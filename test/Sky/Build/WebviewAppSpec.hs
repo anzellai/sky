@@ -1,9 +1,13 @@
 module Sky.Build.WebviewAppSpec (spec) where
 
 import Test.Hspec
+import System.Directory (getCurrentDirectory, doesFileExist,
+                         createDirectoryIfMissing)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
+import System.Exit (ExitCode(..))
 import Data.List (isInfixOf)
-
-import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 -- Issue #356 / v0.1 MVP — Sky.Webview backend.
@@ -24,39 +28,48 @@ import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 -- The runtime smoke test (`go test ./rt -run Webview` + interactive
 -- `sky build && ./sky-out/app`) live under runtime-go/rt/webview_test.go
 -- and examples/31-webview-stopwatch-ui respectively.
---
--- Tier 1 (task #491): no subprocess `sky build` — the compile
--- pipeline runs IN-PROCESS via Sky.Build.Helpers.InProcessCompile.
 spec :: Spec
 spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
     it "type-checks + builds a minimal Webview.app program with all required fields" $ do
-        result <- compileInProcess validFixture
-        case result of
-            CompileErr e -> expectationFailure ("compile failed: " ++ e)
-            CompileOk body -> do
-                -- The Webview.app call site lowers to rt.Webview_app
-                -- via the default Mod_Func kernelToGo fallback (no
-                -- explicit Kernel.hs entry needed, same as
-                -- rt.Tui_app / rt.Cli_program).
-                let routesToWebviewApp = "rt.Webview_app(" `isInfixOf` body
-                routesToWebviewApp `shouldBe` True
+        sky <- findSky
+        withSystemTempDirectory "sky-webview-app" $ \tmp -> do
+            writeFixture tmp validFixture
+            (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
+            if ec /= ExitSuccess
+                then expectationFailure $
+                    "sky build failed.\n" ++ out ++ "\n" ++ errOut
+                else do
+                    built <- doesFileExist (tmp </> "sky-out" </> "app")
+                    built `shouldBe` True
+                    body <- readFile (tmp </> "sky-out" </> "main.go")
+                    -- The Webview.app call site lowers to rt.Webview_app
+                    -- via the default Mod_Func kernelToGo fallback (no
+                    -- explicit Kernel.hs entry needed, same as
+                    -- rt.Tui_app / rt.Cli_program).
+                    let routesToWebviewApp = "rt.Webview_app(" `isInfixOf` body
+                    routesToWebviewApp `shouldBe` True
 
     it "rejects a Webview.app call missing the required window field" $ do
-        result <- compileInProcess missingWindowFixture
-        case result of
-            CompileOk _ ->
-                expectationFailure
-                    "expected compile failure for Webview.app missing required `window` field"
-            CompileErr combined -> do
-                -- HM-level rejection — closed record sig should error,
-                -- NOT a runtime "cfg must define" panic. The compile
-                -- pipeline's Left return value is the one-line marker
-                -- `"Type error: <path>"` (see Compile.hs:1613); the
-                -- full rendered TYPE ERROR block streams via stdout
-                -- which the in-process helper silences.  The marker
-                -- substring is enough to fence the regression.
-                let isTypeError = "Type error" `isInfixOf` combined
-                isTypeError `shouldBe` True
+        sky <- findSky
+        withSystemTempDirectory "sky-webview-app-miss" $ \tmp -> do
+            writeFixture tmp missingWindowFixture
+            (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
+            -- HM-level rejection — closed record sig should error,
+            -- NOT a runtime "cfg must define" panic. The build
+            -- terminates non-zero with a TYPE ERROR diagnostic
+            -- mentioning AppCfg (the inferred required shape).
+            ec `shouldNotBe` ExitSuccess
+            let combined = out ++ "\n" ++ errOut
+            -- sky's diagnostic surfaces "TYPE ERROR" + the expected
+            -- AppCfg shape with the window field present and the
+            -- actual shape missing it. Either substring indicates
+            -- a clean compile-time rejection (vs the runtime panic
+            -- "cfg must define" path).
+            let isTypeError =
+                    "TYPE ERROR" `isInfixOf` combined
+                    || "AppCfg" `isInfixOf` combined
+                    || "Type mismatch" `isInfixOf` combined
+            isTypeError `shouldBe` True
 
   where
     validFixture :: String
@@ -124,3 +137,28 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \        , subscriptions = subscriptions\n\
         \        }\n\
         \        |> Task.run\n"
+
+    writeFixture :: FilePath -> String -> IO ()
+    writeFixture tmp src = do
+        createDirectoryIfMissing True (tmp </> "src")
+        writeFile (tmp </> "sky.toml")
+            ("name = \"webview-app-test\"\n"
+                ++ "version = \"0.0.0\"\n"
+                ++ "entry = \"src/Main.sky\"\n\n"
+                ++ "[source]\nroot = \"src\"\n")
+        writeFile (tmp </> "src" </> "Main.sky") src
+
+    findSky :: IO FilePath
+    findSky = do
+        cwd <- getCurrentDirectory
+        let candidate = cwd </> "sky-out" </> "sky"
+        ok <- doesFileExist candidate
+        if ok
+            then return candidate
+            else return "sky"
+
+    runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
+    runSky sky args cwd =
+        readCreateProcessWithExitCode
+            ((proc sky args) { cwd = Just cwd })
+            ""

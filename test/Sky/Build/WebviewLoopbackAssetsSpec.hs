@@ -1,15 +1,13 @@
 module Sky.Build.WebviewLoopbackAssetsSpec (spec) where
 
 import Test.Hspec
-import Data.List (isInfixOf)
+import System.Directory (getCurrentDirectory, doesFileExist,
+                         createDirectoryIfMissing)
 import System.FilePath ((</>))
-
-import Sky.Build.Helpers.InProcessCompile
-    ( CompileOpts(..)
-    , CompileOkRich(..)
-    , compileInProcessWith
-    , defaultCompileOpts
-    )
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
+import System.Exit (ExitCode(..))
+import Data.List (isInfixOf)
 
 
 -- Bug #370 — Sky.Webview can't load relative-path assets.
@@ -39,29 +37,23 @@ import Sky.Build.Helpers.InProcessCompile
 -- /static/*) is pinned by Go unit tests in
 -- runtime-go/rt/webview_test.go (TestWebviewLoopbackServesStaticAndBody
 -- + TestWebviewLoopbackBindsLoopbackOnly).
---
--- Tier 1 (task #491): no subprocess `sky build` — the compile
--- pipeline runs IN-PROCESS via Sky.Build.Helpers.InProcessCompile.
--- The runtime materialisation (`copyRuntime`) STILL happens —
--- `compileInProcess`'s tempdir gets a real `sky-out/rt/webview.go`
--- so the loopback-helper assertion against that file's content
--- carries through unchanged.
 spec :: Spec
 spec = describe "Sky.Webview loopback assets (bug #370)" $ do
 
     it "[live].static = \"public\" → generated init emits SetSkyDefault(LIVE_STATIC_DIR)" $ do
-        let opts = defaultCompileOpts
-                { coToml = tomlWithStatic
-                  -- Add a real asset under public/ so the build doesn't
-                  -- have to invent one — keeps the fixture honest.
-                , coExtraFiles =
-                    [ ("public/model.vrm", "<binary>")
-                    ]
-                }
-        compileInProcessWith opts webviewFixture $ \r ->
-            case r of
-                Left e -> expectationFailure ("compile failed: " ++ e)
-                Right (CompileOkRich body outDir) -> do
+        sky <- findSky
+        withSystemTempDirectory "sky-webview-static" $ \tmp -> do
+            writeFixture tmp tomlWithStatic webviewFixture
+            -- Add a real asset under public/ so the build doesn't
+            -- have to invent one — keeps the fixture honest.
+            createDirectoryIfMissing True (tmp </> "public")
+            writeFile (tmp </> "public" </> "model.vrm") "<binary>"
+            (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
+            if ec /= ExitSuccess
+                then expectationFailure $
+                    "sky build failed.\n" ++ out ++ "\n" ++ errOut
+                else do
+                    body <- readFile (tmp </> "sky-out" </> "main.go")
                     -- The TOML key must be projected into the
                     -- runtime env-default. SetSkyDefault is no-op
                     -- when the process env already has the var, so
@@ -79,7 +71,10 @@ spec = describe "Sky.Webview loopback assets (bug #370)" $ do
                     -- must contain the loopback server helper —
                     -- without it the env var would have no effect
                     -- on the produced binary.
-                    rtSrc <- readFile (outDir </> "rt" </> "webview.go")
+                    rtPath <- pure (tmp </> "sky-out" </> "rt" </> "webview.go")
+                    haveRuntime <- doesFileExist rtPath
+                    haveRuntime `shouldBe` True
+                    rtSrc <- readFile rtPath
                     let runtimeHasLoopback =
                           "startWebviewLoopback" `isInfixOf` rtSrc
                           && "webviewStaticDir" `isInfixOf` rtSrc
@@ -87,11 +82,15 @@ spec = describe "Sky.Webview loopback assets (bug #370)" $ do
                     runtimeHasLoopback `shouldBe` True
 
     it "no [live].static → no SetSkyDefault(LIVE_STATIC_DIR); SetHtml path preserved" $ do
-        let opts = defaultCompileOpts { coToml = tomlNoStatic }
-        compileInProcessWith opts webviewFixture $ \r ->
-            case r of
-                Left e -> expectationFailure ("compile failed: " ++ e)
-                Right (CompileOkRich body outDir) -> do
+        sky <- findSky
+        withSystemTempDirectory "sky-webview-no-static" $ \tmp -> do
+            writeFixture tmp tomlNoStatic webviewFixture
+            (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
+            if ec /= ExitSuccess
+                then expectationFailure $
+                    "sky build failed.\n" ++ out ++ "\n" ++ errOut
+                else do
+                    body <- readFile (tmp </> "sky-out" </> "main.go")
                     -- No-regression gate: an app without [live].static
                     -- must NOT register LIVE_STATIC_DIR (the env var
                     -- is the gate webviewStaticDir reads — registering
@@ -105,7 +104,8 @@ spec = describe "Sky.Webview loopback assets (bug #370)" $ do
                     -- still carries the original SetHtml-fallback
                     -- branch. We don't WANT to silently delete the
                     -- non-loopback path.
-                    rtSrc <- readFile (outDir </> "rt" </> "webview.go")
+                    rtPath <- pure (tmp </> "sky-out" </> "rt" </> "webview.go")
+                    rtSrc <- readFile rtPath
                     let runtimeKeepsSetHtmlFallback =
                           "w.SetHtml(webviewPageWrap(body))" `isInfixOf` rtSrc
                     runtimeKeepsSetHtmlFallback `shouldBe` True
@@ -165,3 +165,24 @@ spec = describe "Sky.Webview loopback assets (bug #370)" $ do
         \entry = \"src/Main.sky\"\n\n\
         \[source]\n\
         \root = \"src\"\n"
+
+    writeFixture :: FilePath -> String -> String -> IO ()
+    writeFixture tmp toml src = do
+        createDirectoryIfMissing True (tmp </> "src")
+        writeFile (tmp </> "sky.toml") toml
+        writeFile (tmp </> "src" </> "Main.sky") src
+
+    findSky :: IO FilePath
+    findSky = do
+        cwd <- getCurrentDirectory
+        let candidate = cwd </> "sky-out" </> "sky"
+        ok <- doesFileExist candidate
+        if ok
+            then return candidate
+            else return "sky"
+
+    runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
+    runSky sky args cwd =
+        readCreateProcessWithExitCode
+            ((proc sky args) { cwd = Just cwd })
+            ""
