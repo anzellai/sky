@@ -3,7 +3,7 @@
 // Outbound WebSocket connections from a Sky program: open a socket,
 // send text / binary frames, receive incoming frames as a Sub-driven
 // stream of Msgs in Sky.Live update loops. Mirror of http_stream.go
-// in shape; underlying transport is `nhooyr.io/websocket` (modern,
+// in shape; underlying transport is `github.com/coder/websocket` (modern,
 // context-aware, simpler API than gorilla/websocket).
 //
 // Architecture parallel: Cycle 4 HS (Sky.Core.Http.Stream).
@@ -64,7 +64,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 )
 
 // ═════════════════════════════════════════════════════════════════════

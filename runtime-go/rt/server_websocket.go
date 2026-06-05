@@ -52,7 +52,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 )
 
 // ═════════════════════════════════════════════════════════════════════
