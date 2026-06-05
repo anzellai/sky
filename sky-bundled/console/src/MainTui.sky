@@ -11,7 +11,6 @@ module Main exposing (main)
 -- The shared View.sky calls only Std.Ui primitives, so it renders
 -- identically here — the Sky.Tui runtime walks the same Element
 -- tree, computes character-cell layout, paints to the terminal.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Tui as Tui
@@ -23,13 +22,13 @@ import View exposing (view)
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { tab       = OverviewTab
+    ( { tab = OverviewTab
       , parentUrl = ""
-      , overview  = mockOverview
-      , logs      = mockLogs
-      , metrics   = mockMetrics
-      , traces    = mockTraces
-      , errors    = mockErrors
+      , overview = mockOverview
+      , logs = mockLogs
+      , metrics = mockMetrics
+      , traces = mockTraces
+      , errors = mockErrors
       , lastError = ""
       , logFilter = emptyLogFilter
       , traceQuery = ""
@@ -41,23 +40,24 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         SelectTab tab ->
             ( { model | tab = tab }, Cmd.none )
 
         Tick ->
             ( model, Cmd.none )
-
         -- Tui variant doesn't fetch (no HTTP wire in terminal mode);
         -- ignore the response Msgs that the Live variant uses.
+
         GotOverview _ ->
             ( model, Cmd.none )
+        -- Tui variant has no HTTP wire + no filter UI — every other
+        -- Msg (GotMetrics/Traces/Errors, LogFilter*, TraceFilterQuery)
+        -- is a no-op here.
 
         GotLogs _ ->
             ( model, Cmd.none )
 
-        -- Tui variant has no HTTP wire + no filter UI — every other
-        -- Msg (GotMetrics/Traces/Errors, LogFilter*, TraceFilterQuery)
-        -- is a no-op here.
         _ ->
             ( model, Cmd.none )
 
@@ -74,9 +74,9 @@ subscriptions _ =
 -- before reaching user code).
 main =
     Tui.app
-        { init          = init
-        , update        = update
-        , view          = view
+        { init = init
+        , update = update
+        , view = view
         , subscriptions = subscriptions
         }
         |> Task.run

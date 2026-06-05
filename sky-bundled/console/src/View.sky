@@ -23,44 +23,66 @@ import State exposing (..)
 -- missing content tier. Header / tab strip use bgSurface (a hair
 -- lighter) for the chrome separation.
 bgPage : Ui.Color
-bgPage = Ui.rgb 20 23 28
+bgPage =
+    Ui.rgb 20 23 28
+
 
 bgSurface : Ui.Color
-bgSurface = Ui.rgb 28 32 39
+bgSurface =
+    Ui.rgb 28 32 39
+
 
 bgRaised : Ui.Color
-bgRaised = Ui.rgb 20 23 28
+bgRaised =
+    Ui.rgb 20 23 28
+
 
 bgCode : Ui.Color
-bgCode = Ui.rgb 44 50 60
+bgCode =
+    Ui.rgb 44 50 60
+
 
 border_ : Ui.Color
-border_ = Ui.rgb 53 59 70
+border_ =
+    Ui.rgb 53 59 70
+
 
 borderSoft : Ui.Color
-borderSoft = Ui.rgb 42 47 56
+borderSoft =
+    Ui.rgb 42 47 56
+
 
 textPrimary : Ui.Color
-textPrimary = Ui.rgb 240 243 247
+textPrimary =
+    Ui.rgb 240 243 247
+
 
 textSecondary : Ui.Color
-textSecondary = Ui.rgb 197 203 212
+textSecondary =
+    Ui.rgb 197 203 212
+
 
 textMuted : Ui.Color
-textMuted = Ui.rgb 141 150 163
+textMuted =
+    Ui.rgb 141 150 163
+
 
 accent : Ui.Color
-accent = Ui.rgb 126 182 255
+accent =
+    Ui.rgb 126 182 255
+
 
 warn : Ui.Color
-warn = Ui.rgb 255 178 77
+warn =
+    Ui.rgb 255 178 77
+
 
 err : Ui.Color
-err = Ui.rgb 255 117 117
+err =
+    Ui.rgb 255 117 117
 
 
 -- ─── Top-level view ──────────────────────────────────────────────
-
 view : Model -> Element Msg
 view model =
     Ui.column
@@ -70,14 +92,14 @@ view model =
         , Font.color textPrimary
         , Font.family "system-ui, -apple-system, sans-serif"
         ]
-        [ header model
-        , tabStrip model.tab
-        , content model
-        ]
+        -- Title takes all available width — naturally pushes the
+        -- meta to the right. Without `width fill` here the two
+        -- siblings collapse to content and the meta crashes into
+        -- the title with no breathing room.
+        [ header model, tabStrip model.tab, content model ]
 
 
 -- ─── Header ──────────────────────────────────────────────────────
-
 header : Model -> Element Msg
 header model =
     Ui.row
@@ -88,44 +110,51 @@ header model =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color border_
         ]
-        -- Title takes all available width — naturally pushes the
-        -- meta to the right. Without `width fill` here the two
-        -- siblings collapse to content and the meta crashes into
-        -- the title with no breathing room.
         [ Ui.el
-            [ Ui.width Ui.fill, Font.size 16, Font.bold ]
-            (Ui.text "Sky Console")
+              [ Ui.width Ui.fill, Font.size 16, Font.bold ]
+              (Ui.text "Sky Console")
         , Ui.el
-            [ Font.color textSecondary
-            , Font.size 12
-            , Font.family "ui-monospace, Menlo, monospace"
-            ]
-            (Ui.text (headerMeta model.overview))
+              [ Font.color textSecondary
+              , Font.size 12
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text (headerMeta model.overview))
         ]
 
 
 headerMeta : Overview -> String
 headerMeta o =
     let
-        mode = if o.productionMode then "prod" else "dev"
+        -- Histograms show count + sum/count (avg); counters / gauges
+        -- show the raw value. Picks the most useful single number
+        -- per metric type.
+        mode =
+            if o.productionMode then
+                "prod"
+
+            else
+        -- Show first 8 chars of the session id (full sids are too
+        -- long for the column). Click → pivot all logs to this
+        -- session via LogFilterPickSession Msg.
+                "dev"
     in
-    "Sky " ++ o.skyVersion
-        ++ " · " ++ mode
-        ++ " · uptime " ++ formatUptime o.uptimeSeconds
+        "Sky " ++ o.skyVersion ++ " · " ++ mode ++ " · uptime "
+            ++ formatUptime o.uptimeSeconds
 
 
 formatUptime : Int -> String
 formatUptime s =
     if s < 60 then
         String.fromInt s ++ "s"
+
     else if s < 3600 then
         String.fromInt (s // 60) ++ "m"
+
     else
         String.fromInt (s // 3600) ++ "h"
 
 
 -- ─── Tab strip ───────────────────────────────────────────────────
-
 tabStrip : Tab -> Element Msg
 tabStrip active =
     Ui.row
@@ -135,61 +164,76 @@ tabStrip active =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color border_
         ]
-        (List.map (tabButton active)
+        (List.map
+            (tabButton active)
             [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab ])
 
 
 tabButton : Tab -> Tab -> Element Msg
 tabButton active tab =
     let
+        -- Keep a whole trace when ANY of its spans matches the query
+        -- (by span name or trace id) — so filtering on "db" still
+        -- shows the parent msg / cmd spans for context.
         isActive = active == tab
         underlineColor =
-            if isActive then accent else bgSurface
+            if isActive then
+                accent
+
+            else
+                bgSurface
         textColor =
-            if isActive then accent else textSecondary
+            if isActive then
+                accent
+
+            else
+                textSecondary
     in
-    Ui.el
-        [ Ui.paddingXY 14 10
-        , Font.size 13
-        , Font.color textColor
-        , Border.widthEach { top = 0, right = 0, bottom = 2, left = 0 }
-        , Border.color underlineColor
-        , Ui.pointer
-        , Ui.onClick (SelectTab tab)
-        ]
-        (Ui.text (tabLabel tab))
+        Ui.el
+            [ Ui.paddingXY 14 10
+            , Font.size 13
+            , Font.color textColor
+            , Border.widthEach { top = 0, right = 0, bottom = 2, left = 0 }
+            , Border.color underlineColor
+            , Ui.pointer
+            , Ui.onClick (SelectTab tab)
+            ]
+            (Ui.text (tabLabel tab))
 
 
 -- ─── Content router ──────────────────────────────────────────────
-
 content : Model -> Element Msg
 content model =
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
         (case model.tab of
-            OverviewTab -> overviewView model.overview
-            MetricsTab  -> metricsView model.metrics
-            LogsTab     -> logsView model
-            TracesTab   -> tracesView model.traceQuery model.traces
-            ErrorsTab   -> errorsView model.errors)
+
+            OverviewTab ->
+                overviewView model.overview
+
+            MetricsTab ->
+                metricsView model.metrics
+
+            LogsTab ->
+                logsView model
+
+            TracesTab ->
+                tracesView model.traceQuery model.traces
+
+            ErrorsTab ->
+                errorsView model.errors)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────
-
 overviewView : Overview -> List (Element Msg)
 overviewView o =
-    [ kpiRow o
-    , systemPanel o
-    ]
+    [ kpiRow o, systemPanel o ]
 
 
 kpiRow : Overview -> Element Msg
 kpiRow o =
     Ui.grid
-        [ Ui.gridColumns 220
-        , Ui.spacing 12
-        , Ui.width Ui.fill
-        ]
+        [ Ui.gridColumns 220, Ui.spacing 12, Ui.width Ui.fill ]
         [ kpiCard "Requests total" (String.fromInt o.requestsTotal)
         , kpiCard "5xx error rate" (formatPercent o.errorRate5xx)
         , kpiCard "Log buffer" (String.fromInt o.bufferLogUsed)
@@ -208,29 +252,29 @@ kpiCard label valueText =
         , Ui.spacing 4
         ]
         [ Ui.el
-            [ Font.size 11
-            , Font.color textMuted
-            , Font.letterSpacing 0.05
-            ]
-            (Ui.text (String.toUpper label))
+              [ Font.size 11, Font.color textMuted, Font.letterSpacing 5.0e-2 ]
+              (Ui.text (String.toUpper label))
         , Ui.el
-            [ Font.size 24
-            , Font.bold
-            , Font.color textPrimary
-            ]
-            (Ui.text valueText)
+              [ Font.size 24, Font.bold, Font.color textPrimary ]
+              (Ui.text valueText)
         ]
 
 
 systemPanel : Overview -> Element Msg
 systemPanel o =
-    panel "System"
-        [ infoRow "Sky version"  o.skyVersion
-        , infoRow "Commit"       o.commit
-        , infoRow "Built at"     o.builtAt
-        , infoRow "Uptime"       (formatUptime o.uptimeSeconds)
-        , infoRow "Production mode"
-            (if o.productionMode then "yes" else "no")
+    panel
+        "System"
+        [ infoRow "Sky version" o.skyVersion
+        , infoRow "Commit" o.commit
+        , infoRow "Built at" o.builtAt
+        , infoRow "Uptime" (formatUptime o.uptimeSeconds)
+        , infoRow
+              "Production mode"
+              (if o.productionMode then
+                  "yes"
+
+              else
+                  "no")
         ]
 
 
@@ -244,29 +288,27 @@ infoRow label value =
         , Border.color borderSoft
         ]
         [ Ui.el
-            [ Ui.width (Ui.px 180)
-            , Font.color textMuted
-            , Font.size 12
-            ]
-            (Ui.text (String.toUpper label))
+              [ Ui.width (Ui.px 180), Font.color textMuted, Font.size 12 ]
+              (Ui.text (String.toUpper label))
         , codeBadge value
         ]
 
 
 -- ─── Logs tab ────────────────────────────────────────────────────
-
 logsView : Model -> List (Element Msg)
 logsView model =
     let
         filtered = List.filter (matchFilter model.logFilter) model.logs
     in
-    [ logsFilterPanel model.logFilter
-    , panel "Recent log entries"
-        (if List.isEmpty filtered then
-            [ emptyState "No log entries match the current filter." ]
-         else
-            List.map logRow filtered)
-    ]
+        [ logsFilterPanel model.logFilter
+        , panel
+              "Recent log entries"
+              (if List.isEmpty filtered then
+                  [emptyState "No log entries match the current filter."]
+
+              else
+                  List.map logRow filtered)
+        ]
 
 
 matchFilter : LogFilter -> LogEntry -> Bool
@@ -274,18 +316,30 @@ matchFilter f e =
     let
         levelOk =
             case e.level of
-                "debug" -> f.showDebug
-                "info"  -> f.showInfo
-                "warn"  -> f.showWarn
-                "error" -> f.showError
-                _       -> True
+
+                "debug" ->
+                    f.showDebug
+
+                "info" ->
+                    f.showInfo
+
+                "warn" ->
+                    f.showWarn
+
+                "error" ->
+                    f.showError
+
+                _ ->
+                    True
         sessionOk = f.session == "" || f.session == e.sessionId
         queryOk =
             f.query == ""
-                || String.contains (String.toLower f.query)
-                    (String.toLower (e.message ++ " " ++ e.route ++ " " ++ e.subapp))
+                || String.contains
+                       (String.toLower f.query)
+                       (String.toLower
+                           (e.message ++ " " ++ e.route ++ " " ++ e.subapp))
     in
-    levelOk && sessionOk && queryOk
+        levelOk && sessionOk && queryOk
 
 
 logsFilterPanel : LogFilter -> Element Msg
@@ -300,78 +354,84 @@ logsFilterPanel f =
         , Ui.width Ui.fill
         ]
         [ Ui.row
-            [ Ui.width Ui.fill, Ui.spacing 8 ]
-            [ -- Free-text search input
-              Ui.input
-                [ Ui.htmlAttribute "type" "search"
-                , Ui.htmlAttribute "placeholder" "Search message / route / subapp…"
-                , Ui.htmlAttribute "value" f.query
-                , Ui.onInput LogFilterQuery
-                , Ui.width Ui.fill
-                , Background.color bgCode
-                , Border.width 1
-                , Border.color border_
-                , Border.rounded 4
-                , Ui.paddingXY 8 6
-                , Font.color textPrimary
-                , Font.size 12
-                , Font.family "ui-monospace, Menlo, monospace"
-                ]
-            , -- Level toggle pills
-              levelToggle "debug" f.showDebug
-            , levelToggle "info"  f.showInfo
-            , levelToggle "warn"  f.showWarn
-            , levelToggle "error" f.showError
-            , -- Clear-all button (always visible; cheap)
-              Ui.el
-                [ Ui.paddingXY 8 6
-                , Background.color bgCode
-                , Border.rounded 4
-                , Ui.pointer
-                , Ui.onClick LogFilterClear
-                , Font.color textSecondary
-                , Font.size 11
-                ]
-                (Ui.text "clear")
-            ]
-        , -- Active session pivot (only shown when set)
-          if f.session == "" then
-            Ui.text ""
-          else
-            Ui.row
-                [ Ui.spacing 6
-                , Font.size 11
-                , Font.color textMuted
-                ]
-                [ Ui.text "Filtering by session: "
-                , Ui.el
-                    [ Font.family "ui-monospace, Menlo, monospace"
-                    , Font.color accent
+              [ Ui.width Ui.fill, Ui.spacing 8 ]
+              [ Ui.input
+                    [ Ui.htmlAttribute "type" "search"
+                    , Ui.htmlAttribute
+                          "placeholder"
+                          "Search message / route / subapp…"
+                    , Ui.htmlAttribute "value" f.query
+                    , Ui.onInput LogFilterQuery
+                    , Ui.width Ui.fill
+                    , Background.color bgCode
+                    , Border.width 1
+                    , Border.color border_
+                    , Border.rounded 4
+                    , Ui.paddingXY 8 6
+                    , Font.color textPrimary
+                    , Font.size 12
+                    , Font.family "ui-monospace, Menlo, monospace"
                     ]
-                    (Ui.text f.session)
-                ]
+              , levelToggle "debug" f.showDebug
+              , levelToggle "info" f.showInfo
+              , levelToggle "warn" f.showWarn
+              , levelToggle "error" f.showError
+              , Ui.el
+                    [ Ui.paddingXY 8 6
+                    , Background.color bgCode
+                    , Border.rounded 4
+                    , Ui.pointer
+                    , Ui.onClick LogFilterClear
+                    , Font.color textSecondary
+                    , Font.size 11
+                    ]
+                    (Ui.text "clear")
+              ]
+        , if f.session == "" then
+              Ui.text ""
+
+          else
+              Ui.row
+                  [ Ui.spacing 6, Font.size 11, Font.color textMuted ]
+                  [ Ui.text "Filtering by session: "
+                  , Ui.el
+                        [ Font.family "ui-monospace, Menlo, monospace"
+                        , Font.color accent
+                        ]
+                        (Ui.text f.session)
+                  ]
         ]
 
 
 levelToggle : String -> Bool -> Element Msg
 levelToggle lvl on =
     let
-        bg = if on then bgCode else bgSurface
-        fg = if on then levelColor lvl else textMuted
+        bg =
+            if on then
+                bgCode
+
+            else
+                bgSurface
+        fg =
+            if on then
+                levelColor lvl
+
+            else
+                textMuted
     in
-    Ui.el
-        [ Background.color bg
-        , Border.width 1
-        , Border.color border_
-        , Border.rounded 4
-        , Ui.paddingXY 8 6
-        , Ui.pointer
-        , Ui.onClick (LogFilterToggleLevel lvl)
-        , Font.color fg
-        , Font.bold
-        , Font.size 11
-        ]
-        (Ui.text (String.toUpper lvl))
+        Ui.el
+            [ Background.color bg
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 4
+            , Ui.paddingXY 8 6
+            , Ui.pointer
+            , Ui.onClick (LogFilterToggleLevel lvl)
+            , Font.color fg
+            , Font.bold
+            , Font.size 11
+            ]
+            (Ui.text (String.toUpper lvl))
 
 
 logRow : LogEntry -> Element Msg
@@ -383,37 +443,29 @@ logRow e =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color borderSoft
         ]
-        [ -- Time: HH:MM:SS
-          Ui.el
-            [ Ui.width (Ui.px 80)
-            , Font.color textMuted
-            , Font.family "ui-monospace, Menlo, monospace"
-            , Font.size 12
-            ]
-            (Ui.text (compactTime e.time))
-        , -- Level: fixed width + colour-coded
-          Ui.el
-            [ Ui.width (Ui.px 50)
-            , Font.color (levelColor e.level)
-            , Font.bold
-            , Font.size 12
-            ]
-            (Ui.text (String.toUpper e.level))
-        , -- Subapp badge
-          subappBadge e.subapp
-        , -- Session id (clickable — sets the session pivot filter)
-          sessionBadge e.sessionId
-        , -- Trace id (clickable — jumps to the Traces tab filtered
-          -- to this id). reqId is unified with the OTEL trace id, so
-          -- this matches the `trace <id>` chip on the Traces tab.
-          traceBadge e.reqId
-        , -- Message — fills the rest of the row
-          Ui.el
-            [ Ui.width Ui.fill
-            , Font.color (levelTextColor e.level)
-            , Font.size 13
-            ]
-            (Ui.text e.message)
+        [ Ui.el
+              [ Ui.width (Ui.px 80)
+              , Font.color textMuted
+              , Font.family "ui-monospace, Menlo, monospace"
+              , Font.size 12
+              ]
+              (Ui.text (compactTime e.time))
+        , Ui.el
+              [ Ui.width (Ui.px 50)
+              , Font.color (levelColor e.level)
+              , Font.bold
+              , Font.size 12
+              ]
+              (Ui.text (String.toUpper e.level))
+        , subappBadge e.subapp
+        , sessionBadge e.sessionId
+        , traceBadge e.reqId
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Font.color (levelTextColor e.level)
+              , Font.size 13
+              ]
+              (Ui.text e.message)
         ]
 
 
@@ -422,11 +474,9 @@ sessionBadge sid =
     if sid == "" then
         -- Same width as the populated badge so message column
         -- alignment is stable whether session id is present.
-        Ui.el [ Ui.width (Ui.px 80) ] (Ui.text "")
+        Ui.el [Ui.width (Ui.px 80)] (Ui.text "")
+
     else
-        -- Show first 8 chars of the session id (full sids are too
-        -- long for the column). Click → pivot all logs to this
-        -- session via LogFilterPickSession Msg.
         Ui.el
             [ Ui.width (Ui.px 80)
             , Background.color bgCode
@@ -447,7 +497,8 @@ sessionBadge sid =
 traceBadge : String -> Element Msg
 traceBadge tid =
     if tid == "" then
-        Ui.el [ Ui.width (Ui.px 92) ] (Ui.text "")
+        Ui.el [Ui.width (Ui.px 92)] (Ui.text "")
+
     else
         Ui.el
             [ Ui.width (Ui.px 92)
@@ -468,7 +519,8 @@ subappBadge sub =
     if sub == "" then
         -- Same width as the populated badge so the message column
         -- aligns whether the badge is present or not.
-        Ui.el [ Ui.width (Ui.px 70) ] (Ui.text "")
+        Ui.el [Ui.width (Ui.px 70)] (Ui.text "")
+
     else
         Ui.el
             [ Ui.width (Ui.px 70)
@@ -489,9 +541,10 @@ subappBadge sub =
 compactTime : String -> String
 compactTime ts =
     case String.split "T" ts of
-        [ _date, rest ] ->
-            -- rest is "17:34:55.413+01:00"; take up to ":SS"
+
+        [_date, rest] ->
             String.left 8 rest
+
         _ ->
             ts
 
@@ -499,75 +552,86 @@ compactTime ts =
 levelColor : String -> Ui.Color
 levelColor level =
     case level of
-        "warn"  -> warn
-        "error" -> err
-        _       -> textMuted
+
+        "warn" ->
+            warn
+
+        "error" ->
+            err
+
+        _ ->
+            textMuted
 
 
 levelTextColor : String -> Ui.Color
 levelTextColor level =
     case level of
-        "warn"  -> warn
-        "error" -> err
-        _       -> textPrimary
+
+        "warn" ->
+            warn
+
+        "error" ->
+            err
+
+        _ ->
+            textPrimary
 
 
 -- ─── Metrics tab ─────────────────────────────────────────────────
-
 metricsView : List MetricRow -> List (Element Msg)
 metricsView rows =
-    [ panel "Metrics snapshot"
+    [panel
+        "Metrics snapshot"
         (if List.isEmpty rows then
-            [ emptyState "No metrics collected yet." ]
-         else
-            List.map metricRowView rows)
-    ]
+            [emptyState "No metrics collected yet."]
+
+        else
+            List.map metricRowView rows)]
 
 
 metricRowView : MetricRow -> Element Msg
 metricRowView r =
     let
-        -- Histograms show count + sum/count (avg); counters / gauges
-        -- show the raw value. Picks the most useful single number
-        -- per metric type.
         valueStr =
             case r.typ of
+
                 "histogram" ->
-                    "n=" ++ formatFloat r.count
-                        ++ " avg=" ++ formatAvg r.sum r.count
+                    "n=" ++ formatFloat r.count ++ " avg="
+                        ++ formatAvg r.sum r.count
+
                 _ ->
                     formatFloat r.value
     in
-    Ui.row
-        [ Ui.width Ui.fill
-        , Ui.paddingXY 0 6
-        , Ui.spacing 12
-        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
-        , Border.color borderSoft
-        ]
-        [ Ui.el
-            [ Ui.width (Ui.px 60)
-            , Font.size 10
-            , Font.color textMuted
-            , Font.family "ui-monospace, Menlo, monospace"
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 6
+            , Ui.spacing 12
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
             ]
-            (Ui.text (String.toUpper r.typ))
-        , Ui.el
-            [ Ui.width (Ui.px 260)
-            , Font.family "ui-monospace, Menlo, monospace"
-            , Font.size 12
-            , Font.color textPrimary
+            [ Ui.el
+                  [ Ui.width (Ui.px 60)
+                  , Font.size 10
+                  , Font.color textMuted
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  ]
+                  (Ui.text (String.toUpper r.typ))
+            , Ui.el
+                  [ Ui.width (Ui.px 260)
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 12
+                  , Font.color textPrimary
+                  ]
+                  (Ui.text r.name)
+            , Ui.el
+                  [ Ui.width (Ui.px 180)
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 11
+                  , Font.color textMuted
+                  ]
+                  (Ui.text r.labels)
+            , codeBadge valueStr
             ]
-            (Ui.text r.name)
-        , Ui.el
-            [ Ui.width (Ui.px 180)
-            , Font.family "ui-monospace, Menlo, monospace"
-            , Font.size 11
-            , Font.color textMuted
-            ]
-            (Ui.text r.labels)
-        , codeBadge valueStr
-        ]
 
 
 -- Render a Float as a compact human-readable string. Two decimal
@@ -577,40 +641,40 @@ formatFloat : Float -> String
 formatFloat f =
     let
         scaled = Math.round (f * 100.0)
-        whole  = scaled // 100
-        frac   = modBy 100 scaled
-        fracS  =
-            if frac < 10 then "0" ++ String.fromInt frac
-            else String.fromInt frac
+        whole = scaled // 100
+        frac = modBy 100 scaled
+        fracS =
+            if frac < 10 then
+                "0" ++ String.fromInt frac
+
+            else
+                String.fromInt frac
     in
-    if frac == 0 then
-        String.fromInt whole
-    else
-        String.fromInt whole ++ "." ++ fracS
+        if frac == 0 then
+            String.fromInt whole
+
+        else
+            String.fromInt whole ++ "." ++ fracS
 
 
 formatAvg : Float -> Float -> String
 formatAvg sum count =
-    if count == 0.0 then "—" else formatFloat (sum / count)
+    if count == 0.0 then
+        "—"
+
+    else
+        formatFloat (sum / count)
 
 
 -- ─── Traces tab ──────────────────────────────────────────────────
-
 tracesView : String -> List TraceRow -> List (Element Msg)
 tracesView query rows =
     let
-        -- Keep a whole trace when ANY of its spans matches the query
-        -- (by span name or trace id) — so filtering on "db" still
-        -- shows the parent msg / cmd spans for context.
         lq = String.toLower (String.trim query)
-
         matches r =
             String.contains lq (String.toLower r.name)
                 || String.contains lq (String.toLower r.traceId)
-
-        keepTrace tid =
-            List.any (\r -> r.traceId == tid && matches r) rows
-
+        keepTrace tid = List.any (\r -> r.traceId == tid && matches r) rows
         visibleIds =
             if lq == "" then
                 distinctTraceIds rows
@@ -619,15 +683,16 @@ tracesView query rows =
                 List.filter keepTrace (distinctTraceIds rows)
     in
         [ tracesFilterPanel query
-        , panel "Recent traces"
-            (if List.isEmpty rows then
-                [ emptyState "No traces captured yet." ]
+        , panel
+              "Recent traces"
+              (if List.isEmpty rows then
+                  [emptyState "No traces captured yet."]
 
-             else if List.isEmpty visibleIds then
-                [ emptyState "No traces match the filter." ]
+              else if List.isEmpty visibleIds then
+                  [emptyState "No traces match the filter."]
 
-             else
-                List.map (traceGroupView rows) visibleIds)
+              else
+                  List.map (traceGroupView rows) visibleIds)
         ]
 
 
@@ -643,30 +708,32 @@ tracesFilterPanel query =
         , Ui.width Ui.fill
         ]
         [ Ui.input
-            [ Ui.htmlAttribute "type" "search"
-            , Ui.htmlAttribute "placeholder" "Filter traces by span name or trace id…"
-            , Ui.htmlAttribute "value" query
-            , Ui.onInput TraceFilterQuery
-            , Ui.width Ui.fill
-            , Background.color bgCode
-            , Border.width 1
-            , Border.color border_
-            , Border.rounded 4
-            , Ui.paddingXY 8 6
-            , Font.color textPrimary
-            , Font.size 12
-            , Font.family "ui-monospace, Menlo, monospace"
-            ]
+              [ Ui.htmlAttribute "type" "search"
+              , Ui.htmlAttribute
+                    "placeholder"
+                    "Filter traces by span name or trace id…"
+              , Ui.htmlAttribute "value" query
+              , Ui.onInput TraceFilterQuery
+              , Ui.width Ui.fill
+              , Background.color bgCode
+              , Border.width 1
+              , Border.color border_
+              , Border.rounded 4
+              , Ui.paddingXY 8 6
+              , Font.color textPrimary
+              , Font.size 12
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
         , Ui.el
-            [ Ui.paddingXY 8 6
-            , Background.color bgCode
-            , Border.rounded 4
-            , Ui.pointer
-            , Ui.onClick (TraceFilterQuery "")
-            , Font.color textSecondary
-            , Font.size 11
-            ]
-            (Ui.text "clear")
+              [ Ui.paddingXY 8 6
+              , Background.color bgCode
+              , Border.rounded 4
+              , Ui.pointer
+              , Ui.onClick (TraceFilterQuery "")
+              , Font.color textSecondary
+              , Font.size 11
+              ]
+              (Ui.text "clear")
         ]
 
 
@@ -680,8 +747,7 @@ distinctTraceIds rows =
                 acc
 
             else
-                acc ++ [ r.traceId ]
-        )
+                acc ++ [r.traceId])
         []
         rows
 
@@ -695,6 +761,7 @@ spanDepth rows fuel parentId =
 
     else
         case List.find (\r -> r.spanId == parentId) rows of
+
             Just parent ->
                 1 + spanDepth rows (fuel - 1) parent.parentId
 
@@ -707,23 +774,27 @@ spanDepth rows fuel parentId =
 traceGroupView : List TraceRow -> String -> Element Msg
 traceGroupView allRows tid =
     let
-        spans =
-            List.filter (\r -> r.traceId == tid) allRows
-
+        spans = List.filter (\r -> r.traceId == tid) allRows
         shortId =
             if String.length tid >= 8 then
                 String.slice 0 8 tid
 
             else
                 tid
-
         rootName =
             case List.find (\r -> r.parentId == "") spans of
-                Just root -> root.name
+
+                Just root ->
+                    root.name
+
                 Nothing ->
                     case List.head spans of
-                        Just s -> s.name
-                        Nothing -> "(trace)"
+
+                        Just s ->
+                            s.name
+
+                        Nothing ->
+                            "(trace)"
     in
         Ui.column
             [ Ui.width Ui.fill
@@ -735,29 +806,29 @@ traceGroupView allRows tid =
             (Ui.row
                 [ Ui.spacing 8, Ui.paddingXY 0 2 ]
                 [ Ui.el
-                    [ Font.family "ui-monospace, Menlo, monospace"
-                    , Font.size 11
-                    , Font.color accent
-                    , Background.color bgCode
-                    , Ui.paddingXY 6 2
-                    , Border.rounded 3
-                    ]
-                    (Ui.text ("trace " ++ shortId))
+                      [ Font.family "ui-monospace, Menlo, monospace"
+                      , Font.size 11
+                      , Font.color accent
+                      , Background.color bgCode
+                      , Ui.paddingXY 6 2
+                      , Border.rounded 3
+                      ]
+                      (Ui.text ("trace " ++ shortId))
                 , Ui.el
-                    [ Font.size 12, Font.color textSecondary ]
-                    (Ui.text (rootName ++ " · " ++ String.fromInt (List.length spans) ++ " spans"))
+                      [ Font.size 12, Font.color textSecondary ]
+                      (Ui.text
+                          (rootName ++ " · "
+                              ++ String.fromInt (List.length spans)
+                              ++ " spans"))
                 ]
-                :: List.map (spanRowView allRows) spans
-            )
+                :: List.map (spanRowView allRows) spans)
 
 
 spanRowView : List TraceRow -> TraceRow -> Element Msg
 spanRowView allRows r =
     let
         statusErr = r.status == "error"
-
         depth = spanDepth allRows 32 r.parentId
-
         indent = depth * 18
     in
         Ui.row
@@ -766,45 +837,61 @@ spanRowView allRows r =
             , Ui.spacing 10
             ]
             [ Ui.el
-                [ Ui.width (Ui.px 76)
-                , Font.color textMuted
-                , Font.family "ui-monospace, Menlo, monospace"
-                , Font.size 11
-                ]
-                (Ui.text (compactTime r.startTime))
+                  [ Ui.width (Ui.px 76)
+                  , Font.color textMuted
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 11
+                  ]
+                  (Ui.text (compactTime r.startTime))
             , Ui.el
-                [ Ui.width (Ui.px 40)
-                , Font.color (if statusErr then err else textMuted)
-                , Font.bold
-                , Font.size 10
-                ]
-                (Ui.text (if statusErr then "ERR" else "OK"))
+                  [ Ui.width (Ui.px 40)
+                  , Font.color
+                        (if statusErr then
+                            err
+
+                        else
+                            textMuted)
+                  , Font.bold
+                  , Font.size 10
+                  ]
+                  (Ui.text
+                      (if statusErr then
+                          "ERR"
+
+                      else
+                          "OK"))
             , Ui.el
-                [ Ui.width Ui.fill
-                , Font.size 13
-                , Font.color textPrimary
-                , Font.family "ui-monospace, Menlo, monospace"
-                ]
-                (Ui.text ((if depth > 0 then "└ " else "") ++ r.name))
+                  [ Ui.width Ui.fill
+                  , Font.size 13
+                  , Font.color textPrimary
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  ]
+                  (Ui.text
+                      ((if depth > 0 then
+                          "└ "
+
+                      else
+                          "")
+                          ++ r.name))
             , Ui.el
-                [ Font.color textSecondary
-                , Font.family "ui-monospace, Menlo, monospace"
-                , Font.size 12
-                ]
-                (Ui.text (formatFloat r.durationMs ++ "ms"))
+                  [ Font.color textSecondary
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 12
+                  ]
+                  (Ui.text (formatFloat r.durationMs ++ "ms"))
             ]
 
 
 -- ─── Errors tab ──────────────────────────────────────────────────
-
 errorsView : List ErrorRow -> List (Element Msg)
 errorsView rows =
-    [ panel "Top errors by frequency"
+    [panel
+        "Top errors by frequency"
         (if List.isEmpty rows then
-            [ emptyState "No errors recorded — nice work." ]
-         else
-            List.map errorRowView rows)
-    ]
+            [emptyState "No errors recorded — nice work."]
+
+        else
+            List.map errorRowView rows)]
 
 
 errorRowView : ErrorRow -> Element Msg
@@ -817,23 +904,18 @@ errorRowView r =
         , Border.color borderSoft
         ]
         [ Ui.el
-            [ Ui.width (Ui.px 60)
-            , Font.color err
-            , Font.bold
-            , Font.size 13
-            , Font.family "ui-monospace, Menlo, monospace"
-            ]
-            (Ui.text ("×" ++ String.fromInt r.count))
-        , Ui.el
-            [ Font.size 13
-            , Font.color textPrimary
-            ]
-            (Ui.text r.message)
+              [ Ui.width (Ui.px 60)
+              , Font.color err
+              , Font.bold
+              , Font.size 13
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text ("×" ++ String.fromInt r.count))
+        , Ui.el [ Font.size 13, Font.color textPrimary ] (Ui.text r.message)
         ]
 
 
 -- ─── Shared primitives ───────────────────────────────────────────
-
 panel : String -> List (Element Msg) -> Element Msg
 panel title children =
     Ui.column
@@ -845,16 +927,15 @@ panel title children =
         , Ui.spacing 6
         , Ui.width Ui.fill
         ]
-        ( Ui.el
+        (Ui.el
             [ Font.size 12
             , Font.bold
             , Font.color textMuted
-            , Font.letterSpacing 0.05
+            , Font.letterSpacing 5.0e-2
             , Ui.paddingXY 0 4
             ]
             (Ui.text (String.toUpper title))
-          :: children
-        )
+            :: children)
 
 
 codeBadge : String -> Element Msg
@@ -873,11 +954,7 @@ codeBadge value =
 emptyState : String -> Element Msg
 emptyState message =
     Ui.el
-        [ Ui.padding 20
-        , Ui.centerX
-        , Font.color textMuted
-        , Font.italic
-        ]
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
         (Ui.text message)
 
 
@@ -892,13 +969,16 @@ formatPercent : Float -> String
 formatPercent f =
     let
         scaled = Math.round (f * 10000.0)
-        whole  = scaled // 100
-        frac   = modBy 100 scaled
+        whole = scaled // 100
+        frac = modBy 100 scaled
         fracStr =
-            if frac < 10 then "0" ++ String.fromInt frac
-            else String.fromInt frac
+            if frac < 10 then
+                "0" ++ String.fromInt frac
+
+            else
+                String.fromInt frac
     in
-    String.fromInt whole ++ "." ++ fracStr ++ "%"
+        String.fromInt whole ++ "." ++ fracStr ++ "%"
 
 
 formatRatio : Int -> Int -> String
@@ -907,7 +987,8 @@ formatRatio used max_ =
         suffix =
             if max_ >= 1000 then
                 String.fromInt (max_ // 1000) ++ "k"
+
             else
                 String.fromInt max_
     in
-    String.fromInt used ++ "/" ++ suffix
+        String.fromInt used ++ "/" ++ suffix
