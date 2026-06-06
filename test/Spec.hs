@@ -69,6 +69,7 @@ import qualified Sky.Build.CharToCodeSpec
 import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Build.LiveInitRuntimeSpec
+import qualified Sky.Stdlib.RecordAliasBuilderConventionSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -415,6 +416,9 @@ main = hspec $ do
     -- runtime req-map key capitalization broke SkyDeploy's
     -- Dict.get "path" req SSO completion silently).
     describeT "Sky.Build.LiveInitRuntime" Sky.Build.LiveInitRuntimeSpec.spec
+    -- v0.16.10 #393(d) — typed record alias builder convention
+    describeT "Sky.Stdlib.RecordAliasBuilderConvention"
+        Sky.Stdlib.RecordAliasBuilderConventionSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

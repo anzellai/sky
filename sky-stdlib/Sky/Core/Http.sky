@@ -7,7 +7,8 @@
 module Sky.Core.Http exposing
     ( get, post
     , HttpRequest, HttpResponse, request
-    , defaultRequest, withHeader, withTimeout, withBody, withMethod
+    , defaultRequest, withMethod, withUrl, withBody, withHeader
+    , withTimeout, withFollowRedirects, withMaxRedirects
     , parseQuery
     )
 
@@ -108,6 +109,28 @@ withTimeout ms req =
 withBody : String -> HttpRequest -> HttpRequest
 withBody body req =
     { req | body = body }
+
+
+-- | `withUrl url req` — replace the request URL.  Useful when
+-- building a request from a non-defaultRequest starting point or
+-- when re-targeting an already-configured request.
+withUrl : String -> HttpRequest -> HttpRequest
+withUrl url req =
+    { req | url = url }
+
+
+-- | `withFollowRedirects b req` — toggle automatic redirect
+-- following.  Default in `defaultRequest` is True with cap 10.
+withFollowRedirects : Bool -> HttpRequest -> HttpRequest
+withFollowRedirects b req =
+    { req | followRedirects = b }
+
+
+-- | `withMaxRedirects n req` — cap the redirect chain length.
+-- A negative value uses the default cap (10).
+withMaxRedirects : Int -> HttpRequest -> HttpRequest
+withMaxRedirects n req =
+    { req | maxRedirects = n }
 
 
 -- | `parseQuery raw` — parse a URL query string (`"a=1&b=2"`)

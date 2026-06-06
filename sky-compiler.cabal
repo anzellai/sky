@@ -348,6 +348,7 @@ test-suite sky-tests
       Sky.Build.LiveNavigationSpec
       Sky.Build.LiveInitRequestSpec
       Sky.Build.LiveInitRuntimeSpec
+      Sky.Stdlib.RecordAliasBuilderConventionSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec

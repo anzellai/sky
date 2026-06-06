@@ -20,7 +20,11 @@
 -- alwaysOnTop / transparent / decorated windows, voice intents,
 -- Windows / Linux smoke testing (the runtime is build-tagged for
 -- all three OSes; v0.1 only validates macOS).
-module Std.Webview exposing (app, WindowCfg, AppCfg)
+module Std.Webview exposing
+    ( app
+    , WindowCfg, AppCfg
+    , defaultWindow, withTitle, withSize
+    )
 
 import Sky.Ffi as Ffi
 
@@ -31,6 +35,28 @@ type alias WindowCfg =
     { title : String
     , size : ( Int, Int )
     }
+
+
+-- | `defaultWindow` — 800×600 window titled "Sky".  Builders below
+-- override each field.  Apps that construct WindowCfg via this
+-- builder chain stay source-compat when v0.2 adds optional fields.
+defaultWindow : WindowCfg
+defaultWindow =
+    { title = "Sky"
+    , size = ( 800, 600 )
+    }
+
+
+-- | `withTitle "My App" cfg` — replace the window title.
+withTitle : String -> WindowCfg -> WindowCfg
+withTitle title cfg =
+    { cfg | title = title }
+
+
+-- | `withSize w h cfg` — replace the initial window size in pixels.
+withSize : Int -> Int -> WindowCfg -> WindowCfg
+withSize w h cfg =
+    { cfg | size = ( w, h ) }
 
 -- | TEA-shaped app config. Same shape as `Tui.app` plus a `window`
 -- field. The `view` returns a `Std.Ui.Element msg` tree — same as
