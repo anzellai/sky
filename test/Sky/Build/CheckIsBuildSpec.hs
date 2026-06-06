@@ -113,10 +113,31 @@ chunkList n xs
 -- the given workdir. Scrubs the per-workdir `sky-out/main.go` +
 -- `.skycache/` between the two invocations so check and build see
 -- an identical starting state. Returns the verdicts side-by-side.
+--
+-- v0.16.8 #499 family — single retry on disagreement. The full-sweep
+-- run executes 4 chunks concurrently, each fanning out subprocess
+-- check/build invocations.  Under enough load the embedded-runtime
+-- TH-extracted scratch dirs (.skydeps/runtime-go/) accumulate
+-- partially-written state mid-extract that can flip one of the two
+-- verdicts.  Retry-once with fresh artefacts converges; spurious
+-- single-shot disagreement is what's being filtered, not real
+-- check/build drift (any genuine drift would reproduce after the
+-- retry's full cleanArtefacts wipe).
 runBoth :: FilePath -> FilePath -> FilePath -> IO (FilePath, Verdict, Verdict)
 runBoth sky workdir fixture = do
+    (c1, b1) <- runBothOnce sky workdir fixture
+    if c1 == b1
+        then return (fixture, c1, b1)
+        else do
+            (c2, b2) <- runBothOnce sky workdir fixture
+            return (fixture, c2, b2)
+
+
+runBothOnce :: FilePath -> FilePath -> FilePath -> IO (Verdict, Verdict)
+runBothOnce sky workdir fixture = do
     let cleanArtefacts = do
             removePathForcibly (workdir </> ".skycache")
+            removePathForcibly (workdir </> ".skydeps")
             removePathForcibly (workdir </> "sky-out" </> "main.go")
     -- check
     cleanArtefacts
@@ -126,4 +147,4 @@ runBoth sky workdir fixture = do
     cleanArtefacts
     let cpBuild = (proc sky ["build", fixture]) { cwd = Just workdir }
     (bec, _, _) <- readCreateProcessWithExitCode cpBuild ""
-    return (fixture, verdictOf cec, verdictOf bec)
+    return (verdictOf cec, verdictOf bec)

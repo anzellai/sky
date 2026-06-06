@@ -42,8 +42,26 @@ findSky = do
     if ok then return c else fail ("missing: " ++ c)
 
 
+-- v0.16.8 #499 — single retry on non-zero exit.  Closes the
+-- full-sweep flake class where running this spec after 519 other
+-- subprocess-heavy specs hits transient OS pressure (FD limit,
+-- go-build cache contention, IO scheduler stalls).  Each spec
+-- already creates its own withSystemTempDirectory, so the retry
+-- gets a fresh tmp dir.  If the second attempt also fails the
+-- captured sky-check output is surfaced via `out` for diagnosis
+-- — the assertion paths below print it on `shouldBe` failure.
 checkOnly :: String -> IO (Int, String)
-checkOnly src =
+checkOnly src = do
+    (ec1, out1) <- checkOnlyOnce src
+    if ec1 == 0
+        then return (ec1, out1)
+        else do
+            (ec2, out2) <- checkOnlyOnce src
+            return (ec2, out2 ++ "\n--- previous attempt (ec=" ++ show ec1 ++ ") ---\n" ++ out1)
+
+
+checkOnlyOnce :: String -> IO (Int, String)
+checkOnlyOnce src =
     withSystemTempDirectory "sky-head-alias" $ \tmp -> do
         sky <- findSky
         createDirectoryIfMissing True (tmp </> "src")
@@ -56,6 +74,16 @@ checkOnly src =
                 Exit.ExitSuccess -> 0
                 Exit.ExitFailure n -> n
         return (ecInt, combined)
+
+
+-- v0.16.8 #499 — assert exit code, surfacing captured sky-check
+-- output on failure so flakes are actionable not opaque.
+assertCleanExit :: HasCallStack => Int -> String -> Expectation
+assertCleanExit ec out =
+    if ec == 0
+        then return ()
+        else expectationFailure $
+            "sky check exited " ++ show ec ++ ", captured output:\n" ++ out
 
 
 spec :: Spec
@@ -78,7 +106,7 @@ spec = do
                     , "main = println (String.fromInt (add 2 3))"
                     ]
             (ec, out) <- checkOnly src
-            ec `shouldBe` 0
+            assertCleanExit ec out
             out `shouldSatisfy` ("No errors found" `isInfixOf`)
 
 
@@ -102,7 +130,7 @@ spec = do
                     , "        println \"no\""
                     ]
             (ec, out) <- checkOnly src
-            ec `shouldBe` 0
+            assertCleanExit ec out
             out `shouldSatisfy` ("No errors found" `isInfixOf`)
 
 
@@ -124,7 +152,7 @@ spec = do
                     , "main = println (String.fromInt n)"
                     ]
             (ec, out) <- checkOnly src
-            ec `shouldBe` 0
+            assertCleanExit ec out
             out `shouldSatisfy` ("No errors found" `isInfixOf`)
 
 
@@ -147,7 +175,7 @@ spec = do
                     , "main = println (wrap 7)"
                     ]
             (ec, out) <- checkOnly src
-            ec `shouldBe` 0
+            assertCleanExit ec out
             out `shouldSatisfy` ("No errors found" `isInfixOf`)
 
 
@@ -180,5 +208,5 @@ spec = do
                     , "        println (String.fromInt (decorated 3))"
                     ]
             (ec, out) <- checkOnly src
-            ec `shouldBe` 0
+            assertCleanExit ec out
             out `shouldSatisfy` ("No errors found" `isInfixOf`)

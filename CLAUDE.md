@@ -946,6 +946,32 @@ HTTP-first (full HTML on load, patches on events), SSE
 subscriptions, session stores (memory / sqlite / redis / postgres /
 firestore), type-safe events, VNode diffing.
 
+### init's `req` shape (v0.16.7 #417 + v0.16.8 #423)
+
+`init` receives a `req` value that carries the full request
+context:
+
+| Field | Type | Source |
+|---|---|---|
+| `req.path` | `String` | URL path |
+| `req.query` | `String` | raw `?...` (no parser yet — parse via `Sky.Core.Http.parseQuery` if needed) |
+| `req.params` | `Dict String String` | matched-route `:name` segments (#417) |
+| `req.method` | `String` | request method (#423) |
+| `req.headers` | `Dict String String` | request headers, canonical case (#423) |
+| `req.cookies` | `Dict String String` | parsed cookies (#423) |
+
+Session bootstrap in init is now a one-line read:
+
+```elm
+init req =
+    let sid = Maybe.withDefault "" (Dict.get "sky_sid" req.cookies) in
+    ( { session = lookupSession sid }, Cmd.none )
+```
+
+No `Cmd.perform /api/whoami` round-trip needed for first render.
+Apps that ignore `req` build byte-identical to the pre-v0.16.7
+shape (row-poly extension).
+
 ### Per-page `<head>` injection (v0.15.58+)
 
 Add an optional `head : Model -> List (Html msg)` field on the

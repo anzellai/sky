@@ -67,6 +67,7 @@ import qualified Sky.Parse.MultilineInterpolationEscapeSpec
 import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Build.CharToCodeSpec
 import qualified Sky.Build.LiveNavigationSpec
+import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -405,6 +406,9 @@ main = hspec $ do
     -- v0.16.7 #417 + #418 — Sky.Live navigation contract widening
     -- (req.params Dict + onNavigate cfg field).
     describeT "Sky.Build.LiveNavigation" Sky.Build.LiveNavigationSpec.spec
+    -- v0.16.8 #423 — Sky.Live init request shape widening
+    -- (Method + Headers + Cookies in init's req).
+    describeT "Sky.Build.LiveInitRequest" Sky.Build.LiveInitRequestSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

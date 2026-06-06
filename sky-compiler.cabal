@@ -346,6 +346,7 @@ test-suite sky-tests
       Sky.Build.CaseCatchallSubjectDiscardSpec
       Sky.Build.CharToCodeSpec
       Sky.Build.LiveNavigationSpec
+      Sky.Build.LiveInitRequestSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec

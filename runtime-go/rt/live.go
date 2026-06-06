@@ -3070,6 +3070,37 @@ func buildRouteParamsDict(pattern string, values []string) any {
 	return d
 }
 
+// v0.16.8 #423 — headersToDict folds an http.Header (case-canonicalised
+// by Go's net/http stack already) into a Sky `Dict String String`.  We
+// take the first value for each key — Sky-side iteration over multi-
+// valued headers is exotic enough that callers who need it can hit
+// `Live.api` or look at raw request shape from Sky.Http.Server.
+// Empty Header → empty Dict.
+func headersToDict(h http.Header) any {
+	d := Dict_empty()
+	for k, vs := range h {
+		if len(vs) == 0 {
+			continue
+		}
+		d = Dict_insert(k, vs[0], d)
+	}
+	return d
+}
+
+// v0.16.8 #423 — cookiesToDict folds a request's parsed cookies into a
+// Sky `Dict String String`.  Duplicate names take the last value to
+// match Go's net/http.Request.Cookie() lookup order.
+func cookiesToDict(cs []*http.Cookie) any {
+	d := Dict_empty()
+	for _, c := range cs {
+		if c == nil {
+			continue
+		}
+		d = Dict_insert(c.Name, c.Value, d)
+	}
+	return d
+}
+
 // v0.16.7 #418 — dispatchOnNavigate fires the optional `onNavigate :
 // Page -> msg` callback after every URL-driven `applyRoute` call.
 // Returns the new model + any cmd the resulting Msg's update produces;
@@ -3346,10 +3377,15 @@ func liveAppRun(cfg any) any {
 		// accessors (rt.Field(req, "Path") not "path").  Map keys
 		// must match the capitalized form Field looks up via raw
 		// string match on map[string]any.
+		// v0.16.8 #423 — same shape as the dispatchRoot real call so
+		// GobRegister sees the full type graph.
 		req := map[string]any{
-			"Path":   "/",
-			"Query":  "",
-			"Params": Dict_empty(),
+			"Path":    "/",
+			"Query":   "",
+			"Params":  Dict_empty(),
+			"Method":  "GET",
+			"Headers": Dict_empty(),
+			"Cookies": Dict_empty(),
 		}
 		res := sky_call(app.init, req)
 		model := tupleFirst(res)
@@ -3616,10 +3652,21 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// v0.16.7 #417 — capitalized keys match Sky typed-codegen's
 		// `rt.Field(req, "Path"/"Query"/"Params")` accessors.  See
 		// the GobRegister early-pass comment above.
+		//
+		// v0.16.8 #423 — extend init's `req` with `Method : String`,
+		// `Headers : Dict String String`, `Cookies : Dict String
+		// String`.  Apps can now bootstrap their model from a session
+		// cookie at first render without a Cmd.perform round-trip.
+		// Headers preserve the request's case-insensitive lookup
+		// semantics — keys are stored as RFC 7230 canonical form (the
+		// shape Go's net/http already gives us via Header.Get).
 		req := map[string]any{
-			"Path":   r.URL.Path,
-			"Query":  r.URL.RawQuery,
-			"Params": initParams,
+			"Path":    r.URL.Path,
+			"Query":   r.URL.RawQuery,
+			"Params":  initParams,
+			"Method":  r.Method,
+			"Headers": headersToDict(r.Header),
+			"Cookies": cookiesToDict(r.Cookies()),
 		}
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)
