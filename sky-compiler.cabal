@@ -345,6 +345,7 @@ test-suite sky-tests
       Sky.Parse.MultilineInterpolationEscapeSpec
       Sky.Build.CaseCatchallSubjectDiscardSpec
       Sky.Build.CharToCodeSpec
+      Sky.Build.LiveNavigationSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec
