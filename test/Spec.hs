@@ -68,6 +68,7 @@ import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Build.CharToCodeSpec
 import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
+import qualified Sky.Build.LiveInitRuntimeSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -409,6 +410,11 @@ main = hspec $ do
     -- v0.16.8 #423 — Sky.Live init request shape widening
     -- (Method + Headers + Cookies in init's req).
     describeT "Sky.Build.LiveInitRequest" Sky.Build.LiveInitRequestSpec.spec
+    -- v0.16.10 — runtime regression fence for Sky.Live init req
+    -- lookup contract.  Catches today's class of bug (v0.16.7 #417
+    -- runtime req-map key capitalization broke SkyDeploy's
+    -- Dict.get "path" req SSO completion silently).
+    describeT "Sky.Build.LiveInitRuntime" Sky.Build.LiveInitRuntimeSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now
