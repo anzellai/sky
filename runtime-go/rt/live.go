@@ -3373,19 +3373,19 @@ func liveAppRun(cfg any) any {
 	//      dynamically-typed map entries).
 	func() {
 		defer func() { recover() }()
-		// v0.16.7 #417 — Sky typed-codegen capitalizes record field
-		// accessors (rt.Field(req, "Path") not "path").  Map keys
-		// must match the capitalized form Field looks up via raw
-		// string match on map[string]any.
-		// v0.16.8 #423 — same shape as the dispatchRoot real call so
-		// GobRegister sees the full type graph.
+		// v0.16.9 — keys are LOWERCASE for backward-compat with apps
+		// that read fields via Sky's `Dict.get "path" req` (literal
+		// lowercase strings — matched case-sensitively by Dict_get).
+		// Typed-codegen `req.path` access still works because
+		// rt.Field falls back to case-insensitive map lookup.  See
+		// the comment in Field for the full rationale.
 		req := map[string]any{
-			"Path":    "/",
-			"Query":   "",
-			"Params":  Dict_empty(),
-			"Method":  "GET",
-			"Headers": Dict_empty(),
-			"Cookies": Dict_empty(),
+			"path":    "/",
+			"query":   "",
+			"params":  Dict_empty(),
+			"method":  "GET",
+			"headers": Dict_empty(),
+			"cookies": Dict_empty(),
 		}
 		res := sky_call(app.init, req)
 		model := tupleFirst(res)
@@ -3649,24 +3649,23 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// empty Dict (same shape as pre-v0.16.7's missing field
 		// when accessed via `Dict.get` — Maybe-typed read path).
 		_, initParams := applyRouteWithParams(app, model, r.URL.Path)
-		// v0.16.7 #417 — capitalized keys match Sky typed-codegen's
-		// `rt.Field(req, "Path"/"Query"/"Params")` accessors.  See
-		// the GobRegister early-pass comment above.
+		// v0.16.9 — keys lowercase for backward-compat with apps
+		// doing `Dict.get "path" req` (case-sensitive Dict_get
+		// kernel).  rt.Field's case-insensitive map fallback keeps
+		// typed `req.path` access working.
 		//
-		// v0.16.8 #423 — extend init's `req` with `Method : String`,
-		// `Headers : Dict String String`, `Cookies : Dict String
-		// String`.  Apps can now bootstrap their model from a session
-		// cookie at first render without a Cmd.perform round-trip.
-		// Headers preserve the request's case-insensitive lookup
-		// semantics — keys are stored as RFC 7230 canonical form (the
-		// shape Go's net/http already gives us via Header.Get).
+		// v0.16.8 #423 — init's `req` carries `Method` + `Headers` +
+		// `Cookies` alongside #417's `Params`.  Apps bootstrap their
+		// model from a session cookie at first render via
+		// `Dict.get "sky_sid" req.cookies` — no Cmd.perform
+		// round-trip needed.
 		req := map[string]any{
-			"Path":    r.URL.Path,
-			"Query":   r.URL.RawQuery,
-			"Params":  initParams,
-			"Method":  r.Method,
-			"Headers": headersToDict(r.Header),
-			"Cookies": cookiesToDict(r.Cookies()),
+			"path":    r.URL.Path,
+			"query":   r.URL.RawQuery,
+			"params":  initParams,
+			"method":  r.Method,
+			"headers": headersToDict(r.Header),
+			"cookies": cookiesToDict(r.Cookies()),
 		}
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)

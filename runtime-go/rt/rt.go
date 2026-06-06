@@ -4647,7 +4647,42 @@ func Field(record any, field string) any {
 		}
 	}
 	if m, ok := record.(map[string]any); ok {
-		return m[field]
+		// v0.16.9 — restore case-insensitive map lookup so typed
+		// codegen's `rt.Field(req, "Path")` finds runtime maps keyed
+		// lowercase ("path") AND so user code via `Dict.get "path"`
+		// keeps working on capitalized maps.  The Sky.Live runtime
+		// req-map keys are lowercase for historical compatibility
+		// with apps that read via lowercase string literals (e.g.
+		// `Dict.get "path" req`); v0.16.7 #417 + v0.16.8 #423
+		// briefly broke that by capitalizing the keys.  Capitalize-
+		// only would break SkyDeploy + every existing app reading
+		// req fields via Sky's Dict.get; lowercase-only breaks
+		// typed-codegen `req.path` access.  Case-insensitive
+		// fallback closes both.
+		if v, ok := m[field]; ok {
+			return v
+		}
+		// Fast-path: try the swapped-case first char (handles the
+		// dominant "Path" ↔ "path" pair without scanning).
+		if len(field) > 0 {
+			lc := byte(0)
+			uc := byte(0)
+			if field[0] >= 'A' && field[0] <= 'Z' {
+				lc = field[0] + ('a' - 'A')
+			} else if field[0] >= 'a' && field[0] <= 'z' {
+				uc = field[0] - ('a' - 'A')
+			}
+			if lc != 0 {
+				if v, ok := m[string(lc)+field[1:]]; ok {
+					return v
+				}
+			}
+			if uc != 0 {
+				if v, ok := m[string(uc)+field[1:]]; ok {
+					return v
+				}
+			}
+		}
 	}
 	return nil
 }
