@@ -65,6 +65,7 @@ import qualified Sky.Parse.MultiLineSignatureSpec
 import qualified Sky.Parse.RowPolyRecordAnnotationSpec
 import qualified Sky.Parse.MultilineInterpolationEscapeSpec
 import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
+import qualified Sky.Build.CharToCodeSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -398,6 +399,8 @@ main = hspec $ do
         Sky.Parse.MultilineInterpolationEscapeSpec.spec
     describeT "Sky.Build.CaseCatchallSubjectDiscard"
         Sky.Build.CaseCatchallSubjectDiscardSpec.spec
+    -- v0.16.7 #419 — Sky.Core.Char.toCode / fromCode round-trip.
+    describeT "Sky.Build.CharToCode" Sky.Build.CharToCodeSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

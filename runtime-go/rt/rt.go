@@ -6644,6 +6644,22 @@ func Char_isAlpha(c any) any { return unicode.IsLetter(firstRune(c)) }
 func Char_toUpper(c any) any { return string(unicode.ToUpper(firstRune(c))) }
 func Char_toLower(c any) any { return string(unicode.ToLower(firstRune(c))) }
 
+// v0.16.7 #419 — Unicode code-point conversion.  toCode returns the
+// rune as an Int (Sky's only integer type); fromCode wraps an Int
+// back into a Char, clamping to the Unicode replacement character
+// when the input is out of range.
+func Char_toCode(c any) any {
+	return int(firstRune(c))
+}
+
+func Char_fromCode(n any) any {
+	r := rune(AsInt(n))
+	if r < 0 || r > 0x10FFFF {
+		return '�'
+	}
+	return r
+}
+
 // Typed companions — direct rune→bool/string, no any boxing.
 func Char_isUpperT(c rune) bool   { return unicode.IsUpper(c) }
 func Char_isLowerT(c rune) bool   { return unicode.IsLower(c) }
@@ -6651,6 +6667,14 @@ func Char_isDigitT(c rune) bool   { return unicode.IsDigit(c) }
 func Char_isAlphaT(c rune) bool   { return unicode.IsLetter(c) }
 func Char_toUpperT(c rune) string { return string(unicode.ToUpper(c)) }
 func Char_toLowerT(c rune) string { return string(unicode.ToLower(c)) }
+func Char_toCodeT(c rune) int     { return int(c) }
+func Char_fromCodeT(n int) rune {
+	r := rune(n)
+	if r < 0 || r > 0x10FFFF {
+		return '�'
+	}
+	return r
+}
 
 // ═══════════════════════════════════════════════════════════
 // Math (extended)

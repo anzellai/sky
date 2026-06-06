@@ -381,6 +381,8 @@ registry = Map.fromList
     , (("Char", "isAlpha"),       KernelInfo "rt.Char_isAlpha" 1 False)
     , (("Char", "toUpper"),       KernelInfo "rt.Char_toUpper" 1 False)
     , (("Char", "toLower"),       KernelInfo "rt.Char_toLower" 1 False)
+    , (("Char", "toCode"),        KernelInfo "rt.Char_toCode" 1 False)
+    , (("Char", "fromCode"),      KernelInfo "rt.Char_fromCode" 1 False)
 
     , (("Math", "sqrt"),          KernelInfo "rt.Math_sqrt" 1 False)
     , (("Math", "pow"),           KernelInfo "rt.Math_pow" 2 False)

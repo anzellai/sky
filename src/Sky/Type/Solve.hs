@@ -19,6 +19,7 @@ module Sky.Type.Solve
     , emptySolvedTypes               -- v0.15.x P37a
     , lookupSolvedVar                -- v0.15.x P37a
     , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
+    , moduleForRegion                -- v0.16.7 PR #124 — region → defining module
     , lookupSolvedRegion             -- v0.15.x P37a
     , lookupSolvedRegionScoped       -- v0.15.6 #365 — per-module region lookup
     , insertSolvedVar                -- v0.15.x P37a
@@ -186,6 +187,32 @@ lookupSolvedVarScoped name solvedTypes =
                         Nothing -> Map.lookup name (_stEnv solvedTypes)
                 Nothing -> Map.lookup name (_stEnv solvedTypes)
         Nothing -> Map.lookup name (_stEnv solvedTypes)
+
+
+-- | v0.16.7 PR #124 (contributor: arthurmaciel) — determine the
+-- module that *defines* a region by which per-module region map
+-- contains it.  Regions are file-unique, so a hit is unambiguous;
+-- returns `Just` only on a single match.
+--
+-- This is the deterministic counterpart to the render-order
+-- `globalCurrentDepModule` IORef hint in `Compile.hs`: that hint can
+-- lag behind a lazily-forced decl thunk (it sticks on the FIRST dep,
+-- so a later dep's `let encodeOne x = …` reads the first dep's
+-- ambiguous per-module entry and degrades to `any`).  Deriving the
+-- module from the def's own region instead is stable regardless of
+-- thunk-forcing order.
+--
+-- Used at the dep-rendering `defToStmts` boundary to derive `curMod`
+-- from `A.toRegion body` instead of trusting the IORef hint.  The
+-- IORef hint stays as fallback for synthetic regions (monomorphised
+-- instances, generated alias body defs) that have no per-module
+-- region ledger entry.
+moduleForRegion :: A.Region -> SolvedTypes -> Maybe String
+moduleForRegion r solvedTypes =
+    case [ m | (m, rm) <- Map.toList (_stPerModuleRegions solvedTypes)
+             , Map.member r rm ] of
+        [m] -> Just m
+        _   -> Nothing
 
 
 -- | Look up the HM type recorded at a given source region.

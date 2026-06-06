@@ -11187,21 +11187,25 @@ defToStmts def = case def of
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
         let solved = Rec._cg_solvedTypes getCgEnv
-            -- v0.16.6 #492 — read the dep module hint via a fresh
-            -- unsafePerformIO at the call site.  The renderer-time
-            -- sentinels (`generateDeclsForDepScoped`) write the IORef
-            -- ONLY when the GoDeclRaw thunk forces, so this lookup
-            -- must happen INSIDE the lazy bodyExpr thunk that the
-            -- renderer walks per-dep — not at function-call time.
-            -- Routing through `readIORefNoCse` (the 9c9cf86f
-            -- #492-residual helper) inadvertently caused GHC to
-            -- pre-evaluate the IORef read EARLIER than the renderer
-            -- reached the dep's setSentinel, collapsing Lib.B's
-            -- unique encodeOne to `_ambig` (the flat-env survivor).
-            -- The direct `unsafePerformIO . readIORef` thunk forces
-            -- only when the body's let-binding fires under the
-            -- renderer, which is after the setSentinel ran.
-            curMod = unsafePerformIO (readIORef globalCurrentDepModule)
+            -- v0.16.6 #492 + v0.16.7 PR #124 (arthurmaciel) —
+            -- derive the defining module from the def's body region,
+            -- falling back to the render-order IORef hint only when
+            -- the region has no per-module ledger entry (synthetic /
+            -- monomorphised regions).  Regions are file-unique, so
+            -- region-based lookup is deterministic regardless of
+            -- thunk-forcing order.  The IORef hint is brittle on
+            -- its own: it sticks on the FIRST dep, so a later dep's
+            -- `let encodeOne x = …` reads the first dep's ambiguous
+            -- per-module entry and degrades to `func(x any)`.
+            -- Scoped to dep-rendering context (`iorefMod = Just _`)
+            -- so entry-module decls keep the existing flat-lookup
+            -- path.
+            iorefMod = unsafePerformIO (readIORef globalCurrentDepModule)
+            curMod = case iorefMod of
+                Just im -> case Solve.moduleForRegion (A.toRegion body) solved of
+                    Just rm -> Just rm
+                    Nothing -> Just im
+                Nothing -> Nothing
             scopedSolved = Solve.withCurrentModule curMod solved
             inferredTy = Solve.lookupSolvedVarScoped name scopedSolved
             (paramTys, retTy) = case inferredTy of

@@ -6,6 +6,7 @@
 module Sky.Core.Char exposing
     ( isAlpha, isDigit, isLower, isUpper
     , toLower, toUpper
+    , toCode, fromCode
     )
 
 
@@ -37,3 +38,20 @@ toLower = Ffi.kernel "Char_toLower"
 
 toUpper : Char -> String
 toUpper = Ffi.kernel "Char_toUpper"
+
+
+-- | v0.16.7 #419 — Unicode code-point conversion.
+--
+-- `toCode 'A'  → 65`
+-- `fromCode 65 → 'A'`
+--
+-- Round-trip on a single Unicode code point.  Use these to bridge
+-- between `Char` and integer arithmetic — index tables, parse ASCII
+-- ranges, etc.  Out-of-range `fromCode` (negative or above
+-- 0x10FFFF) yields the Unicode replacement character `'�'`.
+toCode : Char -> Int
+toCode = Ffi.kernel "Char_toCode"
+
+
+fromCode : Int -> Char
+fromCode = Ffi.kernel "Char_fromCode"
