@@ -9866,6 +9866,17 @@ coerceArg mSrc e ty
         -- `any(arg).(Widget_Cfg_R[T1])` (or the parametric-alias
         -- arm above short-circuits via `e` raw when source/target
         -- structurally match).
+        --
+        -- Note: an aggressive `(const True)` predicate would
+        -- preserve Tn even at NON-generic call sites where T1 is
+        -- not a Go function scope variable, producing
+        -- `undefined: T1` Go-compile errors.  The IORef-based
+        -- predicate closes the simple repro (Widget); deeply-
+        -- nested-IIFE bodies in larger downstream projects
+        -- (e.g. skydeploy Editor.view's 3-level let-IIFE) still
+        -- leak under GHC's CAF caching of the IORef read — those
+        -- need the Phase 4 explicit-ctx threading per
+        -- docs/v0.16.13-cascade-resume-brief.md.
         let erasedTy = eraseTypeParamsExceptScope enclosingTypeParamInScope ty
         in if erasedTy == "any"
              then e  -- fully erased to any — no assertion needed
