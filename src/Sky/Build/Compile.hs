@@ -12956,7 +12956,21 @@ inferExprType types (A.At r e) = case e of
     Can.Unit     -> Just T.TUnit
     Can.VarLocal name    -> case Solve.lookupSolvedVar name types of
         Just t  -> Just t
-        Nothing -> lookupLambdaType name
+        Nothing ->
+            -- v0.16.13 #530 — prefer region-based lookup (pure, no
+            -- IORef CAF cache) over the IORef-based
+            -- `lookupLambdaType` fallback.  P37a's
+            -- `_stRegions` carries the solver's per-region typed
+            -- map; for `Can.VarLocal name` references inside deeply
+            -- nested IIFE bodies where the name-keyed env lookup
+            -- misses (different scope), the region lookup returns
+            -- the HM-solved type at that exact source location.
+            -- Falling back to `lookupLambdaType` only when even the
+            -- region lookup is empty preserves the prior behaviour
+            -- as a last resort.
+            case Solve.lookupSolvedRegion r types of
+                Just t  -> Just t
+                Nothing -> lookupLambdaType name
     Can.VarTopLevel _ n  -> Solve.lookupSolvedVar n types
     -- VarKernel: instantiate the kernel's HM annotation. Strips the
     -- Forall wrapper (kernel sigs are universally quantified) so the
