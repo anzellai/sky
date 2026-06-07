@@ -7863,6 +7863,7 @@ exprToGo (A.At _ expr) = case expr of
                             callName = maybe qualName id mMangled
                         in GoIr.GoCall (GoIr.GoIdent callName)
                                        (coerceCallArgsAt
+                                            (snapshotCallerCtx ())
                                             (A.toRegion func)
                                             qualName
                                             args)
@@ -8275,7 +8276,11 @@ coerceToFieldType targetTy e
     | Just valTy <- stripMapType targetTy =
         GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
     | otherwise =
-        let erasedTy = eraseTypeParams targetTy
+        -- v0.16.13 #530 — same scope-aware erasure as `coerceArg`'s
+        -- otherwise arm.  Without this, a struct-field assignment of
+        -- `cfg : Foo_R[T1]` into a generic slot fires
+        -- `any(cfg).(Foo_R[any])` and panics at runtime when T1≠any.
+        let erasedTy = eraseTypeParamsExceptScope enclosingTypeParamInScope targetTy
         in if erasedTy == "any"
              then e
              -- v0.13.x #158: record-alias targets (`_R` suffix) route
@@ -9041,8 +9046,21 @@ unmangleQual :: String -> String
 unmangleQual = map (\c -> if c == '_' then '.' else c)
 
 
-coerceCallArgsAt :: A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgsAt region qualName args =
+-- v0.16.13 #530 Phase 3 cascade — explicit LowerCtx threading.  The
+-- enclosing-TVar scope flows through `ctx`, not via the legacy IORef
+-- helpers `enclosingTypeParamInScope` / `getEnclosingTypeParams`.
+-- Those readers are `unsafePerformIO . readIORef` and subject to
+-- GHC's CAF memoisation race documented in
+-- `docs/v0.16.12-issue-530-root-cause-and-attempts.md`.  Threading
+-- the scope through the parameter eliminates the race for this
+-- call-site path, closing the Editor.view nested-helper panic class.
+--
+-- Callers pass `snapshotCallerCtx ()` (line 7183) which is the
+-- existing fresh-per-call-site reader — same semantics as the legacy
+-- reader for the moment but with the ctx live and pinned for the
+-- entire function evaluation, defeating the CAF.
+coerceCallArgsAt :: LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
+coerceCallArgsAt ctx region qualName args =
     let env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
         siteKey = ( A._line (A._start region)
@@ -9297,6 +9315,9 @@ coerceCallArgsAt region qualName args =
                 -- (Monomorphise's `substTypeParamsInString` rewrites
                 -- them to the call site's concrete type at specialise
                 -- time); out-of-scope TVars erase to `any` as before.
+                -- v0.16.13 #530 — ctx-based scope check.  Closes the
+                -- CAF-race described in the function-level comment.
+                ctxInScope t = Set.member t (LC._lc_enclosingTypeParams ctx)
                 substituteOnly pty =
                     let subbed = substTVarsInGoType recovered pty
                         unboundTVars =
@@ -9304,14 +9325,14 @@ coerceCallArgsAt region qualName args =
                                 , not (Map.member t recovered) ]
                         outOfScope =
                             [ t | t <- unboundTVars
-                                , not (enclosingTypeParamInScope t) ]
+                                , not (ctxInScope t) ]
                     in if null unboundTVars
                          then subbed
                          else if null outOfScope
                                 then subbed
                                 else if containsGenericTypeParam subbed
                                        then eraseTypeParamsExceptScope
-                                                enclosingTypeParamInScope
+                                                ctxInScope
                                                 subbed
                                        else subbed
                 substituted = map substituteOnly paramTypes
@@ -9836,7 +9857,16 @@ coerceArg mSrc e ty
     | Just valTy <- stripMapType ty =
         GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
     | otherwise =
-        let erasedTy = eraseTypeParams ty
+        -- v0.16.13 #530 — preserve enclosing-scope TVars during
+        -- erasure.  Issue: if `ty = "Widget_Cfg_R[T1]"` and `T1` is
+        -- declared on the enclosing Go function, blindly erasing to
+        -- `Widget_Cfg_R[any]` then emitting `any(arg).(...[any])`
+        -- panics at runtime under Go's nominal generic-type rules.
+        -- Scope-aware erasure keeps `T1` so the assertion is
+        -- `any(arg).(Widget_Cfg_R[T1])` (or the parametric-alias
+        -- arm above short-circuits via `e` raw when source/target
+        -- structurally match).
+        let erasedTy = eraseTypeParamsExceptScope enclosingTypeParamInScope ty
         in if erasedTy == "any"
              then e  -- fully erased to any — no assertion needed
              -- Function-type targets: Go doesn't allow type-asserting
@@ -10503,7 +10533,9 @@ emitOverApplication func allArgs declared =
         mMangled = instanceMangledName (A.toRegion func) qualName
         callName = maybe qualName id mMangled
         baseCall = GoIr.GoCall (GoIr.GoIdent callName)
-                       (coerceCallArgsAt (A.toRegion func) qualName firstK)
+                       (coerceCallArgsAt
+                            (snapshotCallerCtx ())
+                            (A.toRegion func) qualName firstK)
         applyOne acc arg = GoIr.GoCall
             (GoIr.GoQualified "rt" "SkyCall")
             [acc, exprToGo arg]
