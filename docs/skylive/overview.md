@@ -136,6 +136,54 @@ storePath = "./data.db"
 ttl = 1800
 ```
 
+## Session lifecycle — when `init` runs
+
+Sky.Live's mental model is **"the browser tab re-attaches to a long-running
+server-side session"** — not the SPA model where reload = fresh boot. This is
+the question most often asked by users coming from Elm or React.
+
+| Event | Does `init` run? | What the user sees |
+|-------|------------------|--------------------|
+| First request from a browser with no `sky_sid` cookie | ✅ yes | Fresh Model, first render |
+| Browser reload while session is alive (`sky_sid` cookie present, TTL not expired, store entry intact) | ❌ no | Existing Model restored from session store, view re-renders |
+| Reload after TTL expiry (`SKY_LIVE_TTL`, default `30m`) | ✅ yes | Fresh Model |
+| Reload after the session store evicted the row (e.g. server restart with `memory` store, manual DB wipe) | ✅ yes | Fresh Model |
+| User opens the same URL in a second browser / incognito window | ✅ yes (for the new session) | Each browser gets its own Model |
+| Sky-nav link click (`<a sky-nav>`) | ❌ no | Same Model, new page routed via `update` |
+
+### "But I want a fresh state on reload"
+
+The usual cause is *"my other tab made a change and this tab missed the
+broadcast"* — the right fix is `Cmd.publish` / `Sub.subscribeTopic` so every
+session is told about cross-tenant state changes immediately, no reload
+required. See [pubsub.md](pubsub.md).
+
+If you genuinely want fresh state on reload (e.g. demo reset, e2e test
+bootstrap):
+
+```elm
+-- 1. Expire the session cookie via Cmd.perform, then reload.
+update msg model =
+    case msg of
+        StartOver ->
+            ( model
+            , Cmd.perform (Cookie.expire "sky_sid") ReloadNow )
+
+        ReloadNow _ ->
+            ( model, Cmd.perform (Window.reload ()) Noop )
+```
+
+The next request lands without a `sky_sid`, the runtime mints a fresh session,
+and `init` runs.
+
+### Why Sky.Live keeps Model across reload
+
+Server-driven UIs hold real state — open sockets, accumulators, decoded
+documents, in-flight requests. Throwing it away on every reload would be a
+worse UX than the page just keeping working through a flaky connection.
+That's why the SSE banner + retry queue exist: the durable Model is the
+whole point.
+
 ## Connection status banner
 
 Sky.Live's runtime injects a bottom-pinned banner the user's `view` doesn't have to manage. Three states:

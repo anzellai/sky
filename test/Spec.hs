@@ -88,6 +88,7 @@ import qualified Sky.Build.PointFreePolyAliasSpec
 import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
+import qualified Sky.Build.UnannotatedParametricCfgViewSpec
 import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
@@ -526,6 +527,13 @@ main = hspec $ do
     -- alias bases.
     describeT "Sky.Build.CoerceArgParametric"
                                             Sky.Build.CoerceArgParametricSpec.spec
+    -- Issue #521 — unannotated parametric-Cfg view function call
+    -- in a generic body must emit Cfg_R[<TVar>] casts (not
+    -- Cfg_R[any]), so Monomorphise can rewrite them to the per-
+    -- site instantiation.  See the `eraseTypeParamsExceptScope`
+    -- path in src/Sky/Build/Compile.hs.
+    describeT "Sky.Build.UnannotatedParametricCfgView"
+                                            Sky.Build.UnannotatedParametricCfgViewSpec.spec
     -- v0.15.x hardening / Gap A4 / Plan Item P3 — `isPlainIdent`
     -- structural unit table.  Locks the recursion invariants of
     -- the "plain user-ident chain" classifier used by `coerceArg`

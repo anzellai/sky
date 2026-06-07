@@ -369,6 +369,7 @@ test-suite sky-tests
       Sky.Build.PartialKernelAppSpec
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
+      Sky.Build.UnannotatedParametricCfgViewSpec
       Sky.Build.IsPlainIdentSpec
       Sky.Build.InferExprTypeBinopSpec
       Sky.Build.CoerceArgListMapInterplaySpec

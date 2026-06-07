@@ -39,8 +39,10 @@ module Sky.Build.LowerCtx
     , lookupAlias
     , lookupAnnotation
     , lookupSolved
+    , lookupEnclosingTypeParam
     , withLambdaTypes
     , withLambdaGoStrs
+    , withEnclosingTypeParams
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -107,6 +109,17 @@ data LowerCtx = LowerCtx
         -- ^ Per-callee generalised annotation map.  Snapshotted
         -- from `globalAnnotMap`.  Read by σ-derivation at every
         -- reachable instance emission.
+    , _lc_enclosingTypeParams :: !(Set.Set String)
+        -- ^ Generic type-parameter names declared on the
+        -- currently-emitting Go function (e.g. `T1`, `T2` from
+        -- `func Widget_view[T2 any](...)`).  Populated by
+        -- `withEnclosingTypeParams` at dep + entry emission, BEFORE
+        -- the body's `GoExpr` tree is constructed.  Read by the
+        -- arg-coercion `eraseTypeParams` guard in `Compile.hs` to
+        -- pin in-scope TVars instead of widening them to `any`.
+        -- Closes Issue #521 and forecloses the entire
+        -- `Cfg_R[any]`-cast-panic class for parametric record
+        -- aliases (#261/#262/#263/#461/#463/#465/#467).
     }
 
 
@@ -123,6 +136,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_unionNames  = Set.empty
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = Map.empty
+    , _lc_enclosingTypeParams = Set.empty
     }
 
 
@@ -156,6 +170,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
     , _lc_unionNames  = unions
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = annots
+    , _lc_enclosingTypeParams = Set.empty
     }
 
 
@@ -225,3 +240,23 @@ withLambdaTypes additions ctx =
 withLambdaGoStrs :: Map.Map String String -> LowerCtx -> LowerCtx
 withLambdaGoStrs additions ctx =
     ctx { _lc_lambdaGoStr = Map.union additions (_lc_lambdaGoStr ctx) }
+
+
+-- | Membership test against the enclosing-Go-function's type-param
+-- scope.  Used by the arg-coercion `eraseTypeParams` guard in
+-- `Compile.hs` to pin in-scope TVars (`T2`) instead of erasing to
+-- `any`.  Monomorphise's token-level substitution then rewrites the
+-- preserved `T2` to the concrete instance type — the codegen-time
+-- decision is no longer load-bearing.
+lookupEnclosingTypeParam :: LowerCtx -> String -> Bool
+lookupEnclosingTypeParam ctx k = Set.member k (_lc_enclosingTypeParams ctx)
+
+
+-- | Extend the enclosing-type-param scope.  Returns a NEW ctx —
+-- the parent ctx is unaffected, so nested generic functions obey
+-- lexical structure automatically (child wins on shadowing via
+-- `Set.union additions prev`).
+withEnclosingTypeParams :: [String] -> LowerCtx -> LowerCtx
+withEnclosingTypeParams additions ctx =
+    ctx { _lc_enclosingTypeParams =
+            Set.union (Set.fromList additions) (_lc_enclosingTypeParams ctx) }

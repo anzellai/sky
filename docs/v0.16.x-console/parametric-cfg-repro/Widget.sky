@@ -1,0 +1,55 @@
+module Widget exposing (Cfg, Form, view)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+
+
+type alias Form =
+    { content : String
+    , action : String
+    }
+
+
+-- A Cfg with mixed callback shapes — one `Form -> msg`, two bare
+-- `msg`, plus inert fields.  Mirrors skydeploy/control-plane/Editor.sky.
+type alias Cfg msg =
+    { filename : String
+    , content : String
+    , onSubmit : Form -> msg
+    , onCheck : msg
+    , checkOutput : String
+    , onDismissCheck : msg
+    , busy : Bool
+    }
+
+
+-- DELIBERATELY UNANNOTATED.  HM should infer
+-- `view : Cfg msg -> Element msg` and monomorphise accordingly.
+view cfg =
+    let
+        onSubmit = cfg.onSubmit
+        onCheck = cfg.onCheck
+        onDismissCheck = cfg.onDismissCheck
+    in
+        Ui.column
+            [ Ui.spacing 8, Ui.width Ui.fill ]
+            [ Ui.form
+                  [ Ui.onSubmit onSubmit, Ui.width Ui.fill ]
+                  [ Ui.el
+                        [ Font.color (Ui.rgb 200 200 200) ]
+                        (Ui.text cfg.filename)
+                  ]
+            , Ui.el
+                  [ Ui.onClick onCheck
+                  , Background.color (Ui.rgb 80 80 90)
+                  ]
+                  (Ui.text "Check")
+            , Ui.el
+                  [ Ui.onClick onDismissCheck
+                  , Background.color (Ui.rgb 80 80 90)
+                  ]
+                  (Ui.text "Dismiss")
+            ]
