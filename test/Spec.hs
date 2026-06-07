@@ -89,6 +89,7 @@ import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
+import qualified Sky.Build.UnannotatedParametricCfgUserHelperSpec
 import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
@@ -534,6 +535,14 @@ main = hspec $ do
     -- path in src/Sky/Build/Compile.hs.
     describeT "Sky.Build.UnannotatedParametricCfgView"
                                             Sky.Build.UnannotatedParametricCfgViewSpec.spec
+    -- #521 corner-case sibling — same enclosing-scope guard, but
+    -- the call shape is a user-defined helper taking (cfg, msg)
+    -- with the 2nd arg supplied as `cfg.<field>`.  This routes
+    -- through coerceCallArgsAt — the third substituteOnly site
+    -- patched in the v0.16.11 fix.  Locks down the non-kernel
+    -- path independently of the production fixture above.
+    describeT "Sky.Build.UnannotatedParametricCfgUserHelper"
+                                            Sky.Build.UnannotatedParametricCfgUserHelperSpec.spec
     -- v0.15.x hardening / Gap A4 / Plan Item P3 — `isPlainIdent`
     -- structural unit table.  Locks the recursion invariants of
     -- the "plain user-ident chain" classifier used by `coerceArg`
