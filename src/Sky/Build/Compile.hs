@@ -9285,7 +9285,36 @@ coerceCallArgsAt region qualName args =
                     , Just cgo <- [goExprGoType Nothing ga]
                     , cgo /= "any"
                     ]
-                recovered = Map.union bareRecovered structuralRecovered
+                -- v0.16.13 #530 — HM-based identity recovery for
+                -- parametric-record-alias args.  When the source's
+                -- HM type is a record alias matching the param's
+                -- record-alias base, pin every TVar in the param to
+                -- itself (identity mapping).  This tells substituteOnly
+                -- "the call site's T1 stays as T1 — Monomorphise will
+                -- rewrite it per-instantiation".  Without this,
+                -- substituteOnly would erase the TVar to `any` at the
+                -- call site, breaking SIBLING args at the same call:
+                -- a typed `T1` arg slot then gets `any(arg)` wrapped,
+                -- which Go's call-site inference can't reconcile with
+                -- the now-T1-pinned (via path-b shortcircuit on the
+                -- alias arg) function signature.
+                --
+                -- This mirrors the kernel arm's σ-recovery (line 7741)
+                -- but routes through HM (`aliasBaseFromCanExpr`)
+                -- instead of static-shape matching — so it works for
+                -- `VarLocal` refs where `goExprGoType` returns Nothing.
+                identityRecovered = Map.fromList
+                    [ (tv, tv)
+                    | (pty, arg) <- zip paramTypes args
+                    , Just paramBase <- [parametricAliasBase pty]
+                    , Just srcAlias <- [aliasBaseFromCanExpr arg]
+                    , srcAlias ++ "_R" == paramBase
+                    , tv <- tvarsInGoTypeStr pty
+                    , not (Map.member tv bareRecovered)
+                    , not (Map.member tv structuralRecovered)
+                    ]
+                recovered = Map.unions
+                    [bareRecovered, structuralRecovered, identityRecovered]
                 -- v0.13 Stage 1 — when σ pins EVERY TVar in a paramType,
                 -- skip the `eraseTypeParams` widening. Identity
                 -- mappings (T1 → T1) count as "pinned" because the
@@ -12911,9 +12940,27 @@ inferExprType types (A.At r e) = case e of
     Can.Str _    -> Just ConstrainExpr.stringType
     Can.Chr _    -> Just ConstrainExpr.charType
     Can.Unit     -> Just T.TUnit
-    Can.VarLocal name    -> case Solve.lookupSolvedVar name types of
-        Just t  -> Just t
-        Nothing -> lookupLambdaType name
+    Can.VarLocal name    ->
+        -- v0.16.13 #530 — when `_stEnv` returns a sentinel TVar (the
+        -- solver merge sets `_unresolved` / `_unbound` / `_ambig`
+        -- for names that didn't resolve across modules), treat it
+        -- as a miss and fall through to the per-region map and the
+        -- IORef-backed lambda-types ledger.  Function-LOCAL names
+        -- (parameters, let-bindings) are the usual case here — the
+        -- _stEnv carries them as sentinels because they have no
+        -- module-wide type.  Their real types live in the region
+        -- map or the scope-pushed lambda-types ledger.
+        let isSentinelTVar t = case t of
+                T.TVar n -> n `elem` ["_unresolved", "_unbound", "_ambig"]
+                _ -> False
+            envHit = case Solve.lookupSolvedVar name types of
+                Just t | not (isSentinelTVar t) -> Just t
+                _ -> Nothing
+        in case envHit of
+            Just t -> Just t
+            Nothing -> case Solve.lookupSolvedRegion r types of
+                Just t | not (isSentinelTVar t) -> Just t
+                _ -> lookupLambdaType name
     Can.VarTopLevel _ n  -> Solve.lookupSolvedVar n types
     -- VarKernel: instantiate the kernel's HM annotation. Strips the
     -- Forall wrapper (kernel sigs are universally quantified) so the
