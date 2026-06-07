@@ -229,6 +229,22 @@ kill it and file a bug. Never wait it out.
 
 ### 4. No-deferral principle — every known bug enters the pipeline
 
+> **Reinforced 2026-06-07** — Sky Lang aspires to be the industrial
+> best-in-class language + toolchain for fullstack pure-functional
+> development (UI/UX/DX/security/scalability + extensive stdlib).
+> SkyDeploy is the leading moat — the AI-era platform on which
+> startups and businesses build. Both reputations compound. A
+> "known broken edge case" today is a tomorrow's compounding
+> problem. The session's value is architectural progress, not the
+> tag — when the correct fix takes multi-session/days/weeks, that
+> is a reason to start, not a reason to defer. **Default response
+> to a hard problem: analyse root cause → research the
+> architecturally correct approach (existing roadmap docs / RFCs
+> / improvement plans) → execute, even when it requires multiple
+> sessions.** The tempting tactical workaround is forbidden
+> unless the user explicitly accepts the trade-off after hearing
+> it.
+
 If a bug surfaces during dev, sweep, CI, or testing — **whether
 introduced by your current work or pre-existing** — it MUST
 enter the task pipeline immediately and be fixed in the next
