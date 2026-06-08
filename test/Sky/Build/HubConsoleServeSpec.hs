@@ -19,11 +19,29 @@ import Control.Exception (try, SomeException)
 import qualified Data.List as List
 import qualified System.Directory as Dir
 import System.FilePath ((</>))
+import System.Environment (lookupEnv)
 import System.IO (hGetContents)
 import System.IO.Temp (withSystemTempDirectory)
 import qualified System.Process as Proc
 import System.Exit (ExitCode(..))
 import qualified Data.Time.Clock.POSIX as POSIX
+
+
+-- | Inherit the parent process's PATH so subprocess `sky` invocations
+-- can find `go` (which `sky console-serve` shells out to for building
+-- the hub daemon binary). The CI runner places Go under
+-- `/opt/hostedtoolcache/go/<v>/x64/bin` on Linux +
+-- `/Users/runner/hostedtoolcache/go/<v>/arm64/bin` on macOS via
+-- `actions/setup-go@v5`; neither path is in the fallback. v0.16.13:
+-- the prior `/usr/bin:/bin:/usr/local/bin` hardcode silently passed
+-- on Linux (Ubuntu image leaves go in /usr/local/bin) but failed on
+-- macOS with `sky: go: createProcess: exec: does not exist`.
+inheritedPath :: IO String
+inheritedPath = do
+    mp <- lookupEnv "PATH"
+    case mp of
+        Just p | not (null p) -> pure p
+        _                     -> pure "/usr/bin:/bin:/usr/local/bin"
 
 -- | Locate the built `sky` binary at the repo's `sky-out/sky`.
 -- Mirrors @Sky.Cli.DoctorSpec@'s pattern.
@@ -91,6 +109,7 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
         -- mode without a token. We don't care that go build runs —
         -- the validation fires inside the child once it's exec'd.
         sky <- findSky
+        path <- inheritedPath
         withSystemTempDirectory "sky-hub-spec" $ \tmp -> do
             port <- freePort
             (ec, _, _) <- Proc.readCreateProcessWithExitCode
@@ -99,7 +118,7 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
                     , "--port", show port
                     , "--data-dir", tmp </> "data"
                     , "--auth", "token"
-                    ]) { Proc.env = Just [("PATH", "/usr/bin:/bin:/usr/local/bin")] })
+                    ]) { Proc.env = Just [("PATH", path)] })
                 ""
             case ec of
                 ExitFailure _ -> pure ()
@@ -112,6 +131,7 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
     -- daemon can't wedge the cabal test run.
     it "console-serve daemon accepts an OTLP/JSON push and persists to SQLite" $ do
         sky <- findSky
+        path <- inheritedPath
         withSystemTempDirectory "sky-hub-spec" $ \tmp -> do
             let dataDir = tmp </> "data"
                 dbFile = dataDir </> "console-hot.db"
@@ -130,7 +150,7 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
                         , "--data-dir", dataDir
                         , "--auth", "off"
                         ])
-                        { Proc.env = Just [("PATH", "/usr/bin:/bin:/usr/local/bin"), ("SKY_CONSOLE_HUB_QUIET", "1")]
+                        { Proc.env = Just [("PATH", path), ("SKY_CONSOLE_HUB_QUIET", "1")]
                         , Proc.std_out = Proc.CreatePipe
                         , Proc.std_err = Proc.CreatePipe
                         }
