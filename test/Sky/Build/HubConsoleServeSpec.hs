@@ -116,10 +116,14 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
                 dbFile = dataDir </> "console-hot.db"
             port <- freePort
             -- Spawn daemon under `timeout` so a wedged child gets
-            -- SIGKILL'd at 90 s — cabal test can't hang on this
-            -- subprocess (CLAUDE.md §3).
+            -- SIGKILL'd at 180 s — cabal test can't hang on this
+            -- subprocess (CLAUDE.md §3). Must exceed `waitForReady`
+            -- below (120 s) so the daemon isn't killed mid-boot
+            -- under Linux CI's cold-cache go-build delay (v0.16.13:
+            -- prior 90 s ceiling killed the daemon before the
+            -- 120 s wait could observe it ready).
             let bp = (Proc.proc "timeout"
-                        [ "90"
+                        [ "180"
                         , sky, "console-serve"
                         , "--port", show port
                         , "--data-dir", dataDir
