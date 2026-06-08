@@ -153,6 +153,37 @@ jobs:
             exit 1
           }
 
+      # Linux GitHub runners ship ~14GB free disk after checkout.
+      # That's not enough for cabal build + cabal test + hub pre-warm
+      # + 26-example sweep (each with .skycache + sky-out + Go build
+      # artifacts ~100MB). v0.16.13 deaf8c31 CI failed 10/26 examples
+      # mid-sweep with `mapping output file failed: no space left on
+      # device` from the Go linker. Reclaim ~30-40GB by nuking
+      # preinstalled toolchains we don't use (.NET / Android SDK /
+      # Swift / CodeQL / swap). Keep /opt/ghc + /opt/hostedtoolcache/go
+      # — cabal + go are load-bearing for Sky.
+      - name: Free disk space (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          df -h /
+          echo "---before cleanup---"
+          sudo rm -rf /usr/share/dotnet            || true
+          sudo rm -rf /usr/local/lib/android       || true
+          sudo rm -rf /usr/share/swift             || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL  || true
+          sudo rm -rf /opt/microsoft               || true
+          sudo rm -rf /opt/google/chrome           || true
+          sudo rm -rf /opt/az                      || true
+          # Drop swap (8 GB) — CI runners don't page enough for it
+          # to matter; we'd rather have the disk.
+          sudo swapoff -a                          || true
+          sudo rm -f /swapfile /mnt/swapfile       || true
+          # Trim apt + docker caches — small but adds up.
+          sudo apt-get clean                       || true
+          docker image prune --all --force 2>/dev/null || true
+          df -h /
+          echo "---after cleanup---"
+
       # macOS GitHub runners (M-series, 3-core, 4GB free) have only
       # ~14GB free disk after `actions/checkout` + `cabal build` —
       # NOT enough for the example sweep's 26 fresh .skycache dirs +
