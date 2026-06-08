@@ -92,7 +92,7 @@ export TMPDIR="${TMPDIR:-/tmp}"
 mkdir -p "$TMPDIR" 2>/dev/null || TMPDIR=/tmp
 
 echo "[run] node $RUNNER (port $PORT, timeout 120s, TMPDIR=$TMPDIR)"
-bounded 120 env "${env_args[@]}" SKY_UI_SHOWCASE_PORT="$PORT" \
+bounded 120 env ${env_args[@]+"${env_args[@]}"} SKY_UI_SHOWCASE_PORT="$PORT" \
     TMPDIR="$TMPDIR" \
     node "$RUNNER"
 rc=$?
