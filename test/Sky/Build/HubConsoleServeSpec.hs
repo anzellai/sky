@@ -19,6 +19,7 @@ import Control.Exception (try, SomeException)
 import qualified Data.List as List
 import qualified System.Directory as Dir
 import System.FilePath ((</>))
+import System.IO (hGetContents)
 import System.IO.Temp (withSystemTempDirectory)
 import qualified System.Process as Proc
 import System.Exit (ExitCode(..))
@@ -133,14 +134,28 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
                         , Proc.std_out = Proc.CreatePipe
                         , Proc.std_err = Proc.CreatePipe
                         }
-            (_, _, _, ph) <- Proc.createProcess bp
+            (_, mStdout, mStderr, ph) <- Proc.createProcess bp
             -- Wait up to 120 s for daemon ready. First boot includes
             -- the go build step; warm runs are <1 s. Linux CI's
             -- cold-cache go build of the console daemon can exceed
             -- 60 s under load (v0.16.13: observed timeouts on
             -- ubuntu-latest at 60 s); 120 s gives generous headroom.
             ready <- waitForReady port 120
-            ready `shouldBe` True
+            -- v0.16.13 #530-CI: on failure, drain captured stdout +
+            -- stderr from the daemon so the real error surfaces in
+            -- CI output instead of the bare `expected True got
+            -- False`. Without this the test failed silently on
+            -- Linux CI for 3 consecutive runs with no diagnostic.
+            if ready
+                then return ()
+                else do
+                    out <- maybe (return "") hGetContents mStdout
+                    err <- maybe (return "") hGetContents mStderr
+                    expectationFailure $
+                        "console-serve daemon never bound port " ++ show port
+                        ++ " within 120s.\n"
+                        ++ "--- daemon stdout ---\n" ++ out
+                        ++ "--- daemon stderr ---\n" ++ err
 
             -- Push a Sky-shaped JSON log batch.
             let payload =

@@ -74,6 +74,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ffi-${{ hashFiles('runtime-go/rt/**.go', 'sky-stdlib/**.sky') }}-
 
+      # v0.16.13 #530-CI: cache Go modules + build cache. The
+      # HubConsoleServeSpec runs `sky console-serve` which materialises
+      # the embedded runtime-go tree then runs `go build` to produce
+      # the hub binary — uncached this downloads OTLP/protobuf/sqlite
+      # modules and cold-compiles them, exceeding the 120s wait.
+      # actions/setup-go@v5's `cache: true` only keys off go.sum in
+      # cwd; Sky's go.sum sits under runtime-go/ so we cache explicitly.
+      - name: Cache Go modules + build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('runtime-go/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       # Single-command local/CI parity: scripts/build.sh does everything
       # the manual steps below used to — compile sky, build sky-ffi-inspect,
       # install to sky-out/ + bin/. Adds self-test + example sweep when flagged.
@@ -159,6 +177,39 @@ jobs:
           df -h /
           echo "---after cleanup---"
 
+      # v0.16.13 #530-CI: pre-warm the sky-hub binary so the
+      # HubConsoleServeSpec doesn't burn its waitForReady window on a
+      # cold `go build`. The hub binary is built on first invocation
+      # of `sky console-serve` and cached at
+      # `~/.cache/sky/hub-<version>/sky-hub` — we trigger one
+      # boot+kill cycle here so the binary lands in cache before
+      # the spec's 120s wait starts. Cold-cache go build of the hub
+      # was the root cause of 3 consecutive Linux CI failures at
+      # `waitForReady port 120 → False`.
+      - name: Pre-warm sky-hub binary
+        run: |
+          # Boot the daemon in the background with a free port, give
+          # it a moment to materialise the runtime + go build, then
+          # kill. The first invocation does ALL the cold work; the
+          # spec's invocation reuses the cached binary in <1s.
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || echo 18099)
+          DATA_DIR=$(mktemp -d)
+          SKY_CONSOLE_HUB_QUIET=1 ./sky-out/sky console-serve \
+              --port "$PORT" --data-dir "$DATA_DIR" --auth off &
+          HUB_PID=$!
+          # Up to 5 min for go build + boot + port bind.
+          for i in $(seq 1 60); do
+              if curl -s --max-time 1 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then
+                  echo "hub pre-warm: ready in ${i}*5s"
+                  break
+              fi
+              sleep 5
+          done
+          kill "$HUB_PID" 2>/dev/null || true
+          wait "$HUB_PID" 2>/dev/null || true
+          rm -rf "$DATA_DIR"
+          echo "hub pre-warm: done"
+
       - name: Run cabal test suite
         # Skip Sky.Build.VerifyAll: that spec wraps `sky verify`
         # which we ALSO run as a dedicated step below. Doubling
@@ -171,6 +222,16 @@ jobs:
         # timeout-bounded. 60 min ceiling here so a stuck spec
         # (e.g. Sky.Cli.Watch's spawnWatch child) can't burn the
         # whole CI budget waiting unbounded.
+        #
+        # v0.16.13 #530-CI: SKY_SKIP_SWEEP=1 prevents
+        # Sky.Build.ExampleSweepSpec from re-running the same
+        # 25-example clean build the dedicated `Example sweep` step
+        # below already runs. Removes ~10-15 min of duplicated work
+        # AND eliminates a /tmp pressure source that caused
+        # `No space left on device` cascades on the constrained
+        # macOS runner (3-core, ~14GB free disk).
+        env:
+          SKY_SKIP_SWEEP: '1'
         run: timeout 3600 cabal test --test-show-details=direct --test-options='--skip=Sky.Build.VerifyAll'
 
       # Example sweep — clean-build every example, then either run
