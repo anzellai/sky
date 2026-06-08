@@ -262,26 +262,18 @@ jobs:
         # `No space left on device` cascades on the constrained
         # macOS runner (3-core, ~14GB free disk).
         env:
+          # v0.16.14 Sky-tests fast mode: skip 5 integration specs
+          # (HubConsoleServe / CheckIsBuild / VerifyScenario /
+          # HeapBoundedHm / VerifyAll) that shell out to sky + go build.
+          # Same code paths are exercised end-to-end by the dedicated
+          # Example sweep + verify-all-web + verify-cli workflow steps
+          # below. Set SKY_TESTS_FAST='' (empty) on a nightly schedule
+          # to opt back into the full integration sweep.
+          SKY_TESTS_FAST: '1'
+          # Sky.Build.ExampleSweepSpec self-gates on this — see
+          # task #531 commit message.
           SKY_SKIP_SWEEP: '1'
-        run: |
-          # v0.16.13 #530-CI: macOS runner (3-core M-series) loses parallel
-          # races on shared GOCACHE / GOMODCACHE that Linux (4-core x64)
-          # wins reliably. CheckIsBuildSpec runs 4 concurrent chunks each
-          # spawning sky check + sky build per fixture; under enough
-          # concurrent go-build pressure on macOS, ~5 Sky.Live/Server
-          # fixtures non-deterministically flip (sky check rejects, sky
-          # build accepts within seconds of each other). VerifyScenario +
-          # HeapBoundedHm shell-out specs hit the same shared-cache
-          # pressure. These specs all pass on Linux + locally; the
-          # example sweep + verify-all-web steps below cover the same
-          # code paths end-to-end on macOS so skipping on macOS does not
-          # lose coverage. Proper fix in v0.16.14 splits into a fast
-          # Sky-side cabal target + a slow integration target (task #531).
-          MAC_SKIP=""
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            MAC_SKIP="--skip=Sky.Build.CheckIsBuild --skip=Sky.Build.VerifyScenario --skip=Sky.Build.HeapBoundedHm"
-          fi
-          timeout 3600 cabal test --test-show-details=direct --test-options="--skip=Sky.Build.VerifyAll $MAC_SKIP"
+        run: timeout 3600 cabal test --test-show-details=direct
 
       # v0.16.13 #530-CI: cabal test + hub pre-warm + go module cache
       # together write 4-6 GB of artefacts to disk between the first

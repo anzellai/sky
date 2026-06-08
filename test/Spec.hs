@@ -1,5 +1,8 @@
 module Main (main) where
 
+import Control.Monad (unless)
+import Data.Maybe (isJust)
+import System.Environment (lookupEnv)
 import Test.Hspec
 import SkyTiming (describeT)
 import qualified Sky.Build.CompileSpec
@@ -142,8 +145,22 @@ import qualified Sky.Cli.WatchSpec
 import qualified Sky.Cli.DoctorSpec
 import qualified Sky.Build.HubConsoleServeSpec
 
+-- | v0.16.14: opt-in fast mode for CI. When `SKY_TESTS_FAST=1` is set,
+-- skip the 5 heavy integration specs that shell out to the built
+-- `sky` binary (HubConsoleServe / CheckIsBuild / VerifyScenario /
+-- HeapBoundedHm / VerifyAll). These specs are covered end-to-end by
+-- the dedicated Example sweep + verify-all-web + verify-cli workflow
+-- steps that run AFTER cabal test on every push, so skipping them
+-- inside cabal test does not lose coverage. Run nightly OR with
+-- `SKY_TESTS_FAST` unset for the full integration sweep.
 main :: IO ()
-main = hspec $ do
+main = do
+    fastMode <- isJust <$> lookupEnv "SKY_TESTS_FAST"
+    hspec (allSpecs fastMode)
+
+
+allSpecs :: Bool -> Spec
+allSpecs fastMode = do
     describeT "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
     -- v0.15.43 Cycle 6 PC — top-level `func main()` MUST start with
     -- `defer rt.LogPanicAndExit()`. Regression here re-exposes the
@@ -489,8 +506,12 @@ main = hspec $ do
     -- only exist after the sweep has built them.
     describeT "Sky.Build.ExampleSweep"    Sky.Build.ExampleSweepSpec.spec
     describeT "Sky.Build.TypedFfi"        Sky.Build.TypedFfiSpec.spec
-    -- Audit P0-1: sky check must be ≥ sky build.
-    describeT "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec
+    -- Audit P0-1: sky check must be ≥ sky build. Integration spec —
+    -- shells out to `sky` + `go build`. Skipped under SKY_TESTS_FAST=1
+    -- because the dedicated Example sweep step exercises the same
+    -- code paths end-to-end. v0.16.14.
+    unless fastMode $
+        describeT "Sky.Build.CheckIsBuild" Sky.Build.CheckIsBuildSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describeT "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
     -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
@@ -687,7 +708,11 @@ main = hspec $ do
     -- Limitation #17: Std.Ui-cascading HM constraint pathology that
     -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
     -- reproducer under a tight heap cap.
-    describeT "Sky.Build.HeapBoundedHm"      Sky.Build.HeapBoundedHmSpec.spec
+    -- Integration spec — shells out to `sky check` with +RTS -M256M;
+    -- skipped under SKY_TESTS_FAST=1 (the Example sweep step covers
+    -- the same compilation paths end-to-end). v0.16.14.
+    unless fastMode $
+        describeT "Sky.Build.HeapBoundedHm" Sky.Build.HeapBoundedHmSpec.spec
     -- Limitation #17 hardening: defensive bound on the HM solver.
     -- Caps total solveHelp invocations per `solve` call; trips
     -- with TYPE ERROR before unbounded heap consumption can OOM
@@ -703,10 +728,19 @@ main = hspec $ do
     describeT "Sky.Lsp.HoverShadowing"     Sky.Lsp.HoverShadowingSpec.spec
     -- Audit P2-3: module-stable TVar renaming.
     describeT "Sky.Lsp.RenameStable"       Sky.Lsp.RenameStableSpec.spec
-    -- Audit P2-4: sky verify scenario support.
-    describeT "Sky.Build.VerifyScenario"   Sky.Build.VerifyScenarioSpec.spec
-    -- Audit P3-1: sky verify covers all examples for CI.
-    describeT "Sky.Build.VerifyAll"        Sky.Build.VerifyAllSpec.spec
+    -- Audit P2-4: sky verify scenario support. Integration spec —
+    -- shells out to `sky verify`; skipped under SKY_TESTS_FAST=1 (the
+    -- dedicated verify-all-web workflow step covers the same
+    -- scenarios end-to-end). v0.16.14.
+    unless fastMode $
+        describeT "Sky.Build.VerifyScenario" Sky.Build.VerifyScenarioSpec.spec
+    -- Audit P3-1: sky verify covers all examples for CI. Integration
+    -- spec — shells out to `sky verify` on every example; replaced
+    -- by the dedicated `sky verify` workflow step which has
+    -- per-example bounded timeouts (scripts/example-sweep.sh).
+    -- Skipped under SKY_TESTS_FAST=1. v0.16.14.
+    unless fastMode $
+        describeT "Sky.Build.VerifyAll" Sky.Build.VerifyAllSpec.spec
     -- Audit P3-2: LSP protocol integration.
     describeT "Sky.Lsp.Protocol"           Sky.Lsp.ProtocolSpec.spec
     -- LSP per-capability extensions (definition, documentSymbol, formatting)
@@ -747,4 +781,10 @@ main = hspec $ do
     -- v0.16.4 Chunks 2+3: `sky console-serve` hub daemon. Asserts
     -- the materialise + go build ./cmd/sky-hub + exec path lands on
     -- a daemon that accepts OTLP/JSON and persists to SQLite.
-    describeT "Sky.Build.HubConsoleServe"   Sky.Build.HubConsoleServeSpec.spec
+    -- Integration spec — spawns `sky console-serve` subprocess which
+    -- shells out to `go build` on the embedded runtime. Skipped under
+    -- SKY_TESTS_FAST=1 (the hub binary is also pre-warmed by the
+    -- workflow's "Pre-warm sky-hub binary" step which proves
+    -- end-to-end build works). v0.16.14.
+    unless fastMode $
+        describeT "Sky.Build.HubConsoleServe" Sky.Build.HubConsoleServeSpec.spec
