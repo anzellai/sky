@@ -283,6 +283,33 @@ jobs:
           fi
           timeout 3600 cabal test --test-show-details=direct --test-options="--skip=Sky.Build.VerifyAll $MAC_SKIP"
 
+      # v0.16.13 #530-CI: cabal test + hub pre-warm + go module cache
+      # together write 4-6 GB of artefacts to disk between the first
+      # cleanup (before cabal) and the example sweep. macOS runner
+      # only has ~14 GB free after first cleanup; cabal test alone
+      # can consume 5 GB. Re-clean before the sweep: nuke ~/go cache
+      # + cabal dist-newstyle test artefacts + /tmp clutter to give
+      # the 26-example sweep a fresh 8-10 GB working budget.
+      - name: Free disk space before sweep
+        run: |
+          df -h /
+          echo "---before pre-sweep cleanup---"
+          # Go build cache: holds cabal test's spec build artefacts.
+          # Safe — sweep re-builds from scratch anyway.
+          go clean -cache 2>/dev/null || true
+          # /tmp leftovers from cabal test (logs, sky-cib-sweep dirs, …)
+          sudo rm -rf /tmp/sky-* /tmp/sky-cib-* /tmp/sky-hub-spec-* 2>/dev/null || true
+          # Pruned hub cache (we already built + tested it; sweep doesn't
+          # need to re-exec sky-hub).
+          rm -rf "$HOME/.cache/sky/hub-dev" 2>/dev/null || true
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            # Extra macOS sources we haven't touched yet.
+            sudo rm -rf /Library/Developer/CoreSimulator 2>/dev/null || true
+            sudo rm -rf "$HOME/.android" 2>/dev/null || true
+          fi
+          df -h /
+          echo "---after pre-sweep cleanup---"
+
       # Example sweep — clean-build every example, then either run
       # to completion (cli, with `timeout 10`) or probe HTTP 200
       # (server, with `curl --max-time 1`). See scripts/example-sweep.sh.
