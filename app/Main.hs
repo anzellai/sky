@@ -2147,10 +2147,24 @@ runConsoleServe opts = do
     when (not haveBin) $ do
         putStrLn $ "sky console-serve: building hub daemon (one-time per "
                 ++ "version, into " ++ root ++ ")..."
+        -- CGO_ENABLED=0: the hub doesn't need cgo (modernc.org/sqlite is
+        -- pure Go) AND `rt/hub/hub.go` transitively imports `sky-app/rt`
+        -- which contains `webview.go` (cgo + WebKit framework on darwin).
+        -- The Apple ld_prime linker (Xcode 15+) hits an internal
+        -- assertion on the resulting long Go cgo symbol names — see the
+        -- 2026-06-08 v0.16.13 macOS CI failure (`ld: Assertion failed:
+        -- (name.size() <= maxLength)` in SymbolString.cpp:74). Disabling
+        -- cgo routes through `webview_stub.go` (no WebKit linkage), the
+        -- ld_prime assertion path goes away, and the resulting sky-hub
+        -- binary is functionally identical (the stub is unreachable
+        -- because sky-hub never calls webview symbols).
+        baseEnv <- System.Environment.getEnvironment
+        let buildEnv = ("CGO_ENABLED", "0") : filter ((/= "CGO_ENABLED") . fst) baseEnv
         let bp = (System.Process.proc "go" [ "build", "-o", "sky-hub"
                                             , "./cmd/sky-hub"
                                             ])
                     { System.Process.cwd     = Just root
+                    , System.Process.env     = Just buildEnv
                     , System.Process.std_out = System.Process.Inherit
                     , System.Process.std_err = System.Process.Inherit
                     }
