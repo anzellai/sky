@@ -135,6 +135,30 @@ jobs:
             exit 1
           }
 
+      # macOS GitHub runners (M-series, 3-core, 4GB free) have only
+      # ~14GB free disk after `actions/checkout` + `cabal build` —
+      # NOT enough for the example sweep's 26 fresh .skycache dirs +
+      # Go build caches. Without this cleanup, `cabal test` hits
+      # `No space left on device` halfway through the sweep spec
+      # and ALL examples fail (cascade). Free disk by deleting older
+      # Xcode versions + Homebrew bottle caches + chruby cache.
+      - name: Free disk space (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          df -h /
+          echo "---before cleanup---"
+          # Keep current Xcode (named with -current-version); delete older
+          ls -1 /Applications/ | grep -E '^Xcode_' | head -5 || true
+          sudo rm -rf /Applications/Xcode_*.app || true
+          # Brew autoremove cleans orphan dependencies + clears the cache
+          brew autoremove --quiet 2>/dev/null || true
+          brew cleanup --quiet --prune=all 2>/dev/null || true
+          rm -rf "$HOME/Library/Caches/Homebrew" 2>/dev/null || true
+          # chruby + rbenv unused on Sky's CI; nuke
+          sudo rm -rf /Users/runner/.rbenv /Users/runner/hostedtoolcache/Ruby || true
+          df -h /
+          echo "---after cleanup---"
+
       - name: Run cabal test suite
         # Skip Sky.Build.VerifyAll: that spec wraps `sky verify`
         # which we ALSO run as a dedicated step below. Doubling
