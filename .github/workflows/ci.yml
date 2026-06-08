@@ -87,6 +87,22 @@ jobs:
         run: sky --version
 
       # v0.16.0 drift gate: runtime-go/rt/console_app/main.go is the
+      # macOS GitHub runners don't ship GNU coreutils — bare `timeout`
+      # (used by example-sweep.sh + the cabal test step below + the
+      # drift-check script's inner `timeout` call) is missing, causing
+      # exit 127 ("command not found"). Install coreutils + symlink
+      # `gtimeout` → `timeout` for the rest of the job. example-sweep.sh
+      # has its own shim but the bare `timeout 3600 cabal test` line on
+      # the next step doesn't, and neither does regenerate-console.sh.
+      # MUST run BEFORE the drift check below.
+      - name: Install GNU coreutils (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install coreutils
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(brew --prefix coreutils)/libexec/gnubin/timeout" "$HOME/.local/bin/timeout"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       # Sky.Live console UI translated to Go and committed to the
       # tree. PR 1 introduced the drift check; PR 2 removed the
       # in-tree Sky source (sky-bundled/console/), so this step
@@ -118,20 +134,6 @@ jobs:
             git diff --stat runtime-go/rt/console_app/
             exit 1
           }
-
-      # macOS GitHub runners don't ship GNU coreutils — bare `timeout`
-      # (used by example-sweep.sh + the cabal test step below) is
-      # missing, causing exit 127 ("command not found"). Install
-      # coreutils + symlink `gtimeout` → `timeout` for the rest of
-      # the job. example-sweep.sh has its own shim but the bare
-      # `timeout 3600 cabal test` line on the next step doesn't.
-      - name: Install GNU coreutils (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install coreutils
-          mkdir -p "$HOME/.local/bin"
-          ln -sf "$(brew --prefix coreutils)/libexec/gnubin/timeout" "$HOME/.local/bin/timeout"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run cabal test suite
         # Skip Sky.Build.VerifyAll: that spec wraps `sky verify`

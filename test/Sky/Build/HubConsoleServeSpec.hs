@@ -130,9 +130,12 @@ spec = describe "Sky.Build.HubConsoleServe" $ do
                         , Proc.std_err = Proc.CreatePipe
                         }
             (_, _, _, ph) <- Proc.createProcess bp
-            -- Wait up to 60 s for daemon ready. First boot includes
-            -- the go build step; warm runs are <1 s.
-            ready <- waitForReady port 60
+            -- Wait up to 120 s for daemon ready. First boot includes
+            -- the go build step; warm runs are <1 s. Linux CI's
+            -- cold-cache go build of the console daemon can exceed
+            -- 60 s under load (v0.16.13: observed timeouts on
+            -- ubuntu-latest at 60 s); 120 s gives generous headroom.
+            ready <- waitForReady port 120
             ready `shouldBe` True
 
             -- Push a Sky-shaped JSON log batch.
