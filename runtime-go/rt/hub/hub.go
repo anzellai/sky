@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -251,6 +252,20 @@ func Run(cfg HubConfig) error {
 	// Safe to call before HTTP starts — the kernels degrade to
 	// empty payloads if no reader is registered yet.
 	rt.SetHubStore(store.AsReader())
+
+	// Tell the bundled console_app (Sky source) it's running in hub
+	// mode. The Sky-side init reads SKY_CONSOLE_HUB_DB at boot and
+	// switches its Store from `httpStore parent` (embedded mode) to
+	// `hubStore path` (hub mode — reads via SetHubStore-registered
+	// reader). The actual path is ignored by the kernels; any
+	// non-empty value flips the mode. Without this, the console UI
+	// renders the standalone-mode placeholder ("Run from a host app
+	// to see live telemetry") even though OTLP ingest works and the
+	// SQLite store is populated.
+	storePath := filepath.Join(cfg.DataDir, "console-hot.db")
+	if existing := os.Getenv("SKY_CONSOLE_HUB_DB"); existing == "" {
+		_ = os.Setenv("SKY_CONSOLE_HUB_DB", storePath)
+	}
 
 	mux := buildMux(cfg, store)
 
