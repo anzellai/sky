@@ -76,6 +76,7 @@ import qualified Sky.Stdlib.RecordAliasBuilderConventionSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
+import qualified Sky.Build.NestedCasePatternFieldAccessSpec
 import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.ConsPatternLengthSpec
 import qualified Sky.Build.CtorConsPatternSpec
@@ -464,6 +465,15 @@ allSpecs fastMode = do
     describeT "Sky.Build.GoKeywordCollision"
                                          Sky.Build.GoKeywordCollisionSpec.spec
     describeT "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
+    -- Typed record field access through a nested case pattern
+    -- (v0.16.17 #549). `case ... of Ok (Ok b) -> b.field` was
+    -- silently reading Go zero-values (Int 0, String "", etc.)
+    -- because the lowerer erased `b`'s typed shape through the
+    -- nested destructure. SOUNDNESS BUG — no panic; just junk.
+    -- Real impact: SkyDeploy's MCP server's list_apps queried
+    -- WHERE owner_id=0 returning empty for every user.
+    describeT "Sky.Build.NestedCasePatternFieldAccess"
+        Sky.Build.NestedCasePatternFieldAccessSpec.spec
     -- Cons-with-constructor pattern fix (compiler bug #2). The
     -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`
     -- so the body only fires when the head's actual ctor matches.
