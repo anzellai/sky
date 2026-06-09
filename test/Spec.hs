@@ -92,6 +92,7 @@ import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
+import qualified Sky.Build.LiveApiHandlerShapeSpec
 import qualified Sky.Build.UnannotatedParametricCfgUserHelperSpec
 import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
@@ -556,6 +557,13 @@ allSpecs fastMode = do
     -- path in src/Sky/Build/Compile.hs.
     describeT "Sky.Build.UnannotatedParametricCfgView"
                                             Sky.Build.UnannotatedParametricCfgViewSpec.spec
+    -- Task #545 — Sky.Live.api now has a strongly-typed kernel sig
+    -- (`String -> (Dict String any -> Response) -> Route`).  This
+    -- spec exercises both shapes: Dict-shaped passes, Task-shaped
+    -- gets a clear HM mismatch instead of the pre-fix silent
+    -- runtime `%v`-pointer leak.
+    describeT "Sky.Build.LiveApiHandlerShape"
+                                            Sky.Build.LiveApiHandlerShapeSpec.spec
     -- #521 corner-case sibling — same enclosing-scope guard, but
     -- the call shape is a user-defined helper taking (cfg, msg)
     -- with the 2nd arg supplied as `cfg.<field>`.  This routes
