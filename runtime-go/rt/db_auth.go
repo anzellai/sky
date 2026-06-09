@@ -1353,6 +1353,37 @@ func Db_getInt(fname any, row any) int {
 	return 0
 }
 
+// Sky type: Db.getFloat : String -> row -> Float
+// Returns 0.0 when the field is missing or not numeric. Mirrors
+// Db_getInt's shape — strconv on string-map values, AsFloatOrZero
+// on any-map values.
+func Db_getFloat(fname any, row any) float64 {
+	key := fmt.Sprintf("%v", fname)
+	if m, ok := row.(map[string]string); ok {
+		if v, exists := m[key]; exists {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return 0.0
+			}
+			return f
+		}
+		return 0.0
+	}
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[key]; exists {
+			if s, isStr := v.(string); isStr {
+				f, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return 0.0
+				}
+				return f
+			}
+			return AsFloatOrZero(v)
+		}
+	}
+	return 0.0
+}
+
 // Sky type: Db.getBool : String -> row -> Bool
 // Returns false when the field is missing. SQLite stores booleans as
 // 0/1 strings; "1" / "true" map to true.
