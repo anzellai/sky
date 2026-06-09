@@ -7029,17 +7029,35 @@ document.addEventListener("click", function(ev) {
   } catch (e) { return; }
   ev.preventDefault();
   fetch(href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
-    .then(function(r) { return r.text(); })
-    .then(function(t) {
-      __skyPatch(t);
-      window.history.pushState({}, "", href);
+    .then(function(r) {
+      // r.ok check is load-bearing. Without it, a 404 body like
+      // "session not found" (server lost our session_id store
+      // entry — TTL expiry, store-restart, store-config change,
+      // cross-deploy cookie collision) would be passed verbatim
+      // to __skyPatch and become the whole page body.
+      // Non-OK → full-page reload, which triggers the runtime's
+      // initial-page handler: creates a fresh session_id and
+      // re-runs the app's init. Apps gate on session presence
+      // (Maybe Session in Model) so the reload lands cleanly on
+      // whatever surface their init is configured to render.
+      if (!r.ok) { window.location.href = href; return; }
+      return r.text().then(function(t) {
+        __skyPatch(t);
+        window.history.pushState({}, "", href);
+      });
     })
     .catch(function() { window.location.href = href; });
 });
 window.addEventListener("popstate", function() {
   fetch(window.location.href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
-    .then(function(r) { return r.text(); })
-    .then(__skyPatch);
+    .then(function(r) {
+      // Same r.ok gate as the sky-nav click path. Without it,
+      // Back/Forward to a URL after the server lost our session
+      // renders the 404 body as the whole page.
+      if (!r.ok) { window.location.href = window.location.href; return; }
+      return r.text().then(__skyPatch);
+    })
+    .catch(function() { /* Back/Forward fetch failed; leave URL alone. */ });
 });
 // ── Status banner (connection state) ─────────────────────────
 // Single bottom-pinned element rendered by the runtime (NOT by the
