@@ -27,7 +27,7 @@ Live reference for v0.16.x.  Historical / superseded docs live in
 * [`skyauth/`](skyauth/) — `Std.Auth` (sessions + JWT + roles).
 * [`skydb/`](skydb/) — `Std.Db` (SQLite + PostgreSQL).
 * [`v0.16.x-console/`](v0.16.x-console/) — Sky Console embedded mode,
-  hub mode (`sky console serve`), HubExporter, telemetry flow.
+  hub mode (`sky console-serve`), HubExporter, telemetry flow.
 
 ## Toolchain
 

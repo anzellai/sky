@@ -345,6 +345,7 @@ test-suite sky-tests
       Sky.Parse.MultilineInterpolationEscapeSpec
       Sky.Build.CaseCatchallSubjectDiscardSpec
       Sky.Build.CharToCodeSpec
+      Sky.Build.CharPredicateAsRuneSpec
       Sky.Build.LiveNavigationSpec
       Sky.Build.LiveInitRequestSpec
       Sky.Build.LiveInitRuntimeSpec

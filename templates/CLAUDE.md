@@ -58,7 +58,7 @@ structured numbered list otherwise) — but ask, do not assume.
 5. **Deployment target** — local binary / Docker / Cloud Run via
    SkyDeploy / Kubernetes / VM under systemd.
 6. **Observability scope** — local logs only / per-app embedded
-   console / push to central `sky console serve` hub / external
+   console / push to central `sky console-serve` hub / external
    OTel collector (Honeycomb / Tempo / Datadog).
 
 ### App shape decision matrix
@@ -67,7 +67,7 @@ structured numbered list otherwise) — but ask, do not assume.
 |------------------------------------------|--------------------|------------------------------------|-------|
 | Web app (forms, real-time, UI state)     | **Sky.Live**       | `Std.Live.app cfg`                 | HTTP-first; SSE patches; sessions + cookies + routing built in. |
 | HTTP / JSON API (no browser UI)          | **Sky.Http.Server**| `Server.listen 8000 [...]`         | Routes + middleware (CORS, rate-limit, logging, basic-auth). |
-| Multi-tenant SaaS / dashboard            | **Sky.Live + auth-app gate** | `Live.app { consoleAuth = … }` | Pair with `sky console serve` hub for shared telemetry. |
+| Multi-tenant SaaS / dashboard            | **Sky.Live + auth-app gate** | `Live.app { consoleAuth = … }` | Pair with `sky console-serve` hub for shared telemetry. |
 | Background job / cron worker             | **Sky.Cli**        | `main = Task.run scheduledWork`    | No UI loop; long-running goroutines via `Task.parallel`. |
 | Terminal UI (TUI)                        | **Sky.Tui**        | `Std.Tui.app cfg`                  | Same view code as Sky.Live; renders to ANSI cells. |
 | One-shot CLI tool                        | **Sky.Cli**        | `main = Task.run cliCmd`           | Argparse via `System.args`. |

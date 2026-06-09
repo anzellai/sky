@@ -22,7 +22,7 @@
 | `Ffi.kernel` mechanism + auto-TCO | ✅ shipped |
 | `sky doc` (terminal + HTTP server) / `sky watch` / `sky doctor` / `sky console` | ✅ shipped |
 | Sky Console embedded mode + sub-app mount + observability federation | ✅ shipped — v0.16.0 inline; v0.16.1 isolated SSE + HubExporter |
-| `sky console serve` hub (OTLP receivers + SQLite hot store) | ✅ shipped — v0.16.4 |
+| `sky console-serve` hub (OTLP receivers + SQLite hot store) | ✅ shipped — v0.16.4 |
 | Hub UI — multi-service dashboard, drill-down tabs, SSE updates | ✅ shipped — v0.16.4-5 (`runtime-go/rt/console_app/main.go` regenerated from `sky-bundled/console/src/`) |
 | `Hub_currentIdentity` kernel + Sky.Live session identity persistence (gob round-trip) | ✅ shipped — v0.16.5 |
 | Runtime tenant-prefix SQL enforcement (`HubStoreReaderWithTenant`) | ✅ shipped — v0.16.6 |
@@ -52,7 +52,7 @@ Production-grade code does not survive guesswork.
 5. **Deployment target** — local binary / Docker / Cloud Run via
    SkyDeploy / Kubernetes / VM under systemd.
 6. **Observability scope** — local logs only / per-app embedded
-   console / push to central `sky console serve` hub / OTel
+   console / push to central `sky console-serve` hub / OTel
    collector (Honeycomb / Tempo / Datadog).
 
 ### App shape matrix
@@ -61,7 +61,7 @@ Production-grade code does not survive guesswork.
 |------------------------------------------|--------------------|------------------------------------|-------|
 | Web app (forms, real-time, UI state)     | **Sky.Live**       | `Std.Live.app cfg`                 | HTTP-first; SSE patches; sessions + cookies + routing built in. |
 | HTTP / JSON API (no browser UI)          | **Sky.Http.Server**| `Server.listen 8000 [...]`         | Routes + middleware (CORS / rate-limit / logging / basic-auth). |
-| Multi-tenant SaaS / dashboard            | **Sky.Live + auth-app gate** | `Live.app { consoleAuth = … }` | Pair with `sky console serve` hub for shared telemetry; tenant scope enforced at SQL layer (v0.16.6). |
+| Multi-tenant SaaS / dashboard            | **Sky.Live + auth-app gate** | `Live.app { consoleAuth = … }` | Pair with `sky console-serve` hub for shared telemetry; tenant scope enforced at SQL layer (v0.16.6). |
 | Background job / cron worker             | **Sky.Cli**        | `main = Task.run scheduledWork`    | No UI loop; `Task.parallel` for fan-out. |
 | Terminal UI (TUI)                        | **Sky.Tui**        | `Std.Tui.app cfg`                  | Same view code as Sky.Live. |
 | One-shot CLI tool                        | **Sky.Cli**        | `main = Task.run cliCmd`           | Argparse via `System.args`. |
