@@ -2223,6 +2223,38 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TLambda (T.TVar "page")
                     (T.TType (ModuleName.Canonical "") "Route" [])))
+    -- Live.api: String -> (Dict String any -> Response) -> Route
+    --
+    -- Closes a soundness gap (#545) — pre-fix the second arg was
+    -- absorbed by Live.app's `appExt` row variable + the kernel
+    -- had no explicit type entry for `api`, so a handler shaped
+    -- `Request -> Task Error Response` (Sky.Http.Server) unified
+    -- silently with what `api` "expected", was stored as `any`
+    -- by the lowerer, and at runtime the Live.go dispatcher's
+    -- reflective Call against the wrong shape fell through and
+    -- the function closure was %v-printed into the response body
+    -- as a Go pointer string like `0x105129450`.
+    --
+    -- The handler shape is sync (no Task) because Sky.Live's api
+    -- dispatch is synchronous — apps that need Task work run it
+    -- inline via Task.run. Mirrors how existing handlers in
+    -- control-plane (DeployCallback, GithubApp, SsoApp,
+    -- GithubWebhook) are typed today.
+    --
+    -- `Dict String any` for the request is deliberate: Sky.Live
+    -- hands `api` handlers a typeless dict (path, body, headers,
+    -- query, …) rather than the typed Sky.Http.Server.Request
+    -- record. Apps extract fields via `Dict.get` / a thin
+    -- `readField` helper.
+    ("Live", "api") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TLambda
+                        (T.TType ModuleName.dict "Dict"
+                            [stringType, T.TVar "any"])
+                        (T.TType (ModuleName.Canonical "") "Response" []))
+                    (T.TType (ModuleName.Canonical "") "Route" [])))
     -- Live.lifecycle: msg -> msg  (identity-typed marker that tags
     -- a Msg as a heartbeat/Tick for the diff-based logger; runtime
     -- unwraps before invoking update so user code sees raw Msg).
