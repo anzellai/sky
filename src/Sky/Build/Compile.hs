@@ -8575,13 +8575,16 @@ typedKernelArgCoerce = Map.fromList
     , (("Math",   "cos"),  ["AsFloat"])
     , (("Math",   "tan"),  ["AsFloat"])
     , (("Math",   "log"),  ["AsFloat"])
-    -- Char (ints used as runes — Sky's Char is rune)
-    , (("Char",   "isUpper"),  ["AsInt"])
-    , (("Char",   "isLower"),  ["AsInt"])
-    , (("Char",   "isDigit"),  ["AsInt"])
-    , (("Char",   "isAlpha"),  ["AsInt"])
-    , (("Char",   "toUpper"),  ["AsInt"])
-    , (("Char",   "toLower"),  ["AsInt"])
+    -- Char: typed kernels take `rune`. `AsRune` mirrors `AsInt` but
+    -- returns `rune` so Char values flowing through `any` (e.g. a
+    -- lambda parameter peeled out of `String.toList`) coerce
+    -- cleanly without an `int → rune` Go-side type mismatch.
+    , (("Char",   "isUpper"),  ["AsRune"])
+    , (("Char",   "isLower"),  ["AsRune"])
+    , (("Char",   "isDigit"),  ["AsRune"])
+    , (("Char",   "isAlpha"),  ["AsRune"])
+    , (("Char",   "toUpper"),  ["AsRune"])
+    , (("Char",   "toLower"),  ["AsRune"])
     -- Path / Encoding / Regex (single-string args)
     , (("Path",   "dir"),        ["AsString"])
     , (("Path",   "base"),       ["AsString"])

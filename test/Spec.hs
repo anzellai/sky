@@ -69,6 +69,7 @@ import qualified Sky.Parse.RowPolyRecordAnnotationSpec
 import qualified Sky.Parse.MultilineInterpolationEscapeSpec
 import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Build.CharToCodeSpec
+import qualified Sky.Build.CharPredicateAsRuneSpec
 import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Build.LiveInitRuntimeSpec
@@ -426,6 +427,10 @@ allSpecs fastMode = do
         Sky.Build.CaseCatchallSubjectDiscardSpec.spec
     -- v0.16.7 #419 — Sky.Core.Char.toCode / fromCode round-trip.
     describeT "Sky.Build.CharToCode" Sky.Build.CharToCodeSpec.spec
+    -- v0.16.17 follow-up — Char.is*/Char.to* typed kernels coerce
+    -- their rune arg via rt.AsRune, not rt.AsInt.
+    describeT "Sky.Build.CharPredicateAsRune"
+        Sky.Build.CharPredicateAsRuneSpec.spec
     -- v0.16.7 #417 + #418 — Sky.Live navigation contract widening
     -- (req.params Dict + onNavigate cfg field).
     describeT "Sky.Build.LiveNavigation" Sky.Build.LiveNavigationSpec.spec
