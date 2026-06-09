@@ -445,13 +445,45 @@ func coerceInner[T any](v any) T {
 					out.FieldByName("Tag").SetInt(tagField.Int())
 					if tagField.Int() == 0 {
 						inner := out.FieldByName("OkValue")
-						if inner.IsValid() && inner.Type().Kind() == reflect.Interface {
-							inner.Set(reflect.ValueOf(okField.Interface()))
+						if inner.IsValid() {
+							innerVal := okField.Interface()
+							if inner.Type().Kind() == reflect.Interface {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(inner.Type()) {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								// v0.16.17 — symmetrise with the SkyMaybe
+								// branch above.  Closes the
+								// `Result a (Result a Box)` soundness bug
+								// where the inner OkValue is a concrete
+								// `Box_R` struct (non-interface) inside a
+								// `SkyResult[any, any]` source — pre-fix
+								// the assignment was silently skipped and
+								// the output kept its zero-value Box_R.
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									inner.Type())
+								if narrowed.IsValid() {
+									inner.Set(narrowed)
+								}
+							}
 						}
 					} else {
 						inner := out.FieldByName("ErrValue")
-						if inner.IsValid() && inner.Type().Kind() == reflect.Interface {
-							inner.Set(reflect.ValueOf(errField.Interface()))
+						if inner.IsValid() {
+							innerVal := errField.Interface()
+							if inner.Type().Kind() == reflect.Interface {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(inner.Type()) {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									inner.Type())
+								if narrowed.IsValid() {
+									inner.Set(narrowed)
+								}
+							}
 						}
 					}
 					return out.Interface().(T)
