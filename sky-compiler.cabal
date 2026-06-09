@@ -354,6 +354,7 @@ test-suite sky-tests
       Sky.Format.FormatSpec
       Sky.Build.GoKeywordCollisionSpec
       Sky.Build.NestedPatternSpec
+      Sky.Build.NestedCasePatternFieldAccessSpec
       Sky.Build.ConsCtorPatternSpec
       Sky.Build.ConsPatternLengthSpec
       Sky.Build.CtorConsPatternSpec
