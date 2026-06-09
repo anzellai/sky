@@ -1860,6 +1860,28 @@ verified against HEAD.
     `type alias` for the whole arrow type.
 ### Closed in v0.16 (kept here for grep)
 
+- ~~Sky.Live runtime: sky-nav click + popstate (Back/Forward)
+  handlers don't check `r.ok` before passing the fetch body to
+  `__skyPatch`. A 404 "session not found" body (server lost our
+  session_id store entry — TTL expiry, store-restart, store-
+  config change, cross-deploy cookie collision) gets passed
+  verbatim to `__skyPatch` and replaces the entire `<body>` with
+  plain text — user sees "session not found" as the whole page
+  in a serif font, indistinguishable from a generic crash~~ —
+  closed in v0.16.16. Both .then chains in `liveJSWithCfg…`
+  gate on `r.ok` before invoking `__skyPatch`; on non-OK the
+  click path navigates to the link URL (`window.location.href =
+  href`) and the popstate path reloads the current URL — both
+  trigger the runtime's initial-page handler which always
+  succeeds (GET / creates a fresh session when the cookie is
+  invalid). Regression: `TestSkyNavFetchChecksOk` verifies the
+  embedded JS contains ≥2 `if (!r.ok)` occurrences. The recovery
+  behaviour stays reload (universal sane default — works for
+  apps with no auth, with auth, with stateful cart/cookie state).
+  Apps that need richer behaviour can opt-in to a configurable
+  `onSessionLost` cfg field — design tracked but not shipped in
+  v0.16.x; reload is the floor.
+
 - ~~Unannotated cross-module `view : Cfg msg -> Element msg`
   miscompiles to `any(cfg).(Cfg_R[any])` casts that panic at
   runtime~~ — closed by Issue #521.  The lowerer now pushes the
