@@ -89,11 +89,16 @@ err =
 
 
 -- ─── Entry point ────────────────────────────────────────────────
-viewLogsTab : Model -> List (Element Msg)
-viewLogsTab model =
+--
+-- v0.16.20: takes pre-filtered logs explicitly (caller in View.sky
+-- applies the global range + free-text filter once before
+-- dispatch). Avoids the record-update + Coerce panic site that
+-- crashed tab navigation in production.
+viewLogsTab : Model -> List LogEntry -> List (Element Msg)
+viewLogsTab model preFilteredLogs =
     [ scopeBanner model.selectedService
     , filterPanel model.logFilter
-    , logsPanel model.logs
+    , logsPanel preFilteredLogs
     ]
 
 

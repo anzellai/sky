@@ -3543,8 +3543,8 @@ func LogsTab_err() Std_Ui_Color {
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
-func LogsTab_viewLogsTab(model State_Model_R) []Std_Ui_Element {
-	return []Std_Ui_Element{rt.Coerce[Std_Ui_Element](LogsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService")))), rt.Coerce[Std_Ui_Element](LogsTab_filterPanel(rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter")))), rt.Coerce[Std_Ui_Element](LogsTab_logsPanel(rt.AsListT[State_LogEntry_R](rt.Field(model, "Logs"))))}
+func LogsTab_viewLogsTab(model State_Model_R, preFilteredLogs []State_LogEntry_R) []Std_Ui_Element {
+	return []Std_Ui_Element{rt.Coerce[Std_Ui_Element](LogsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService")))), rt.Coerce[Std_Ui_Element](LogsTab_filterPanel(rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter")))), rt.Coerce[Std_Ui_Element](LogsTab_logsPanel(rt.AsListT[State_LogEntry_R](preFilteredLogs)))}
 }
 
 func LogsTab_scopeBanner(selected string) Std_Ui_Element {
@@ -5454,8 +5454,8 @@ func TracesTab_err() Std_Ui_Color {
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
-func TracesTab_viewTracesTab(model State_Model_R) []Std_Ui_Element {
-	return []Std_Ui_Element{rt.Coerce[Std_Ui_Element](TracesTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService")))), rt.Coerce[Std_Ui_Element](TracesTab_tracesFilterPanel(rt.CoerceString(rt.Field(model, "TraceQuery")))), rt.Coerce[Std_Ui_Element](TracesTab_tracesPanel(rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](rt.Field(model, "Traces"))))}
+func TracesTab_viewTracesTab(model State_Model_R, preFilteredTraces []State_TraceRow_R) []Std_Ui_Element {
+	return []Std_Ui_Element{rt.Coerce[Std_Ui_Element](TracesTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService")))), rt.Coerce[Std_Ui_Element](TracesTab_tracesFilterPanel(rt.CoerceString(rt.Field(model, "TraceQuery")))), rt.Coerce[Std_Ui_Element](TracesTab_tracesPanel(rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](preFilteredTraces)))}
 }
 
 func TracesTab_scopeBanner(selected string) Std_Ui_Element {
@@ -5970,7 +5970,7 @@ func View_urlSync(model State_Model_R) Std_Ui_Element {
 func View_encodeFilters(model State_Model_R) string {
 	return func() string {
 		rangePart := func() string {
-			if rt.AsBool(rt.Eq(model.Range, State_Range_Last24h)) {
+			if rt.AsBool(rt.Eq(rt.Field(model, "Range"), State_Range_Last24h)) {
 				return ""
 			} else {
 				return rt.CoerceString(rt.Concat("range=", State_rangeKey(any(model.Range).(State_Range))))
@@ -6150,66 +6150,62 @@ func View_content(model State_Model_R) Std_Ui_Element {
 								return nil
 							}()
 							_ = tracesFinal
-							return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-								filtered := rt.RecordUpdate(model, map[string]any{"Logs": logsFinal, "Traces": tracesFinal})
-								_ = filtered
-								return rt.Coerce[Std_Ui_Element](rt.Coerce[Std_Ui_Element](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_padding(20), Std_Ui_spacing(16)}), rt.AsListT[Std_Ui_Element](func() any {
-									__subject := rt.Field(filtered, "Tab")
-									_ = __subject
-									if rt.EnumTagIs(__subject, 0) {
-										return func() any {
-											if rt.AsBool(rt.NotEq(rt.Field(filtered, "HubDbPath"), "")) {
-												return Overview_viewOverview(rt.Coerce[State_Model_R](filtered))
-											} else {
-												return View_overviewView(rt.Coerce[State_Overview_R](rt.Field(filtered, "Overview")))
-											}
-											return nil
-										}()
-									}
-									if rt.EnumTagIs(__subject, 1) {
-										return func() any {
-											if rt.AsBool(rt.NotEq(rt.Field(filtered, "HubDbPath"), "")) {
-												return MetricsTab_viewMetricsTab(rt.Coerce[State_Model_R](filtered))
-											} else {
-												return View_metricsView(rt.AsListT[State_MetricRow_R](rt.Field(filtered, "Metrics")))
-											}
-											return nil
-										}()
-									}
-									if rt.EnumTagIs(__subject, 2) {
-										return func() any {
-											if rt.AsBool(rt.NotEq(rt.Field(filtered, "HubDbPath"), "")) {
-												return LogsTab_viewLogsTab(rt.Coerce[State_Model_R](filtered))
-											} else {
-												return View_logsView(rt.Coerce[State_Model_R](filtered))
-											}
-											return nil
-										}()
-									}
-									if rt.EnumTagIs(__subject, 3) {
-										return func() any {
-											if rt.AsBool(rt.NotEq(rt.Field(filtered, "HubDbPath"), "")) {
-												return TracesTab_viewTracesTab(rt.Coerce[State_Model_R](filtered))
-											} else {
-												return View_tracesView(rt.CoerceString(rt.Field(filtered, "TraceQuery")), rt.AsListT[State_TraceRow_R](rt.Field(filtered, "Traces")))
-											}
-											return nil
-										}()
-									}
-									if rt.EnumTagIs(__subject, 4) {
-										return func() any {
-											if rt.AsBool(rt.NotEq(rt.Field(filtered, "HubDbPath"), "")) {
-												return ErrorsTab_viewErrorsTab(rt.Coerce[State_Model_R](filtered))
-											} else {
-												return View_errorsView(rt.AsListT[State_ErrorRow_R](rt.Field(filtered, "Errors")))
-											}
-											return nil
-										}()
-									}
-									_ = rt.Unreachable("case/__subject")
-									return nil
-								}()))))
-							}())
+							return rt.Coerce[Std_Ui_Element](rt.Coerce[Std_Ui_Element](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_padding(20), Std_Ui_spacing(16)}), rt.AsListT[Std_Ui_Element](func() any {
+								__subject := rt.Field(model, "Tab")
+								_ = __subject
+								if rt.EnumTagIs(__subject, 0) {
+									return func() any {
+										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
+											return Overview_viewOverview(rt.Coerce[State_Model_R](model))
+										} else {
+											return View_overviewView(rt.Coerce[State_Overview_R](rt.Field(model, "Overview")))
+										}
+										return nil
+									}()
+								}
+								if rt.EnumTagIs(__subject, 1) {
+									return func() any {
+										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
+											return MetricsTab_viewMetricsTab(rt.Coerce[State_Model_R](model))
+										} else {
+											return View_metricsView(rt.AsListT[State_MetricRow_R](rt.Field(model, "Metrics")))
+										}
+										return nil
+									}()
+								}
+								if rt.EnumTagIs(__subject, 2) {
+									return func() any {
+										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
+											return LogsTab_viewLogsTab(rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
+										} else {
+											return View_logsView(rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
+										}
+										return nil
+									}()
+								}
+								if rt.EnumTagIs(__subject, 3) {
+									return func() any {
+										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
+											return TracesTab_viewTracesTab(rt.Coerce[State_Model_R](model), rt.AsListT[State_TraceRow_R](tracesFinal))
+										} else {
+											return View_tracesView(rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](tracesFinal))
+										}
+										return nil
+									}()
+								}
+								if rt.EnumTagIs(__subject, 4) {
+									return func() any {
+										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
+											return ErrorsTab_viewErrorsTab(rt.Coerce[State_Model_R](model))
+										} else {
+											return View_errorsView(rt.AsListT[State_ErrorRow_R](rt.Field(model, "Errors")))
+										}
+										return nil
+									}()
+								}
+								_ = rt.Unreachable("case/__subject")
+								return nil
+							}()))))
 						}())
 					}())
 				}())
@@ -6250,11 +6246,11 @@ func View_infoRow(label string, value string) Std_Ui_Element {
 	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(label))))).(Std_Ui_Element)), View_codeBadge(value)})))
 }
 
-func View_logsView(model State_Model_R) []Std_Ui_Element {
+func View_logsView(model State_Model_R, preFilteredLogs []State_LogEntry_R) []Std_Ui_Element {
 	return func() []Std_Ui_Element {
 		filtered := Sky_Core_List_filter__LogEntry(func(__pp0 State_LogEntry_R) bool {
 			return View_matchFilter(rt.Coerce[State_LogFilter_R](model.LogFilter), rt.Coerce[State_LogEntry_R](__pp0))
-		}, rt.AsListT[State_LogEntry_R](model.Logs))
+		}, rt.AsListT[State_LogEntry_R](preFilteredLogs))
 		_ = filtered
 		return rt.AsListT[Std_Ui_Element]([]Std_Ui_Element{rt.Coerce[Std_Ui_Element](View_logsFilterPanel(rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter")))), rt.Coerce[Std_Ui_Element](View_panel("Recent log entries", rt.AsListT[Std_Ui_Element](func() any {
 			if rt.AsBool(Sky_Core_List_isEmpty__LogEntry(rt.AsListT[State_LogEntry_R](filtered))) {

@@ -478,11 +478,26 @@ tabButton active tab =
 
 
 -- ─── Content router ──────────────────────────────────────────────
+--
+-- v0.16.20 hotfix: previous shape (`filtered = { model | logs = ...,
+-- traces = ... }` then dispatch `Coerce[Model](filtered)` at each
+-- tab branch) tripped a runtime panic class — RecordUpdate's
+-- returned struct flowed through a typed-Coerce site at every tab
+-- branch (5+ sites per render), and ANY one panicking dropped the
+-- whole Sky.Live session. The bug surfaced as "console panics on
+-- nav to metrics/logs" once real-world data hit Sky's reflect
+-- coerce in production.
+--
+-- Fix: stop creating a synthetic `filtered` Model. Compute the
+-- filtered Logs + Traces lists once, pass them explicitly to the
+-- consumers that need them (logsView / viewLogsTab / tracesView /
+-- viewTracesTab). The unchanged model flows everywhere else — no
+-- record-update, no extra Coerce sites.
 content : Model -> Element Msg
 content model =
     let
         -- v0.16.18 #558-PR1 + PR3: pre-filter time-bound rows once
-        -- per render so every per-tab branch sees the narrowed view.
+        -- per render so per-tab branches see the narrowed view.
         -- Metrics + Errors have no time column or text axis (they're
         -- aggregates) so neither filter applies to them.
         threshold = rangeThresholdIso model.range model.nowMs
@@ -513,15 +528,10 @@ content model =
 
             else
                 List.filter (matchTraceText q) tracesAfterRange
-        filtered =
-            { model
-                | logs = logsFinal
-                , traces = tracesFinal
-            }
     in
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
-        (case filtered.tab of
+        (case model.tab of
 
             OverviewTab ->
                 -- v0.16.4 B5: hub mode shows the multi-service
@@ -530,11 +540,11 @@ content model =
                 -- the single-service Overview that's shipped since
                 -- v0.16.0 — byte-identical output for embedded
                 -- consoles.
-                if filtered.hubDbPath /= "" then
-                    viewOverview filtered
+                if model.hubDbPath /= "" then
+                    viewOverview model
 
                 else
-                    overviewView filtered.overview
+                    overviewView model.overview
 
             MetricsTab ->
                 -- v0.16.4 B6: hub-mode drill-down. When a service
@@ -542,32 +552,37 @@ content model =
                 -- new MetricsTab page renders a scope banner +
                 -- pre-filtered metrics. Embedded / standalone
                 -- consoles keep the existing single-service view.
-                if filtered.hubDbPath /= "" then
-                    viewMetricsTab filtered
+                if model.hubDbPath /= "" then
+                    viewMetricsTab model
 
                 else
-                    metricsView filtered.metrics
+                    metricsView model.metrics
 
             LogsTab ->
-                if filtered.hubDbPath /= "" then
-                    viewLogsTab filtered
+                -- The filtered logs flow as an explicit arg so we
+                -- skip the record-update + Coerce roundtrip that
+                -- panicked production. Each tab branch sees the
+                -- unmodified `model` for everything else (logFilter,
+                -- store config, identity, etc.).
+                if model.hubDbPath /= "" then
+                    viewLogsTab model logsFinal
 
                 else
-                    logsView filtered
+                    logsView model logsFinal
 
             TracesTab ->
-                if filtered.hubDbPath /= "" then
-                    viewTracesTab filtered
+                if model.hubDbPath /= "" then
+                    viewTracesTab model tracesFinal
 
                 else
-                    tracesView filtered.traceQuery filtered.traces
+                    tracesView model.traceQuery tracesFinal
 
             ErrorsTab ->
-                if filtered.hubDbPath /= "" then
-                    viewErrorsTab filtered
+                if model.hubDbPath /= "" then
+                    viewErrorsTab model
 
                 else
-                    errorsView filtered.errors)
+                    errorsView model.errors)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────
@@ -641,10 +656,14 @@ infoRow label value =
 
 
 -- ─── Logs tab ────────────────────────────────────────────────────
-logsView : Model -> List (Element Msg)
-logsView model =
+-- v0.16.20 hotfix: takes pre-filtered logs explicitly. Calling
+-- content router does the time-range + global-query filter once;
+-- here we apply only the per-tab level + free-text filter on top.
+logsView : Model -> List LogEntry -> List (Element Msg)
+logsView model preFilteredLogs =
     let
-        filtered = List.filter (matchFilter model.logFilter) model.logs
+        filtered =
+            List.filter (matchFilter model.logFilter) preFilteredLogs
     in
         [ logsFilterPanel model.logFilter
         , panel

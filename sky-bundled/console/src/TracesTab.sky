@@ -71,11 +71,15 @@ err =
 
 
 -- ─── Entry point ────────────────────────────────────────────────
-viewTracesTab : Model -> List (Element Msg)
-viewTracesTab model =
+--
+-- v0.16.20: takes pre-filtered traces explicitly. Avoids the
+-- record-update + Coerce panic site that crashed tab navigation
+-- in production (same shape as viewLogsTab).
+viewTracesTab : Model -> List TraceRow -> List (Element Msg)
+viewTracesTab model preFilteredTraces =
     [ scopeBanner model.selectedService
     , tracesFilterPanel model.traceQuery
-    , tracesPanel model.traceQuery model.traces
+    , tracesPanel model.traceQuery preFilteredTraces
     ]
 
 
