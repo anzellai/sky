@@ -1088,8 +1088,18 @@ func Auth_signToken(secret any, claims any, expirySeconds any) any {
 	if errRes != nil {
 		return errRes
 	}
+	// Typed codegen represents `Dict String String` as Go
+	// map[string]string (and Dict String V as map[string]V); the
+	// untyped Dict rep is map[string]any. Use the same normaliser
+	// the Db.* kernels already use so callers can pass either shape.
+	// Pre-2026-06-10 fix: a bare `claims.(map[string]any)` silently
+	// dropped every claim when the caller passed a typed Dict —
+	// the JWT shipped with only `exp` / `iat` and downstream
+	// claim-based gates (e.g. SkyDeploy's #552 console handshake's
+	// `slug` claim) saw empty strings, breaking signature-valid
+	// tokens at the application layer.
 	m := map[string]any{}
-	if c, ok := claims.(map[string]any); ok {
+	if c, ok := dbAnyToStringMap(claims); ok {
 		for k, v := range c {
 			m[k] = v
 		}
