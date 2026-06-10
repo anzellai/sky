@@ -217,3 +217,42 @@ func TestHandleSSE_EmitsEventPatchForPatchFrame(t *testing.T) {
 		t.Fatalf("handleSSE didn't emit our queued event:patch frame (seq=7)")
 	}
 }
+
+// ─── (e) Idempotent setAttribute guard (#568) ───────────────────
+//
+// __skyApplyPatches must guard setAttribute(k, v) with a getAttribute
+// equality check. Without the guard, an SSE patch carrying an
+// unchanged attribute value still calls setAttribute, which browsers
+// treat as a "navigate / refetch" event for src/href-bearing elements
+// (most painfully: <iframe src="…"> reloads on ANY assignment, even
+// to the same string).
+//
+// Production regression: dev.skydeploy.app/_sky/console rendered
+// inside the dashboard via <iframe src=…>. The dashboard Tick (4s)
+// re-rendered, sent SSE attribute patches that touched iframe.src
+// with the unchanged value, the iframe reloaded every 4s, every
+// reload re-fired the cross-origin handshake form-POST to
+// <slug>.<host>/_sky/console/_login, and each handshake opened a
+// fresh long-lived SSE on the tenant Cloud Run instance. With
+// max_instances=1 and containerConcurrency=80, the tenant saturated
+// in minutes and Cloud Run's GFE responded "Rate exceeded." to
+// every subsequent request.
+//
+// The runtime fix is a one-line guard in the JS patch loop. This
+// regression pins the guard string-contents so a future rewrite of
+// __skyApplyPatches can't silently drop it.
+func TestLiveJS_IdempotentSetAttributeGuard(t *testing.T) {
+	js := liveJS("test-sid")
+	// The guarded pattern is "if (el.getAttribute(k) !== v) {" — a
+	// substring search is robust against whitespace tweaks but tight
+	// enough to catch a logic flip (e.g. someone "simplifying" the
+	// guard back to unconditional setAttribute).
+	wantGuard := "if (el.getAttribute(k) !== v) {"
+	if !strings.Contains(js, wantGuard) {
+		t.Fatalf("__skyApplyPatches must guard setAttribute with %q; not found in liveJS — "+
+			"see runtime-go/rt/live.go and docs for issue #568. Without this guard, "+
+			"every Sky.Live SSE patch that re-emits an unchanged iframe/img/link/script "+
+			"src or href triggers a browser refetch, breaking embedded console / "+
+			"image-heavy apps under any Tick subscription.", wantGuard)
+	}
+}

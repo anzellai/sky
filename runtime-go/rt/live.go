@@ -6866,7 +6866,20 @@ function __skyApplyPatches(patches) {
         }
         if (v === "") { el.removeAttribute(k); }
         else {
-          el.setAttribute(k, v);
+          // Idempotent setAttribute (#568): some elements re-fetch or
+          // re-navigate on ANY assignment to certain attributes, even
+          // when the new value is identical to the existing one. The
+          // poster child is the iframe src attribute — calling
+          // setAttribute with the same value causes the browser to
+          // re-navigate the iframe, dropping any SSE / cookie /
+          // scroll state inside. Same class: img src refetches,
+          // link href rebuilds the stylesheet, script src re-executes
+          // (browsers vary). Skipping the no-op write costs one
+          // getAttribute compare per attr and rules out a whole bug
+          // class. Mirrors the guard in __skyCopyAttrsExceptAuthority.
+          if (el.getAttribute(k) !== v) {
+            el.setAttribute(k, v);
+          }
           // Sync DOM properties that don't reflect from attrs.
           if (k === "value" && ("value" in el)) {
             el.value = v;
