@@ -101,7 +101,7 @@ applyKeyValue section config key value = case section of
         "port"      -> config { _livePort = safeReadInt value (_livePort config) }
         "store"     -> config { _liveStore = value }
         "storePath" -> config { _liveStorePath = value }
-        "ttl"       -> config { _liveTtl = safeReadInt value (_liveTtl config) }
+        "ttl"       -> config { _liveTtl = parseDurationSeconds value (_liveTtl config) }
         "static"    -> config { _liveStatic = value }
         -- maxBodyBytes: cap for the `/_sky/event` POST body. Default
         -- in the runtime is 5 MiB; bump higher if your app uses
@@ -119,7 +119,7 @@ applyKeyValue section config key value = case section of
     -- without each call passing a secret.
     "auth" -> case key of
         "secret"     -> config { _authSecret   = value }
-        "tokenTtl"   -> config { _authTokenTtl = safeReadInt value (_authTokenTtl config) }
+        "tokenTtl"   -> config { _authTokenTtl = parseDurationSeconds value (_authTokenTtl config) }
         "cookieName" -> config { _authCookie   = value }
         "driver"     -> config { _authDriver   = value }
         _            -> config
@@ -156,6 +156,67 @@ safeReadInt :: String -> Int -> Int
 safeReadInt s fallback = case reads s of
     [(n, _)] -> n
     _        -> fallback
+
+
+-- | Parse a Sky.Live / Std.Auth TTL value into seconds.
+--
+-- Accepts EITHER a Go-duration string (`"24h"`, `"30m"`, `"1h30m"`,
+-- `"45s"`) OR a bare integer interpreted as seconds. Returns the
+-- fallback for any unparseable value.
+--
+-- This exists because `safeReadInt`'s `reads` consumes only the
+-- leading digits and silently drops the suffix — `reads "24h" ::
+-- [(Int, String)]` returns `[(24, "h")]`, so `safeReadInt "24h"
+-- def` is `24` (twenty-four SECONDS, not twenty-four hours). The
+-- documented sky.toml shape is `ttl = "24h"` (matches CLAUDE.md +
+-- the runtime's `parseTTL`), so the bug surfaced as session
+-- cookies expiring every 24 seconds in production after users
+-- configured `[live] ttl = "24h"`.
+parseDurationSeconds :: String -> Int -> Int
+parseDurationSeconds raw fallback =
+    let s = trim raw
+    in case s of
+        "" -> fallback
+        _  ->
+            -- Try Go-duration first (the documented shape: "24h",
+            -- "1h30m"). On miss fall back to bare-integer SECONDS
+            -- via a strict all-digits guard. We deliberately do
+            -- NOT use `safeReadInt` here — its `reads`-based parse
+            -- accepts leading digits + arbitrary suffix, which is
+            -- exactly the bug class this helper exists to close.
+            case parseGoDuration s of
+                Just secs | secs > 0 -> secs
+                _                     ->
+                    if all (`elem` ['0'..'9']) s && not (null s)
+                        then case reads s of
+                            [(n, "")] -> n
+                            _         -> fallback
+                        else fallback
+
+
+-- | Tiny Go-duration parser: accepts `Nh`, `Nm`, `Ns`, OR a
+-- concatenation (`1h30m`, `1h30m45s`). Returns total seconds.
+-- `Nothing` on any unparseable shape.
+--
+-- Mirrors Go's `time.ParseDuration` for the suffixes Sky actually
+-- ships defaults in (h, m, s — we don't need ms/us/ns since
+-- TTLs are second-granular at the cookie + JWT layer).
+parseGoDuration :: String -> Maybe Int
+parseGoDuration s =
+    -- Reject bare-integer strings here so the caller's
+    -- `safeReadInt` fallback handles them (preserves the
+    -- legacy bare-seconds shape).
+    if not (any (`elem` "hms") s) then Nothing
+    else go s 0
+  where
+    go "" acc = Just acc
+    go cs acc = case reads cs :: [(Int, String)] of
+        [(n, rest)] -> case rest of
+            ('h':rest') -> go rest' (acc + n * 3600)
+            ('m':rest') -> go rest' (acc + n * 60)
+            ('s':rest') -> go rest' (acc + n)
+            _           -> Nothing
+        _ -> Nothing
 
 
 -- Helpers
