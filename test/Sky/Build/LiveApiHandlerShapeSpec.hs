@@ -92,6 +92,7 @@ appShell handlerDefs apiLine = unlines
     , "import Sky.Http.Server as Server"
     , "import Sky.Http.Server exposing (Request, Response)"
     , "import Sky.Core.Error as Error exposing (Error)"
+    , "import Std.Html as Html"
     , ""
     , "type Page = HomePage"
     , "type Msg = NoOp"
@@ -102,8 +103,15 @@ appShell handlerDefs apiLine = unlines
     , "update : Msg -> String -> ( String, Cmd.Cmd Msg )"
     , "update _ m = ( m, Cmd.none )"
     , ""
-    , "view : String -> any"
-    , "view _ = \"\""
+    -- Live.app's kernel sig constrains view to `Model -> Html msg`.
+    -- Earlier iteration of this fixture used `view : String -> any`
+    -- — wildcard `any` is per-occurrence (not polymorphic) so it
+    -- doesn't unify with `Html Msg` in the cfg record. Bind a real
+    -- Html return so the positive test exercises ONLY the api
+    -- handler shape under test, not an incidental view-type
+    -- mismatch.
+    , "view : String -> Html.Html Msg"
+    , "view _ = Html.text \"\""
     , ""
     , "subscriptions : String -> Sub.Sub Msg"
     , "subscriptions _ = Sub.none"
