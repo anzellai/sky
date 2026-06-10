@@ -14,7 +14,7 @@ import rt "sky-app/rt"
 
 var _ = rt.AsInt
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 
 func Sky_Core_List_map_[T1 any, T2 any](fn func(T1) T2, list []T1) []T2 {
 	return func() []T2 {
@@ -345,7 +345,7 @@ func Std_Html_Attributes_Attribute_EventAttr(v0 Std_Html_Attributes_Event) Std_H
 
 var Std_Html_Attributes_Attribute_NoAttr Std_Html_Attributes_Attribute = Std_Html_Attributes_Attribute{Tag: 3, SkyName: "NoAttr"}
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Html_Attributes_Event = rt.SkyADT
 
 func Std_Html_Attributes_Event_OnMsg(v0 string, v1 any) Std_Html_Attributes_Event {
@@ -364,7 +364,7 @@ func Std_Html_Attributes_Event_OnRaw(v0 string, v1 any) Std_Html_Attributes_Even
 	return Std_Html_Attributes_Event{Tag: 3, SkyName: "OnRaw", Fields: []any{v0, v1}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func Std_Html_Attributes_class(v string) rt.SkyAttribute {
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("class", v))
 }
@@ -447,7 +447,7 @@ func Std_Html_Html_HRaw(v0 string) Std_Html_Html {
 	return Std_Html_Html{Tag: 2, SkyName: "HRaw", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func Std_Html_text(s string) Std_Html_Html {
 	return rt.Coerce[Std_Html_Html](Std_Html_Html_HText(s))
 }
@@ -554,7 +554,7 @@ func Std_Ui_AnimationEntry_AnimationEntry(v0 string, v1 string, v2 string, v3 bo
 	return Std_Ui_AnimationEntry{Tag: 0, SkyName: "AnimationEntry", Fields: []any{v0, v1, v2, v3}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Attribute = rt.SkyADT
 
 var Std_Ui_Attribute_NoAttribute Std_Ui_Attribute = Std_Ui_Attribute{Tag: 0, SkyName: "NoAttribute"}
@@ -701,7 +701,7 @@ func Std_Ui_Attribute_AttrAnimation(v0 string, v1 string, v2 string, v3 bool) St
 	return Std_Ui_Attribute{Tag: 37, SkyName: "AttrAnimation", Fields: []any{v0, v1, v2, v3}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Breakpoint = rt.SkyADT
 
 var Std_Ui_Breakpoint_SmAndUp Std_Ui_Breakpoint = Std_Ui_Breakpoint{Tag: 0, SkyName: "SmAndUp"}
@@ -734,14 +734,14 @@ func Std_Ui_Breakpoint_Custom(v0 int, v1 int) Std_Ui_Breakpoint {
 	return Std_Ui_Breakpoint{Tag: 13, SkyName: "Custom", Fields: []any{v0, v1}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Color = rt.SkyADT
 
 func Std_Ui_Color_Rgba(v0 int, v1 int, v2 int, v3 float64) Std_Ui_Color {
 	return Std_Ui_Color{Tag: 0, SkyName: "Rgba", Fields: []any{v0, v1, v2, v3}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Description = rt.SkyADT
 
 var Std_Ui_Description_NoDescription Std_Ui_Description = Std_Ui_Description{Tag: 0, SkyName: "NoDescription"}
@@ -770,7 +770,7 @@ var Std_Ui_Description_DescButton Std_Ui_Description = Std_Ui_Description{Tag: 9
 
 var Std_Ui_Description_DescParagraph Std_Ui_Description = Std_Ui_Description{Tag: 10, SkyName: "DescParagraph"}
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Element = rt.SkyADT
 
 var Std_Ui_Element_Empty Std_Ui_Element = Std_Ui_Element{Tag: 0, SkyName: "Empty"}
@@ -791,7 +791,7 @@ func Std_Ui_Element_Raw(v0 any) Std_Ui_Element {
 	return Std_Ui_Element{Tag: 4, SkyName: "Raw", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_HAlign = int
 
 const (
@@ -838,7 +838,7 @@ func Std_Ui_Length_Vw(v0 int) Std_Ui_Length {
 	return Std_Ui_Length{Tag: 6, SkyName: "Vw", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Std_Ui_Location = int
 
 const (
@@ -2996,7 +2996,7 @@ func State_Msg_GlobalQuery(v0 string) State_Msg {
 	return State_Msg{Tag: 18, SkyName: "GlobalQuery", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type State_Range = int
 
 const (
@@ -3022,7 +3022,7 @@ type State_ErrorRow_R struct {
 	Message string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_ErrorRow_R{}) }
 
 func State_ErrorRow(p0 int, p1 string) State_ErrorRow_R {
@@ -3035,7 +3035,7 @@ type State_Identity_R struct {
 	Claims  map[string]string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_Identity_R{}) }
 
 func State_Identity(p0 string, p1 string, p2 map[string]string) State_Identity_R {
@@ -3055,7 +3055,7 @@ type State_LogEntry_R struct {
 	LatencyMs float64
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_LogEntry_R{}) }
 
 func State_LogEntry(p0 string, p1 string, p2 string, p3 string, p4 string, p5 string, p6 string, p7 string, p8 float64, p9 float64) State_LogEntry_R {
@@ -3071,7 +3071,7 @@ type State_LogFilter_R struct {
 	ShowError bool
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_LogFilter_R{}) }
 
 func State_LogFilter(p0 string, p1 string, p2 bool, p3 bool, p4 bool, p5 bool) State_LogFilter_R {
@@ -3087,7 +3087,7 @@ type State_MetricRow_R struct {
 	Count  float64
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_MetricRow_R{}) }
 
 func State_MetricRow(p0 string, p1 string, p2 string, p3 float64, p4 float64, p5 float64) State_MetricRow_R {
@@ -3116,7 +3116,7 @@ type State_Model_R struct {
 	GlobalQuery     string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_Model_R{}) }
 
 func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[State_Identity_R], p15 string, p16 State_Range, p17 int, p18 string) State_Model_R {
@@ -3135,7 +3135,7 @@ type State_Overview_R struct {
 	ProductionMode  bool
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_Overview_R{}) }
 
 func State_Overview(p0 string, p1 string, p2 string, p3 int, p4 int, p5 float64, p6 int, p7 int, p8 bool) State_Overview_R {
@@ -3152,7 +3152,7 @@ type State_ServiceStat_R struct {
 	SparkP95   []float64
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_ServiceStat_R{}) }
 
 func State_ServiceStat(p0 string, p1 string, p2 float64, p3 float64, p4 float64, p5 []float64, p6 []float64) State_ServiceStat_R {
@@ -3173,7 +3173,7 @@ type State_Store_R struct {
 	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_Store_R{}) }
 
 func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R], p1 func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p2 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p3 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p4 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p5 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p6 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R], p7 func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p8 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p9 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p10 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]) State_Store_R {
@@ -3191,7 +3191,7 @@ type State_TraceRow_R struct {
 	Status     string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(State_TraceRow_R{}) }
 
 func State_TraceRow(p0 string, p1 string, p2 string, p3 string, p4 string, p5 string, p6 float64, p7 string) State_TraceRow_R {
@@ -3264,6 +3264,30 @@ func State_rangeLabel(r State_Range) string {
 		}
 		if rt.EnumTagIs(__subject, 4) {
 			return "All"
+		}
+		_ = rt.Unreachable("case/__subject")
+		return ""
+	}()
+}
+
+func State_rangeKey(r State_Range) string {
+	return func() string {
+		__subject := r
+		_ = __subject
+		if rt.EnumTagIs(__subject, 0) {
+			return "15m"
+		}
+		if rt.EnumTagIs(__subject, 1) {
+			return "1h"
+		}
+		if rt.EnumTagIs(__subject, 2) {
+			return "24h"
+		}
+		if rt.EnumTagIs(__subject, 3) {
+			return "7d"
+		}
+		if rt.EnumTagIs(__subject, 4) {
+			return "all"
 		}
 		_ = rt.Unreachable("case/__subject")
 		return ""
@@ -3733,7 +3757,7 @@ func Sky_Core_Error_Error_Error(v0 Sky_Core_Error_ErrorKind, v1 Sky_Core_Error_E
 	return Sky_Core_Error_Error{Tag: 0, SkyName: "Error", Fields: []any{v0, v1}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Sky_Core_Error_ErrorDetails = rt.SkyADT
 
 func Sky_Core_Error_ErrorDetails_FfiPanic(v0 Sky_Core_Error_PanicInfo_R) Sky_Core_Error_ErrorDetails {
@@ -3756,7 +3780,7 @@ func Sky_Core_Error_ErrorDetails_Custom(v0 string) Sky_Core_Error_ErrorDetails {
 	return Sky_Core_Error_ErrorDetails{Tag: 4, SkyName: "Custom", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Sky_Core_Error_ErrorKind = int
 
 const (
@@ -3778,7 +3802,7 @@ type Sky_Core_Error_ErrorInfo_R struct {
 	Details rt.SkyMaybe[Sky_Core_Error_ErrorDetails]
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Error_ErrorInfo_R{}) }
 
 func Sky_Core_Error_ErrorInfo(p0 string, p1 rt.SkyMaybe[Sky_Core_Error_ErrorDetails]) Sky_Core_Error_ErrorInfo_R {
@@ -3790,7 +3814,7 @@ type Sky_Core_Error_PanicInfo_R struct {
 	Stack   []string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Error_PanicInfo_R{}) }
 
 func Sky_Core_Error_PanicInfo(p0 string, p1 []string) Sky_Core_Error_PanicInfo_R {
@@ -3802,7 +3826,7 @@ type Sky_Core_Error_TypeInfo_R struct {
 	Actual   string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Error_TypeInfo_R{}) }
 
 func Sky_Core_Error_TypeInfo(p0 string, p1 string) Sky_Core_Error_TypeInfo_R {
@@ -3823,7 +3847,7 @@ type Sky_Core_Http_HttpRequest_R struct {
 	MaxRedirects    int
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpRequest_R{}) }
 
 func Sky_Core_Http_HttpRequest(p0 string, p1 string, p2 string, p3 []rt.SkyTuple2, p4 int, p5 bool, p6 int) Sky_Core_Http_HttpRequest_R {
@@ -3836,7 +3860,7 @@ type Sky_Core_Http_HttpResponse_R struct {
 	Headers map[string]string
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
 
 func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Core_Http_HttpResponse_R {
@@ -3903,7 +3927,7 @@ func Sky_Core_Task_ShouldRetry_RetryWhen(v0 any) Sky_Core_Task_ShouldRetry {
 	return Sky_Core_Task_ShouldRetry{Tag: 1, SkyName: "RetryWhen", Fields: []any{v0}}
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 type Sky_Core_Task_RetryPolicy_R[T1 any] struct {
 	MaxAttempts int
 	BaseMs      int
@@ -3912,7 +3936,7 @@ type Sky_Core_Task_RetryPolicy_R[T1 any] struct {
 	ShouldRetry Sky_Core_Task_ShouldRetry
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Sky_Core_Task_RetryPolicy_R[any]{}) }
 
 func Sky_Core_Task_RetryPolicy[T1 any](p0 int, p1 int, p2 bool, p3 int, p4 Sky_Core_Task_ShouldRetry) Sky_Core_Task_RetryPolicy_R[T1] {
@@ -3933,6 +3957,10 @@ func Sky_Core_Time_unixMillis() func(struct{}) rt.SkyTask[Sky_Core_Error_Error, 
 
 func Sky_Core_Time_formatISO8601() func(int) string {
 	return rt.Coerce[func(int) string](rt.Ffi_kernel("Time_formatISO8601"))
+}
+
+func Sky_Core_Encoding_urlEncode() func(string) string {
+	return rt.Coerce[func(string) string](rt.Ffi_kernel("Encoding_urlEncode"))
 }
 
 func Std_Cmd_none() rt.SkyCmd {
@@ -3964,7 +3992,7 @@ type Std_Ui_Chart_Cfg_R struct {
 	GridLines bool
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Std_Ui_Chart_Cfg_R{}) }
 
 func Std_Ui_Chart_Cfg(p0 int, p1 int, p2 Std_Ui_Color, p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[rt.SkyTuple2], p5 bool) Std_Ui_Chart_Cfg_R {
@@ -3979,7 +4007,7 @@ type Std_Ui_Chart_Series_R struct {
 	Color  rt.SkyMaybe[Std_Ui_Color]
 }
 
-// SKY-ORIGIN: src/Main.sky:192:1
+// SKY-ORIGIN: src/Main.sky:193:1
 func init() { rt.RegisterGobType(Std_Ui_Chart_Series_R{}) }
 
 func Std_Ui_Chart_Series(p0 []rt.SkyTuple2, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[Std_Ui_Color]) Std_Ui_Chart_Series_R {
@@ -5781,7 +5809,7 @@ func View_err() Std_Ui_Color {
 }
 
 func View_view(model State_Model_R) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}), rt.AsListT[Std_Ui_Element]([]any{View_header(rt.Coerce[State_Model_R](model)), View_tabStrip(any(model.Tab).(State_Tab)), View_globalFilterStrip(rt.Coerce[State_Model_R](model)), View_content(rt.Coerce[State_Model_R](model))})))
+	return rt.Coerce[Std_Ui_Element](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}), rt.AsListT[Std_Ui_Element]([]any{View_header(rt.Coerce[State_Model_R](model)), View_tabStrip(any(model.Tab).(State_Tab)), View_globalFilterStrip(rt.Coerce[State_Model_R](model)), View_content(rt.Coerce[State_Model_R](model)), View_urlSync(rt.Coerce[State_Model_R](model))})))
 }
 
 func View_header(model State_Model_R) Std_Ui_Element {
@@ -5933,6 +5961,71 @@ func View_rangeChip(current State_Range, r State_Range) Std_Ui_Element {
 
 func View_queryRow(current string) Std_Ui_Element {
 	return rt.Coerce[Std_Ui_Element](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length))}), any(Std_Ui_text("Search")).(Std_Ui_Element)), Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter logs + traces by message, route, name, id…"), Std_Ui_htmlAttribute("value", current), Std_Ui_onInput(State_Msg_GlobalQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(11)}))})))
+}
+
+func View_urlSync(model State_Model_R) Std_Ui_Element {
+	return rt.Coerce[Std_Ui_Element](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("data-sky-query", rt.CoerceString(View_encodeFilters(rt.Coerce[State_Model_R](model)))), Std_Ui_width(any(Std_Ui_px(0)).(Std_Ui_Length)), Std_Ui_height(any(Std_Ui_px(0)).(Std_Ui_Length))}), Std_Ui_none()))
+}
+
+func View_encodeFilters(model State_Model_R) string {
+	return func() string {
+		rangePart := func() string {
+			if rt.AsBool(rt.Eq(model.Range, State_Range_Last24h)) {
+				return ""
+			} else {
+				return rt.CoerceString(rt.Concat("range=", State_rangeKey(any(model.Range).(State_Range))))
+			}
+			return ""
+		}()
+		_ = rangePart
+		return rt.CoerceString(func() string {
+			qPart := func() string {
+				if rt.AsBool(rt.Eq(rt.Field(model, "GlobalQuery"), "")) {
+					return ""
+				} else {
+					return rt.CoerceString(rt.Concat("q=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "GlobalQuery")))))
+				}
+				return ""
+			}()
+			_ = qPart
+			return rt.CoerceString(func() string {
+				svcPart := func() string {
+					if rt.AsBool(rt.Eq(rt.Field(model, "SelectedService"), "")) {
+						return ""
+					} else {
+						return rt.CoerceString(rt.Concat("service=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "SelectedService")))))
+					}
+					return ""
+				}()
+				_ = svcPart
+				return rt.CoerceString(rt.CoerceString(View_joinQueryParts(rt.AsListT[string](Sky_Core_List_filter__String(func(_lp_p string) bool { p := _lp_p; _ = p; return rt.CoerceBool(rt.NotEq(p, "")) }, rt.AsListT[string]([]any{rangePart, qPart, svcPart}))))))
+			}())
+		}())
+	}()
+}
+
+func View_joinQueryParts(parts []string) string {
+	return func() string {
+		__subject := parts
+		_ = __subject
+		if len(rt.AsList(__subject)) == 0 {
+			return ""
+		}
+		if len(rt.AsList(__subject)) == 1 {
+			p := rt.AsList(__subject)[0]
+			_ = p
+			return rt.CoerceString(p)
+		}
+		if len(rt.AsList(__subject)) >= 1 {
+			p := rt.AsList(__subject)[0]
+			_ = p
+			rest := any(rt.AsList(__subject)[1:])
+			_ = rest
+			return rt.CoerceString(rt.Concat(p, rt.Concat("&", View_joinQueryParts(rt.AsListT[string](rest)))))
+		}
+		_ = rt.Unreachable("case/__subject")
+		return ""
+	}()
 }
 
 func View_matchLogText(q string, l State_LogEntry_R) bool {
@@ -6675,62 +6768,62 @@ func View_formatPercent(f float64) string {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:40:1
+// SKY-ORIGIN: src/Main.sky:41:1
 func overviewDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("productionMode", any(rt.JsonDec_bool()).(rt.SkyDecoder), false, any(rt.JsonDecP_optional("bufferTraceUsed", intFromFloat(), 0, any(rt.JsonDecP_optional("bufferLogUsed", intFromFloat(), 0, any(rt.JsonDecP_optional("errorRate5xx", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("requestsTotal", intFromFloat(), 0, any(rt.JsonDecP_optional("uptimeSeconds", intFromFloat(), 0, any(rt.JsonDecP_optional("builtAt", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("commit", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("skyVersion", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDec_succeed(State_Overview)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:59:1
+// SKY-ORIGIN: src/Main.sky:60:1
 func intFromFloat() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_map(func(f any) int { return rt.CoerceInt(rt.Math_roundT(rt.AsFloat(f))) }, any(rt.JsonDec_float()).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:64:1
+// SKY-ORIGIN: src/Main.sky:65:1
 func logsDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(logEntryDecoder()))
 }
 
-// SKY-ORIGIN: src/Main.sky:73:1
+// SKY-ORIGIN: src/Main.sky:74:1
 func logEntryDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("LatencyMS", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("Status", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("Route", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_custom(fieldFromFields("user_label"), rt.JsonDecP_custom(fieldFromFields("session_id"), rt.JsonDecP_optional("ReqID", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Subapp", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Message", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Level", any(rt.JsonDec_string()).(rt.SkyDecoder), "info", any(rt.JsonDecP_optional("TS", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDec_succeed(State_LogEntry)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:93:1
+// SKY-ORIGIN: src/Main.sky:94:1
 func fieldFromFields(name string) rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_oneOf([]any{rt.JsonDec_at([]any{"Fields", name}, rt.JsonDec_string()), rt.JsonDec_succeed("")}))
 }
 
-// SKY-ORIGIN: src/Main.sky:103:1
+// SKY-ORIGIN: src/Main.sky:104:1
 func metricsDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(metricRowDecoder()))
 }
 
-// SKY-ORIGIN: src/Main.sky:108:1
+// SKY-ORIGIN: src/Main.sky:109:1
 func metricRowDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("count", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("sum", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("value", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("labels", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("type", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("name", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDec_succeed(State_MetricRow)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:124:1
+// SKY-ORIGIN: src/Main.sky:125:1
 func tracesDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(traceRowDecoder()))
 }
 
-// SKY-ORIGIN: src/Main.sky:129:1
+// SKY-ORIGIN: src/Main.sky:130:1
 func traceRowDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("status", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("durationMs", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("startTime", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("kind", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("name", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("parentId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("spanId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("traceId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDec_succeed(State_TraceRow)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:142:1
+// SKY-ORIGIN: src/Main.sky:143:1
 func errorsDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(errorRowDecoder()))
 }
 
-// SKY-ORIGIN: src/Main.sky:147:1
+// SKY-ORIGIN: src/Main.sky:148:1
 func errorRowDecoder() rt.SkyDecoder {
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("message", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("count", any(rt.JsonDec_int()).(rt.SkyDecoder), 0, any(rt.JsonDec_succeed(State_ErrorRow)).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
-// SKY-ORIGIN: src/Main.sky:162:1
+// SKY-ORIGIN: src/Main.sky:163:1
 func httpStore(parent string) State_Store_R {
 	return State_Store_R{ListServices: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []string] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []string](rt.AnyTaskSucceed([]any{""}))
@@ -6765,46 +6858,58 @@ func init_[T1 any](_req T1) rt.SkyTuple2 {
 			hubDbPath := rt.System_getenvOr("SKY_CONSOLE_HUB_DB", "")
 			_ = hubDbPath
 			return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-				chosenStore := func() State_Store_R {
-					if rt.AsBool(rt.NotEq(hubDbPath, "")) {
-						return rt.Coerce[State_Store_R](HubStore_hubStore(rt.CoerceString(hubDbPath)))
-					} else {
-						return rt.Coerce[State_Store_R](httpStore(rt.CoerceString(parent)))
-					}
-					return State_Store_R{}
-				}()
-				_ = chosenStore
+				initialRange := State_Range_Last24h
+				_ = initialRange
 				return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-					isStandalone := rt.And(rt.Eq(parent, ""), rt.Eq(hubDbPath, ""))
-					_ = isStandalone
+					initialQuery := ""
+					_ = initialQuery
 					return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-						startModel := State_Model_R{Errors: []State_ErrorRow_R{}, GlobalQuery: "", HubDbPath: rt.CoerceString(hubDbPath), Identity: rt.MaybeCoerce[State_Identity_R](rt.Nothing[any]()), LastError: "", LogFilter: State_emptyLogFilter(), Logs: func() []State_LogEntry_R {
-							if rt.AsBool(isStandalone) {
-								return State_mockLogs()
-							} else {
-								return []State_LogEntry_R{}
-							}
-							return nil
-						}(), Metrics: []State_MetricRow_R{}, NowMs: 0, Overview: func() State_Overview_R {
-							if rt.AsBool(isStandalone) {
-								return State_mockOverview()
-							} else {
-								return State_emptyOverview()
-							}
-							return State_Overview_R{}
-						}(), ParentUrl: rt.CoerceString(parent), Range: rt.Coerce[State_Range](State_Range_Last24h), SelectedService: "", ServiceStats: []State_ServiceStat_R{}, Store: rt.Coerce[State_Store_R](chosenStore), Tab: rt.Coerce[State_Tab](State_Tab_OverviewTab), TenantPrefix: "", TraceQuery: "", Traces: []State_TraceRow_R{}}
-						_ = startModel
+						initialService := ""
+						_ = initialService
 						return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-							identityCmd := func() rt.SkyCmd {
+							chosenStore := func() State_Store_R {
 								if rt.AsBool(rt.NotEq(hubDbPath, "")) {
-									return rt.Coerce[rt.SkyCmd](rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, State_Identity_R](rt.Hub_currentIdentity(hubDbPath)), State_Msg_GotIdentity))
+									return rt.Coerce[State_Store_R](HubStore_hubStore(rt.CoerceString(hubDbPath)))
 								} else {
-									return rt.Coerce[rt.SkyCmd](rt.Cmd_none())
+									return rt.Coerce[State_Store_R](httpStore(rt.CoerceString(parent)))
 								}
-								return rt.SkyCmd{}
+								return State_Store_R{}
 							}()
-							_ = identityCmd
-							return rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: startModel, V1: rt.Cmd_batch([]any{fetchForTab(rt.Coerce[State_Model_R](startModel), any(rt.Field(startModel, "Tab")).(State_Tab), rt.Coerce[State_LogFilter_R](rt.Field(startModel, "LogFilter"))), identityCmd, rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})})
+							_ = chosenStore
+							return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+								isStandalone := rt.And(rt.Eq(parent, ""), rt.Eq(hubDbPath, ""))
+								_ = isStandalone
+								return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+									startModel := State_Model_R{Errors: []State_ErrorRow_R{}, GlobalQuery: rt.CoerceString(initialQuery), HubDbPath: rt.CoerceString(hubDbPath), Identity: rt.MaybeCoerce[State_Identity_R](rt.Nothing[any]()), LastError: "", LogFilter: State_emptyLogFilter(), Logs: func() []State_LogEntry_R {
+										if rt.AsBool(isStandalone) {
+											return State_mockLogs()
+										} else {
+											return []State_LogEntry_R{}
+										}
+										return nil
+									}(), Metrics: []State_MetricRow_R{}, NowMs: 0, Overview: func() State_Overview_R {
+										if rt.AsBool(isStandalone) {
+											return State_mockOverview()
+										} else {
+											return State_emptyOverview()
+										}
+										return State_Overview_R{}
+									}(), ParentUrl: rt.CoerceString(parent), Range: rt.Coerce[State_Range](initialRange), SelectedService: rt.CoerceString(initialService), ServiceStats: []State_ServiceStat_R{}, Store: rt.Coerce[State_Store_R](chosenStore), Tab: rt.Coerce[State_Tab](State_Tab_OverviewTab), TenantPrefix: "", TraceQuery: "", Traces: []State_TraceRow_R{}}
+									_ = startModel
+									return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+										identityCmd := func() rt.SkyCmd {
+											if rt.AsBool(rt.NotEq(hubDbPath, "")) {
+												return rt.Coerce[rt.SkyCmd](rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, State_Identity_R](rt.Hub_currentIdentity(hubDbPath)), State_Msg_GotIdentity))
+											} else {
+												return rt.Coerce[rt.SkyCmd](rt.Cmd_none())
+											}
+											return rt.SkyCmd{}
+										}()
+										_ = identityCmd
+										return rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: startModel, V1: rt.Cmd_batch([]any{fetchForTab(rt.Coerce[State_Model_R](startModel), any(rt.Field(startModel, "Tab")).(State_Tab), rt.Coerce[State_LogFilter_R](rt.Field(startModel, "LogFilter"))), identityCmd, rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})})
+									}())
+								}())
+							}())
 						}())
 					}())
 				}())
@@ -6813,7 +6918,7 @@ func init_[T1 any](_req T1) rt.SkyTuple2 {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:289:1
+// SKY-ORIGIN: src/Main.sky:301:1
 func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 	return func() rt.SkyTuple2 {
 		__subject_tAdt := any(msg).(State_Msg)
@@ -7034,7 +7139,7 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:465:1
+// SKY-ORIGIN: src/Main.sky:477:1
 func fetchLogsOnly(model State_Model_R, filter State_LogFilter_R) rt.SkyCmd {
 	return func() rt.SkyCmd {
 		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
@@ -7053,12 +7158,12 @@ func fetchLogsOnly(model State_Model_R, filter State_LogFilter_R) rt.SkyCmd {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:488:1
+// SKY-ORIGIN: src/Main.sky:500:1
 func hasStoreSource(model State_Model_R) bool {
 	return rt.CoerceBool(rt.Or(model.ParentUrl != "", model.HubDbPath != ""))
 }
 
-// SKY-ORIGIN: src/Main.sky:505:1
+// SKY-ORIGIN: src/Main.sky:517:1
 func fetchForTab(model State_Model_R, tab State_Tab, filter State_LogFilter_R) rt.SkyCmd {
 	return func() rt.SkyCmd {
 		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
@@ -7070,7 +7175,7 @@ func fetchForTab(model State_Model_R, tab State_Tab, filter State_LogFilter_R) r
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:515:1
+// SKY-ORIGIN: src/Main.sky:527:1
 func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []rt.SkyCmd {
 	return func() []rt.SkyCmd {
 		if rt.AsBool(model.HubDbPath != "") {
@@ -7122,21 +7227,21 @@ func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:575:1
+// SKY-ORIGIN: src/Main.sky:587:1
 func fetchOverview(parent string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
 	return rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
 		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(overviewDecoder(), rt.Field(resp, "Body")))
 	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/overview"))))
 }
 
-// SKY-ORIGIN: src/Main.sky:581:1
+// SKY-ORIGIN: src/Main.sky:593:1
 func fetchLogs(parent string, filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
 		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(logsDecoder(), rt.Field(resp, "Body")))
 	}, rt.TaskCoerceT[any, any](rt.Http_get(rt.Concat(parent, rt.Concat("/_sky/console/api/logs?limit=200", buildLogQuery(rt.Coerce[State_LogFilter_R](filter))))))))
 }
 
-// SKY-ORIGIN: src/Main.sky:590:1
+// SKY-ORIGIN: src/Main.sky:602:1
 func buildLogQuery(f State_LogFilter_R) string {
 	return func() string {
 		levels := rt.Concat(func() any {
@@ -7180,28 +7285,28 @@ func buildLogQuery(f State_LogFilter_R) string {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:607:1
+// SKY-ORIGIN: src/Main.sky:619:1
 func fetchMetrics(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
 		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(metricsDecoder(), rt.Field(resp, "Body")))
 	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/metrics-summary"))))
 }
 
-// SKY-ORIGIN: src/Main.sky:613:1
+// SKY-ORIGIN: src/Main.sky:625:1
 func fetchTraces(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
 		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(tracesDecoder(), rt.Field(resp, "Body")))
 	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/traces?limit=100"))))
 }
 
-// SKY-ORIGIN: src/Main.sky:619:1
+// SKY-ORIGIN: src/Main.sky:631:1
 func fetchErrors(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
 		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(errorsDecoder(), rt.Field(resp, "Body")))
 	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/errors"))))
 }
 
-// SKY-ORIGIN: src/Main.sky:625:1
+// SKY-ORIGIN: src/Main.sky:637:1
 func subscriptions(model State_Model_R) rt.SkySub {
 	return func() rt.SkySub {
 		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
@@ -7213,7 +7318,7 @@ func subscriptions(model State_Model_R) rt.SkySub {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:651:1
+// SKY-ORIGIN: src/Main.sky:663:1
 func tickIntervalMs(tab State_Tab) int {
 	return func() int {
 		__subject := tab
@@ -7230,7 +7335,7 @@ func tickIntervalMs(tab State_Tab) int {
 	}()
 }
 
-// SKY-ORIGIN: src/Main.sky:665:1
+// SKY-ORIGIN: src/Main.sky:677:1
 func viewWrapped(model State_Model_R) rt.SkyValue {
 	return rt.Coerce[rt.SkyValue](Std_Ui_layout(rt.AsListT[rt.SkyAttribute]([]any{}), any(View_view(rt.Coerce[State_Model_R](model))).(Std_Ui_Element)))
 }

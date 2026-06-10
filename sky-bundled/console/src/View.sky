@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Time as Time
+import Sky.Core.Encoding as Encoding
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -106,6 +107,7 @@ view model =
         , tabStrip model.tab
         , globalFilterStrip model
         , content model
+        , urlSync model
         ]
 
 
@@ -346,6 +348,62 @@ queryRow current =
               , Font.size 11
               ]
         ]
+
+
+-- v0.16.18 #558-PR4 — emit a zero-height element whose
+-- data-sky-query attribute carries the URL-encoded filter state.
+-- The runtime's __skyRunPaths reads the attribute on every render
+-- and calls history.replaceState if it differs from
+-- location.search. Filter changes don't push history (the back
+-- button stays useful for actual navigation).
+urlSync : Model -> Element Msg
+urlSync model =
+    Ui.el
+        [ Ui.htmlAttribute "data-sky-query" (encodeFilters model)
+        , Ui.width (Ui.px 0)
+        , Ui.height (Ui.px 0)
+        ]
+        Ui.none
+
+
+encodeFilters : Model -> String
+encodeFilters model =
+    let
+        rangePart =
+            if model.range == Last24h then
+                ""
+
+            else
+                "range=" ++ rangeKey model.range
+        qPart =
+            if model.globalQuery == "" then
+                ""
+
+            else
+                "q=" ++ Encoding.urlEncode model.globalQuery
+        svcPart =
+            if model.selectedService == "" then
+                ""
+
+            else
+                "service=" ++ Encoding.urlEncode model.selectedService
+    in
+        joinQueryParts
+            (List.filter (\p -> p /= "") [rangePart, qPart, svcPart])
+
+
+joinQueryParts : List String -> String
+joinQueryParts parts =
+    case parts of
+
+        [] ->
+            ""
+
+        [p] ->
+            p
+
+        p :: rest ->
+            p ++ "&" ++ joinQueryParts rest
 
 
 -- Case-insensitive substring match against the searchable text

@@ -165,6 +165,34 @@ rangeLabel r =
         RangeAll -> "All"
 
 
+-- v0.16.18 #558-PR4 — URL token (lowercase) for Range. Symmetric
+-- with parseRange: a token round-trips through both. Distinct from
+-- rangeLabel because "All" displays Title-case but URLs prefer
+-- lowercase.
+rangeKey : Range -> String
+rangeKey r =
+    case r of
+        Last15m  -> "15m"
+        Last1h   -> "1h"
+        Last24h  -> "24h"
+        Last7d   -> "7d"
+        RangeAll -> "all"
+
+
+-- Parse a URL token back into the Range ADT. Unknown / missing
+-- tokens fall back to the Last24h default so a malformed URL
+-- doesn't break boot.
+parseRange : String -> Range
+parseRange s =
+    case s of
+        "15m" -> Last15m
+        "1h"  -> Last1h
+        "24h" -> Last24h
+        "7d"  -> Last7d
+        "all" -> RangeAll
+        _     -> Last24h
+
+
 -- ─── Logs filter ────────────────────────────────────────────────
 
 -- Multi-axis filter: free-text search + level toggles + session id

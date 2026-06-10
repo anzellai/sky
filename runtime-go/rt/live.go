@@ -6841,6 +6841,20 @@ function __skyRunPaths(root) {
       try { history.replaceState({}, "", p); } catch (_) {}
     }
   }
+  // v0.16.18 #558-PR4 — sibling that manages the query string.
+  // The value is the raw query (no leading '?'); empty value means
+  // "no params, strip any existing query string". Always
+  // replaceState (never push) — filter changes shouldn't grow the
+  // back-button history. The path is preserved, so this composes
+  // with data-sky-path: paths push, queries replace.
+  var qels = (root || document).querySelectorAll("[data-sky-query]");
+  for (var j = 0; j < qels.length; j++) {
+    var q = qels[j].getAttribute("data-sky-query") || "";
+    var current = (location.search || "").replace(/^\?/, "");
+    if (q === current) continue;
+    var target = location.pathname + (q ? "?" + q : "");
+    try { history.replaceState({}, "", target); } catch (_) {}
+  }
 }
 
 function __skyBindOne(root, eventName) {
