@@ -50,6 +50,25 @@ close = Ffi.kernel "Db_close"
 
 -- | `exec db sql params` — parameterised SQL with bound args.
 -- Returns the affected-row count.
+--
+-- `params` is a homogeneously-typed list, so mixed-type SQL params
+-- (e.g. `INSERT INTO users (name, age, admin) VALUES (?, ?, ?)`
+-- bound with String + Int + Bool) must be normalised at the call
+-- site. The convention is to stringify everything via
+-- `String.fromInt` / `String.fromFloat` / `toString` (#575):
+--
+--     Db.exec conn
+--         "INSERT INTO users (name, age, admin) VALUES (?, ?, ?)"
+--         [ "Alice", String.fromInt 30, toString True ]
+--
+-- The SQL driver re-parses each ? parameter to the column's
+-- declared type, so the round-trip is correct for SQLite +
+-- PostgreSQL. Maybe-typed columns route through Maybe directly
+-- (Just v / Nothing) thanks to #574 — no coercion needed:
+--
+--     Db.exec conn
+--         "INSERT INTO people (name, age) VALUES (?, ?)"
+--         [ Just "Alice", Just 30 ]
 exec : Db -> String -> List a -> Task Error Int
 exec = Ffi.kernel "Db_exec"
 
@@ -63,6 +82,10 @@ execRaw = Ffi.kernel "Db_execRaw"
 
 -- | `query db sql params` — parameterised SELECT.  Returns rows
 -- as a list of `Dict String String`.
+--
+-- Same mixed-type convention as `exec` (#575): stringify
+-- non-String params at the call site, or pass Maybe-typed values
+-- directly (#574). See `exec`'s docstring for examples.
 query : Db -> String -> List a -> Task Error (List (Dict String String))
 query = Ffi.kernel "Db_query"
 
