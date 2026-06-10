@@ -3728,7 +3728,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	}
 	app.setupSubscriptions(sess)
 
-	vn := HtmlToVNode(sky_call(app.view, model))
+	vn, _ := app.safeViewCall(model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
@@ -3953,7 +3953,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// Handler IDs are <sky-id>.<event>, stable per model state.
 	if len(sess.handlers) == 0 && sess.model != nil {
 		sess.handlers = map[string]any{}
-		vn := HtmlToVNode(sky_call(app.view, sess.model))
+		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
@@ -4144,7 +4144,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	sess.mu.Lock()
 	if len(sess.handlers) == 0 && sess.model != nil {
 		sess.handlers = map[string]any{}
-		vn := HtmlToVNode(sky_call(app.view, sess.model))
+		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
@@ -4383,7 +4383,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	cmd := tupleSecond(result)
 	finalCmd = cmd
 	sess.handlers = map[string]any{}
-	vn := HtmlToVNode(sky_call(app.view, sess.model))
+	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body = renderVNode(vn, sess.handlers)
@@ -4442,12 +4442,132 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 // break the audit explicitly flagged.
 func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
-	vn := HtmlToVNode(sky_call(app.view, sess.model))
+	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
 	sess.commitRender(&vn, body)
 	return body
+}
+
+// safeViewCall wraps the user's `view` function with a defer/recover
+// so a single panic (e.g. rt.Coerce mismatch on a record-update
+// result, missing field on a polymorphic any, divide-by-zero in a
+// view-time computation) doesn't drop the whole Sky.Live session.
+//
+// Hardens the navigation/view path: panics in user code are caught,
+// logged structurally, and the session continues with a degraded
+// "render error" notice. The user's next dispatch (re-click, browser
+// reload) runs view again from a clean state.
+//
+// Before this defer/recover, a single bad Coerce in a typed-record
+// codegen site (e.g. RecordUpdate-then-Coerce[T]) would crash the
+// dispatch goroutine — Sky.Live's session was effectively destroyed
+// until full page reload AND the user had no diagnostic. With this
+// wrapper the panic becomes a structured log + a visible-but-
+// recoverable error notice on the page.
+//
+// Returns the rendered VNode and `panicked=true` when the wrapper
+// caught a panic. Callers don't need to special-case the panicked
+// path — the fallback VNode renders cleanly through the same
+// assignSkyIDs / applyStyleInjections / renderVNode pipeline.
+//
+// See memory/sky_navigation_panic_class.md for the structural
+// root cause (Sky's reflect-based Coerce sites grow per-render +
+// any one panicking takes down the whole session).
+func (app *liveApp) safeViewCall(model any) (VNode, bool) {
+	var vn VNode
+	var panicked bool
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+				reason := fmt.Sprintf("%v", r)
+				stack := string(debug.Stack())
+				// Structured log for ops dashboards (Sky Console, OTel).
+				// Stack is included so the panic site is grep-able from
+				// the journalctl / Cloud Logging stream. logEmit fires
+				// immediately (no Task wrap) since we're already inside
+				// the deferred recover.
+				logEmit(logLevelError, "error", "sky.live.view.panic",
+					[]any{
+						"reason", reason,
+						"stack_head", firstLines(stack, 8),
+					},
+				)
+				vn = renderViewPanicFallback(reason)
+			}
+		}()
+		vn = HtmlToVNode(sky_call(app.view, model))
+	}()
+	return vn, panicked
+}
+
+// renderViewPanicFallback produces a self-contained VNode that
+// renders a small "Render error" banner inline with the page chrome.
+// The fallback CANNOT call any user code — it only emits literal
+// VNode values built from Go strings. The recovery is local to ONE
+// dispatch; the next dispatch re-runs view normally.
+//
+// Visible to the user as a dark-mode-aware error notice with the
+// panic reason embedded (truncated to 200 chars to keep the UI
+// readable when the reason is a long stack frame).
+func renderViewPanicFallback(reason string) VNode {
+	short := reason
+	if len(short) > 200 {
+		short = short[:200] + "…"
+	}
+	style := "background:#3a1f24;color:#ffb3b3;" +
+		"border:1px solid #6b3438;border-radius:6px;" +
+		"padding:14px 18px;margin:16px;" +
+		"font:13px/1.5 ui-monospace,Menlo,monospace;"
+	return VNode{
+		Kind: "element",
+		Tag:  "div",
+		Attrs: map[string]string{
+			"style": style,
+			"role":  "alert",
+		},
+		Children: []VNode{
+			{
+				Kind: "element",
+				Tag:  "strong",
+				Attrs: map[string]string{
+					"style": "color:#ff7a7a;",
+				},
+				Children: []VNode{vtext("Render error")},
+			},
+			vtext("  "),
+			vtext(short),
+			{
+				Kind: "element",
+				Tag:  "div",
+				Attrs: map[string]string{
+					"style": "margin-top:8px;color:#a0a0aa;font-size:11px;",
+				},
+				Children: []VNode{
+					vtext("This dispatch's view panicked — the session " +
+						"survived. Refresh the page or trigger a new " +
+						"action to retry."),
+				},
+			},
+		},
+	}
+}
+
+// firstLines returns the first N lines of s — used to keep log
+// stack-head fields compact in the structured log.
+func firstLines(s string, n int) string {
+	count := 0
+	for i, c := range s {
+		if c == '\n' {
+			count++
+			if count >= n {
+				return s[:i]
+			}
+		}
+	}
+	return s
 }
 
 // isErrResult: True when v is a SkyResult with Tag == 1 (Err).
@@ -5395,8 +5515,12 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		var snap frameSnapshot
 		var haveSnap bool
 		func() {
-			defer func() { _ = recover() }()
-			vn := HtmlToVNode(sky_call(app.view, sess.model))
+			// v0.16.21: defer/recover absorbed into safeViewCall.
+			// Previously this was a bare `defer func() { _ = recover() }()`
+			// that silently swallowed panics with no log — admins couldn't
+			// see why frames started looking wrong. safeViewCall emits
+			// structured logs + renders a recoverable error notice.
+			vn, _ := app.safeViewCall(sess.model)
 			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
