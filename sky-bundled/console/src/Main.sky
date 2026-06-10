@@ -252,6 +252,8 @@ init _req =
             -- the first Tick (defaults to 0 = no filter applies).
             , range = Last24h
             , nowMs = 0
+            -- v0.16.18 #558-PR3: empty = no filter.
+            , globalQuery = ""
             }
 
         -- Fetch the signed-in identity on boot. Only meaningful
@@ -453,6 +455,10 @@ update msg model =
             -- still requires the Err arm. Keep nowMs untouched on
             -- the unreachable failure case.
             ( model, Cmd.none )
+
+        -- v0.16.18 #558-PR3: global free-text filter input event.
+        GlobalQuery q ->
+            ( { model | globalQuery = q }, Cmd.none )
 
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg

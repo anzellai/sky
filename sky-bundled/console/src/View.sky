@@ -206,6 +206,7 @@ globalFilterStrip model =
 
           else
               Ui.none
+        , queryRow model.globalQuery
         ]
 
 
@@ -312,6 +313,62 @@ rangeChip current r =
             (Ui.text (rangeLabel r))
 
 
+-- Free-text search input rendered as the third row of the global
+-- filter strip. Uses the Ui.input idiom that LogsTab + TracesTab
+-- already use — explicit `value` attribute keeps the input
+-- contents in sync across server-driven re-renders, onInput sends
+-- GlobalQuery on every keystroke.
+queryRow : String -> Element Msg
+queryRow current =
+    Ui.row
+        [ Ui.spacing 6, Ui.width Ui.fill ]
+        [ Ui.el
+              [ Font.color textSecondary
+              , Font.size 11
+              , Ui.paddingXY 0 4
+              , Ui.width (Ui.px 60)
+              ]
+              (Ui.text "Search")
+        , Ui.input
+              [ Ui.htmlAttribute "type" "search"
+              , Ui.htmlAttribute
+                    "placeholder"
+                    "Filter logs + traces by message, route, name, id…"
+              , Ui.htmlAttribute "value" current
+              , Ui.onInput GlobalQuery
+              , Ui.width Ui.fill
+              , Background.color bgPage
+              , Border.width 1
+              , Border.color border_
+              , Border.rounded 4
+              , Ui.paddingXY 8 4
+              , Font.color textPrimary
+              , Font.size 11
+              ]
+        ]
+
+
+-- Case-insensitive substring match against the searchable text
+-- axes of a LogEntry. The caller pre-lowers the query so each row
+-- only lowers its candidate fields. Multiple fields are checked
+-- so "/api/users" finds the route, "5xx" finds 5xx in messages,
+-- a session id pivots to that session's logs.
+matchLogText : String -> LogEntry -> Bool
+matchLogText q l =
+    String.contains q (String.toLower l.message)
+        || String.contains q (String.toLower l.route)
+        || String.contains q (String.toLower l.reqId)
+        || String.contains q (String.toLower l.sessionId)
+
+
+-- TraceRow doesn't carry a reqId or message — name + traceId are
+-- the searchable axes. Same case-insensitive substring shape.
+matchTraceText : String -> TraceRow -> Bool
+matchTraceText q t =
+    String.contains q (String.toLower t.name)
+        || String.contains q (String.toLower t.traceId)
+
+
 -- ISO-8601 threshold for a (range, nowMs) pair. Empty string means
 -- "no filter" — caller short-circuits the List.filter. Returned
 -- string sorts lexicographically against telemetry row .time /
@@ -366,23 +423,43 @@ tabButton active tab =
 content : Model -> Element Msg
 content model =
     let
-        -- v0.16.18 #558-PR1: pre-filter time-bound rows once per
-        -- render so every per-tab branch sees the narrowed view.
-        -- Metrics + Errors have no time column (they're aggregates)
-        -- so the range filter doesn't apply to them.
+        -- v0.16.18 #558-PR1 + PR3: pre-filter time-bound rows once
+        -- per render so every per-tab branch sees the narrowed view.
+        -- Metrics + Errors have no time column or text axis (they're
+        -- aggregates) so neither filter applies to them.
         threshold = rangeThresholdIso model.range model.nowMs
-        filtered =
+        q = String.toLower (String.trim model.globalQuery)
+        logsAfterRange =
             if threshold == "" then
-                model
+                model.logs
 
             else
-                { model
-                    | logs = List.filter (\l -> l.time >= threshold) model.logs
-                    , traces =
-                        List.filter
-                            (\t -> t.startTime >= threshold)
-                            model.traces
-                }
+                List.filter (\l -> l.time >= threshold) model.logs
+        tracesAfterRange =
+            if threshold == "" then
+                model.traces
+
+            else
+                List.filter
+                    (\t -> t.startTime >= threshold)
+                    model.traces
+        logsFinal =
+            if q == "" then
+                logsAfterRange
+
+            else
+                List.filter (matchLogText q) logsAfterRange
+        tracesFinal =
+            if q == "" then
+                tracesAfterRange
+
+            else
+                List.filter (matchTraceText q) tracesAfterRange
+        filtered =
+            { model
+                | logs = logsFinal
+                , traces = tracesFinal
+            }
     in
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]

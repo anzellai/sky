@@ -267,6 +267,13 @@ type alias Model =
     -- (Time.formatISO8601 is pure Int -> String).
     , range : Range
     , nowMs : Int
+    -- v0.16.18 #558-PR3: free-text search applied alongside the
+    -- range + service filters. Empty string = no filter. Match
+    -- is case-insensitive substring against multiple row fields
+    -- (logs: message / route / reqId / sessionId; traces: name /
+    -- traceId). Errors + metrics carry no useful text axis so
+    -- the filter doesn't apply to them.
+    , globalQuery : String
     }
 
 -- Identity threaded from the hub auth-gate via Hub_currentIdentity
@@ -313,6 +320,8 @@ type Msg
     -- v0.16.18 #558-PR1
     | SelectRange Range
     | GotNowMs (Result Error Int)
+    -- v0.16.18 #558-PR3
+    | GlobalQuery String
 
 
 -- ─── Defaults ────────────────────────────────────────────────────
