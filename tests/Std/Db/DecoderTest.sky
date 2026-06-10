@@ -43,7 +43,7 @@ userDecoder =
         |> Decode.andMap (Decode.int "id")
         |> Decode.andMap (Decode.string "name")
         |> Decode.andMap (Decode.string "email")
-        |> Decode.andMap (Decode.nullable "age" (Decode.int "age"))
+        |> Decode.andMap (Decode.nullable (Decode.int "age"))
 
 
 -- A simpler 2-field decoder via `map2` (no curried lambda).
