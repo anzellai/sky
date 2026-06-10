@@ -121,6 +121,50 @@ type alias ServiceStat =
     , sparkP95 : List Float
     }
 
+-- ─── Time-range filter (v0.16.18 #558-PR1) ──────────────────────
+--
+-- Global time-range applied across Logs / Traces tabs. Independent
+-- of the per-tab filters (LogFilter / traceQuery). The selected
+-- variant + a Tick-refreshed `nowMs` snapshot let the view path
+-- compute the ISO-8601 threshold synchronously via
+-- Time.formatISO8601 (pure Int -> String). Rows whose `time` /
+-- `startTime` string is < threshold are filtered out before the
+-- per-tab filters apply.
+--
+-- `RangeAll` skips the filter entirely (no threshold computation).
+-- Default is `Last24h` — matches the typical "what's been happening
+-- today" question. Future PRs widen to slug + free-text + saved
+-- views built on the same row-filter foundation.
+type Range
+    = Last15m
+    | Last1h
+    | Last24h
+    | Last7d
+    | RangeAll
+
+
+-- Range duration in milliseconds. `RangeAll` returns 0 — caller
+-- short-circuits the threshold computation and skips filtering.
+rangeMillis : Range -> Int
+rangeMillis r =
+    case r of
+        Last15m  -> 15 * 60 * 1000
+        Last1h   -> 60 * 60 * 1000
+        Last24h  -> 24 * 60 * 60 * 1000
+        Last7d   -> 7 * 24 * 60 * 60 * 1000
+        RangeAll -> 0
+
+
+rangeLabel : Range -> String
+rangeLabel r =
+    case r of
+        Last15m  -> "15m"
+        Last1h   -> "1h"
+        Last24h  -> "24h"
+        Last7d   -> "7d"
+        RangeAll -> "All"
+
+
 -- ─── Logs filter ────────────────────────────────────────────────
 
 -- Multi-axis filter: free-text search + level toggles + session id
@@ -216,6 +260,13 @@ type alias Model =
     , serviceStats : List ServiceStat
     , identity : Maybe Identity
     , tenantPrefix : String
+    -- v0.16.18 #558-PR1: global time-range filter applied across
+    -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
+    -- Cmd.perform Time.unixMillis GotNowMs — the view path uses
+    -- `nowMs - rangeMillis range` as the ISO-8601 threshold
+    -- (Time.formatISO8601 is pure Int -> String).
+    , range : Range
+    , nowMs : Int
     }
 
 -- Identity threaded from the hub auth-gate via Hub_currentIdentity
@@ -259,6 +310,9 @@ type Msg
     -- A successful response with a tenant claim derives the
     -- tenantPrefix used to filter service-name queries.
     | GotIdentity (Result Error Identity)
+    -- v0.16.18 #558-PR1
+    | SelectRange Range
+    | GotNowMs (Result Error Int)
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

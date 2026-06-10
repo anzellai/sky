@@ -24,6 +24,7 @@ import Sky.Core.Json.Decode.Pipeline as Pipeline
 import Sky.Core.Task as Task
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
+import Sky.Core.Time as Time
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Live exposing (app, route)
@@ -244,6 +245,13 @@ init _req =
             -- let in.
             , identity = Nothing
             , tenantPrefix = ""
+            -- v0.16.18 #558-PR1: global time-range filter. Last24h
+            -- is the typical "what's been happening today" default;
+            -- users can flip to 15m / 1h / 7d / All via the chip
+            -- row at the top of every tab. nowMs is populated on
+            -- the first Tick (defaults to 0 = no filter applies).
+            , range = Last24h
+            , nowMs = 0
             }
 
         -- Fetch the signed-in identity on boot. Only meaningful
@@ -266,6 +274,11 @@ init _req =
     , Cmd.batch
         [ fetchForTab startModel startModel.tab startModel.logFilter
         , identityCmd
+        -- v0.16.18 #558-PR1: prime nowMs so the very first render
+        -- after init has a real threshold (the default range is
+        -- Last24h — without this Cmd, the first render sees
+        -- nowMs=0 and falls through to "no filter").
+        , Cmd.perform (Time.unixMillis ()) GotNowMs
         ]
     )
 
@@ -286,7 +299,16 @@ update msg model =
             )
 
         Tick ->
-            ( model, fetchForTab model model.tab model.logFilter )
+            ( model
+            , Cmd.batch
+                [ fetchForTab model model.tab model.logFilter
+                -- v0.16.18 #558-PR1: refresh nowMs so the time-range
+                -- filter's ISO-8601 threshold tracks wall-clock. We
+                -- only need this when range != RangeAll (the only
+                -- case it's actually consulted in the view path).
+                , Cmd.perform (Time.unixMillis ()) GotNowMs
+                ]
+            )
 
         GotOverview (Ok ov) ->
             ( { model | overview = ov, lastError = "" }, Cmd.none )
@@ -406,6 +428,20 @@ update msg model =
             )
 
         GotIdentity (Err _) ->
+            ( model, Cmd.none )
+
+        -- v0.16.18 #558-PR1: global time-range filter.
+        SelectRange r ->
+            ( { model | range = r }, Cmd.none )
+
+        GotNowMs (Ok n) ->
+            ( { model | nowMs = n }, Cmd.none )
+
+        GotNowMs (Err _) ->
+            -- Time.unixMillis is infallible at the runtime layer
+            -- (System.NowMs equivalent), but the Result e a shape
+            -- still requires the Err arm. Keep nowMs untouched on
+            -- the unreachable failure case.
             ( model, Cmd.none )
 
 

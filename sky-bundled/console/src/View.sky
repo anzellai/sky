@@ -3,6 +3,7 @@ module View exposing (view)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Time as Time
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -101,7 +102,11 @@ view model =
         -- meta to the right. Without `width fill` here the two
         -- siblings collapse to content and the meta crashes into
         -- the title with no breathing room.
-        [ header model, tabStrip model.tab, content model ]
+        [ header model
+        , tabStrip model.tab
+        , rangeStrip model.range
+        , content model
+        ]
 
 
 -- ─── Header ──────────────────────────────────────────────────────
@@ -174,6 +179,80 @@ tabStrip active =
             [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab ])
 
 
+-- ─── Range strip (v0.16.18 #558-PR1) ────────────────────────────
+--
+-- Chip-style picker between tabStrip and content. Selecting a
+-- range fires SelectRange; the in-memory filter applied per-tab
+-- below uses model.range + model.nowMs to compute the ISO-8601
+-- threshold.
+rangeStrip : Range -> Element Msg
+rangeStrip current =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 20 8
+        , Ui.spacing 6
+        , Background.color bgSurface
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color border_
+        ]
+        [ Ui.el
+              [ Font.color textSecondary, Font.size 11, Ui.paddingXY 0 4 ]
+              (Ui.text "Range")
+        , rangeChip current Last15m
+        , rangeChip current Last1h
+        , rangeChip current Last24h
+        , rangeChip current Last7d
+        , rangeChip current RangeAll
+        ]
+
+
+rangeChip : Range -> Range -> Element Msg
+rangeChip current r =
+    let
+        isActive = current == r
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgPage
+        fg =
+            if isActive then
+                Ui.rgb 0 0 0
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 4
+            , Background.color bg
+            , Font.color fg
+            , Font.size 11
+            , Border.rounded 10
+            , Ui.pointer
+            , Ui.onClick (SelectRange r)
+            ]
+            (Ui.text (rangeLabel r))
+
+
+-- ISO-8601 threshold for a (range, nowMs) pair. Empty string means
+-- "no filter" — caller short-circuits the List.filter. Returned
+-- string sorts lexicographically against telemetry row .time /
+-- .startTime values (hub schema writes ms-precision ISO-8601).
+rangeThresholdIso : Range -> Int -> String
+rangeThresholdIso r nowMs =
+    case r of
+        RangeAll ->
+            ""
+
+        _ ->
+            if nowMs <= 0 then
+                ""
+
+            else
+                Time.formatISO8601 (nowMs - rangeMillis r)
+
+
 tabButton : Tab -> Tab -> Element Msg
 tabButton active tab =
     let
@@ -209,9 +288,28 @@ tabButton active tab =
 -- ─── Content router ──────────────────────────────────────────────
 content : Model -> Element Msg
 content model =
+    let
+        -- v0.16.18 #558-PR1: pre-filter time-bound rows once per
+        -- render so every per-tab branch sees the narrowed view.
+        -- Metrics + Errors have no time column (they're aggregates)
+        -- so the range filter doesn't apply to them.
+        threshold = rangeThresholdIso model.range model.nowMs
+        filtered =
+            if threshold == "" then
+                model
+
+            else
+                { model
+                    | logs = List.filter (\l -> l.time >= threshold) model.logs
+                    , traces =
+                        List.filter
+                            (\t -> t.startTime >= threshold)
+                            model.traces
+                }
+    in
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
-        (case model.tab of
+        (case filtered.tab of
 
             OverviewTab ->
                 -- v0.16.4 B5: hub mode shows the multi-service
@@ -220,11 +318,11 @@ content model =
                 -- the single-service Overview that's shipped since
                 -- v0.16.0 — byte-identical output for embedded
                 -- consoles.
-                if model.hubDbPath /= "" then
-                    viewOverview model
+                if filtered.hubDbPath /= "" then
+                    viewOverview filtered
 
                 else
-                    overviewView model.overview
+                    overviewView filtered.overview
 
             MetricsTab ->
                 -- v0.16.4 B6: hub-mode drill-down. When a service
@@ -232,32 +330,32 @@ content model =
                 -- new MetricsTab page renders a scope banner +
                 -- pre-filtered metrics. Embedded / standalone
                 -- consoles keep the existing single-service view.
-                if model.hubDbPath /= "" then
-                    viewMetricsTab model
+                if filtered.hubDbPath /= "" then
+                    viewMetricsTab filtered
 
                 else
-                    metricsView model.metrics
+                    metricsView filtered.metrics
 
             LogsTab ->
-                if model.hubDbPath /= "" then
-                    viewLogsTab model
+                if filtered.hubDbPath /= "" then
+                    viewLogsTab filtered
 
                 else
-                    logsView model
+                    logsView filtered
 
             TracesTab ->
-                if model.hubDbPath /= "" then
-                    viewTracesTab model
+                if filtered.hubDbPath /= "" then
+                    viewTracesTab filtered
 
                 else
-                    tracesView model.traceQuery model.traces
+                    tracesView filtered.traceQuery filtered.traces
 
             ErrorsTab ->
-                if model.hubDbPath /= "" then
-                    viewErrorsTab model
+                if filtered.hubDbPath /= "" then
+                    viewErrorsTab filtered
 
                 else
-                    errorsView model.errors)
+                    errorsView filtered.errors)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────
