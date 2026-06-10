@@ -256,3 +256,51 @@ func TestLiveJS_IdempotentSetAttributeGuard(t *testing.T) {
 			"image-heavy apps under any Tick subscription.", wantGuard)
 	}
 }
+
+// TestLiveJS_IframePreservedAcrossHTMLReplace pins the SECOND iframe-
+// reload path closed by #568. The attribute-patch guard
+// (TestLiveJS_IdempotentSetAttributeGuard) handles the case where the
+// diff emits an attrs patch for an unchanged iframe.src. But the
+// diff also emits *HTML-replace* patches when a parent subtree's
+// structure changes (sibling sky-id reorder, child-count change,
+// etc.). The HTML-replace path goes through
+// __skyReplaceHTMLPreservingFocus, which historically only spliced
+// inputs/textareas/selects — iframes inside the swapped subtree got
+// removeChild'd and recreated from the new HTML, triggering a fresh
+// navigation regardless of whether the URL changed.
+//
+// Production manifestation: the 438ms back-to-back POSTs to
+// /_sky/console/_login that confirmed the loop was not just a 4s
+// Tick. Each parent-tree diff round that touched any sibling of the
+// iframe destroyed and re-created the iframe, re-firing the
+// handshake form-submit.
+//
+// The fix splices iframes alongside inputs/textareas/selects with
+// the live iframe's src treated as user-state authority — the live
+// document, internal SSE, navigation history, scroll position
+// belong to the iframe. Placeholder contributes only non-src attrs.
+func TestLiveJS_IframePreservedAcrossHTMLReplace(t *testing.T) {
+	js := liveJS("test-sid")
+	wantIframeQuery := `container.querySelectorAll("iframe")`
+	if !strings.Contains(js, wantIframeQuery) {
+		t.Fatalf("__skyReplaceHTMLPreservingFocus must walk iframes via %q; "+
+			"not found in liveJS — see runtime-go/rt/live.go and #568. "+
+			"Without this, any HTML-replace patch on a subtree containing "+
+			"an iframe destroys and re-creates the iframe, triggering a "+
+			"fresh navigation even when the src is unchanged. Breaks "+
+			"embedded console / multi-tab dashboards / preview iframes.",
+			wantIframeQuery)
+	}
+	// The splice must strip src from the placeholder so the
+	// follow-on __skyCopyAttrsExceptAuthority call doesn't write
+	// src onto the live iframe (which would trigger the same
+	// navigation we're solving). A precise substring matches the
+	// guard.
+	wantStripSrc := `phFr.removeAttribute("src")`
+	if !strings.Contains(js, wantStripSrc) {
+		t.Fatalf("iframe splice must strip src from placeholder via %q "+
+			"so __skyCopyAttrsExceptAuthority doesn't navigate the live "+
+			"iframe; not found in liveJS — see runtime-go/rt/live.go.",
+			wantStripSrc)
+	}
+}

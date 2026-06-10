@@ -6283,6 +6283,43 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     if (isFocused) preservedFocus = live;
   }
 
+  // Splice IFRAMES across the swap (#568 second loop).  Without
+  // this, an HTML-replace patch that touches the iframe's parent
+  // subtree (sibling sky-id reorder, structural reorganisation)
+  // destroys the live iframe via removeChild and creates a fresh
+  // one from the placeholder markup.  The fresh iframe's src
+  // triggers a navigation regardless of whether the value matches
+  // the live one — every reload re-fires the embedded console's
+  // handshake form, opens a new SSE, and pegs the tenant Cloud
+  // Run instance.
+  //
+  // Same splice pattern as inputs.  The iframe's src is treated
+  // as USER STATE AUTHORITY (the live document, internal SSE,
+  // navigation history, scroll position are owned by the iframe).
+  // Placeholder contributes non-authority attrs only — class,
+  // style, sandbox, referrerpolicy — via the existing helper
+  // (whose authority filter covers value/checked/selected; src
+  // isn't in that list, so we strip it from the placeholder
+  // before mirroring to avoid the same setAttribute-triggered
+  // navigation the patch path's guard prevents).
+  var liveFrames = container.querySelectorAll("iframe");
+  for (var fi = 0; fi < liveFrames.length; fi++) {
+    var liveFr = liveFrames[fi];
+    var phFr = __skyFindPlaceholder(tmp, liveFr);
+    if (!phFr) continue;
+    // Strip src from placeholder so __skyCopyAttrsExceptAuthority
+    // doesn't write it onto the live iframe (which would navigate
+    // it, same problem we are solving).  If the server WANTS to
+    // change the iframe URL it can do so by changing the live
+    // iframe's sky-id — that produces an HTML-replace whose
+    // placeholder has no live match, falling through to the
+    // default innerHTML path and creating a fresh iframe at the
+    // new URL.
+    if (phFr.hasAttribute("src")) phFr.removeAttribute("src");
+    __skyCopyAttrsExceptAuthority(phFr, liveFr);
+    phFr.parentNode.replaceChild(liveFr, phFr);
+  }
+
   // Commit: throw away container's current children (those we didn't
   // splice are stale; spliced ones already moved into tmp), then
   // attach tmp's children. Done.
