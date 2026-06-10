@@ -352,6 +352,24 @@ checkImportExposingAgainstDep deps imps = concatMap check imps
                             ctors u = [ c | Can.Ctor c _ _ _ <- Map.findWithDefault [] u unions ]
                         in concatMap (checkItem path values aliases unions ctors) xs
 
+    -- Kernel-implicit Prelude types are globally available regardless of
+    -- import. `Decoder` / `Value` / `Attribute` / `Handler` / `Middleware`
+    -- / `Session` / `Store` / `Route` / `VNode` / `Request` / `Response` /
+    -- `Cmd` / `Sub` / `Db` / `Error` are kernel-registered runtime types
+    -- (see Compile.hs `runtimeOnlyTypes` + `runtimeTypedMap`); they're
+    -- never declared as `type alias`es in any stdlib .sky source, but the
+    -- type-checker accepts them in any signature via empty-home lookup.
+    -- Accepting them in `exposing (...)` lists as a no-op closes a long-
+    -- standing pitfall where users write `import Std.Db.Decode exposing
+    -- (Decoder, ...)` and hit a misleading "module Std.Db.Decode does not
+    -- expose type Decoder" error — Decoder is globally available; the
+    -- import is redundant, not malformed. (#576)
+    isKernelImplicitType n =
+        n `elem` [ "Decoder", "Value", "Attribute", "Handler"
+                 , "Middleware", "Session", "Store", "Route"
+                 , "VNode", "Request", "Response", "Cmd", "Sub"
+                 , "Db", "Error" ]
+
     checkItem path values aliases unions _ctorsOf (A.At _ e) = case e of
         Src.ExposedValue n
             | Set.member n values || Set.member n aliases -> []
@@ -360,11 +378,13 @@ checkImportExposingAgainstDep deps imps = concatMap check imps
                   ++ n ++ "`." ]
         Src.ExposedType n Src.Private
             | Set.member n aliases || Map.member n unions -> []
+            | isKernelImplicitType n -> []
             | otherwise ->
                 [ "Import error: module `" ++ path ++ "` does not expose type `"
                   ++ n ++ "`." ]
         Src.ExposedType n Src.Public
             | Set.member n aliases || Map.member n unions -> []
+            | isKernelImplicitType n -> []
             | otherwise ->
                 [ "Import error: module `" ++ path ++ "` does not expose type `"
                   ++ n ++ "`." ]

@@ -25,8 +25,45 @@ import (
 // through to a generic shape on a non-DbDecoder second arg.
 
 // DbDecoder wraps a row-decoder function.
+//
+// `cols` records which column names this decoder reads from the row.
+// Primitive decoders (string/int/float/bool) populate a single-entry
+// slice; combinators (map/andMap/andThen/map2..5) union from their
+// inputs. `nullable` consults `cols` to decide Nothing-vs-delegate
+// — this is how the v0.16.x single-arg `nullable inner` form replaces
+// the historical `nullable col inner` shape that forced users to
+// double-name the column (#577).
 type DbDecoder struct {
-	run func(row map[string]any) any // row → SkyResult[any, any]
+	run  func(row map[string]any) any // row → SkyResult[any, any]
+	cols []string                     // columns this decoder reads, empty for succeed/fail
+}
+
+// dbUnionCols returns the de-duplicated union of two column lists.
+// Order-preserving: a's entries come first, then b's novel ones.
+func dbUnionCols(a, b []string) []string {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, c := range a {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	for _, c := range b {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
 }
 
 // dbRowAsMap normalises a DB-row argument to map[string]any. Db_query
@@ -61,7 +98,7 @@ func dbColString(row map[string]any, name string) (string, bool) {
 // DbDec_string : String -> Decoder String — read a String column.
 func DbDec_string(colName any) any {
 	col := AsString(colName)
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: []string{col}, run: func(row map[string]any) any {
 		if s, ok := dbColString(row, col); ok {
 			return Ok[any, any](s)
 		}
@@ -73,7 +110,7 @@ func DbDec_string(colName any) any {
 // Accepts int, int64, float64, and decimal-stringified Ints.
 func DbDec_int(colName any) any {
 	col := AsString(colName)
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: []string{col}, run: func(row map[string]any) any {
 		v, ok := row[col]
 		if !ok {
 			return Err[any, any](ErrDecode("missing column: " + col))
@@ -104,7 +141,7 @@ func DbDec_int(colName any) any {
 // Float. Accepts float64, int, int64, and string forms.
 func DbDec_float(colName any) any {
 	col := AsString(colName)
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: []string{col}, run: func(row map[string]any) any {
 		v, ok := row[col]
 		if !ok {
 			return Err[any, any](ErrDecode("missing column: " + col))
@@ -133,7 +170,7 @@ func DbDec_float(colName any) any {
 // "t"/"f"/"1"/"0" string forms.
 func DbDec_bool(colName any) any {
 	col := AsString(colName)
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: []string{col}, run: func(row map[string]any) any {
 		v, ok := row[col]
 		if !ok {
 			return Err[any, any](ErrDecode("missing column: " + col))
@@ -160,30 +197,38 @@ func DbDec_bool(colName any) any {
 	}}
 }
 
-// DbDec_nullable : String -> Decoder a -> Decoder (Maybe a) —
-// returns Just for non-null cells, Nothing for NULL / absent
-// columns. The inner decoder gets the value when present.
-func DbDec_nullable(colName any, inner any) any {
-	col := AsString(colName)
+// DbDec_nullable : Decoder a -> Decoder (Maybe a) — returns Just
+// for non-null cells, Nothing when ANY column read by `inner` is
+// NULL or absent. The inner decoder runs when every column it
+// reads is present and non-null. v0.16.x single-arg shape (#577):
+// pre-fix this took an explicit column name AND an inner that
+// re-mentioned the same column ("age" "age") — the inner's `cols`
+// field now sources the gate columns automatically.
+func DbDec_nullable(inner any) any {
 	d, ok := inner.(DbDecoder)
 	if !ok {
 		return Err[any, any](ErrInvalidInput("nullable: inner is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
-		v, present := row[col]
-		if !present || v == nil {
-			return Ok[any, any](Nothing[any]())
+	return DbDecoder{cols: d.cols, run: func(row map[string]any) any {
+		// Nothing-gate: any read column being NULL or absent → Nothing.
+		// Inner with no `cols` (e.g. succeed-only) always delegates —
+		// nothing for the row to NULL it against.
+		for _, c := range d.cols {
+			v, present := row[c]
+			if !present || v == nil {
+				return Ok[any, any](Nothing[any]())
+			}
 		}
-		// Delegate to the inner decoder by re-running it on the same row.
-		inner := d.run(row)
-		r, ok := inner.(SkyResult[any, any])
+		// Every gate column is present + non-null → delegate. Any
+		// inner error past this point is structural (type mismatch)
+		// and should surface as-is.
+		innerRes := d.run(row)
+		r, ok := innerRes.(SkyResult[any, any])
 		if !ok {
-			return Err[any, any](ErrDecode(fmt.Sprintf("nullable: inner returned non-Result %T", inner)))
+			return Err[any, any](ErrDecode(fmt.Sprintf("nullable: inner returned non-Result %T", innerRes)))
 		}
 		if r.Tag != 0 {
-			// Inner errored — but we observed a non-null value, so the
-			// error is structural (e.g. wrong type for the column). Surface.
-			return inner
+			return innerRes
 		}
 		return Ok[any, any](Just[any](r.OkValue))
 	}}
@@ -214,7 +259,7 @@ func DbDec_map(fn any, dec any) any {
 	if !ok {
 		return Err[any, any](ErrInvalidInput("map: arg is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: d.cols, run: func(row map[string]any) any {
 		inner := d.run(row)
 		r, ok := inner.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
@@ -226,13 +271,16 @@ func DbDec_map(fn any, dec any) any {
 }
 
 // DbDec_andThen : (a -> Decoder b) -> Decoder a -> Decoder b —
-// chain decoders.
+// chain decoders. The continuation's columns are dynamic, so the
+// outer cols list conservatively names only the source inner's
+// columns; that's sufficient for `nullable` over an andThen chain
+// where the gate columns are the ones read upfront.
 func DbDec_andThen(fn any, dec any) any {
 	d, ok := dec.(DbDecoder)
 	if !ok {
 		return Err[any, any](ErrInvalidInput("andThen: arg is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: d.cols, run: func(row map[string]any) any {
 		inner := d.run(row)
 		r, ok := inner.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
@@ -269,7 +317,7 @@ func DbDec_andMap(decA any, decFn any) any {
 	if !ok {
 		return Err[any, any](ErrInvalidInput("andMap: second arg is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: dbUnionCols(df.cols, da.cols), run: func(row map[string]any) any {
 		fnResult := df.run(row)
 		fr, ok := fnResult.(SkyResult[any, any])
 		if !ok || fr.Tag != 0 {
@@ -292,7 +340,7 @@ func DbDec_map2(fn, d1, d2 any) any {
 	if !ok1 || !ok2 {
 		return Err[any, any](ErrInvalidInput("map2: arg is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: dbUnionCols(da.cols, db.cols), run: func(row map[string]any) any {
 		r1 := da.run(row)
 		s1, ok := r1.(SkyResult[any, any])
 		if !ok || s1.Tag != 0 {
@@ -317,7 +365,7 @@ func DbDec_map3(fn, d1, d2, d3 any) any {
 	if !ok1 || !ok2 || !ok3 {
 		return Err[any, any](ErrInvalidInput("map3: arg is not a Decoder"))
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: dbUnionCols(dbUnionCols(da.cols, db.cols), dc.cols), run: func(row map[string]any) any {
 		r1 := da.run(row)
 		s1, ok := r1.(SkyResult[any, any])
 		if !ok || s1.Tag != 0 {
@@ -344,14 +392,16 @@ func DbDec_map3(fn, d1, d2, d3 any) any {
 func DbDec_map4(fn, d1, d2, d3, d4 any) any {
 	das := []any{d1, d2, d3, d4}
 	dbs := make([]DbDecoder, 4)
+	var allCols []string
 	for i, d := range das {
 		dec, ok := d.(DbDecoder)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("map4: arg is not a Decoder"))
 		}
 		dbs[i] = dec
+		allCols = dbUnionCols(allCols, dec.cols)
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: allCols, run: func(row map[string]any) any {
 		vals := make([]any, 4)
 		for i, dec := range dbs {
 			r := dec.run(row)
@@ -373,14 +423,16 @@ func DbDec_map4(fn, d1, d2, d3, d4 any) any {
 func DbDec_map5(fn, d1, d2, d3, d4, d5 any) any {
 	das := []any{d1, d2, d3, d4, d5}
 	dbs := make([]DbDecoder, 5)
+	var allCols []string
 	for i, d := range das {
 		dec, ok := d.(DbDecoder)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("map5: arg is not a Decoder"))
 		}
 		dbs[i] = dec
+		allCols = dbUnionCols(allCols, dec.cols)
 	}
-	return DbDecoder{run: func(row map[string]any) any {
+	return DbDecoder{cols: allCols, run: func(row map[string]any) any {
 		vals := make([]any, 5)
 		for i, dec := range dbs {
 			r := dec.run(row)

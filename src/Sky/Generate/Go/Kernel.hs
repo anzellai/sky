@@ -701,7 +701,7 @@ registry = Map.fromList
     , (("DbDec", "int"),         KernelInfo "rt.DbDec_int" 1 False)
     , (("DbDec", "float"),       KernelInfo "rt.DbDec_float" 1 False)
     , (("DbDec", "bool"),        KernelInfo "rt.DbDec_bool" 1 False)
-    , (("DbDec", "nullable"),    KernelInfo "rt.DbDec_nullable" 2 False)
+    , (("DbDec", "nullable"),    KernelInfo "rt.DbDec_nullable" 1 False)
     , (("DbDec", "succeed"),     KernelInfo "rt.DbDec_succeed" 1 False)
     , (("DbDec", "fail"),        KernelInfo "rt.DbDec_fail" 1 False)
     , (("DbDec", "map"),         KernelInfo "rt.DbDec_map" 2 False)

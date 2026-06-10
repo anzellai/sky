@@ -6,6 +6,12 @@
 -- `Db.queryDecode` (for SELECT-many) or `Db.getByIdDecode` (for
 -- SELECT-one-by-id).
 --
+-- `Decoder` is a kernel-implicit Prelude type — it's available in
+-- every Sky module without explicit import (alongside `Db`, `Value`,
+-- `Attribute`, `Handler`, `Cmd`, `Sub`, `Request`, `Response`,
+-- `Error`, `VNode`).  `import Std.Db.Decode exposing (Decoder, ...)`
+-- is therefore redundant but still accepted as a no-op (#576).
+--
 -- The combinator shape mirrors `Sky.Core.Json.Decode` / `.Pipeline`,
 -- intentionally — code that already does JSON decoding gets a
 -- consistent vocabulary for SQL rows.  Real production benefit:
@@ -25,7 +31,7 @@
 --         Db.Decode.succeed (\i e a -> { id = i, email = e, age = a })
 --             |> Db.Decode.andMap (Db.Decode.int "id")
 --             |> Db.Decode.andMap (Db.Decode.string "email")
---             |> Db.Decode.andMap (Db.Decode.nullable "age" (Db.Decode.int "age"))
+--             |> Db.Decode.andMap (Db.Decode.nullable (Db.Decode.int "age"))
 --
 --     users : Db -> Task Error (List User)
 --     users db =
@@ -74,9 +80,11 @@ bool : String -> Decoder Bool
 bool = Ffi.kernel "DbDec_bool"
 
 
--- | `nullable col inner` — wrap `inner` so it returns `Nothing` for
--- NULL / absent columns, `Just <decoded>` otherwise.
-nullable : String -> Decoder a -> Decoder (Maybe a)
+-- | `nullable inner` — wrap `inner` so it returns `Nothing` when ANY
+-- column the inner reads is NULL or absent, `Just <decoded>` otherwise.
+-- v0.16.x single-arg shape (#577): the column name is sourced from the
+-- inner decoder, eliminating the historical "age" "age" double-naming.
+nullable : Decoder a -> Decoder (Maybe a)
 nullable = Ffi.kernel "DbDec_nullable"
 
 

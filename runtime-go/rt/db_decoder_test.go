@@ -75,7 +75,7 @@ func TestDbDecBoolParsesAllForms(t *testing.T) {
 
 func TestDbDecNullableReturnsNothingOnNull(t *testing.T) {
 	inner := DbDec_string("middle_name")
-	dec := DbDec_nullable("middle_name", inner)
+	dec := DbDec_nullable(inner)
 	row := map[string]any{"middle_name": nil}
 	got := DbDec_run(dec, row)
 	r, ok := got.(SkyResult[any, any])
@@ -93,7 +93,7 @@ func TestDbDecNullableReturnsNothingOnNull(t *testing.T) {
 
 func TestDbDecNullableReturnsJustOnPresentValue(t *testing.T) {
 	inner := DbDec_string("middle_name")
-	dec := DbDec_nullable("middle_name", inner)
+	dec := DbDec_nullable(inner)
 	row := map[string]any{"middle_name": "Q"}
 	got := DbDec_run(dec, row)
 	r, _ := got.(SkyResult[any, any])

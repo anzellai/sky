@@ -238,6 +238,59 @@ func Db_close(db any) any {
 	}
 }
 
+// dbBindArg unwraps a Sky-Maybe-shaped arg for database/sql binding
+// (#574 / task #574). The Go sql package's argument converter
+// rejects `rt.SkyMaybe[T]` because it sees a struct it doesn't
+// recognise — leaving Sky users unable to write any nullable
+// column. We pre-marshal each arg here:
+//
+//	Nothing (Tag=1)            → nil   (binds as SQL NULL)
+//	Just v  (Tag=0)            → v     (unwrapped, recurses once)
+//	anything else              → as-is
+//
+// Reflect-based because SkyMaybe[T] is a generic struct and the
+// concrete T varies per call site (mirrors MaybeCoerce's approach
+// at rt.go:359). Costs one reflect.ValueOf per arg per call;
+// negligible vs the round-trip latency of the underlying SQL
+// driver. The recursive unwrap covers `Just (Just v)` cases that
+// arise from nested decoders, and stops at the first non-Maybe
+// value so non-nullable args pass through unchanged.
+func dbBindArg(a any) any {
+	if a == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(a)
+	// Reach inside *T when a is a pointer to a struct (rare for Sky
+	// values but cheap to handle).
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return a
+	}
+	tagField := rv.FieldByName("Tag")
+	justField := rv.FieldByName("JustValue")
+	// Both fields must be present AND Tag must be an Int — that's
+	// the SkyMaybe[T] shape and nothing else (Sky's ADT codegen for
+	// user types uses different field names; Result has OkValue /
+	// ErrValue, not JustValue).
+	if !tagField.IsValid() || !justField.IsValid() || tagField.Kind() != reflect.Int {
+		return a
+	}
+	switch int(tagField.Int()) {
+	case 0: // Just
+		return dbBindArg(justField.Interface())
+	case 1: // Nothing
+		return nil
+	default:
+		return a
+	}
+}
+
+
 // Db.exec : Db -> String -> List any -> Task Error Int
 // Runs a statement that doesn't return rows. Returns rows affected.
 // Returns a Task thunk so the actual write defers to the
@@ -252,7 +305,7 @@ func Db_exec(db any, query any, args any) any {
 			argList := asList(args)
 			goArgs := make([]any, len(argList))
 			for i, a := range argList {
-				goArgs[i] = a
+				goArgs[i] = dbBindArg(a)
 			}
 			q, errRes := mustStringTyped(query, "db.exec")
 			if errRes != nil {
@@ -302,7 +355,7 @@ func Db_query(db any, query any, args any) any {
 			argList := asList(args)
 			goArgs := make([]any, len(argList))
 			for i, a := range argList {
-				goArgs[i] = a
+				goArgs[i] = dbBindArg(a)
 			}
 			q, errRes := mustStringTyped(query, "db.query")
 			if errRes != nil {
