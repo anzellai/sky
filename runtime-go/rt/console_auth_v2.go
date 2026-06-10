@@ -340,9 +340,31 @@ func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: consoleCookieSameSite(),
 		MaxAge:   int(consoleAuthCookieV2MaxAge.Seconds()),
 	})
+}
+
+// consoleCookieSameSite returns SameSite=None when SKY_CONSOLE_EMBED_ORIGIN
+// is set (the operator opted into iframe embedding from another origin —
+// SkyDeploy's dashboard does this), and SameSite=Strict otherwise.
+//
+// Why: SameSite=Strict cookies are blocked by Chrome / Safari / Firefox in
+// cross-origin iframe contexts even when the iframe is same-site by
+// eTLD+1 — the browsers treat the iframe document as a "third-party"
+// cookie context. The handshake form-POST → 303 → cookie sequence
+// succeeds at the server, but the browser refuses to send the cookie back
+// when the iframe (re)fetches /_sky/console. Net effect: blank iframe.
+//
+// SameSite=None (paired with the already-present Secure flag, required by
+// the spec) keeps cookies usable in iframe embed. The dashboard's framer
+// is pinned via the embed-origin allowlist, so the cookie can't leak to
+// an arbitrary third party.
+func consoleCookieSameSite() http.SameSite {
+	if consoleEmbedAllowed() {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteStrictMode
 }
 
 // clearConsoleV2Cookie zeros the cookie (logout, denial, mode change).
@@ -353,7 +375,7 @@ func clearConsoleV2Cookie(w http.ResponseWriter) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: consoleCookieSameSite(),
 		MaxAge:   -1,
 	})
 }
