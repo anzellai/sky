@@ -398,7 +398,17 @@ update msg model =
         -- shareable link still drops everyone on the same
         -- aggregate landing.
         SelectService name ->
-            ( { model | selectedService = name }, Cmd.none )
+            -- v0.16.18 #558-PR2: trigger an immediate refetch with the
+            -- new service scope so the user sees the narrowed dataset
+            -- without waiting 3s for the next Tick. Without this the
+            -- global service-chip felt unresponsive (the highlight
+            -- flipped instantly but rows stayed stale until tick).
+            let
+                newModel = { model | selectedService = name }
+            in
+            ( newModel
+            , fetchForTab newModel newModel.tab newModel.logFilter
+            )
 
         GotServiceStats (Ok stats) ->
             ( { model | serviceStats = stats, lastError = "" }, Cmd.none )

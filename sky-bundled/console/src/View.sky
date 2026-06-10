@@ -104,7 +104,7 @@ view model =
         -- the title with no breathing room.
         [ header model
         , tabStrip model.tab
-        , rangeStrip model.range
+        , globalFilterStrip model
         , content model
         ]
 
@@ -179,15 +179,20 @@ tabStrip active =
             [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab ])
 
 
--- ─── Range strip (v0.16.18 #558-PR1) ────────────────────────────
+-- ─── Global filter strip (v0.16.18 #558-PR1 + PR2) ──────────────
 --
--- Chip-style picker between tabStrip and content. Selecting a
--- range fires SelectRange; the in-memory filter applied per-tab
--- below uses model.range + model.nowMs to compute the ISO-8601
--- threshold.
-rangeStrip : Range -> Element Msg
-rangeStrip current =
-    Ui.row
+-- Single row carrying every global filter axis. Currently:
+--   * Range chips (always visible) — Last15m / 1h / 24h / 7d / All
+--   * Service chips (hub mode only) — one per Store.listServices
+--     entry, "All" sentinel for the unfiltered view
+--
+-- Hub mode is gated on model.hubDbPath /= "" — embedded consoles
+-- only see one service (their own host app) so the service picker
+-- would be redundant noise. Future PRs add level + free-text axes
+-- here so every filter lives in one consistent header location.
+globalFilterStrip : Model -> Element Msg
+globalFilterStrip model =
+    Ui.column
         [ Ui.width Ui.fill
         , Ui.paddingXY 20 8
         , Ui.spacing 6
@@ -195,8 +200,25 @@ rangeStrip current =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color border_
         ]
+        [ rangeRow model.range
+        , if model.hubDbPath /= "" then
+              serviceRow model.selectedService model.serviceStats
+
+          else
+              Ui.none
+        ]
+
+
+rangeRow : Range -> Element Msg
+rangeRow current =
+    Ui.row
+        [ Ui.spacing 6 ]
         [ Ui.el
-              [ Font.color textSecondary, Font.size 11, Ui.paddingXY 0 4 ]
+              [ Font.color textSecondary
+              , Font.size 11
+              , Ui.paddingXY 0 4
+              , Ui.width (Ui.px 60)
+              ]
               (Ui.text "Range")
         , rangeChip current Last15m
         , rangeChip current Last1h
@@ -204,6 +226,61 @@ rangeStrip current =
         , rangeChip current Last7d
         , rangeChip current RangeAll
         ]
+
+
+-- "All" comes first as the deselect/reset; remaining chips come
+-- from ServiceStat so the strip stays in sync with the multi-
+-- service Overview's roster (services tagged with the user's
+-- tenantPrefix are already filtered at the hub kernel layer).
+serviceRow : String -> List ServiceStat -> Element Msg
+serviceRow selected stats =
+    Ui.row
+        [ Ui.spacing 6 ]
+        (Ui.el
+            [ Font.color textSecondary
+            , Font.size 11
+            , Ui.paddingXY 0 4
+            , Ui.width (Ui.px 60)
+            ]
+            (Ui.text "Service")
+            :: serviceChip selected ""
+            :: List.map (\s -> serviceChip selected s.name) stats
+        )
+
+
+serviceChip : String -> String -> Element Msg
+serviceChip selected name =
+    let
+        label =
+            if name == "" then
+                "All"
+
+            else
+                name
+        isActive = selected == name
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgPage
+        fg =
+            if isActive then
+                Ui.rgb 0 0 0
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 4
+            , Background.color bg
+            , Font.color fg
+            , Font.size 11
+            , Border.rounded 10
+            , Ui.pointer
+            , Ui.onClick (SelectService name)
+            ]
+            (Ui.text label)
 
 
 rangeChip : Range -> Range -> Element Msg
