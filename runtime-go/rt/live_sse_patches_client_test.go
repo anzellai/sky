@@ -217,3 +217,109 @@ func TestHandleSSE_EmitsEventPatchForPatchFrame(t *testing.T) {
 		t.Fatalf("handleSSE didn't emit our queued event:patch frame (seq=7)")
 	}
 }
+
+// ─── (e) Idempotent setAttribute guard (#568) ───────────────────
+//
+// __skyApplyPatches must guard setAttribute(k, v) with a getAttribute
+// equality check. Without the guard, an SSE patch carrying an
+// unchanged attribute value still calls setAttribute, which browsers
+// treat as a "navigate / refetch" event for src/href-bearing elements
+// (most painfully: <iframe src="…"> reloads on ANY assignment, even
+// to the same string).
+//
+// Production regression: dev.skydeploy.app/_sky/console rendered
+// inside the dashboard via <iframe src=…>. The dashboard Tick (4s)
+// re-rendered, sent SSE attribute patches that touched iframe.src
+// with the unchanged value, the iframe reloaded every 4s, every
+// reload re-fired the cross-origin handshake form-POST to
+// <slug>.<host>/_sky/console/_login, and each handshake opened a
+// fresh long-lived SSE on the tenant Cloud Run instance. With
+// max_instances=1 and containerConcurrency=80, the tenant saturated
+// in minutes and Cloud Run's GFE responded "Rate exceeded." to
+// every subsequent request.
+//
+// The runtime fix is a one-line guard in the JS patch loop. This
+// regression pins the guard string-contents so a future rewrite of
+// __skyApplyPatches can't silently drop it.
+func TestLiveJS_IdempotentSetAttributeGuard(t *testing.T) {
+	js := liveJS("test-sid")
+	// The guarded pattern is "if (el.getAttribute(k) !== v) {" — a
+	// substring search is robust against whitespace tweaks but tight
+	// enough to catch a logic flip (e.g. someone "simplifying" the
+	// guard back to unconditional setAttribute).
+	wantGuard := "if (el.getAttribute(k) !== v) {"
+	if !strings.Contains(js, wantGuard) {
+		t.Fatalf("__skyApplyPatches must guard setAttribute with %q; not found in liveJS — "+
+			"see runtime-go/rt/live.go and docs for issue #568. Without this guard, "+
+			"every Sky.Live SSE patch that re-emits an unchanged iframe/img/link/script "+
+			"src or href triggers a browser refetch, breaking embedded console / "+
+			"image-heavy apps under any Tick subscription.", wantGuard)
+	}
+}
+
+// TestLiveJS_IframePreservedAcrossHTMLReplace pins the SECOND iframe-
+// reload path closed by #568. The attribute-patch guard
+// (TestLiveJS_IdempotentSetAttributeGuard) handles the case where the
+// diff emits an attrs patch for an unchanged iframe.src. But the
+// diff also emits *HTML-replace* patches when a parent subtree's
+// structure changes (sibling sky-id reorder, child-count change,
+// etc.). The HTML-replace path goes through
+// __skyReplaceHTMLPreservingFocus, which historically only spliced
+// inputs/textareas/selects — iframes inside the swapped subtree got
+// removeChild'd and recreated from the new HTML, triggering a fresh
+// navigation regardless of whether the URL changed.
+//
+// Production manifestation: the 438ms back-to-back POSTs to
+// /_sky/console/_login that confirmed the loop was not just a 4s
+// Tick. Each parent-tree diff round that touched any sibling of the
+// iframe destroyed and re-created the iframe, re-firing the
+// handshake form-submit.
+//
+// The fix splices iframes alongside inputs/textareas/selects with
+// the live iframe's src treated as user-state authority — the live
+// document, internal SSE, navigation history, scroll position
+// belong to the iframe. Placeholder contributes only non-src attrs.
+func TestLiveJS_IframePreservedAcrossHTMLReplace(t *testing.T) {
+	js := liveJS("test-sid")
+	wantIframeQuery := `container.querySelectorAll("iframe")`
+	if !strings.Contains(js, wantIframeQuery) {
+		t.Fatalf("__skyReplaceHTMLPreservingFocus must walk iframes via %q; "+
+			"not found in liveJS — see runtime-go/rt/live.go and #568. "+
+			"Without this, any HTML-replace patch on a subtree containing "+
+			"an iframe destroys and re-creates the iframe, triggering a "+
+			"fresh navigation even when the src is unchanged. Breaks "+
+			"embedded console / multi-tab dashboards / preview iframes.",
+			wantIframeQuery)
+	}
+	// SRC-EQUALITY GATE — without this, the splice would freeze the
+	// iframe at its first-loaded URL forever. Sky.Live's sky-id is
+	// purely structural (path + position + tag, plus form-name for
+	// inputs); it does NOT encode src. So two renders that emit
+	// <iframe src=A> then <iframe src=B> at the same structural
+	// position share a sky-id, and naive splicing matches the
+	// placeholder by sky-id and preserves the live iframe, dropping
+	// the new src on the floor. The gate compares liveSrc vs phSrc
+	// and skips the splice when they differ — fall-through to the
+	// default innerHTML path destroys the live iframe and creates a
+	// fresh one at the new URL. Caught in adversarial review of #568.
+	wantSrcGate := "if (liveSrc !== phSrc) continue;"
+	if !strings.Contains(js, wantSrcGate) {
+		t.Fatalf("iframe splice must guard with src-equality (%q); "+
+			"not found in liveJS — without it, the iframe is FROZEN at "+
+			"its first URL forever because sky-id doesn't encode src. "+
+			"See runtime-go/rt/live.go and #568 adversarial review.",
+			wantSrcGate)
+	}
+	// The splice must strip src from the placeholder so the
+	// follow-on __skyCopyAttrsExceptAuthority call doesn't write
+	// src onto the live iframe (which would trigger the same
+	// navigation we're solving). A precise substring matches the
+	// guard.
+	wantStripSrc := `phFr.removeAttribute("src")`
+	if !strings.Contains(js, wantStripSrc) {
+		t.Fatalf("iframe splice must strip src from placeholder via %q "+
+			"so __skyCopyAttrsExceptAuthority doesn't navigate the live "+
+			"iframe; not found in liveJS — see runtime-go/rt/live.go.",
+			wantStripSrc)
+	}
+}
