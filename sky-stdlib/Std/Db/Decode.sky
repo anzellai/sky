@@ -6,6 +6,12 @@
 -- `Db.queryDecode` (for SELECT-many) or `Db.getByIdDecode` (for
 -- SELECT-one-by-id).
 --
+-- `Decoder` is a kernel-implicit Prelude type — it's available in
+-- every Sky module without explicit import (alongside `Db`, `Value`,
+-- `Attribute`, `Handler`, `Cmd`, `Sub`, `Request`, `Response`,
+-- `Error`, `VNode`).  `import Std.Db.Decode exposing (Decoder, ...)`
+-- is therefore redundant but still accepted as a no-op (#576).
+--
 -- The combinator shape mirrors `Sky.Core.Json.Decode` / `.Pipeline`,
 -- intentionally — code that already does JSON decoding gets a
 -- consistent vocabulary for SQL rows.  Real production benefit:

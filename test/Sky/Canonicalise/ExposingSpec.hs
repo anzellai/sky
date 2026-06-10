@@ -44,6 +44,34 @@ mainImportsSecretSrc = unlines
     ]
 
 
+-- #576 — kernel-implicit Prelude types may appear in `exposing (...)` even
+-- when the dep module doesn't declare them via `type alias`. `Decoder` is
+-- defined as `runtimeOnlyTypes` in Compile.hs; the canonicaliser threads
+-- it as kernel-implicit; the .sky source for `Std.Db.Decode` never has
+-- `type alias Decoder a = ...` (the kernel is the type's source of
+-- truth). Pre-fix this spec's import errored with "module Std.Db.Decode
+-- does not expose type Decoder" — a misleading error since Decoder is
+-- already globally available.
+mainReExportsDecoderSrc :: String
+mainReExportsDecoderSrc = unlines
+    [ "module Main exposing (main)"
+    , ""
+    , "import Sky.Core.Prelude exposing (..)"
+    , "import Std.Db.Decode exposing (Decoder, succeed)"
+    , "import Std.Log exposing (println)"
+    , ""
+    , ""
+    , "myDec : Decoder Int"
+    , "myDec ="
+    , "    succeed 0"
+    , ""
+    , ""
+    , "main ="
+    , "    let _ = myDec in"
+    , "    println \"ok\""
+    ]
+
+
 spec :: Spec
 spec = do
     describe "P2: importing an unexposed name is a canonicalise error" $ do
@@ -58,3 +86,13 @@ spec = do
                     e `shouldSatisfy` \s ->
                         ("does not expose" `isInfixOf` s) &&
                         ("secret" `isInfixOf` s)
+
+    describe "#576: kernel-implicit Prelude type re-exposure" $ do
+        it "accepts `import Std.Db.Decode exposing (Decoder, ...)` (Decoder is kernel-implicit)" $ do
+            result <- compileInProcessMulti
+                [ ("src/Main.sky", mainReExportsDecoderSrc) ]
+            case result of
+                CompileOk _ -> pure ()
+                CompileErr e -> expectationFailure
+                    ( "expected re-exposure of kernel-implicit Decoder to succeed, "
+                      ++ "got: " ++ e )
