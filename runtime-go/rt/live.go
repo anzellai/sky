@@ -6307,14 +6307,23 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     var liveFr = liveFrames[fi];
     var phFr = __skyFindPlaceholder(tmp, liveFr);
     if (!phFr) continue;
+    // SRC-EQUALITY GATE.  sky-id is purely structural (tag +
+    // position + form-name) and does NOT encode src.  So two
+    // renders that emit <iframe src=A> then <iframe src=B> at
+    // the same structural position share a sky-id, and naive
+    // splicing would freeze the iframe at src=A forever — every
+    // legitimate URL change would silently no-op.  Only splice
+    // (preserve the live iframe) when the SERVER's intended src
+    // matches the live src.  When they differ, fall through to
+    // the default innerHTML path so the live iframe gets
+    // destroyed and a fresh one navigates to the new URL.
+    var liveSrc = liveFr.getAttribute("src") || "";
+    var phSrc = phFr.getAttribute("src") || "";
+    if (liveSrc !== phSrc) continue;
     // Strip src from placeholder so __skyCopyAttrsExceptAuthority
     // doesn't write it onto the live iframe (which would navigate
-    // it, same problem we are solving).  If the server WANTS to
-    // change the iframe URL it can do so by changing the live
-    // iframe's sky-id — that produces an HTML-replace whose
-    // placeholder has no live match, falling through to the
-    // default innerHTML path and creating a fresh iframe at the
-    // new URL.
+    // it even when the strings already match — assigning src
+    // unconditionally re-fetches in some browsers).
     if (phFr.hasAttribute("src")) phFr.removeAttribute("src");
     __skyCopyAttrsExceptAuthority(phFr, liveFr);
     phFr.parentNode.replaceChild(liveFr, phFr);

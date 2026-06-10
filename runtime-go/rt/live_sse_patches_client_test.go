@@ -291,6 +291,25 @@ func TestLiveJS_IframePreservedAcrossHTMLReplace(t *testing.T) {
 			"embedded console / multi-tab dashboards / preview iframes.",
 			wantIframeQuery)
 	}
+	// SRC-EQUALITY GATE — without this, the splice would freeze the
+	// iframe at its first-loaded URL forever. Sky.Live's sky-id is
+	// purely structural (path + position + tag, plus form-name for
+	// inputs); it does NOT encode src. So two renders that emit
+	// <iframe src=A> then <iframe src=B> at the same structural
+	// position share a sky-id, and naive splicing matches the
+	// placeholder by sky-id and preserves the live iframe, dropping
+	// the new src on the floor. The gate compares liveSrc vs phSrc
+	// and skips the splice when they differ — fall-through to the
+	// default innerHTML path destroys the live iframe and creates a
+	// fresh one at the new URL. Caught in adversarial review of #568.
+	wantSrcGate := "if (liveSrc !== phSrc) continue;"
+	if !strings.Contains(js, wantSrcGate) {
+		t.Fatalf("iframe splice must guard with src-equality (%q); "+
+			"not found in liveJS — without it, the iframe is FROZEN at "+
+			"its first URL forever because sky-id doesn't encode src. "+
+			"See runtime-go/rt/live.go and #568 adversarial review.",
+			wantSrcGate)
+	}
 	// The splice must strip src from the placeholder so the
 	// follow-on __skyCopyAttrsExceptAuthority call doesn't write
 	// src onto the live iframe (which would trigger the same
