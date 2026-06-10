@@ -70,6 +70,7 @@ import qualified Sky.Parse.MultilineInterpolationEscapeSpec
 import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Build.CharToCodeSpec
 import qualified Sky.Build.CharPredicateAsRuneSpec
+import qualified Sky.Sky.TomlTtlSpec
 import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Build.LiveInitRuntimeSpec
@@ -431,6 +432,9 @@ allSpecs fastMode = do
     -- their rune arg via rt.AsRune, not rt.AsInt.
     describeT "Sky.Build.CharPredicateAsRune"
         Sky.Build.CharPredicateAsRuneSpec.spec
+    -- v0.16.19 — sky.toml `[live] ttl = "24h"` parses as 86400 s
+    -- (was silently truncated to 24 s by safeReadInt's reads).
+    describeT "Sky.Sky.TomlTtl" Sky.Sky.TomlTtlSpec.spec
     -- v0.16.7 #417 + #418 — Sky.Live navigation contract widening
     -- (req.params Dict + onNavigate cfg field).
     describeT "Sky.Build.LiveNavigation" Sky.Build.LiveNavigationSpec.spec
