@@ -259,6 +259,17 @@ func dbBindArg(a any) any {
 	if a == nil {
 		return nil
 	}
+	// SqlValue ADT — Sky multi-variant ADTs lower to rt.SkyADT
+	// (Tag + SkyName + Fields []any). v0.16.26 (#582) typed-binding
+	// surface: every variant maps 1:1 to a database/sql.Valuer-friendly
+	// Go type. Recognised by SkyName starting with "Sql" — narrow enough
+	// to not collide with user ADTs that happen to share the SkyADT
+	// shape.
+	if adt, ok := a.(SkyADT); ok {
+		if v, recognised := sqlValueToGo(adt); recognised {
+			return v
+		}
+	}
 	rv := reflect.ValueOf(a)
 	// Reach inside *T when a is a pointer to a struct (rare for Sky
 	// values but cheap to handle).
@@ -288,6 +299,249 @@ func dbBindArg(a any) any {
 	default:
 		return a
 	}
+}
+
+// sqlValueToGo recognises the Std.Db.SqlValue ADT and decodes each
+// variant to a database/sql-friendly Go value. Returns (nil, false)
+// when the ADT isn't a SqlValue so dbBindArg can fall through to
+// the Maybe-shape check.
+//
+// Variant ↔ Go type mapping (v0.16.26 #582):
+//   SqlString s   → string
+//   SqlInt i      → int64
+//   SqlFloat f    → float64
+//   SqlBool b     → bool
+//   SqlBytes s    → []byte
+//   SqlDecimal d  → string (Decimal.toString — driver-portable)
+//   SqlTime t     → time.Time (from Unix millis)
+//   SqlMoney m    → string ("ISO_CODE AMOUNT" — lossless round-trip)
+//   SqlNull w     → nil (wrapped value's data is ignored; type-witness
+//                   only matters at the schema-design level)
+func sqlValueToGo(adt SkyADT) (any, bool) {
+	switch adt.SkyName {
+	case "SqlString":
+		if len(adt.Fields) >= 1 {
+			return AsString(adt.Fields[0]), true
+		}
+	case "SqlInt":
+		if len(adt.Fields) >= 1 {
+			return int64(AsInt(adt.Fields[0])), true
+		}
+	case "SqlFloat":
+		if len(adt.Fields) >= 1 {
+			return AsFloat(adt.Fields[0]), true
+		}
+	case "SqlBool":
+		if len(adt.Fields) >= 1 {
+			return AsBool(adt.Fields[0]), true
+		}
+	case "SqlBytes":
+		if len(adt.Fields) >= 1 {
+			return []byte(AsString(adt.Fields[0])), true
+		}
+	case "SqlDecimal":
+		if len(adt.Fields) >= 1 {
+			return sqlDecimalToString(adt.Fields[0]), true
+		}
+	case "SqlTime":
+		if len(adt.Fields) >= 1 {
+			millis := int64(AsInt(adt.Fields[0]))
+			return time.UnixMilli(millis).UTC(), true
+		}
+	case "SqlMoney":
+		if len(adt.Fields) >= 1 {
+			return sqlMoneyToString(adt.Fields[0]), true
+		}
+	case "SqlNull":
+		// Type-witness ignored; the wrapped variant tag tells the
+		// driver what column type to bind NULL as, but database/sql
+		// at this layer just needs nil.
+		return nil, true
+	}
+	return nil, false
+}
+
+// sqlDecimalToString renders a Decimal value. Decimal is opaque
+// via decimalBox/decimalUnbox; if the value is already a string
+// (raw input) we pass through, otherwise unbox via the registered
+// helper. Lossless for the shopspring/decimal backend used today.
+func sqlDecimalToString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return decimalUnbox(v).String()
+}
+
+// sqlMoneyToString renders Money as "ISO_CODE AMOUNT" for
+// driver-portable single-TEXT-column storage. Money is the
+// Sky ADT `Money Decimal Currency` — a single-constructor ADT
+// so the SkyADT carries Fields = [decimalBox, currencyADT].
+// Currency is a sum-type: every named code (USD/EUR/.../USDC)
+// has SkyName matching the ISO code, while CurrencyRaw carries
+// the raw string in Fields[0].
+func sqlMoneyToString(v any) string {
+	adt, ok := v.(SkyADT)
+	if !ok || adt.SkyName != "Money" || len(adt.Fields) < 2 {
+		// Defensive fallback — render whatever it is via %v rather
+		// than panic, but this shouldn't trigger in practice.
+		return fmt.Sprintf("%v", v)
+	}
+	amount := sqlDecimalToString(adt.Fields[0])
+	currency := sqlCurrencyToCode(adt.Fields[1])
+	return currency + " " + amount
+}
+
+// sqlCurrencyToCode extracts the 3-letter ISO 4217 code from a
+// Currency ADT value. Named variants (USD, EUR, JPY, ..., USDC)
+// use SkyName directly; CurrencyRaw carries the raw code in
+// Fields[0].
+func sqlCurrencyToCode(v any) string {
+	adt, ok := v.(SkyADT)
+	if !ok {
+		return fmt.Sprintf("%v", v)
+	}
+	if adt.SkyName == "CurrencyRaw" && len(adt.Fields) >= 1 {
+		return AsString(adt.Fields[0])
+	}
+	return adt.SkyName
+}
+
+// Db_updateFields : Db -> String -> List (String, SqlValue) -> List (String, SqlField) -> Task Error Int
+// Builds a dynamic UPDATE statement that includes only the columns
+// whose SqlField is `SetField v`. `OmitField` columns are dropped
+// from the SET clause so the database keeps their existing value.
+// WHERE clause is composed from `whereCols`; column names are
+// identifier-validated (alphanum + underscore + dot) so they can't
+// inject SQL.
+func Db_updateFields(db any, table any, whereCols any, setFields any) any {
+	return func() any {
+		return WithDbSpan(dbSystemOf(db), "updateFields", stmtAttr(table), func() any {
+			d, ok := db.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.updateFields: not a Db"))
+			}
+			tbl, errRes := mustStringTyped(table, "db.updateFields:table")
+			if errRes != nil {
+				return errRes
+			}
+			if !validSqlIdent(tbl) {
+				return Err[any, any](ErrInvalidInput(
+					"db.updateFields: invalid table name " + tbl))
+			}
+			whereList := asList(whereCols)
+			setList := asList(setFields)
+			if len(setList) == 0 {
+				return Err[any, any](ErrInvalidInput(
+					"db.updateFields: no SET fields"))
+			}
+
+			// Build SET clause + args. SetField → "col = ?", bind value;
+			// OmitField → skip entirely.
+			var setClauses []string
+			var goArgs []any
+			for _, pair := range setList {
+				col, fld, ok := unpackPair(pair)
+				if !ok {
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: SET entry not a (String, SqlField) tuple"))
+				}
+				if !validSqlIdent(col) {
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: invalid SET column name " + col))
+				}
+				// fld is a SqlField ADT: SetField SqlValue | OmitField
+				adt, isAdt := fld.(SkyADT)
+				if !isAdt {
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: SET entry value not a SqlField"))
+				}
+				switch adt.SkyName {
+				case "SetField":
+					if len(adt.Fields) < 1 {
+						return Err[any, any](ErrInvalidInput(
+							"db.updateFields: SetField missing value"))
+					}
+					setClauses = append(setClauses, col+" = ?")
+					goArgs = append(goArgs, dbBindArg(adt.Fields[0]))
+				case "OmitField":
+					// column dropped from SQL — database keeps existing value
+					continue
+				default:
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: unknown SqlField variant " + adt.SkyName))
+				}
+			}
+			if len(setClauses) == 0 {
+				// Every column was OmitField — nothing to update.
+				return Ok[any, any](0)
+			}
+
+			// Build WHERE clause + args. Each (col, value) becomes
+			// "col = ?" AND-joined. Empty whereCols → no WHERE clause
+			// (acceptable for full-table updates).
+			var whereClauses []string
+			for _, pair := range whereList {
+				col, val, ok := unpackPair(pair)
+				if !ok {
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: WHERE entry not a (String, SqlValue) tuple"))
+				}
+				if !validSqlIdent(col) {
+					return Err[any, any](ErrInvalidInput(
+						"db.updateFields: invalid WHERE column name " + col))
+				}
+				whereClauses = append(whereClauses, col+" = ?")
+				goArgs = append(goArgs, dbBindArg(val))
+			}
+
+			sql := "UPDATE " + tbl + " SET " + strings.Join(setClauses, ", ")
+			if len(whereClauses) > 0 {
+				sql += " WHERE " + strings.Join(whereClauses, " AND ")
+			}
+			res, err := d.conn.Exec(sql, goArgs...)
+			if err != nil {
+				return Err[any, any](ErrIo("db.updateFields: " + err.Error()))
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return Err[any, any](ErrIo("db.updateFields rows: " + err.Error()))
+			}
+			return Ok[any, any](int(n))
+		})
+	}
+}
+
+// unpackPair pulls (String, V) out of a Sky 2-tuple. Sky tuples
+// lower as SkyTuple2{V0, V1}. Returns ("", nil, false) if the
+// input isn't a 2-tuple with String first.
+func unpackPair(p any) (string, any, bool) {
+	if t2, ok := p.(SkyTuple2); ok {
+		col, sok := t2.V0.(string)
+		if !sok {
+			return "", nil, false
+		}
+		return col, t2.V1, true
+	}
+	return "", nil, false
+}
+
+// validSqlIdent — alphanumeric + underscore + dot only. Rejects
+// SQL injection vectors via column names. SQLite + PostgreSQL
+// identifiers allow more, but for stdlib-built dynamic SQL we
+// stick to the safe-everywhere subset.
+func validSqlIdent(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 

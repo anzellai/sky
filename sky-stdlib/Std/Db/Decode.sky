@@ -38,12 +38,16 @@
 --         Db.queryDecode db "SELECT id, email, age FROM users" [] userDecoder
 module Std.Db.Decode exposing
     ( string, int, float, bool
+    , money
     , nullable
     , succeed, fail
     , map, andThen, andMap
     , map2, map3, map4, map5
     , required, optional
     )
+
+
+import Std.Money exposing (Money)
 
 
 import Sky.Ffi as Ffi
@@ -78,6 +82,15 @@ float = Ffi.kernel "DbDec_float"
 -- 0/1 ints; PostgreSQL drivers may return either form).
 bool : String -> Decoder Bool
 bool = Ffi.kernel "DbDec_bool"
+
+
+-- | `money col` — decode column `col` as a Money. Reads a TEXT
+-- cell in `"ISO_CODE AMOUNT"` format (e.g. `"USD 1234.56"`) and
+-- parses it back to a `Std.Money.Money` value with full currency
+-- + decimal fidelity. Round-trips with `Std.Db.SqlMoney` on the
+-- write side (v0.16.26 #582).
+money : String -> Decoder Money
+money = Ffi.kernel "DbDec_money"
 
 
 -- | `nullable inner` — wrap `inner` so it returns `Nothing` when ANY

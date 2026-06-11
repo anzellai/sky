@@ -3,6 +3,8 @@ package rt
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/shopspring/decimal"
 )
 
 // DB row decoders (v0.15.45 — Std.Db.Decode) — mirror of
@@ -195,6 +197,69 @@ func DbDec_bool(colName any) any {
 		}
 		return Err[any, any](ErrDecode(fmt.Sprintf("column %s: expected Bool, got %T", col, v)))
 	}}
+}
+
+// DbDec_money : String -> Decoder Money — read a TEXT column in
+// "ISO_CODE AMOUNT" format and parse back to a Sky Money value.
+// Round-trips with `SqlMoney` on the bind side (v0.16.26 #582).
+// Format: 3+ letter currency code, space, decimal amount string.
+// Examples: "USD 1234.56", "JPY 100", "BTC 0.0001234".
+func DbDec_money(colName any) any {
+	col := AsString(colName)
+	return DbDecoder{cols: []string{col}, run: func(row map[string]any) any {
+		s, ok := dbColString(row, col)
+		if !ok {
+			return Err[any, any](ErrDecode("missing column: " + col))
+		}
+		idx := -1
+		for i := 0; i < len(s); i++ {
+			if s[i] == ' ' {
+				idx = i
+				break
+			}
+		}
+		if idx <= 0 || idx >= len(s)-1 {
+			return Err[any, any](ErrDecode(
+				"column " + col + ": expected Money 'CODE AMOUNT', got " + s))
+		}
+		code := s[:idx]
+		amountStr := s[idx+1:]
+		// Re-construct Money via the Sky-side constructor shape so
+		// the result is assignment-compatible with user code expecting
+		// a Money ADT.
+		amount, perr := decimal.NewFromString(amountStr)
+		if perr != nil {
+			return Err[any, any](ErrDecode(
+				"column " + col + ": Money amount parse: " + perr.Error()))
+		}
+		currency := sqlCodeToCurrency(code)
+		money := SkyADT{
+			Tag: 0, SkyName: "Money",
+			Fields: []any{decimalBox(amount), currency},
+		}
+		return Ok[any, any](money)
+	}}
+}
+
+// sqlCodeToCurrency builds the Sky-side Currency ADT for a
+// 3-letter ISO code. Named variants (USD/EUR/.../USDC) get a
+// dedicated ADT with that SkyName; unknown codes fall through to
+// `CurrencyRaw String`. Matches Std.Money.parseCurrency's semantics
+// but lives at the runtime layer so the decoder doesn't have to
+// reflect-call into Sky kernel code.
+func sqlCodeToCurrency(code string) SkyADT {
+	switch code {
+	case "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK",
+		"DKK", "CNY", "HKD", "SGD", "KRW", "TWD", "INR", "THB", "MYR", "IDR",
+		"PHP", "VND", "BRL", "MXN", "ARS", "CLP", "ZAR", "TRY", "RUB", "UAH",
+		"PLN", "CZK", "HUF", "RON", "BGN", "AED", "SAR", "QAR", "KWD", "BHD",
+		"OMR", "JOD", "ILS", "EGP", "NGN", "KES", "GHS", "MAD", "TND", "DZD",
+		"PKR", "BDT", "LKR", "NPR",
+		"BTC", "ETH", "USDT", "USDC":
+		return SkyADT{Tag: 0, SkyName: code, Fields: []any{}}
+	default:
+		return SkyADT{Tag: 0, SkyName: "CurrencyRaw", Fields: []any{code}}
+	}
 }
 
 // DbDec_nullable : Decoder a -> Decoder (Maybe a) — returns Just

@@ -17,12 +17,26 @@ module Std.Db exposing
     , withTransaction
     , getField, getString, getInt, getBool
     , Migration, migrate
+    -- v0.16.26 — typed SQL value binding (#582)
+    , SqlValue(..)
+    , fromMaybeString, fromMaybeInt, fromMaybeFloat, fromMaybeBool
+    , fromMaybeBytes, fromMaybeDecimal, fromMaybeTime, fromMaybeMoney
+    , SqlField(..), updateFields
     )
 
 
 import Sky.Ffi as Ffi
 import Sky.Core.List as List
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Maybe as Maybe
+import Std.Decimal exposing (Decimal)
+import Std.Decimal as Decimal
+import Std.Money exposing (Money)
+import Std.Money as Money
+
+-- `Time` is a Unix-millis Int in Sky's stdlib (Sky.Core.Time has
+-- no opaque type; every entry takes/returns Int). SqlTime carries
+-- raw millis for driver-side `time.UnixMilli(...).UTC()` round-trip.
 
 
 -- ─── Connection lifecycle ──────────────────────────────────────────
@@ -234,3 +248,154 @@ getInt = Ffi.kernel "Db_getInt"
 
 getBool : String -> row -> Bool
 getBool = Ffi.kernel "Db_getBool"
+
+
+-- ─── Typed SQL parameter binding (v0.16.26 — #582) ─────────────────
+
+
+-- | A typed SQL parameter value for prepared-statement binding.
+-- Covers SQLite's 5 storage classes + PostgreSQL's common extensions
+-- (Decimal, Time, Bytes, Money). Lets `List SqlValue` flow
+-- homogeneously through `Db.exec` / `Db.query` while preserving
+-- per-column type-information to the SQL driver.
+--
+-- Nullability is a VALUE-level property expressed via `SqlNull
+-- witness` — the wrapped SqlValue carries a type-tag for the driver
+-- (e.g. `SqlNull (SqlInt 0)` means "NULL, Int type"). The wrapped
+-- value's data is ignored.
+--
+-- "Column omitted" (not present in the SQL statement at all) is a
+-- SQL-statement-level concern handled by `updateFields` /
+-- `insertFields` builders below, not a `SqlValue` variant.
+--
+-- Money serialises as `"ISO_CODE AMOUNT"` text (e.g. `"USD 1234.56"`)
+-- for lossless round-trip via a single TEXT column. For two-column
+-- money storage (`amount NUMERIC, currency CHAR(3)`), decompose at
+-- the call site: `SqlDecimal (Money.amount m), SqlString
+-- (Money.currencyCode (Money.currency m))`.
+--
+-- Example with mixed types — the call site sky-sqlgen emits:
+--
+--     Db.exec conn
+--         "INSERT INTO orders (id, customer, amount, paid_at) VALUES (?, ?, ?, ?)"
+--         [ SqlInt orderId
+--         , SqlString customerUuid
+--         , SqlMoney total
+--         , fromMaybeTime maybePaidAt    -- nullable column
+--         ]
+type SqlValue
+    = SqlString String           -- TEXT / VARCHAR / CHAR / UUID-as-text / JSON-as-text
+    | SqlInt Int                 -- INTEGER / SMALLINT / BIGINT / SERIAL
+    | SqlFloat Float             -- REAL / DOUBLE PRECISION
+    | SqlBool Bool               -- BOOLEAN
+    | SqlBytes String            -- BLOB / BYTEA (Sky's Bytes is String alias)
+    | SqlDecimal Decimal         -- NUMERIC / DECIMAL
+    | SqlTime Int                -- TIMESTAMP / DATE / TIMETZ (Unix millis)
+    | SqlMoney Money             -- TEXT as "ISO_CODE AMOUNT" (lossless round-trip)
+    | SqlNull SqlValue           -- typed NULL via wrapped type-witness
+
+
+-- ─── Maybe-lifting helpers ─────────────────────────────────────────
+--
+-- Each helper maps `Maybe T` to the corresponding `SqlValue`
+-- variant: `Just v` → `SqlT v`, `Nothing` → `SqlNull (SqlT
+-- defaultWitness)`. Lets sky-sqlgen and hand-written code emit
+-- nullable columns without inline `case-of` boilerplate.
+
+
+fromMaybeString : Maybe String -> SqlValue
+fromMaybeString m =
+    case m of
+        Just v -> SqlString v
+        Nothing -> SqlNull (SqlString "")
+
+
+fromMaybeInt : Maybe Int -> SqlValue
+fromMaybeInt m =
+    case m of
+        Just v -> SqlInt v
+        Nothing -> SqlNull (SqlInt 0)
+
+
+fromMaybeFloat : Maybe Float -> SqlValue
+fromMaybeFloat m =
+    case m of
+        Just v -> SqlFloat v
+        Nothing -> SqlNull (SqlFloat 0.0)
+
+
+fromMaybeBool : Maybe Bool -> SqlValue
+fromMaybeBool m =
+    case m of
+        Just v -> SqlBool v
+        Nothing -> SqlNull (SqlBool False)
+
+
+fromMaybeBytes : Maybe String -> SqlValue
+fromMaybeBytes m =
+    case m of
+        Just v -> SqlBytes v
+        Nothing -> SqlNull (SqlBytes "")
+
+
+fromMaybeDecimal : Maybe Decimal -> SqlValue
+fromMaybeDecimal m =
+    case m of
+        Just v -> SqlDecimal v
+        Nothing -> SqlNull (SqlDecimal Decimal.zero)
+
+
+fromMaybeTime : Maybe Int -> SqlValue
+fromMaybeTime m =
+    case m of
+        Just v -> SqlTime v
+        Nothing -> SqlNull (SqlTime 0)
+
+
+fromMaybeMoney : Maybe Money -> SqlValue
+fromMaybeMoney m =
+    case m of
+        Just v -> SqlMoney v
+        Nothing ->
+            -- Witness uses USD as the type-tag carrier; only the
+            -- variant tag is read by the driver.
+            SqlNull (SqlMoney (Money.zero (Money.parseCurrency "USD")))
+
+
+-- ─── updateFields / insertFields builders ──────────────────────────
+
+
+-- | Per-column "what to do" instruction for partial updates.
+-- `SetField v` includes the column in the SET clause and binds `v`
+-- (which may be `SqlNull witness` for an explicit NULL). `OmitField`
+-- drops the column from the SQL statement entirely — the database's
+-- existing value is unchanged. This is the third "absent" state SQL
+-- requires for PATCH semantics that the per-value `SqlValue` ADT
+-- can't express alone (#582 L3).
+type SqlField
+    = SetField SqlValue
+    | OmitField
+
+
+-- | `updateFields db table whereCols setFields` — PATCH-style update
+-- with dynamically-generated SQL. Each `SetField v` becomes a
+-- `column = ?` clause; `OmitField` columns are dropped from the SQL
+-- entirely so the database keeps their existing value.
+--
+-- Example: change `email` and explicitly NULL `paid_at`, leave
+-- `notes` untouched:
+--
+--     Db.updateFields conn "users"
+--         [ ("id", SqlInt 1) ]
+--         [ ("email",   SetField (SqlString "new@example.com"))
+--         , ("paid_at", SetField (SqlNull (SqlTime 0)))
+--         , ("notes",   OmitField)
+--         ]
+--     -- generates: UPDATE users SET email = ?, paid_at = ? WHERE id = ?
+--     -- args:      [ SqlString "new@example.com"
+--     --            , SqlNull (SqlTime 0)
+--     --            , SqlInt 1 ]
+--
+-- Returns the affected-row count.
+updateFields : Db -> String -> List ( String, SqlValue ) -> List ( String, SqlField ) -> Task Error Int
+updateFields = Ffi.kernel "Db_updateFields"
