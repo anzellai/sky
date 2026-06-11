@@ -790,7 +790,7 @@ updateOrder conn orderId maybeStatus refunded =
         ]
 ```
 
-Variants (9 total) — `SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` / `SqlBytes` / `SqlDecimal` / `SqlTime` / `SqlMoney` / `SqlNull SqlValue`. Money serialises lossless as `"ISO_CODE AMOUNT"` TEXT; round-trip via `Db.Decode.money`. Maybe-lifting helpers: `fromMaybeString` / `fromMaybeInt` / `fromMaybeFloat` / `fromMaybeBool` / `fromMaybeBytes` / `fromMaybeDecimal` / `fromMaybeTime` / `fromMaybeMoney`. `SqlField` (`SetField SqlValue` | `OmitField`) for partial updates via `Db.updateFields` and DEFAULT-omittable INSERTs via `Db.insertFields` (#585) — `OmitField` columns drop from the SQL so the database applies their `DEFAULT`; all-omit → `INSERT … DEFAULT VALUES`.
+Variants (9 total) — `SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` / `SqlBytes` / `SqlDecimal` / `SqlTime` / `SqlMoney` / `SqlNull SqlValue`. Money serialises lossless as `"ISO_CODE AMOUNT"` TEXT; round-trip via `Db.Decode.money`. Maybe-lifting helpers: `fromMaybeString` / `fromMaybeInt` / `fromMaybeFloat` / `fromMaybeBool` / `fromMaybeBytes` / `fromMaybeDecimal` / `fromMaybeTime` / `fromMaybeMoney`. `SqlField` (`SetField SqlValue` | `OmitField`) for partial updates via `Db.updateFields` and DEFAULT-omittable INSERTs via `Db.insertFields` (#585) — `OmitField` columns drop from the SQL so the database applies their `DEFAULT`; all-omit → `INSERT … DEFAULT VALUES`. `Db.insertFieldsReturning table fields projection decoder` (#586) appends `RETURNING <projection>` to the same builder and decodes each returned row via `Std.Db.Decode` — for picking up assigned autoincrement ids / applied DEFAULTs / generated columns at INSERT time (SQLite ≥ 3.35 / PostgreSQL).
 
 ### `Log` — structured logging
 

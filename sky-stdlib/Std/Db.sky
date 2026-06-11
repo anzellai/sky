@@ -9,21 +9,44 @@
 -- All row results come back as `Dict String String` — read
 -- typed values via `getInt` / `getBool` / `getField`.
 module Std.Db exposing
-    ( open, connect, close
-    , exec, execRaw, query
-    , insertRow, getById, updateById, deleteById
-    , findOneByField, findManyByField, findByConditions
-    , unsafeFindWhere, queryDecode, getByIdDecode
+    ( open
+    , connect
+    , close
+    , exec
+    , execRaw
+    , query
+    , insertRow
+    , getById
+    , updateById
+    , deleteById
+    , findOneByField
+    , findManyByField
+    , findByConditions
+    , unsafeFindWhere
+    , queryDecode
+    , getByIdDecode
     , withTransaction
-    , getField, getString, getInt, getBool
-    , Migration, migrate
+    , getField
+    , getString
+    , getInt
+    , getBool
+    , Migration
+    , migrate
     -- v0.16.26 — typed SQL value binding (#582)
     , SqlValue(..)
-    , fromMaybeString, fromMaybeInt, fromMaybeFloat, fromMaybeBool
-    , fromMaybeBytes, fromMaybeDecimal, fromMaybeTime, fromMaybeMoney
-    , SqlField(..), updateFields, insertFields
+    , fromMaybeString
+    , fromMaybeInt
+    , fromMaybeFloat
+    , fromMaybeBool
+    , fromMaybeBytes
+    , fromMaybeDecimal
+    , fromMaybeTime
+    , fromMaybeMoney
+    , SqlField(..)
+    , updateFields
+    , insertFields
+    , insertFieldsReturning
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.List as List
@@ -33,6 +56,7 @@ import Std.Decimal exposing (Decimal)
 import Std.Decimal as Decimal
 import Std.Money exposing (Money)
 import Std.Money as Money
+
 
 -- `Time` is a Unix-millis Int in Sky's stdlib (Sky.Core.Time has
 -- no opaque type; every entry takes/returns Int). SqlTime carries
@@ -46,17 +70,20 @@ import Std.Money as Money
 -- `driver` is `"sqlite"` / `"postgres"`; `dsn` is the connection
 -- string.
 open : String -> String -> Task Error Db
-open = Ffi.kernel "Db_open"
+open =
+    Ffi.kernel "Db_open"
 
 
 -- | Use the connection configured by `sky.toml`'s `[database]`
 -- section (driver + url).
 connect : () -> Task Error Db
-connect = Ffi.kernel "Db_connect"
+connect =
+    Ffi.kernel "Db_connect"
 
 
 close : Db -> Task Error ()
-close = Ffi.kernel "Db_close"
+close =
+    Ffi.kernel "Db_close"
 
 
 -- ─── Raw SQL ───────────────────────────────────────────────────────
@@ -84,14 +111,16 @@ close = Ffi.kernel "Db_close"
 --         "INSERT INTO people (name, age) VALUES (?, ?)"
 --         [ Just "Alice", Just 30 ]
 exec : Db -> String -> List a -> Task Error Int
-exec = Ffi.kernel "Db_exec"
+exec =
+    Ffi.kernel "Db_exec"
 
 
 -- | `execRaw db sql` — SQL without bound args (DDL,
 -- multi-statement scripts).  No parameter binding — vulnerable
 -- to injection if `sql` is built from user input.
 execRaw : Db -> String -> Task Error Int
-execRaw = Ffi.kernel "Db_execRaw"
+execRaw =
+    Ffi.kernel "Db_execRaw"
 
 
 -- | `query db sql params` — parameterised SELECT.  Returns rows
@@ -101,7 +130,8 @@ execRaw = Ffi.kernel "Db_execRaw"
 -- non-String params at the call site, or pass Maybe-typed values
 -- directly (#574). See `exec`'s docstring for examples.
 query : Db -> String -> List a -> Task Error (List (Dict String String))
-query = Ffi.kernel "Db_query"
+query =
+    Ffi.kernel "Db_query"
 
 
 -- ─── Convenience CRUD ──────────────────────────────────────────────
@@ -110,41 +140,48 @@ query = Ffi.kernel "Db_query"
 -- | `insertRow db table fields` — insert a row built from
 -- `fields` (`Dict String String`).  Returns the new row's `id`.
 insertRow : Db -> String -> Dict String String -> Task Error Int
-insertRow = Ffi.kernel "Db_insertRow"
+insertRow =
+    Ffi.kernel "Db_insertRow"
 
 
 -- | `getById db table id` — fetch a single row by integer id.
 getById : Db -> String -> String -> Task Error (Maybe (Dict String String))
-getById = Ffi.kernel "Db_getById"
+getById =
+    Ffi.kernel "Db_getById"
 
 
 -- | `updateById db table id fields` — partial update; returns
 -- the affected-row count.
 updateById : Db -> String -> String -> Dict String String -> Task Error Int
-updateById = Ffi.kernel "Db_updateById"
+updateById =
+    Ffi.kernel "Db_updateById"
 
 
 -- | `deleteById db table id` — delete one row by id; returns
 -- the affected-row count.
 deleteById : Db -> String -> String -> Task Error Int
-deleteById = Ffi.kernel "Db_deleteById"
+deleteById =
+    Ffi.kernel "Db_deleteById"
 
 
 -- | `findOneByField db table fieldName value` — equality lookup.
 findOneByField : Db -> String -> String -> a -> Task Error (Maybe (Dict String String))
-findOneByField = Ffi.kernel "Db_findOneByField"
+findOneByField =
+    Ffi.kernel "Db_findOneByField"
 
 
 -- | `findManyByField db table fieldName value` — equality
 -- lookup returning all matches.
 findManyByField : Db -> String -> String -> a -> Task Error (List (Dict String String))
-findManyByField = Ffi.kernel "Db_findManyByField"
+findManyByField =
+    Ffi.kernel "Db_findManyByField"
 
 
 -- | `findByConditions db table conditions` — AND-joined equality
 -- on every key/value pair in `conditions`.
 findByConditions : Db -> String -> Dict String String -> Task Error (List (Dict String String))
-findByConditions = Ffi.kernel "Db_findByConditions"
+findByConditions =
+    Ffi.kernel "Db_findByConditions"
 
 
 -- | `unsafeFindWhere db table whereClause params` — raw `WHERE`
@@ -152,7 +189,8 @@ findByConditions = Ffi.kernel "Db_findByConditions"
 -- verbatim to the SELECT — vulnerable to injection if built from
 -- user input.
 unsafeFindWhere : Db -> String -> String -> List a -> Task Error (List (Dict String String))
-unsafeFindWhere = Ffi.kernel "Db_unsafeFindWhere"
+unsafeFindWhere =
+    Ffi.kernel "Db_unsafeFindWhere"
 
 
 -- | `queryDecode db sql params decoder` — typed query with a
@@ -163,7 +201,8 @@ unsafeFindWhere = Ffi.kernel "Db_unsafeFindWhere"
 -- success; the first row-decoder failure short-circuits the entire
 -- task with `Err`.
 queryDecode : Db -> String -> List a -> Decoder b -> Task Error (List b)
-queryDecode = Ffi.kernel "Db_queryDecode"
+queryDecode =
+    Ffi.kernel "Db_queryDecode"
 
 
 -- | `getByIdDecode db table id decoder` — typed sibling of
@@ -172,7 +211,8 @@ queryDecode = Ffi.kernel "Db_queryDecode"
 -- `Err Error` (not `Ok Nothing`) — the row exists but didn't match
 -- the expected shape.
 getByIdDecode : Db -> String -> Int -> Decoder a -> Task Error (Maybe a)
-getByIdDecode = Ffi.kernel "Db_getByIdDecode"
+getByIdDecode =
+    Ffi.kernel "Db_getByIdDecode"
 
 
 -- ─── Transactions ──────────────────────────────────────────────────
@@ -181,8 +221,8 @@ getByIdDecode = Ffi.kernel "Db_getByIdDecode"
 -- | Run a block of database work inside a transaction; commits
 -- on `Ok`, rolls back on `Err`.
 withTransaction : Db -> (Db -> Task Error a) -> Task Error a
-withTransaction = Ffi.kernel "Db_withTransaction"
-
+withTransaction =
+    Ffi.kernel "Db_withTransaction"
 
 -- ─── Schema migrations ─────────────────────────────────────────────
 
@@ -196,8 +236,6 @@ type alias Migration =
     { name : String
     , sql : String
     }
-
-
 -- | Apply pending schema migrations, in list order.
 --
 -- Each migration whose `name` is not yet recorded runs in its own
@@ -218,16 +256,18 @@ type alias Migration =
 --
 --     Db.connect ()
 --         |> Task.andThen (\db -> Db.migrate db migrations)
+
+
 migrate : Db -> List Migration -> Task Error (List String)
 migrate db migrations =
-    migrateApply db
-        (List.map (\m -> ( m.name, m.sql )) migrations)
+    migrateApply db (List.map (\m -> ( m.name, m.sql )) migrations)
 
 
 -- | Low-level kernel: applies (name, sql) pairs. The record-shaped
 -- `Migration` API above is pure-Sky sugar over this.
 migrateApply : Db -> List ( String, String ) -> Task Error (List String)
-migrateApply = Ffi.kernel "Db_migrateApply"
+migrateApply =
+    Ffi.kernel "Db_migrateApply"
 
 
 -- ─── Row accessors (read columns from a row) ───────────────────────
@@ -235,20 +275,23 @@ migrateApply = Ffi.kernel "Db_migrateApply"
 
 -- | Read a field as a String (the canonical row-element shape).
 getField : String -> row -> String
-getField = Ffi.kernel "Db_getField"
+getField =
+    Ffi.kernel "Db_getField"
 
 
 getString : String -> row -> String
-getString = Ffi.kernel "Db_getString"
+getString =
+    Ffi.kernel "Db_getString"
 
 
 getInt : String -> row -> Int
-getInt = Ffi.kernel "Db_getInt"
+getInt =
+    Ffi.kernel "Db_getInt"
 
 
 getBool : String -> row -> Bool
-getBool = Ffi.kernel "Db_getBool"
-
+getBool =
+    Ffi.kernel "Db_getBool"
 
 -- ─── Typed SQL parameter binding (v0.16.26 — #582) ─────────────────
 
@@ -284,15 +327,15 @@ getBool = Ffi.kernel "Db_getBool"
 --         , fromMaybeTime maybePaidAt    -- nullable column
 --         ]
 type SqlValue
-    = SqlString String           -- TEXT / VARCHAR / CHAR / UUID-as-text / JSON-as-text
-    | SqlInt Int                 -- INTEGER / SMALLINT / BIGINT / SERIAL
-    | SqlFloat Float             -- REAL / DOUBLE PRECISION
-    | SqlBool Bool               -- BOOLEAN
-    | SqlBytes String            -- BLOB / BYTEA (Sky's Bytes is String alias)
-    | SqlDecimal Decimal         -- NUMERIC / DECIMAL
-    | SqlTime Int                -- TIMESTAMP / DATE / TIMETZ (Unix millis)
-    | SqlMoney Money             -- TEXT as "ISO_CODE AMOUNT" (lossless round-trip)
-    | SqlNull SqlValue           -- typed NULL via wrapped type-witness
+    = SqlString String-- TEXT / VARCHAR / CHAR / UUID-as-text / JSON-as-text
+    | SqlInt Int-- INTEGER / SMALLINT / BIGINT / SERIAL
+    | SqlFloat Float-- REAL / DOUBLE PRECISION
+    | SqlBool Bool-- BOOLEAN
+    | SqlBytes String-- BLOB / BYTEA (Sky's Bytes is String alias)
+    | SqlDecimal Decimal-- NUMERIC / DECIMAL
+    | SqlTime Int-- TIMESTAMP / DATE / TIMETZ (Unix millis)
+    | SqlMoney Money-- TEXT as "ISO_CODE AMOUNT" (lossless round-trip)
+    | SqlNull SqlValue-- typed NULL via wrapped type-witness
 
 
 -- ─── Maybe-lifting helpers ─────────────────────────────────────────
@@ -301,67 +344,94 @@ type SqlValue
 -- variant: `Just v` → `SqlT v`, `Nothing` → `SqlNull (SqlT
 -- defaultWitness)`. Lets sky-sqlgen and hand-written code emit
 -- nullable columns without inline `case-of` boilerplate.
-
-
 fromMaybeString : Maybe String -> SqlValue
 fromMaybeString m =
     case m of
-        Just v -> SqlString v
-        Nothing -> SqlNull (SqlString "")
+
+        Just v ->
+            SqlString v
+
+        Nothing ->
+            -- Witness uses USD as the type-tag carrier; only the
+            -- variant tag is read by the driver.
+            SqlNull (SqlString "")
 
 
 fromMaybeInt : Maybe Int -> SqlValue
 fromMaybeInt m =
     case m of
-        Just v -> SqlInt v
-        Nothing -> SqlNull (SqlInt 0)
+
+        Just v ->
+            SqlInt v
+
+        Nothing ->
+            SqlNull (SqlInt 0)
 
 
 fromMaybeFloat : Maybe Float -> SqlValue
 fromMaybeFloat m =
     case m of
-        Just v -> SqlFloat v
-        Nothing -> SqlNull (SqlFloat 0.0)
+
+        Just v ->
+            SqlFloat v
+
+        Nothing ->
+            SqlNull (SqlFloat 0.0)
 
 
 fromMaybeBool : Maybe Bool -> SqlValue
 fromMaybeBool m =
     case m of
-        Just v -> SqlBool v
-        Nothing -> SqlNull (SqlBool False)
+
+        Just v ->
+            SqlBool v
+
+        Nothing ->
+            SqlNull (SqlBool False)
 
 
 fromMaybeBytes : Maybe String -> SqlValue
 fromMaybeBytes m =
     case m of
-        Just v -> SqlBytes v
-        Nothing -> SqlNull (SqlBytes "")
+
+        Just v ->
+            SqlBytes v
+
+        Nothing ->
+            SqlNull (SqlBytes "")
 
 
 fromMaybeDecimal : Maybe Decimal -> SqlValue
 fromMaybeDecimal m =
     case m of
-        Just v -> SqlDecimal v
-        Nothing -> SqlNull (SqlDecimal Decimal.zero)
+
+        Just v ->
+            SqlDecimal v
+
+        Nothing ->
+            SqlNull (SqlDecimal Decimal.zero)
 
 
 fromMaybeTime : Maybe Int -> SqlValue
 fromMaybeTime m =
     case m of
-        Just v -> SqlTime v
-        Nothing -> SqlNull (SqlTime 0)
+
+        Just v ->
+            SqlTime v
+
+        Nothing ->
+            SqlNull (SqlTime 0)
 
 
 fromMaybeMoney : Maybe Money -> SqlValue
 fromMaybeMoney m =
     case m of
-        Just v -> SqlMoney v
+
+        Just v ->
+            SqlMoney v
+
         Nothing ->
-            -- Witness uses USD as the type-tag carrier; only the
-            -- variant tag is read by the driver.
             SqlNull (SqlMoney (Money.zero (Money.parseCurrency "USD")))
-
-
 -- ─── updateFields / insertFields builders ──────────────────────────
 
 
@@ -372,11 +442,10 @@ fromMaybeMoney m =
 -- existing value is unchanged. This is the third "absent" state SQL
 -- requires for PATCH semantics that the per-value `SqlValue` ADT
 -- can't express alone (#582 L3).
+
 type SqlField
     = SetField SqlValue
     | OmitField
-
-
 -- | `updateFields db table whereCols setFields` — PATCH-style update
 -- with dynamically-generated SQL. Each `SetField v` becomes a
 -- `column = ?` clause; `OmitField` columns are dropped from the SQL
@@ -397,8 +466,11 @@ type SqlField
 --     --            , SqlInt 1 ]
 --
 -- Returns the affected-row count.
+
+
 updateFields : Db -> String -> List ( String, SqlValue ) -> List ( String, SqlField ) -> Task Error Int
-updateFields = Ffi.kernel "Db_updateFields"
+updateFields =
+    Ffi.kernel "Db_updateFields"
 
 
 -- | `insertFields db table fields` — DEFAULT-omittable INSERT with
@@ -423,4 +495,37 @@ updateFields = Ffi.kernel "Db_updateFields"
 -- All columns OmitField → `INSERT INTO <table> DEFAULT VALUES` (a
 -- single all-defaults row).  Returns the affected-row count.
 insertFields : Db -> String -> List ( String, SqlField ) -> Task Error Int
-insertFields = Ffi.kernel "Db_insertFields"
+insertFields =
+    Ffi.kernel "Db_insertFields"
+
+
+-- | `insertFieldsReturning db table fields projection decoder` —
+-- the decoding counterpart of `insertFields`.  Same DEFAULT-
+-- omittable INSERT (SetField/OmitField three-state), with a
+-- `RETURNING <projection>` clause appended; each returned row is
+-- decoded through `decoder` and the list returned.
+--
+-- The projection string is a caller-controlled SQL fragment — the
+-- same trust model as `queryDecode`'s SQL.  Supply a column list
+-- (`"id, title, body"`), `"*"`, aliases, or SQL expressions; the
+-- kernel does NOT validate or rewrite the text.  Schema-derived
+-- literals (sky-sqlgen) are safe; user input is not.
+--
+-- Example: insert a row, let `id` autoincrement + `created_at`
+-- default-fill, and decode both back to bind them to the caller:
+--
+--     Db.insertFieldsReturning conn "items"
+--         [ ( "name", SetField (SqlString "Widget") )
+--         , ( "note", SetField (SqlString "first batch") )
+--         ]
+--         "id, created_at"
+--         itemReturnDecoder
+--     -- → INSERT INTO items (name, note) VALUES (?, ?)
+--     --      RETURNING id, created_at
+--     -- decodes one row per row affected (typically exactly one)
+--
+-- Requires SQLite ≥ 3.35 (Mar 2021) or PostgreSQL — same as every
+-- other `RETURNING` use already in `Std.Db`.  (#586)
+insertFieldsReturning : Db -> String -> List ( String, SqlField ) -> String -> Decoder a -> Task Error (List a)
+insertFieldsReturning =
+    Ffi.kernel "Db_insertFieldsReturning"

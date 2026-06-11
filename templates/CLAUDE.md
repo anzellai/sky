@@ -4189,8 +4189,12 @@ Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 -- `fromMaybeMoney`. PATCH-style partial update via Db.updateFields
 -- + DEFAULT-omittable INSERT via Db.insertFields (#585) — both take
 -- SqlField (SetField | OmitField); insertFields all-omit emits
--- `INSERT … DEFAULT VALUES`. Money round-trips via
--- "ISO_CODE AMOUNT" TEXT — pair with `Db.Decode.money`.
+-- `INSERT … DEFAULT VALUES`. v0.16.30 `Db.insertFieldsReturning`
+-- (#586) appends `RETURNING <projection>` to the same builder and
+-- decodes each returned row via `Std.Db.Decode` — pick up assigned
+-- autoincrement ids / applied DEFAULTs at INSERT time (SQLite ≥
+-- 3.35 / PostgreSQL). Money round-trips via "ISO_CODE AMOUNT" TEXT
+-- — pair with `Db.Decode.money`.
 import Std.Db exposing (SqlValue(..), SqlField(..))
 Db.exec conn
     "INSERT INTO items (name, qty, price) VALUES (?, ?, ?)"

@@ -534,57 +534,9 @@ func Db_insertFields(db any, table any, setFields any) any {
 			if errRes != nil {
 				return errRes
 			}
-			if !validSqlIdent(tbl) {
-				return Err[any, any](ErrInvalidInput(
-					"db.insertFields: invalid table name " + tbl))
-			}
-			setList := asList(setFields)
-
-			var cols []string
-			var placeholders []string
-			var goArgs []any
-			for _, pair := range setList {
-				col, fld, ok := unpackPair(pair)
-				if !ok {
-					return Err[any, any](ErrInvalidInput(
-						"db.insertFields: entry not a (String, SqlField) tuple"))
-				}
-				if !validSqlIdent(col) {
-					return Err[any, any](ErrInvalidInput(
-						"db.insertFields: invalid column name " + col))
-				}
-				adt, isAdt := fld.(SkyADT)
-				if !isAdt {
-					return Err[any, any](ErrInvalidInput(
-						"db.insertFields: entry value not a SqlField"))
-				}
-				switch adt.SkyName {
-				case "SetField":
-					if len(adt.Fields) < 1 {
-						return Err[any, any](ErrInvalidInput(
-							"db.insertFields: SetField missing value"))
-					}
-					cols = append(cols, col)
-					placeholders = append(placeholders, "?")
-					goArgs = append(goArgs, dbBindArg(adt.Fields[0]))
-				case "OmitField":
-					// column dropped from SQL — database applies DEFAULT
-					continue
-				default:
-					return Err[any, any](ErrInvalidInput(
-						"db.insertFields: unknown SqlField variant " + adt.SkyName))
-				}
-			}
-
-			var sql string
-			if len(cols) == 0 {
-				// Every column was OmitField — insert a row entirely
-				// composed of column defaults.  Both SQLite and
-				// PostgreSQL honour this form.
-				sql = "INSERT INTO " + tbl + " DEFAULT VALUES"
-			} else {
-				sql = "INSERT INTO " + tbl + " (" + strings.Join(cols, ", ") +
-					") VALUES (" + strings.Join(placeholders, ", ") + ")"
+			sql, goArgs, buildErr := dbBuildInsertFields("db.insertFields", tbl, asList(setFields))
+			if buildErr != nil {
+				return buildErr
 			}
 			res, err := d.conn.Exec(sql, goArgs...)
 			if err != nil {
@@ -595,6 +547,165 @@ func Db_insertFields(db any, table any, setFields any) any {
 				return Err[any, any](ErrIo("db.insertFields rows: " + err.Error()))
 			}
 			return Ok[any, any](int(n))
+		})
+	}
+}
+
+// dbBuildInsertFields composes the INSERT SQL + bound-arg slice from
+// a validated table name + the SqlField pair list.  Shared between
+// `Db_insertFields` (Exec) and `Db_insertFieldsReturning` (Query+
+// decode, #586) so the SetField/OmitField semantics and identifier
+// validation are single-sourced.
+//
+// Returns the composed SQL (no RETURNING clause), the args slice,
+// and a non-nil error value (already a `SkyResult Err`) the kernel
+// caller should propagate verbatim on failure.
+func dbBuildInsertFields(kernelName, table string, setList []any) (string, []any, any) {
+	if !validSqlIdent(table) {
+		return "", nil, Err[any, any](ErrInvalidInput(
+			kernelName + ": invalid table name " + table))
+	}
+	var cols []string
+	var placeholders []string
+	var goArgs []any
+	for _, pair := range setList {
+		col, fld, ok := unpackPair(pair)
+		if !ok {
+			return "", nil, Err[any, any](ErrInvalidInput(
+				kernelName + ": entry not a (String, SqlField) tuple"))
+		}
+		if !validSqlIdent(col) {
+			return "", nil, Err[any, any](ErrInvalidInput(
+				kernelName + ": invalid column name " + col))
+		}
+		adt, isAdt := fld.(SkyADT)
+		if !isAdt {
+			return "", nil, Err[any, any](ErrInvalidInput(
+				kernelName + ": entry value not a SqlField"))
+		}
+		switch adt.SkyName {
+		case "SetField":
+			if len(adt.Fields) < 1 {
+				return "", nil, Err[any, any](ErrInvalidInput(
+					kernelName + ": SetField missing value"))
+			}
+			cols = append(cols, col)
+			placeholders = append(placeholders, "?")
+			goArgs = append(goArgs, dbBindArg(adt.Fields[0]))
+		case "OmitField":
+			continue
+		default:
+			return "", nil, Err[any, any](ErrInvalidInput(
+				kernelName + ": unknown SqlField variant " + adt.SkyName))
+		}
+	}
+	if len(cols) == 0 {
+		// Every column was OmitField — insert a row entirely composed
+		// of column defaults.  Both SQLite and PostgreSQL honour this
+		// form, and DEFAULT VALUES + RETURNING is valid on both.
+		return "INSERT INTO " + table + " DEFAULT VALUES", goArgs, nil
+	}
+	return "INSERT INTO " + table + " (" + strings.Join(cols, ", ") +
+		") VALUES (" + strings.Join(placeholders, ", ") + ")", goArgs, nil
+}
+
+// Db_insertFieldsReturning : Db -> String -> List (String, SqlField) -> String -> Decoder a -> Task Error (List a)
+// The decoding counterpart of `Db_insertFields`.  Builds the same
+// DEFAULT-omittable INSERT, appends `RETURNING <projection>`, runs
+// it through `Query` (not Exec — RETURNING produces rows), and
+// decodes each row via the same DbDecoder path as `Db_queryDecode`.
+//
+// The projection string is caller-controlled (matches the
+// `queryDecode` trust model) so `RETURNING *` / aliases / SQL
+// expressions all work without a second grammar.  sky-sqlgen emits
+// schema-derived literals; the kernel does NOT validate or rewrite
+// the text.
+//
+// Requires SQLite ≥ 3.35 (Mar 2021) or PostgreSQL — same as every
+// other RETURNING use already in Std.Db.  #586.
+func Db_insertFieldsReturning(db any, table any, setFields any, projection any, decoder any) any {
+	return func() any {
+		return WithDbSpan(dbSystemOf(db), "insertFieldsReturning", stmtAttr(table), func() any {
+			d, ok := db.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.insertFieldsReturning: not a Db"))
+			}
+			tbl, errRes := mustStringTyped(table, "db.insertFieldsReturning:table")
+			if errRes != nil {
+				return errRes
+			}
+			proj, errRes := mustStringTyped(projection, "db.insertFieldsReturning:projection")
+			if errRes != nil {
+				return errRes
+			}
+			if proj == "" {
+				return Err[any, any](ErrInvalidInput(
+					"db.insertFieldsReturning: empty RETURNING projection"))
+			}
+			sql, goArgs, buildErr := dbBuildInsertFields(
+				"db.insertFieldsReturning", tbl, asList(setFields))
+			if buildErr != nil {
+				return buildErr
+			}
+			sql += " RETURNING " + proj
+
+			rows, err := d.conn.Query(sql, goArgs...)
+			if err != nil {
+				return Err[any, any](ErrIo("db.insertFieldsReturning: " + err.Error()))
+			}
+			defer rows.Close()
+
+			cols, err := rows.Columns()
+			if err != nil {
+				return Err[any, any](ErrIo(
+					"db.insertFieldsReturning columns: " + err.Error()))
+			}
+			var rowDicts []map[string]any
+			for rows.Next() {
+				raw := make([]any, len(cols))
+				ptrs := make([]any, len(cols))
+				for i := range raw {
+					ptrs[i] = &raw[i]
+				}
+				if err := rows.Scan(ptrs...); err != nil {
+					return Err[any, any](ErrIo(
+						"db.insertFieldsReturning scan: " + err.Error()))
+				}
+				rowDict := map[string]any{}
+				for i, c := range cols {
+					rowDict[c] = normaliseSqlValue(raw[i])
+				}
+				rowDicts = append(rowDicts, rowDict)
+			}
+			if err := rows.Err(); err != nil {
+				return Err[any, any](ErrIo(
+					"db.insertFieldsReturning iter: " + err.Error()))
+			}
+
+			// Decode each row through the same DbDecoder path as
+			// Db_queryDecode (typed Std.Db.Decode pipeline).  Legacy
+			// JsonDecoder isn't supported on the RETURNING surface —
+			// it's a v0.16.29+ entry point and there are no legacy
+			// callers to keep working.
+			d2, isDec := decoder.(DbDecoder)
+			if !isDec {
+				return Err[any, any](ErrDecode(
+					"db.insertFieldsReturning: decoder is not a Std.Db.Decode Decoder"))
+			}
+			out := make([]any, 0, len(rowDicts))
+			for _, row := range rowDicts {
+				result := d2.run(row)
+				sr, ok := result.(SkyResult[any, any])
+				if !ok {
+					return Err[any, any](ErrDecode(
+						"db.insertFieldsReturning: decoder returned non-Result"))
+				}
+				if sr.Tag != 0 {
+					return result
+				}
+				out = append(out, sr.OkValue)
+			}
+			return Ok[any, any](out)
 		})
 	}
 }

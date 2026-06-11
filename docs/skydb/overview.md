@@ -57,6 +57,7 @@ Every operation that touches the disk returns `Task Error a` (per the [Task-ever
 | `Db.queryDecode` | `Db -> String -> List a -> b -> Task Error (List b)` | Decoder is parametric — typically a `Dict String String -> Result Error a` function; failures abort the whole query |
 | `Db.updateFields` | `Db -> String -> List (String, SqlValue) -> List (String, SqlField) -> Task Error Int` | **v0.16.26+** PATCH-style update with dynamic SQL. `SetField v` includes the column with `?` placeholder; `OmitField` drops it from the SET clause entirely (database keeps existing value). Column-name validation prevents SQL injection via identifiers. |
 | `Db.insertFields` | `Db -> String -> List (String, SqlField) -> Task Error Int` | **v0.16.29+ (#585)** INSERT counterpart of `updateFields`. `SetField v` includes the column with `?` placeholder; `OmitField` drops it from the column list so the database applies its `DEFAULT`. All columns `OmitField` → `INSERT INTO <table> DEFAULT VALUES`. Same identifier validation + `dbBindArg` normalisation as `updateFields`. |
+| `Db.insertFieldsReturning` | `Db -> String -> List (String, SqlField) -> String -> Decoder a -> Task Error (List a)` | **v0.16.30+ (#586)** Decoding counterpart of `insertFields`. Appends `RETURNING <projection>` (caller-controlled — same trust model as `queryDecode`'s SQL), then decodes each returned row through `decoder`. Requires SQLite ≥ 3.35 (Mar 2021) or PostgreSQL. Unblocks emission of `id` / `created_at` autodefaults + sky-sqlgen's `@omit` + RETURNING shapes. |
 
 #### Typed parameter binding via `SqlValue` (v0.16.26+)
 
@@ -117,6 +118,23 @@ Db.insertFields conn "items"
 ```
 
 All columns `OmitField` → `INSERT INTO <table> DEFAULT VALUES` (one all-defaults row).  Returns the affected-row count.
+
+When you need the values the database picked — autoincrement `id`, `DEFAULT created_at`, a generated column — pair with `Db.insertFieldsReturning` instead:
+
+```elm
+Db.insertFieldsReturning conn "items"
+    [ ("name",   SetField (SqlString "Widget"))
+    , ("status", OmitField)                    -- → DEFAULT 'pending'
+    , ("note",   SetField (SqlString "first batch"))
+    ]
+    "id, status"                               -- RETURNING clause
+    rowDecoder
+-- → INSERT INTO items (name, note) VALUES (?, ?)
+--      RETURNING id, status
+-- decoded as List Row (typically one row).
+```
+
+The projection string is a caller-controlled SQL fragment — the same trust model as `queryDecode`'s SQL.  Schema-derived literals (sky-sqlgen) are safe; user input is not.  Requires SQLite ≥ 3.35 (Mar 2021) or PostgreSQL — same as every other `RETURNING` use already in `Std.Db`.
 
 Money round-trips via `Std.Db.Decode.money` on the read side — paired with `SqlMoney` on the write side for lossless single-TEXT-column storage that survives PostgreSQL `NUMERIC + CHAR(3)` if you decompose at the call site instead.
 

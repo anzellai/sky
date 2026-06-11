@@ -656,6 +656,7 @@ registry = Map.fromList
     , (("Db", "execRaw"),         KernelInfo "rt.Db_execRaw" 2 False)
     , (("Db", "updateFields"),    KernelInfo "rt.Db_updateFields" 4 False)
     , (("Db", "insertFields"),    KernelInfo "rt.Db_insertFields" 3 False)
+    , (("Db", "insertFieldsReturning"), KernelInfo "rt.Db_insertFieldsReturning" 5 False)
     , (("Db", "getField"),        KernelInfo "rt.Db_getField" 2 False)
     , (("Db", "getFieldOr"),      KernelInfo "rt.Db_getFieldOr" 3 False)
     , (("Db", "getString"),       KernelInfo "rt.Db_getString" 2 False)
