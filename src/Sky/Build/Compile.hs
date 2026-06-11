@@ -12006,23 +12006,46 @@ patternCondition subject pat = case pat of
                 (GoIr.GoCall (GoIr.GoIdent "len")
                     [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
                 (GoIr.GoIntLit minLen)
-            -- Head/tail discriminator narrowing on the OUTER cons. The
-            -- chain-length condition above already covers structural
-            -- length; per-head ADT/literal narrowing still routes
-            -- through consHeadCondition / consTailCondition for the
-            -- top cons (deeper-position head narrowing is left to a
-            -- future patch — the current bug repro never needed it).
-            (A.At _ hPat) = h
-            (A.At _ tPat) = t
-            headCond = consHeadCondition subject hPat
-            -- Skip the tail condition when the tail is itself a PCons
-            -- (length now folded into `lenCond`) or PList (same — the
-            -- exact match is already baked into `lenCond`/`isExact`).
-            tailCond = case tPat of
+            -- #583 soundness fix — walk the cons spine and emit a
+            -- head-discriminator condition at EVERY position, not
+            -- just the outermost.  Pre-fix, only the outer head got
+            -- its tag tested:
+            --     (TWord a) :: (TSym s) :: rest
+            -- emitted `len >= 2 && tag(slice[0]) == 0` and bound
+            -- `s := AdtField(slice[1], 0)` UNCONDITIONALLY — a
+            -- `[TWord, TNum]` payload silently produced
+            -- `s = <int>` bound into a String slot (cross-type
+            -- confusion + cross-constructor leak).  The spine walk
+            -- now emits a discriminator per non-PVar/PAnything
+            -- head at the runtime expression `rt.AsList(subject)[i]`.
+            spineHeads = collectSpineHeads 0 (A.At A.one (Can.PCons h t))
+            headConds =
+                [ c
+                | (i, hPat) <- spineHeads
+                , Just c <- [patternConditionForExpr
+                                ("rt.AsList(" ++ subject ++ ")[" ++ show i ++ "]")
+                                hPat]
+                ]
+            -- Terminator tail condition.  After walking the spine,
+            -- the terminator is whatever non-PCons pattern stopped
+            -- the chain (typically PVar / PAnything → Nothing).
+            -- Length already folded into `lenCond` covers PList and
+            -- PCons chains so we only need a discriminator when the
+            -- terminator is something else (e.g. a literal sub-list
+            -- match, rare).  The terminator slice starts at index
+            -- `length spineHeads`.
+            terminator = consSpineTerminator (A.At A.one (Can.PCons h t))
+            tailCond = case terminator of
                 Can.PCons _ _ -> Nothing
                 Can.PList _   -> Nothing
-                _             -> consTailCondition subject tPat
-            extras = [ c | Just c <- [headCond, tailCond] ]
+                Can.PVar _    -> Nothing
+                Can.PAnything -> Nothing
+                _ ->
+                    let idx = length spineHeads
+                        tailRaw = "any(rt.AsList(" ++ subject
+                                  ++ ")[" ++ show idx ++ ":])"
+                    in patternConditionForExpr tailRaw terminator
+            extras = headConds ++ [ c | Just c <- [tailCond] ]
         in Just $ foldl (GoIr.GoBinary "&&") lenCond extras
 
     -- Fixed-length list: match exact length; element conditions handled in
@@ -12195,6 +12218,38 @@ consChainLength (A.At _ p) = case p of
         -- PVar / PAnything / PUnit / PRecord / PCtor / literal — the
         -- tail accepts any remaining suffix (≥ 0 more elements).
         (0, False)
+
+
+-- | Walk a cons-pattern spine and collect (index, head_pattern) for
+-- every position.  `a :: b :: c :: rest` returns
+-- `[(0, a), (1, b), (2, c)]` — `rest` is the terminator and not
+-- included.  Used by #583's head-discriminator-at-every-position fix:
+-- the OUTER cons's `patternCondition` walks the whole spine and emits
+-- a tag/literal/sub-pattern check at each runtime index instead of
+-- only the outermost head.
+--
+-- PAlias unwraps and continues walking so `((a :: b :: rest) as whole)`
+-- still emits the b-discriminator at index 1.  PList terminates the
+-- walk (its element checks are independent — see consChainLength).
+collectSpineHeads :: Int -> Can.Pattern -> [(Int, Can.Pattern_)]
+collectSpineHeads i (A.At _ p) = case p of
+    Can.PCons h t ->
+        let (A.At _ hPat) = h
+        in (i, hPat) : collectSpineHeads (i + 1) t
+    Can.PAlias inner _ ->
+        collectSpineHeads i inner
+    _ -> []
+
+
+-- | The pattern that terminates a cons-pattern spine — the value at
+-- the deepest tail position (the `rest` in `a :: b :: rest`).  Used
+-- by #583's tail-condition path to know what offset the runtime
+-- terminator slice starts at and what discriminator (if any) to emit.
+consSpineTerminator :: Can.Pattern -> Can.Pattern_
+consSpineTerminator (A.At _ p) = case p of
+    Can.PCons _ t   -> consSpineTerminator t
+    Can.PAlias inner _ -> consSpineTerminator inner
+    other           -> other
 
 
 -- | Discriminator condition for the head pattern of a `(h :: t)` cons.

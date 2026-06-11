@@ -119,11 +119,33 @@ patternAtom mkError =
              char mkError '}'
              return (Src.PRecord fields)
 
-        , -- Constructor: Name or Name pat pat ...
-          do name <- upper mkError
-             spaces
-             args <- patternCtorArgs mkError
-             return (Src.PCtor name [] args)
+        , -- Constructor (bare or qualified): `Name`, `Name pat ...`,
+          -- `Mod.Ctor`, `Mod.Ctor pat ...`.
+          --
+          -- #584 — Qualifier-aware ctor patterns mirror the expression
+          -- grammar so `case x of ( col, Db.SetField v ) -> …` parses
+          -- without forcing the caller to `import Std.Db exposing
+          -- (SqlField(..))`.  The canonicaliser resolves the alias to
+          -- its target module the same way the expression-position
+          -- resolver does.
+          --
+          -- Folded into a single alternative because `oneOf` does not
+          -- retry after input has been consumed (the upper name).
+          -- Branching after the upper name lets bare `Just`/`Nothing`
+          -- continue to work alongside `Db.SetField`.
+          do firstName <- upper mkError
+             mc <- peek
+             case mc of
+                 Just '.' -> do
+                     char mkError '.'
+                     ctorName <- upper mkError
+                     spaces
+                     args <- patternCtorArgs mkError
+                     return (Src.PCtorQual firstName ctorName args)
+                 _ -> do
+                     spaces
+                     args <- patternCtorArgs mkError
+                     return (Src.PCtor firstName [] args)
 
         , -- Negative number literal: `-3`, `-3.14`. Peek two chars so we
           -- don't consume `-` unless the next char is a digit — otherwise
