@@ -180,3 +180,93 @@ func TestDbQuery_BindsMaybeInWhereClause(t *testing.T) {
 		t.Fatalf("expected 1 row matching id=Just 1, got %d", len(rows))
 	}
 }
+
+// ── #577 regression: nullable decoder must handle real SQL NULL ──
+//
+// Pre-fix this errored with "expected Int, got rt.SkyMaybe[interface
+// {}]" because Db_query's normaliseSqlValue wraps SQL NULL as
+// SkyMaybe[any]{Tag:1} BEFORE the row reaches the decoder, but the
+// nullable kernel checked only `v == nil`. The unit tests above (line
+// 76, 94) synthesise `row["middle_name"] = nil` directly and never
+// hit the wrapped form — these tests go end-to-end through Db_query
+// against in-memory SQLite + a literal `INSERT … VALUES (?, NULL)` so
+// the SkyMaybe-wrap path is exercised.
+
+// TestDbDecNullable_E2E_NullColumnReturnsNothing — the actual
+// regression: queryDecode-style execution against a SQL row where
+// the column is NULL must yield Nothing, not error.
+func TestDbDecNullable_E2E_NullColumnReturnsNothing(t *testing.T) {
+	db := openNullableTestDb(t)
+	if _, err := db.conn.Exec(
+		"INSERT INTO people (id, name, age) VALUES (1, 'alice', NULL)"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	queryRes := AnyTaskRun(Db_query(
+		db, "SELECT id, name, age FROM people WHERE id = 1", []any{}))
+	sr, ok := queryRes.(SkyResult[any, any])
+	if !ok || sr.Tag != 0 {
+		t.Fatalf("Db_query failed: %v", queryRes)
+	}
+	rows, _ := sr.OkValue.([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row, ok := rows[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any row, got %T", rows[0])
+	}
+
+	// Run a single nullable (int "age") decoder against the actual
+	// row Db_query produced. This is what the user's `sky run`
+	// stack hits.
+	dec := DbDec_nullable(DbDec_int("age"))
+	got := DbDec_run(dec, row)
+	r, ok := got.(SkyResult[any, any])
+	if !ok {
+		t.Fatalf("expected SkyResult, got %T", got)
+	}
+	if r.Tag != 0 {
+		t.Fatalf("nullable decoded a NULL row as Err: %v\n"+
+			"hint: this is the #577 SkyMaybe-wrap regression — "+
+			"normaliseSqlValue at db_auth.go:976 converts SQL NULL "+
+			"to SkyMaybe[any]{Tag:1}, the nullable gate must "+
+			"recognise that form not just raw nil.", r.ErrValue)
+	}
+	m, ok := r.OkValue.(SkyMaybe[any])
+	if !ok {
+		t.Fatalf("expected SkyMaybe[any], got %T", r.OkValue)
+	}
+	if m.Tag != 1 {
+		t.Errorf("expected Nothing (tag 1), got tag %d value %v", m.Tag, m.JustValue)
+	}
+}
+
+// TestDbDecNullable_E2E_NonNullColumnReturnsJust — the matching
+// happy path: a non-NULL int cell flows through nullable as
+// Just (int value).
+func TestDbDecNullable_E2E_NonNullColumnReturnsJust(t *testing.T) {
+	db := openNullableTestDb(t)
+	if _, err := db.conn.Exec(
+		"INSERT INTO people (id, name, age) VALUES (1, 'alice', 42)"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	queryRes := AnyTaskRun(Db_query(
+		db, "SELECT age FROM people WHERE id = 1", []any{}))
+	sr, _ := queryRes.(SkyResult[any, any])
+	rows, _ := sr.OkValue.([]any)
+	row, _ := rows[0].(map[string]any)
+
+	dec := DbDec_nullable(DbDec_int("age"))
+	got := DbDec_run(dec, row)
+	r, _ := got.(SkyResult[any, any])
+	if r.Tag != 0 {
+		t.Fatalf("nullable decoded a non-NULL row as Err: %v", r.ErrValue)
+	}
+	m, _ := r.OkValue.(SkyMaybe[any])
+	if m.Tag != 0 {
+		t.Errorf("expected Just, got Nothing")
+	}
+	if v := AsInt(m.JustValue); v != 42 {
+		t.Errorf("expected 42, got %v", m.JustValue)
+	}
+}

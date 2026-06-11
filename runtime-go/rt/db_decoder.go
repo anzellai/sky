@@ -213,9 +213,23 @@ func DbDec_nullable(inner any) any {
 		// Nothing-gate: any read column being NULL or absent → Nothing.
 		// Inner with no `cols` (e.g. succeed-only) always delegates —
 		// nothing for the row to NULL it against.
+		//
+		// Two NULL representations to recognise:
+		//   raw nil — the obvious form (synthetic row maps, drivers
+		//             that don't go through normaliseSqlValue)
+		//   SkyMaybe[any]{Tag:1} — Db_query's `normaliseSqlValue`
+		//             wraps every SQL NULL as Nothing so the typed-
+		//             record decoding path (getByIdDecode) gets clean
+		//             Maybe semantics. The Decoder pipeline has to
+		//             recognise that wrap here OR the primitive int/
+		//             string/bool decoders see the struct and error
+		//             with "expected Int, got rt.SkyMaybe[interface{}]".
 		for _, c := range d.cols {
 			v, present := row[c]
 			if !present || v == nil {
+				return Ok[any, any](Nothing[any]())
+			}
+			if m, ok := v.(SkyMaybe[any]); ok && m.Tag == 1 {
 				return Ok[any, any](Nothing[any]())
 			}
 		}
