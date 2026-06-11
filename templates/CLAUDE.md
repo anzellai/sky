@@ -4178,10 +4178,26 @@ Db.exec conn "INSERT INTO t (name) VALUES (?)" ["val"]
 Db.query conn "SELECT * FROM t WHERE x = ?" ["val"]
 Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 
+-- v0.16.26: mixed-type SQL params via typed SqlValue ADT.
+-- `[SqlString name, SqlInt age, SqlBool active, fromMaybeInt qty,
+--   SqlMoney price]` is a homogeneous `List SqlValue` that
+-- type-checks cleanly and binds each variant to the right
+-- database/sql type. Avoids the no-Workaround stringify trap.
+-- Variants: SqlString | SqlInt | SqlFloat | SqlBool | SqlBytes |
+-- SqlDecimal | SqlTime | SqlMoney | SqlNull SqlValue (recursive
+-- with type-witness). Maybe-lifting helpers: `fromMaybeString` ..
+-- `fromMaybeMoney`. PATCH-style partial update via Db.updateFields
+-- with SqlField (SetField | OmitField). Money round-trips via
+-- "ISO_CODE AMOUNT" TEXT — pair with `Db.Decode.money`.
+import Std.Db exposing (SqlValue(..), SqlField(..))
+Db.exec conn
+    "INSERT INTO items (name, qty, price) VALUES (?, ?, ?)"
+    [ SqlString name, fromMaybeInt qty, SqlMoney price ]
+
 -- Typed queries via Std.Db.Decode (v0.15.45 — preferred over the
 -- Dict.get accessor boilerplate). Mirrors Sky.Core.Json.Decode's
--- shape (string/int/float/bool/nullable/map/map2-5/andMap/required/
--- optional). v0.16.24: nullable is single-arg
+-- shape (string/int/float/bool/money/nullable/map/map2-5/andMap/
+-- required/optional). v0.16.24: nullable is single-arg
 -- (`nullable (int "age")`, not `nullable "age" (int "age")`).
 -- v0.16.24: Db.exec/query bind `Maybe a` directly — `Just v`
 -- writes the value, `Nothing` writes SQL NULL. Decoder/Db/Value/
