@@ -81,6 +81,7 @@ import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.NestedCasePatternFieldAccessSpec
 import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.ConsPatternLengthSpec
+import qualified Sky.Build.ListLiteralPatternSpec
 import qualified Sky.Build.CtorConsPatternSpec
 import qualified Sky.Build.EnvPrefixSpec
 import qualified Sky.Build.FfiGenMultiSpec
@@ -493,6 +494,11 @@ allSpecs fastMode = do
     -- `a :: b :: []` emits `len == 2`, not the buggy `len >= 1 &&
     -- len(tail) >= 1` (which collapsed to `>= 2` regardless of arm).
     describeT "Sky.Build.ConsPatternLength" Sky.Build.ConsPatternLengthSpec.spec
+    -- #587 — list-literal `[Ctor x]` pattern must gate BOTH length
+    -- AND each element's discriminator (PCtor tag + inner arg).
+    -- Pre-fix it checked only length; any 1-element list of the
+    -- right type silently matched.  Sibling of #583.
+    describeT "Sky.Build.ListLiteralPattern" Sky.Build.ListLiteralPatternSpec.spec
     -- Inverse of ConsCtorPattern: cons / fixed-length-list pattern
     -- INSIDE a ctor arg (`Just (h :: _)`, `Ok [a, b]`). Pre-fix,
     -- argPatternCondition only narrowed for ctor / literal sub-

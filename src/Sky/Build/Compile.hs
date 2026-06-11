@@ -12048,14 +12048,27 @@ patternCondition subject pat = case pat of
             extras = headConds ++ [ c | Just c <- [tailCond] ]
         in Just $ foldl (GoIr.GoBinary "&&") lenCond extras
 
-    -- Fixed-length list: match exact length; element conditions handled in
-    -- bindings below (codegen over-matches conservatively — strict element
-    -- matching would need nested if-cascades we don't model in a single cond).
+    -- Fixed-length list: exact length AND each element's pattern
+    -- discriminator.  Pre-#587 the codegen only checked length and
+    -- "deferred element conditions to the bindings" — but bindings
+    -- run AFTER the arm gate, so `case xs of [Star Nothing] -> …`
+    -- accepted `[Col "id"]` and `[Star (Just "x")]` too.  Mirrors
+    -- the spine-discriminator emission #583 added to PCons: walk
+    -- the literal elements, AND in any `patternConditionForExpr`
+    -- result against `rt.AsList(subj)[i]`.  Short-circuiting on the
+    -- length check keeps the indexed reads safe at runtime.
     Can.PList xs ->
-        Just $ GoIr.GoBinary "=="
-            (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
-            (GoIr.GoIntLit (length xs))
+        let lenCond = GoIr.GoBinary "=="
+                (GoIr.GoCall (GoIr.GoIdent "len")
+                    [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
+                (GoIr.GoIntLit (length xs))
+            elemConds =
+                [ c
+                | (i, A.At _ p) <- zip [0 :: Int ..] xs
+                , Just c <- [patternConditionForExpr
+                    ("rt.AsList(" ++ subject ++ ")[" ++ show i ++ "]") p]
+                ]
+        in Just (foldl (GoIr.GoBinary "&&") lenCond elemConds)
 
     -- A tuple's shape is guaranteed by HM, but its components can
     -- carry discriminating sub-patterns (`(Just x, Just y)`) — those
@@ -12326,7 +12339,7 @@ patternConditionForExpr subjectRaw pat = case pat of
                 "rune")
             (GoIr.GoRuneLit c)
 
-    Can.PCtor _home typeName union ctorName ctorIdx _args ->
+    Can.PCtor _home typeName union ctorName ctorIdx args ->
         -- Sky's `Bool` lowers to a raw Go `bool`, so a True/False
         -- ctor pattern must compare the value directly — `rt.EnumTagIs`
         -- expects an SkyADT and is always false on a `bool`. The
@@ -12349,14 +12362,33 @@ patternConditionForExpr subjectRaw pat = case pat of
                     , GoIr.GoIntLit ctorIdx
                     ]
             _ ->
-                -- Tagged ADT: read .Tag via the rt.AdtTag helper which
-                -- accepts any-typed inputs and routes through
-                -- reflection if needed (so this works whether the head
-                -- value is Sky-side typed or any-boxed at runtime).
-                Just $ GoIr.GoBinary "=="
-                    (GoIr.GoCall (GoIr.GoQualified "rt" "AdtTag")
-                        [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw]])
-                    (GoIr.GoIntLit ctorIdx)
+                -- Tagged ADT: read .Tag via the rt.AdtTag helper AND
+                -- recurse into every ctor arg that carries a non-
+                -- trivial sub-pattern.  #587 surfaced the missing
+                -- recursion via a `[Star Nothing]` list literal —
+                -- without it, `Star (Just "x")` and `Star Nothing`
+                -- both compared equal at the gate, then the body
+                -- bindings ran on a wrong-shaped value.  The
+                -- top-level `patternCondition` PCtor handler already
+                -- mirrors this via `argPatternCondition`; we walk
+                -- the same args here but build accessors as raw Go
+                -- expressions because subjectRaw is an arbitrary
+                -- expression, not a bound name.
+                let outer = GoIr.GoBinary "=="
+                        (GoIr.GoCall (GoIr.GoQualified "rt" "AdtTag")
+                            [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw]])
+                        (GoIr.GoIntLit ctorIdx)
+                    argSubjRaw idx = case ctorName of
+                        "Ok"   -> "rt.ResultOk(" ++ subjectRaw ++ ")"
+                        "Err"  -> "rt.ResultErr(" ++ subjectRaw ++ ")"
+                        "Just" -> "rt.MaybeJust(" ++ subjectRaw ++ ")"
+                        _      -> "rt.AdtField(" ++ subjectRaw ++ ", " ++ show idx ++ ")"
+                    inners =
+                        [ c
+                        | Can.PatternCtorArg idx _ (A.At _ argPat) <- args
+                        , Just c <- [patternConditionForExpr (argSubjRaw idx) argPat]
+                        ]
+                in Just (foldl (GoIr.GoBinary "&&") outer inners)
 
     Can.PCons h t ->
         -- Nested cons (e.g. `(_ :: _) :: _`, or the inner cons from a
@@ -12375,11 +12407,20 @@ patternConditionForExpr subjectRaw pat = case pat of
             (GoIr.GoIntLit minLen)
 
     Can.PList xs ->
-        Just $ GoIr.GoBinary "=="
-            (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
-                    [GoIr.GoRaw subjectRaw] ])
-            (GoIr.GoIntLit (length xs))
+        -- Nested PList (inside a tuple component / ctor arg / cons
+        -- spine): same #587 fix — length AND per-element discriminator.
+        let lenCond = GoIr.GoBinary "=="
+                (GoIr.GoCall (GoIr.GoIdent "len")
+                    [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                        [GoIr.GoRaw subjectRaw] ])
+                (GoIr.GoIntLit (length xs))
+            elemConds =
+                [ c
+                | (i, A.At _ p) <- zip [0 :: Int ..] xs
+                , Just c <- [patternConditionForExpr
+                    ("rt.AsList(" ++ subjectRaw ++ ")[" ++ show i ++ "]") p]
+                ]
+        in Just (foldl (GoIr.GoBinary "&&") lenCond elemConds)
 
     Can.PAlias inner _ ->
         let (A.At _ innerPat) = inner

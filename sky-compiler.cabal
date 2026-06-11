@@ -359,6 +359,7 @@ test-suite sky-tests
       Sky.Build.NestedCasePatternFieldAccessSpec
       Sky.Build.ConsCtorPatternSpec
       Sky.Build.ConsPatternLengthSpec
+      Sky.Build.ListLiteralPatternSpec
       Sky.Build.CtorConsPatternSpec
       Sky.Build.EnvPrefixSpec
       Sky.Build.FfiGenMultiSpec
