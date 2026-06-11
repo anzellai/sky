@@ -198,6 +198,57 @@ spec = do
             BSC.unpack once `shouldSatisfy` (\s ->
                 "module Std.Big exposing\n" `isPrefixOfLine` s)
 
+        -- #572 regression. Pre-fix, comment blocks stranded BETWEEN
+        -- list-element lines `, "foo" ++ x` were silently dropped:
+        -- the prev-anchor key didn't match (formatter line-wrapped
+        -- the long `++` expression) AND the next-anchor key was
+        -- rejected because `nextAnchorKey` only accepted binding-
+        -- shaped lines (`name = ...` / `name : T`), not list-element
+        -- continuations. Furthermore, when block N's next-anchor
+        -- AND block N+1's prev-anchor pointed at the same list-
+        -- element line, the prev-anchor stole the line and starved
+        -- block N's next-anchor. The fix accepts comma-prefixed
+        -- lines as next-anchors (keyed on full stripped text), AND
+        -- lets both anchors fire on the same line (next-anchor
+        -- before line, prev-anchor after).
+        it "preserves comment blocks stranded between list elements (#572)" $ do
+            let src = unlines
+                    [ "module Test exposing (..)"
+                    , ""
+                    , ""
+                    , "envVars appId depId sourceBucket slug ="
+                    , "    String.join"
+                    , "        \",\""
+                    , "        [ \"APP_ID=\" ++ String.fromInt appId"
+                    , "        , \"DEPLOYMENT_ID=\" ++ String.fromInt depId"
+                    , "        , \"SOURCE_BUCKET=\" ++ sourceBucket ++ \"-suffix-makes-it-wrap-past-100\""
+                    , "        -- Block 1: shared admin secret doc."
+                    , "        -- The runtime uses it to verify the JWT."
+                    , "        -- Two-line doc anchored above the next list element."
+                    , "        , \"SKY_ADMIN_SECRET_NAME=skydeploy-platform-admin-token\""
+                    , "        -- Block 2: long-lived deploy flag."
+                    , "        -- Set on every deploy alongside the console secret."
+                    , "        , \"SKY_RUNTIME_MODE=longlived\""
+                    , "        , \"ENV=production\""
+                    , "        ]"
+                    ]
+            once <- runFmt sky src
+            let body = BSC.unpack once
+            -- Block 1 + Block 2 + Block 3 must all survive.
+            body `shouldSatisfy`
+                ("-- Block 1: shared admin secret doc." `isInfixOfLine`)
+            body `shouldSatisfy`
+                ("-- The runtime uses it to verify the JWT." `isInfixOfLine`)
+            body `shouldSatisfy`
+                ("-- Two-line doc anchored above the next list element." `isInfixOfLine`)
+            body `shouldSatisfy`
+                ("-- Block 2: long-lived deploy flag." `isInfixOfLine`)
+            body `shouldSatisfy`
+                ("-- Set on every deploy alongside the console secret." `isInfixOfLine`)
+            -- Round-trip idempotency.
+            twice <- runFmt sky body
+            once `shouldBe` twice
+
 
 -- Tiny helpers — `isPrefixOfLine` checks that some line in the
 -- output starts with the given needle; `isInfixOfLine` does

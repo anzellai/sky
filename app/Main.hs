@@ -2568,11 +2568,19 @@ preserveTopLevelComments source formatted =
             _ -> acc
 
     -- Compute a next-anchor key from a candidate line.
-    -- Returns `Just <ident>` ONLY for binding-shaped lines:
+    -- Returns `Just <ident>` for binding-shaped lines:
     --   * `name =`             → `Just "name"`
     --   * `name : Type`        → `Just "name"`
     --   * `name arg1 arg2 =`   → `Just "name"`
-    -- Returns `Nothing` for expression-shaped lines (call sites,
+    -- Returns `Just <full-line-strip>` for list-element continuations
+    --   * `, "FOO"`            → `Just ", \"FOO\""`
+    --   * `, expr ++ x`        → `Just ", expr ++ x"`
+    -- List-element lines are common landing slots for #572-style stranded
+    -- comments (a doc block between two list elements). The leading
+    -- identifier is `,` itself — too generic — so we key on the FULL
+    -- stripped line, which is specific (string literals / field-shaped
+    -- assignments are nearly unique within their enclosing list).
+    -- Returns `Nothing` for OTHER expression-shaped lines (call sites,
     -- `case … of`, operator-led continuations) — those would
     -- mis-match because the identifier is too generic.
     nextAnchorKey :: T.Text -> Maybe T.Text
@@ -2583,11 +2591,16 @@ preserveTopLevelComments source formatted =
                        || (c >= '0' && c <= '9')
                        || c == '_'
             ident = T.takeWhile isIdentCh stripped
-        in if T.null ident
-             then Nothing
-             else if isBindingShape stripped
-                    then Just ident
-                    else Nothing
+            startsWithComma = case T.uncons stripped of
+                Just (',', _) -> True
+                _             -> False
+        in if startsWithComma && T.length stripped > 1
+             then Just (T.strip stripped)
+             else if T.null ident
+                    then Nothing
+                    else if isBindingShape stripped
+                           then Just ident
+                           else Nothing
 
     -- A binding-shape line has a `=` (after the binder) or a `:`
     -- (top-level type annotation) at the top level. Crude but
@@ -2670,14 +2683,19 @@ preserveTopLevelComments source formatted =
                 (prevAnchorRes, bt1, am') = case prevAnchorHit of
                     Just (cs, m, b) -> (Just cs, b, m)
                     Nothing         -> (Nothing, bt, am)
-                -- Next-anchor only fires when prev-anchor didn't and
-                -- when the output line is binding-shaped (see
-                -- `nextAnchorKey`).
-                nextAnchorHit
-                    | prevAnchorRes /= Nothing = Nothing
-                    | otherwise = case nextAnchorKey l of
-                        Just nextK -> popQueue nm nextK bt1
-                        Nothing    -> Nothing
+                -- Next-anchor fires INDEPENDENTLY of prev-anchor.
+                -- The two anchor BLOCKS are different — bodyTable's
+                -- ID-based dedup (Map.delete on consume) prevents
+                -- double-emission if the same block somehow ended
+                -- up keyed to both anchors. The case where two
+                -- DIFFERENT blocks anchor to the same line is real
+                -- and load-bearing (#572): inside a list literal,
+                -- block N's next-anchor and block N+1's prev-anchor
+                -- are the SAME list-element line — without firing
+                -- both we starve one of the two blocks.
+                nextAnchorHit = case nextAnchorKey l of
+                    Just nextK -> popQueue nm nextK bt1
+                    Nothing    -> Nothing
                 (nextAnchorRes, bt2, nm') = case nextAnchorHit of
                     Just (cs, m, b) -> (Just cs, b, m)
                     Nothing         -> (Nothing, bt1, nm)
@@ -2686,18 +2704,20 @@ preserveTopLevelComments source formatted =
                 -- header above, body below. Header comments float
                 -- to column 1 (a top-level decl's leading comment).
                 -- Body comments keep their source indentation.
-                (Just (hcs, hm'), Just acs, _) ->
+                (Just (hcs, hm'), Just acs, Just ncs) ->
+                    hcs ++ ncs ++ [l] ++ acs ++ go hm' am' nm' bt2 ls
+                (Just (hcs, hm'), Just acs, Nothing) ->
                     hcs ++ [l] ++ acs ++ go hm' am' nm' bt2 ls
-                (Just (hcs, hm'), Nothing, _) ->
+                (Just (hcs, hm'), Nothing, Just ncs) ->
+                    hcs ++ ncs ++ [l] ++ go hm' am' nm' bt2 ls
+                (Just (hcs, hm'), Nothing, Nothing) ->
                     hcs ++ [l] ++ go hm' am' nm' bt2 ls
-                -- No header. Prev-anchor wins (we already gated
-                -- next-anchor on prev-anchor above). Body comments
-                -- keep their source-original indentation — re-indenting
-                -- to the prev-line's indent broke idempotency when
-                -- the prev line lived at a deeper indent than the
-                -- comment (a continuation line of a multi-segment
-                -- string concat, vs. the comment at let-binding level).
-                (Nothing, Just acs, _) ->
+                -- No header. Next-anchor block emits BEFORE the
+                -- line; prev-anchor block emits AFTER the line.
+                -- Both can fire simultaneously — see #572.
+                (Nothing, Just acs, Just ncs) ->
+                    ncs ++ l : acs ++ go hm am' nm' bt2 ls
+                (Nothing, Just acs, Nothing) ->
                     l : acs ++ go hm am' nm' bt2 ls
                 (Nothing, Nothing, Just ncs) ->
                     -- Place comments ABOVE the matched line, also
