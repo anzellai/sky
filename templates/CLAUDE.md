@@ -4181,7 +4181,12 @@ Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 -- Typed queries via Std.Db.Decode (v0.15.45 — preferred over the
 -- Dict.get accessor boilerplate). Mirrors Sky.Core.Json.Decode's
 -- shape (string/int/float/bool/nullable/map/map2-5/andMap/required/
--- optional).
+-- optional). v0.16.24: nullable is single-arg
+-- (`nullable (int "age")`, not `nullable "age" (int "age")`).
+-- v0.16.24: Db.exec/query bind `Maybe a` directly — `Just v`
+-- writes the value, `Nothing` writes SQL NULL. Decoder/Db/Value/
+-- Attribute/Handler/Cmd/Sub/Request/Response/Error are kernel-
+-- implicit Prelude types — always in scope, no import needed.
 import Std.Db.Decode as DbDecode
 
 userDecoder : Decoder User
@@ -4190,6 +4195,9 @@ userDecoder =
         |> DbDecode.andMap (DbDecode.int "id")
         |> DbDecode.andMap (DbDecode.string "name")
         |> DbDecode.andMap (DbDecode.string "email")
+-- For nullable columns: `DbDecode.nullable (DbDecode.int "age")` —
+-- single-arg form (v0.16.24+). Inner is required to be a typed
+-- decoder for the column.
 
 users : Task Error (List User)
 users = Db.queryDecode db "SELECT id, name, email FROM users" [] userDecoder

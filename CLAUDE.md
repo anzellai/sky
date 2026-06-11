@@ -1860,6 +1860,44 @@ verified against HEAD.
     `type alias` for the whole arrow type.
 ### Closed in v0.16 (kept here for grep)
 
+- ~~`Std.Db.exec` / `Std.Db.query` reject `Maybe a` params at the
+  database/sql driver layer ("unsupported type rt.SkyMaybe[int],
+  a struct")~~ — closed in v0.16.24 (#574). Runtime `dbBindArg`
+  helper reflect-walks any arg with the SkyMaybe shape and
+  substitutes `nil` for Nothing / the unwrapped value for Just.
+  Applied at both `Db_exec` and `Db_query` binding sites;
+  `Db_queryDecode` inherits via `Db_query`. Now you can write
+  `Db.exec conn "INSERT … VALUES (?, ?)" [ Just "Alice", Nothing ]`
+  and Nothing binds as SQL NULL.
+
+- ~~`import Std.Db.Decode exposing (Decoder, ...)` errors with
+  "module Std.Db.Decode does not expose type Decoder" — but
+  Decoder is globally available as a kernel-implicit Prelude
+  type~~ — closed in v0.16.24 (#576). `Canonicalise.Module`
+  `checkItem` now accepts 15 kernel-implicit Prelude types in
+  `exposing (...)` lists as a no-op when the dep module doesn't
+  declare them: `Decoder`, `Value`, `Attribute`, `Handler`,
+  `Middleware`, `Session`, `Store`, `Route`, `VNode`, `Request`,
+  `Response`, `Cmd`, `Sub`, `Db`, `Error`. The import is
+  redundant (the names are already globally in scope) but no
+  longer rejected. Regression: `ExposingSpec` "#576: kernel-
+  implicit Prelude type re-exposure".
+
+- ~~`Std.Db.Decode.nullable` requires double-naming the column
+  (`nullable "age" (int "age")`); silently mis-gates when the
+  two column names differ~~ — closed in v0.16.24 (#577). **Breaking
+  signature change**: `nullable : Decoder a -> Decoder (Maybe a)`
+  (drops the leading column-name arg). `DbDecoder` gains a `cols`
+  field that primitive decoders populate; combinators (`map`,
+  `andMap`, `map2..5`, `andThen`) propagate via `dbUnionCols`.
+  `nullable` checks all of inner's columns for NULL/absent before
+  delegating — handles both single-column and composed-decoder
+  cases. Migration:
+  ```
+  -- before: Decode.nullable "age" (Decode.int "age")
+  -- after:  Decode.nullable (Decode.int "age")
+  ```
+
 - ~~Sky.Live runtime: sky-nav click + popstate (Back/Forward)
   handlers don't check `r.ok` before passing the fetch body to
   `__skyPatch`. A 404 "session not found" body (server lost our

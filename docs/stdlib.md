@@ -744,7 +744,7 @@ userDecoder =
         |> DbDecode.andMap (DbDecode.int "id")
         |> DbDecode.andMap (DbDecode.string "name")
         |> DbDecode.andMap (DbDecode.string "email")
-        |> DbDecode.andMap (DbDecode.nullable "age" (DbDecode.int "age"))
+        |> DbDecode.andMap (DbDecode.nullable (DbDecode.int "age"))
 
 users : Db -> Task Error (List User)
 users db = Db.queryDecode db "SELECT id, name, email, age FROM users" [] userDecoder
