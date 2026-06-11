@@ -917,7 +917,7 @@ Each binding is either:
 | `Io` | `Sky.Core.Io` | readLine, writeStdout, writeStderr |
 | `System` | `Sky.Core.System` | args, getArg, getenv, getenvOr (bare), getenvInt, getenvBool, setenv, unsetenv, cwd, loadEnv, exit |
 | `Process` | `Sky.Core.Process` | run (subprocess) |
-| `Db` | `Std.Db` | open, connect, close, exec, execRaw, query, insertRow, getById, updateById, deleteById, findOneByField, findManyByField, findByConditions, unsafeFindWhere, queryDecode, withTransaction, migrate (versioned forward-only schema migrations + `_sky_migrations` + checksum guard), getField, getString, getInt, getBool |
+| `Db` | `Std.Db` | open, connect, close, exec, execRaw, query, insertRow, getById, updateById, deleteById, findOneByField, findManyByField, findByConditions, unsafeFindWhere, queryDecode, withTransaction, migrate (versioned forward-only schema migrations + `_sky_migrations` + checksum guard), getField, getString, getInt, getBool. **v0.16.26+ typed parameter binding**: `SqlValue` ADT (`SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` / `SqlBytes` / `SqlDecimal` / `SqlTime` / `SqlMoney` / `SqlNull SqlValue`) gives mixed-type SQL params as a homogeneous `List SqlValue` — closes the no-workaround gap for `INSERT … VALUES (?, ?, ?)` mixing `String + Maybe Int + Bool`. 8 `fromMaybe*` helpers for nullable columns. `SqlField` (`SetField SqlValue` / `OmitField`) + `Db.updateFields conn table whereCols setFields` for PATCH semantics with column-omit support. Money serialises lossless as `"ISO_CODE AMOUNT"` TEXT — paired with `Db.Decode.money` for round-trip. |
 | `Auth` | `Std.Auth` | register, login, setRole (Task) + hashPassword, hashPasswordCost, verifyPassword, passwordStrength, signToken, verifyToken (Result); v0.15.48+ signTokenWithClaims / verifyTokenWithAlgorithm — typed-builder aliases over Sky.Core.Jwt for fine-grained algorithm + claims control |
 | `Log` | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith |
 | `Trace` | `Std.Trace` | span, event, attr — opt-in app-level tracing spans. Tier-1 spans (HTTP/session/Msg/DB/Auth/Http/File) are automatic; see `docs/observability.md` |
@@ -1859,6 +1859,39 @@ verified against HEAD.
     the type body (`T1\n    -> T2`) is not supported — extract a
     `type alias` for the whole arrow type.
 ### Closed in v0.16 (kept here for grep)
+
+- ~~`Std.Db.exec` / `Std.Db.query` reject mixed-type parameter lists
+  (`[String, Maybe Int, Bool]` fails HM with E2001 because List is
+  homogeneous); no workaround that doesn't violate the no-stringify /
+  no-Ffi.toAny rule~~ — closed in v0.16.26 (#582). New `SqlValue` ADT
+  in `Std.Db`: `SqlString | SqlInt | SqlFloat | SqlBool | SqlBytes |
+  SqlDecimal | SqlTime | SqlMoney | SqlNull SqlValue` (9 variants
+  total, recursive SqlNull carries a type-witness for typed NULL
+  binding). `List SqlValue` flows through `Db.exec` / `Db.query`
+  with full per-column type fidelity to the driver. 8 `fromMaybe*`
+  helpers cover Maybe-lifting without inline case-of. Money
+  round-trips via `"ISO_CODE AMOUNT"` TEXT (paired with
+  `Db.Decode.money` on the read side). Example:
+  ```
+  Db.exec conn
+      "INSERT INTO orders (id, customer, total, paid_at) VALUES (?, ?, ?, ?)"
+      [ SqlInt orderId
+      , SqlString customerUuid
+      , SqlMoney total
+      , fromMaybeTime maybePaidAt
+      ]
+  ```
+
+- ~~Partial-update / PATCH semantics need three states per field
+  (explicit value / explicit NULL / column omitted) but Db.exec only
+  models the first two; the "leave alone" state required generating
+  different SQL strings outside the stdlib~~ — closed in v0.16.26
+  (#582). New `SqlField` ADT (`SetField SqlValue` / `OmitField`) +
+  `Db.updateFields db table whereCols setFields` builder generates
+  dynamic UPDATE that includes only `SetField` columns. Column-name
+  validation rejects identifiers outside `[A-Za-z0-9_.]` so the
+  dynamic SQL can't open an injection vector. All-OmitField
+  short-circuits to 0 rows (no empty SET clause).
 
 - ~~`Std.Db.exec` / `Std.Db.query` reject `Maybe a` params at the
   database/sql driver layer ("unsupported type rt.SkyMaybe[int],
