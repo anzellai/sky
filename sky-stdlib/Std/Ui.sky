@@ -2223,6 +2223,7 @@ locationCss loc =
 -- Dispatch to the right Std.Html constructor by tag name. <img>
 -- is void (no children); other tags take children unchanged.
 -- Unknown tags fall back to <div>.
+dispatchTag : String -> List (Attr.Attribute msg) -> List (Html.Html msg) -> Html.Html msg
 dispatchTag tag attrs children =
     if tag == "a" then
         Html.a attrs children
