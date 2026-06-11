@@ -6305,6 +6305,14 @@ func File_tempFile(prefix any) any {
 	return Ok[any, any](name)
 }
 
+func File_tempDir(prefix any) any {
+	dir, err := os.MkdirTemp("", AsString(prefix))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](dir)
+}
+
 func File_copy(src any, dst any) any {
 	srcPath := AsString(src)
 	dstPath := AsString(dst)

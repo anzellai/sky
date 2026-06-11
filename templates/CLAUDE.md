@@ -1208,13 +1208,13 @@ readFileLimit : String -> Int -> Task Error String       -- bounded read (defaul
 readFileBytes : String -> Task Error Bytes               -- binary
 writeFile : String -> String -> Task Error ()
 append : String -> String -> Task Error ()               -- creates if missing
-exists : String -> Bool                                  -- pure, no Task wrapping
-isDir : String -> Bool                                   -- pure
+exists : String -> Task Error Bool
+isDir : String -> Task Error Bool
 remove : String -> Task Error ()
 mkdirAll : String -> Task Error ()
 readDir : String -> Task Error (List String)
 tempFile : String -> Task Error String                   -- returns path
-tempDir : String -> Task Error String                    -- returns path
+tempDir : String -> Task Error String                    -- creates uniquely-named dir, returns path
 copy : String -> String -> Task Error ()
 rename : String -> String -> Task Error ()
 ```

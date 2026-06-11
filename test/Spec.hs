@@ -92,6 +92,7 @@ import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
 import qualified Sky.Build.PointFreePolyAliasSpec
 import qualified Sky.Build.PartialKernelAppSpec
+import qualified Sky.Build.PartialUserHofSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
@@ -554,6 +555,15 @@ allSpecs fastMode = do
     -- emits a closure that captures the supplied args + takes the
     -- remaining as `any`-typed params, calling the DYNAMIC kernel.
     describeT "Sky.Build.PartialKernelApp" Sky.Build.PartialKernelAppSpec.spec
+    -- #580: point-free partial-app of a Sky-source stdlib HOF
+    -- (List.map dbl) into a polymorphic callback slot (Task.map /
+    -- outer List.map). Pre-fix emitted `func(any) any` wrapper +
+    -- explicit `[any, any]` instantiation that mismatched concrete
+    -- supplied args. Post-fix σ-recovers TVars from the supplied
+    -- args' Go types, types the wrapper to match, and drops the
+    -- explicit instantiation so Go's call-site inference closes the
+    -- chain.
+    describeT "Sky.Build.PartialUserHof" Sky.Build.PartialUserHofSpec.spec
     -- Limitation #18 (other half): renderHofParamTy used to hardcode
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.

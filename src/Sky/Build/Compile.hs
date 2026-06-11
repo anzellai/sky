@@ -10547,13 +10547,23 @@ emitPartialUserCall func suppliedArgs missing =
     let -- Resolve callee qualified name so we can look up its typed
         -- param signature and coerce both the supplied args and the
         -- closure-captured extras.
+        --
+        -- #580: route the trailing `name` through `goSafeName` so the
+        -- lookup key matches the registration key. Without this, a
+        -- callee whose Sky name is a Go predeclared identifier (`map`,
+        -- `new`, `len`, …) registers under `Mod_name_` (trailing `_`
+        -- per `goSafeName`) but the lookup misses by using the bare
+        -- `Mod_name`. With paramTypes empty the wrapper falls back to
+        -- `func(any) any` even when typed routing was available — and
+        -- the inner generic instantiation lands with both args
+        -- unwrapped, which `go build` rejects.
         qualName = case A.toValue func of
             Can.VarTopLevel home name ->
                 let modStr = ModuleName.toString home
                 in if null modStr || modStr == "Main"
-                     then name
+                     then goSafeName name
                      else map (\c -> if c == '.' then '_' else c) modStr
-                          ++ "_" ++ name
+                          ++ "_" ++ goSafeName name
             _ -> ""
         env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName
@@ -10565,23 +10575,43 @@ emitPartialUserCall func suppliedArgs missing =
         -- the registry). Length must be exactly `missing` so the
         -- wrapper chain length matches.
         availableExtras = drop (length suppliedArgs) paramTypes
-        -- v0.13 Stage 1 fix — erase any TVar placeholders in the
-        -- extra (missing) param types BEFORE using them as wrapper
-        -- input types. Without this, a partial-app of a generic
-        -- function (e.g. `List.filter pred`) emits a wrapper with
-        -- bare TVars (`func(__pp0 []T1) any`) which Go rejects:
-        -- T1 is only valid inside the kernel's generic body, not
-        -- at the wrapper construction site in user code.
+        -- #580 σ-recovery — when supplied args have concrete Go types,
+        -- pin the callee's TVars from them so the missing-slot wrapper
+        -- params + ultimate return type can carry concrete shapes
+        -- instead of being erased to `any`. Without this a
+        -- `List.map dbl` (with `dbl : Int -> Int`) emitted as
+        -- `func(__pp0 []any) any` even though Sky's HM solver had
+        -- already pinned T1=int, T2=int from `dbl`. The bare-`any`
+        -- wrapper then mismatched against the inner call's
+        -- `Sky_Core_List_map_[any, any]` explicit instantiation when
+        -- `dbl` was passed raw (concrete func into func(any) any slot).
+        -- Mirror of the call-site σ-recovery at the typed-kernel
+        -- path (line ~7740) — same logic, applied to suppliedArgs.
+        suppliedSigma = Map.unions
+            [ recovered
+            | (paramTy, srcArg) <- zip suppliedTypes suppliedArgs
+            , containsGenericTypeParam paramTy
+            , let srcGoExpr = exprToGo srcArg
+            , Just srcGoTy <- [goExprGoType (Just srcArg) srcGoExpr]
+            , srcGoTy /= "any"
+            , not (containsGenericTypeParam srcGoTy)
+            , let recovered = unifyGoTypes paramTy srcGoTy
+            , not (Map.null recovered)
+            ]
+        applySigma t =
+            let subbed = substTVarsInGoType suppliedSigma t
+            in if containsGenericTypeParam subbed
+                 then eraseTypeParams subbed
+                 else subbed
         extraTypes    = take missing
-                          (map eraseTypeParams availableExtras
+                          (map applySigma availableExtras
                               ++ repeat "any")
         -- v0.13 Stage 2 — typed partial-app wrapper. Reads the
         -- callee's ULTIMATE return type (scalar, after every arg
-        -- applies) from `_cg_funcUltimateRetType`. Falls back to
-        -- "any" when unavailable so we never emit a worse shape
-        -- than the historical `func(any) any` default. Erase TVars
-        -- for the same reason as extraTypes.
-        ultRetType = eraseTypeParams
+        -- applies) from `_cg_funcUltimateRetType`. With σ recovered
+        -- the substitution can preserve concrete shape (`[]int` not
+        -- `[]any`); erase any TVars σ didn't pin.
+        ultRetType = applySigma
                         (Map.findWithDefault "any" qualName
                            (Rec._cg_funcUltimateRetType env))
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
@@ -10589,7 +10619,24 @@ emitPartialUserCall func suppliedArgs missing =
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
-        finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
+        -- #580 — when σ-recovery pinned every TVar in the callee's
+        -- param list (no remaining unbound generics), drop the
+        -- explicit `[any, any]` instantiation that `exprToGo func`
+        -- would otherwise inject. Go's call-site type inference can
+        -- then pin the callee's T-vars from the now-typed wrapper
+        -- params + supplied args. This is what makes the inner call
+        -- consistent: a concrete supplied arg (e.g. `dbl :
+        -- func(int) int`) and a typed wrapper param (e.g. `__pp0
+        -- []int`) both pin T1=int, T2=int. Pre-fix the explicit
+        -- `[any, any]` forced T-vars to any while `dbl` stayed
+        -- concrete — `go build` rejected the mismatch.
+        allExtrasConcrete = not (any containsGenericTypeParam extraTypes)
+                              && not (containsGenericTypeParam ultRetType)
+                              && not (null availableExtras)
+        finalCallTarget
+            | allExtrasConcrete = GoIr.GoIdent qualName
+            | otherwise         = exprToGo func
+        finalCall = GoIr.GoCall finalCallTarget (suppliedGo ++ extraIdents)
         -- Build the curried wrapper chain from the inside out.
         -- Innermost wrapper returns `ultRetType`; each outer
         -- wrapper returns `func(P_inner) <inner_ret>`.

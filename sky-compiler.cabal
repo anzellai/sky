@@ -370,6 +370,7 @@ test-suite sky-tests
       Sky.Build.RuntimeFingerprintSpec
       Sky.Build.PointFreePolyAliasSpec
       Sky.Build.PartialKernelAppSpec
+      Sky.Build.PartialUserHofSpec
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
       Sky.Build.UnannotatedParametricCfgViewSpec

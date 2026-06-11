@@ -198,6 +198,42 @@ spec = do
             BSC.unpack once `shouldSatisfy` (\s ->
                 "module Std.Big exposing\n" `isPrefixOfLine` s)
 
+        -- Trailing-comment relocation regression (sqlgen feedback,
+        -- 2026-06-11). A `--` comment line that follows a tail-
+        -- position body line used to be re-anchored to the NEXT
+        -- top-level decl's header (because the walker treated any
+        -- pre-decl block as a header block).  The formatter then
+        -- wrote it BETWEEN the two decls with blank lines around,
+        -- visually attaching to the wrong decl.  Post-fix the
+        -- walker tracks `prevIsBody` and keeps trailing body
+        -- comments anchored to the body line.
+        it "preserves trailing body comments in tail position" $ do
+            let src = unlines
+                    [ "module Test exposing (..)"
+                    , ""
+                    , ""
+                    , "foo : Int -> Int"
+                    , "foo x ="
+                    , "    x + 1"
+                    , "    -- this trailing comment belongs to foo"
+                    , ""
+                    , ""
+                    , "main = foo 5"
+                    ]
+            once <- runFmt sky src
+            let body = BSC.unpack once
+            -- The comment must follow `x + 1` directly, NOT land
+            -- between `foo`'s body and `main`'s declaration.
+            body `shouldSatisfy` (\s ->
+                let ls = lines s
+                    pairs = zip ls (drop 1 ls)
+                in any (\(a, b) ->
+                      "x + 1" `Data.List.isInfixOf` a
+                          && "trailing comment" `Data.List.isInfixOf` b) pairs)
+            -- Round-trip is byte-identical.
+            twice <- runFmt sky body
+            once `shouldBe` twice
+
         -- #572 regression. Pre-fix, comment blocks stranded BETWEEN
         -- list-element lines `, "foo" ++ x` were silently dropped:
         -- the prev-anchor key didn't match (formatter line-wrapped

@@ -7,7 +7,7 @@ module Sky.Core.File exposing
     , writeFile, append
     , exists, remove
     , mkdirAll, readDir, isDir
-    , tempFile, copy, rename
+    , tempFile, tempDir, copy, rename
     )
 
 
@@ -83,6 +83,13 @@ isDir = Ffi.kernel "File_isDir"
 -- temp dir.  Returns the absolute path.
 tempFile : String -> Task Error String
 tempFile = Ffi.kernel "File_tempFile"
+
+
+-- | `tempDir prefix` — create a uniquely-named directory in the
+-- system temp dir.  Returns the absolute path.  Caller is
+-- responsible for `remove`-ing the directory when done.
+tempDir : String -> Task Error String
+tempDir = Ffi.kernel "File_tempDir"
 
 
 copy : String -> String -> Task Error ()

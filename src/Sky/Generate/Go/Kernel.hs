@@ -326,6 +326,7 @@ registry = Map.fromList
     , (("File", "readDir"),       KernelInfo "rt.File_readDir" 1 False)
     , (("File", "isDir"),         KernelInfo "rt.File_isDir" 1 False)
     , (("File", "tempFile"),     KernelInfo "rt.File_tempFile" 1 False)
+    , (("File", "tempDir"),      KernelInfo "rt.File_tempDir" 1 False)
     , (("File", "copy"),         KernelInfo "rt.File_copy" 2 False)
     , (("File", "rename"),       KernelInfo "rt.File_rename" 2 False)
 

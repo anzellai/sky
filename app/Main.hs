@@ -2353,28 +2353,44 @@ preserveTopLevelComments source formatted =
     --   * when isHeader=False the second field is the previous code
     --     line (preserves the pre-#353 behaviour); the third field
     --     is the next code line for the fallback path
-    collectCommentBlocks t = walk Nothing False [] (T.lines t)
+    collectCommentBlocks t = walk Nothing False False [] (T.lines t)
       where
-        walk _prev _inStr _acc [] = []
-        walk prev inStr acc (l:ls)
+        walk _prev _prevIsBody _inStr _acc [] = []
+        walk prev prevIsBody inStr acc (l:ls)
             -- Inside a `"""` multiline string the line is string
             -- content — never a comment or a declaration. Skipping
             -- it here is what stops a `--`-prefixed string line
             -- from being collected as a comment and re-injected
             -- (duplicated) on every `sky fmt` round-trip.
-            | inStr = walk prev (nextInStr inStr l) acc ls
-            | isCommentOrBlank l = walk prev inStr (acc ++ [l]) ls
+            | inStr = walk prev prevIsBody (nextInStr inStr l) acc ls
+            | isCommentOrBlank l = walk prev prevIsBody inStr (acc ++ [l]) ls
             | isTopLevelDecl l =
                 let trimmed = trimBlanks acc
                     anchorKey = stripTrailingComment (T.strip l)
-                    rest = walk (Just anchorKey) (nextInStr False l) [] ls
+                    rest = walk (Just anchorKey) False (nextInStr False l) [] ls
                 in if null trimmed
                      then rest
-                     else (trimmed, T.strip l, Nothing, True) : rest
+                     -- Quirk fix: when the comment block's
+                     -- immediately preceding code line was BODY
+                     -- (`prevIsBody`) — not the previous decl's
+                     -- header — the comments belong to that body,
+                     -- not to the next decl. The formatter's
+                     -- decl-end blank lines made the walker mis-
+                     -- attribute these to the next decl's header
+                     -- group, which then printed them between the
+                     -- two decls (visually attached to the wrong
+                     -- one). Emit as a body block keyed to prev
+                     -- (body line) with the upcoming decl line as
+                     -- fallback next-anchor.
+                     else case prev of
+                         Just p | prevIsBody ->
+                             (trimmed, p, Just anchorKey, False) : rest
+                         _ ->
+                             (trimmed, T.strip l, Nothing, True) : rest
             | otherwise =
                 let trimmed = trimBlanks acc
                     nextAnchor = stripTrailingComment (T.strip l)
-                    rest = walk (Just nextAnchor) (nextInStr False l) [] ls
+                    rest = walk (Just nextAnchor) True (nextInStr False l) [] ls
                 in case (trimmed, prev) of
                     ([], _) -> rest
                     (_, Just p) -> (trimmed, p, Just nextAnchor, False) : rest
