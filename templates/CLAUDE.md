@@ -4187,7 +4187,9 @@ Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 -- SqlDecimal | SqlTime | SqlMoney | SqlNull SqlValue (recursive
 -- with type-witness). Maybe-lifting helpers: `fromMaybeString` ..
 -- `fromMaybeMoney`. PATCH-style partial update via Db.updateFields
--- with SqlField (SetField | OmitField). Money round-trips via
+-- + DEFAULT-omittable INSERT via Db.insertFields (#585) — both take
+-- SqlField (SetField | OmitField); insertFields all-omit emits
+-- `INSERT … DEFAULT VALUES`. Money round-trips via
 -- "ISO_CODE AMOUNT" TEXT — pair with `Db.Decode.money`.
 import Std.Db exposing (SqlValue(..), SqlField(..))
 Db.exec conn

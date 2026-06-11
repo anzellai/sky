@@ -790,7 +790,7 @@ updateOrder conn orderId maybeStatus refunded =
         ]
 ```
 
-Variants (9 total) — `SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` / `SqlBytes` / `SqlDecimal` / `SqlTime` / `SqlMoney` / `SqlNull SqlValue`. Money serialises lossless as `"ISO_CODE AMOUNT"` TEXT; round-trip via `Db.Decode.money`. Maybe-lifting helpers: `fromMaybeString` / `fromMaybeInt` / `fromMaybeFloat` / `fromMaybeBool` / `fromMaybeBytes` / `fromMaybeDecimal` / `fromMaybeTime` / `fromMaybeMoney`. `SqlField` (`SetField SqlValue` | `OmitField`) for partial updates via `Db.updateFields`.
+Variants (9 total) — `SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` / `SqlBytes` / `SqlDecimal` / `SqlTime` / `SqlMoney` / `SqlNull SqlValue`. Money serialises lossless as `"ISO_CODE AMOUNT"` TEXT; round-trip via `Db.Decode.money`. Maybe-lifting helpers: `fromMaybeString` / `fromMaybeInt` / `fromMaybeFloat` / `fromMaybeBool` / `fromMaybeBytes` / `fromMaybeDecimal` / `fromMaybeTime` / `fromMaybeMoney`. `SqlField` (`SetField SqlValue` | `OmitField`) for partial updates via `Db.updateFields` and DEFAULT-omittable INSERTs via `Db.insertFields` (#585) — `OmitField` columns drop from the SQL so the database applies their `DEFAULT`; all-omit → `INSERT … DEFAULT VALUES`.
 
 ### `Log` — structured logging
 

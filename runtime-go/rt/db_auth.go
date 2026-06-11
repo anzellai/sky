@@ -511,6 +511,94 @@ func Db_updateFields(db any, table any, whereCols any, setFields any) any {
 	}
 }
 
+// Db_insertFields : Db -> String -> List (String, SqlField) -> Task Error Int
+// Builds a dynamic INSERT that includes only the columns whose
+// SqlField is `SetField v`. `OmitField` columns are dropped from
+// the column list + VALUES clause so the database applies their
+// DEFAULT.  When every column is OmitField the runtime emits
+// `INSERT INTO <table> DEFAULT VALUES` so callers can write one
+// builder for "row with all defaults" too.
+//
+// Mirror of Db_updateFields without a WHERE clause.  Reuses the
+// same identifier validation + dbBindArg / SqlValue normalisation
+// (SqlNull → nil, SqlMoney/SqlDecimal → TEXT, etc.) so behaviour
+// matches Db.exec / Db.updateFields end-to-end.  #585.
+func Db_insertFields(db any, table any, setFields any) any {
+	return func() any {
+		return WithDbSpan(dbSystemOf(db), "insertFields", stmtAttr(table), func() any {
+			d, ok := db.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.insertFields: not a Db"))
+			}
+			tbl, errRes := mustStringTyped(table, "db.insertFields:table")
+			if errRes != nil {
+				return errRes
+			}
+			if !validSqlIdent(tbl) {
+				return Err[any, any](ErrInvalidInput(
+					"db.insertFields: invalid table name " + tbl))
+			}
+			setList := asList(setFields)
+
+			var cols []string
+			var placeholders []string
+			var goArgs []any
+			for _, pair := range setList {
+				col, fld, ok := unpackPair(pair)
+				if !ok {
+					return Err[any, any](ErrInvalidInput(
+						"db.insertFields: entry not a (String, SqlField) tuple"))
+				}
+				if !validSqlIdent(col) {
+					return Err[any, any](ErrInvalidInput(
+						"db.insertFields: invalid column name " + col))
+				}
+				adt, isAdt := fld.(SkyADT)
+				if !isAdt {
+					return Err[any, any](ErrInvalidInput(
+						"db.insertFields: entry value not a SqlField"))
+				}
+				switch adt.SkyName {
+				case "SetField":
+					if len(adt.Fields) < 1 {
+						return Err[any, any](ErrInvalidInput(
+							"db.insertFields: SetField missing value"))
+					}
+					cols = append(cols, col)
+					placeholders = append(placeholders, "?")
+					goArgs = append(goArgs, dbBindArg(adt.Fields[0]))
+				case "OmitField":
+					// column dropped from SQL — database applies DEFAULT
+					continue
+				default:
+					return Err[any, any](ErrInvalidInput(
+						"db.insertFields: unknown SqlField variant " + adt.SkyName))
+				}
+			}
+
+			var sql string
+			if len(cols) == 0 {
+				// Every column was OmitField — insert a row entirely
+				// composed of column defaults.  Both SQLite and
+				// PostgreSQL honour this form.
+				sql = "INSERT INTO " + tbl + " DEFAULT VALUES"
+			} else {
+				sql = "INSERT INTO " + tbl + " (" + strings.Join(cols, ", ") +
+					") VALUES (" + strings.Join(placeholders, ", ") + ")"
+			}
+			res, err := d.conn.Exec(sql, goArgs...)
+			if err != nil {
+				return Err[any, any](ErrIo("db.insertFields: " + err.Error()))
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return Err[any, any](ErrIo("db.insertFields rows: " + err.Error()))
+			}
+			return Ok[any, any](int(n))
+		})
+	}
+}
+
 // unpackPair pulls (String, V) out of a Sky 2-tuple. Sky tuples
 // lower as SkyTuple2{V0, V1}. Returns ("", nil, false) if the
 // input isn't a 2-tuple with String first.

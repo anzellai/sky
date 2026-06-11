@@ -21,7 +21,7 @@ module Std.Db exposing
     , SqlValue(..)
     , fromMaybeString, fromMaybeInt, fromMaybeFloat, fromMaybeBool
     , fromMaybeBytes, fromMaybeDecimal, fromMaybeTime, fromMaybeMoney
-    , SqlField(..), updateFields
+    , SqlField(..), updateFields, insertFields
     )
 
 
@@ -399,3 +399,28 @@ type SqlField
 -- Returns the affected-row count.
 updateFields : Db -> String -> List ( String, SqlValue ) -> List ( String, SqlField ) -> Task Error Int
 updateFields = Ffi.kernel "Db_updateFields"
+
+
+-- | `insertFields db table fields` — DEFAULT-omittable INSERT with
+-- dynamically-generated SQL. The INSERT counterpart of
+-- `updateFields`: each `SetField v` becomes a `(col)` / `(?)` entry
+-- in the column list and VALUES clause; `OmitField` columns are
+-- dropped entirely so the database applies their `DEFAULT`.
+--
+-- Example: insert a row with `name` + `note` set, let the database
+-- fill `status` (DEFAULT 'pending') and `created_at` (DEFAULT
+-- CURRENT_TIMESTAMP):
+--
+--     Db.insertFields conn "items"
+--         [ ("name",   SetField (SqlString "Widget"))
+--         , ("status", OmitField)               -- DEFAULT 'pending'
+--         , ("note",   SetField (SqlString "first batch"))
+--         ]
+--     -- generates: INSERT INTO items (name, note) VALUES (?, ?)
+--     -- args:      [ SqlString "Widget"
+--     --            , SqlString "first batch" ]
+--
+-- All columns OmitField → `INSERT INTO <table> DEFAULT VALUES` (a
+-- single all-defaults row).  Returns the affected-row count.
+insertFields : Db -> String -> List ( String, SqlField ) -> Task Error Int
+insertFields = Ffi.kernel "Db_insertFields"

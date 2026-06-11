@@ -56,6 +56,7 @@ Every operation that touches the disk returns `Task Error a` (per the [Task-ever
 | `Db.query` | `Db -> String -> List a -> Task Error (List (Dict String String))` | Returns rows as `Dict String String` (every column stringified at the boundary). Same param semantics as `Db.exec`. |
 | `Db.queryDecode` | `Db -> String -> List a -> b -> Task Error (List b)` | Decoder is parametric — typically a `Dict String String -> Result Error a` function; failures abort the whole query |
 | `Db.updateFields` | `Db -> String -> List (String, SqlValue) -> List (String, SqlField) -> Task Error Int` | **v0.16.26+** PATCH-style update with dynamic SQL. `SetField v` includes the column with `?` placeholder; `OmitField` drops it from the SET clause entirely (database keeps existing value). Column-name validation prevents SQL injection via identifiers. |
+| `Db.insertFields` | `Db -> String -> List (String, SqlField) -> Task Error Int` | **v0.16.29+ (#585)** INSERT counterpart of `updateFields`. `SetField v` includes the column with `?` placeholder; `OmitField` drops it from the column list so the database applies its `DEFAULT`. All columns `OmitField` → `INSERT INTO <table> DEFAULT VALUES`. Same identifier validation + `dbBindArg` normalisation as `updateFields`. |
 
 #### Typed parameter binding via `SqlValue` (v0.16.26+)
 
@@ -102,6 +103,20 @@ Db.updateFields conn "orders"
     ]
 -- → UPDATE orders SET status = ?, paid_at = ? WHERE id = ?
 ```
+
+For INSERTs with DEFAULT-omittable columns (set this, NULL that, let the database fill the rest), `Db.insertFields` is the INSERT counterpart — same `SqlField` three-state model, no WHERE clause:
+
+```elm
+Db.insertFields conn "items"
+    [ ("name",   SetField (SqlString "Widget"))                   -- value
+    , ("status", OmitField)                                       -- → DEFAULT
+    , ("note",   SetField (SqlString "first batch"))              -- value
+    ]
+-- → INSERT INTO items (name, note) VALUES (?, ?)
+--   (status omitted; database applies its DEFAULT)
+```
+
+All columns `OmitField` → `INSERT INTO <table> DEFAULT VALUES` (one all-defaults row).  Returns the affected-row count.
 
 Money round-trips via `Std.Db.Decode.money` on the read side — paired with `SqlMoney` on the write side for lossless single-TEXT-column storage that survives PostgreSQL `NUMERIC + CHAR(3)` if you decompose at the call site instead.
 
