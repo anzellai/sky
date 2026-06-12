@@ -364,6 +364,64 @@ globalEmittedSpecs = unsafePerformIO $ newIORef Set.empty
 globalCsiByCallee :: IORef (Map.Map String [String])
 globalCsiByCallee = unsafePerformIO $ newIORef Map.empty
 
+
+-- | v0.17 C9 — consolidated σ-projection signature record.
+--
+-- Phase γ foundation per
+-- @docs/v0.17-fully-typed-codegen-v5-plan.md@ §Phase γ.  Aggregates
+-- the four σ-projection registries audit-catalogued in
+-- @docs/v0.17-sigma-consumers.md@ into ONE record-per-binding,
+-- keyed by Sky-dotted qualified name (e.g.
+-- @"Sky.Core.List.foldl"@).
+--
+-- Population: parallel to the existing IORefs (no authority flip
+-- yet).  C9 ships the data structure + entry-module annotated
+-- write.  C10/C11 add dep-module + HM-inferred writes.  C12 flips
+-- readers to GoSig-direct + deletes the legacy IORefs.
+--
+-- Differential test: opt-in via @SKY_GOSIG_DIFF=1@ env var.  When
+-- on, every emit point that reads from the legacy registries ALSO
+-- reads GoSig and asserts equality (list-Eq on the quantifier
+-- ordering, set-Eq on key presence).  Off by default until C12.
+--
+-- Per Adversary grill (2026-06-12): fields are @Maybe@-wrapped
+-- because C9 doesn't populate them all — partial-population state
+-- is type-visible.  When C10/C11 extend population, individual
+-- fields graduate from @Nothing@ to @Just@ at well-defined
+-- lifecycle points.
+data GoSig = GoSig
+    { _gs_annotation :: !(Maybe T.Annotation)
+    -- ^ T.Forall vars body — from globalAnnotMap.  Populated in C9
+    -- when the entry-module annotation is present.
+    , _gs_typeParams :: !(Maybe [(String, String)])
+    -- ^ Sky→Go TVar name pairs — from
+    -- @_cg_funcSkyToGoTVars@.  Populated when the binding
+    -- participates in σ-projection (non-empty annotation
+    -- quantifier list).
+    , _gs_quantifiers :: !(Maybe [String])
+    -- ^ Solver-ordered quantifier list — from globalCsiByCallee
+    -- (filter @not (null _instance_quantifiers)@ matches the
+    -- write filter at line 1438).
+    }
+    deriving (Eq, Show)
+
+
+-- | Empty signature — all fields Nothing.  Used as the starting
+-- point for partial population in C9.
+emptyGoSig :: GoSig
+emptyGoSig = GoSig
+    { _gs_annotation = Nothing
+    , _gs_typeParams = Nothing
+    , _gs_quantifiers = Nothing
+    }
+
+
+-- | Global GoSig registry — keyed by Sky-dotted qualified name.
+-- Population: C9 entry-module path only; C10/C11 widen.
+{-# NOINLINE globalGoSigMap #-}
+globalGoSigMap :: IORef (Map.Map String GoSig)
+globalGoSigMap = unsafePerformIO $ newIORef Map.empty
+
 -- | v0.15.5 PR 2 — consolidated lowering-scope state IORef.
 --
 -- Replaces the v0.13/v0.15 pair of IORefs (the lambda-type +
@@ -1438,6 +1496,34 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             , not (null (Solve._instance_quantifiers inst))
                             ]
                     writeIORef globalCsiByCallee csiByCallee
+                    -- v0.17 C9: parallel population of globalGoSigMap.
+                    -- Aggregates annotMap + csiByCallee + the env's
+                    -- _cg_funcSkyToGoTVars into ONE record-per-binding.
+                    -- No reader uses globalGoSigMap yet — C10/C11
+                    -- extend population, C12 flips authority.  This
+                    -- write is byte-equivalent to the union of the
+                    -- three existing IORef states; the differential
+                    -- test (opt-in via SKY_GOSIG_DIFF=1) verifies.
+                    envForGoSig <- readIORef globalCgEnv
+                    let funcSkyToGoTVars = Rec._cg_funcSkyToGoTVars envForGoSig
+                        allCalleeNames = Set.union
+                            (Map.keysSet annotMap)
+                            (Map.keysSet csiByCallee)
+                        mkGoSig skyName =
+                            let goName = map (\c -> if c == '.' then '_' else c) skyName
+                                tparams = Map.lookup goName funcSkyToGoTVars
+                                annot   = Map.lookup skyName annotMap
+                                quants  = Map.lookup skyName csiByCallee
+                            in GoSig
+                                { _gs_annotation = annot
+                                , _gs_typeParams = tparams
+                                , _gs_quantifiers = quants
+                                }
+                        goSigMap = Map.fromList
+                            [ (skyName, mkGoSig skyName)
+                            | skyName <- Set.toList allCalleeNames
+                            ]
+                    writeIORef globalGoSigMap goSigMap
                     -- v0.13 Phase A4: eagerly compute the set of
                     -- specialised mangled names that WOULD be
                     -- emitted, so call-site codegen (which runs
