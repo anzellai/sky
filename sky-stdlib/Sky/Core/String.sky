@@ -16,7 +16,7 @@
 module Sky.Core.String exposing
     ( fromInt, fromFloat
     , length, isEmpty
-    , join, split, replace, slice
+    , join, split, replace, slice, dropLeft, dropRight
     , toInt, toFloat
     , toUpper, toLower, trim, trimStart, trimEnd
     , reverse, append, concat
@@ -177,6 +177,18 @@ replace = Ffi.kernel "String_replace"
 
 slice : Int -> Int -> String -> String
 slice = Ffi.kernel "String_slice"
+
+
+-- | Drop the first n characters (runes) from s.  Elm semantics:
+-- negative n returns s unchanged; n >= length returns "".
+dropLeft : Int -> String -> String
+dropLeft = Ffi.kernel "String_dropLeft"
+
+
+-- | Drop the last n characters (runes) from s.  Elm semantics:
+-- negative n returns s unchanged; n >= length returns "".
+dropRight : Int -> String -> String
+dropRight = Ffi.kernel "String_dropRight"
 
 
 repeat : Int -> String -> String
