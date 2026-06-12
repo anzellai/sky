@@ -1025,7 +1025,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     ]
                 -- All Sky-defined ADT/union names with the dep's module
-                -- prefix. safeReturnType uses this set to distinguish
+                -- prefix. safeReturnTypeFull uses this set to distinguish
                 -- "type Sky_Core_Error_Error = rt.SkyADT" (alias is
                 -- emitted, name is safe to use as a Go type) from
                 -- "Bufio_Scanner" (FFI-opaque, no Go alias exists, must
@@ -1650,7 +1650,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
                 -- AFTER typecheck and preserve TVar names (`func(string)
                 -- T1`). The pre-typecheck `collectFuncTypesWith`
-                -- entries use `safeReturnTypeWith` which ERASES TVars
+                -- entries use `safeReturnTypeBootstrap` which ERASES TVars
                 -- to `any` (`func(string) any`). Union order matters:
                 -- the typed (post-HM) entries must WIN over the early
                 -- erased entries so call-site σ-recovery can pin
@@ -3420,7 +3420,7 @@ generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
         -- type vars its arg list mentions AS A BARE @T.TVar@ at the
         -- top level (e.g. `Just : a -> Maybe a`, `Box : a -> Box a`).
         -- Deeply-nested TVar references (`Just (Event msg)`-style)
-        -- are skipped because the legacy 'safeReturnType' renders
+        -- are skipped because the legacy 'safeReturnTypeFull' renders
         -- such types DIFFERENTLY than 'substituteTVarsToGo' (e.g.
         -- emits @[]Std_Ui_Attribute@ vs @[]rt.SkyAttribute@), causing
         -- caller-side type mismatches if we mixed the two.
@@ -3485,10 +3485,10 @@ generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
   where
     -- C4: poly ADT — route TVar arg types through substituteTVarsToGo
     -- so `Box a` ctor's `a` arg lowers as `T1`, not `any`.  For
-    -- non-poly unions tvarMap is empty so safeReturnType still handles
+    -- non-poly unions tvarMap is empty so safeReturnTypeFull still handles
     -- the type (preserves existing behaviour on monomorphic unions).
     -- C4: bare-TVar args route to the Go type-var (T1 / T2 / ...);
-    -- all other args use safeReturnType (legacy path) for byte-for-byte
+    -- all other args use safeReturnTypeFull (legacy path) for byte-for-byte
     -- consistency with existing emission.
     ctorArgGoTypeDep tvarMap i argTys
         | i < length argTys =
@@ -3496,7 +3496,7 @@ generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
             in case aty of
                 T.TVar skyTV
                     | Just goTV <- Map.lookup skyTV tvarMap -> goTV
-                _ -> safeReturnType aty
+                _ -> safeReturnTypeFull aty
         | otherwise = "any"
 
 
@@ -3642,7 +3642,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                     ]
             -- Gather the FULL record-alias set (entry + dep modules,
             -- prefixed and unprefixed forms) so collectFuncTypesWith's
-            -- safeReturnTypeWith resolves `Piece` → `Chess_Piece_Piece_R`
+            -- safeReturnTypeBootstrap resolves `Piece` → `Chess_Piece_Piece_R`
             -- instead of degrading to `any`. Without this, annotated
             -- entry functions taking record types get `any` params.
             prevEnv <- readIORef globalCgEnv
@@ -4148,7 +4148,7 @@ generateUnionTypes canMod =
     -- T1: ctor params are typed from the union's declared arg types.
     -- Call sites coerce via the VarCtor branch of exprToGo Can.Call.
     ctorArgGoType i argTys
-        | i < length argTys = safeReturnType (argTys !! i)
+        | i < length argTys = safeReturnTypeFull (argTys !! i)
         | otherwise = "any"
 
     hasTVar :: T.Type -> Bool
@@ -5636,8 +5636,16 @@ collectFreeTVars = nubOrd . go
 -- append `_R` when needed). Rejects polymorphic type variables and
 -- unmapped kernel types. Returns "any" for anything not safely
 -- expressible.
-safeReturnType :: T.Type -> String
-safeReturnType t = case t of
+--
+-- v0.17 C7 — Renamed from `safeReturnType` for policy-disambiguation
+-- with sibling functions [@safeReturnTypeBootstrap@] (alias set as
+-- param, used during env bootstrap) and [@safeReturnTypePure@] (no
+-- env access, no record-alias narrowing).  The three are NOT
+-- duplicates; each serves a distinct data-availability phase of the
+-- lowering pipeline.  See Cause J in
+-- @docs/v0.17-fully-typed-codegen-v5-plan.md@.
+safeReturnTypeFull :: T.Type -> String
+safeReturnTypeFull t = case t of
     -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
     -- generic-instantiation mismatch at the return wrap.
     T.TUnit                       -> "struct{}"
@@ -5647,11 +5655,11 @@ safeReturnType t = case t of
     T.TType _ "String" []         -> "string"
     T.TType _ "Char" []           -> "rune"
     T.TType _ "Bytes" []          -> "[]byte"
-    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ safeReturnType e
-                                     ++ ", " ++ safeReturnType a ++ "]"
-    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ safeReturnType x ++ "]"
-    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ safeReturnType e
-                                     ++ ", " ++ safeReturnType a ++ "]"
+    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ safeReturnTypeFull e
+                                     ++ ", " ++ safeReturnTypeFull a ++ "]"
+    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ safeReturnTypeFull x ++ "]"
+    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ safeReturnTypeFull e
+                                     ++ ", " ++ safeReturnTypeFull a ++ "]"
     -- T5: list/dict/set typed as concrete Go types. User-code audit
     -- required in parallel — when a function annotated to return
     -- `Dict String String` actually holds mixed-type values (e.g.
@@ -5660,11 +5668,11 @@ safeReturnType t = case t of
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   [elem]     ->
-        let inner = safeReturnType elem
+        let inner = safeReturnTypeFull elem
         in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   [_, v]     ->
-        let inner = safeReturnType v
+        let inner = safeReturnTypeFull v
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
@@ -5691,7 +5699,7 @@ safeReturnType t = case t of
     -- The `isKnownUnion` gate at the bottom of this arm still
     -- keeps FFI-opaque parametric types (where no Go alias was
     -- emitted) falling through to `any`. Mirrors the equivalent
-    -- arm in `safeReturnTypeWith` (which landed earlier in v0.13).
+    -- arm in `safeReturnTypeBootstrap` (which landed earlier in v0.13).
     T.TType home name _ ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
@@ -5792,9 +5800,9 @@ safeReturnType t = case t of
                     -- Primitives / containers live inside the alias body
                     -- (e.g. `type alias Id = String`). Inline them.
                     | otherwise     -> case innerType of
-                        T.TType _ _ _ -> safeReturnType innerType
+                        T.TType _ _ _ -> safeReturnTypeFull innerType
                         T.TRecord{}   -> if null base then "any" else base
-                        _             -> safeReturnType innerType
+                        _             -> safeReturnTypeFull innerType
     -- Bare TRecord with known fields: match against the codegen env's
     -- record alias registry (field-set → alias name) and emit `_R`.
     -- HM often collapses an alias reference down to its underlying
@@ -5950,13 +5958,13 @@ collectFuncTypesWith extraRecAliases prefix canMod =
         extract def = case def of
             Can.TypedDef (A.At _ n) _ typedPats _ retType ->
                 let argTypes = map snd typedPats
-                    argGoTys = map (safeReturnTypeWith knownRecAliases) argTypes
-                    retGoTy  = safeReturnTypeWith knownRecAliases retType
+                    argGoTys = map (safeReturnTypeBootstrap knownRecAliases) argTypes
+                    retGoTy  = safeReturnTypeBootstrap knownRecAliases retType
                     -- v0.13 Stage 2 — ultimate return type strips ALL
                     -- nested TLambda levels. Used by typed partial-
                     -- application wrapper codegen which needs the
                     -- scalar return after every arg applies.
-                    ultRetGoTy = safeReturnTypeWith knownRecAliases
+                    ultRetGoTy = safeReturnTypeBootstrap knownRecAliases
                                     (ultimateReturnType retType)
                     hasAnyTyped = retGoTy /= "any" || any (/= "any") argGoTys
                 in if hasAnyTyped
@@ -5975,7 +5983,7 @@ collectFuncTypesWith extraRecAliases prefix canMod =
             [ (qualName aliasName, paramTys, retTy, retTy)
             | (aliasName, alias) <- Map.toList (Can._aliases canMod)
             , Rec.DataRecord fieldList <- [Rec.classifyAlias alias]
-            , let paramTys = map (safeReturnTypeWith knownRecAliases . snd) fieldList
+            , let paramTys = map (safeReturnTypeBootstrap knownRecAliases . snd) fieldList
             , let retTy = qualName aliasName ++ "_R"
             ]
         -- v0.13 Stage 1 — ADT constructors (e.g. `State_Msg_InputName`)
@@ -5993,7 +6001,7 @@ collectFuncTypesWith extraRecAliases prefix canMod =
         -- as `var` decls, not functions.
         adtCtorResults =
             [ ( qualName (typeName ++ "_" ++ cname)
-              , map (safeReturnTypeWith knownRecAliases) argTys
+              , map (safeReturnTypeBootstrap knownRecAliases) argTys
               , qualName typeName
               , qualName typeName )
             | (typeName, Can.Union _vars ctors _numAlts opts)
@@ -6021,11 +6029,18 @@ ultimateReturnType (T.TLambda _ rest) = ultimateReturnType rest
 ultimateReturnType t                  = t
 
 
--- | safeReturnType variant that takes an explicit record-alias set
+-- | safeReturnTypeFull variant that takes an explicit record-alias set
 -- instead of consulting the global env. Used by collectFuncTypes
 -- during env bootstrap.
-safeReturnTypeWith :: Set.Set String -> T.Type -> String
-safeReturnTypeWith recAliases = go
+--
+-- v0.17 C7 — Renamed from `safeReturnTypeWith`.  Unlike the Full
+-- variant, this one runs BEFORE @globalCgEnv@ is finalised — the
+-- alias set is the only signal available at this phase.  Includes a
+-- @T.TLambda _ _@ arm (renders function types) that Full lacks
+-- because Full is called after alias resolution is complete and
+-- function-typed slots already have a typed Go rendering elsewhere.
+safeReturnTypeBootstrap :: Set.Set String -> T.Type -> String
+safeReturnTypeBootstrap recAliases = go
   where
     -- Extract module prefixes that appear in the alias set (everything
     -- before the last "_"). Lets us find "State_Model_R" from a TType
@@ -7004,7 +7019,7 @@ tvarsInEmitted ty = case ty of
         | take 1 n == "_" -> [n]
         | otherwise       -> [n]
     T.TLambda a b -> tvarsInEmitted a ++ tvarsInEmitted b
-    -- v0.13 C: container TVars propagate. The renderer (`safeReturnType*`
+    -- v0.13 C: container TVars propagate. The renderer (`safeReturnTypeFull*`
     -- / `typeStrWithAliasesReg`) already emits typed Go containers
     -- like `[]T1` / `map[string]V1` when an element TVar is known —
     -- collecting them here lets `splitInferredSigWithReg` declare
@@ -7048,12 +7063,18 @@ tvarsInEmitted ty = case ty of
     T.TUnit     -> []
 
 
--- | Env-free version of safeReturnType for use during env bootstrap.
+-- | Env-free version of safeReturnTypeFull for use during env bootstrap.
 -- Doesn't recognise user record aliases (so they degrade to `any` in
 -- the param/return tables); the codegen of the function body will
 -- still see them via the live env. This is acceptable because record
 -- aliases as call-site argument types are rare and the degradation
 -- only loses a typing opportunity, not correctness.
+--
+-- v0.17 C7 — Name retained (was already disambiguated pre-rename).
+-- The Pure variant is the no-env-no-alias-set fallback for sites
+-- that have NEITHER the live @globalCgEnv@ NOR an explicit alias
+-- set in scope.  Falls back to @any@ for any user-defined type —
+-- the loss is a typing opportunity, not soundness.
 safeReturnTypePure :: T.Type -> String
 safeReturnTypePure t = case t of
     -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
@@ -7094,7 +7115,7 @@ safeReturnTypePure t = case t of
     T.TType _ name [] | Just goTy <- lookup name runtimeTypedMap -> goTy
     -- safeReturnTypePure has no env access — can't distinguish record
     -- aliases (need _R suffix) from ADTs (use name directly). Fall
-    -- back to any for all user types. The env-aware safeReturnType
+    -- back to any for all user types. The env-aware safeReturnTypeFull
     -- handles these correctly for annotation-based param types.
     T.TAlias _ _ _ (T.Filled inner)  -> safeReturnTypePure inner
     T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnTypePure inner
@@ -7998,7 +8019,7 @@ exprToGo (A.At _ expr) = case expr of
                                     -- ADT constructor: extract param types
                                     -- from the annotation's arrow type.
                                     let extractParams (T.TLambda from to) =
-                                            safeReturnType from : extractParams to
+                                            safeReturnTypeFull from : extractParams to
                                         extractParams _ = []
                                     in extractParams ctorTy
                         _ -> []
@@ -9016,12 +9037,12 @@ isDirectCallable (A.At _ e) = case e of
 
 
 -- | Per-argument Go types for a constructor, derived from its
--- canonical annotation. Uses safeReturnType (env-aware so record
+-- canonical annotation. Uses safeReturnTypeFull (env-aware so record
 -- aliases resolve). Missing slots degrade to "any".
 ctorParamTypes :: Can.Annotation -> [String]
 ctorParamTypes (Can.Forall _ t) = go t
   where
-    go (T.TLambda from to) = safeReturnType from : go to
+    go (T.TLambda from to) = safeReturnTypeFull from : go to
     go _                   = []
 
 ctorArity :: Can.Annotation -> Int
@@ -9048,7 +9069,7 @@ emitPartialCtor func suppliedArgs missing =
             Can.VarCtor _ _ typeName _ annot ->
                 let (_, r) = peelArgs (skyAnnotType annot)
                 in case r of
-                    _ | safeReturnType r /= "any" -> safeReturnType r
+                    _ | safeReturnTypeFull r /= "any" -> safeReturnTypeFull r
                     _ -> typeName
             _ -> "any"
         suppliedTys = take (length suppliedArgs) paramTys
@@ -15014,7 +15035,7 @@ solvedTypeToGo ty = case ty of
             base = prefix ++ name
             env = getCgEnv
             allAliases = Rec._cg_recordAliases env
-            -- Mirror safeReturnType's qualified-candidate fallback so a
+            -- Mirror safeReturnTypeFull's qualified-candidate fallback so a
             -- captured TType with empty home resolves to the correct
             -- module-qualified Go alias (e.g. `Model` → `State_Model_R`).
             qualifiedCandidates =
@@ -15064,7 +15085,7 @@ solvedTypeToGo ty = case ty of
             Nothing -> synthAnonRecordName fields
     T.TTuple _ _ rest ->
         -- v0.13: render tuples as `rt.SkyTuple2/3/N` — CONSISTENT
-        -- with `typeStrWithAliasesReg` / `safeReturnTypeWith` (which
+        -- with `typeStrWithAliasesReg` / `safeReturnTypeBootstrap` (which
         -- drive function signatures) AND with the actual tuple-
         -- literal emission (`GoStructLit "rt.SkyTuple2"`).  The old
         -- `rt.T2[A,B]` rendering was an inconsistency: a variable
