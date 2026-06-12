@@ -1,0 +1,10 @@
+# Cause D — record-update over typed base
+#
+# Today emits rt.RecordUpdate (reflect-backed); C5 will emit a
+# typed closure when baseGo's static type is known.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN Person_R
+MUST_CONTAIN rt.RecordUpdate
+MUST_NOT_PANIC_AT_RUNTIME

@@ -1,0 +1,17 @@
+# Cause E — poly ADT type-arg propagation
+#
+# A user-defined polymorphic ADT `type Box a = Box a | EmptyBox`
+# must compile and run.  Today's emission collapses the `a` to
+# `any`; C4 will propagate the named TVar.
+#
+# When C4 lands, tighten expectations to MUST_CONTAIN "[T1 any]"
+# or similar typed signature on Box_Box.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN Box_Box
+MUST_CONTAIN Box_EmptyBox
+# unwrap is parametric — must be emitted generic.  This already
+# works today (HM solver infers T1 for the polymorphic call site).
+MUST_CONTAIN unwrap[T1 any]
+MUST_NOT_PANIC_AT_RUNTIME

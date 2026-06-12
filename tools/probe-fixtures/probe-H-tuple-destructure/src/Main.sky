@@ -1,0 +1,22 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Tuple construction + destructure — Cause H surface.  Today
+-- routes through rt.SkyTuple2 (= T2[any, any] non-generic alias).
+-- C6a emits typed T2[String, Int] at lowering call sites; C6b
+-- drops the SkyTuple2 alias entirely.
+makePair : String -> Int -> (String, Int)
+makePair name age =
+    (name, age)
+
+
+showPair : (String, Int) -> String
+showPair (n, a) =
+    n ++ " is " ++ String.fromInt a
+
+
+main =
+    println (showPair (makePair "Alice" 30))
