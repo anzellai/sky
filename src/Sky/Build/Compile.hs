@@ -3395,9 +3395,49 @@ collectDeclNames = goNames Set.empty
 -- | Emit a dep module's union type declaration + constructor value/func.
 -- Type becomes `<ModPrefix>_<TypeName>` and each ctor becomes
 -- `<ModPrefix>_<TypeName>_<CtorName>`.
+--
+-- v0.17 C4 — Cause E partial close.  Polymorphic unions
+-- (@type Box a = Box a | EmptyBox@) emit a non-generic type alias
+-- (`type Box = rt.SkyADT`) but the N-ary ctor functions gain
+-- @[T1 any, ...]@ type params with arg types substituted through
+-- 'substituteTVarsToGo'.  So @Just : a -> Maybe a@ emits as
+-- @func Maybe_Just[T1 any](v0 T1) Maybe@ — the construction side is
+-- typed, the consumption side (pattern match against the union)
+-- still goes through @rt.SkyADT@'s field-erasing path.
+--
+-- Keeping the union TYPE non-generic preserves existing consumer
+-- references like @case x of Just v -> ...@ that today emit bare
+-- @qualType@ in type slots without args.  Fully typing the
+-- consumption side is Phase γ's σ-projection work (C8-C12).
 generateUnionForDep :: String -> (String, Can.Union) -> [GoIr.GoDecl]
-generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
+generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
     let qualType = modPrefix ++ "_" ++ typeName
+        -- C4: poly ADT — derive Go type-var names + substitution map.
+        goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1::Int ..] vars
+        tvarMap = Map.fromList (zip vars goTVars)
+        isPoly = not (null goTVars)
+        -- Per-ctor type params: each ctor binds ONLY the union's
+        -- type vars its arg list mentions AS A BARE @T.TVar@ at the
+        -- top level (e.g. `Just : a -> Maybe a`, `Box : a -> Box a`).
+        -- Deeply-nested TVar references (`Just (Event msg)`-style)
+        -- are skipped because the legacy 'safeReturnType' renders
+        -- such types DIFFERENTLY than 'substituteTVarsToGo' (e.g.
+        -- emits @[]Std_Ui_Attribute@ vs @[]rt.SkyAttribute@), causing
+        -- caller-side type mismatches if we mixed the two.
+        -- C8-C14 closes the deep-TVar case via the typed pipeline.
+        ctorTypeParamsFor argTys =
+            if isPoly
+                then
+                    let used = [skyTV
+                               | aty <- argTys
+                               , T.TVar skyTV <- [aty]
+                               ]
+                        kept = [goTV
+                               | (skyTV, goTV) <- zip vars goTVars
+                               , skyTV `elem` used
+                               ]
+                    in [(goTV, "any") | goTV <- kept]
+                else []
     in case opts of
         Can.Enum ->
             [ GoIr.GoDeclType qualType (GoIr.GoEnumDef
@@ -3406,11 +3446,8 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                 ])
             ]
         _ ->
-            -- Emit as a type alias to rt.SkyADT so values constructed
-            -- here are assignment-compatible with values produced by
-            -- rt-side builders (ErrIo, ErrNetwork, Just/Nothing helpers,
-            -- etc.). Eliminates the `interface {} is rt.SkyADT, not
-            -- Sky_Core_Error_Error` panic class at pattern-match sites.
+            -- Type alias stays non-generic — `type qualType = rt.SkyADT`.
+            -- The TVar info lives only on the ctor function's params.
             GoIr.GoDeclRaw ("type " ++ qualType ++ " = rt.SkyADT")
             : [ if arity == 0
                   then GoIr.GoDeclVar (qualType ++ "_" ++ cname) qualType
@@ -3418,11 +3455,16 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                             [ ("Tag", GoIr.GoIntLit idx)
                             , ("SkyName", GoIr.GoStringLit cname)
                             ]))
+                  -- N-ary ctor: emit as function with type params (for
+                  -- poly unions) and arg types substituted through
+                  -- tvarMap so TVar refs become T1 / T2 / ... .  Return
+                  -- type stays bare qualType (non-generic alias).
                   else GoIr.GoDeclFunc GoIr.GoFuncDecl
                         { GoIr._gf_name = qualType ++ "_" ++ cname
-                        , GoIr._gf_typeParams = []
+                        , GoIr._gf_typeParams = ctorTypeParamsFor argTys
                         , GoIr._gf_params =
-                            [ GoIr.GoParam ("v" ++ show i) (ctorArgGoTypeDep i argTys)
+                            [ GoIr.GoParam ("v" ++ show i)
+                                (ctorArgGoTypeDep tvarMap i argTys)
                             | i <- [0 .. arity - 1]
                             ]
                         , GoIr._gf_returnType = qualType
@@ -3441,9 +3483,20 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                         ctors
                    ++ "}" ]
   where
-    -- T1: dep ctor params typed from declared union's arg types.
-    ctorArgGoTypeDep i argTys
-        | i < length argTys = safeReturnType (argTys !! i)
+    -- C4: poly ADT — route TVar arg types through substituteTVarsToGo
+    -- so `Box a` ctor's `a` arg lowers as `T1`, not `any`.  For
+    -- non-poly unions tvarMap is empty so safeReturnType still handles
+    -- the type (preserves existing behaviour on monomorphic unions).
+    -- C4: bare-TVar args route to the Go type-var (T1 / T2 / ...);
+    -- all other args use safeReturnType (legacy path) for byte-for-byte
+    -- consistency with existing emission.
+    ctorArgGoTypeDep tvarMap i argTys
+        | i < length argTys =
+            let aty = argTys !! i
+            in case aty of
+                T.TVar skyTV
+                    | Just goTV <- Map.lookup skyTV tvarMap -> goTV
+                _ -> safeReturnType aty
         | otherwise = "any"
 
 
