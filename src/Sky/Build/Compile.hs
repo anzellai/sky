@@ -8211,14 +8211,95 @@ exprToGo (A.At _ expr) = case expr of
                        [exprToGo target, GoIr.GoStringLit (capitalise_ field)]
 
     Can.Update _name baseExpr fields ->
-        -- Record update via reflect-based runtime helper (works on any + typed structs)
-        let baseGo = GoBuilder.renderExpr (exprToGo baseExpr)
+        -- v0.17 C5: typed closure fast path closes Cause D when the
+        -- base expression's static Go type is a concrete record alias
+        -- (e.g. Person_R).  Emits an IIFE:
+        --
+        --     func() Person_R {
+        --         _u := base
+        --         _u.Age = newAge
+        --         _u.Name = newName
+        --         return _u
+        --     }()
+        --
+        -- The GoTypedBlock wrapper guarantees goExprGoType (5089) sees
+        -- the concrete return type at downstream consumer slots, so
+        -- coerceToFieldType / coerceArg short-circuit instead of
+        -- re-wrapping with rt.Coerce.
+        --
+        -- Falls back to rt.RecordUpdate (reflect-backed) when the
+        -- base's static type is unknown (any) — preserves today's
+        -- semantics on Db.query / JSON.Decode / cross-module FFI
+        -- return-shaped bases.  Cause D consumption-side close is
+        -- Phase γ (C8-C12) σ-projection work.
+        let baseGoExpr = exprToGo baseExpr
             fieldUpdates = Map.toList fields
-            pairs = map (\(fname, Can.FieldUpdate _ fexpr) ->
-                "\"" ++ capitalise_ fname ++ "\": " ++ GoBuilder.renderExpr (exprToGo fexpr))
-                fieldUpdates
-        in GoIr.GoRaw $ "rt.RecordUpdate(" ++ baseGo ++ ", map[string]any{" ++
-            intercalate_ ", " pairs ++ "})"
+            isRecordAlias t =
+                t /= "any" && not (null t)
+                && (List.isSuffixOf "_R" t
+                    || List.isSuffixOf "_R]" t)  -- generic alias instance
+            -- goExprGoType is primary.  Falls back to lookupLambdaGoStr
+            -- for direct identifier bases (the common
+            -- `f : Person -> Person` shape) — that registry holds the
+            -- Go-rendered string of the binding's static type, so a hit
+            -- here proves the Go-side `_u := base` will type-check
+            -- safely as the target alias.  Sky-side inferExprType is
+            -- NOT used because it can return Just "Job_R" while the
+            -- Go-side baseGoExpr is `any` (polymorphic call result,
+            -- JSON decode output) — yielding an unsafe `_u.Field` ref.
+            mbStaticTy = case goExprGoType (Just baseExpr) baseGoExpr of
+                Just t | isRecordAlias t -> Just t
+                _ -> case baseGoExpr of
+                    GoIr.GoIdent name
+                        | Just goStr <- lookupLambdaGoStr name
+                        , isRecordAlias goStr -> Just goStr
+                    _ -> Nothing
+        in case mbStaticTy of
+            Just t | isRecordAlias t ->
+                -- Typed closure fast path.  Mirrors the record-literal
+                -- lowerField pattern (Compile.hs:8301-8317): per-field
+                -- type lookup + coerceToFieldType so heterogeneous
+                -- field-value Go types (e.g. `rt.Concat(...)` returning
+                -- `any`) narrow correctly into the struct's typed slot.
+                let aliasNameFromT =
+                        -- "Person_R" → "Person"; "X_Y_R[any]" → "X_Y";
+                        -- "X_Y_R" → "X_Y".  Strip the _R suffix
+                        -- (with optional generic bracket trailer).
+                        let stripBracket s
+                                | Just i <- List.elemIndex '[' s = take i s
+                                | otherwise = s
+                            stripR s
+                                | List.isSuffixOf "_R" s = take (length s - 2) s
+                                | otherwise = s
+                        in stripR (stripBracket t)
+                    aliasDecl = lookupAliasDecl aliasNameFromT
+                    fieldTypeMap = case aliasDecl of
+                        Just (Can.Alias _ (T.TRecord m _)) ->
+                            Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
+                        _ -> Map.empty
+                    lowerFieldValue fname fexpr =
+                        let fieldGoTy =
+                                Map.findWithDefault "any" fname fieldTypeMap
+                        in coerceToFieldType fieldGoTy
+                               (exprToGoExpectGo fieldGoTy fexpr)
+                    initStmt = GoIr.GoShortDecl "_u" baseGoExpr
+                    assignStmts =
+                        [ GoIr.GoAssign ("_u." ++ capitalise_ fname)
+                            (lowerFieldValue fname fexpr)
+                        | (fname, Can.FieldUpdate _ fexpr) <- fieldUpdates
+                        ]
+                in GoIr.GoTypedBlock t
+                    (initStmt : assignStmts)
+                    (GoIr.GoIdent "_u")
+            _ ->
+                -- Fallback: reflect-backed runtime helper
+                let baseGo = GoBuilder.renderExpr baseGoExpr
+                    pairs = map (\(fname, Can.FieldUpdate _ fexpr) ->
+                        "\"" ++ capitalise_ fname ++ "\": "
+                            ++ GoBuilder.renderExpr (exprToGo fexpr))
+                        fieldUpdates
+                in GoIr.GoRaw $ "rt.RecordUpdate(" ++ baseGo ++
+                    ", map[string]any{" ++ intercalate_ ", " pairs ++ "})"
 
     Can.Record fields ->
         -- Record literal: look up matching type alias → named struct, or anonymous
