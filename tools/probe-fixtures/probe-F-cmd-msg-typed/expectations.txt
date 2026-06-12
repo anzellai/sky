@@ -1,0 +1,10 @@
+# Cause F — Cmd/Sub non-generic runtime
+#
+# update declares `Msg -> Int -> Int` — Msg type SHOULD survive
+# end-to-end.  This baseline fixture compiles; the typed return
+# case `(Model, Cmd Msg)` is more invasive (lives in Live apps).
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN func update(msg Msg, count int) int
+MUST_NOT_PANIC_AT_RUNTIME

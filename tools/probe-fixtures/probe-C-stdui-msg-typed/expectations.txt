@@ -1,0 +1,13 @@
+# Cause C — Std.Ui kernel-sig polymorphism erased
+#
+# view : Int -> Element Msg routes Msg through Std.Ui's
+# callback slots.  Today kernel sigs are non-generic
+# (Std_Ui_button takes `cfg any`); C13 introduces generic
+# kernel sigs.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN func view(count int)
+# Runtime check skipped — fixture validates view signature shape
+# in lowered Go, not actual rendering (no Sky.Live entry).
+

@@ -1,0 +1,21 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Same-module polymorphic re-instantiation (Cause A surface).
+-- `wrap` is polymorphic in `a`; called with String AND Int in the
+-- same module forces α-renaming per call site.  v0.15 closed the
+-- main soundness gap; C8-C12 cleans up the σ-projection
+-- implementation.
+wrap : a -> List a
+wrap x =
+    [x]
+
+
+main =
+    let asString = wrap "hello"
+        asInt = wrap 42
+    in
+    println ("strings: " ++ String.fromInt (List.length asString) ++ ", ints: " ++ String.fromInt (List.length asInt))

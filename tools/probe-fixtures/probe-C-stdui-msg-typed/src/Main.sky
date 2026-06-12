@@ -1,0 +1,31 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Ui as Ui
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+-- Std.Ui callback in HOF slot (Cause C surface).  view :: Int -> Element Msg
+-- via Ui.button { onPress = Just Increment }.  Today Std.Ui
+-- kernel sigs are non-generic so the typed Msg flows through
+-- `func(any) any` HOFs.  C13 makes Std_Ui_Element generic.
+view : Int -> Ui.Element Msg
+view count =
+    Ui.row []
+        [ Ui.button [] { onPress = Just Decrement, label = Ui.text "-" }
+        , Ui.text (String.fromInt count)
+        , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+        ]
+
+
+main =
+    -- We're not running the UI here (no Sky.Live entry) — just
+    -- want to lock the view type signature shape in lowered Go.
+    let _ = view 0
+    in
+    println "view typed"
