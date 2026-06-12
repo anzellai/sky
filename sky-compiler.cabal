@@ -308,6 +308,7 @@ test-suite sky-tests
       Sky.Type.UiOnSubmitTypedRecordSpec
       Sky.Type.UfCycleGuardSpec
       Sky.Type.RecordFieldExactnessSpec
+      Sky.Build.GoTypeAdtSpec
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiFillCssSpec
       Sky.Build.UiAlignSelfSpec
