@@ -4644,13 +4644,19 @@ reservedGoNames =
 
 
 -- | Generate typed function parameters and return type from a solved type
+--
+-- v0.17 C3: routed through 'GoType.goTypeString', the canonical Sky→Go
+-- mapping entry point.  Internally identical to the legacy
+-- 'GoType.typeToGo' (locked by C2 differential parity test); future
+-- commits widen 'MappingContext' so this site picks up alias /
+-- runtime-typed enrichment automatically.
 typedFuncSig :: [Can.Pattern] -> T.Type -> ([GoIr.GoParam], String)
 typedFuncSig params funcType =
     let (argTypes, retType) = splitFuncType (length params) funcType
         goParams = zipWith (\pat ty ->
-            GoIr.GoParam (patternName pat) (GoType.typeToGo ty))
+            GoIr.GoParam (patternName pat) (GoType.goTypeString ty))
             params argTypes
-    in (goParams, GoType.typeToGo retType)
+    in (goParams, GoType.goTypeString retType)
 
 
 -- | Split a function type into argument types and return type

@@ -458,3 +458,20 @@ mapNamedType ctx home name args =
             in case args of
                 [] -> GoNamed goName []
                 _  -> GoNamed goName (map (mapSkyTypeToGo ctx) args)
+
+
+-- | Canonical "Sky type → Go type string" entry point — routes a
+-- 'T.Type' through 'mapSkyTypeToGo' + 'renderGoType' using
+-- 'defaultMappingContext'.  Equivalent to the legacy 'typeToGo'
+-- (locked by the C2 parity test in
+-- 'test/Sky/Build/GoTypeAdtSpec.hs').
+--
+-- New call sites SHOULD use this entry point.  Existing 'typeToGo'
+-- callers can migrate freely — the C2 parity contract guarantees
+-- byte-identical output.  Both surfaces coexist so 'typeToGo' can
+-- serve as a parity oracle until C8+ widens 'MappingContext' with
+-- env-derived alias data (at which point the new pipeline produces
+-- richer output AND 'typeToGo' becomes the "minimal" fallback for
+-- env-free contexts).
+goTypeString :: T.Type -> String
+goTypeString = renderGoType defaultRenderEnv . mapSkyTypeToGo defaultMappingContext
