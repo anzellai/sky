@@ -373,6 +373,7 @@ test-suite sky-tests
       Sky.Build.PartialKernelAppSpec
       Sky.Build.PartialUserHofSpec
       Sky.Build.HofTypedMsgSpec
+      Sky.Build.CurriedLambdaStageCSpec
       Sky.Build.CoerceArgParametricSpec
       Sky.Build.UnannotatedParametricCfgViewSpec
       Sky.Build.UnannotatedParametricCfgUserHelperSpec
