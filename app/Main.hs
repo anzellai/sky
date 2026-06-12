@@ -2368,22 +2368,36 @@ preserveTopLevelComments source formatted =
                 let trimmed = trimBlanks acc
                     anchorKey = stripTrailingComment (T.strip l)
                     rest = walk (Just anchorKey) False (nextInStr False l) [] ls
+                    -- #587-followup / regression fence for the "header
+                    -- comment stays above the definition" spec.  The
+                    -- `prevIsBody` quirk-fix below assumes the comment
+                    -- block is IMMEDIATELY adjacent to its previous-body
+                    -- line.  But when blank lines separate them, the
+                    -- comment is semantically a HEADER for the next
+                    -- top-level decl — not a trailer for the previous
+                    -- body.  Falling through to the body-anchor path
+                    -- under that shape stuck the comment after the
+                    -- prev-body call-site line (e.g. `helper x`) instead
+                    -- of above the `helper y =` definition.
+                    leadingBlanks =
+                        length acc -
+                        length (dropWhile (T.null . T.strip) acc)
                 in if null trimmed
                      then rest
                      -- Quirk fix: when the comment block's
                      -- immediately preceding code line was BODY
-                     -- (`prevIsBody`) — not the previous decl's
-                     -- header — the comments belong to that body,
-                     -- not to the next decl. The formatter's
-                     -- decl-end blank lines made the walker mis-
-                     -- attribute these to the next decl's header
-                     -- group, which then printed them between the
-                     -- two decls (visually attached to the wrong
-                     -- one). Emit as a body block keyed to prev
-                     -- (body line) with the upcoming decl line as
-                     -- fallback next-anchor.
+                     -- (`prevIsBody`) AND there are NO blank lines
+                     -- between prev-body and the comment block, the
+                     -- comments belong to that body, not to the next
+                     -- decl. The formatter's decl-end blank lines
+                     -- made the walker mis-attribute these to the
+                     -- next decl's header group, which then printed
+                     -- them between the two decls (visually attached
+                     -- to the wrong one). Emit as a body block keyed
+                     -- to prev (body line) with the upcoming decl
+                     -- line as fallback next-anchor.
                      else case prev of
-                         Just p | prevIsBody ->
+                         Just p | prevIsBody, leadingBlanks == 0 ->
                              (trimmed, p, Just anchorKey, False) : rest
                          _ ->
                              (trimmed, T.strip l, Nothing, True) : rest
