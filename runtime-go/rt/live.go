@@ -490,6 +490,19 @@ func msgDisplayName(msg any) string {
 	}
 	if rv.Kind() == reflect.Func {
 		name := runtime.FuncForPC(rv.Pointer()).Name()
+		// #532 — reflect.MakeFunc-wrapped closures report
+		// "reflect.makeFuncStub" as their PC name. Naively trimming on
+		// the last `_` returns "makeFuncStub" and routes it onto the
+		// wire as the Msg name; the server's LookupAdtTag then fails
+		// silently and `{"patches":[]}` comes back. Returning "" here
+		// makes the dispatcher fall back to the per-binding-site
+		// handlerId — the canonical robust path for reflect-MakeFunc
+		// closures (typical when a Msg constructor is partial-applied
+		// onto a form onSubmit). The compiler-side fix is tracked
+		// separately; this is the runtime-side defence.
+		if strings.HasPrefix(name, "reflect.") {
+			return ""
+		}
 		// Trim main.Msg_UpdateEmail → UpdateEmail.
 		if idx := strings.LastIndex(name, "_"); idx >= 0 {
 			return name[idx+1:]
