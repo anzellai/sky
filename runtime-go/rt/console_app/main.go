@@ -3430,7 +3430,15 @@ func HubStore_hubStore(dbPath string) State_Store_R {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readErrors(dbPath))
 	}, ReadFilteredErrors: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readFilteredErrors(dbPath, svc))
-	}, ReadFilteredLogs: rt.Coerce[func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]](func(svc any) any { return func(filter any) any { return rt.Hub_readFilteredLogs(dbPath, svc, filter) } }), ReadFilteredMetrics: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	}, ReadFilteredLogs: func(_lp_svc string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+		svc := _lp_svc
+		_ = svc
+		return func(_lp_filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+			filter := _lp_filter
+			_ = filter
+			return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readFilteredLogs(dbPath, svc, filter))
+		}
+	}, ReadFilteredMetrics: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readFilteredMetrics(dbPath, svc))
 	}, ReadFilteredTraces: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readFilteredTraces(dbPath, svc))
@@ -6827,9 +6835,15 @@ func httpStore(parent string) State_Store_R {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](fetchErrors(rt.CoerceString(parent)))
 	}, ReadFilteredErrors: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](fetchErrors(rt.CoerceString(parent)))
-	}, ReadFilteredLogs: rt.Coerce[func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]](func(_svc any) any {
-		return func(filter any) any { return fetchLogs(parent, rt.Coerce[State_LogFilter_R](filter)) }
-	}), ReadFilteredMetrics: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	}, ReadFilteredLogs: func(_lp__svc string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+		_svc := _lp__svc
+		_ = _svc
+		return func(_lp_filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+			filter := _lp_filter
+			_ = filter
+			return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](fetchLogs(parent, rt.Coerce[State_LogFilter_R](filter)))
+		}
+	}, ReadFilteredMetrics: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](fetchMetrics(rt.CoerceString(parent)))
 	}, ReadFilteredTraces: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](fetchTraces(rt.CoerceString(parent)))
