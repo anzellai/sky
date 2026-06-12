@@ -3800,6 +3800,35 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                       $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
             writeIORef globalUnionNames $! Rec._cg_unionNames cgEnv
+            -- v0.17 C10: GoSig dep-module typeParams population.  C9
+            -- captured entry-module-only state; after dep-module
+            -- _cg_funcSkyToGoTVars merges in at line 3788-3790, the
+            -- full map is in cgEnv.  Re-update _gs_typeParams for
+            -- every Sky-named binding the merged map now knows about.
+            -- Preserves the annotation/quantifier fields from C9.
+            do
+                existingGoSig <- readIORef globalGoSigMap
+                let depFuncSkyToGoTVars = Rec._cg_funcSkyToGoTVars cgEnv
+                    skyNameByGo = Map.fromList
+                        [ ( map (\c -> if c == '.' then '_' else c) sk
+                          , sk
+                          )
+                        | sk <- Map.keys existingGoSig
+                        ]
+                    updates =
+                        [ (skyName, pairs)
+                        | (goName, pairs) <- Map.toList depFuncSkyToGoTVars
+                        , Just skyName <- [Map.lookup goName skyNameByGo]
+                        ]
+                    updatedGoSig = foldr
+                        (\(skyName, pairs) acc ->
+                            Map.adjust
+                                (\sig -> sig { _gs_typeParams = Just pairs })
+                                skyName
+                                acc)
+                        existingGoSig
+                        updates
+                writeIORef globalGoSigMap updatedGoSig
             return $ collectGoImports canMod srcMod
         -- Force `imports` before anything else so the env is set up
         -- before depDecls / decls are evaluated (they read getCgEnv).
