@@ -1783,70 +1783,70 @@ func Std_Ui_locationCss(loc Std_Ui_Location) string {
 
 func Std_Ui_dispatchTag(tag string, attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
 	return func() Std_Html_Html {
-		if rt.AsBool(rt.Eq(tag, "a")) {
+		if rt.AsBool(tag == "a") {
 			return rt.Coerce[Std_Html_Html](Std_Html_a(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 		} else {
-			if rt.AsBool(rt.Eq(tag, "p")) {
+			if rt.AsBool(tag == "p") {
 				return rt.Coerce[Std_Html_Html](Std_Html_p(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 			} else {
-				if rt.AsBool(rt.Eq(tag, "h1")) {
+				if rt.AsBool(tag == "h1") {
 					return rt.Coerce[Std_Html_Html](Std_Html_h1(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 				} else {
-					if rt.AsBool(rt.Eq(tag, "h2")) {
+					if rt.AsBool(tag == "h2") {
 						return rt.Coerce[Std_Html_Html](Std_Html_h2(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 					} else {
-						if rt.AsBool(rt.Eq(tag, "h3")) {
+						if rt.AsBool(tag == "h3") {
 							return rt.Coerce[Std_Html_Html](Std_Html_h3(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 						} else {
-							if rt.AsBool(rt.Eq(tag, "h4")) {
+							if rt.AsBool(tag == "h4") {
 								return rt.Coerce[Std_Html_Html](Std_Html_h4(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 							} else {
-								if rt.AsBool(rt.Eq(tag, "h5")) {
+								if rt.AsBool(tag == "h5") {
 									return rt.Coerce[Std_Html_Html](Std_Html_h5(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 								} else {
-									if rt.AsBool(rt.Eq(tag, "h6")) {
+									if rt.AsBool(tag == "h6") {
 										return rt.Coerce[Std_Html_Html](Std_Html_h6(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 									} else {
-										if rt.AsBool(rt.Eq(tag, "button")) {
+										if rt.AsBool(tag == "button") {
 											return rt.Coerce[Std_Html_Html](Std_Html_button(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 										} else {
-											if rt.AsBool(rt.Eq(tag, "form")) {
+											if rt.AsBool(tag == "form") {
 												return rt.Coerce[Std_Html_Html](Std_Html_form(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 											} else {
-												if rt.AsBool(rt.Eq(tag, "label")) {
+												if rt.AsBool(tag == "label") {
 													return rt.Coerce[Std_Html_Html](Std_Html_label(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 												} else {
-													if rt.AsBool(rt.Eq(tag, "section")) {
+													if rt.AsBool(tag == "section") {
 														return rt.Coerce[Std_Html_Html](Std_Html_section(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 													} else {
-														if rt.AsBool(rt.Eq(tag, "nav")) {
+														if rt.AsBool(tag == "nav") {
 															return rt.Coerce[Std_Html_Html](Std_Html_nav(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 														} else {
-															if rt.AsBool(rt.Eq(tag, "footer")) {
+															if rt.AsBool(tag == "footer") {
 																return rt.Coerce[Std_Html_Html](Std_Html_footer(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 															} else {
-																if rt.AsBool(rt.Eq(tag, "header")) {
+																if rt.AsBool(tag == "header") {
 																	return rt.Coerce[Std_Html_Html](Std_Html_header(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																} else {
-																	if rt.AsBool(rt.Eq(tag, "main")) {
+																	if rt.AsBool(tag == "main") {
 																		return rt.Coerce[Std_Html_Html](Std_Html_main(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																	} else {
-																		if rt.AsBool(rt.Eq(tag, "aside")) {
+																		if rt.AsBool(tag == "aside") {
 																			return rt.Coerce[Std_Html_Html](Std_Html_aside(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																		} else {
-																			if rt.AsBool(rt.Eq(tag, "img")) {
+																			if rt.AsBool(tag == "img") {
 																				return func() Std_Html_Html {
 																					_ = rt.AnyTaskRun(children)
 																					return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_img(rt.AsListT[rt.SkyAttribute](attrs))))
 																				}()
 																			} else {
-																				if rt.AsBool(rt.Eq(tag, "input")) {
+																				if rt.AsBool(tag == "input") {
 																					return func() Std_Html_Html {
 																						_ = rt.AnyTaskRun(children)
 																						return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_input(rt.AsListT[rt.SkyAttribute](attrs))))
 																					}()
 																				} else {
-																					if rt.AsBool(rt.Eq(tag, "textarea")) {
+																					if rt.AsBool(tag == "textarea") {
 																						return rt.Coerce[Std_Html_Html](Std_Html_textarea(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																					} else {
 																						return rt.Coerce[Std_Html_Html](Std_Html_div(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
