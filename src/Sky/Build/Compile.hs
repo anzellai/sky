@@ -1535,17 +1535,39 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- already non-generic) — the spec emission step
                     -- in generateGoMulti applies the same filter.
                     env0 <- readIORef globalCgEnv
+                    -- v0.17 C12: σ-projection reads GoSig primary
+                    -- with side-table fallback.  Behaviour unchanged
+                    -- on the happy path (GoSig + side-tables agree).
+                    -- Opt-in cross-check via SKY_GOSIG_DIFF=1 emits
+                    -- stderr warnings on any divergence (caught
+                    -- BEFORE the side-table delete in a later commit).
+                    goSigMapForSpec <- readIORef globalGoSigMap
+                    let lookupSkyToGo skyName =
+                            let goName = map (\c -> if c == '.' then '_' else c) skyName
+                                fromSig = Map.lookup skyName goSigMapForSpec >>= _gs_typeParams
+                            in case fromSig of
+                                Just pairs -> pairs
+                                Nothing    ->
+                                    Map.findWithDefault []
+                                        goName
+                                        (Rec._cg_funcSkyToGoTVars env0)
+                        lookupQuants skyName =
+                            case Map.lookup skyName goSigMapForSpec of
+                                Just sig -> case _gs_annotation sig of
+                                    Just (T.Forall vs _) -> filter (/= "any") vs
+                                    Nothing -> case Map.lookup skyName annotMap of
+                                        Just (T.Forall vs _) -> filter (/= "any") vs
+                                        Nothing -> []
+                                Nothing -> case Map.lookup skyName annotMap of
+                                    Just (T.Forall vs _) -> filter (/= "any") vs
+                                    Nothing -> []
                     let specNames = Set.fromList
                             [ Mono.mangleInstance
                                 (Solve.CallInstance skyName tys [])
                             | (skyName, tys) <- Set.toList reached
                             , not (null tys)
-                            , let goName = map (\c -> if c == '.' then '_' else c) skyName
-                                  skyToGo = Map.findWithDefault []
-                                      goName (Rec._cg_funcSkyToGoTVars env0)
-                                  quants = case Map.lookup skyName annotMap of
-                                      Just (T.Forall vs _) -> filter (/= "any") vs
-                                      Nothing -> []
+                            , let skyToGo = lookupSkyToGo skyName
+                                  quants  = lookupQuants skyName
                                   σ_sky = Map.fromList (zip quants tys)
                                   σ_go = [() | (sn, _) <- skyToGo
                                              , Map.member sn σ_sky ]
