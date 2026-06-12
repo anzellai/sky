@@ -30,6 +30,7 @@ import qualified System.Timeout
 import qualified System.Exit
 import Control.Monad (when)
 import Data.FileEmbed (embedStringFile)
+import qualified System.Info
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -1342,9 +1343,28 @@ runCommand cmd = case cmd of
             Left err -> return (Left err)
             Right _ -> do
                 putStrLn "Running go build..."
+                -- #569: `sky check` discards the binary, so we don't
+                -- need an optimised build.  `-gcflags=all=-l` disables
+                -- inlining, which is the *only* way to stop Go's
+                -- closure-name composition pathology in the
+                -- Std.Ui.renderElement / renderNodeAs mutual-recursion
+                -- pair — every inlining decision through a `func1`
+                -- closure prepends another `OuterFn.func1.` to the
+                -- nested closure's symbol name, and the static-call
+                -- graph here makes the prefix grow exponentially.
+                -- We measured 20.5 MB symbols on a Std.Ui-importing
+                -- fixture; Apple's ld64 in Sequoia (used by GitHub
+                -- Actions `macos-latest`) tightened the symbol-name
+                -- cap and rejects the object file with the assertion
+                -- `(name.size() <= maxLength)` during input parsing.
+                -- Disabling inlining caps the symbol at ~300 bytes
+                -- and lets the linker complete.  Free on `sky check`
+                -- (throwaway binary); `sky build` keeps full
+                -- optimisation for production.
                 (ec, _, berr) <- System.Process.readCreateProcessWithExitCode
                     (System.Process.shell
-                        ("cd " ++ outDir ++ " && go build -o /dev/null ."))
+                        ("cd " ++ outDir
+                            ++ " && go build -gcflags=all=-l -o /dev/null ."))
                     ""
                 case ec of
                     System.Exit.ExitSuccess -> do
@@ -2805,9 +2825,30 @@ runGoBuildWithDiagnostics outDir binName _goPath = do
     -- to defend against an accidental space without breaking under sh -c.
     let versionLdflag =
             "-ldflags '-X sky-app/rt.skyVersion=" ++ skyBuildVersion ++ "'"
+        -- #569: Apple ld64 in macOS Sequoia (Xcode 16+) tightened
+        -- the symbol-name length cap to ~16 KB.  Go's inliner
+        -- composes nested closure names recursively in mutually-
+        -- recursive functions: the Std.Ui.renderElement /
+        -- renderNodeAs pair produces symbols like
+        -- `…func1.…func1.1.…func1.…`, with each inlining decision
+        -- prepending another prefix.  Measured 20.5 MB symbols on
+        -- a Std.Ui-importing test fixture before ld64 rejected the
+        -- object file (`Assertion failed: name.size() <= maxLength`,
+        -- ObjectFileParser::addAtomsForSection → makeNamedAtom →
+        -- makeSymbolStringInPlace).  Disabling inlining on darwin
+        -- caps the longest symbol at ~300 bytes and unblocks linking.
+        -- Linux's GNU ld doesn't have this cap, so we keep the
+        -- inliner on for production-perf there.  Cost on darwin:
+        -- ~5–10% runtime perf hit from missed inlining — acceptable
+        -- given the alternative is an unlinkable binary.  This is
+        -- a workaround; the principled fix is to teach Go's symbol
+        -- mangler not to compose nested closure names.
+        gcflagsForOs
+            | System.Info.os == "darwin" = " -gcflags=all=-l"
+            | otherwise = ""
         buildCmd cgo =
             "cd " ++ outDir ++ " && CGO_ENABLED=" ++ (if cgo then "1" else "0")
-            ++ " go build " ++ versionLdflag
+            ++ " go build " ++ versionLdflag ++ gcflagsForOs
             ++ " -o " ++ binName ++ " ."
     -- Some kernels exist as a real `cgo && darwin` implementation +
     -- a `!cgo || !darwin` stub that returns Err Error at runtime.
