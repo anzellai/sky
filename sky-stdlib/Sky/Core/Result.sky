@@ -21,30 +21,35 @@ module Sky.Core.Result exposing
     )
 
 
+withDefault : a -> Result e a -> a
 withDefault def r =
     case r of
         Ok x -> x
         Err _ -> def
 
 
+map : (a -> b) -> Result e a -> Result e b
 map fn r =
     case r of
         Ok x -> Ok (fn x)
         Err e -> Err e
 
 
+andThen : (a -> Result e b) -> Result e a -> Result e b
 andThen fn r =
     case r of
         Ok x -> fn x
         Err e -> Err e
 
 
+mapError : (e1 -> e2) -> Result e1 a -> Result e2 a
 mapError fn r =
     case r of
         Ok x -> Ok x
         Err e -> Err (fn e)
 
 
+map2 : (a -> b -> c) -> Result e a -> Result e b -> Result e c
 map2 fn ra rb =
     case ra of
         Ok a ->
@@ -54,6 +59,7 @@ map2 fn ra rb =
         Err e -> Err e
 
 
+map3 : (a -> b -> c -> d) -> Result e a -> Result e b -> Result e c -> Result e d
 map3 fn ra rb rc =
     case ra of
         Ok a ->
@@ -66,6 +72,7 @@ map3 fn ra rb rc =
         Err e -> Err e
 
 
+map4 : (a -> b -> c -> d -> f) -> Result e a -> Result e b -> Result e c -> Result e d -> Result e f
 map4 fn ra rb rc rd =
     case ra of
         Ok a ->
@@ -81,6 +88,7 @@ map4 fn ra rb rc rd =
         Err e -> Err e
 
 
+map5 : (a -> b -> c -> d -> f -> g) -> Result e a -> Result e b -> Result e c -> Result e d -> Result e f -> Result e g
 map5 fn ra rb rc rd re =
     case ra of
         Ok a ->
@@ -99,6 +107,7 @@ map5 fn ra rb rc rd re =
         Err err -> Err err
 
 
+andMap : Result e a -> Result e (a -> b) -> Result e b
 andMap ra rfn =
     case rfn of
         Ok fn ->
@@ -108,6 +117,7 @@ andMap ra rfn =
         Err e -> Err e
 
 
+combine : List (Result e a) -> Result e (List a)
 combine results =
     case results of
         [] -> Ok []

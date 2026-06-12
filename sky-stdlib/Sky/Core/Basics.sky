@@ -16,30 +16,36 @@ module Sky.Core.Basics exposing
     )
 
 
+identity : a -> a
 identity x =
     x
 
 
+always : a -> b -> a
 always x _ =
     x
 
 
+not : Bool -> Bool
 not b =
     case b of
         True -> False
         False -> True
 
 
+fst : ( a, b ) -> a
 fst t =
     case t of
         (a, _) -> a
 
 
+snd : ( a, b ) -> b
 snd t =
     case t of
         (_, b) -> b
 
 
+clamp : Int -> Int -> Int -> Int
 clamp lo hi x =
     if x < lo then
         lo

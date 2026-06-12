@@ -300,6 +300,7 @@ debugShow v =
 -- and be built with `sky build` or `sky run`. Exits with status 0
 -- when every test passes, 1 when any test fails. `sky test` does
 -- the equivalent via a synthesised wrapper module.
+runMain : List Test -> a
 runMain tests =
     let
         results = run tests

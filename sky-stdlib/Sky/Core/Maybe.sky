@@ -21,24 +21,28 @@ module Sky.Core.Maybe exposing
     )
 
 
+withDefault : a -> Maybe a -> a
 withDefault def m =
     case m of
         Just x -> x
         Nothing -> def
 
 
+map : (a -> b) -> Maybe a -> Maybe b
 map fn m =
     case m of
         Just x -> Just (fn x)
         Nothing -> Nothing
 
 
+andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 andThen fn m =
     case m of
         Just x -> fn x
         Nothing -> Nothing
 
 
+map2 : (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
 map2 fn ma mb =
     case ma of
         Just a ->
@@ -48,6 +52,7 @@ map2 fn ma mb =
         Nothing -> Nothing
 
 
+map3 : (a -> b -> c -> d) -> Maybe a -> Maybe b -> Maybe c -> Maybe d
 map3 fn ma mb mc =
     case ma of
         Just a ->
@@ -60,6 +65,7 @@ map3 fn ma mb mc =
         Nothing -> Nothing
 
 
+map4 : (a -> b -> c -> d -> e) -> Maybe a -> Maybe b -> Maybe c -> Maybe d -> Maybe e
 map4 fn ma mb mc md =
     case ma of
         Just a ->
@@ -75,6 +81,7 @@ map4 fn ma mb mc md =
         Nothing -> Nothing
 
 
+map5 : (a -> b -> c -> d -> e -> f) -> Maybe a -> Maybe b -> Maybe c -> Maybe d -> Maybe e -> Maybe f
 map5 fn ma mb mc md me =
     case ma of
         Just a ->
@@ -93,6 +100,7 @@ map5 fn ma mb mc md me =
         Nothing -> Nothing
 
 
+andMap : Maybe a -> Maybe (a -> b) -> Maybe b
 andMap ma mfn =
     case mfn of
         Just fn ->
@@ -102,6 +110,7 @@ andMap ma mfn =
         Nothing -> Nothing
 
 
+combine : List (Maybe a) -> Maybe (List a)
 combine maybes =
     case maybes of
         [] -> Just []
@@ -114,12 +123,14 @@ combine maybes =
                 Nothing -> Nothing
 
 
+isJust : Maybe a -> Bool
 isJust m =
     case m of
         Just _ -> True
         Nothing -> False
 
 
+isNothing : Maybe a -> Bool
 isNothing m =
     case m of
         Just _ -> False

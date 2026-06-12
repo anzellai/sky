@@ -41,12 +41,14 @@ module Sky.Core.List exposing
     )
 
 
+map : (a -> b) -> List a -> List b
 map fn list =
     case list of
         [] -> []
         (x :: rest) -> fn x :: map fn rest
 
 
+filter : (a -> Bool) -> List a -> List a
 filter pred list =
     case list of
         [] -> []
@@ -57,6 +59,7 @@ filter pred list =
                 filter pred rest
 
 
+any : (a -> Bool) -> List a -> Bool
 any pred list =
     case list of
         [] -> False
@@ -67,6 +70,7 @@ any pred list =
                 any pred rest
 
 
+all : (a -> Bool) -> List a -> Bool
 all pred list =
     case list of
         [] -> True
@@ -77,6 +81,7 @@ all pred list =
                 False
 
 
+find : (a -> Bool) -> List a -> Maybe a
 find pred list =
     case list of
         [] -> Nothing
@@ -87,72 +92,85 @@ find pred list =
                 find pred rest
 
 
+foldl : (a -> b -> b) -> b -> List a -> b
 foldl fn acc list =
     case list of
         [] -> acc
         (x :: rest) -> foldl fn (fn x acc) rest
 
 
+foldr : (a -> b -> b) -> b -> List a -> b
 foldr fn acc list =
     case list of
         [] -> acc
         (x :: rest) -> fn x (foldr fn acc rest)
 
 
+concatMap : (a -> List b) -> List a -> List b
 concatMap fn list =
     case list of
         [] -> []
         (x :: rest) -> append (fn x) (concatMap fn rest)
 
 
+indexedMap : (Int -> a -> b) -> List a -> List b
 indexedMap fn list =
     indexedMapHelp fn 0 list
 
 
+indexedMapHelp : (Int -> a -> b) -> Int -> List a -> List b
 indexedMapHelp fn i list =
     case list of
         [] -> []
         (x :: rest) -> fn i x :: indexedMapHelp fn (i + 1) rest
 
 
+isEmpty : List a -> Bool
 isEmpty list =
     case list of
         [] -> True
         _ -> False
 
 
+length : List a -> Int
 length list =
     case list of
         [] -> 0
         (_ :: rest) -> 1 + length rest
 
 
+head : List a -> Maybe a
 head list =
     case list of
         [] -> Nothing
         (x :: _) -> Just x
 
 
+tail : List a -> Maybe (List a)
 tail list =
     case list of
         [] -> Nothing
         (_ :: rest) -> Just rest
 
 
+cons : a -> List a -> List a
 cons x list =
     x :: list
 
 
+reverse : List a -> List a
 reverse list =
     reverseHelp list []
 
 
+reverseHelp : List a -> List a -> List a
 reverseHelp list acc =
     case list of
         [] -> acc
         (x :: rest) -> reverseHelp rest (x :: acc)
 
 
+take : Int -> List a -> List a
 take n list =
     if n <= 0 then
         []
@@ -162,6 +180,7 @@ take n list =
             (x :: rest) -> x :: take (n - 1) rest
 
 
+drop : Int -> List a -> List a
 drop n list =
     if n <= 0 then
         list
@@ -171,18 +190,21 @@ drop n list =
             (_ :: rest) -> drop (n - 1) rest
 
 
+append : List a -> List a -> List a
 append xs ys =
     case xs of
         [] -> ys
         (x :: rest) -> x :: append rest ys
 
 
+concat : List (List a) -> List a
 concat lists =
     case lists of
         [] -> []
         (xs :: rest) -> append xs (concat rest)
 
 
+member : a -> List a -> Bool
 member x list =
     case list of
         [] -> False
@@ -193,6 +215,7 @@ member x list =
                 member x rest
 
 
+range : Int -> Int -> List Int
 range lo hi =
     if lo > hi then
         []
@@ -200,6 +223,7 @@ range lo hi =
         lo :: range (lo + 1) hi
 
 
+zip : List a -> List b -> List ( a, b )
 zip xs ys =
     case xs of
         [] -> []
