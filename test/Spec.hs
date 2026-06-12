@@ -95,6 +95,7 @@ import qualified Sky.Build.PointFreePolyAliasSpec
 import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.PartialUserHofSpec
 import qualified Sky.Build.HofTypedMsgSpec
+import qualified Sky.Build.CurriedLambdaStageCSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
 import qualified Sky.Build.LiveApiHandlerShapeSpec
@@ -574,6 +575,14 @@ allSpecs fastMode = do
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
     describeT "Sky.Build.HofTypedMsg"        Sky.Build.HofTypedMsgSpec.spec
+    -- #590 Stage C — multi-arg Sky lambdas flowing into a curried
+    -- Go callback slot (`func(T1) func(T2) ... R`) used to fall
+    -- through the type-directed lambda lowerer and emit
+    -- `func(x any) any { return func(y any) any { ... } }` wrapped
+    -- in `rt.Coerce[...]`. Stage C peels the curried shape and
+    -- emits each level typed via `curryLambdaPatTyped[Pre]`.
+    describeT "Sky.Build.CurriedLambdaStageC"
+        Sky.Build.CurriedLambdaStageCSpec.spec
     -- v0.15.x hardening / Gap A1 / Plan Item P1 — coerceArg's
     -- parametric-alias short-circuit was gated on `goExprGoType e`
     -- returning Just. For let-bound polymorphic-call results the

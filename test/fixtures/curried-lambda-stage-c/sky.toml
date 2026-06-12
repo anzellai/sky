@@ -1,0 +1,6 @@
+name = "curried-lambda-stage-c"
+version = "0.0.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

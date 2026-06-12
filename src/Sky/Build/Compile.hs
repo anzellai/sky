@@ -7252,6 +7252,52 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             , all (/= "any") paramTys -> do
                 lowerTypedLambda pats paramTys retTy body
 
+        -- #590 — Stage C curried-shape arm.  When the slot type is
+        -- `func(T1) func(T2) ... func(TN) R` (a curried Go function)
+        -- AND the Sky lambda has N patterns, peel the curried shape
+        -- with `splitCurriedFuncTypeStr` and emit each level with its
+        -- typed param via `curryLambdaPatTyped[Pre]`.  Mirrors the
+        -- working `coerceFallback` site at Compile.hs:9364 and
+        -- `kernelCoerceArg` at 10190.  Pre-fix, multi-arg Sky lambdas
+        -- at curried HOF call sites (e.g. `\t acc -> ...` against
+        -- foldl's `(a -> b -> b)`) fell through to the generic
+        -- `coerceReturnExprT` path and emitted `func(any) func(any) R`
+        -- — the `acc` param stayed `any` even when the slot pinned it
+        -- to a concrete type via the surrounding function's generic
+        -- substitution.  Go then rejected the call at type-check time
+        -- when the lambda's emitted return-type (concretely typed via
+        -- the body's leaf expression) conflicted with the unrefined
+        -- `any` param.
+        Can.Lambda pats body
+            | length pats > 1
+            , (inputTypes, finalRet0) <-
+                splitCurriedFuncTypeStr (length pats) goRendering
+            , length inputTypes == length pats
+            , length inputTypes > 0
+            , all (/= "any") inputTypes
+            , all isEmittableGoType inputTypes ->
+                let finalRet =
+                        if finalRet0 == "any"
+                            then case inferGoType
+                                    (Rec._cg_solvedTypes getCgEnv)
+                                    body of
+                                "any" -> "any"
+                                concrete -> concrete
+                            else finalRet0
+                    skyTys = map goTypeStrToSkyType inputTypes
+                    bindings = patVarTypes pats skyTys
+                    bodyPreTyped = isEmittableGoType finalRet
+                    rawBody =
+                        if bodyPreTyped
+                            then exprToGoExpectGo finalRet body
+                            else exprToGo body
+                    body' = withScopedLambdaTypes bindings rawBody
+                in if bodyPreTyped
+                    then curryLambdaPatTypedPre inputTypes finalRet
+                            pats body'
+                    else curryLambdaPatTyped inputTypes finalRet
+                            pats body'
+
         -- v0.15 Stage C.2 — type-directed list literal.
         --
         -- When `goRendering` parses as `[]T`, each list element is

@@ -1,0 +1,38 @@
+module Main exposing (main)
+
+{-|
+Regression for #590 — Stage C curried-shape lambda lowering.
+
+Pre-fix, a multi-arg Sky lambda flowing into a curried Go callback
+slot (`func(T1) func(T2) ... R`) fell through the type-directed
+lambda lowerer and emitted `func(x any) any { return func(y any)
+any { ... } }` wrapped in `rt.Coerce[...]`.  When the body's leaf
+expression had a concrete return type (here `Int` via `(+)`), Go
+rejected the call because the lambda's inner func returned `any`
+while the slot's tail required `int`.
+
+Post-fix: when the slot type is a curried `func(T1) func(T2) ...
+func(TN) R` AND the Sky lambda has N patterns, `splitCurried-
+FuncTypeStr` peels each level and `curryLambdaPatTyped[Pre]`
+emits a typed shape for every step — no `any/any` widening, no
+`rt.Coerce` wrap.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Helper with a curried, fully-typed callback param.  Pre-fix
+-- the multi-arg lambda at the call site forced `func(any) func(any)
+-- any` here; post-fix it emits the typed shape end-to-end.
+helper : (Int -> Int -> Int) -> Int -> Int -> Int
+helper f a b =
+    f a b
+
+
+main =
+    let
+        result =
+            helper (\x y -> x + y) 2 3
+    in
+        println (String.fromInt result)
