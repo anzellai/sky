@@ -7024,6 +7024,36 @@ func String_right(n any, s any) any {
 	return string(runes[len(runes)-nn:])
 }
 
+// String_dropLeft drops the first n characters (runes) of s. Elm
+// String.dropLeft semantics: negative n returns s unchanged; n
+// >= length returns "".
+func String_dropLeft(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn <= 0 {
+		return string(runes)
+	}
+	if nn >= len(runes) {
+		return ""
+	}
+	return string(runes[nn:])
+}
+
+// String_dropRight drops the last n characters (runes) of s. Elm
+// String.dropRight semantics: negative n returns s unchanged; n
+// >= length returns "".
+func String_dropRight(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn <= 0 {
+		return string(runes)
+	}
+	if nn >= len(runes) {
+		return ""
+	}
+	return string(runes[:len(runes)-nn])
+}
+
 func String_replace(old any, new_ any, s any) any {
 	return strings.ReplaceAll(fmt.Sprintf("%v", s), fmt.Sprintf("%v", old), fmt.Sprintf("%v", new_))
 }
