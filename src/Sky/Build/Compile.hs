@@ -811,12 +811,30 @@ compile config entryPath outDir = do
 
 
 -- | Compute a stable hash of all source file contents
+-- | v0.17 C24 — explicit cache-schema version constant.  Prepended to
+-- every source-hash computation so commits that change emitted-IR
+-- shape (e.g. CSI key widening from @(Int, Int)@ to
+-- @(FilePath, Int, Int)@) can invalidate stale @.skycache/lowered/@
+-- caches by bumping this string.  Bump format:
+-- @"vMAJOR.MINOR"@ — e.g. @"v0.17.0"@ → @"v0.17.1"@.
+--
+-- Without this, source-file hash collisions across schema versions
+-- would silently reuse old lowered Go output that lacks the new
+-- shape — manifesting as build errors at the user's @go build@.
+cacheSchemaVersion :: String
+cacheSchemaVersion = "v0.17.0"
+
+
 computeSourceHash :: [FilePath] -> IO String
 computeSourceHash paths = do
     contents <- mapM (\p -> doesFileExist p >>= \ok -> if ok then readFile p else return "")
         paths
-    -- Simple, not cryptographic: sum of SDBM-ish hashes keyed by path
-    let combined = concat (zipWith (\p c -> p ++ ":" ++ c ++ "\n") paths contents)
+    -- Simple, not cryptographic: sum of SDBM-ish hashes keyed by path.
+    -- The cacheSchemaVersion prefix lets commits that alter the emitted-IR
+    -- shape invalidate stale lowered caches by bumping the constant.
+    let combined =
+            cacheSchemaVersion ++ "\n"
+            ++ concat (zipWith (\p c -> p ++ ":" ++ c ++ "\n") paths contents)
     return (show (length combined) ++ "-" ++ show (foldl (\acc c -> acc * 31 + fromEnum c) (0 :: Int) combined))
 
 
