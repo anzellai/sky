@@ -1592,6 +1592,35 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             , not (null σ_go)
                             ]
                     writeIORef globalEmittedSpecs specNames
+                    -- v0.17 GoSig differential self-check (opt-in via
+                    -- SKY_GOSIG_DIFF=1).  Compares globalGoSigMap to
+                    -- the legacy side-tables at the σ-projection site;
+                    -- if any binding's annotation OR typeParams OR
+                    -- quantifiers differ between the two paths, emit a
+                    -- stderr warning naming the binding.  Off by
+                    -- default; protects future Phase γ commits from
+                    -- silent drift between GoSig and side-tables.
+                    diffMode <- System.Environment.lookupEnv "SKY_GOSIG_DIFF"
+                    case diffMode of
+                        Just "1" -> do
+                            goSigForDiff <- readIORef globalGoSigMap
+                            let mismatches =
+                                    [ skyName
+                                    | (skyName, sig) <- Map.toList goSigForDiff
+                                    , let goName = map (\c -> if c == '.' then '_' else c) skyName
+                                          sideAnnot = Map.lookup skyName annotMap
+                                          sideTParams = Map.lookup goName (Rec._cg_funcSkyToGoTVars envForGoSig)
+                                          sideQuants = Map.lookup skyName csiByCallee
+                                          annotMatch = _gs_annotation sig == sideAnnot
+                                          tparamsMatch = _gs_typeParams sig == sideTParams
+                                          quantsMatch = _gs_quantifiers sig == sideQuants
+                                    , not (annotMatch && tparamsMatch && quantsMatch)
+                                    ]
+                            mapM_ (\skyName ->
+                                System.IO.hPutStrLn System.IO.stderr
+                                    ("[SKY_GOSIG_DIFF] divergence at " ++ skyName))
+                                mismatches
+                        _ -> return ()
                     reachTrace <- System.Environment.lookupEnv "SKY_REACH_TRACE"
                     case reachTrace of
                         Just "1" -> do
