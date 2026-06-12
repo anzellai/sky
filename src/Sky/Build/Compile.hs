@@ -4319,6 +4319,19 @@ generateUnionTypes canMod =
             -- "interface {} is rt.SkyADT, not <UserADT>" panic class at
             -- pattern-match sites.
             [ GoIr.GoDeclRaw $ "type " ++ typeName ++ " = rt.SkyADT" ]
+            -- v0.17 C13 entry-module path: same dual-alias pattern as
+            -- generateUnionForDep (line 3565).  Polymorphic entry-
+            -- module unions also emit a typed sibling so future
+            -- typed-call-site commits can opt in to qualified-T form.
+            ++ ( let goTVarsEM = zipWith (\i _ -> "T" ++ show (i :: Int))
+                                    [1::Int ..] vars
+                 in if null goTVarsEM
+                       then []
+                       else [ GoIr.GoDeclRaw $
+                              "type " ++ typeName ++ "_T["
+                              ++ intercalate_ ", "
+                                  [tp ++ " any" | tp <- goTVarsEM]
+                              ++ "] = rt.SkyADT" ] )
             ++ map (generateCtorFunc typeName) ctors
             ++ [ GoIr.GoDeclRaw $ "func init() { "
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
