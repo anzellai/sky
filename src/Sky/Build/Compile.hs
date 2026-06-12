@@ -3981,6 +3981,10 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             _annotMap' <- readIORef globalAnnotMap
             csiByCallee <- readIORef globalCsiByCallee
             env <- readIORef globalCgEnv
+            -- v0.17 C12 (this site): GoSig-primary read for the
+            -- spec-decl σ-projection.  Mirrors the partial flip at
+            -- Compile.hs:1456-1490 with the same fallback semantics.
+            goSigMapForBuild <- readIORef globalGoSigMap
             let
                 -- Index every emitted GoFuncDecl (entry + deps) by
                 -- the Go-side name so the specialiser can find the
@@ -3998,9 +4002,20 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                     let goName = map (\c -> if c == '.' then '_' else c) skyName
                         mangled = Mono.mangleInstance
                             (Solve.CallInstance skyName tys [])
-                        skyToGo = Map.findWithDefault []
-                            goName (Rec._cg_funcSkyToGoTVars env)
-                        quants = Map.findWithDefault [] skyName csiByCallee
+                        skyToGo =
+                            case Map.lookup skyName goSigMapForBuild
+                                    >>= _gs_typeParams of
+                                Just pairs -> pairs
+                                Nothing ->
+                                    Map.findWithDefault []
+                                        goName
+                                        (Rec._cg_funcSkyToGoTVars env)
+                        quants =
+                            case Map.lookup skyName goSigMapForBuild
+                                    >>= _gs_quantifiers of
+                                Just qs -> qs
+                                Nothing ->
+                                    Map.findWithDefault [] skyName csiByCallee
                         σ_sky = Map.fromList (zip quants tys)
                         -- `sanitiseTypedDeep`: a monomorphisation
                         -- type-arg can be an anonymous record
