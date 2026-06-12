@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Cause G — FFI opaque collapse to "Value".
+--
+-- Today every opaque FFI type from go-pkg gets collapsed to
+-- (Canonical "") "Value" — so a Sky annotation `stripe.Customer`
+-- and `aws.Account` unify even though they're distinct Go types.
+-- The C17 6-commit umbrella (see docs/v0.17-c17-revised-design.md)
+-- closes this; this fixture today GREEN-as-baseline and ready to
+-- tighten to MUST_FAIL_BUILD on cross-package opaque shapes when
+-- C17 lands.
+--
+-- Note: this fixture intentionally has NO FFI usage today — it
+-- captures the baseline Sky-only behavior + reserves a slot in
+-- the probe sweep for the cross-pkg opaque fixture once
+-- examples/13-skyshop's stripe Customer / paymentMethod cross-shape
+-- gets probed properly.
+main =
+    println "probe-G placeholder — see docs/v0.17-c17-revised-design.md"

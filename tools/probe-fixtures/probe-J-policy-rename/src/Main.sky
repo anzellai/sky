@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Cause J — safeReturnType policy split.  C7 renamed the three
+-- variants to safeReturnTypeFull / safeReturnTypeBootstrap /
+-- safeReturnTypePure.  This fixture exercises a typed record-alias
+-- return that flows through safeReturnTypeFull (full env access)
+-- and prints it.  If the rename ever regresses or the env fallback
+-- accidentally lands on safeReturnTypePure, this fixture's output
+-- main.go would lose the typed Person_R return shape.
+type alias Person =
+    { name : String
+    , age : Int
+    }
+
+
+mkPerson : String -> Int -> Person
+mkPerson n a =
+    { name = n, age = a }
+
+
+main =
+    let alice = mkPerson "Alice" 30
+    in println (alice.name ++ " is " ++ String.fromInt alice.age)

@@ -1,0 +1,10 @@
+# Cause J — safeReturnType policy split (C7 rename verification).
+#
+# mkPerson : String -> Int -> Person should emit with typed return
+# Person_R (post-C7 rename verifies safeReturnTypeFull still
+# resolves record-alias narrowing under the new name).
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN func mkPerson(n string, a int) Person_R
+MUST_NOT_PANIC_AT_RUNTIME
