@@ -271,3 +271,190 @@ renderGoType env (GoStruct fields)  =
     renderField e (name, ty) = name ++ " " ++ renderGoType e ty ++ ";"
 renderGoType _   (GoTypeVar n)      = n
 renderGoType _   (GoRaw s)          = s
+
+
+-- ============================================================================
+-- v0.17 C2 — Structural mapper Sky.Type -> GoType
+-- ============================================================================
+--
+-- 'mapSkyTypeToGo' is the typed-mapping counterpart to the legacy
+-- 'typeToGo'.  Same structural shape; same output string when paired
+-- with 'renderGoType defaultRenderEnv' AND 'defaultMappingContext'.
+--
+-- The differential parity property (asserted by
+-- 'test/Sky/Build/GoTypeAdtSpec.hs'):
+--
+-- @
+--     typeToGo ty
+--         ==
+--     renderGoType defaultRenderEnv (mapSkyTypeToGo defaultMappingContext ty)
+-- @
+--
+-- This commit's mapper is structurally minimal — it does NOT consult
+-- 'MappingContext' data fields, only the embedded 'RenderEnv'.  C8+
+-- widens 'MappingContext' with alias / union / runtime-typed maps that
+-- 'solvedTypeToGo' currently reads from 'getCgEnv' ambiently
+-- ('Sky.Build.Compile' line 14831 onward).  Each widening landed
+-- alongside the call-site migration that needs it; the parity test
+-- gates against drift.
+
+
+-- | Per-call mapping context.  Carries everything 'mapSkyTypeToGo'
+-- needs to convert a 'T.Type' to a 'GoType' AND everything
+-- 'renderGoType' needs to render it back to a Go source string.
+--
+-- C2 ships the minimal shape — just 'mcRenderEnv'.  C8 onward widens
+-- with the alias / union / runtime-typed maps that today's
+-- @solvedTypeToGo@ reads from 'CodegenEnv' via 'getCgEnv'.  See
+-- @docs/v0.17-fully-typed-codegen-v5-plan.md@ §Phase γ.
+data MappingContext = MappingContext
+    { mcRenderEnv :: RenderEnv
+    }
+    deriving (Eq, Show)
+
+
+-- | Conservative default — empty mapping context with today's
+-- 'defaultRenderEnv'.  Used by the differential parity test in
+-- 'test/Sky/Build/GoTypeAdtSpec.hs'.
+defaultMappingContext :: MappingContext
+defaultMappingContext = MappingContext { mcRenderEnv = defaultRenderEnv }
+
+
+-- | Map a canonical Sky type to its typed Go-type representation.
+--
+-- Structural mirror of 'typeToGo' — produces a 'GoType' whose
+-- 'renderGoType' output equals 'typeToGo' on the same input, given
+-- 'defaultMappingContext'.  C8+ MAY produce different output once
+-- 'MappingContext' carries env-derived alias data — the legacy
+-- 'typeToGo' has no equivalent path because it never had env access.
+mapSkyTypeToGo :: MappingContext -> T.Type -> GoType
+mapSkyTypeToGo ctx t = case t of
+    T.TVar name ->
+        GoTypeVar (goTypeParam name)
+
+    T.TUnit ->
+        GoUnit
+
+    T.TLambda from to ->
+        GoFunc (mapSkyTypeToGo ctx from) (mapSkyTypeToGo ctx to)
+
+    T.TTuple _ _ [] ->
+        GoBare "rt.SkyTuple2"
+
+    T.TTuple _ _ [_] ->
+        GoBare "rt.SkyTuple3"
+
+    T.TTuple {} ->
+        GoBare "rt.SkyTupleN"
+
+    T.TRecord fields Nothing ->
+        mapRecordType ctx fields
+
+    T.TRecord _ (Just _) ->
+        GoRaw "any /* extensible record */"
+
+    T.TType home name args ->
+        mapNamedType ctx home name args
+
+    T.TAlias _ _ _ (T.Hoisted inner) ->
+        mapSkyTypeToGo ctx inner
+
+    T.TAlias _ _ _ (T.Filled inner) ->
+        mapSkyTypeToGo ctx inner
+
+
+-- | Map a closed-record type to a 'GoStruct'.
+mapRecordType :: MappingContext -> Map.Map String T.FieldType -> GoType
+mapRecordType ctx fields =
+    GoStruct (map (mapField ctx) (Map.toList fields))
+  where
+    mapField c (name, T.FieldType _ ty) =
+        (capitalise name, mapSkyTypeToGo c ty)
+
+    capitalise [] = []
+    capitalise (c:cs) = toEnum (fromEnum c - 32) : cs
+
+
+-- | Map a named-type application (e.g. @List Int@, @Result Error Foo@,
+-- user-defined @Std.Ui.Element msg@) to its Go shape.
+--
+-- Mirrors 'goNamedType' arm-for-arm so the differential parity
+-- property holds.  Future commits ENRICH this mapper with
+-- 'MappingContext' lookups (record-alias narrowing, runtime-typed
+-- map for opaque FFI types) — each adds a NEW arm above the existing
+-- fallthrough rather than changing existing arms.
+mapNamedType
+    :: MappingContext
+    -> ModuleName.Canonical
+    -> String
+    -> [T.Type]
+    -> GoType
+mapNamedType ctx home name args =
+    case (ModuleName.toString home, name) of
+        -- Primitives — both qualified (Sky.Core.Basics) and bare paths
+        ("Sky.Core.Basics", "Int")    -> GoBare "int"
+        ("Sky.Core.Basics", "Float")  -> GoBare "float64"
+        ("Sky.Core.Basics", "Bool")   -> GoBare "bool"
+        ("Sky.Core.Basics", "String") -> GoBare "string"
+        ("Sky.Core.Basics", "Char")   -> GoBare "rune"
+        (_, "Int")    -> GoBare "int"
+        (_, "Float")  -> GoBare "float64"
+        (_, "Bool")   -> GoBare "bool"
+        (_, "String") -> GoBare "string"
+        (_, "Char")   -> GoBare "rune"
+        (_, "Bytes")  -> GoBare "[]byte"
+
+        -- Parameterised core types — always emit the generic form to
+        -- match legacy 'typeToGo'.  Runtime Cmd/Sub/Tuple non-genericity
+        -- (root cause F, H) is closed by C13-runtime / C6 — this
+        -- commit only mirrors today's output.
+        (_, "List")   -> case args of
+            [elem_] -> GoNamed "rt.SkyList" [mapSkyTypeToGo ctx elem_]
+            _       -> GoNamed "rt.SkyList" [GoAny]
+
+        (_, "Maybe")  -> case args of
+            [inner] -> GoNamed "rt.SkyMaybe" [mapSkyTypeToGo ctx inner]
+            _       -> GoNamed "rt.SkyMaybe" [GoAny]
+
+        (_, "Result") -> case args of
+            [err, ok] ->
+                GoNamed "rt.SkyResult"
+                    [mapSkyTypeToGo ctx err, mapSkyTypeToGo ctx ok]
+            _ -> GoNamed "rt.SkyResult" [GoAny, GoAny]
+
+        (_, "Task") -> case args of
+            [err, ok] ->
+                GoNamed "rt.SkyTask"
+                    [mapSkyTypeToGo ctx err, mapSkyTypeToGo ctx ok]
+            _ -> GoNamed "rt.SkyTask" [GoAny, GoAny]
+
+        (_, "Dict") -> case args of
+            [k, v] ->
+                GoNamed "rt.SkyDict"
+                    [mapSkyTypeToGo ctx k, mapSkyTypeToGo ctx v]
+            _ -> GoNamed "rt.SkyDict" [GoAny, GoAny]
+
+        (_, "Set") -> case args of
+            [elem_] -> GoNamed "rt.SkySet" [mapSkyTypeToGo ctx elem_]
+            _       -> GoNamed "rt.SkySet" [GoAny]
+
+        (_, "Cmd") -> case args of
+            [msg] -> GoNamed "rt.SkyCmd" [mapSkyTypeToGo ctx msg]
+            _     -> GoNamed "rt.SkyCmd" [GoAny]
+
+        (_, "Sub") -> case args of
+            [msg] -> GoNamed "rt.SkySub" [mapSkyTypeToGo ctx msg]
+            _     -> GoNamed "rt.SkySub" [GoAny]
+
+        -- Std.Html.Html — codegens non-generic (`= rt.SkyADT`), so
+        -- the msg arg is dropped at emission time.  Same special-case
+        -- as legacy 'goNamedType'.
+        (_, "Html") -> GoNamed "Std_Html_Html" []
+
+        -- User-defined types: Module_Name or Module_Name[T1, T2]
+        _ ->
+            let prefix = goModulePrefix home
+                goName = prefix ++ "_" ++ name
+            in case args of
+                [] -> GoNamed goName []
+                _  -> GoNamed goName (map (mapSkyTypeToGo ctx) args)
