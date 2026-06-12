@@ -3557,7 +3557,21 @@ generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
             -- Type alias stays non-generic — `type qualType = rt.SkyADT`.
             -- The TVar info lives only on the ctor function's params.
             GoIr.GoDeclRaw ("type " ++ qualType ++ " = rt.SkyADT")
-            : [ if arity == 0
+            -- v0.17 C13 (dual-alias, additive): for polymorphic unions,
+            -- ALSO emit a typed sibling alias so future commits / typed
+            -- Std.Ui call sites can opt in to typed Element/Attr/etc.
+            -- emission via `qualType_T[Msg]`.  Non-generic `qualType`
+            -- stays as the default — bare ctor references, existing
+            -- consumer code, regenerated console_app, etc. all unchanged.
+            -- The typed sibling is reachable only from lowering sites
+            -- that explicitly emit the `_T[...]` form.  Per Adversary
+            -- grill 2026-06-12 — Phase δ minimum-cascade design.
+            : ( if isPoly
+                  then [ GoIr.GoDeclRaw ("type " ++ qualType ++ "_T["
+                        ++ intercalate_ ", " [tp ++ " any" | tp <- goTVars]
+                        ++ "] = rt.SkyADT") ]
+                  else [] )
+            ++ [ if arity == 0
                   then GoIr.GoDeclVar (qualType ++ "_" ++ cname) qualType
                         (Just (GoIr.GoStructLit qualType
                             [ ("Tag", GoIr.GoIntLit idx)
