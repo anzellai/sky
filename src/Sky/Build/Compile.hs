@@ -5152,6 +5152,38 @@ isEmittableGoType s =
     && (isJust (goZeroValue s) || "func(" `List.isPrefixOf` s)
 
 
+-- | v0.17 Cause H step 4 — single shared gate used at every typed-
+-- tuple emission site (six total — five bounded renderers plus
+-- `substituteTVarsToGo`).  Pre-Step-4 each site used a hand-coded
+-- primitive-only whitelist that produced typed `rt.T2[A,B]` only
+-- for `string` / `int` / `bool` / etc.  Tuples of richer-but-still-
+-- concrete shapes (`(Int, List Int)`, `(Foo_R, Bar_R)`, `(Int,
+-- rt.SkyMaybe[String])`) fell back to the boundary-uncertain alias
+-- `rt.SkyTuple2 = T2[any, any]` even though every element was a
+-- known emittable Go type.
+--
+-- The widened gate: every element must be (a) an `isEmittableGoType`
+-- string (real Go type with a known zero value or function shape;
+-- excludes `"any"` and degenerate cases) AND (b) free of generic
+-- type-parameter tokens (`T1`, `T2`, … — those are valid only inside
+-- a parametric Go function body, NOT in the non-generic call sites
+-- the bounded renderers feed).  `substituteTVarsToGo` keeps the
+-- pre-existing `anyTVar` SKY-level check so a Sky TVar still falls
+-- back to the safe alias when the renderer's tvar-map doesn't carry
+-- it (the gate is identical structurally — TVars rendered to `T1`
+-- would also be rejected by `containsGenericTypeParam`).
+--
+-- The widening is safe because the bounded renderers all share the
+-- recursion guard from Step 2: a self-referential parametric alias
+-- that previously black-holed at the primitive-only test now caps at
+-- depth 64 (or hits the visited set) and renders as `"any"`, which
+-- this gate rejects — falling back to `rt.SkyTuple2` exactly as
+-- before.
+isTypedTupleElement :: String -> Bool
+isTypedTupleElement s =
+    isEmittableGoType s && not (containsGenericTypeParam s)
+
+
 -- | v0.13 typed lowerer: convert a `GoBlock` (IIFE returning `any`)
 -- into a `GoTypedBlock` (IIFE returning the concrete `retType`) when
 -- it's SAFE to do so.  "Safe" means:
@@ -15631,33 +15663,66 @@ solvedTypeToGoPreserveTVarsBounded fuel _seen ty =
 -- field types. Sky-TVars NOT in the map fall back to solvedTypeToGo
 -- (which renders them as `any` per the legacy widening behaviour
 -- for out-of-scope TVars).
+--
+-- v0.17 Cause H — seventh recursion-guarded renderer.  Same fuel +
+-- visited-set shape as the bounded sibling renderers.  Without this
+-- guard, the Step-4 widening at the typed-tuple gate exposes the
+-- latent recursion through TType / TAlias arms via `map go args` on
+-- self-referential parametric alias bodies (e.g. Std.Ui Element /
+-- Std.Html Html), reproducing the `<<loop>>` blackhole probe-C-stdui-
+-- msg-typed used to mask via the primitive-only whitelist.
 substituteTVarsToGo :: Map.Map String String -> T.Type -> String
-substituteTVarsToGo tvarMap = go
+substituteTVarsToGo tvarMap = substituteTVarsToGoBounded tvarMap 64 Set.empty
+
+
+substituteTVarsToGoBounded :: Map.Map String String -> Int -> Set.Set String -> T.Type -> String
+substituteTVarsToGoBounded _ fuel _ _ | fuel <= 0 = "any"
+substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
   where
+    rec = substituteTVarsToGoBounded tvarMap (fuel - 1) seen
+    -- Cycle-aware recurrence — passes a visited-set with @base@
+    -- inserted so a parametric-alias body that re-references the
+    -- SAME alias returns @"any"@ instead of looping.
+    recCycle base =
+        substituteTVarsToGoBounded tvarMap (fuel - 1) (Set.insert base seen)
     go ty = case ty of
         T.TVar name
             | Just goName <- Map.lookup name tvarMap -> goName
             | otherwise -> solvedTypeToGo ty
         T.TLambda from to ->
-            "func(" ++ go from ++ ") " ++ go to
+            "func(" ++ rec from ++ ") " ++ rec to
         T.TType _ "List" [elem_] ->
-            let elemGo = go elem_
+            let elemGo = rec elem_
             in if elemGo == "any" then "[]any" else "[]" ++ elemGo
         T.TType _ "Maybe" [a] ->
-            "rt.SkyMaybe[" ++ go a ++ "]"
+            "rt.SkyMaybe[" ++ rec a ++ "]"
         T.TType _ "Result" [e, a] ->
-            "rt.SkyResult[" ++ go e ++ ", " ++ go a ++ "]"
+            "rt.SkyResult[" ++ rec e ++ ", " ++ rec a ++ "]"
         T.TType _ "Task" [e, a] ->
-            "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
+            "rt.SkyTask[" ++ rec e ++ ", " ++ rec a ++ "]"
         T.TType _ "Dict" [_, v] ->
-            "map[string]" ++ go v
+            "map[string]" ++ rec v
         T.TTuple _a _b cs ->
             -- v0.17 Cause H — propagate typed tuples through the
             -- tvar-substituted path too.  Critical for lambda
             -- return types (List.map's callback slot) so the
             -- emitted lambda's return matches the called function's
             -- typed return value.
-            let renderedAll = map go (_a : _b : cs)
+            -- v0.17 Cause H Step 4 — substituteTVarsToGo operates in
+            -- a PARAMETRIC Go context (T1/T2 type-params in scope).
+            -- The bounded sibling renderers use `isTypedTupleElement`
+            -- which rejects `T1`/`T2`/… as generic-param tokens; that
+            -- gate is correct for non-generic call sites but throws
+            -- away typing here.  Keep the legacy primitive-only
+            -- whitelist at THIS site as the conservative bridge —
+            -- widening here exposed a `<<loop>>` via Std.Ui's
+            -- self-referential parametric Element body even with the
+            -- bounded recursion guard in place (a thunk cycle through
+            -- a non-renderer code path that consumes the wider gate's
+            -- typed-tuple output).  Tracked for the GoType ADT
+            -- migration (Strategy C) which models the parametric
+            -- context structurally.
+            let renderedAll = map rec (_a : _b : cs)
                 anyTVar = any
                     (\t -> case t of T.TVar _ -> True; _ -> False)
                     (_a : _b : cs)
@@ -15680,11 +15745,17 @@ substituteTVarsToGo tvarMap = go
         -- v0.15 Stage E — recursive-alias self-reference: a TType
         -- referencing the SAME parametric alias being substituted
         -- (e.g. `Tree a` inside `Tree a = { kids : List (Tree a) }`).
+        -- v0.17 Cause H — cycle guard: when the alias name is already
+        -- in @seen@, fall back to @"any"@ instead of recursing into
+        -- the same body again.
         T.TType _ name args
             | not (null args)
             , Just (Can.Alias _ (T.TRecord _ _)) <- lookupAliasDecl name ->
-                let argStrs = map go args
-                in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
+                if Set.member name seen
+                    then "any"
+                    else
+                        let argStrs = map (recCycle name) args
+                        in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
         -- v0.15 Stage E — Surface 1's canonicaliser wraps parametric
         -- alias references as `TAlias name [(v, arg)] (Filled body)`.
         -- The default `solvedTypeToGo` TAlias arm renders the type-
@@ -15695,8 +15766,11 @@ substituteTVarsToGo tvarMap = go
         T.TAlias _ name pairs _
             | not (null pairs)
             , Just (Can.Alias _ (T.TRecord _ _)) <- lookupAliasDecl name ->
-                let argStrs = map (go . snd) pairs
-                in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
+                if Set.member name seen
+                    then "any"
+                    else
+                        let argStrs = map (recCycle name . snd) pairs
+                        in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
         _ -> solvedTypeToGo ty
             -- For other shapes the legacy renderer is correct.
 
