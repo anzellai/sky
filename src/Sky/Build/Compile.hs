@@ -15799,6 +15799,44 @@ solvedTypeToGo :: T.Type -> String
 solvedTypeToGo = solvedTypeToGoBounded 64 Set.empty
 
 
+-- | v0.17 Strategy-C PR 2 — typed sibling of 'solvedTypeToGo'.
+--
+-- Delegates to the env-free 'GoType.mapSkyTypeToGo' with
+-- 'GoType.defaultMappingContext'.  PR 3 wires this as the producer
+-- for 'Can.Tuple' lowering at @exprToGoExpectGo@'s typed-tuple arm
+-- so the value-side @emitTypedTuple2@ pattern-matches on
+-- 'GoType.GoTuple' instead of re-tokenising a string via
+-- @parseTupleTypeArgs@.
+--
+-- Why no bounded variant?  The 'GoType' ADT eliminates the cycle
+-- surface that motivated 'solvedTypeToGoBounded' — 'mapSkyTypeToGo'
+-- recurses structurally on 'T.Type', which is a strict, finite
+-- value (the Sky compiler never constructs an infinite type), so
+-- termination is implicit.  The legacy string renderers needed
+-- the depth-cap because they re-entered themselves via downstream
+-- consumers (the 'parseTupleTypeArgs' → @inferTypeFromGoString@
+-- round-trip — see @docs/v0.17-cause-h-step4-blocker.md@); the
+-- typed pipeline closes that round-trip.
+--
+-- Parity vs. 'solvedTypeToGo':
+--
+--   * Holds for env-free shapes — primitives, Cmd / Sub / List /
+--     Maybe / Result / Task / Dict / Set / Char / Bytes,
+--     'T.TUnit', 'T.TLambda' over env-free inner types, anonymous
+--     records, basic 'T.TAlias'.  Locked by
+--     'test/Sky/Build/GoTypeAdtSpec.hs' C2 parity tests.
+--
+--   * Diverges on user-defined types whose Go name 'solvedTypeToGo'
+--     resolves via @getCgEnv@ (record-alias map, union names,
+--     runtime-typed map).  'mapSkyTypeToGo' has no env access yet,
+--     so it falls back to the bare module-prefix lookup.  C8 widens
+--     'GoType.MappingContext' with the env data and closes that gap.
+--     Until then PR 3 only uses 'solvedTypeToGoTyped' on the
+--     'T.TTuple' path, which never hits the env-dependent arms.
+solvedTypeToGoTyped :: T.Type -> GoType.GoType
+solvedTypeToGoTyped = GoType.mapSkyTypeToGo GoType.defaultMappingContext
+
+
 solvedTypeToGoBounded :: Int -> Set.Set String -> T.Type -> String
 solvedTypeToGoBounded fuel _ _ | fuel <= 0 = "any"
 solvedTypeToGoBounded fuel seen ty =
