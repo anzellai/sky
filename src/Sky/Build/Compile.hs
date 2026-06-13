@@ -1431,11 +1431,15 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- callees inferred at the same point) don't overwrite
             -- each other.  Lookups consult the inner map by the
             -- expected callee's Sky-form name.
+            -- v0.17 — typed tuples ALWAYS on.  CSI widen still
+            -- gated by SKY_CSI_WIDEN_KEY because turning it on
+            -- surfaces a coerceCallArgsAt typed-arg coercion gap
+            -- for spec functions without _cg_funcSkyToGoTVars
+            -- entries (Lib.Db.exec __String spec etc.) — fix
+            -- tracked separately.
             csiWidenEnv <- System.Environment.lookupEnv "SKY_CSI_WIDEN_KEY"
-            let csiWiden = csiWidenEnv == Just "1"
-            writeIORef globalCsiWiden csiWiden
-            typedTuplesEnv <- System.Environment.lookupEnv "SKY_TYPED_TUPLES"
-            writeIORef globalTypedTuples (typedTuplesEnv == Just "1")
+            writeIORef globalCsiWiden (csiWidenEnv == Just "1")
+            writeIORef globalTypedTuples True
             let csiEntries =
                     -- v0.17 C24 — key includes module name so two
                     -- dep modules with calls at the same (line, col)
@@ -1446,7 +1450,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- a populated _cg_funcSkyToGoTVars entry (spec
                     -- name emitted but arg coercion fell to
                     -- AsListAny — fix tracked separately).
-                    [ ( ( if csiWiden then modName else ""
+                    [ ( ( modName
                         , A._line (A._start (Solve._cs_region csi))
                         , A._col  (A._start (Solve._cs_region csi)) )
                       , Map.singleton
@@ -1493,7 +1497,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- v0.17 C24 — same (modName, line, col) key
                         -- shape as the codegen registry above.
                         csiMapForReach = Map.fromList
-                            [ ( ( if csiWiden then modName else ""
+                            [ ( ( modName
                                 , A._line (A._start (Solve._cs_region csi))
                                 , A._col  (A._start (Solve._cs_region csi)) )
                               , Solve._cs_instance csi
@@ -5945,9 +5949,31 @@ safeReturnTypeFull t = case t of
     -- (SkyTuple2 = T2[any, any]) so current body codegen stays
     -- valid — tuple destructure in patternBindings wraps with any()
     -- before asserting.
-    T.TTuple _ _ []               -> "rt.SkyTuple2"
-    T.TTuple _ _ [_]              -> "rt.SkyTuple3"
-    T.TTuple _ _ _                -> "rt.SkyTupleN"
+    --
+    -- v0.17 Cause H — emit typed `rt.T2[A,B]` / `rt.T3[A,B,C]` when
+    -- all element types are universally-scoped Go primitives so
+    -- the safeReturnTypeFull-rendered sig matches typeStrWithAliasesReg.
+    T.TTuple a b extras ->
+        let renderedAll = map safeReturnTypeFull (a : b : extras)
+            anyTVar = any
+                (\t -> case t of T.TVar _ -> True; _ -> False)
+                (a : b : extras)
+            isPrimitive s = s `elem`
+                [ "string", "int", "int32", "int64"
+                , "float32", "float64", "bool", "byte", "rune"
+                , "[]byte"
+                ]
+            allPrim = not anyTVar
+                   && not (null renderedAll)
+                   && all isPrimitive renderedAll
+        in case extras of
+             []
+                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple2"
+             [_]
+                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple3"
+             _ -> "rt.SkyTupleN"
     -- Opaque parameterised types whose Go alias is `any` regardless
     -- of type args (Decoder a, Value a). Match before the []-only
     -- TType branch so `Decoder String` resolves the same way.
@@ -6341,9 +6367,28 @@ safeReturnTypeBootstrap recAliases = go
             in if inner == "any" then "map[string]any" else "map[string]" ++ inner
         T.TType _ "Dict"   _          -> "map[string]any"
         T.TType _ "Set"    _          -> "map[any]bool"
-        T.TTuple _ _ []               -> "rt.SkyTuple2"
-        T.TTuple _ _ [_]              -> "rt.SkyTuple3"
-        T.TTuple _ _ _                -> "rt.SkyTupleN"
+        -- v0.17 Cause H — typed tuples
+        T.TTuple a b extras ->
+            let renderedAll = map go (a : b : extras)
+                anyTVar = any
+                    (\t -> case t of T.TVar _ -> True; _ -> False)
+                    (a : b : extras)
+                isPrimitive s = s `elem`
+                    [ "string", "int", "int32", "int64"
+                    , "float32", "float64", "bool", "byte", "rune"
+                    , "[]byte"
+                    ]
+                allPrim = not anyTVar
+                       && not (null renderedAll)
+                       && all isPrimitive renderedAll
+            in case extras of
+                 []
+                    | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                    | otherwise -> "rt.SkyTuple2"
+                 [_]
+                    | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                    | otherwise -> "rt.SkyTuple3"
+                 _ -> "rt.SkyTupleN"
         T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
         -- v0.13 Layer 3: `_` (not `[]`) so a PARAMETERISED Sky ADT
         -- (`Html msg`, `Attribute msg`, `Element msg`) renders to its
@@ -7118,22 +7163,12 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
             allPrim = not anyTVar
                    && not (null renderedAll)
                    && all isPrimitive renderedAll
-            -- v0.17 Cause H — typed tuple emission gated by env.
-            -- The primitive-only check above closes the dep-module
-            -- visibility issue (entry-module types like Msg aren't
-            -- in dep scope).  But typed-emission ALSO surfaces a
-            -- caller-side widening issue: a typed return T2[A,B]
-            -- can't be assigned into a SkyTuple2 slot (Go rejects
-            -- the distinct generic instantiation).  Closing that
-            -- needs caller-side typed-slot propagation.  Until
-            -- then, opt-in via SKY_TYPED_TUPLES=1.
-            useTyped = unsafePerformIO (readIORef globalTypedTuples)
         in case extras of
              []
-                | useTyped && allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
                 | otherwise -> "rt.SkyTuple2"
              [_]
-                | useTyped && allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
                 | otherwise -> "rt.SkyTuple3"
              _ -> "rt.SkyTupleN"
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
@@ -7468,9 +7503,28 @@ safeReturnTypePure t = case t of
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
-    T.TTuple _ _ []               -> "rt.SkyTuple2"
-    T.TTuple _ _ [_]              -> "rt.SkyTuple3"
-    T.TTuple _ _ _                -> "rt.SkyTupleN"
+    -- v0.17 Cause H — typed tuples
+    T.TTuple a b extras ->
+        let renderedAll = map safeReturnTypePure (a : b : extras)
+            anyTVar = any
+                (\t -> case t of T.TVar _ -> True; _ -> False)
+                (a : b : extras)
+            isPrimitive s = s `elem`
+                [ "string", "int", "int32", "int64"
+                , "float32", "float64", "bool", "byte", "rune"
+                , "[]byte"
+                ]
+            allPrim = not anyTVar
+                   && not (null renderedAll)
+                   && all isPrimitive renderedAll
+        in case extras of
+             []
+                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple2"
+             [_]
+                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple3"
+             _ -> "rt.SkyTupleN"
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Known runtime types with concrete Go definitions. Qualified
     -- overrides (e.g. Sky.Core.Http.Response -> rt.HttpResponse) win
@@ -10054,13 +10108,28 @@ coerceCallArgsAt region qualName args =
                                     -- `func(x State_Post_R) State_Post_R`
                                     -- where the body returns a typed
                                     -- value and HM knows it.
+                                    --
+                                    -- v0.17 #4 — only promote the
+                                    -- HM-inferred concrete return when
+                                    -- ALL inputTypes are typed too.
+                                    -- Mixing `any` params with a
+                                    -- concrete return defeats Go's
+                                    -- call-site TVar inference for
+                                    -- shape-preserving kernels (foldl,
+                                    -- foldr, etc. where param-T2 ==
+                                    -- return-T2).  See companion gate
+                                    -- in kernelCoerceArg.
+                                    allInputsTyped =
+                                        all (/= "any") inputTypes
                                     finalRet =
                                         if finalRet0 == "any"
-                                            then case inferGoType
-                                                    (Rec._cg_solvedTypes getCgEnv)
-                                                    body of
-                                                "any" -> "any"
-                                                concrete -> concrete
+                                            then if allInputsTyped
+                                                   then case inferGoType
+                                                           (Rec._cg_solvedTypes getCgEnv)
+                                                           body of
+                                                       "any" -> "any"
+                                                       concrete -> concrete
+                                                   else "any"
                                             else finalRet0
                                     skyTys = map goTypeStrToSkyType inputTypes
                                     bindings = patVarTypes pats skyTys
@@ -10866,13 +10935,33 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
                 splitCurriedFuncTypeStr (length pats) subbed
             , length inputTypes == length pats
             , length inputTypes > 0 ->
-                let finalRet =
+                -- v0.17 #4 — gate body-inferred finalRet on ALL
+                -- inputTypes being typed.  If any input slot is `any`
+                -- (kernel's TVar was erased to any when σ-recovery
+                -- couldn't pin it from sibling args), DON'T promote
+                -- the body's HM-inferred concrete return type to the
+                -- lambda's emitted return.  Reason: for kernel sigs
+                -- like `foldl : (a -> b -> b) -> b -> List a -> b`,
+                -- when T2=b's σ stays unbound (recovery failed), the
+                -- middle curry's param emits as `any` but the lambda
+                -- return would inherit the body's `string`.  Go's
+                -- call-site inference then sees
+                -- `func(any) func(any) string` vs the kernel's
+                -- `func(T1) func(T2) T2` and can't unify T2 (the
+                -- middle arg says T2=any, the return says T2=string).
+                -- Falling back to `any` return when any input is
+                -- `any` keeps the lambda emit consistent — Go infers
+                -- T2=any cleanly.
+                let allInputsTyped = all (/= "any") inputTypes
+                    finalRet =
                         if finalRet0 == "any"
-                            then case inferGoType
-                                    (Rec._cg_solvedTypes getCgEnv)
-                                    body of
-                                "any" -> "any"
-                                concrete -> concrete
+                            then if allInputsTyped
+                                   then case inferGoType
+                                           (Rec._cg_solvedTypes getCgEnv)
+                                           body of
+                                       "any" -> "any"
+                                       concrete -> concrete
+                                   else "any"
                             else finalRet0
                     skyTys = map goTypeStrToSkyType inputTypes
                     bindings = patVarTypes pats skyTys
@@ -15420,14 +15509,31 @@ substituteTVarsToGo tvarMap = go
         T.TType _ "Dict" [_, v] ->
             "map[string]" ++ go v
         T.TTuple _a _b cs ->
-            -- Tuples stay as their concrete runtime types; tvar
-            -- substitution doesn't apply to the Tuple struct itself
-            -- (rt.SkyTuple2 etc.) — only its inner fields, which the
-            -- runtime carries as `any` anyway.
-            case length cs of
-                0 -> "rt.SkyTuple2"
-                1 -> "rt.SkyTuple3"
-                _ -> "rt.SkyTupleN"
+            -- v0.17 Cause H — propagate typed tuples through the
+            -- tvar-substituted path too.  Critical for lambda
+            -- return types (List.map's callback slot) so the
+            -- emitted lambda's return matches the called function's
+            -- typed return value.
+            let renderedAll = map go (_a : _b : cs)
+                anyTVar = any
+                    (\t -> case t of T.TVar _ -> True; _ -> False)
+                    (_a : _b : cs)
+                isPrimitive s = s `elem`
+                    [ "string", "int", "int32", "int64"
+                    , "float32", "float64", "bool", "byte", "rune"
+                    , "[]byte"
+                    ]
+                allPrim = not anyTVar
+                       && not (null renderedAll)
+                       && all isPrimitive renderedAll
+            in case cs of
+                 []
+                    | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                    | otherwise -> "rt.SkyTuple2"
+                 [_]
+                    | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                    | otherwise -> "rt.SkyTuple3"
+                 _ -> "rt.SkyTupleN"
         -- v0.15 Stage E — recursive-alias self-reference: a TType
         -- referencing the SAME parametric alias being substituted
         -- (e.g. `Tree a` inside `Tree a = { kids : List (Tree a) }`).
@@ -15546,20 +15652,34 @@ solvedTypeToGo ty = case ty of
                         "]"
                     Nothing -> aliasName ++ "_R"
             Nothing -> synthAnonRecordName fields
-    T.TTuple _ _ rest ->
-        -- v0.13: render tuples as `rt.SkyTuple2/3/N` — CONSISTENT
-        -- with `typeStrWithAliasesReg` / `safeReturnTypeBootstrap` (which
-        -- drive function signatures) AND with the actual tuple-
-        -- literal emission (`GoStructLit "rt.SkyTuple2"`).  The old
-        -- `rt.T2[A,B]` rendering was an inconsistency: a variable
-        -- `solvedTypeToGo`-typed `[]rt.T2[int,int]` could never
-        -- accept a `[]rt.SkyTuple2` value (`rt.SkyTuple2 =
-        -- T2[any,any]`, a DIFFERENT Go type), so the "typed tuple"
-        -- claim was never actually honoured by codegen.
-        case length rest of
-            0 -> "rt.SkyTuple2"
-            1 -> "rt.SkyTuple3"
-            _ -> "rt.SkyTupleN"
+    T.TTuple a b rest ->
+        -- v0.17 Cause H — typed tuples.  When every element
+        -- renders to a universal Go primitive, emit
+        -- `rt.T2[A,B]` / `rt.T3[A,B,C]` so this rendering matches
+        -- `typeStrWithAliasesReg`'s output.  Both ends emit the
+        -- same instantiation, so list/dict/tuple containers using
+        -- this rendering accept values from
+        -- `typeStrWithAliasesReg`-rendered slots.
+        let renderedAll = map solvedTypeToGo (a : b : rest)
+            anyTVar = any
+                (\t -> case t of T.TVar _ -> True; _ -> False)
+                (a : b : rest)
+            isPrimitive s = s `elem`
+                [ "string", "int", "int32", "int64"
+                , "float32", "float64", "bool", "byte", "rune"
+                , "[]byte"
+                ]
+            allPrim = not anyTVar
+                   && not (null renderedAll)
+                   && all isPrimitive renderedAll
+        in case rest of
+             []
+                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple2"
+             [_]
+                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple3"
+             _ -> "rt.SkyTupleN"
     T.TAlias home name typeArgs aliasTy ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
