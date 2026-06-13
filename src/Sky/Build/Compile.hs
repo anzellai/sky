@@ -15595,8 +15595,41 @@ substituteTVarsToGo tvarMap = go
             -- For other shapes the legacy renderer is correct.
 
 
+-- | v0.17 Cause H step 1 — recursion guard.  The legacy renderer
+-- had unbounded structural recursion through TType / TAlias arms;
+-- pathological shapes (self-referential parametric record aliases,
+-- cross-renderer chains via aliasGenericArgs) black-holed at
+-- `<<loop>>`.  The primitive whitelist on typed-tuple emission was
+-- masking this — it short-circuited before recursion could happen.
+--
+-- Strategy B (per the docs/v0.17 architecture plan): track a depth
+-- counter capped at 64 and a visited-set keyed on the qualified
+-- type name encountered at TType / TAlias arms.  On cap-overflow
+-- OR `Set.member` hit, render `"any"` — a value any caller already
+-- handles (it's the universal fallback string).  Legitimate
+-- 40-arrow-deep Result-chains stay well under cap=64; the visited-
+-- set catches cycles that depth alone wouldn't (depth=2 cycle).
+--
+-- The top-level entrypoint preserves the old String -> T.Type ->
+-- String signature, so every call site continues to work
+-- unchanged.  This is an invariant-preserving refactor — for any
+-- non-pathological type the output is byte-identical with the
+-- pre-guard renderer.
 solvedTypeToGo :: T.Type -> String
-solvedTypeToGo ty = case ty of
+solvedTypeToGo = solvedTypeToGoBounded 64 Set.empty
+
+
+solvedTypeToGoBounded :: Int -> Set.Set String -> T.Type -> String
+solvedTypeToGoBounded fuel _ _ | fuel <= 0 = "any"
+solvedTypeToGoBounded fuel seen ty =
+    -- v0.17 Cause H step 1 — bounded recurse.  No-arg recursion sites
+    -- (List/Maybe/Result/Task/Dict/TLambda/TRecord/TTuple/etc) use
+    -- `rec`; TType/TAlias arms that consume a TYPE NAME shadow `seen`
+    -- with `Set.insert base seen` so that re-encountering the same
+    -- qualified name later in the recursion is detected as a cycle
+    -- and renders `"any"` rather than black-holing.
+    let rec = solvedTypeToGoBounded (fuel - 1) seen
+    in case ty of
     T.TVar name
         | head name == '_' -> "any"  -- unresolved internal variable
         | otherwise -> "any"         -- unresolved user variable (TODO: Go type param)
@@ -15613,24 +15646,24 @@ solvedTypeToGo ty = case ty of
     -- runtime-produced `[]any` gets converted at assignment
     -- boundaries via `rt.AsListT[T]` in coerceToFieldType.
     T.TType _ "List" [elem] ->
-        let elemGo = solvedTypeToGo elem
+        let elemGo = rec elem
         in if elemGo == "any" then "[]any" else "[]" ++ elemGo
     T.TType _ "List" _ -> "[]any"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
     T.TType _ "Maybe" [a] ->
-        "rt.SkyMaybe[" ++ solvedTypeToGo a ++ "]"
+        "rt.SkyMaybe[" ++ rec a ++ "]"
     T.TType _ "Maybe" _ -> "rt.SkyMaybe[any]"
     T.TType _ "Result" [e, a] ->
-        "rt.SkyResult[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
+        "rt.SkyResult[" ++ rec e ++ ", " ++ rec a ++ "]"
     T.TType _ "Result" _ -> "rt.SkyResult[any, any]"
     T.TType _ "Task" [e, a] ->
-        "rt.SkyTask[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
+        "rt.SkyTask[" ++ rec e ++ ", " ++ rec a ++ "]"
     T.TType _ "Task" _ -> "rt.SkyTask[any, any]"
     -- Dict values: emit `map[string]V` for known value types;
     -- boundary conversion via rt.AsMapT[V] in coerceToFieldType.
     T.TType _ "Dict" [_, v] ->
-        "map[string]" ++ solvedTypeToGo v
+        "map[string]" ++ rec v
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set" _ -> "map[any]bool"
     T.TType home name _ ->
@@ -15673,7 +15706,7 @@ solvedTypeToGo ty = case ty of
                     | isRuntimeOnly -> "any"
                     | isKnownUnion  -> base
                     | otherwise     -> "any"
-    T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
+    T.TLambda from to -> "func(" ++ rec from ++ ") " ++ rec to
     T.TRecord fields _ ->
         -- v0.15 Stage E — parametric aliases render with explicit
         -- generic args via `aliasGenericArgs` (structural extraction
@@ -15685,7 +15718,7 @@ solvedTypeToGo ty = case ty of
                 case aliasGenericArgs aliasName fields of
                     Just (_, argTys) ->
                         aliasName ++ "_R[" ++
-                        intercalate_ ", " (map solvedTypeToGo argTys) ++
+                        intercalate_ ", " (map rec argTys) ++
                         "]"
                     Nothing -> aliasName ++ "_R"
             Nothing -> synthAnonRecordName fields
@@ -15697,7 +15730,7 @@ solvedTypeToGo ty = case ty of
         -- same instantiation, so list/dict/tuple containers using
         -- this rendering accept values from
         -- `typeStrWithAliasesReg`-rendered slots.
-        let renderedAll = map solvedTypeToGo (a : b : rest)
+        let renderedAll = map rec (a : b : rest)
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : rest)
@@ -15723,6 +15756,16 @@ solvedTypeToGo ty = case ty of
                        then ""
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
+            -- v0.17 Cause H step 1 — cycle guard.  Self-referential
+            -- parametric record aliases (e.g. `Tree a = { kids : List
+            -- (Tree a) }`) used to black-hole because the recursedFrom-
+            -- Chain arm walks aliasTy's body, which re-references the
+            -- same alias.  Detecting `Set.member base seen` here returns
+            -- "any" instead of looping, matching the legacy "no resolution
+            -- → any" fallback that every consumer already handles.
+            cycleHit = Set.member base seen
+            seen' = Set.insert base seen
+            recCycle = solvedTypeToGoBounded (fuel - 1) seen'
             env = getCgEnv
             allAliases = Rec._cg_recordAliases env
             -- v0.15 Stage E — emit explicit Go type-args.
@@ -15730,7 +15773,7 @@ solvedTypeToGo ty = case ty of
                 if null typeArgs
                     then ""
                     else "[" ++ intercalate_ ", "
-                              [ solvedTypeToGo argTy
+                              [ recCycle argTy
                               | (_, argTy) <- typeArgs ]
                           ++ "]"
             -- Try every registered cross-module alias of the form
@@ -15779,9 +15822,11 @@ solvedTypeToGo ty = case ty of
                 T.Filled  t -> Just t
                 _           -> Nothing
             recursedFromChain = case unwrappedAlias of
-                Just t -> Just (solvedTypeToGo t)
+                Just t -> Just (recCycle t)
                 Nothing -> Nothing
-        in case matches of
+        in if cycleHit
+            then "any"
+            else case matches of
             (m:_) -> m ++ "_R" ++ typeArgSuffix
             _ -> case runtimeTyped of
                 Just goTy -> goTy
