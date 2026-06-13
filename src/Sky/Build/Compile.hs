@@ -7016,7 +7016,22 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set"  _ -> "map[any]bool"
-    -- Cmd/Sub: opaque Go types (ignore inner type param)
+    -- v0.17 C15-runtime — Cmd/Sub typed sibling emission.
+    -- When the inner type argument is a CONCRETE Sky type (not a
+    -- TVar), emit the dual-alias form `rt.SkyCmd_T[<msg>]` /
+    -- `rt.SkySub_T[<msg>]` so the Sky source's
+    -- `Cmd Msg` / `Sub Msg` typing flows into the Go sig.
+    -- The runtime dual-alias (`type SkyCmd_T[T any] = cmdT`)
+    -- makes this transparent: `rt.SkyCmd_T[Msg]` and
+    -- `rt.SkyCmd` are identical at runtime.  TVar args fall
+    -- back to the bare form so callers that already pass
+    -- `any`-typed Cmd values continue to compile.
+    T.TType _ "Cmd" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkyCmd_T[" ++ go arg ++ "]"
+    T.TType _ "Sub" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkySub_T[" ++ go arg ++ "]"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
     -- Std.Html.Html: htmlType in the constraint generator carries an

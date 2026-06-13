@@ -1466,6 +1466,15 @@ type cmdT struct {
 // SkyCmd is the public type for Sky's Cmd msg type.
 type SkyCmd = cmdT
 
+// SkyCmd_T is the v0.17 C15 dual-alias for Sky's Cmd msg type.
+// Transparent at runtime (same underlying cmdT), but lets the
+// compiler emit `rt.SkyCmd_T[Msg]` at Sky-side typed call sites
+// (`update : Msg -> Model -> (Model, Cmd Msg)`) instead of bare
+// `rt.SkyCmd` — Sky source becomes more legible without changing
+// any runtime code.  Matches the C13/C14 pattern for Std.Ui's
+// Element/Attribute dual-alias.
+type SkyCmd_T[T any] = cmdT
+
 type subT struct {
 	// kind values:
 	//   "none"            — Sub.none — no subscription
@@ -1494,6 +1503,11 @@ type subT struct {
 
 // SkySub is the public type for Sky's Sub msg type.
 type SkySub = subT
+
+// SkySub_T is the v0.17 C15 dual-alias for Sky's Sub msg type.
+// Same shape as SkyCmd_T — transparent at runtime, lets the
+// compiler emit `rt.SkySub_T[Msg]` at typed call sites.
+type SkySub_T[T any] = subT
 
 func Cmd_none() SkyCmd                { return cmdT{kind: "none"} }
 func Cmd_batch(list any) SkyCmd       { return cmdT{kind: "batch", batch: asList(list)} }
