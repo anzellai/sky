@@ -377,7 +377,7 @@ func addPointerMethods(info *PackageInfo, mset *types.MethodSet, typeName string
 		}
 		info.Functions = append(info.Functions, Function{
 			Name:     name,
-			Params:   append([]Param{{Name: "recv", Type: types.NewPointer(named.Obj().Type()).String()}}, paramsOf(sig)...),
+			Params:   append([]Param{paramForReceiver(types.NewPointer(named.Obj().Type()))}, paramsOf(sig)...),
 			Results:  resultsOf(sig),
 			Variadic: sig.Variadic(),
 			Effect:   classifyEffect(resultsOf(sig)),
@@ -490,6 +490,25 @@ func skyTypeQualifiedOf(t types.Type) string {
 	}
 }
 
+// paramForReceiver — v0.17 (audit #1) — receiver positions need
+// the same SkyType + SkyTypeQualified treatment as regular params.
+// Before this fix, every method's `recv` was constructed manually
+// as `Param{Name: "recv", Type: recvType.String()}` which bypassed
+// `paramFor` entirely and left SkyType / SkyTypeQualified empty —
+// so the function-level skyType string emitted by FfiGen's
+// wrapperSkyType saw the receiver as a bare unqualified
+// `CustomerListParams` while other Stripe sigs emitted the
+// qualified form, causing HM mismatches at cross-FFI composition
+// (`Variable 'listParams' type mismatch: Value vs
+// CustomerListParams_at_github_com_stripe_stripe_go_v84`).
+// Closes the inspector completeness audit recommended by
+// `docs/v0.17-c17c-asymmetry.md` (Option A).
+func paramForReceiver(t types.Type) Param {
+	p := paramFor(t)
+	p.Name = "recv"
+	return p
+}
+
 func paramForNamed(name string, t types.Type) Param {
 	p := paramFor(t)
 	p.Name = name
@@ -541,7 +560,7 @@ func skyTypeOf(t types.Type) string {
 }
 
 func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvType types.Type) Function {
-	params := []Param{{Name: "recv", Type: recvType.String()}}
+	params := []Param{paramForReceiver(recvType)}
 	params = append(params, paramsOf(sig)...)
 	return Function{
 		Name:       typeName + fn.Name(),
@@ -605,7 +624,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 	for _, f := range info.Functions {
 		seen[f.Name] = true
 	}
-	recvType := types.NewPointer(named.Obj().Type()).String()
+	recvTypeT := types.NewPointer(named.Obj().Type())
 	for i := 0; i < s.NumFields(); i++ {
 		f := s.Field(i)
 		if !f.Exported() {
@@ -615,7 +634,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 		if !seen[getterName] {
 			info.Functions = append(info.Functions, Function{
 				Name:       getterName,
-				Params:     []Param{{Name: "recv", Type: recvType}},
+				Params:     []Param{paramForReceiver(recvTypeT)},
 				Results:    []Param{paramFor(f.Type())},
 				Effect:     "pure",
 				Exported:   true,
@@ -632,9 +651,9 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 				// value-first, receiver second — matches Sky pipeline idiom.
 				Params: []Param{
 					paramForNamed("value", f.Type()),
-					{Name: "recv", Type: recvType},
+					paramForReceiver(recvTypeT),
 				},
-				Results:    []Param{{Type: recvType}},
+				Results:    []Param{paramFor(recvTypeT)},
 				Effect:     "pure",
 				Exported:   true,
 				RecvType:   typeName,
