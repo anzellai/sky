@@ -85,6 +85,21 @@ ftyToType _kernelName = go
         -- into the legacy collapse so behaviour is byte-stable.
         Nothing
             | Just (bareName, pkgPath) <- splitQualified name ->
+                -- v0.17 C17c attempt — flip held back AGAIN.
+                -- skyshop verified the qualified resolver flip
+                -- breaks on asymmetric FFI surfaces: when one side
+                -- of a composition is in the inspector output
+                -- (qualified) but the other isn't (unknown name →
+                -- Value fallback elsewhere in the compiler), the
+                -- two sides don't unify.  Specifically:
+                --   listParams = Stripe.customerListParamsSetEmail ...
+                --   case Customer.list listParams of  -- mismatch
+                -- because customerListParamsSetEmail is absent from
+                -- the inspector's stripe.kernel.json.  Until either
+                -- (a) inspector coverage is provably complete or
+                -- (b) the resolver bridges Value↔qualified, keep
+                -- the collapse so behaviour stays byte-stable.
+                -- Tracked: c17c-asymmetry note in C17 design doc.
                 let _suppressUnused = (bareName, pkgPath, mangleGoIdent pkgPath)
                 in opaqueValue
             | otherwise -> opaqueValue
