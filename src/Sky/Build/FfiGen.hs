@@ -80,6 +80,20 @@ data FnInfo = FnInfo
         -- wrapper-call side.
     , _fnResultSkyTypes :: [String]
         -- ^ Same shape, for results.
+    , _fnParamSkyQualified  :: [String]
+        -- ^ v0.17 C17b — per-param qualified opaque marker.
+        -- Same length as '_fnParams'; entry is "" when the
+        -- inspector did not emit a qualified marker (i.e. the
+        -- Go type is a basic / basic-alias / built-in).
+        -- Format: @Name\@pkgPath@ (e.g.
+        -- @*Customer\@github.com/stripe/stripe-go/v84@).
+        -- When non-empty, 'wrapperSkyType' uses this verbatim
+        -- so distinct opaque types from different Go packages
+        -- carry their qualifier into the kernel.json skyType
+        -- string, where 'parseFty' + 'ftyToType' recognise the
+        -- '\@' suffix and emit distinct 'TType' homes.
+    , _fnResultSkyQualified :: [String]
+        -- ^ Same shape, for results.
     }
     deriving (Show)
 
@@ -99,8 +113,8 @@ instance A.FromJSON FnInfo where
         results <- o A..: "results" >>= mapM parseParamFull
         FnInfo
             <$> o A..: "name"
-            <*> pure (map (\(n, t, _) -> (n, t)) params)
-            <*> pure (map (\(n, t, _) -> (n, t)) results)
+            <*> pure (map (\(n, t, _, _) -> (n, t)) params)
+            <*> pure (map (\(n, t, _, _) -> (n, t)) results)
             <*> o A..:? "variadic" A..!= False
             <*> o A..: "effect"
             <*> o A..:? "recvType" A..!= ""
@@ -108,14 +122,20 @@ instance A.FromJSON FnInfo where
             <*> o A..:? "isField" A..!= False
             <*> o A..:? "isFieldSet" A..!= False
             <*> o A..:? "isPkgVar" A..!= False
-            <*> pure (map (\(_, _, s) -> s) params)
-            <*> pure (map (\(_, _, s) -> s) results)
+            <*> pure (map (\(_, _, s, _) -> s) params)
+            <*> pure (map (\(_, _, s, _) -> s) results)
+            <*> pure (map (\(_, _, _, q) -> q) params)
+            <*> pure (map (\(_, _, _, q) -> q) results)
       where
         parseParamFull = A.withObject "param" $ \o -> do
             n <- o A..:? "name" A..!= ""
             t <- o A..: "type"
             s <- o A..:? "skyType" A..!= ""
-            return (n, t, s)
+            -- v0.17 C17b — qualified opaque marker.
+            -- Inspector emits this for opaque named types only;
+            -- absent for basic-aliases and built-ins.
+            q <- o A..:? "skyTypeQualified" A..!= ""
+            return (n, t, s, q)
 
 
 instance A.FromJSON PkgInfo where
@@ -394,25 +414,43 @@ emitKernelJson moduleName kernelName pkg =
 -- `Pkg.fn ()` (unit applied), matching the existing convention.
 wrapperSkyType :: FnInfo -> String
 wrapperSkyType fn =
-    -- Per-param / per-result Sky-side override from the inspector
-    -- (e.g. CheckoutSessionStatus -> string). Length matches
-    -- _fnParams / _fnResults; "" means use the bare Go type.
-    let resolveSky goT skyOverride
-            | null skyOverride = goTypeToSky goT
-            | otherwise        = goTypeToSky skyOverride
+    -- Per-param / per-result Sky-side override from the inspector.
+    -- Precedence (highest first):
+    --   1. skyTypeQualified — opaque distinctness marker
+    --      (v0.17 C17b — e.g. @*Customer\@github.com/stripe/stripe-go/v84@)
+    --   2. skyType        — basic-alias collapse
+    --      (e.g. CheckoutSessionStatus -> string)
+    --   3. bare Go type   — via 'goTypeToSky'.
+    -- Length matches _fnParams / _fnResults; "" at each tier means
+    -- fall through to the next.
+    let resolveSky goT skyOverride qualOverride
+            -- v0.17 C17b — qualified marker carries Go-container
+            -- prefix(es) (e.g. @[]*Customer\@pkg.path@). Route
+            -- through 'goTypeToSky' so '[]' / 'map[string]' / '*'
+            -- translate to Sky shape (@List@ / @Dict String@ /
+            -- drop-star).  goTypeToSky preserves '\@pkgPath'
+            -- suffixes verbatim — stripPkg is gated to skip when
+            -- the name carries an '\@'.
+            | not (null qualOverride) = goTypeToSky qualOverride
+            | not (null skyOverride)  = goTypeToSky skyOverride
+            | otherwise               = goTypeToSky goT
         paramOverrides =
             _fnParamSkyTypes fn ++ repeat ""
         resultOverrides =
             _fnResultSkyTypes fn ++ repeat ""
+        paramQualified =
+            _fnParamSkyQualified fn ++ repeat ""
+        resultQualified =
+            _fnResultSkyQualified fn ++ repeat ""
         paramSig = if null (_fnParams fn)
             then "()"
             else intercalate " -> "
-                    (zipWith (\(_, t) sk -> resolveSky t sk)
-                        (_fnParams fn) paramOverrides)
+                    (zipWith3 (\(_, t) sk q -> resolveSky t sk q)
+                        (_fnParams fn) paramOverrides paramQualified)
         results = _fnResults fn
-        zippedResults = zip results resultOverrides
-        nonErr = [ ((n, t), sk) | ((n, t), sk) <- zippedResults, t /= "error" ]
-        skyOf ((_, t), sk) = resolveSky t sk
+        zippedResults = zip3 results resultOverrides resultQualified
+        nonErr = [ ((n, t), sk, q) | ((n, t), sk, q) <- zippedResults, t /= "error" ]
+        skyOf ((_, t), sk, q) = resolveSky t sk q
         innerOk = case (results, nonErr) of
             ([], _)               -> "()"
             ([(_, "error")], _)   -> "()"
@@ -1779,7 +1817,14 @@ goTypeToSky t
         "struct{}"    -> "()"
         _         -> stripPkg t
   where
-    stripPkg = reverse . takeWhile (/= '.') . reverse
+    -- v0.17 C17b — qualified opaque markers carry the package
+    -- path in their NAME (e.g. @Customer\@github.com/stripe/...@).
+    -- Skip dot-stripping when '@' is present so the qualifier
+    -- reaches parseFty intact; the FfiTypeResolve layer splits
+    -- on '@' to mint distinct opaque TType homes per package.
+    stripPkg s
+        | '@' `elem` s = s
+        | otherwise    = reverse . takeWhile (/= '.') . reverse $ s
 
     -- Multi-word Sky types (`List X`, `Dict String V`) need parens
     -- when nested inside another constructor: `List (List X)`,

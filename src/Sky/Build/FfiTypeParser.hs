@@ -17,7 +17,17 @@
 -- > app    := atom atom*
 -- > atom   := '(' inner ')' | identifier
 -- > inner  := type (',' type)*       -- tuple, including 'unit' when empty
--- > identifier := lowercase | uppercase
+-- > identifier := lowercase | uppercase ('@' pkgpath)?
+-- > pkgpath := [A-Za-z0-9_./-]+
+--
+-- v0.17 C17b — qualified opaque names. An uppercase identifier
+-- may be followed by an '@pkgPath' suffix carrying the producing
+-- Go package's import path (e.g.
+-- @Customer\@github.com/stripe/stripe-go/v84@). The parser keeps the
+-- full string inside 'FtyApp' so the AST shape stays byte-stable;
+-- 'Sky.Build.FfiTypeResolve.ftyToType' splits on '@' to emit a
+-- canonical 'TType' whose home carries the package path, preserving
+-- opaque distinctness across the FFI surface (Cause G).
 --
 -- Application is left-associative (matches Elm/Sky surface syntax).
 -- Arrow is right-associative.
@@ -98,10 +108,38 @@ lex' = go . dropWhile isSpace
     go ('-':'>':rest) = (TArrow :) <$> go (dropWhile isSpace rest)
     go cs@(c:_) | isAlpha c || c == '_' =
         let (ident, rest) = span identChar cs
-        in (TIdent ident :) <$> go (dropWhile isSpace rest)
+            -- v0.17 C17b — qualified opaque suffix.
+            -- After a bare identifier, an '@' followed by package-
+            -- path characters forms one TIdent carrying the
+            -- qualified marker.  Path char set:
+            -- alphanumeric / '_' / '.' / '/' / '-'.  Lower-case
+            -- identifiers (type variables) never carry '@'; only
+            -- the inspector's qualified opaque markers do.
+            (qualified, rest') = case rest of
+                '@':more
+                    | not (null more) && pathStart (head more) ->
+                        let (pkg, after) = span pathChar more
+                        in  (ident ++ "@" ++ pkg, after)
+                _ -> (ident, rest)
+        in (TIdent qualified :) <$> go (dropWhile isSpace rest')
     go _ = Nothing
 
     identChar c = isAlphaNum c || c == '_'
+
+    -- v0.17 C17b — qualified-suffix char set.
+    -- Tight superset of Go package-path syntax (e.g.
+    -- @github.com/stripe/stripe-go/v84@) plus dashes for hyphenated
+    -- vanity hosts.  Excludes whitespace + arrow + paren + comma so
+    -- the surrounding grammar still partitions cleanly.
+    pathChar :: Char -> Bool
+    pathChar c = isAlphaNum c || c == '_' || c == '.'
+              || c == '/' || c == '-'
+    -- First-char gate: rejects '@' followed by whitespace / paren /
+    -- arrow so an isolated '@' (unlikely but defensive) doesn't
+    -- swallow the rest of the type.
+    pathStart :: Char -> Bool
+    pathStart c = isAlpha c || c == '_' || c == '.'
+               || c == '/' || c == '-'
 
 
 -- ──────────────────────────────────────────────────────────────────

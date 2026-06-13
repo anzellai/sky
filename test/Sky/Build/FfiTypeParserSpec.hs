@@ -138,3 +138,64 @@ spec = do
                 -- ^ this is "valid" — partial application of Result
                 -- to one type arg. The producer never emits this
                 -- shape, but the parser's grammar accepts it.
+
+        -- ── v0.17 C17b — qualified opaque marker regressions ──
+        --
+        -- The inspector now emits `Name@pkgPath` for opaque named
+        -- types (Stripe / AWS / Firestore / etc).  These must lex
+        -- as one TIdent so the parser can hand them downstream to
+        -- 'Sky.Build.FfiTypeResolve.ftyToType', which splits on '@'
+        -- to mint distinct opaque homes per package.
+
+        it "C17b — parses single qualified opaque token" $
+            parseFty "Customer@github.com/stripe/stripe-go/v84"
+                `shouldBe`
+                    Just (opaque "Customer@github.com/stripe/stripe-go/v84")
+
+        it "C17b — qualified opaque inside Result wrap" $
+            parseFty "() -> Result Error Customer@github.com/stripe/stripe-go/v84"
+                `shouldBe`
+                    Just (FtyArrow unit
+                            (result
+                                (opaque "Customer@github.com/stripe/stripe-go/v84")))
+
+        it "C17b — qualified opaque inside List" $
+            parseFty "() -> Result Error (List Customer@github.com/stripe/stripe-go/v84)"
+                `shouldBe`
+                    Just (FtyArrow unit
+                            (result
+                                (list
+                                    (opaque "Customer@github.com/stripe/stripe-go/v84"))))
+
+        it "C17b — qualified opaque as function param" $
+            parseFty "Customer@github.com/stripe/stripe-go/v84 -> Result Error String"
+                `shouldBe`
+                    Just (FtyArrow
+                            (opaque "Customer@github.com/stripe/stripe-go/v84")
+                            (result str))
+
+        it "C17b — two qualified opaque types stay distinct" $ do
+            -- Different package paths → different FtyApp names →
+            -- downstream ftyToType mints distinct TType homes.
+            parseFty "Customer@github.com/stripe/stripe-go/v84 -> Result Error Customer@cloud.google.com/firestore"
+                `shouldBe`
+                    Just (FtyArrow
+                            (opaque "Customer@github.com/stripe/stripe-go/v84")
+                            (result
+                                (opaque "Customer@cloud.google.com/firestore")))
+
+        it "C17b — unqualified opaque still works (backwards compat)" $
+            -- Pre-C17a kernel.json files have no '@' suffix.  The
+            -- parser must still accept the legacy shape; downstream
+            -- ftyToType falls back to the 'Value' collapse for these.
+            parseFty "() -> Result Error Customer"
+                `shouldBe`
+                    Just (FtyArrow unit (result (opaque "Customer")))
+
+        it "C17b — qualified path with dashes (vanity host)" $
+            -- e.g. github.com/some-org/some-pkg
+            parseFty "Widget@github.com/some-org/some-pkg-v2 -> Result Error Int"
+                `shouldBe`
+                    Just (FtyArrow
+                            (opaque "Widget@github.com/some-org/some-pkg-v2")
+                            (result int_))
