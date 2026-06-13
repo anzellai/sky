@@ -7048,7 +7048,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- coercion bridges `[]any` → `[]Mod_Name` via
     -- `rt.AsListT[Mod_Name]` (coerceArg's stripSlice arm) and
     -- `Mod_Name` ↔ `any` via `rt.Coerce`.
-    T.TType home name _ ->
+    T.TType home name typeArgs ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
                        then ""
@@ -7093,13 +7093,46 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                                             ] of
                                        [u] -> Just u
                                        _   -> Nothing
+            -- v0.17 C14 — typed Std.Ui call-site emission (Cause C).
+            -- When the (home, name) pair carries a C13 dual-alias
+            -- (`<base>_T[T1 any] = rt.SkyADT`) AND every type arg
+            -- renders to a concrete Go type (NOT bare "any"), emit
+            -- the typed sibling form `<base>_T[<args>]`.  Otherwise
+            -- fall through to the existing bare-base path.
+            --
+            -- The dual-alias target set ships closed to Std.Ui's
+            -- Element / Attribute (the proven C13 surface).  Wider
+            -- coverage (Std.Html.Html etc.) is gated on future ticks
+            -- once probe-C confirms no cross-module regressions.
+            hasC14Dual = (modStr, name) `elem`
+                [ ("Std.Ui", "Element")
+                , ("Std.Ui", "Attribute")
+                ]
+            -- v0.17 C14 — reject TVars at the SKY level, not the
+            -- post-render level.  A TVar that's mapped to "T1" via
+            -- the `numbered` registry still RENDERS as "T1" which
+            -- looks "concrete" but is a Go type-parameter name —
+            -- emitting `Std_Ui_Element_T[T1]` from a kernel sig
+            -- forces every call site to infer T1, and Go can't.
+            -- Only flip when every arg is a real concrete TType /
+            -- TUnit / TLambda — never a bare TVar.
+            isSkyConcrete (T.TVar _) = False
+            isSkyConcrete _          = True
+            renderedArgs = map go typeArgs
+            concreteArgs = not (null typeArgs)
+                        && all isSkyConcrete typeArgs
+                        && all (\s -> s /= "any" && s /= "") renderedArgs
+            c14Emit = base ++ "_T[" ++ intercalate_ ", " renderedArgs ++ "]"
         in case matches of
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing   -> case unionRecovery of
                     Just u  -> u
-                    Nothing -> if isRuntimeOnly then "any" else base
+                    Nothing
+                        | isRuntimeOnly                 -> "any"
+                        | hasC14Dual && concreteArgs    -> c14Emit
+                        | otherwise                     -> base
     T.TAlias home name typeArgs aliasType ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
