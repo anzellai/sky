@@ -7541,8 +7541,19 @@ tvarsInEmitted ty = case ty of
 -- that have NEITHER the live @globalCgEnv@ NOR an explicit alias
 -- set in scope.  Falls back to @any@ for any user-defined type —
 -- the loss is a typing opportunity, not soundness.
+-- | v0.17 Cause H step 2d — bounded variant of safeReturnTypePure.
+-- Same fuel + visited-set shape as solvedTypeToGoBounded /
+-- safeReturnTypeFullBounded; preserves the public single-arg
+-- signature so every call site continues to work unchanged.
 safeReturnTypePure :: T.Type -> String
-safeReturnTypePure t = case t of
+safeReturnTypePure = safeReturnTypePureBounded 64 Set.empty
+
+
+safeReturnTypePureBounded :: Int -> Set.Set String -> T.Type -> String
+safeReturnTypePureBounded fuel _ _ | fuel <= 0 = "any"
+safeReturnTypePureBounded fuel seen t =
+    let rec = safeReturnTypePureBounded (fuel - 1) seen
+    in case t of
     -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
     -- generic-instantiation mismatch at the return wrap.
     T.TUnit                       -> "struct{}"
@@ -7552,25 +7563,25 @@ safeReturnTypePure t = case t of
     T.TType _ "String" []         -> "string"
     T.TType _ "Char" []           -> "rune"
     T.TType _ "Bytes" []          -> "[]byte"
-    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ safeReturnTypePure e
-                                     ++ ", " ++ safeReturnTypePure a ++ "]"
-    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ safeReturnTypePure x ++ "]"
-    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ safeReturnTypePure e
-                                     ++ ", " ++ safeReturnTypePure a ++ "]"
+    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
+                                     ++ ", " ++ rec a ++ "]"
+    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
+    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
+                                     ++ ", " ++ rec a ++ "]"
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   [elem]     ->
-        let inner = safeReturnTypePure elem
+        let inner = rec elem
         in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   [_, v]     ->
-        let inner = safeReturnTypePure v
+        let inner = rec v
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
     -- v0.17 Cause H — typed tuples
     T.TTuple a b extras ->
-        let renderedAll = map safeReturnTypePure (a : b : extras)
+        let renderedAll = map rec (a : b : extras)
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
@@ -7602,8 +7613,25 @@ safeReturnTypePure t = case t of
     -- aliases (need _R suffix) from ADTs (use name directly). Fall
     -- back to any for all user types. The env-aware safeReturnTypeFull
     -- handles these correctly for annotation-based param types.
-    T.TAlias _ _ _ (T.Filled inner)  -> safeReturnTypePure inner
-    T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnTypePure inner
+    --
+    -- v0.17 Cause H step 2d — TAlias inner recursion also gated by
+    -- the cycle visited-set so a self-referential alias body
+    -- (`type alias Tree a = { children : List (Tree a) }` shape)
+    -- doesn't blackhole the renderer.  The alias name keyed by
+    -- module-prefixed `base` mirrors solvedTypeToGoBounded /
+    -- safeReturnTypeFullBounded.
+    T.TAlias home name _ aliasType ->
+        let modStr = ModuleName.toString home
+            prefix = if null modStr || modStr == "Main"
+                       then ""
+                       else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+            base = prefix ++ name
+            cycleHit = Set.member base seen
+            recCycle = safeReturnTypePureBounded (fuel - 1) (Set.insert base seen)
+            innerType = case aliasType of
+                T.Filled  inner -> inner
+                T.Hoisted inner -> inner
+        in if cycleHit then "any" else recCycle innerType
     _ -> "any"
 
 
