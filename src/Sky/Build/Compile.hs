@@ -5914,8 +5914,19 @@ collectFreeTVars = nubOrd . go
 -- duplicates; each serves a distinct data-availability phase of the
 -- lowering pipeline.  See Cause J in
 -- @docs/v0.17-fully-typed-codegen-v5-plan.md@.
+-- | v0.17 Cause H step 2 — bounded variant of safeReturnTypeFull,
+-- analogue of `solvedTypeToGoBounded`.  Same fuel + visited-set
+-- shape; the top-level entry preserves the public single-arg
+-- signature so every call site continues to work unchanged.
 safeReturnTypeFull :: T.Type -> String
-safeReturnTypeFull t = case t of
+safeReturnTypeFull = safeReturnTypeFullBounded 64 Set.empty
+
+
+safeReturnTypeFullBounded :: Int -> Set.Set String -> T.Type -> String
+safeReturnTypeFullBounded fuel _ _ | fuel <= 0 = "any"
+safeReturnTypeFullBounded fuel seen t =
+    let rec = safeReturnTypeFullBounded (fuel - 1) seen
+    in case t of
     -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
     -- generic-instantiation mismatch at the return wrap.
     T.TUnit                       -> "struct{}"
@@ -5925,11 +5936,11 @@ safeReturnTypeFull t = case t of
     T.TType _ "String" []         -> "string"
     T.TType _ "Char" []           -> "rune"
     T.TType _ "Bytes" []          -> "[]byte"
-    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ safeReturnTypeFull e
-                                     ++ ", " ++ safeReturnTypeFull a ++ "]"
-    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ safeReturnTypeFull x ++ "]"
-    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ safeReturnTypeFull e
-                                     ++ ", " ++ safeReturnTypeFull a ++ "]"
+    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
+                                     ++ ", " ++ rec a ++ "]"
+    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
+    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
+                                     ++ ", " ++ rec a ++ "]"
     -- T5: list/dict/set typed as concrete Go types. User-code audit
     -- required in parallel — when a function annotated to return
     -- `Dict String String` actually holds mixed-type values (e.g.
@@ -5938,11 +5949,11 @@ safeReturnTypeFull t = case t of
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   [elem]     ->
-        let inner = safeReturnTypeFull elem
+        let inner = rec elem
         in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   [_, v]     ->
-        let inner = safeReturnTypeFull v
+        let inner = rec v
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
@@ -5955,7 +5966,7 @@ safeReturnTypeFull t = case t of
     -- all element types are universally-scoped Go primitives so
     -- the safeReturnTypeFull-rendered sig matches typeStrWithAliasesReg.
     T.TTuple a b extras ->
-        let renderedAll = map safeReturnTypeFull (a : b : extras)
+        let renderedAll = map rec (a : b : extras)
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
@@ -6063,6 +6074,9 @@ safeReturnTypeFull t = case t of
                        then ""
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
+            -- v0.17 Cause H step 2 — same cycle guard as solvedTypeToGo.
+            cycleHit = Set.member base seen
+            recCycle = safeReturnTypeFullBounded (fuel - 1) (Set.insert base seen)
             env = getCgEnv
             allAliases = Rec._cg_recordAliases env
             qualifiedCandidates =
@@ -6083,7 +6097,9 @@ safeReturnTypeFull t = case t of
             innerType = case aliasType of
                 T.Filled  inner -> inner
                 T.Hoisted inner -> inner
-        in case matches of
+        in if cycleHit
+            then "any"
+            else case matches of
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
                 Just goTy -> goTy
@@ -6092,9 +6108,9 @@ safeReturnTypeFull t = case t of
                     -- Primitives / containers live inside the alias body
                     -- (e.g. `type alias Id = String`). Inline them.
                     | otherwise     -> case innerType of
-                        T.TType _ _ _ -> safeReturnTypeFull innerType
+                        T.TType _ _ _ -> recCycle innerType
                         T.TRecord{}   -> if null base then "any" else base
-                        _             -> safeReturnTypeFull innerType
+                        _             -> recCycle innerType
     -- Bare TRecord with known fields: match against the codegen env's
     -- record alias registry (field-set → alias name) and emit `_R`.
     -- HM often collapses an alias reference down to its underlying
