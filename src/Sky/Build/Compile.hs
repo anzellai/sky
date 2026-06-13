@@ -5184,6 +5184,98 @@ isTypedTupleElement s =
     isEmittableGoType s && not (containsGenericTypeParam s)
 
 
+-- | v0.17 Strategy-C PR 4 (smart) — SHARED decision used by all six
+-- tuple-emission sites.  Operates on the structural 'T.Type' (NOT a
+-- per-renderer rendered string), then derives the answer from the
+-- env-free 'GoType.GoType' lifted via 'solvedTypeToGoTyped'.
+--
+-- Why structural?  The legacy primitive-only whitelist ran INSIDE
+-- each of the six bounded String renderers, so the decision lived
+-- inline in each renderer's tuple arm.  Two failure modes followed:
+--
+--   1. ASYMMETRY — different renderers render the same tuple
+--      element differently (env-aware @Foo_R@ vs env-free @any@ vs
+--      tvar-substituted @T1@), so the per-renderer
+--      @all isPrimitive renderedAll@ checks gave DIFFERENT answers
+--      for the SAME T.Type.  Result: producer emits
+--      @[]rt.T2[A,B]@ but consumer slot emits @[]rt.SkyTuple2@,
+--      Go rejects the assignment because @T2[A,B]@ and
+--      @T2[any,any]@ are distinct generic instantiations.
+--
+--   2. CYCLE — multi-site widening let each renderer's @rec@
+--      explore RICHER tuple element strings through sibling
+--      renderers (cross-renderer recursion via @aliasGenericArgs@).
+--      The cross-thunk chain blackholed at @<<loop>>@ on
+--      pathologically-recursive parametric aliases like
+--      Std.Ui.Element.
+--
+-- Both failure modes evaporate when all sites share the SAME
+-- T.Type-keyed decision: per-renderer rendering choices don't
+-- affect the answer, and the decision path goes through the
+-- structural 'GoType.mapSkyTypeToGo' / 'isTypedGoElement' chain
+-- (no legacy renderer callbacks, so no cross-renderer thunks).
+--
+-- Conservative semantics — TVars, generic-type-param identifiers
+-- (T1, T2), GoAny, and GoRaw escape hatches all reject typed
+-- emission, matching the legacy primitive-only whitelist's intent.
+-- Concrete element shapes pass.  This widens emission from the
+-- legacy 10-primitive set to ANY concrete-element tuple while
+-- staying conservative around the parametric-context shapes that
+-- the legacy whitelist refused.
+shouldTypedTuple :: T.Type -> Bool
+shouldTypedTuple ty = case ty of
+    T.TTuple a b extras ->
+        let elements = a : b : extras
+            -- Reject if any element is a Sky TVar — keeps parity
+            -- with the legacy whitelist on parametric-context
+            -- tuples whose Go renderings would be T-vars or @any@.
+            noSkyTVars = not (any isSkyTVar elements)
+            -- Lift each element via solvedTypeToGoTyped + walk the
+            -- GoType structure; reject if any branch hits a shape
+            -- the typed-tuple lowering can't safely consume.
+            allTyped = all (isTypedGoElement . solvedTypeToGoTyped) elements
+        in noSkyTVars && not (null elements) && allTyped
+    _ -> False
+  where
+    isSkyTVar :: T.Type -> Bool
+    isSkyTVar (T.TVar _) = True
+    isSkyTVar _          = False
+
+
+-- | Structural predicate on 'GoType' — TRUE when this Go shape is
+-- safe to embed as an element of a typed @rt.T2[...]@ / @rt.T3[...]@
+-- slot.  Used by 'shouldTypedTuple'; defined separately so the
+-- recursion structure is explicit (GoStruct + GoTuple recurse on
+-- nested element types, leaf shapes decide directly).
+--
+-- Conservative rejects:
+--
+--   * 'GoType.GoAny' — degrade-to-@any@ marker; emitting a typed
+--     tuple containing @any@ would re-enter the legacy
+--     @T2[any,any]@ alias asymmetry.
+--   * 'GoType.GoTypeVar' — bare Go type-parameter ident @T1@/@T2@
+--     valid only inside a parametric Go function body; the
+--     bounded sibling renderers (non-parametric call sites) would
+--     reject it at @go build@.  substituteTVarsToGo's parametric
+--     context historically used the primitive whitelist for the
+--     same reason — keep that.
+--   * 'GoType.GoRaw' — verbatim Go strings carry escape-hatch
+--     content the structural pipeline hasn't validated.  Reject
+--     defensively until the GoRaw count is driven to zero
+--     post-Strategy-C.
+isTypedGoElement :: GoType.GoType -> Bool
+isTypedGoElement gt = case gt of
+    GoType.GoAny           -> False
+    GoType.GoTypeVar _     -> False
+    GoType.GoRaw _         -> False
+    GoType.GoBare _        -> True
+    GoType.GoUnit          -> True
+    GoType.GoFunc _ _      -> True
+    GoType.GoNamed _ args  -> all isTypedGoElement args
+    GoType.GoStruct fields -> all (isTypedGoElement . snd) fields
+    GoType.GoTuple elems   -> all isTypedGoElement elems
+
+
 -- | v0.13 typed lowerer: convert a `GoBlock` (IIFE returning `any`)
 -- into a `GoTypedBlock` (IIFE returning the concrete `retType`) when
 -- it's SAFE to do so.  "Safe" means:
@@ -15955,6 +16047,21 @@ solvedTypeToGoBounded fuel seen ty =
         -- same instantiation, so list/dict/tuple containers using
         -- this rendering accept values from
         -- `typeStrWithAliasesReg`-rendered slots.
+        --
+        -- v0.17 Strategy-C PR 4 attempts (THREE: REVERTED) —
+        --   1. Single-site widen here -> 25/26 example sweep
+        --      (26-ui-showcase asymmetry).
+        --   2. Five-site widen -> probe-sweep <<loop>>.
+        --   3. Smart shared `shouldTypedTuple` across all 6 sites
+        --      (structural T.Type-keyed decision via the GoType
+        --      ADT, eliminating both asymmetry AND cycle by
+        --      construction) -> 23/26 example sweep, revealing
+        --      a foundation gap: `Sky.Generate.Go.Type.mapSkyTypeToGo`
+        --      and Compile.hs `solvedTypeToGo` diverge for Dict
+        --      / user-types / record aliases.  C8+ (MappingContext
+        --      env-widening) is the prerequisite.
+        -- See @docs/v0.17-cause-h-step4-blocker.md@ for the full
+        -- diagnosis.
         let renderedAll = map rec (a : b : rest)
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
