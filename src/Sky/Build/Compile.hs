@@ -8953,56 +8953,63 @@ exprToGo (A.At _ expr) = case expr of
 
 -- v0.17 Cause H — typed tuple literal helpers.  Called from
 -- `exprToGoExpectGo`'s Can.Tuple arm when the slot's Go type is
--- a `rt.T2[A,B]` / `rt.T3[A,B,C]` generic instantiation.  Parse
--- the type-args from `goRendering`, recurse with typed expected
--- types per element, and emit the literal carrying the same
--- instantiation so the value's static Go type matches the slot.
+-- a `rt.T2[A,B]` / `rt.T3[A,B,C]` generic instantiation.
+--
+-- v0.17 Strategy-C PR 3 — element-type extraction is now structural:
+-- @tupleElementSlots@ pulls each element's 'T.Type' out of the
+-- 'Can.Tuple' expression's region via 'inferExprType', then lifts to
+-- a 'GoType.GoType' via 'solvedTypeToGoTyped' and accesses the
+-- structural args via 'GoType.goTypeArgs'.  Pre-PR-3 the same
+-- extraction went through the lossy String seam @parseTupleTypeArgs@
+-- (now deleted) which re-tokenised the rendered @"rt.T2[string,int]"@
+-- form.  The structural path is closure-free — the value-side
+-- @<<loop>>@ blackhole that Step-4 widening kept tripping over (see
+-- @docs/v0.17-cause-h-step4-blocker.md@) no longer has its first
+-- seam, so the round-trip can be closed end-to-end by PR 5 + 6.
 emitTypedTuple2 :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
 emitTypedTuple2 goRendering a b =
-    case parseTupleTypeArgs goRendering of
-        Just [tA, tB] -> GoIr.GoStructLit goRendering
-            [("V0", exprToGoExpectGo tA a), ("V1", exprToGoExpectGo tB b)]
+    case tupleElementSlots a b [] of
+        Just [tA, tB] ->
+            let strA = GoType.renderGoType GoType.defaultRenderEnv tA
+                strB = GoType.renderGoType GoType.defaultRenderEnv tB
+            in GoIr.GoStructLit goRendering
+                [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b)]
         _ -> GoIr.GoStructLit "rt.SkyTuple2"
             [("V0", exprToGo a), ("V1", exprToGo b)]
 
 emitTypedTuple3 :: String -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
 emitTypedTuple3 goRendering a b c =
-    case parseTupleTypeArgs goRendering of
-        Just [tA, tB, tC] -> GoIr.GoStructLit goRendering
-            [("V0", exprToGoExpectGo tA a), ("V1", exprToGoExpectGo tB b),
-             ("V2", exprToGoExpectGo tC c)]
+    case tupleElementSlots a b [c] of
+        Just [tA, tB, tC] ->
+            let strA = GoType.renderGoType GoType.defaultRenderEnv tA
+                strB = GoType.renderGoType GoType.defaultRenderEnv tB
+                strC = GoType.renderGoType GoType.defaultRenderEnv tC
+            in GoIr.GoStructLit goRendering
+                [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b),
+                 ("V2", exprToGoExpectGo strC c)]
         _ -> GoIr.GoStructLit "rt.SkyTuple3"
             [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
 
--- Parse `rt.T2[string, int]` → Just ["string", "int"].  Bracket-
--- depth aware so nested generics like `rt.T2[rt.SkyMaybe[int], string]`
--- split correctly.
-parseTupleTypeArgs :: String -> Maybe [String]
-parseTupleTypeArgs s = case break (== '[') s of
-    (_, '[':rest) -> case extractBracketed rest of
-        Just inner -> Just (splitTopLevelArgs inner)
-        Nothing -> Nothing
-    _ -> Nothing
-  where
-    extractBracketed = go 1 []
-      where
-        go :: Int -> String -> String -> Maybe String
-        go 0 acc _      = Just (reverse (drop 1 acc))
-        go _ _   []     = Nothing
-        go n acc (c:cs) = case c of
-            '[' -> go (n + 1) (c : acc) cs
-            ']' | n == 1 -> Just (reverse acc)
-                | otherwise -> go (n - 1) (c : acc) cs
-            _   -> go n (c : acc) cs
-    splitTopLevelArgs str = reverse (map (dropWhile (== ' ')) (splitAcc 0 [] [] str))
-      where
-        splitAcc :: Int -> String -> [String] -> String -> [String]
-        splitAcc _ cur done []          = reverse cur : done
-        splitAcc 0 cur done (',' : rest) = splitAcc 0 [] (reverse cur : done) rest
-        splitAcc n cur done (c : rest)
-            | c == '['  = splitAcc (n + 1) (c : cur) done rest
-            | c == ']'  = splitAcc (n - 1) (c : cur) done rest
-            | otherwise = splitAcc n (c : cur) done rest
+
+-- | v0.17 Strategy-C PR 3 — structural replacement for the legacy
+-- @parseTupleTypeArgs@ String splitter.
+--
+-- Walks each tuple element via 'inferExprType' against the in-scope
+-- 'Solve.SolvedTypes' (from @getCgEnv@), lifts each resolved
+-- 'T.Type' to a 'GoType.GoType' via 'solvedTypeToGoTyped'.  Returns
+-- 'Nothing' if ANY element's type couldn't be resolved — caller
+-- falls back to the untyped @rt.SkyTuple{2,3,N}@ alias emission, same
+-- as the legacy String-parse failure path.
+--
+-- The function is element-list-aware (not tuple-arity-bound) so the
+-- same helper backs 2-, 3-, and arbitrary-arity emitters; callers
+-- pattern-match on the returned list shape.
+tupleElementSlots :: Can.Expr -> Can.Expr -> [Can.Expr] -> Maybe [GoType.GoType]
+tupleElementSlots a b extras =
+    let solved = Rec._cg_solvedTypes getCgEnv
+        elements = a : b : extras
+        slots = map (fmap solvedTypeToGoTyped . inferExprType solved) elements
+    in sequence slots
 
 
 -- ═══════════════════════════════════════════════════════════
