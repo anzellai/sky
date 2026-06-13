@@ -7102,18 +7102,38 @@ typeStrWithAliasesReg
     -> [(String, String)]
     -> T.Type
     -> String
-typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
+typeStrWithAliasesReg recAliases fieldIdx tvarMap ty =
+    typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap 64 Set.empty ty
+
+
+-- | v0.17 Cause H step 2c — bounded recursion, same shape as the
+-- guard in solvedTypeToGoBounded / safeReturnTypeFullBounded /
+-- safeReturnTypeBootstrap.  Fuel cap (64) + visited-set keyed on
+-- the qualified type name at the TAlias arm.  Top-level entry
+-- preserves the public 4-arg signature; for any non-pathological
+-- input the rendered string is byte-identical with the pre-guard
+-- renderer.
+typeStrWithAliasesRegBounded
+    :: Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> Int
+    -> Set.Set String
+    -> T.Type
+    -> String
+typeStrWithAliasesRegBounded _ _ _ fuel _ _ | fuel <= 0 = "any"
+typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty of
     T.TVar name -> case lookup name tvarMap of
         Just gname -> gname
         Nothing    -> "any"
     T.TLambda from to ->
-        "func(" ++ go from ++ ") " ++ go to
+        "func(" ++ rec from ++ ") " ++ rec to
     T.TType _ "Result" [e, a] ->
-        "rt.SkyResult[" ++ go e ++ ", " ++ go a ++ "]"
+        "rt.SkyResult[" ++ rec e ++ ", " ++ rec a ++ "]"
     T.TType _ "Maybe" [x] ->
-        "rt.SkyMaybe[" ++ go x ++ "]"
+        "rt.SkyMaybe[" ++ rec x ++ "]"
     T.TType _ "Task" [e, a] ->
-        "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
+        "rt.SkyTask[" ++ rec e ++ ", " ++ rec a ++ "]"
     -- List with a known element type: emit `[]T` so sig is specific.
     -- Body-constructed `[]any{...}` coerces via rt.Coerce[[]T] (reflect-
     -- based element walk) and rt.AsListT[T] at call boundaries, both of
@@ -7121,12 +7141,12 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- themselves map to `any` (TVars, runtime-only abstractions) fall
     -- back to `[]any` to avoid emitting `[]any` inside `[]any`.
     T.TType _ "List" [elem] ->
-        let inner = go elem
+        let inner = rec elem
         in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List" _ -> "[]any"
     -- Dict String V similarly emits `map[string]V` when V is concrete.
     T.TType _ "Dict" [_k, v] ->
-        let inner = go v
+        let inner = rec v
         in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set"  _ -> "map[any]bool"
@@ -7142,10 +7162,10 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- `any`-typed Cmd values continue to compile.
     T.TType _ "Cmd" [arg]
         | (case arg of { T.TVar _ -> False; _ -> True }) ->
-            "rt.SkyCmd_T[" ++ go arg ++ "]"
+            "rt.SkyCmd_T[" ++ rec arg ++ "]"
     T.TType _ "Sub" [arg]
         | (case arg of { T.TVar _ -> False; _ -> True }) ->
-            "rt.SkySub_T[" ++ go arg ++ "]"
+            "rt.SkySub_T[" ++ rec arg ++ "]"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
     -- Std.Html.Html: htmlType in the constraint generator carries an
@@ -7167,7 +7187,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     T.TType _ "Html" [arg]
         | (case arg of { T.TVar _ -> False; _ -> True })
         , isNothing (unsafePerformIO (readIORef globalCurrentDepModule)) ->
-            "Std_Html_Html_T[" ++ go arg ++ "]"
+            "Std_Html_Html_T[" ++ rec arg ++ "]"
     T.TType _ "Html" _ -> "Std_Html_Html"
     -- v0.17 Cause H — typed tuple emission.  When every element
     -- renders to a concrete Go type (NOT TVar / "any"), emit the
@@ -7181,7 +7201,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- stay bare — SkyTupleN is a slice-backed struct without a
     -- parametric variant.
     T.TTuple a b extras ->
-        let renderedAll = map go (a : b : extras)
+        let renderedAll = map rec (a : b : extras)
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
@@ -7290,7 +7310,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
             -- TUnit / TLambda — never a bare TVar.
             isSkyConcrete (T.TVar _) = False
             isSkyConcrete _          = True
-            renderedArgs = map go typeArgs
+            renderedArgs = map rec typeArgs
             concreteArgs = not (null typeArgs)
                         && all isSkyConcrete typeArgs
                         && all (\s -> s /= "any" && s /= "") renderedArgs
@@ -7311,6 +7331,14 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                        then ""
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
+            -- v0.17 Cause H step 2c — cycle guard.  Mirrors the
+            -- TAlias-arm guard in solvedTypeToGoBounded; same
+            -- semantics: re-entering an alias whose name is already
+            -- on the recursion path renders "any" instead of looping.
+            cycleHit = Set.member base seen
+            recCycle = typeStrWithAliasesRegBounded
+                          recAliases fieldIdx tvarMap
+                          (fuel - 1) (Set.insert base seen)
             qualifiedCandidates =
                 [ p ++ "_" ++ name
                 | a <- Set.toList recAliases
@@ -7335,9 +7363,11 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                 if null typeArgs
                     then ""
                     else "[" ++ intercalate_ ", "
-                              [ go argTy | (_, argTy) <- typeArgs ]
+                              [ recCycle argTy | (_, argTy) <- typeArgs ]
                           ++ "]"
-        in case matches of
+        in if cycleHit
+            then "any"
+            else case matches of
             (m:_) -> m ++ "_R" ++ typeArgSuffix
             _     -> case runtimeTyped of
                 Just goTy -> goTy
@@ -7345,7 +7375,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                     | isRuntimeOnly -> "any"
                     | otherwise     -> case inner of
                         T.TRecord{} -> if null base then "any" else base ++ typeArgSuffix
-                        _           -> go inner
+                        _           -> recCycle inner
     -- Bare anonymous record (HM collapses alias-of-record after row
     -- unification): match its field set against the codegen field-index
     -- registry. Without this, `mkJob id name = { id = ..., name = ... }`
@@ -7358,13 +7388,18 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                 case aliasGenericArgs aliasName fields of
                     Just (_, argTys) ->
                         aliasName ++ "_R[" ++
-                        intercalate_ ", " (map go argTys) ++
+                        intercalate_ ", " (map rec argTys) ++
                         "]"
                     Nothing -> aliasName ++ "_R"
             Nothing -> "any"
     _ -> safeReturnTypePure ty
   where
-    go = typeStrWithAliasesReg recAliases fieldIdx tvarMap
+    -- v0.17 Cause H step 2c — recurse with fuel decremented +
+    -- inherited seen-set.  The TAlias arm above overrides this
+    -- with `recCycle` to add its base name to seen.
+    rec :: T.Type -> String
+    rec = typeStrWithAliasesRegBounded
+              recAliases fieldIdx tvarMap (fuel - 1) seen
 
 
 -- | v0.15 Stage E — extract (alias-var ↦ actual-type) bindings from
