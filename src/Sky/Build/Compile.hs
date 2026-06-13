@@ -7040,6 +7040,13 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- empty home would otherwise render the bare `Html`, which go
     -- build rejects ("undefined: Html"). The ADT codegens non-generic
     -- (`= rt.SkyADT`), so the msg type arg is dropped.
+    --
+    -- v0.17 — extending C14 typed sibling to Html attempted + reverted.
+    -- Unlike Std.Ui's Element/Attribute (which never reach a dep-
+    -- module Go file in real apps), Std.Html.Html appears in dep
+    -- modules that don't have the entry-module's `Msg` ADT in scope.
+    -- A typed emission like `Std_Html_Html_T[Msg]` from a dep module
+    -- causes `undefined: Msg` at go build.  Bare collapse stays.
     T.TType _ "Html" _ -> "Std_Html_Html"
     -- v0.17 Cause H — typed tuples attempted + reverted.
     -- Naïve typed emission at sig slots (`rt.T2[string, int]`)
