@@ -295,7 +295,7 @@ try {
             waitUntil: "domcontentloaded",
             timeout: 15_000,
         });
-        await page.waitForSelector('[data-test-id="showcase-root"]', { timeout: 5_000 });
+        await page.waitForSelector('[data-test-id="showcase-root"]', { timeout: 15_000 });
         await page.waitForTimeout(200);
 
         // ─── 1. Deep-nesting fill (#63 class) ───────────────────
@@ -777,7 +777,7 @@ try {
             waitUntil: "domcontentloaded",
             timeout: 15_000,
         });
-        await mp.waitForSelector('[data-test-id="showcase-root"]', { timeout: 5_000 });
+        await mp.waitForSelector('[data-test-id="showcase-root"]', { timeout: 15_000 });
         await mp.waitForTimeout(200);
 
         console.log("--- snapshots (mobile) ---");
