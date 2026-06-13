@@ -195,8 +195,30 @@ data GoType
     | GoNamed String [GoType]     -- ^ @Module_Name@ or @rt.SkyList[T]@
     | GoStruct [(String, GoType)] -- ^ anonymous @struct{ Name T; ... }@
     | GoTypeVar String            -- ^ @T1@, @T2@ — Go type-parameter ident
+    | GoTuple [GoType]            -- ^ @rt.T2[A, B]@ / @rt.T3[A, B, C]@ / @rt.SkyTupleN@.
+                                  --   The 'renderTupleGeneric' policy gate on 'RenderEnv'
+                                  --   controls whether the generic instantiation OR the
+                                  --   back-compat alias (@rt.SkyTuple2 = T2[any, any]@) ships.
+                                  --   v0.17 Step 4 (Cause H) widens callers to emit
+                                  --   'GoTuple' for concrete-element shapes; tuples of
+                                  --   ≥4 elements always render as the slice-backed
+                                  --   non-parametric @rt.SkyTupleN@ irrespective of the
+                                  --   gate (no Go-side generic variant exists).
     | GoRaw String                -- ^ escape hatch — verbatim Go type string
     deriving (Eq, Show)
+
+
+-- | Structural accessor — return the type-argument list when 'GoType'
+-- carries one ('GoNamed', 'GoTuple'), 'Nothing' otherwise.
+--
+-- Replaces the lossy String-parsing seam @parseTupleTypeArgs@
+-- (currently at @Sky.Build.Compile@): consumers walking a 'GoType'
+-- now access the structural args directly without re-tokenising the
+-- rendered string.  See @docs/v0.17-cause-h-step4-blocker.md@.
+goTypeArgs :: GoType -> Maybe [GoType]
+goTypeArgs (GoNamed _ args) = Just args
+goTypeArgs (GoTuple args)   = Just args
+goTypeArgs _                = Nothing
 
 
 -- | Rendering policy switches.
@@ -270,6 +292,32 @@ renderGoType env (GoStruct fields)  =
   where
     renderField e (name, ty) = name ++ " " ++ renderGoType e ty ++ ";"
 renderGoType _   (GoTypeVar n)      = n
+renderGoType env (GoTuple args)     =
+    -- The legacy String renderers emit one of three forms depending
+    -- on arity + a primitive-only whitelist on every element string:
+    --   * 2-tuple, all elements pass the gate → @rt.T2[A, B]@
+    --   * 2-tuple, gate fails               → @rt.SkyTuple2@
+    --   * 3-tuple analogues                 → @rt.T3[...]@ / @rt.SkyTuple3@
+    --   * arity ≥ 4                         → @rt.SkyTupleN@
+    --
+    -- The C1 'GoTuple' carries the typed element list explicitly, so
+    -- the renderer no longer needs to re-tokenise.  Today the
+    -- 'renderTupleGeneric' policy gate is False (matches legacy
+    -- @typeToGo@ output — alias form for arity 2 / 3); once Cause-H
+    -- Step 4 lands across all consumers, callers will construct
+    -- 'GoTuple' only when they want the generic instantiation AND
+    -- flip the policy gate to True simultaneously.  Until then the
+    -- alias form ships verbatim.
+    case args of
+      [_, _]
+        | renderTupleGeneric env ->
+            "rt.T2[" ++ commaJoin (map (renderGoType env) args) ++ "]"
+        | otherwise -> "rt.SkyTuple2"
+      [_, _, _]
+        | renderTupleGeneric env ->
+            "rt.T3[" ++ commaJoin (map (renderGoType env) args) ++ "]"
+        | otherwise -> "rt.SkyTuple3"
+      _ -> "rt.SkyTupleN"
 renderGoType _   (GoRaw s)          = s
 
 
@@ -338,14 +386,18 @@ mapSkyTypeToGo ctx t = case t of
     T.TLambda from to ->
         GoFunc (mapSkyTypeToGo ctx from) (mapSkyTypeToGo ctx to)
 
-    T.TTuple _ _ [] ->
-        GoBare "rt.SkyTuple2"
-
-    T.TTuple _ _ [_] ->
-        GoBare "rt.SkyTuple3"
-
-    T.TTuple {} ->
-        GoBare "rt.SkyTupleN"
+    T.TTuple a b extras ->
+        -- v0.17 PR 1 — structural TTuple → GoTuple.  Pre-PR-1 every
+        -- arity dropped to a 'GoBare' alias ("rt.SkyTuple2" /
+        -- "rt.SkyTuple3" / "rt.SkyTupleN") because there was no
+        -- typed-element constructor.  The new 'GoTuple [GoType]'
+        -- preserves element types end-to-end; 'renderGoType' still
+        -- emits the alias form by default ('renderTupleGeneric'
+        -- gate = False, the today-runtime shape), so the C2 parity
+        -- property holds.  Cause-H Step 4 flips the gate per call
+        -- site once consumers consult 'goTypeArgs' instead of
+        -- 'parseTupleTypeArgs'.
+        GoTuple (map (mapSkyTypeToGo ctx) (a : b : extras))
 
     T.TRecord fields Nothing ->
         mapRecordType ctx fields

@@ -11,6 +11,7 @@ import Sky.Generate.Go.Type
     , mapSkyTypeToGo
     , renderGoType
     , typeToGo
+    , goTypeArgs
     )
 import qualified Sky.Type.Type as T
 import Sky.Sky.ModuleName (Canonical(..))
@@ -233,3 +234,115 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
                             ]
                         ]
             parity inner
+
+    -- ========================================================================
+    -- PR 1 — GoTuple constructor + goTypeArgs accessor
+    -- ========================================================================
+    --
+    -- 'GoTuple [GoType]' replaces the lossy 'GoBare "rt.SkyTuple2"'
+    -- shape from C2.  'goTypeArgs' is the structural replacement for
+    -- the String-parsing seam @parseTupleTypeArgs@ at
+    -- @Sky.Build.Compile@.  Cause-H Step 4 (consumer migration) flips
+    -- the 'renderTupleGeneric' policy gate per call site; until then
+    -- the renderer ships the alias form for byte parity with C2 +
+    -- 'typeToGo'.
+    describe "PR 1 — GoTuple + goTypeArgs (structural)" $ do
+        let env = defaultRenderEnv
+            genericEnv =
+                defaultRenderEnv { renderTupleGeneric = True }
+            bareHome = Canonical ""
+
+        it "renders 2-tuple as rt.SkyTuple2 under defaultRenderEnv" $
+            renderGoType env
+                (GoTuple [GoBare "int", GoBare "string"])
+                `shouldBe` "rt.SkyTuple2"
+
+        it "renders 3-tuple as rt.SkyTuple3 under defaultRenderEnv" $
+            renderGoType env
+                (GoTuple [GoBare "int", GoBare "string", GoBare "bool"])
+                `shouldBe` "rt.SkyTuple3"
+
+        it "renders N≥4 as rt.SkyTupleN under defaultRenderEnv" $
+            renderGoType env
+                (GoTuple
+                    [ GoBare "int"
+                    , GoBare "string"
+                    , GoBare "bool"
+                    , GoBare "float64"
+                    ])
+                `shouldBe` "rt.SkyTupleN"
+
+        it "renders 2-tuple as rt.T2[A, B] when renderTupleGeneric=True" $
+            renderGoType genericEnv
+                (GoTuple [GoBare "int", GoBare "string"])
+                `shouldBe` "rt.T2[int, string]"
+
+        it "renders 3-tuple as rt.T3[A, B, C] when renderTupleGeneric=True" $
+            renderGoType genericEnv
+                (GoTuple
+                    [GoBare "int", GoBare "string", GoBare "bool"])
+                `shouldBe` "rt.T3[int, string, bool]"
+
+        it "still emits SkyTupleN at arity≥4 regardless of policy gate" $
+            -- No Go-side generic SkyTupleN exists; the slice-backed
+            -- variant is the only emission for arity ≥ 4.
+            renderGoType genericEnv
+                (GoTuple
+                    [ GoBare "int"
+                    , GoBare "string"
+                    , GoBare "bool"
+                    , GoBare "float64"
+                    ])
+                `shouldBe` "rt.SkyTupleN"
+
+        it "renders typed nested generics inside a tuple" $
+            -- (List Int, rt.SkyMaybe[String]) is the Cause-H Step 4
+            -- canary shape — the legacy primitive-only whitelist
+            -- rejected both elements; the typed pipeline keeps them.
+            renderGoType genericEnv
+                (GoTuple
+                    [ GoNamed "rt.SkyList" [GoBare "int"]
+                    , GoNamed "rt.SkyMaybe" [GoBare "string"]
+                    ])
+                `shouldBe` "rt.T2[rt.SkyList[int], rt.SkyMaybe[string]]"
+
+        it "goTypeArgs returns Just for GoNamed args" $ do
+            goTypeArgs (GoNamed "rt.SkyList" [GoBare "int"])
+                `shouldBe` Just [GoBare "int"]
+            goTypeArgs (GoNamed "rt.SkyResult" [GoBare "Error", GoBare "int"])
+                `shouldBe` Just [GoBare "Error", GoBare "int"]
+            goTypeArgs (GoNamed "Std_Html_Html" [])
+                `shouldBe` Just []
+
+        it "goTypeArgs returns Just for GoTuple args" $ do
+            goTypeArgs (GoTuple [GoBare "int", GoBare "string"])
+                `shouldBe` Just [GoBare "int", GoBare "string"]
+            goTypeArgs (GoTuple [])
+                `shouldBe` Just []
+
+        it "goTypeArgs returns Nothing for non-applicative shapes" $ do
+            goTypeArgs (GoBare "int")          `shouldBe` Nothing
+            goTypeArgs GoUnit                  `shouldBe` Nothing
+            goTypeArgs GoAny                   `shouldBe` Nothing
+            goTypeArgs (GoFunc (GoBare "int") (GoBare "string"))
+                                               `shouldBe` Nothing
+            goTypeArgs (GoStruct [("F", GoBare "int")])
+                                               `shouldBe` Nothing
+            goTypeArgs (GoTypeVar "T1")        `shouldBe` Nothing
+            goTypeArgs (GoRaw "/* anything */") `shouldBe` Nothing
+
+        it "mapSkyTypeToGo lifts TTuple straight into GoTuple" $ do
+            -- Structural shape — assert the constructor, not the
+            -- rendered string.  This is the new contract: consumers
+            -- pattern-match on 'GoTuple' instead of prefix-sniffing
+            -- the rendered form.
+            mapSkyTypeToGo defaultMappingContext
+                (T.TTuple (T.TType bareHome "Int" []) (T.TType bareHome "String" []) [])
+                `shouldBe` GoTuple [GoBare "int", GoBare "string"]
+            mapSkyTypeToGo defaultMappingContext
+                (T.TTuple
+                    (T.TType bareHome "Int" [])
+                    (T.TType bareHome "String" [])
+                    [T.TType bareHome "Bool" []])
+                `shouldBe` GoTuple
+                    [GoBare "int", GoBare "string", GoBare "bool"]
