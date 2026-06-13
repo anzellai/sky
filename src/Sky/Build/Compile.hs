@@ -7077,15 +7077,22 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- empty home so it unifies with user `Html Msg` annotations. Map
     -- it to the generated ADT here, the same way Cmd/Sub are — the
     -- empty home would otherwise render the bare `Html`, which go
-    -- build rejects ("undefined: Html"). The ADT codegens non-generic
-    -- (`= rt.SkyADT`), so the msg type arg is dropped.
+    -- build rejects ("undefined: Html").
     --
-    -- v0.17 — extending C14 typed sibling to Html attempted + reverted.
-    -- Unlike Std.Ui's Element/Attribute (which never reach a dep-
-    -- module Go file in real apps), Std.Html.Html appears in dep
-    -- modules that don't have the entry-module's `Msg` ADT in scope.
-    -- A typed emission like `Std_Html_Html_T[Msg]` from a dep module
-    -- causes `undefined: Msg` at go build.  Bare collapse stays.
+    -- v0.17 #3 (Cause "typed Html call site") — emit the C13
+    -- typed sibling `Std_Html_Html_T[arg]` ONLY when the current
+    -- emission is on the entry-module side AND arg is concrete.
+    -- Dep modules emit bare `Std_Html_Html` because their Go file
+    -- doesn't have entry-module types like `Msg` in scope —
+    -- referencing `Std_Html_Html_T[Msg]` from a dep yields
+    -- `undefined: Msg` at go build.  This mirrors the user's
+    -- VNode[T any] suggestion: the runtime type is generic, but
+    -- only the entry module instantiates it with its Msg type;
+    -- dep-side function bodies stay polymorphic via the bare alias.
+    T.TType _ "Html" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True })
+        , isNothing (unsafePerformIO (readIORef globalCurrentDepModule)) ->
+            "Std_Html_Html_T[" ++ go arg ++ "]"
     T.TType _ "Html" _ -> "Std_Html_Html"
     -- v0.17 Cause H — typed tuple emission.  When every element
     -- renders to a concrete Go type (NOT TVar / "any"), emit the
