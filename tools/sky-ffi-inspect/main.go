@@ -72,8 +72,18 @@ type Param struct {
 	// `type Direction int`): SkyType collapses to the basic name
 	// so HM treats them as String / Int / Bool. Empty when SkyType
 	// equals Type — Haskell side defaults to Type when empty.
-	SkyType string     `json:"skyType,omitempty"`
-	GoType  types.Type `json:"-"` // unexported; used for interface-implements checks
+	SkyType string `json:"skyType,omitempty"`
+	// SkyTypeQualified — v0.17 C17a foundation for FFI opaque
+	// distinctness (Cause G).  Populated only when the underlying
+	// Go type is an opaque named struct/interface (NOT a basic-
+	// alias): emits the fully-qualified Sky-name + Go package path
+	// in `Name@pkgPath` form (e.g. `Customer@github.com/stripe/stripe-go/v84`).
+	// Existing Haskell parser ignores unknown JSON fields → safe
+	// additive change; C17b extends the parser to consume it.
+	// When the type isn't an opaque named struct, this is empty
+	// and consumers fall back to SkyType.
+	SkyTypeQualified string     `json:"skyTypeQualified,omitempty"`
+	GoType           types.Type `json:"-"` // unexported; used for interface-implements checks
 }
 
 type Function struct {
@@ -404,10 +414,80 @@ func resultsOf(sig *types.Signature) []Param {
 func paramFor(t types.Type) Param {
 	gt := t.String()
 	st := skyTypeOf(t)
+	sq := skyTypeQualifiedOf(t)
 	if st == gt {
-		return Param{Type: gt}
+		return Param{Type: gt, SkyTypeQualified: sq}
 	}
-	return Param{Type: gt, SkyType: st}
+	return Param{Type: gt, SkyType: st, SkyTypeQualified: sq}
+}
+
+// skyTypeQualifiedOf — v0.17 C17a — emits a fully-qualified opaque
+// marker for opaque named types (NOT basic-aliases). Format:
+// `Name@pkgPath` (e.g. `Customer@github.com/stripe/stripe-go/v84`).
+//
+// Returns "" when the type is a basic, basic-alias, pointer/slice/
+// map/array container, or interface{} — anything where Sky's
+// current routing already produces a distinct surface form.
+//
+// Used by the Haskell side (C17b+) to keep opaque FFI types
+// distinct from each other.  Today every opaque named struct
+// collapses to (Canonical "") "Value" so `stripe.Customer` and
+// `aws.Account` unify even though they're distinct Go types.
+//
+// Recursive through containers: a `*Customer` returns
+// `*Customer@github.com/stripe/stripe-go/v84` so callers can split
+// pointer-of-opaque safely.
+func skyTypeQualifiedOf(t types.Type) string {
+	switch tt := t.(type) {
+	case *types.Pointer:
+		inner := skyTypeQualifiedOf(tt.Elem())
+		if inner == "" {
+			return ""
+		}
+		return "*" + inner
+	case *types.Slice:
+		inner := skyTypeQualifiedOf(tt.Elem())
+		if inner == "" {
+			return ""
+		}
+		return "[]" + inner
+	case *types.Map:
+		// Maps with opaque key OR value get qualified;
+		// callers split on the first `@`.  This keeps the grammar
+		// extensible without forcing a regex parser later.
+		k := skyTypeQualifiedOf(tt.Key())
+		v := skyTypeQualifiedOf(tt.Elem())
+		if k == "" && v == "" {
+			return ""
+		}
+		if k == "" {
+			k = skyTypeOf(tt.Key())
+		}
+		if v == "" {
+			v = skyTypeOf(tt.Elem())
+		}
+		return "map[" + k + "]" + v
+	case *types.Named:
+		// Basic-aliases (Stripe enum-strings) intentionally don't
+		// emit a qualified marker — they collapse to their basic
+		// underlying via SkyType.
+		if _, ok := tt.Underlying().(*types.Basic); ok {
+			return ""
+		}
+		obj := tt.Obj()
+		if obj == nil {
+			return ""
+		}
+		name := obj.Name()
+		// Builtin types (`error`) have a nil Pkg — skip qualification.
+		pkg := obj.Pkg()
+		if pkg == nil {
+			return ""
+		}
+		return name + "@" + pkg.Path()
+	default:
+		return ""
+	}
 }
 
 func paramForNamed(name string, t types.Type) Param {
