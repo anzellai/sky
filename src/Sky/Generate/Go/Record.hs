@@ -94,21 +94,21 @@ data CodegenEnv = CodegenEnv
       -- for TVars. Value is (typeParams, paramTypes, returnType).
       -- Populated per-dep from the solver, used by mkDef to emit
       -- generic Go signatures for unannotated polymorphic functions.
-    , _cg_callSiteInstances :: !(Map.Map (Int, Int) (Map.Map String Solve.CallInstance))
+    , _cg_callSiteInstances :: !(Map.Map (String, Int, Int) (Map.Map String Solve.CallInstance))
       -- v0.13 Phase A5: at each polymorphic call site, the captured
-      -- instance gives the call's concrete type-args.  Keyed by
-      -- (line, col) of the call's source region.  Codegen at
+      -- instance gives the call's concrete type-args.  Codegen at
       -- `Can.VarTopLevel` / `Can.VarKernel` consults this map to
       -- pick the right generic instantiation.
       --
-      -- Cross-file collision (known limitation): two distinct
-      -- source files with calls at the same (line, col) collide in
-      -- this map.  In practice the pair is unique enough in single-
-      -- module projects.  For larger dep graphs, the eraseTypeParams
-      -- fallback in coerceCallArgsAt's `_` branch handles dropped
-      -- instances gracefully (emitting `any`-widened args).  Full
-      -- (file, line, col) keying needs invasive plumbing of file
-      -- context through the lazy codegen pipeline — deferred.
+      -- v0.17 C24 — key widened from (line, col) to
+      -- (modName, line, col) where modName is the qualified Sky
+      -- module that hosts the call ("" for the entry module).
+      -- Closes cross-file collision: two distinct dep modules with
+      -- calls at the same (line, col) used to collide and silently
+      -- drop instances → `any`-widened args; now they're keyed
+      -- separately and each emits the right specialised name.
+      -- Read sites derive `modName` from `globalCurrentDepModule`
+      -- (Just m → m, Nothing → "" for entry).
     , _cg_funcSkyToGoTVars :: !(Map.Map String [(String, String)])
       -- v0.13 Phase A5+: per-function mapping from annotation Sky-
       -- TVar names (e.g. "a", "e") to the emitted Go-generic names
@@ -227,7 +227,7 @@ withEnumNames extra env =
 -- consults this map when emitting `Can.Call` nodes to pick the
 -- right generic instantiation (concrete types vs `any`).
 withCallSiteInstances
-    :: Map.Map (Int, Int) (Map.Map String Solve.CallInstance)
+    :: Map.Map (String, Int, Int) (Map.Map String Solve.CallInstance)
     -> CodegenEnv -> CodegenEnv
 withCallSiteInstances csi env =
     env { _cg_callSiteInstances = csi }

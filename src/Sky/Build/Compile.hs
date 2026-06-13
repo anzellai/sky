@@ -600,6 +600,14 @@ getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 globalCurrentDepModule :: IORef (Maybe String)
 globalCurrentDepModule = unsafePerformIO $ newIORef Nothing
 
+-- v0.17 C24 — runtime flag for CSI key widening.  Read at
+-- post-solve time from SKY_CSI_WIDEN_KEY.  When True, the CSI
+-- registry keys by (modName, line, col); when False (default),
+-- the modName slot is "" so existing behaviour is preserved.
+{-# NOINLINE globalCsiWiden #-}
+globalCsiWiden :: IORef Bool
+globalCsiWiden = unsafePerformIO $ newIORef False
+
 
 -- | Read ffi/*.kernel.json and write the resulting module/function maps into
 -- Env.ffiKernelModulesRef and Env.ffiKernelFunctionsRef. After this call the
@@ -1414,14 +1422,29 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- callees inferred at the same point) don't overwrite
             -- each other.  Lookups consult the inner map by the
             -- expected callee's Sky-form name.
+            csiWidenEnv <- System.Environment.lookupEnv "SKY_CSI_WIDEN_KEY"
+            let csiWiden = csiWidenEnv == Just "1"
+            writeIORef globalCsiWiden csiWiden
             let csiEntries =
-                    [ ( ( A._line (A._start (Solve._cs_region csi))
+                    -- v0.17 C24 — key includes module name so two
+                    -- dep modules with calls at the same (line, col)
+                    -- don't collide.  Entry-module CSIs use "".
+                    -- Gated by SKY_CSI_WIDEN_KEY=1 because widening
+                    -- preserves more CSIs which surfaces a downstream
+                    -- coerceCallArgsAt bug for stdlib calls without
+                    -- a populated _cg_funcSkyToGoTVars entry (spec
+                    -- name emitted but arg coercion fell to
+                    -- AsListAny — fix tracked separately).
+                    [ ( ( if csiWiden then modName else ""
+                        , A._line (A._start (Solve._cs_region csi))
                         , A._col  (A._start (Solve._cs_region csi)) )
                       , Map.singleton
                           (Solve._instance_callee (Solve._cs_instance csi))
                           (Solve._cs_instance csi)
                       )
-                    | csi <- callSiteInstances ++ concatMap snd depCsiByMod ]
+                    | (modName, csis) <-
+                        ("", callSiteInstances) : depCsiByMod
+                    , csi <- csis ]
                 csiByRegion = Map.fromListWith Map.union csiEntries
             modifyIORef globalCgEnv $ \e ->
                 Rec.withCallSiteInstances csiByRegion e
@@ -1456,12 +1479,17 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- per-instance specialisations.
                     let defMap = buildDefMap canMod validDeps
                         annotMap = buildAnnotMap (Solve._stEnv t) depSolved
+                        -- v0.17 C24 — same (modName, line, col) key
+                        -- shape as the codegen registry above.
                         csiMapForReach = Map.fromList
-                            [ ( ( A._line (A._start (Solve._cs_region csi))
+                            [ ( ( if csiWiden then modName else ""
+                                , A._line (A._start (Solve._cs_region csi))
                                 , A._col  (A._start (Solve._cs_region csi)) )
                               , Solve._cs_instance csi
                               )
-                            | csi <- callSiteInstances ++ concatMap snd depCsiByMod ]
+                            | (modName, csis) <-
+                                ("", callSiteInstances) : depCsiByMod
+                            , csi <- csis ]
                         entryName = case mainModuleName entrySrcMod of
                             Just n  -> n ++ ".main"
                             Nothing -> "Main.main"
@@ -9510,7 +9538,19 @@ instanceMangledName region qualName = unsafePerformIO $ do
     env <- readIORef globalCgEnv
     reached <- readIORef globalReachableSet
     _annotMap' <- readIORef globalAnnotMap
-    let siteKey = ( A._line (A._start region)
+    -- v0.17 C24 — derive the (modName, line, col) key.  modName
+    -- is the current dep-module being rendered (empty for the
+    -- entry).  globalCurrentDepModule is bracketed at each dep
+    -- render boundary by sentinel GoDeclRaw entries — see
+    -- generateGoMulti's dep dispatch.  Gated by globalCsiWiden
+    -- which mirrors the write-side env-var gate.
+    curMod <- readIORef globalCurrentDepModule
+    widen <- readIORef globalCsiWiden
+    let modName = if widen
+            then case curMod of { Just m -> m; Nothing -> "" }
+            else ""
+        siteKey = ( modName
+                  , A._line (A._start region)
                   , A._col  (A._start region) )
         skyForm = unmangleQual qualName
         nested = Map.lookup siteKey (Rec._cg_callSiteInstances env)
@@ -9549,7 +9589,18 @@ coerceCallArgsAt :: A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
 coerceCallArgsAt region qualName args =
     let env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
-        siteKey = ( A._line (A._start region)
+        -- v0.17 C24 — read with (modName, line, col) key.  modName
+        -- comes from globalCurrentDepModule via unsafePerformIO
+        -- because coerceCallArgsAt is a pure function and the
+        -- module-bracketing pattern relies on the same IORef.
+        -- Gated by globalCsiWiden — when off, modName is "".
+        curMod = unsafePerformIO (readIORef globalCurrentDepModule)
+        widen = unsafePerformIO (readIORef globalCsiWiden)
+        modName = if widen
+            then case curMod of { Just m -> m; Nothing -> "" }
+            else ""
+        siteKey = ( modName
+                  , A._line (A._start region)
                   , A._col  (A._start region) )
         skyForm = unmangleQual qualName
         instM = Map.lookup siteKey (Rec._cg_callSiteInstances env)
