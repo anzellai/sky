@@ -6348,7 +6348,7 @@ ultimateReturnType t                  = t
 -- because Full is called after alias resolution is complete and
 -- function-typed slots already have a typed Go rendering elsewhere.
 safeReturnTypeBootstrap :: Set.Set String -> T.Type -> String
-safeReturnTypeBootstrap recAliases = go
+safeReturnTypeBootstrap recAliases = go 64 Set.empty
   where
     -- Extract module prefixes that appear in the alias set (everything
     -- before the last "_"). Lets us find "State_Model_R" from a TType
@@ -6360,7 +6360,13 @@ safeReturnTypeBootstrap recAliases = go
             , '_' `elem` a
             ]
 
-    go t = case t of
+    -- v0.17 Cause H step 2b — bounded recursion.  Same shape as
+    -- solvedTypeToGoBounded / safeReturnTypeFullBounded: fuel cap +
+    -- visited-set keyed on the qualified alias name at the TAlias
+    -- arm.  Output byte-identical for non-pathological types.
+    go :: Int -> Set.Set String -> T.Type -> String
+    go fuel _ _ | fuel <= 0 = "any"
+    go fuel seen t = case t of
         T.TUnit                       -> "struct{}"
         T.TType _ "Int" []            -> "int"
         T.TType _ "Float" []          -> "float64"
@@ -6368,25 +6374,25 @@ safeReturnTypeBootstrap recAliases = go
         T.TType _ "String" []         -> "string"
         T.TType _ "Char" []           -> "rune"
         T.TType _ "Bytes" []          -> "[]byte"
-        T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ go e
-                                         ++ ", " ++ go a ++ "]"
-        T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ go x ++ "]"
-        T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ go e
-                                         ++ ", " ++ go a ++ "]"
+        T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
+                                         ++ ", " ++ rec a ++ "]"
+        T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
+        T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
+                                         ++ ", " ++ rec a ++ "]"
         T.TType _ "Cmd"    _          -> "rt.SkyCmd"
         T.TType _ "Sub"    _          -> "rt.SkySub"
         T.TType _ "List"   [elem]     ->
-            let inner = go elem
+            let inner = rec elem
             in if inner == "any" then "[]any" else "[]" ++ inner
         T.TType _ "List"   _          -> "[]any"
         T.TType _ "Dict"   [_, v]     ->
-            let inner = go v
+            let inner = rec v
             in if inner == "any" then "map[string]any" else "map[string]" ++ inner
         T.TType _ "Dict"   _          -> "map[string]any"
         T.TType _ "Set"    _          -> "map[any]bool"
         -- v0.17 Cause H — typed tuples
         T.TTuple a b extras ->
-            let renderedAll = map go (a : b : extras)
+            let renderedAll = map rec (a : b : extras)
                 anyTVar = any
                     (\t -> case t of T.TVar _ -> True; _ -> False)
                     (a : b : extras)
@@ -6444,6 +6450,9 @@ safeReturnTypeBootstrap recAliases = go
                            then ""
                            else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
                 base = prefix ++ name
+                -- v0.17 Cause H step 2b — cycle guard.
+                cycleHit = Set.member base seen
+                recCycle = go (fuel - 1) (Set.insert base seen)
                 qualifiedCandidates =
                     [ p ++ "_" ++ name | p <- Set.toList aliasModulePrefixes ]
                 candidates = if null prefix
@@ -6457,7 +6466,9 @@ safeReturnTypeBootstrap recAliases = go
                 inner = case aliasType of
                     T.Filled i  -> i
                     T.Hoisted i -> i
-            in case matches of
+            in if cycleHit
+                then "any"
+                else case matches of
                 (m:_) -> m ++ "_R"
                 _     -> case runtimeTyped of
                     Just goTy -> goTy
@@ -6465,7 +6476,7 @@ safeReturnTypeBootstrap recAliases = go
                         | isRuntimeOnly -> "any"
                         | otherwise     -> case inner of
                             T.TRecord{} -> if null base then "any" else base
-                            _           -> go inner
+                            _           -> recCycle inner
         -- Function-typed slots (HOF params): render typed return shape
         -- to match what `renderHofParamTy` emits at signature time
         -- (v0.13 D1). This drives `_cg_funcParamTypes[fn]`'s entry,
@@ -6477,15 +6488,17 @@ safeReturnTypeBootstrap recAliases = go
         T.TLambda _ _ -> renderFuncTy t
         _ -> "any"
       where
+        -- v0.17 Cause H step 2b — bounded recurse with seen-set
+        -- inherited from the enclosing equation.
+        rec = go (fuel - 1) seen
         -- Curried multi-arg → nested `func(A) func(B) ...`.
         renderFuncTy (T.TLambda from to@T.TLambda{}) =
-            "func(" ++ go from ++ ") " ++ renderFuncTy to
+            "func(" ++ rec from ++ ") " ++ renderFuncTy to
         renderFuncTy (T.TLambda from to@(T.TVar _)) =
-            "func(" ++ go from ++ ") " ++ go to
+            "func(" ++ rec from ++ ") " ++ rec to
         renderFuncTy (T.TLambda from to) =
-            "func(" ++ go from ++ ") " ++ go to
-        renderFuncTy other = go other
-        renderFuncTy other = go other
+            "func(" ++ rec from ++ ") " ++ rec to
+        renderFuncTy other = rec other
 
 
 -- | Index module decls by binding name so we can check annotations
