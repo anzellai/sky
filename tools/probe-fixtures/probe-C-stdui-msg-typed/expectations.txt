@@ -8,6 +8,12 @@
 MUST_BUILD
 MUST_CONTAIN package main
 MUST_CONTAIN func view(count int)
+# v0.17 C13 dual-alias deliverable — typed sibling alias must
+# exist for every polymorphic union. Locks the foundation
+# for C14 typed call-site emission (`Std_Ui_Element_T[Msg]`
+# at the view return-type slot).
+MUST_CONTAIN type Std_Ui_Element_T[T1 any] = rt.SkyADT
+MUST_CONTAIN type Std_Ui_Attribute_T[T1 any] = rt.SkyADT
 # Runtime check skipped — fixture validates view signature shape
 # in lowered Go, not actual rendering (no Sky.Live entry).
 
