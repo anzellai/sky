@@ -608,6 +608,15 @@ globalCurrentDepModule = unsafePerformIO $ newIORef Nothing
 globalCsiWiden :: IORef Bool
 globalCsiWiden = unsafePerformIO $ newIORef False
 
+-- v0.17 Cause H — runtime flag for typed tuple emission.
+-- Read at post-solve time from SKY_TYPED_TUPLES.  When True,
+-- T.TTuple slots emit `rt.T2[A, B]` for all-primitive element
+-- types; when False (default), the alias form `rt.SkyTuple2`
+-- is used everywhere.
+{-# NOINLINE globalTypedTuples #-}
+globalTypedTuples :: IORef Bool
+globalTypedTuples = unsafePerformIO $ newIORef False
+
 
 -- | Read ffi/*.kernel.json and write the resulting module/function maps into
 -- Env.ffiKernelModulesRef and Env.ffiKernelFunctionsRef. After this call the
@@ -1425,6 +1434,8 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             csiWidenEnv <- System.Environment.lookupEnv "SKY_CSI_WIDEN_KEY"
             let csiWiden = csiWidenEnv == Just "1"
             writeIORef globalCsiWiden csiWiden
+            typedTuplesEnv <- System.Environment.lookupEnv "SKY_TYPED_TUPLES"
+            writeIORef globalTypedTuples (typedTuplesEnv == Just "1")
             let csiEntries =
                     -- v0.17 C24 — key includes module name so two
                     -- dep modules with calls at the same (line, col)
@@ -7076,22 +7087,48 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- A typed emission like `Std_Html_Html_T[Msg]` from a dep module
     -- causes `undefined: Msg` at go build.  Bare collapse stays.
     T.TType _ "Html" _ -> "Std_Html_Html"
-    -- v0.17 Cause H — typed tuples attempted + reverted.
-    -- Naïve typed emission at sig slots (`rt.T2[string, int]`)
-    -- panics because literal tuple construction still emits the
-    -- alias form (`rt.SkyTuple2{V0:..., V1:...}` ≡ `T2[any,any]`)
-    -- and `rt.T2[string,int]` is a DISTINCT Go generic
-    -- instantiation — not a type alias.  Go's reflect-based Coerce
-    -- can't bridge `T2[any,any]` → `T2[string,int]`.
-    --
-    -- Closing Cause H requires parallel work on `Can.Tuple`
-    -- literal lowering to emit `rt.T2[string,int]{V0:..., V1:...}`
-    -- whenever the LowerCtx carries concrete element types.
-    -- Deferred — needs LowerCtx propagation through tuple literal
-    -- nodes, which is its own multi-edit work.  Keep collapse for now.
-    T.TTuple _ _ []   -> "rt.SkyTuple2"
-    T.TTuple _ _ [_]  -> "rt.SkyTuple3"
-    T.TTuple _ _ _    -> "rt.SkyTupleN"
+    -- v0.17 Cause H — typed tuple emission.  When every element
+    -- renders to a concrete Go type (NOT TVar / "any"), emit the
+    -- typed `rt.T2[A, B]` / `rt.T3[A, B, C]` form.  The literal
+    -- lowering (exprToGoExpectGo's Can.Tuple arm) sees this slot
+    -- type and emits the matching typed-instantiation value, so
+    -- `T2[string,int]` and the literal `T2[string,int]{V0:..., V1:...}`
+    -- have identical Go static types.  TVar elements fall back to
+    -- `rt.SkyTuple{2,3}` (= T{2,3}[any,any{,any}]) — back-compat
+    -- alias for boundary-uncertain shapes.  N-tuples (≥4 elements)
+    -- stay bare — SkyTupleN is a slice-backed struct without a
+    -- parametric variant.
+    T.TTuple a b extras ->
+        let renderedAll = map go (a : b : extras)
+            anyTVar = any
+                (\t -> case t of T.TVar _ -> True; _ -> False)
+                (a : b : extras)
+            isPrimitive s = s `elem`
+                [ "string", "int", "int32", "int64"
+                , "float32", "float64", "bool", "byte", "rune"
+                , "[]byte"
+                ]
+            allPrim = not anyTVar
+                   && not (null renderedAll)
+                   && all isPrimitive renderedAll
+            -- v0.17 Cause H — typed tuple emission gated by env.
+            -- The primitive-only check above closes the dep-module
+            -- visibility issue (entry-module types like Msg aren't
+            -- in dep scope).  But typed-emission ALSO surfaces a
+            -- caller-side widening issue: a typed return T2[A,B]
+            -- can't be assigned into a SkyTuple2 slot (Go rejects
+            -- the distinct generic instantiation).  Closing that
+            -- needs caller-side typed-slot propagation.  Until
+            -- then, opt-in via SKY_TYPED_TUPLES=1.
+            useTyped = unsafePerformIO (readIORef globalTypedTuples)
+        in case extras of
+             []
+                | useTyped && allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple2"
+             [_]
+                | useTyped && allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
+                | otherwise -> "rt.SkyTuple3"
+             _ -> "rt.SkyTupleN"
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Primitives (must check before the user-type catch-all)
     T.TType _ "Int" []    -> "int"
@@ -7735,6 +7772,26 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         Can.Record fields
             | isParametricAliasInstantiation goRendering ->
                 lowerRecordLiteralTo goRendering fields
+
+        -- v0.17 Cause H — typed tuple literal emission.  When the
+        -- slot's Go type is a typed `rt.T2[A,B]` / `rt.T3[A,B,C]`
+        -- generic instantiation (NOT the back-compat alias
+        -- `rt.SkyTuple2 = T2[any,any]`), emit the literal carrying
+        -- the SAME instantiation so the value's static Go type
+        -- matches the slot.  Sub-expressions route through
+        -- `exprToGoExpectGo` so they coerce to A / B individually.
+        --
+        -- Pre-fix, every tuple literal emitted as
+        -- `rt.SkyTuple2{V0:..., V1:...}` (= T2[any,any]), causing
+        -- `rt.Coerce[rt.T2[string,int]]({Alice 30})` to panic
+        -- because T2[string,int] and T2[any,any] are distinct
+        -- generic instantiations (not aliased synonyms).
+        Can.Tuple a b []
+            | take 5 goRendering == "rt.T2" ->
+                emitTypedTuple2 goRendering a b
+        Can.Tuple a b [c]
+            | take 5 goRendering == "rt.T3" ->
+                emitTypedTuple3 goRendering a b c
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -8706,6 +8763,60 @@ exprToGo (A.At _ expr) = case expr of
                 let vs = a : b : more
                     vsInit = GoIr.GoSliceLit "any" (map exprToGo vs)
                 in GoIr.GoStructLit "rt.SkyTupleN" [("Vs", vsInit)]
+
+
+-- v0.17 Cause H — typed tuple literal helpers.  Called from
+-- `exprToGoExpectGo`'s Can.Tuple arm when the slot's Go type is
+-- a `rt.T2[A,B]` / `rt.T3[A,B,C]` generic instantiation.  Parse
+-- the type-args from `goRendering`, recurse with typed expected
+-- types per element, and emit the literal carrying the same
+-- instantiation so the value's static Go type matches the slot.
+emitTypedTuple2 :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple2 goRendering a b =
+    case parseTupleTypeArgs goRendering of
+        Just [tA, tB] -> GoIr.GoStructLit goRendering
+            [("V0", exprToGoExpectGo tA a), ("V1", exprToGoExpectGo tB b)]
+        _ -> GoIr.GoStructLit "rt.SkyTuple2"
+            [("V0", exprToGo a), ("V1", exprToGo b)]
+
+emitTypedTuple3 :: String -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple3 goRendering a b c =
+    case parseTupleTypeArgs goRendering of
+        Just [tA, tB, tC] -> GoIr.GoStructLit goRendering
+            [("V0", exprToGoExpectGo tA a), ("V1", exprToGoExpectGo tB b),
+             ("V2", exprToGoExpectGo tC c)]
+        _ -> GoIr.GoStructLit "rt.SkyTuple3"
+            [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
+
+-- Parse `rt.T2[string, int]` → Just ["string", "int"].  Bracket-
+-- depth aware so nested generics like `rt.T2[rt.SkyMaybe[int], string]`
+-- split correctly.
+parseTupleTypeArgs :: String -> Maybe [String]
+parseTupleTypeArgs s = case break (== '[') s of
+    (_, '[':rest) -> case extractBracketed rest of
+        Just inner -> Just (splitTopLevelArgs inner)
+        Nothing -> Nothing
+    _ -> Nothing
+  where
+    extractBracketed = go 1 []
+      where
+        go :: Int -> String -> String -> Maybe String
+        go 0 acc _      = Just (reverse (drop 1 acc))
+        go _ _   []     = Nothing
+        go n acc (c:cs) = case c of
+            '[' -> go (n + 1) (c : acc) cs
+            ']' | n == 1 -> Just (reverse acc)
+                | otherwise -> go (n - 1) (c : acc) cs
+            _   -> go n (c : acc) cs
+    splitTopLevelArgs str = reverse (map (dropWhile (== ' ')) (splitAcc 0 [] [] str))
+      where
+        splitAcc :: Int -> String -> [String] -> String -> [String]
+        splitAcc _ cur done []          = reverse cur : done
+        splitAcc 0 cur done (',' : rest) = splitAcc 0 [] (reverse cur : done) rest
+        splitAcc n cur done (c : rest)
+            | c == '['  = splitAcc (n + 1) (c : cur) done rest
+            | c == ']'  = splitAcc (n - 1) (c : cur) done rest
+            | otherwise = splitAcc n (c : cur) done rest
 
 
 -- ═══════════════════════════════════════════════════════════
