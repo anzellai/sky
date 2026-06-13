@@ -15588,10 +15588,20 @@ kernelTypedCall types modName funcName args goArgs =
 -- Distinction from the default `solvedTypeToGo`:
 --   * default: TVar _ -> "any"
 --   * this:    TVar n where isGenericTypeParam n -> n (kept as-is)
+-- | v0.17 Cause H step 2e — bounded variant.  Same fuel + visited-
+-- set shape as solvedTypeToGoBounded / safeReturnTypeFullBounded /
+-- safeReturnTypeBootstrapBounded / typeStrWithAliasesRegBounded /
+-- safeReturnTypePureBounded.  Preserves the public single-arg
+-- signature so every call site continues to work unchanged.
 solvedTypeToGoPreserveTVars :: T.Type -> String
-solvedTypeToGoPreserveTVars = go
-  where
-    go ty = case ty of
+solvedTypeToGoPreserveTVars = solvedTypeToGoPreserveTVarsBounded 64 Set.empty
+
+
+solvedTypeToGoPreserveTVarsBounded :: Int -> Set.Set String -> T.Type -> String
+solvedTypeToGoPreserveTVarsBounded fuel _ _ | fuel <= 0 = "any"
+solvedTypeToGoPreserveTVarsBounded fuel _seen ty =
+    let go = solvedTypeToGoPreserveTVarsBounded (fuel - 1) _seen
+    in case ty of
         T.TVar name
             | isGenericTypeParam name -> name
             | otherwise -> "any"
@@ -15608,6 +15618,10 @@ solvedTypeToGoPreserveTVars = go
             "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
         T.TType _ "Dict" [_, v] ->
             "map[string]" ++ go v
+        -- Delegate to the guarded solvedTypeToGo for leaf / opaque
+        -- shapes; that renderer carries its OWN bounded recursion
+        -- (Step 2a, commit 0818268c), so cross-renderer chains stay
+        -- protected end-to-end.
         _ -> solvedTypeToGo ty
 
 
