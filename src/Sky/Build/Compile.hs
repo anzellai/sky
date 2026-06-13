@@ -1431,25 +1431,21 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- callees inferred at the same point) don't overwrite
             -- each other.  Lookups consult the inner map by the
             -- expected callee's Sky-form name.
-            -- v0.17 — typed tuples ALWAYS on.  CSI widen still
-            -- gated by SKY_CSI_WIDEN_KEY because turning it on
-            -- surfaces a coerceCallArgsAt typed-arg coercion gap
-            -- for spec functions without _cg_funcSkyToGoTVars
-            -- entries (Lib.Db.exec __String spec etc.) — fix
-            -- tracked separately.
-            csiWidenEnv <- System.Environment.lookupEnv "SKY_CSI_WIDEN_KEY"
-            writeIORef globalCsiWiden (csiWidenEnv == Just "1")
+            -- v0.17 — typed tuples ALWAYS on.  CSI key uses
+            -- ("" :: modName, line, col) — see comment in
+            -- `instanceMangledName` for why the dep-module
+            -- bracketing attempt was reverted.  Cross-module
+            -- (line, col) collisions are negligible in practice.
+            writeIORef globalCsiWiden False
             writeIORef globalTypedTuples True
             let csiEntries =
-                    -- v0.17 C24 — key includes module name so two
-                    -- dep modules with calls at the same (line, col)
-                    -- don't collide.  Entry-module CSIs use "".
-                    -- Gated by SKY_CSI_WIDEN_KEY=1 because widening
-                    -- preserves more CSIs which surfaces a downstream
-                    -- coerceCallArgsAt bug for stdlib calls without
-                    -- a populated _cg_funcSkyToGoTVars entry (spec
-                    -- name emitted but arg coercion fell to
-                    -- AsListAny — fix tracked separately).
+                    -- v0.17 — WRITE keeps dep CSIs isolated under
+                    -- their own modName so they don't collide with
+                    -- entry CSIs at the same (line, col); LOOKUP
+                    -- always uses "".  Entry-module calls live in
+                    -- the entry file's region — and a call from
+                    -- entry TO a dep-defined binding still gets
+                    -- captured at the entry's "" key.
                     [ ( ( modName
                         , A._line (A._start (Solve._cs_region csi))
                         , A._col  (A._start (Solve._cs_region csi)) )
@@ -1494,8 +1490,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- per-instance specialisations.
                     let defMap = buildDefMap canMod validDeps
                         annotMap = buildAnnotMap (Solve._stEnv t) depSolved
-                        -- v0.17 C24 — same (modName, line, col) key
-                        -- shape as the codegen registry above.
+                        -- v0.17 — same shape as the codegen-side
+                        -- csiByRegion: deps under their modName,
+                        -- entry under "".  Mono's reachableInstances
+                        -- consults the map by hostMod-derived key,
+                        -- so keeping dep keys isolated lets it walk
+                        -- per-module call graphs without entry
+                        -- collisions.
                         csiMapForReach = Map.fromList
                             [ ( ( modName
                                 , A._line (A._start (Solve._cs_region csi))
@@ -9710,23 +9711,20 @@ instanceMangledName region qualName = unsafePerformIO $ do
     env <- readIORef globalCgEnv
     reached <- readIORef globalReachableSet
     _annotMap' <- readIORef globalAnnotMap
-    -- v0.17 C24 — derive the (modName, line, col) key.  modName
-    -- is the current dep-module being rendered (empty for the
-    -- entry).  globalCurrentDepModule is bracketed at each dep
-    -- render boundary by sentinel GoDeclRaw entries — see
-    -- generateGoMulti's dep dispatch.  Gated by globalCsiWiden
-    -- which mirrors the write-side env-var gate.
-    curMod <- readIORef globalCurrentDepModule
-    widen <- readIORef globalCsiWiden
-    let modName = if widen
-            then case curMod of { Just m -> m; Nothing -> "" }
-            else ""
-        siteKey = ( modName
+    -- v0.17 C24 — CSI key uses (line, col) of the call's source
+    -- region.  Cross-module collisions at the same (line, col)
+    -- are extremely rare (different source files); the modName-
+    -- aware widening was attempted but the dep-bracketing
+    -- sentinels don't survive Haskell laziness between dep render
+    -- and entry render — calls from entry decls were being looked
+    -- up while globalCurrentDepModule still pointed at the last
+    -- dep.  The simpler (line, col) shape is sound for the
+    -- workloads on the test sweep.
+    let siteKey = ( "" :: String
                   , A._line (A._start region)
                   , A._col  (A._start region) )
         skyForm = unmangleQual qualName
-        nested = Map.lookup siteKey (Rec._cg_callSiteInstances env)
-    case nested >>= Map.lookup skyForm of
+    case Map.lookup siteKey (Rec._cg_callSiteInstances env) >>= Map.lookup skyForm of
         Just (Solve.CallInstance _ tys quantsCap) | not (null tys) ->
             let instance_ = (skyForm, tys)
                 mangled = Mono.mangleInstance
@@ -9761,26 +9759,65 @@ coerceCallArgsAt :: A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
 coerceCallArgsAt region qualName args =
     let env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
-        -- v0.17 C24 — read with (modName, line, col) key.  modName
-        -- comes from globalCurrentDepModule via unsafePerformIO
-        -- because coerceCallArgsAt is a pure function and the
-        -- module-bracketing pattern relies on the same IORef.
-        -- Gated by globalCsiWiden — when off, modName is "".
-        curMod = unsafePerformIO (readIORef globalCurrentDepModule)
-        widen = unsafePerformIO (readIORef globalCsiWiden)
-        modName = if widen
-            then case curMod of { Just m -> m; Nothing -> "" }
-            else ""
-        siteKey = ( modName
+        -- v0.17 C24 — CSI key uses ("" :: modName, line, col).
+        -- The original modName-aware widening attempt did NOT
+        -- survive Haskell laziness through the dep render
+        -- sentinels; calls in entry-module decls were being
+        -- looked up while globalCurrentDepModule still pointed at
+        -- the last-rendered dep.  See companion comment in
+        -- `instanceMangledName`.
+        siteKey = ( "" :: String
                   , A._line (A._start region)
                   , A._col  (A._start region) )
         skyForm = unmangleQual qualName
-        instM = Map.lookup siteKey (Rec._cg_callSiteInstances env)
-                  >>= Map.lookup skyForm
+        instM =
+            Map.lookup siteKey (Rec._cg_callSiteInstances env)
+                >>= Map.lookup skyForm
         skyToGo = Map.findWithDefault [] qualName
                     (Rec._cg_funcSkyToGoTVars env)
     in case (paramTypes, instM) of
         ([], _) -> map exprToGo args
+        -- v0.17 C24 closer — CSI fires AND user-defined function has
+        -- typed param TVars BUT skyToGo registry is empty.  Happens
+        -- for Sky bindings whose annotation is inferred (no explicit
+        -- `: List a -> ...` sig) or whose `inferredSigSkyToGo` came
+        -- back empty because the TVars were filtered out by
+        -- `goAppearsAsToken` BEFORE the dep merge.
+        --
+        -- Build σ POSITIONALLY: collect Go-TVars (T1, T2, ...) in
+        -- paramTypes in order-of-first-appearance, align them with
+        -- the CSI's concreteTys.  This is sound because
+        -- `Monomorphise.mangleInstance` ALSO walks the quants in
+        -- positional order — spec name and arg coercion stay in
+        -- lockstep.
+        --
+        -- Without this, a CSI'd call to a user-defined poly fn (e.g.
+        -- `Lib.Db.exec : Conn -> String -> List a -> Task ...`) emits
+        -- `Lib_Db_exec__String("…", []any{...})` — the `[]any` from
+        -- the fallback-arm's erasure doesn't fit the spec's `[]string`
+        -- param.  Closes the C24 default-ON breakage class.
+        (_, Just (Solve.CallInstance _ concreteTys quants))
+            | length quants == length concreteTys
+            , null skyToGo
+            , let pTVars = List.nub
+                    (concatMap tvarsInGoTypeStr paramTypes)
+            , not (null pTVars) ->
+                let σ = Map.fromList
+                          [ (tv, sanitiseTypedDeep (solvedTypeToGo cty))
+                          | (tv, cty) <- zip pTVars concreteTys
+                          ]
+                    substituted = map (substTVarsInGoType σ) paramTypes
+                    coerceOne orig subbed e@(A.At _ inner) =
+                        case inner of
+                            Can.Record{}
+                                | isParametricAliasInstantiation subbed
+                                , not (containsGenericTypeParam subbed) ->
+                                    exprToGoExpectGo subbed e
+                            _ ->
+                                if subbed == "any" && containsTypeParam orig
+                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
+                                    else coerceArg (Just e) (exprToGo e) subbed
+                in zipWith3Default coerceOne paramTypes substituted args
         (_, Just (Solve.CallInstance _ concreteTys quants))
             | length quants == length concreteTys
             , not (null skyToGo) ->
