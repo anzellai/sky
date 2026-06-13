@@ -7041,6 +7041,19 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- build rejects ("undefined: Html"). The ADT codegens non-generic
     -- (`= rt.SkyADT`), so the msg type arg is dropped.
     T.TType _ "Html" _ -> "Std_Html_Html"
+    -- v0.17 Cause H — typed tuples attempted + reverted.
+    -- Naïve typed emission at sig slots (`rt.T2[string, int]`)
+    -- panics because literal tuple construction still emits the
+    -- alias form (`rt.SkyTuple2{V0:..., V1:...}` ≡ `T2[any,any]`)
+    -- and `rt.T2[string,int]` is a DISTINCT Go generic
+    -- instantiation — not a type alias.  Go's reflect-based Coerce
+    -- can't bridge `T2[any,any]` → `T2[string,int]`.
+    --
+    -- Closing Cause H requires parallel work on `Can.Tuple`
+    -- literal lowering to emit `rt.T2[string,int]{V0:..., V1:...}`
+    -- whenever the LowerCtx carries concrete element types.
+    -- Deferred — needs LowerCtx propagation through tuple literal
+    -- nodes, which is its own multi-edit work.  Keep collapse for now.
     T.TTuple _ _ []   -> "rt.SkyTuple2"
     T.TTuple _ _ [_]  -> "rt.SkyTuple3"
     T.TTuple _ _ _    -> "rt.SkyTupleN"
