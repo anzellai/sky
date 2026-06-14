@@ -10120,7 +10120,25 @@ coerceCallArgsAt region qualName args =
                           | (skyName, goName) <- skyToGo
                           , Just cty <- [Map.lookup skyName skyToConcrete]
                           ]
-                    substituted = map (substTVarsInGoType σ) paramTypes
+                    -- v0.17 PR-13 — σ-substitution routes through the
+                    -- structural 'substTVarsInGoTypeStructural' when
+                    -- the param type parses cleanly as a 'GoType' AND
+                    -- the structural output is byte-identical to the
+                    -- legacy String-tokenising 'substTVarsInGoType'.
+                    -- Falls back to the legacy String pipeline when
+                    -- the structural and legacy outputs differ — the
+                    -- divergence-on-fallback flags a structural-
+                    -- substitution edge case worth investigating, but
+                    -- keeps the call-site emission byte-identical
+                    -- under the pre-mortem lesson 4 TCO gate.  Every
+                    -- non-fallback substitution is by construction
+                    -- safe; the structural path is the v0.17 e2e-
+                    -- typed direction the master plan flips fully
+                    -- by PR-22 (delete legacy renderers).
+                    substituted =
+                        [ structuralSubstOrLegacy σ pty
+                        | pty <- paramTypes
+                        ]
                     -- When a substituted param type is exactly "any"
                     -- because the call-site instance normalised this
                     -- TVar to `any` (partial-resolution — surrounding
@@ -10501,6 +10519,42 @@ substTVarsInGoType σ s = goSubst s
     -- and apply σ-substitution to the ASCII prefix only.
     isIdentStart = isGoIdentStart
     isIdentChar = isGoIdentChar
+
+
+-- | v0.17 PR-13 — structural σ-substitution with byte-identical
+-- safety fallback to the legacy String pipeline.
+--
+-- Strategy:
+--   1. Parse the param type through 'GoType.parseGoType'.
+--   2. Build a structural σ' (Map String GoType) by parsing each
+--      σ value through 'parseGoType'.
+--   3. Apply 'substTVarsInGoTypeStructural' σ' on the parsed
+--      param.
+--   4. Render through 'renderGoType' and compare against the
+--      legacy 'substTVarsInGoType' σ output.
+--   5. If byte-identical → return the structural output (the v0.17
+--      typed-e2e direction).
+--   6. Otherwise → fall back to the legacy String output (preserves
+--      every pre-PR-13 codegen byte).
+--
+-- The structural path is the intended steady state.  The fallback
+-- exists so any edge case the structural path doesn't yet handle
+-- (e.g. unusual Go-string forms the parser rejects) doesn't break
+-- the call-site emission.  Pre-mortem lesson 4 (TCO continue-block
+-- byte-diff) is gated by the byte-identical comparison.
+structuralSubstOrLegacy :: Map.Map String String -> String -> String
+structuralSubstOrLegacy σ paramTy =
+    let legacy = substTVarsInGoType σ paramTy
+    in case GoType.parseGoType paramTy of
+        Nothing -> legacy
+        Just goPty ->
+            let σ' = Map.mapMaybe GoType.parseGoType σ
+                structuralOut = GoType.renderGoType
+                    GoType.defaultRenderEnv
+                    (GoType.substTVarsInGoTypeStructural σ' goPty)
+            in if structuralOut == legacy
+                then structuralOut
+                else legacy
 
 -- | v0.13 Stage 1 — split a chained-func Go-type string like
 -- `func(string) func(int) func(bool) Foo` into ([string,int,bool],

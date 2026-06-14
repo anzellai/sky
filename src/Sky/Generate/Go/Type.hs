@@ -227,6 +227,55 @@ data GoType
     deriving (Eq, Show)
 
 
+-- | v0.17 PR-13 — structural substitution of generic-type-parameter
+-- leaves (@T1@, @T2@, …) within a 'GoType'.  Mirrors the legacy
+-- token-aware String 'substTVarsInGoType' (in @Sky.Build.Compile@)
+-- but operates on the typed ADT, so the substitution is by
+-- construction safe against tokeniser edge cases (Unicode identifiers,
+-- collision with predeclared Go keywords, multi-character TVars like
+-- @T10@).
+--
+-- The legacy 'substTVarsInGoType' rewrites IDENTIFIER tokens — both
+-- 'GoTypeVar' leaves (the canonical T-vars) AND any GoNamed-rendered
+-- identifier that happens to equal a key in σ.  The structural form
+-- mirrors that behaviour: GoNamed nullary names are looked up in σ
+-- (so `T2` rendered through 'GoNamed' still substitutes), but the
+-- canonical case is the 'GoTypeVar' arm.
+--
+-- The "⚠ TCO RISK" pre-mortem on PR-13 (master plan): the
+-- continue-block reassignment in tail-recursive functions emits
+-- through `coerceCallArgsAt`'s σ-substituted param-type pipeline.
+-- Any divergence between this structural substitution and the
+-- legacy String form would alter the continue-block byte-shape and
+-- regress TCO probes.  The round-trip parity property
+-- @renderGoType env (substTVarsInGoTypeStructural σ' g) ==
+-- substTVarsInGoType σ (renderGoType env g)@ (where σ' is the
+-- GoType-typed sibling of σ) gates the structural cutover.
+substTVarsInGoTypeStructural :: Map.Map String GoType -> GoType -> GoType
+substTVarsInGoTypeStructural sigma = go
+  where
+    go t = case t of
+        GoTypeVar n ->
+            Map.findWithDefault t n sigma
+        GoNamed n []
+            -- Legacy 'substTVarsInGoType' rewrites identifier tokens;
+            -- a nullary GoNamed renders as the bare name, so a TVar
+            -- mis-classified as GoNamed (e.g. `T2` produced by the
+            -- parser's `parseNameWithArgs` arm) still substitutes.
+            -- Composite GoNamed (with args) recurses into args only.
+            | Just replacement <- Map.lookup n sigma -> replacement
+            | otherwise -> t
+        GoNamed n args  -> GoNamed n (map go args)
+        GoFunc a b      -> GoFunc (go a) (go b)
+        GoMultiFunc as r -> GoMultiFunc (map go as) (go r)
+        GoStruct fs     -> GoStruct [(fn, go ft) | (fn, ft) <- fs]
+        GoTuple as      -> GoTuple (map go as)
+        GoBare _        -> t
+        GoUnit          -> t
+        GoAny           -> t
+        GoRaw _         -> t
+
+
 -- | Structural accessor — return the type-argument list when 'GoType'
 -- carries one ('GoNamed', 'GoTuple'), 'Nothing' otherwise.
 --
