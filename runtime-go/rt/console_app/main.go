@@ -85,6 +85,7 @@ func Sky_Core_List_any_[T1 any](pred func(T1) bool, list []T1) bool {
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Sky_Core_List_find[T1 any](pred func(T1) bool, list []T1) rt.SkyMaybe[T1] {
@@ -111,6 +112,7 @@ func Sky_Core_List_find[T1 any](pred func(T1) bool, list []T1) rt.SkyMaybe[T1] {
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Sky_Core_List_foldl[T1 any, T2 any](fn func(T1) func(T2) T2, acc T2, list []T1) T2 {
@@ -135,6 +137,7 @@ func Sky_Core_List_foldl[T1 any, T2 any](fn func(T1) func(T2) T2, acc T2, list [
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Sky_Core_List_concatMap[T1 any, T2 any](fn func(T1) []T2, list []T1) []T2 {
@@ -271,6 +274,7 @@ func Sky_Core_List_member[T1 any](x T1, list []T1) bool {
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Sky_Core_String_fromInt() func(int) string {
