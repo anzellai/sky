@@ -9210,6 +9210,49 @@ genericParams modName funcName = case (modName, funcName) of
 -- | Count the number of `->` arrows in a Forall-wrapped type — that's the
 -- arity of the constructor. For `Just : a -> Maybe a` this is 1. For
 -- `JobDone : Int -> Result String String -> Msg` this is 2.
+-- | v0.17 PR-14 — structural classification of a Go target type
+-- into the routing arm 'coerceToFieldType' / 'coerceArg' picks.
+--
+-- Pre-PR-14, the routing was a chain of String prefix-checks
+-- (\"rt.SkyResult[\", \"rt.SkyMaybe[\", \"[]\", \"func(\", ...).
+-- This helper migrates the classification to structural pattern-
+-- match on 'GoType.GoType' arms.  The same String-tokenising
+-- guard `parseGoType >>= classify` falls back to the legacy
+-- String pipeline when the parse rejects an unusual form
+-- (preserves byte-shape for every pre-PR-14 codegen path).
+data CoerceTarget
+    = CoerceSkipPassThrough     -- ^ targetTy ∈ {\"\", \"any\"}
+    | CoerceSkyResultT String    -- ^ rt.SkyResult[…] generic args
+    | CoerceSkyMaybe  String    -- ^ rt.SkyMaybe[…] generic args
+    | CoerceSkyTask   String    -- ^ rt.SkyTask[…] generic args
+    | CoerceListAny             -- ^ []any
+    | CoerceMapStringAny        -- ^ map[string]any
+    | CoerceListT     String    -- ^ []T (T != any)
+    | CoerceMapStringT String   -- ^ map[string]V (V != any)
+    | CoerceFunc                -- ^ func(…) … (1 arg or N args)
+    | CoerceRecordAlias String  -- ^ Foo_R (record-alias struct)
+    | CoerceAny                 -- ^ targetTy erases to \"any\"
+    | CoerceTypeAssert String   -- ^ fallthrough: plain `any(e).(T)`
+
+
+classifyCoerceTarget :: String -> CoerceTarget
+classifyCoerceTarget targetTy
+    | targetTy == "any" || null targetTy = CoerceSkipPassThrough
+    | Just inner <- stripParametric "rt.SkyResult" targetTy = CoerceSkyResultT inner
+    | Just inner <- stripParametric "rt.SkyMaybe"  targetTy = CoerceSkyMaybe  inner
+    | Just inner <- stripParametric "rt.SkyTask"   targetTy = CoerceSkyTask  inner
+    | targetTy == "[]any"            = CoerceListAny
+    | targetTy == "map[string]any"   = CoerceMapStringAny
+    | Just elt <- stripListType targetTy = CoerceListT elt
+    | Just v   <- stripMapType  targetTy = CoerceMapStringT v
+    | "func(" `List.isPrefixOf` erasedTy = CoerceFunc
+    | erasedTy == "any"                  = CoerceAny
+    | isRecordAliasTy erasedTy           = CoerceRecordAlias erasedTy
+    | otherwise                          = CoerceTypeAssert erasedTy
+  where
+    erasedTy = eraseTypeParams targetTy
+
+
 -- | Coerce an expression to a target Go type for struct-field assignment.
 -- When the target is `any` (or unknown), pass through. Otherwise wrap as
 -- `any(expr).(TargetType)` which is safe across concrete and any-typed sources.
@@ -9227,63 +9270,49 @@ coerceToFieldType targetTy e
     -- variants of this site (`coerceArg`'s parametric-alias arm)
     -- DO have the source expr and pass it through.
     | goExprGoType Nothing e == Just targetTy = e
-    -- Parametric container types: use the runtime's cross-instantiation
-    -- coerce helpers that reconstruct the value with the target generic
-    -- params. Handles SkyMaybe[any] → SkyMaybe[ErrorDetails] etc.
-    | Just params <- stripParametric "rt.SkyResult" targetTy =
-        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseTypeParams params ++ "]")) [e]
-    | Just inner <- stripParametric "rt.SkyMaybe" targetTy =
-        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
-    | isJust (stripParametric "rt.SkyTask" targetTy) =
-        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ eraseTypeParams (fromMaybe "" (stripParametric "rt.SkyTask" targetTy)) ++ "]")) [e]
-    -- `[]any` / `map[string]any` widening: typed source may be `[]T` /
-    -- `map[string]T`. Direct assertion panics — route through the
-    -- widener helpers analogous to AsListT / AsMapT.
-    | targetTy == "[]any" =
-        GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
-    | targetTy == "map[string]any" =
-        GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
-    -- Typed slices: runtime produces []any, so walk-and-cast via
-    -- rt.AsListT[T] instead of a hard `any(v).([]T)` assertion.
-    | Just elt <- stripListType targetTy =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
-    -- Typed maps: same pattern for map[string]V.
-    | Just valTy <- stripMapType targetTy =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
-    | otherwise =
-        let erasedTy = eraseTypeParams targetTy
-        in if erasedTy == "any"
-             then e
-             -- v0.13.x #158: record-alias targets (`_R` suffix) route
-             -- through `rt.Coerce[T]` so a `map[string]any` source
-             -- (Db.query rows, Firestore snapshots, JSON-decoded blobs)
-             -- narrows to the typed struct via the map→struct field
-             -- builder in Coerce. Other target shapes (ADT names, FFI
-             -- opaque types) keep the direct assertion — they have no
-             -- map-source panic class.
-             else if isRecordAliasTy erasedTy
-                  then GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
-                  -- Function-typed targets need careful handling.
-                  -- Go function types are nominal in BOTH params and
-                  -- returns: a `func(P) State_Msg` is NOT assignable
-                  -- to a `func(P) any` slot via `.(...)` assertion.
-                  --
-                  -- When the SOURCE is a `GoFuncLit` (typically the
-                  -- eta-expansion lambda emitted by partial-applied
-                  -- ctors; see line ~6986), the compiler KNOWS the
-                  -- lambda's intended shape. If the slot's signature
-                  -- can absorb the source's body (e.g. target return
-                  -- = `any`; Go auto-wraps any concrete value), we
-                  -- rewrite the GoFuncLit's signature DIRECTLY,
-                  -- producing fully-typed Go with no runtime adapter.
-                  --
-                  -- For non-lambda sources, or signature shapes where
-                  -- a static rewrite isn't sound, we fall through to
-                  -- rt.Coerce (which uses reflect.MakeFunc via
-                  -- adaptFuncValue at runtime — slower but correct).
-                  else if "func(" `List.isPrefixOf` erasedTy
-                  then retypeFuncLitOrCoerce erasedTy e
-                  else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+    -- v0.17 PR-14 — structural dispatch via the 'CoerceTarget' ADT.
+    -- The pre-PR-14 chain of String-prefix guards is now classified
+    -- once at the top via 'classifyCoerceTarget' (kept above).
+    -- Each arm emits the same Go expression as the pre-PR-14
+    -- branch — byte-identical codegen.  The ADT migration is
+    -- the foundation PR-15+ uses to swap classifyCoerceTarget's
+    -- internals to a GoType-structural classifier without
+    -- re-touching the dispatch arms.
+    | otherwise = case classifyCoerceTarget targetTy of
+        CoerceSkipPassThrough -> e
+        CoerceSkyResultT inner ->
+            GoIr.GoCall (GoIr.GoIdent
+                ("rt.ResultCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
+        CoerceSkyMaybe inner ->
+            GoIr.GoCall (GoIr.GoIdent
+                ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
+        CoerceSkyTask inner ->
+            GoIr.GoCall (GoIr.GoIdent
+                ("rt.TaskCoerceT[" ++ eraseTypeParams inner ++ "]")) [e]
+        CoerceListAny      -> GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
+        CoerceMapStringAny -> GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
+        CoerceListT elt ->
+            GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
+        CoerceMapStringT v ->
+            GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ v ++ "]")) [e]
+        CoerceAny -> e
+        CoerceRecordAlias erasedTy ->
+            -- v0.13.x #158: record-alias targets (`_R` suffix) route
+            -- through `rt.Coerce[T]` so a `map[string]any` source
+            -- (Db.query rows, Firestore snapshots, JSON-decoded blobs)
+            -- narrows to the typed struct via the map→struct field
+            -- builder in Coerce.
+            GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+        CoerceFunc ->
+            -- Function-typed targets: nominal in BOTH params and
+            -- returns.  When the source is a `GoFuncLit`, rewrite
+            -- the lambda's signature directly (fully-typed Go,
+            -- no runtime adapter).  Non-literal sources fall
+            -- through to rt.Coerce[func(...)] via the GoFuncLit
+            -- branch's else.
+            retypeFuncLitOrCoerce (eraseTypeParams targetTy) e
+        CoerceTypeAssert erasedTy ->
+            GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 
 -- | Function-target coercion. When the source is a lambda literal,
