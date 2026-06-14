@@ -17,6 +17,7 @@ module Sky.Type.Solve
     , SolveResult(..)
     , SolvedTypes(..)
     , emptySolvedTypes               -- v0.15.x P37a
+    , Unresolved(..)                 -- v0.17 PR-10 sentinel scaffold
     , lookupSolvedVar                -- v0.15.x P37a
     , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
     , moduleForRegion                -- v0.16.7 PR #124 — region → defining module
@@ -297,6 +298,56 @@ unionSolvedEnv additions st =
 -- by the typed-directed lowerer in v0.15 Stage B+ to look up the
 -- concrete HM type of any sub-expression by its source position.
 type RegionTypes = Map.Map A.Region T.Type
+
+
+-- | v0.17 PR-10 — typed Unresolved ADT scaffold.
+--
+-- Today the solver + constraint generator + codegen scatter
+-- magic-string sentinel TVars (`T.TVar "_lit"`, `T.TVar "_lambda_arg_*"`,
+-- `T.TVar "_unknown"`, `T.TVar "_ambig"`, etc.) through
+-- @inferExprType@ to mark positions where HM didn't resolve.
+-- Wide grep finds 35+ references across @Compile.hs@,
+-- @Type/Solve.hs@, and @Type/Constrain/Expression.hs@ with 18
+-- distinct strings — too scattered to migrate cleanly in a single
+-- 1.5-session PR.
+--
+-- This data type ships AS A SCAFFOLD for the eventual migration.
+-- Each constructor names one well-understood category. Consumers
+-- migrate sentinel-by-sentinel; each migration commit converts
+-- one writer site + its matching pattern-match readers in
+-- lockstep.
+--
+-- Doc + carry-forward plan: docs/v0.17-pr10-sentinel-cleanup-analysis.md
+data Unresolved
+    = UnresolvedLit
+      -- ^ Position where a literal's type couldn't be inferred — the
+      -- HM-solver returned a TVar that downstream codegen would
+      -- otherwise render as @any@. Carries no extra context today;
+      -- enriched per migration if specific consumers need source
+      -- locations.
+    | UnresolvedLambdaArg
+      -- ^ Lambda parameter not bound by an annotation; lookup falls
+      -- through the lambda-types ledger.
+    | UnresolvedUnknown
+      -- ^ Catch-all for the legacy `T.TVar "_unknown"` reverse-map
+      -- collapse. The Compile.hs `isWildcardSkyType` pattern-matches
+      -- on this exact string — migrating that consumer requires
+      -- a coordinated change in `Sky.Build.Compile.solvedTypeToGo`.
+    | UnresolvedAmbig
+      -- ^ Solver merge produced ambiguous types (e.g. cross-module
+      -- name collision); legacy code at line 1957/1966 etc. emits
+      -- this. Treated as "miss" by 'inferExprType' at
+      -- @Compile.hs:14125@.
+    | UnresolvedCycle
+      -- ^ Cycle detected during solving; legacy `T.TVar "_cycle"`.
+    | UnresolvedSuper
+      -- ^ FlexSuper variable; legacy `T.TVar "_super"`.
+    | UnresolvedError
+      -- ^ Internal solver error; legacy `T.TVar "_error"`.
+    | UnresolvedUnbound
+      -- ^ Name not present in _stEnv during a downstream lookup;
+      -- legacy `T.TVar "_unbound"`.
+    deriving (Eq, Show)
 
 
 -- | Solver state
