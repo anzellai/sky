@@ -19,8 +19,16 @@
 module Sky.Generate.Go.Type where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Sky.AST.Canonical as Can
 import qualified Sky.Type.Type as T
 import qualified Sky.Sky.ModuleName as ModuleName
+-- v0.17 PR-4 — buildMappingContext imports CodegenEnv from Record.hs.
+-- Record.hs has no Sky.Generate.Go.Type dependency, so this import is
+-- acyclic. If Record.hs ever needs to consume MappingContext directly,
+-- the right move is to extract the env type to a shared Sky.Generate.Go.Env
+-- module — but PR-4 doesn't need that yet.
+import qualified Sky.Generate.Go.Record as Rec
 
 
 -- | Convert a canonical Sky type to a Go type string
@@ -603,21 +611,92 @@ splitTopLevel sep = go 0 [] []
 -- needs to convert a 'T.Type' to a 'GoType' AND everything
 -- 'renderGoType' needs to render it back to a Go source string.
 --
--- C2 ships the minimal shape — just 'mcRenderEnv'.  C8 onward widens
--- with the alias / union / runtime-typed maps that today's
--- @solvedTypeToGo@ reads from 'CodegenEnv' via 'getCgEnv'.  See
--- @docs/v0.17-fully-typed-codegen-v5-plan.md@ §Phase γ.
+-- C2 shipped the minimal shape — just 'mcRenderEnv'.  PR-4 widens
+-- with the env-derived data the foundation refactor consumes; each
+-- field carries a "consumed by PR-N" comment naming the PR that flips
+-- it from ignored-placeholder to actually-read.  PRs 5-10 fill them in.
+--
+-- Pre-mortem-derived discipline: the widening here is data-only.  No
+-- semantic consumer reads any new field yet.  PRs 5-10 each enable
+-- exactly one of these channels in lockstep with the renderer arm
+-- that needs it, so the parity test gates against drift.
+--
+-- Show instance only — Can.Alias has no Eq instance.  Tests compare
+-- fields individually rather than the whole record.
 data MappingContext = MappingContext
-    { mcRenderEnv :: RenderEnv
+    { mcRenderEnv      :: !RenderEnv
+      -- ^ Render policy switches.  Always read by 'renderGoType'.
+
+    -- v0.17 PR-4 fields (additive — no current consumer).
+    , mcRecordAliases  :: !(Set.Set String)
+      -- ^ Record-alias names (current module + every loaded dep,
+      -- module-prefixed).  CONSUMED BY: PR-5 (GoTypeBuild emits the
+      -- @_R@ suffix when a nominal type matches a member of this
+      -- set; otherwise falls back to the bare module-prefixed name).
+
+    , mcUnionNames     :: !(Set.Set String)
+      -- ^ Module-prefixed union/ADT names with a corresponding
+      -- @type X = rt.SkyADT@ alias emitted somewhere.  CONSUMED BY:
+      -- PR-5 (GoTypeBuild reaches for @rt.SkyADT@ instead of @any@
+      -- when a nominal type matches a member here).
+
+    , mcEnumNames      :: !(Set.Set String)
+      -- ^ Subset of 'mcUnionNames' whose Sky declaration is a pure
+      -- enum (every constructor is nullary).  These emit as
+      -- @type X = int@ at the runtime so zero value is @0@, not
+      -- @X{}@.  CONSUMED BY: PR-5 (decides GoBare "int" vs the
+      -- @rt.SkyADT@ alias for enum-shaped unions).
+
+    , mcAliases        :: !(Map.Map String Can.Alias)
+      -- ^ Alias declarations from the current module — keyed by
+      -- alias name, value is the canonicalised RHS Sky type.
+      -- CONSUMED BY: PR-7 (defuse @globalAnonRecords@ IORef —
+      -- anon-record structural identity reaches the mapper via this
+      -- field so the IORef can be retired).
     }
-    deriving (Eq, Show)
+    deriving (Show)
 
 
 -- | Conservative default — empty mapping context with today's
--- 'defaultRenderEnv'.  Used by the differential parity test in
--- 'test/Sky/Build/GoTypeAdtSpec.hs'.
+-- 'defaultRenderEnv' and empty env-derived maps.  Used by the
+-- differential parity test in 'test/Sky/Build/GoTypeAdtSpec.hs'.
+--
+-- When 'mapSkyTypeToGo' doesn't consult the new PR-4 fields (which is
+-- the case at PR-4 itself — only PRs 5-10 wire them up), 'defaultMappingContext'
+-- and 'buildMappingContext env' produce byte-identical output.  That's
+-- the foundation-no-behaviour-change contract.
 defaultMappingContext :: MappingContext
-defaultMappingContext = MappingContext { mcRenderEnv = defaultRenderEnv }
+defaultMappingContext = MappingContext
+    { mcRenderEnv      = defaultRenderEnv
+    , mcRecordAliases  = Set.empty
+    , mcUnionNames     = Set.empty
+    , mcEnumNames      = Set.empty
+    , mcAliases        = Map.empty
+    }
+
+
+-- | Build a 'MappingContext' from the codegen environment that today's
+-- 'solvedTypeToGo' reads ambient via 'getCgEnv'.  This is the structural
+-- counterpart to the IORef-soup approach — same data, threaded explicitly.
+--
+-- Today this is the ONLY supported way to produce a non-default
+-- 'MappingContext' that PRs 5-10 will treat as "real".  Direct field-by-
+-- field construction is fine for tests but production code should always
+-- go through this constructor so the field set stays in sync with
+-- CodegenEnv as it evolves.
+--
+-- The 'mcRenderEnv' is taken as a separate argument because RenderEnv
+-- carries policy switches (renderTupleGeneric, renderCmdGeneric, etc.)
+-- that aren't derivable from CodegenEnv alone — they're flipped per-call
+-- by Phase γ migrations.
+buildMappingContext :: RenderEnv -> Rec.CodegenEnv -> MappingContext
+buildMappingContext renderEnv cgEnv = MappingContext
+    { mcRenderEnv      = renderEnv
+    , mcRecordAliases  = Rec._cg_recordAliases cgEnv
+    , mcUnionNames     = Rec._cg_unionNames cgEnv
+    , mcEnumNames      = Rec._cg_enumNames cgEnv
+    , mcAliases        = Rec._cg_aliases cgEnv
+    }
 
 
 -- | Map a canonical Sky type to its typed Go-type representation.

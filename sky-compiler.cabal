@@ -285,6 +285,7 @@ test-suite sky-tests
       Sky.Build.CompileSpec
       Sky.Build.GoTypeRoundTripSpec
       Sky.Build.KnownDivergence
+      Sky.Build.MappingContextSpec
       Sky.Build.RendererParitySpec
       Sky.Build.MainPanicRecoverSpec
       Sky.Build.DepHmFatalSpec

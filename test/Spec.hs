@@ -34,6 +34,7 @@ import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.GoTypeAdtSpec
 import qualified Sky.Build.GoTypeRoundTripSpec
+import qualified Sky.Build.MappingContextSpec
 import qualified Sky.Build.RendererParitySpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiFillCssSpec
@@ -297,6 +298,7 @@ allSpecs fastMode = do
     -- Unit test only — no callers migrated yet.
     describeT "Sky.Build.GoTypeAdt"       Sky.Build.GoTypeAdtSpec.spec
     describeT "Sky.Build.GoTypeRoundTrip" Sky.Build.GoTypeRoundTripSpec.spec
+    describeT "Sky.Build.MappingContext"  Sky.Build.MappingContextSpec.spec
     describeT "Sky.Build.RendererParity"  Sky.Build.RendererParitySpec.spec
     describeT "Sky.Build.UiFillCascade"   Sky.Build.UiFillCascadeSpec.spec
     -- v0.15.55 F1 + v0.15.56 F4: cross-axis fill CSS emission.
