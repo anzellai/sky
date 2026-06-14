@@ -573,6 +573,33 @@ withScopedEnclosingTypeParams tps x = unsafePerformIO $ do
     return (GoIr.GoRaw rendered)
 
 
+-- | v0.17 PR-17c — sibling of 'withScopedEnclosingTypeParams' that
+-- operates on a list of 'GoStmt' (the @_gf_body@ slot of a
+-- 'GoFuncDecl').  Used by the TCO emission path so the TCO body's
+-- inner coerceArg / coerceToFieldType reads see the function's
+-- declared T-vars in scope when 'enclosingTypeParamInScope' fires.
+--
+-- Pre-PR-17c the IORef scope was only wrapped around the normal
+-- (non-TCO) bodyExpr, leaving the TCO continue-block's
+-- @rt.MaybeCoerce[any](...)@ emission with an empty scope set —
+-- the assignment @m = rt.MaybeCoerce[any](__tco_t1)@ then failed
+-- against @m@'s declared @rt.SkyMaybe[T1]@ type.
+withScopedEnclosingTypeParamsStmts :: [String] -> [GoIr.GoStmt] -> [GoIr.GoStmt]
+withScopedEnclosingTypeParamsStmts tps stmts
+    | null tps  = stmts
+    | otherwise = unsafePerformIO $ do
+        prev <- readIORef scopeStateRef
+        writeIORef scopeStateRef (LC.withEnclosingTypeParams tps prev)
+        let rendered = unlines (concatMap GoBuilder.renderStmt stmts)
+            forced = length rendered
+        forced `seq` writeIORef scopeStateRef prev
+        -- Return a single GoExprStmt containing a GoRaw — the
+        -- rendered text contains complete statements, so emitting
+        -- it verbatim at the body-list level preserves Go's
+        -- statement boundaries.
+        return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
+
+
 -- | Membership test: is `t` a generic type parameter declared on
 -- the enclosing Go function?  Used by the arg-coercion paths to
 -- decide whether to erase a TVar (out-of-scope → erase to `any`)
@@ -3576,9 +3603,15 @@ generateDeclsForDep canMod modPrefix =
               depParamTyped =
                   [ ty | GoIr.GoParam _ ty <- typedGoParams' ]
               useTco = TCO.isTailRecursive depHome name (length params) body
-              tcoBody = [GoIr.GoForever
-                          (tcoBodyStmts depHome name (length params)
-                                        depParamNames depParamTyped depRetType body)]
+              -- v0.17 PR-17c — wrap TCO body's emission in the
+              -- enclosing-type-param scope so coerceArg /
+              -- coerceToFieldType reads inside the loop preserve
+              -- T-vars instead of erasing to `any`.  Closes
+              -- probe-TCO-4 (polymorphic case-arm tail jump).
+              tcoBody = withScopedEnclosingTypeParamsStmts depTypeParams
+                          [GoIr.GoForever
+                              (tcoBodyStmts depHome name (length params)
+                                            depParamNames depParamTyped depRetType body)]
               normalBody = [GoIr.GoReturn bodyExpr]
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
@@ -4854,9 +4887,13 @@ generateDef home def0 solvedTypes =
             paramNames = [ pn | GoIr.GoParam pn _ <- goParams' ]
             paramTyped = [ ty | GoIr.GoParam _ ty <- typedGoParams ]
             useTco = TCO.isTailRecursive home name (length params) body
-            tcoBody = [GoIr.GoForever
-                        (tcoBodyStmts home name (length params)
-                                      paramNames paramTyped goRetType body)]
+            -- v0.17 PR-17c — wrap entry-module TCO body in the
+            -- enclosing-type-param scope.  Sibling of the dep-module
+            -- wrap at line ~3606; same probe-TCO-4 closer.
+            tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
+                        [GoIr.GoForever
+                            (tcoBodyStmts home name (length params)
+                                          paramNames paramTyped goRetType body)]
             normalBody = [GoIr.GoReturn bodyExpr]
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -9298,41 +9335,53 @@ coerceToFieldType targetTy e
     -- the foundation PR-15+ uses to swap classifyCoerceTarget's
     -- internals to a GoType-structural classifier without
     -- re-touching the dispatch arms.
-    | otherwise = case classifyCoerceTarget targetTy of
-        CoerceSkipPassThrough -> e
-        CoerceSkyResultT inner ->
-            GoIr.GoCall (GoIr.GoIdent
-                ("rt.ResultCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
-        CoerceSkyMaybe inner ->
-            GoIr.GoCall (GoIr.GoIdent
-                ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
-        CoerceSkyTask inner ->
-            GoIr.GoCall (GoIr.GoIdent
-                ("rt.TaskCoerceT[" ++ eraseTypeParams inner ++ "]")) [e]
-        CoerceListAny      -> GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
-        CoerceMapStringAny -> GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
-        CoerceListT elt ->
-            GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
-        CoerceMapStringT v ->
-            GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ v ++ "]")) [e]
-        CoerceAny -> e
-        CoerceRecordAlias erasedTy ->
-            -- v0.13.x #158: record-alias targets (`_R` suffix) route
-            -- through `rt.Coerce[T]` so a `map[string]any` source
-            -- (Db.query rows, Firestore snapshots, JSON-decoded blobs)
-            -- narrows to the typed struct via the map→struct field
-            -- builder in Coerce.
-            GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
-        CoerceFunc ->
-            -- Function-typed targets: nominal in BOTH params and
-            -- returns.  When the source is a `GoFuncLit`, rewrite
-            -- the lambda's signature directly (fully-typed Go,
-            -- no runtime adapter).  Non-literal sources fall
-            -- through to rt.Coerce[func(...)] via the GoFuncLit
-            -- branch's else.
-            retypeFuncLitOrCoerce (eraseTypeParams targetTy) e
-        CoerceTypeAssert erasedTy ->
-            GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+    -- v0.17 PR-17c — pin in-scope enclosing T-vars instead of widening
+    -- them to `any`.  The pre-fix `eraseTypeParams` flattened EVERY
+    -- T-var to `any`, which broke TCO-jump assignments like
+    -- `m = rt.MaybeCoerce[any](...)` when `m`'s declared type was
+    -- `rt.SkyMaybe[T1]` inside `func choose[T1 any](...)`.  Go's
+    -- nominal generics reject `SkyMaybe[any]` ≢ `SkyMaybe[T1]`.
+    -- The scoped erasure preserves T1 whenever the enclosing Go
+    -- function declared it (via `withScopedEnclosingTypeParams`).
+    | otherwise =
+        let eraseScoped = eraseTypeParamsExceptScope enclosingTypeParamInScope
+        in case classifyCoerceTarget targetTy of
+            CoerceSkipPassThrough -> e
+            CoerceSkyResultT inner ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.ResultCoerce[" ++ eraseScoped inner ++ "]")) [e]
+            CoerceSkyMaybe inner ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.MaybeCoerce[" ++ eraseScoped inner ++ "]")) [e]
+            CoerceSkyTask inner ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.TaskCoerceT[" ++ eraseScoped inner ++ "]")) [e]
+            CoerceListAny      -> GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
+            CoerceMapStringAny -> GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
+            CoerceListT elt ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.AsListT[" ++ eraseScoped elt ++ "]")) [e]
+            CoerceMapStringT v ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.AsMapT[" ++ eraseScoped v ++ "]")) [e]
+            CoerceAny -> e
+            CoerceRecordAlias erasedTy ->
+                -- v0.13.x #158: record-alias targets (`_R` suffix) route
+                -- through `rt.Coerce[T]` so a `map[string]any` source
+                -- (Db.query rows, Firestore snapshots, JSON-decoded blobs)
+                -- narrows to the typed struct via the map→struct field
+                -- builder in Coerce.
+                GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+            CoerceFunc ->
+                -- Function-typed targets: nominal in BOTH params and
+                -- returns.  When the source is a `GoFuncLit`, rewrite
+                -- the lambda's signature directly (fully-typed Go,
+                -- no runtime adapter).  Non-literal sources fall
+                -- through to rt.Coerce[func(...)] via the GoFuncLit
+                -- branch's else.
+                retypeFuncLitOrCoerce (eraseTypeParams targetTy) e
+            CoerceTypeAssert erasedTy ->
+                GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 
 -- | Function-target coercion. When the source is a lambda literal,
@@ -10987,10 +11036,20 @@ coerceArg mSrc e ty
     | Just shapeTy <- goExprGoType Nothing e
     , shapeTy == ty
         = e
+    -- v0.17 PR-17c — pin in-scope enclosing T-vars instead of
+    -- widening to `any`.  See sibling comment in 'coerceToFieldType'
+    -- — same fix, same reason (TCO continue-block `m =
+    -- rt.MaybeCoerce[any](...)` assigning to `m rt.SkyMaybe[T1]`).
     | Just params <- stripParametric "rt.SkyResult" ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseTypeParams params ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.ResultCoerce["
+                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope params
+                ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.MaybeCoerce["
+                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope inner
+                ++ "]")) [e]
     -- Audit: parametric SkyTask param targets need TaskCoerceT for the
     -- same nominal-typing reason — `func() any` from the runtime helpers
     -- and `SkyTask[any, any]` from typed call sites are unrelated to
@@ -10998,7 +11057,10 @@ coerceArg mSrc e ty
     -- this branch the codegen emits `any(arg).(rt.SkyTask[Error, A])`
     -- which panics at runtime on any cross-instantiation pass-through.
     | Just params <- stripParametric "rt.SkyTask" ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ eraseTypeParams params ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.TaskCoerceT["
+                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope params
+                ++ "]")) [e]
     | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
     | ty == "bool"   = GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [e]
