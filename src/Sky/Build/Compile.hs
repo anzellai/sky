@@ -4939,12 +4939,92 @@ goSafeName n
 -- | The two statements a let-binding emits — the declaration and an
 -- unused-suppressing assign — with the bound name keyword-escaped so
 -- it matches the goSafeName-escaped references emitted for it.
+-- | v0.17 PR-17d — emit a let-binding statement pair.  When the
+-- bound expression is a 'GoFuncLit' AND its body self-references
+-- the bound name (a recursive closure), use a TWO-STEP declaration
+-- so the closure body can reference the bound name.  Go's
+-- @x := func() { x() }@ is rejected by the compiler because the
+-- LHS of @:=@ is NOT in scope on the RHS, so a let-bound recursive
+-- helper like
+--
+--   walk xs n =
+--       let helper ys acc = case ys of [] -> acc; _ :: r -> helper r (acc + 1)
+--       in helper xs n
+--
+-- would emit @helper := func(...) { ... helper(r, acc + 1) ... }@
+-- which @go build@ rejects with @undefined: helper@.  The
+-- two-step form @var helper any; helper = func(...) { ... }@ puts
+-- the name in scope BEFORE the RHS evaluates.  Closes probe-TCO-5.
+--
+-- Non-self-referential let-bound closures (and non-function
+-- expressions) keep the simpler @:=@ form — Go accepts them and
+-- the @var@ pre-decl would just be noise.
 letBindStmts :: String -> GoIr.GoExpr -> [GoIr.GoStmt]
 letBindStmts name expr =
     let sn = goSafeName name
-    in [ GoIr.GoShortDecl sn expr
-       , GoIr.GoAssign "_" (GoIr.GoIdent sn)
-       ]
+        selfRef = case expr of
+            GoIr.GoFuncLit{} -> goExprMentionsIdent sn expr
+            _                -> False
+    in if selfRef
+        then [ GoIr.GoVarDecl sn "any" Nothing
+             , GoIr.GoAssign sn expr
+             , GoIr.GoAssign "_" (GoIr.GoIdent sn)
+             ]
+        else [ GoIr.GoShortDecl sn expr
+             , GoIr.GoAssign "_" (GoIr.GoIdent sn)
+             ]
+
+
+-- | v0.17 PR-17d helper — walk a 'GoExpr' tree looking for a bare
+-- 'GoIdent' whose name matches @target@.  Used to detect
+-- self-referential let-bound closures so 'letBindStmts' can emit
+-- the two-step @var x; x = func@ form instead of the @x := func@
+-- form that Go rejects on RHS self-reference.
+goExprMentionsIdent :: String -> GoIr.GoExpr -> Bool
+goExprMentionsIdent target = goE
+  where
+    goE :: GoIr.GoExpr -> Bool
+    goE e = case e of
+        GoIr.GoIdent n           -> n == target
+        GoIr.GoCall f args       -> goE f || any goE args
+        GoIr.GoGenericCall _ _ as -> any goE as
+        GoIr.GoSelector x _      -> goE x
+        GoIr.GoIndex a b         -> goE a || goE b
+        GoIr.GoSliceLit _ xs     -> any goE xs
+        GoIr.GoMapLit _ _ kvs    -> any (\(k, v) -> goE k || goE v) kvs
+        GoIr.GoStructLit _ fs    -> any (goE . snd) fs
+        GoIr.GoFuncLit _ _ body  -> any goS body
+        GoIr.GoBinary _ a b      -> goE a || goE b
+        GoIr.GoUnary _ a         -> goE a
+        GoIr.GoTypeAssert a _    -> goE a
+        GoIr.GoBlock stmts r     -> any goS stmts || goE r
+        GoIr.GoTypedBlock _ stmts r -> any goS stmts || goE r
+        GoIr.GoQualified _ _     -> False
+        GoIr.GoIntLit _          -> False
+        GoIr.GoFloatLit _        -> False
+        GoIr.GoStringLit _       -> False
+        GoIr.GoRuneLit _         -> False
+        GoIr.GoBoolLit _         -> False
+        GoIr.GoNil               -> False
+        GoIr.GoRaw _             -> False
+
+    goS :: GoIr.GoStmt -> Bool
+    goS s = case s of
+        GoIr.GoExprStmt e    -> goE e
+        GoIr.GoAssign _ e    -> goE e
+        GoIr.GoShortDecl _ e -> goE e
+        GoIr.GoVarDecl _ _ m -> maybe False goE m
+        GoIr.GoReturn e      -> goE e
+        GoIr.GoReturnVoid    -> False
+        GoIr.GoIf c t el     -> goE c || any goS t || any goS el
+        GoIr.GoSwitch e cs   -> goE e || any (\(g, body) -> goE g || any goS body) cs
+        GoIr.GoTypeSwitch _ e cs -> goE e || any (any goS . snd) cs
+        GoIr.GoFor _ e body  -> goE e || any goS body
+        GoIr.GoForever body  -> any goS body
+        GoIr.GoContinue      -> False
+        GoIr.GoBlock_ body   -> any goS body
+        GoIr.GoComment _     -> False
+        GoIr.GoBlank         -> False
 
 
 -- | Sky convention: identifiers starting with `_` mean the value is unused.
