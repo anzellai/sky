@@ -506,6 +506,19 @@ lookupLambdaType k = unsafePerformIO $ do
     return (LC.lookupLambdaType ctx k)
 
 
+-- | v0.17 PR-11 — structural Go-type lookup for typed lambda params.
+-- IORef wrapper around 'LC.lookupLambdaGoType'.  Same `unsafePerformIO`
+-- + unit-arg discipline as the existing T.Type-shaped lookup so the
+-- read is per-call (no GHC memoisation of the IORef snapshot).  Read
+-- by 'goExprGoType' / 'isMaybeOrResultIdent' / 'operandIsStaticallyTyped'
+-- as the structural replacement for the lossy
+-- @inferTypeFromGoString@-bridged T.Type recovery (now deleted).
+lookupLambdaGoType :: String -> Maybe GoType.GoType
+lookupLambdaGoType k = unsafePerformIO $ do
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupLambdaGoType ctx k)
+
+
 -- | v0.13 Stage 1 (task #189) — Go-type-string registry for typed
 -- function parameters in scope. When a dep function emits as
 -- `func [T1, T2 any](fn func(T1) T2, list []T1) …`, the `fn` param
@@ -5618,6 +5631,25 @@ goExprGoType mSrc e = case shapeClassified of
                 in if take 5 goTy == "func("
                      then Just goTy
                      else Nothing
+            -- v0.17 PR-11 — structural GoType lookup recovers the
+            -- routing that `lowerTypedLambda`'s
+            -- `paramGoTypeBindings` used to deliver via the
+            -- lossy `inferTypeFromGoString` round trip.  Now that
+            -- the writer pushes GoType directly into
+            -- `_lc_lambdaGoTypes`, this arm replicates the legacy
+            -- T.Type branches structurally:
+            --   * GoBare primitive  → render as-is
+            --   * GoNamed `_R` parametric alias → preserve generic args
+            --   * GoFunc func type  → render as `func(...) ...`
+            _ | Just gt <- lookupLambdaGoType name ->
+                let rendered = GoType.renderGoType GoType.defaultRenderEnv gt
+                in case gt of
+                    GoType.GoBare _ -> Just rendered
+                    GoType.GoNamed _ _
+                        | isJust (parametricAliasBase rendered) -> Just rendered
+                    GoType.GoFunc _ _
+                        | take 5 rendered == "func(" -> Just rendered
+                    _ -> Nothing
             _ | Just goTy <- lookupLambdaGoStr name -> Just goTy
             _ ->
                 -- v0.13 Stage 1 — top-level Sky function passed as a
@@ -8103,33 +8135,42 @@ lowerTypedLambda
 lowerTypedLambda pats paramTys retTy body =
     let (params, destructStmts) = unzip (zipWith oneParam [0 :: Int ..] (zip pats paramTys))
         allDestructStmts = concat destructStmts
-        -- v0.13 typed lowerer: register PVar param types in the
-        -- lambda-scope map so the body's `Can.VarLocal name`
-        -- accesses recover the typed Go reference.  Mirrors what
-        -- `wrapTyped`'s eta-expansion path does for partial-applied
-        -- ctors.
-        paramTypeBindings = Map.fromList
-            [ (n, inferTypeFromGoString gty)
+        -- v0.17 PR-11 — register PVar param types in the structural
+        -- Go-type lambda-scope map (`_lc_lambdaGoTypes`) via PR-3's
+        -- `parseGoType`.  This REPLACES the legacy
+        -- `inferTypeFromGoString`-mediated T.Type registration —
+        -- that helper was a lossy String→T.Type reverse mapper whose
+        -- non-primitive output was a useless `T.TVar "_"` wildcard.
+        -- The new structural GoType retains the full shape (parametric
+        -- alias instantiation, func types, generics) so downstream
+        -- consumers (`goExprGoType` / `isMaybeOrResultIdent` /
+        -- `operandIsStaticallyTyped`) can route on the structural
+        -- form via `renderGoType` without going through the legacy
+        -- `solvedTypeToGo` chain.
+        paramGoTypeBindings :: Map.Map String GoType.GoType
+        paramGoTypeBindings = Map.fromList
+            [ (n, gt)
             | (A.At _ (Can.PVar n), gty) <- zip pats paramTys
             , gty /= "any"
+            , Just gt <- [GoType.parseGoType gty]
             ]
         -- v0.15.x P6 (Phase 2) — thread ctx EXPLICITLY through the
         -- lambda body's lowering instead of relying on
         -- `withScopedLambdaTypes`'s push/pop IORef dance.  Build a
-        -- per-lambda `LC.LowerCtx` extended with `paramTypeBindings`
+        -- per-lambda `LC.LowerCtx` extended with `paramGoTypeBindings`
         -- and lower the body via `lowerExprExpectGo` — the ctx-
         -- aware wrapper writes ctx into `scopeStateRef` for the
         -- duration of the call, then restores.  Same net effect as
         -- the legacy push/pop, but the ctx is now an EXPLICIT
         -- VALUE the caller passes, not implicit IORef state.
         --
-        -- When `paramTypeBindings` is empty the body still routes
+        -- When `paramGoTypeBindings` is empty the body still routes
         -- through the wrapper so call-graph ctx threading stays
         -- uniform.  The wrapper re-installs the same ctx (no-op
         -- write+restore) so the rest of the IORef-based machinery
         -- is unaffected.
         parentCtx = ctxFromIORef ()
-        lambdaCtx = LC.withLambdaTypes paramTypeBindings parentCtx
+        lambdaCtx = LC.withLambdaGoTypes paramGoTypeBindings parentCtx
         bodyExpr = lowerExprExpectGo lambdaCtx retTy body
         wrappedBody =
             if null allDestructStmts
@@ -8147,20 +8188,15 @@ lowerTypedLambda pats paramTys retTy body =
             in (GoIr.GoParam tmp gty, patternBindings tmp pat)
 
 
--- | v0.15 Stage C helper — coarse Go-string-to-Sky-type recovery for
--- the lambda-scope binding map.  Handles primitives + falls back to
--- `T.TVar "_"` (treated as unconstrained by the lambda-scope reader,
--- which is sufficient for the param-type-propagation use case).  The
--- returned type is consumed by `lookupLambdaType` for sub-expression
--- type recovery; precision can be improved later.
-inferTypeFromGoString :: String -> T.Type
-inferTypeFromGoString s = case s of
-    "string" -> T.TType ModuleName.basics "String" []
-    "int"    -> T.TType ModuleName.basics "Int" []
-    "bool"   -> T.TType ModuleName.basics "Bool" []
-    "float64"-> T.TType ModuleName.basics "Float" []
-    "rune"   -> T.TType ModuleName.basics "Char" []
-    _        -> T.TVar "_"
+-- v0.17 PR-11 — `inferTypeFromGoString` (lossy String→T.Type reverse
+-- mapper for primitives) was deleted.  Its sole writer at
+-- `lowerTypedLambda`'s `paramGoTypeBindings` now pushes structural
+-- `GoType` directly via PR-3's `parseGoType`; consumers
+-- (`goExprGoType` / `isMaybeOrResultIdent` /
+-- `operandIsStaticallyTyped`) consult the new `_lc_lambdaGoTypes`
+-- map via `lookupLambdaGoType` and route on the structural shape +
+-- `renderGoType` for the Go-string they want — no more wildcard
+-- `T.TVar "_"` round trip.
 
 
 -- | v0.15 Stage E helper — detect a Go-string-typed parametric alias
@@ -12638,6 +12674,19 @@ caseToGo mExpectedGo subject branches =
                 , let goTy = solvedTypeToGo t
                 , isConcreteResultOrMaybe goTy
                 -> True
+            -- v0.17 PR-11 — structural GoType detection for typed-
+            -- lambda params that previously routed through the lossy
+            -- `inferTypeFromGoString` (always wildcard for non-
+            -- primitives, so they NEVER matched the legacy T.Type
+            -- arm above).  Now that `lowerTypedLambda` registers the
+            -- real `GoType` in `_lc_lambdaGoTypes`, render it and
+            -- apply the same `isConcreteResultOrMaybe` gate.  This
+            -- closes a routing gap, not a regression.
+            GoIr.GoIdent name
+                | Just gt <- lookupLambdaGoType name
+                , let goTy = GoType.renderGoType GoType.defaultRenderEnv gt
+                , isConcreteResultOrMaybe goTy
+                -> True
             _ -> False
 
         funcRetTypeMap = Rec._cg_funcRetType getCgEnv
@@ -14864,12 +14913,19 @@ operandIsStaticallyTyped (A.At _ e) = case e of
     Can.Unit     -> True
     Can.VarLocal name ->
         -- Gate on Go static type: registered HM type must map to a
-        -- concrete Go type (not "any", not bare `T_N`).
+        -- concrete Go type (not "any", not bare `T_N`).  v0.17 PR-11
+        -- adds the structural `lookupLambdaGoType` fallback so
+        -- `lowerTypedLambda`-registered params (no longer in the
+        -- T.Type ledger) keep gating correctly.
         case lookupLambdaType name of
             Just t  ->
                 let goTy = solvedTypeToGo t
                 in goTy /= "any" && not (isGenericTypeParam goTy)
-            Nothing -> False
+            Nothing -> case lookupLambdaGoType name of
+                Just gt ->
+                    let goTy = GoType.renderGoType GoType.defaultRenderEnv gt
+                    in goTy /= "any" && not (isGenericTypeParam goTy)
+                Nothing -> False
     Can.Negate inner -> operandIsStaticallyTyped inner
     -- Record field access on a statically-typed target: the field
     -- access emits `target.Field` (typed) AND the field's HM type

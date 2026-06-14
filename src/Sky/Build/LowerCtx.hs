@@ -35,6 +35,7 @@ module Sky.Build.LowerCtx
     , buildLowerCtx
     , lookupLambdaType
     , lookupLambdaGoStr
+    , lookupLambdaGoType
     , memberLambdaType
     , lookupAlias
     , lookupAnnotation
@@ -42,6 +43,7 @@ module Sky.Build.LowerCtx
     , lookupEnclosingTypeParam
     , withLambdaTypes
     , withLambdaGoStrs
+    , withLambdaGoTypes
     , withEnclosingTypeParams
     ) where
 
@@ -50,6 +52,7 @@ import qualified Data.Set as Set
 
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Generate.Go.Record as Rec
+import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
@@ -87,6 +90,18 @@ data LowerCtx = LowerCtx
         -- ^ Lambda-scope Go-type strings for function-typed
         -- parameters in scope.  Replaces `globalLambdaGoStrings`.
         -- Updated via `withLambdaGoStrs`.
+    , _lc_lambdaGoTypes :: !(Map.Map String GoType.GoType)
+        -- ^ v0.17 PR-11 — structural Go-type registry for typed
+        -- lambda params.  Populated at `lowerTypedLambda`'s writer
+        -- via `parseGoType` directly (no lossy String→T.Type round
+        -- trip via the now-deleted `inferTypeFromGoString`).  Readers
+        -- that previously consumed the wildcard `TVar "_"` from the
+        -- T.Type registry (sites 1, 3, 5 in `goExprGoType` /
+        -- `operandIsStaticallyTyped` / `isMaybeOrResultIdent`) now
+        -- consult this map directly and use `renderGoType` for the
+        -- Go-string they want.  Sibling to `_lc_lambdaTypes` — both
+        -- coexist until every consumer migrates off the T.Type
+        -- channel.
     , _lc_aliases     :: !(Map.Map String Can.Alias)
         -- ^ Entry + dep merged alias map.  Snapshotted from
         -- `globalAllAliases`.  Read by parametric-alias generic-args
@@ -131,6 +146,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_solved      = Solve.emptySolvedTypes
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
+    , _lc_lambdaGoTypes = Map.empty
     , _lc_aliases     = Map.empty
     , _lc_fieldIdx    = Map.empty
     , _lc_unionNames  = Set.empty
@@ -165,6 +181,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
     , _lc_solved      = solved
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
+    , _lc_lambdaGoTypes = Map.empty
     , _lc_aliases     = aliases
     , _lc_fieldIdx    = fieldIdx
     , _lc_unionNames  = unions
@@ -186,6 +203,16 @@ lookupLambdaType ctx k = Map.lookup k (_lc_lambdaTypes ctx)
 -- `Compile.lookupLambdaGoStr`.
 lookupLambdaGoStr :: LowerCtx -> String -> Maybe String
 lookupLambdaGoStr ctx k = Map.lookup k (_lc_lambdaGoStr ctx)
+
+
+-- | v0.17 PR-11 — structural Go-type lookup for typed lambda params.
+-- Returns the 'GoType' registered at @lowerTypedLambda@'s writer
+-- without any String → T.Type round trip (the deleted
+-- @inferTypeFromGoString@'s job).  Consumers route through
+-- 'renderGoType' when they need the legacy Go-string they previously
+-- got via @solvedTypeToGo@.
+lookupLambdaGoType :: LowerCtx -> String -> Maybe GoType.GoType
+lookupLambdaGoType ctx k = Map.lookup k (_lc_lambdaGoTypes ctx)
 
 
 -- | Membership-only sister of `lookupLambdaType`.  Pure substitute
@@ -240,6 +267,16 @@ withLambdaTypes additions ctx =
 withLambdaGoStrs :: Map.Map String String -> LowerCtx -> LowerCtx
 withLambdaGoStrs additions ctx =
     ctx { _lc_lambdaGoStr = Map.union additions (_lc_lambdaGoStr ctx) }
+
+
+-- | v0.17 PR-11 — extend the structural Go-type lambda-scope.
+-- Mirror of 'withLambdaTypes' for the new 'GoType'-typed registry.
+-- Populated at @lowerTypedLambda@'s writer; consumed by
+-- @goExprGoType@ / @isMaybeOrResultIdent@ /
+-- @operandIsStaticallyTyped@.
+withLambdaGoTypes :: Map.Map String GoType.GoType -> LowerCtx -> LowerCtx
+withLambdaGoTypes additions ctx =
+    ctx { _lc_lambdaGoTypes = Map.union additions (_lc_lambdaGoTypes ctx) }
 
 
 -- | Membership test against the enclosing-Go-function's type-param

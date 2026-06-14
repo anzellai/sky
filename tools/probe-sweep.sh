@@ -142,9 +142,17 @@ run_fixture() {
                 if [[ ! -x "$bin" ]]; then
                     failures+=("binary missing: $bin")
                 else
+                    # CLAUDE.md non-negotiable #3 — every long-running
+                    # command MUST be timeout-bounded.  A probe binary
+                    # that infinite-loops (e.g. miscompiled TCO
+                    # continue-block) would otherwise stall the sweep
+                    # indefinitely.  10 s is generous for the
+                    # fixtures' workload; exit code 124 = timed out.
                     local run_rc=0
-                    "$bin" > /dev/null 2>&1 || run_rc=$?
-                    if (( run_rc != 0 )); then
+                    timeout 10 "$bin" > /dev/null 2>&1 || run_rc=$?
+                    if (( run_rc == 124 )); then
+                        failures+=("runtime timed out — infinite loop / TCO miscompile")
+                    elif (( run_rc != 0 )); then
                         failures+=("runtime exit $run_rc — likely panic")
                     fi
                 fi ;;
