@@ -1,0 +1,10 @@
+# probe-TCO-7: TCO across Std.Ui Element poly-T boundary.
+# Closes by: PR-13 + PR-23 (user-ADT typed payload).
+#
+# Exercises TCO + Std.Ui poly-T args together (Cause C residual).
+# PR-23 closes the user-ADT typed-payload long tail; PR-13 holds
+# the foundation while that lands.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue

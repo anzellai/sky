@@ -33,6 +33,7 @@ import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.GoTypeAdtSpec
+import qualified Sky.Build.RendererParitySpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiFillCssSpec
 import qualified Sky.Build.UiAlignSelfSpec
@@ -294,6 +295,7 @@ allSpecs fastMode = do
     -- fully-typed-codegen refactor (docs/v0.17-fully-typed-codegen-v5-plan.md).
     -- Unit test only — no callers migrated yet.
     describeT "Sky.Build.GoTypeAdt"       Sky.Build.GoTypeAdtSpec.spec
+    describeT "Sky.Build.RendererParity"  Sky.Build.RendererParitySpec.spec
     describeT "Sky.Build.UiFillCascade"   Sky.Build.UiFillCascadeSpec.spec
     -- v0.15.55 F1 + v0.15.56 F4: cross-axis fill CSS emission.
     -- F1 (v0.15.55) — drop `height: 100%` from cross-axis HEIGHT fill

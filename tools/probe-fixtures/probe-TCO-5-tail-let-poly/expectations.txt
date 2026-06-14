@@ -1,0 +1,11 @@
+# probe-TCO-5: let-bound tail-recursive helper.
+# Closes by: PR-12 + PR-13.
+#
+# `helper` is the tail-recursive inner binding; `walk` calls it
+# at tail position. PR-12 lowerTypedLambda is where the local
+# lambda picks up its typed signature; PR-13 the TCO continue
+# block preserves that typing.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue

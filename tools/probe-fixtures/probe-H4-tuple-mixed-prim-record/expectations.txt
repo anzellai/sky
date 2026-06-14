@@ -1,0 +1,13 @@
+# probe-H4: (Int, { name : String }) — primitive + anonymous record.
+# Closes by: PR-17 + foundation PR-7 (defuse globalAnonRecords).
+#
+# Anon-record naming is via _skyanon_<hash> alias; the typed-slot
+# lowering through PR-7's IORef defusing + PR-17 tuple widen is
+# what gives this fixture its typed Go shape.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+
+# AT PR-17 + PR-7 — anon record gets a stable typed alias and the
+# tuple slot lowers to T2[int, <alias>]. Refine assertions when
+# we observe the canonical anon-name post-PR-7.

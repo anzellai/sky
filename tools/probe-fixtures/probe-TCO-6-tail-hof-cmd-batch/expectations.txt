@@ -1,0 +1,10 @@
+# probe-TCO-6: tail call passing Cmd.batch [...] payload.
+# Closes by: PR-13 + PR-18 (Cmd kernel typed migration).
+#
+# `build : Int -> Cmd msg -> Cmd msg` is polymorphic in the message
+# type. PR-18 makes Cmd typed; PR-13 prerequisite keeps poly-T
+# flowing through TCO continue-block reassignment.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue

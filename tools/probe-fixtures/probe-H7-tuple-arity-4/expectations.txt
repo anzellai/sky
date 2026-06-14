@@ -1,0 +1,14 @@
+# probe-H7: 4-tuple — rt.T4 runtime alias generation gate.
+# Closes by: PR-17 (requires rt.T4..rt.T9 alias scaffolding).
+#
+# Today: rt.SkyTupleN slice-backed (the existing runtime alias
+# list stops at T3).
+# Target: rt.T4[int, string, bool, float64] struct projection
+# after PR-17 lands the T4..T9 aliases.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+
+# AT PR-17:
+# MUST_CONTAIN rt.T4[int, string, bool, float64]
+# MUST_NOT_CONTAIN rt.SkyTuple

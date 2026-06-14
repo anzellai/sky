@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+pair : (String, Int)
+pair =
+    ( "hello", 42 )
+
+
+main =
+    let
+        ( s, n ) =
+            pair
+    in
+    println (s ++ " " ++ String.fromInt n)

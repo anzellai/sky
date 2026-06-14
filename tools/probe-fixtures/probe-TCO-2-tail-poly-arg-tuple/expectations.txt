@@ -1,0 +1,12 @@
+# probe-TCO-2: tail call with (Cfg Msg, State) tuple arg.
+# Closes by: PR-13 + PR-16.
+#
+# Combines Cause H typed-tuple emission with TCO continue-block
+# reassignment. The reassignment site must NOT introduce
+# rt.Coerce[rt.SkyTuple2](...) wrapping at PR-13.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue
+MUST_CONTAIN Cfg_R
+MUST_CONTAIN State_R

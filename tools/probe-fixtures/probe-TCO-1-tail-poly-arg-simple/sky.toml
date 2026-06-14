@@ -1,0 +1,6 @@
+name = "probe-TCO-1-tail-poly-arg-simple"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

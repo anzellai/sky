@@ -1,0 +1,18 @@
+# probe-H3: canonical TEA init shape — (Model, Cmd Msg).
+# Closes by: PR-17 + PR-18 (Cmd kernel typed migration).
+#
+# Today (verified 2026-06-14): the tuple drops to rt.SkyTuple2,
+# Cmd.none widens to any.
+# Target: rt.T2[Model_R, rt.SkyCmd_T[Msg]] end-to-end.
+# Entry-module types are unprefixed (Model_R, Msg).
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN Model_R
+MUST_CONTAIN Msg_Tick
+
+# TODAY (flip at PR-17 + PR-18):
+MUST_CONTAIN rt.SkyTuple2
+# AT PR-17:
+# MUST_CONTAIN rt.T2[Model_R, rt.SkyCmd_T[Msg]]
+# MUST_NOT_CONTAIN rt.SkyTuple2

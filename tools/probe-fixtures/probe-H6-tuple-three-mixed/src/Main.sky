@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+triple : ( Int, String, Bool )
+triple =
+    ( 1, "two", True )
+
+
+main =
+    let
+        ( n, s, b ) =
+            triple
+    in
+    println (s ++ " " ++ String.fromInt n ++ " " ++ (if b then "yes" else "no"))

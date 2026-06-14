@@ -1,0 +1,30 @@
+# probe-H2: (Cfg Msg, Model) — Cause H Step 4 headline.
+# Closes by: PR-17.
+#
+# Today (verified 2026-06-14):
+#   func makePair() rt.SkyTuple2 {
+#     return rt.SkyTuple2{V0: Cfg_R[any]{...}, V1: Model_R{...}}
+#   }
+# Cfg's type parameter widened to `any` instead of `Main_Msg`.
+# Tuple still SkyTuple2 (no typed slot).
+#
+# Target (PR-17):
+#   func makePair() rt.T2[Cfg_R[Msg], Model_R] { ... }
+#   destructure becomes typed struct projection.
+#
+# Entry-module types are unprefixed (Cfg_R, Model_R, Msg) — NOT
+# Main_Cfg_R. This is Sky's entry-module convention (see CLAUDE.md
+# "Module-prefix safety net").
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN Cfg_R
+MUST_CONTAIN Model_R
+
+# TODAY (flip at PR-17):
+MUST_CONTAIN rt.SkyTuple2
+MUST_CONTAIN Cfg_R[any]
+# AT PR-17:
+# MUST_CONTAIN rt.T2[Cfg_R[Msg]
+# MUST_NOT_CONTAIN rt.SkyTuple2
+# MUST_NOT_CONTAIN Cfg_R[any]

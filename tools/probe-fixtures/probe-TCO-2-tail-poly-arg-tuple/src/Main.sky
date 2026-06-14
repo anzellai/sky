@@ -1,0 +1,39 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Cfg msg =
+    { label : String
+    , onPress : msg
+    }
+
+
+type alias State =
+    { ticks : Int
+    }
+
+
+type Msg
+    = Tick
+
+
+step : ( Cfg Msg, State ) -> ( Cfg Msg, State )
+step ( cfg, state ) =
+    if state.ticks > 5 then
+        ( cfg, state )
+
+    else
+        step ( cfg, { state | ticks = state.ticks + 1 } )
+
+
+main =
+    let
+        ( _, s ) =
+            step
+                ( { label = "x", onPress = Tick }
+                , { ticks = 0 }
+                )
+    in
+    println (String.fromInt s.ticks)
