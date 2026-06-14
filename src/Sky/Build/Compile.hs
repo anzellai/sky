@@ -4887,13 +4887,16 @@ generateDef home def0 solvedTypes =
             paramNames = [ pn | GoIr.GoParam pn _ <- goParams' ]
             paramTyped = [ ty | GoIr.GoParam _ ty <- typedGoParams ]
             useTco = TCO.isTailRecursive home name (length params) body
-            -- v0.17 PR-17c — wrap entry-module TCO body in the
-            -- enclosing-type-param scope.  Sibling of the dep-module
-            -- wrap at line ~3606; same probe-TCO-4 closer.
+            -- v0.17 PR-17b/c — entry-module sibling of dep-module
+            -- wrap.  PR-17b moves destructStmts INSIDE GoForever
+            -- (tuple-pattern locals re-bind each iteration; closes
+            -- probe-TCO-2).  PR-17c wraps the body in the enclosing
+            -- type-param scope (probe-TCO-4 closer).
             tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
                         [GoIr.GoForever
-                            (tcoBodyStmts home name (length params)
-                                          paramNames paramTyped goRetType body)]
+                            (destructStmts ++
+                                tcoBodyStmts home name (length params)
+                                             paramNames paramTyped goRetType body)]
             normalBody = [GoIr.GoReturn bodyExpr]
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -4901,7 +4904,9 @@ generateDef home def0 solvedTypes =
             , GoIr._gf_typeParams = [ (tp, "any") | tp <- entryTypeParams ]
             , GoIr._gf_params = typedGoParams
             , GoIr._gf_returnType = goRetType
-            , GoIr._gf_body = destructStmts ++ (if useTco then tcoBody else normalBody)
+            , GoIr._gf_body = if useTco
+                then tcoBody
+                else destructStmts ++ normalBody
             }
         ]
 
