@@ -8286,13 +8286,33 @@ lowerRecordLiteralTo targetTy fields =
 -- Returns the list of arg type-strings (top-level comma split,
 -- bracket-balanced).  Returns [] when input doesn't carry the
 -- `_R[...]` instantiation form.
+--
+-- v0.17 PR-15 — structural routing via PR-3's 'GoType.parseGoType'
+-- + PR-3's structural 'goTypeArgs' accessor, with byte-identical
+-- fallback to the legacy String tokeniser.  When 'parseGoType'
+-- succeeds AND the rendered structural output matches the legacy
+-- String parser's output, the structural list ships (the v0.17
+-- typed-e2e direction).  When parsing rejects an unusual form OR
+-- the outputs diverge (e.g. comment-bearing target strings, raw
+-- 'GoRaw' escape-hatch types), the legacy tokeniser's output ships
+-- — preserves byte-shape under the pre-mortem lesson 4 TCO gate.
 parseTargetArgs :: String -> [String]
-parseTargetArgs s = case List.dropWhile (/= '[') s of
-    '[' : rest -> case dropTrailingBracket rest of
-        Just inner -> splitTopLevelArgs 0 [] inner
-        Nothing    -> []
-    _ -> []
+parseTargetArgs s =
+    let legacy = legacyParse s
+        structuralMb = do
+            gt <- GoType.parseGoType s
+            argsList <- GoType.goTypeArgs gt
+            Just (map (GoType.renderGoType GoType.defaultRenderEnv) argsList)
+    in case structuralMb of
+        Just structural | structural == legacy -> structural
+        _                                      -> legacy
   where
+    legacyParse :: String -> [String]
+    legacyParse str = case List.dropWhile (/= '[') str of
+        '[' : rest -> case dropTrailingBracket rest of
+            Just inner -> splitTopLevelArgs 0 [] inner
+            Nothing    -> []
+        _ -> []
     dropTrailingBracket str = case reverse str of
         ']' : tailR -> Just (reverse tailR)
         _           -> Nothing
