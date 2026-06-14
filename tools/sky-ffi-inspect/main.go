@@ -111,7 +111,47 @@ type PackageInfo struct {
 	Pkg       string     `json:"pkg"`
 	Name      string     `json:"name"`
 	Functions []Function `json:"functions"`
-	Errors    []string   `json:"errors"`
+	// v0.17 PR-9 — Implements registry: maps the qualified name of
+	// each concrete named type in THIS package to the list of
+	// qualified interface names it satisfies. Format of both names:
+	// `Name@github.com/pkg/path`.
+	//
+	// Built by iterating every exported *types.Named in this
+	// package's scope against the global interface inventory
+	// gathered across every loaded package. Parameterised interfaces
+	// (Go 1.18+) are skipped at inventory time — types.Implements
+	// requires fully-instantiated interfaces, and Sky's HM can't
+	// unify against them (CLAUDE.md Limitation #1).
+	//
+	// Pointer-receiver retry mirrors implementsError (line 763):
+	// if T does not implement I, *T is tried too — Go convention is
+	// pointer receivers on most interface implementations.
+	//
+	// Consumed by the Haskell side (PR-21) for FFI interface
+	// satisfaction lookups. Existing parsers ignore the field —
+	// additive change.
+	Implements map[string][]string `json:"implements,omitempty"`
+	// v0.17 PR-9 — PkgAlias registry: maps every Go import path
+	// referenced by this package's types or methods to a canonical
+	// safe-identifier alias (e.g.
+	// "github.com/stripe/stripe-go/v84" → "stripe_go_v84"). Self-
+	// path also included as a self-alias (canonicalised same way).
+	//
+	// Used by hand-coded sigs / cross-package implementation lookups
+	// downstream. Aliases derived via pathToAlias (last segment,
+	// sanitised; "v\d+" version segments fold into the prior segment).
+	// Sky-side wrappers consume this so cross-pkg references stay
+	// stable across compilations.
+	PkgAlias map[string]string `json:"pkgAlias,omitempty"`
+	Errors   []string          `json:"errors"`
+}
+
+// namedInterface — one entry in the global interface inventory built
+// at main() time before walkPackage runs. Captures everything needed
+// to call types.Implements for each concrete named type later.
+type namedInterface struct {
+	QualifiedName string
+	Iface         *types.Interface
 }
 
 func main() {
@@ -171,19 +211,217 @@ func main() {
 	for _, pkg := range pkgs {
 		loadedByPath[pkg.PkgPath] = pkg
 	}
+
+	// v0.17 PR-9 — build the global interface inventory across every
+	// LOADED package (roots + transitive deps). Each requested package's
+	// `Implements` field is then populated by checking its concrete
+	// named types against this inventory. One inventory, O(K) total
+	// build cost where K = total interfaces in the loaded set.
+	allInterfaces := buildInterfaceInventory(loadedByPath)
+
 	for _, requested := range pkgPaths {
 		pkg, ok := loadedByPath[requested]
 		if !ok {
 			results = append(results, PackageInfo{
-				Pkg: requested,
+				Pkg:    requested,
 				Errors: []string{"no package loaded for " + requested},
 			})
 			continue
 		}
-		results = append(results, walkPackage(requested, pkg))
+		info := walkPackage(requested, pkg)
+		info.Implements = computeImplements(pkg, allInterfaces)
+		info.PkgAlias = computePkgAlias(pkg)
+		results = append(results, info)
 	}
 
 	emitInfoOrArray(results, len(pkgPaths) > 1)
+}
+
+// buildInterfaceInventory walks every loaded package's scope and
+// collects every exported, non-parameterised interface type. The
+// resulting slice is consumed by computeImplements during walkPackage.
+//
+// Parameterised interfaces (Go 1.18+) are skipped because
+// types.Implements requires a fully-instantiated interface and Sky's
+// HM has no higher-kinded support (CLAUDE.md Limitation #1).
+func buildInterfaceInventory(loaded map[string]*packages.Package) []namedInterface {
+	var out []namedInterface
+	for path, pkg := range loaded {
+		if pkg.Types == nil {
+			continue
+		}
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if obj == nil || !obj.Exported() {
+				continue
+			}
+			tn, ok := obj.(*types.TypeName)
+			if !ok {
+				continue
+			}
+			named, ok := tn.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			// Skip parameterised interfaces.
+			if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+				continue
+			}
+			iface, ok := named.Underlying().(*types.Interface)
+			if !ok {
+				continue
+			}
+			out = append(out, namedInterface{
+				QualifiedName: name + "@" + path,
+				Iface:         iface,
+			})
+		}
+	}
+	return out
+}
+
+// computeImplements walks pkg's scope, finds every exported
+// concrete (non-interface) named type, and probes each against the
+// global interface inventory.
+//
+// Pointer-receiver retry mirrors implementsError: if T does not
+// implement I, *T is tried — Go convention is pointer receivers on
+// most interface methods.
+//
+// Returns nil when the package surfaces no implementations (which
+// keeps the JSON field omitted via the `omitempty` tag).
+func computeImplements(pkg *packages.Package, allInterfaces []namedInterface) map[string][]string {
+	if pkg.Types == nil || len(allInterfaces) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	scope := pkg.Types.Scope()
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		if obj == nil || !obj.Exported() {
+			continue
+		}
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		// Skip the type itself if its underlying is an interface
+		// (interfaces don't "implement" other interfaces here; that
+		// semantic is captured separately if needed).
+		if _, isIface := named.Underlying().(*types.Interface); isIface {
+			continue
+		}
+		// Skip parameterised types — Sky can't instantiate them.
+		if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+			continue
+		}
+		var satisfies []string
+		for _, ni := range allInterfaces {
+			if implementsIface(named, ni.Iface) {
+				satisfies = append(satisfies, ni.QualifiedName)
+			}
+		}
+		if len(satisfies) > 0 {
+			qn := name + "@" + pkg.PkgPath
+			out[qn] = satisfies
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// implementsIface checks whether T or *T satisfies the given
+// interface. Mirrors implementsError's *T retry shape.
+func implementsIface(t types.Type, iface *types.Interface) bool {
+	if types.Implements(t, iface) {
+		return true
+	}
+	if _, isPtr := t.(*types.Pointer); !isPtr {
+		return types.Implements(types.NewPointer(t), iface)
+	}
+	return false
+}
+
+// computePkgAlias builds the import-path → canonical-alias mapping
+// for pkg. Includes self under its own path and every direct import
+// returned by packages.Package.Imports.
+//
+// Alias derivation: last path segment, sanitised to a valid Go ident.
+// Versioned packages (path ending in /v\d+) fold the version segment
+// onto the previous one. E.g.:
+//   "github.com/stripe/stripe-go/v84" → "stripe_go_v84"
+//   "github.com/google/go-cmp/cmp"    → "cmp"
+//   "net/http"                        → "http"
+func computePkgAlias(pkg *packages.Package) map[string]string {
+	if pkg == nil {
+		return nil
+	}
+	out := make(map[string]string)
+	out[pkg.PkgPath] = pathToCanonicalAlias(pkg.PkgPath)
+	for path := range pkg.Imports {
+		out[path] = pathToCanonicalAlias(path)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// pathToCanonicalAlias derives a stable Go-ident alias from an import
+// path. Mirrors FfiGen.hs's `pathToAlias` shape so Sky-side and
+// Inspector-side strings agree.
+func pathToCanonicalAlias(path string) string {
+	if path == "" {
+		return ""
+	}
+	segs := strings.Split(path, "/")
+	// Fold trailing version segment back into the previous one.
+	if n := len(segs); n >= 2 && isVersionSegment(segs[n-1]) {
+		segs[n-2] = segs[n-2] + "_" + segs[n-1]
+		segs = segs[:n-1]
+	}
+	last := segs[len(segs)-1]
+	return sanitiseIdent(last)
+}
+
+// isVersionSegment matches "v" followed by 1+ digits, ASCII only.
+func isVersionSegment(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitiseIdent replaces non-ident chars with underscores.
+func sanitiseIdent(s string) string {
+	if s == "" {
+		return ""
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '_' {
+			out = append(out, c)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
 }
 
 
