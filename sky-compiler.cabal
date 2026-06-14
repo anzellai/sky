@@ -164,6 +164,7 @@ executable sky
     Sky.Type.Type
     Sky.Type.Unify
     Sky.Type.Solve
+    Sky.Type.Solve.GoTypeBuild
     Sky.Type.Instantiate
     Sky.Type.Constrain.Module
     Sky.Type.Constrain.Expression
