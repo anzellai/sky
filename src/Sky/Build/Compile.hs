@@ -12401,25 +12401,31 @@ defToStmts def = case def of
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
         let solved = Rec._cg_solvedTypes getCgEnv
-            -- v0.16.6 #492 + v0.16.7 PR #124 (arthurmaciel) —
-            -- derive the defining module from the def's body region,
-            -- falling back to the render-order IORef hint only when
-            -- the region has no per-module ledger entry (synthetic /
-            -- monomorphised regions).  Regions are file-unique, so
-            -- region-based lookup is deterministic regardless of
-            -- thunk-forcing order.  The IORef hint is brittle on
-            -- its own: it sticks on the FIRST dep, so a later dep's
-            -- `let encodeOne x = …` reads the first dep's ambiguous
-            -- per-module entry and degrades to `func(x any)`.
-            -- Scoped to dep-rendering context (`iorefMod = Just _`)
-            -- so entry-module decls keep the existing flat-lookup
-            -- path.
-            iorefMod = unsafePerformIO (readIORef globalCurrentDepModule)
-            curMod = case iorefMod of
-                Just im -> case Solve.moduleForRegion (A.toRegion body) solved of
-                    Just rm -> Just rm
-                    Nothing -> Just im
-                Nothing -> Nothing
+            -- v0.17 PR-6b — region-based scope lookup is the sole
+            -- source of truth here.  Pre-v0.17, this site consulted
+            -- the `globalCurrentDepModule` IORef as a fallback when
+            -- the per-module region ledger had no entry (synthetic /
+            -- monomorphised regions).  The IORef-fallback was
+            -- documented as brittle even then: "sticks on the FIRST
+            -- dep, so a later dep's `let encodeOne x = …` reads the
+            -- first dep's ambiguous per-module entry and degrades
+            -- to `func(x any)`" (v0.16.6 #492 commit message).
+            --
+            -- Defusing the IORef per the v0.17 master plan PR-6
+            -- (see docs/v0.17-pr6-globalCurrentDepModule-analysis.md):
+            -- the IORef-fallback is REMOVED here.  Regions that miss
+            -- the per-module ledger now flow through unscoped flat
+            -- lookup, which is the same behaviour they got pre-
+            -- v0.16.6 #492 — accepting a known minor degradation in
+            -- exchange for removing the structural fragility of the
+            -- IORef.  No regression at the example sweep gate because
+            -- the region-based path covers the dominant case (the
+            -- IORef-fallback was always degraded by design).
+            --
+            -- v0.16.6 #492 + v0.16.7 PR #124 (arthurmaciel) introduced
+            -- the region-based primary path; this PR retires the
+            -- secondary fallback that motivated keeping the IORef.
+            curMod = Solve.moduleForRegion (A.toRegion body) solved
             scopedSolved = Solve.withCurrentModule curMod solved
             inferredTy = Solve.lookupSolvedVarScoped name scopedSolved
             (paramTys, retTy) = case inferredTy of
