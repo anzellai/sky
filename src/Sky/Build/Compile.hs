@@ -5284,6 +5284,7 @@ isTypedGoElement gt = case gt of
     GoType.GoBare _        -> True
     GoType.GoUnit          -> True
     GoType.GoFunc _ _      -> True
+    GoType.GoMultiFunc _ _ -> True
     GoType.GoNamed _ args  -> all isTypedGoElement args
     GoType.GoStruct fields -> all (isTypedGoElement . snd) fields
     GoType.GoTuple elems   -> all isTypedGoElement elems
@@ -5648,6 +5649,8 @@ goExprGoType mSrc e = case shapeClassified of
                     GoType.GoNamed _ _
                         | isJust (parametricAliasBase rendered) -> Just rendered
                     GoType.GoFunc _ _
+                        | take 5 rendered == "func(" -> Just rendered
+                    GoType.GoMultiFunc _ _
                         | take 5 rendered == "func(" -> Just rendered
                     _ -> Nothing
             _ | Just goTy <- lookupLambdaGoStr name -> Just goTy
@@ -7995,8 +7998,20 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         -- parsed param types + return type.  Multi-param Sky lambdas
         -- where N != arity (currying) fall back to the generic
         -- `coerceReturnExprT` path.
+        -- v0.17 PR-12 — structural slot-shape destructure.  Replaces
+        -- the lossy String parser `parseFuncType`'s output
+        -- (`Just ([P1..PN], R)`) with `GoType.parseGoType`'s structural
+        -- return — `GoMultiFunc params ret` for N>=2, `GoFunc from to`
+        -- for N=1.  Each param renders via `renderGoType` so the
+        -- downstream `lowerTypedLambda` keeps its `[String] -> String`
+        -- contract; the gain is that the slot shape is now
+        -- structurally validated (the parser rejects malformed
+        -- input early) and the migration is the single seam where
+        -- the v0.17 GoType ADT becomes load-bearing for typed
+        -- lambda lowering.
         Can.Lambda pats body
-            | Just (paramTys, retTy) <- parseFuncType goRendering
+            | Just gt <- GoType.parseGoType goRendering
+            , Just (paramTys, retTy) <- destructureSlotFunc gt
             , length paramTys == length pats
             , all (/= "any") paramTys -> do
                 lowerTypedLambda pats paramTys retTy body
@@ -9366,41 +9381,42 @@ retypeFuncLitOrCoerce targetTy e = case parseFuncType targetTy of
 -- | Parse a Go function type `func(P1, P2, ...) R` into (params, ret).
 -- Returns Nothing if the string doesn't conform to this exact shape.
 -- Used only at the field-coercion boundary; not a general Go parser.
+-- | v0.17 PR-12 — structural destructure of the slot's GoType into
+-- the @(paramTypes, retType)@ pair @lowerTypedLambda@ wants.  Returns
+-- 'Nothing' when the slot type isn't a function shape (GoFunc /
+-- GoMultiFunc).  Each param + return is rendered via 'renderGoType'
+-- so the downstream lowerer keeps its String contract; the structural
+-- form is the gain — the gate against the legacy lossy
+-- 'parseFuncType' (now deleted) which String-tokenised the renderer's
+-- output.
+destructureSlotFunc :: GoType.GoType -> Maybe ([String], String)
+destructureSlotFunc gt = case gt of
+    GoType.GoFunc from to ->
+        Just
+            ( [GoType.renderGoType GoType.defaultRenderEnv from]
+            , GoType.renderGoType GoType.defaultRenderEnv to
+            )
+    GoType.GoMultiFunc params ret ->
+        Just
+            ( map (GoType.renderGoType GoType.defaultRenderEnv) params
+            , GoType.renderGoType GoType.defaultRenderEnv ret
+            )
+    _ -> Nothing
+
+
+-- | v0.17 PR-12 — the lossy String-tokenising implementation was
+-- replaced by a structural shim over PR-3's `GoType.parseGoType` +
+-- 'destructureSlotFunc'.  The legacy `parseFuncType` symbol survives
+-- as a 1-line bridge so the 3 remaining call sites (peelTypedArrows,
+-- retypeFuncLitOrCoerce, zipWithDefaultExpect's lambda gate) keep
+-- compiling unchanged.  The bridge can be deleted once those 3 sites
+-- migrate to consume `GoType` structurally (deferred to a later
+-- focused PR — each consumer interacts with `parseFuncType`'s
+-- @([String], String)@ output in idiomatic ways that benefit from a
+-- thin migration, not a forced cutover that'd just thread a render
+-- step through unchanged downstream code).
 parseFuncType :: String -> Maybe ([String], String)
-parseFuncType s = case stripPrefix' "func(" s of
-    Nothing -> Nothing
-    Just rest -> case spanParenBalanced rest of
-        Nothing -> Nothing
-        Just (paramsStr, afterParen) -> case afterParen of
-            ' ':retTy -> Just (splitTopLevelCommas paramsStr, retTy)
-            _         -> Nothing
-  where
-    stripPrefix' p str
-      | p `List.isPrefixOf` str = Just (drop (length p) str)
-      | otherwise               = Nothing
-    -- Walk `s` accumulating chars until the matching close-paren
-    -- (depth 0). Returns the inside + what's after the close-paren.
-    spanParenBalanced :: String -> Maybe (String, String)
-    spanParenBalanced = go 0 []
-      where
-        go _ _    []           = Nothing
-        go 0 acc  (')':after)  = Just (reverse acc, after)
-        go d acc  ('(':cs)     = go (d+1) ('(':acc) cs
-        go d acc  (')':cs)     = go (d-1) (')':acc) cs
-        go d acc  (c:cs)       = go d (c:acc) cs
-    -- Split on top-level commas (respecting parens/brackets).
-    splitTopLevelCommas :: String -> [String]
-    splitTopLevelCommas = splitOn 0 []
-      where
-        splitOn :: Int -> String -> String -> [String]
-        splitOn _ acc []           = [reverse acc | not (null acc)]
-        splitOn 0 acc (',':' ':cs) = reverse acc : splitOn 0 [] cs
-        splitOn 0 acc (',':cs)     = reverse acc : splitOn 0 [] cs
-        splitOn d acc ('(':cs)     = splitOn (d+1) ('(':acc) cs
-        splitOn d acc (')':cs)     = splitOn (d-1) (')':acc) cs
-        splitOn d acc ('[':cs)     = splitOn (d+1) ('[':acc) cs
-        splitOn d acc (']':cs)     = splitOn (d-1) (']':acc) cs
-        splitOn d acc (c:cs)       = splitOn d (c:acc) cs
+parseFuncType s = GoType.parseGoType s >>= destructureSlotFunc
 
 
 -- | True when `ty` looks like a record alias the codegen emits:

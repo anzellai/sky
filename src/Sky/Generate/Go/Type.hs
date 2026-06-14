@@ -199,7 +199,18 @@ data GoType
     = GoBare String               -- ^ "int", "string", "rune", "bool", "float64", "[]byte"
     | GoUnit                      -- ^ "struct{}" — Sky's @()@ unit type
     | GoAny                       -- ^ "any" — wildcard / unresolved TVar fallback
-    | GoFunc GoType GoType        -- ^ @func(A) B@
+    | GoFunc GoType GoType        -- ^ @func(A) B@ — single-arg (Sky's
+                                  --   default curried-function shape).
+    | GoMultiFunc [GoType] GoType -- ^ v0.17 PR-12 — @func(A, B, ..., N) R@.
+                                  --   Sky lambdas with N>1 patterns lower
+                                  --   to a single Go function with N
+                                  --   params (not a chain of N curried
+                                  --   single-arg @GoFunc@s).  Used by
+                                  --   @lowerTypedLambda@ to consume the
+                                  --   structural slot-type shape without
+                                  --   the lossy String-parsing detour
+                                  --   through @parseFuncType@ (deleted
+                                  --   at PR-12).
     | GoNamed String [GoType]     -- ^ @Module_Name@ or @rt.SkyList[T]@
     | GoStruct [(String, GoType)] -- ^ anonymous @struct{ Name T; ... }@
     | GoTypeVar String            -- ^ @T1@, @T2@ — Go type-parameter ident
@@ -291,6 +302,8 @@ renderGoType _   GoUnit             = "struct{}"
 renderGoType _   GoAny              = "any"
 renderGoType env (GoFunc from to)   =
     "func(" ++ renderGoType env from ++ ") " ++ renderGoType env to
+renderGoType env (GoMultiFunc params ret) =
+    "func(" ++ commaJoin (map (renderGoType env) params) ++ ") " ++ renderGoType env ret
 renderGoType env (GoNamed n args)   =
     case args of
         [] -> n
@@ -413,6 +426,7 @@ canonicaliseGoType g = case g of
         | isPrimitiveGoType s -> GoBare s
         | otherwise           -> GoNamed s []
     GoFunc a b      -> GoFunc (canonicaliseGoType a) (canonicaliseGoType b)
+    GoMultiFunc as r -> GoMultiFunc (map canonicaliseGoType as) (canonicaliseGoType r)
     GoNamed n args  -> GoNamed n (map canonicaliseGoType args)
     GoStruct fs     -> GoStruct (map (\(n, t) -> (n, canonicaliseGoType t)) fs)
     GoTuple args    -> GoTuple (map canonicaliseGoType args)
@@ -438,19 +452,40 @@ parseGoType raw =
         | "func(" `isPrefixOf'` s = parseFunc s
         | "struct{" `isPrefixOf'` s && not ("struct{}" `isPrefixOf'` s)
                                  = parseStruct s
+        -- v0.17 PR-12 — Go slice prefix `[]T` (e.g. `[]int`, `[]byte`,
+        -- `[]rt.SkyMaybe[T]`).  Falls into 'GoBare' so the renderer
+        -- emits the exact rendered string back.  Without this arm,
+        -- 'parseGoType "[]int"' would route to 'parseNameWithArgs'
+        -- which rejects `[` as a name char and returns 'Nothing' —
+        -- breaking 'parseFuncType' for slot-types like
+        -- `func([]int) []int`.  The bare-string preservation is OK
+        -- because all consumers ('destructureSlotFunc' /
+        -- 'renderGoType') just round-trip the rendered form.
+        | "[]" `isPrefixOf'` s  = Just (GoBare s)
         | isPrimitiveGoType s   = Just (GoBare s)
         | isTypeVarTok s        = Just (GoTypeVar s)
         | otherwise             = parseNameWithArgs s
 
-    -- "func(A) B" — split on the matching ")" pair, parse the inner
-    -- arg as A, parse the post-" " as B.
+    -- "func(A) B"   → GoFunc      (single-arg, Sky-curried default)
+    -- "func(A, B, ...) R" → GoMultiFunc (PR-12 — Sky lambda with N>1
+    --                       patterns lowers to a single Go function
+    --                       with N params, not nested GoFuncs).
     parseFunc :: String -> Maybe GoType
     parseFunc s = do
         let afterFunc = drop 4 s  -- drop "func"; opener "(" remains
         (inner, post) <- splitMatching '(' ')' afterFunc
-        argT <- parseGoType (trimWS inner)
         resT <- parseGoType (trimWS post)
-        Just (GoFunc argT resT)
+        let trimmedInner = trimWS inner
+            argParts = splitTopLevelComma trimmedInner
+        case argParts of
+            []  -> Nothing  -- "func() R" — not produced by current
+                           --   pipeline; reject explicitly.
+            [single] -> do
+                argT <- parseGoType (trimWS single)
+                Just (GoFunc argT resT)
+            many -> do
+                argTs <- mapM (parseGoType . trimWS) many
+                Just (GoMultiFunc argTs resT)
 
     -- "struct{ Name T; Name2 T2; }"
     parseStruct :: String -> Maybe GoType
