@@ -283,6 +283,7 @@ test-suite sky-tests
       Sky.Build.Helpers.InProcessCompile
       Sky.Build.Validator
       Sky.Build.CompileSpec
+      Sky.Build.GoTypeRoundTripSpec
       Sky.Build.KnownDivergence
       Sky.Build.RendererParitySpec
       Sky.Build.MainPanicRecoverSpec

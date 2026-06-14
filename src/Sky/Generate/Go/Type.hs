@@ -322,6 +322,258 @@ renderGoType _   (GoRaw s)          = s
 
 
 -- ============================================================================
+-- v0.17 PR-3 — parseGoType (inverse of renderGoType under genericEnv)
+-- ============================================================================
+--
+-- 'parseGoType' is the inverse of 'renderGoType' under the "genericEnv"
+-- shape — i.e. RenderEnv with @renderTupleGeneric = True@ (and the Cmd/Sub
+-- generic switches also on). Under that shape every constructor renders
+-- to a distinct string the parser can recognise.
+--
+-- The round-trip property (asserted by
+-- 'test/Sky/Build/GoTypeRoundTripSpec.hs'):
+--
+-- @
+--     parseGoType (renderGoType genericEnv x)  ==  Just (canonicalise x)
+-- @
+--
+-- where @canonicalise@ rewrites @GoBare s@ to @GoNamed s []@ for any
+-- non-primitive @s@ (the parser cannot distinguish 'GoBare "Foo"' from
+-- 'GoNamed "Foo" []' — they both render to "Foo" — so canonicalisation
+-- collapses to the named form for non-primitives).
+--
+-- LOSSY CASES (documented exceptions):
+--
+--   * 'GoTuple' rendered under @renderTupleGeneric = False@ collapses to
+--     the back-compat alias @rt.SkyTuple2@ / @rt.SkyTuple3@ / @rt.SkyTupleN@.
+--     The parser produces @GoNamed "rt.SkyTuple2" []@ etc. — the element
+--     types are LOST in the rendered string and cannot be recovered.
+--
+--   * 'GoRaw' is an escape hatch carrying verbatim strings; parsing back
+--     produces the closest structural match (often @GoNamed@ or @GoBare@)
+--     and the round-trip succeeds only when the original GoRaw content
+--     happens to be a canonical structural form.
+--
+-- Implementation: hand-written recursive-descent parser. Total — every
+-- input string produces SOME GoType, even if it falls back to @GoRaw@.
+--
+-- 'parseGoType' returns @Nothing@ ONLY for syntactically malformed input
+-- (unbalanced brackets, unterminated 'func(', empty input). Valid input
+-- always parses to a structural shape.
+
+-- | The "everything-typed-generic" RenderEnv — the round-trip target.
+-- Mirrors the runtime shape v0.17 ships at Phase γ (Cmd/Sub/Tuple
+-- generic-typed kernel sigs throughout).
+genericRenderEnv :: RenderEnv
+genericRenderEnv = RenderEnv
+    { renderCmdGeneric    = True
+    , renderSubGeneric    = True
+    , renderTupleGeneric  = True
+    }
+
+
+-- | The canonical primitive Go-type set. Membership here decides
+-- @GoBare s@ vs @GoNamed s []@ at parse time: a string equal to one of
+-- these (modulo @[]<prim>@ container forms) parses as @GoBare@; any
+-- other bare identifier parses as @GoNamed name []@.
+isPrimitiveGoType :: String -> Bool
+isPrimitiveGoType s = s `elem` primitiveGoTypes
+                   || isByteContainer s
+  where
+    isByteContainer ('[' : ']' : rest) = rest `elem` ["byte", "rune"]
+    isByteContainer _                  = False
+
+primitiveGoTypes :: [String]
+primitiveGoTypes =
+    [ "int", "int8", "int16", "int32", "int64"
+    , "uint", "uint8", "uint16", "uint32", "uint64"
+    , "uintptr"
+    , "float32", "float64"
+    , "string", "rune", "byte", "bool"
+    , "complex64", "complex128"
+    , "error"
+    ]
+
+
+-- | Canonicalise a 'GoType' against the parser's output convention.
+-- Rewrites @GoBare s@ to @GoNamed s []@ for non-primitive @s@, since
+-- the rendered string @s@ alone cannot be distinguished from a nullary
+-- @GoNamed@. Idempotent.
+canonicaliseGoType :: GoType -> GoType
+canonicaliseGoType g = case g of
+    GoBare s
+        | isPrimitiveGoType s -> GoBare s
+        | otherwise           -> GoNamed s []
+    GoFunc a b      -> GoFunc (canonicaliseGoType a) (canonicaliseGoType b)
+    GoNamed n args  -> GoNamed n (map canonicaliseGoType args)
+    GoStruct fs     -> GoStruct (map (\(n, t) -> (n, canonicaliseGoType t)) fs)
+    GoTuple args    -> GoTuple (map canonicaliseGoType args)
+    other           -> other
+
+
+-- | Parse a Go-type string back into a 'GoType'.
+--
+-- Returns @Just g@ when the input is syntactically well-formed; @Nothing@
+-- on unbalanced brackets, unterminated @func(@, or empty input.
+parseGoType :: String -> Maybe GoType
+parseGoType raw =
+    case trimWS raw of
+        ""  -> Nothing
+        s   -> parseTop s
+
+  where
+    -- Complete-string parser: must consume the WHOLE input.
+    parseTop :: String -> Maybe GoType
+    parseTop s
+        | s == "any"           = Just GoAny
+        | s == "struct{}"      = Just GoUnit
+        | "func(" `isPrefixOf'` s = parseFunc s
+        | "struct{" `isPrefixOf'` s && not ("struct{}" `isPrefixOf'` s)
+                                 = parseStruct s
+        | isPrimitiveGoType s   = Just (GoBare s)
+        | isTypeVarTok s        = Just (GoTypeVar s)
+        | otherwise             = parseNameWithArgs s
+
+    -- "func(A) B" — split on the matching ")" pair, parse the inner
+    -- arg as A, parse the post-" " as B.
+    parseFunc :: String -> Maybe GoType
+    parseFunc s = do
+        let afterFunc = drop 4 s  -- drop "func"; opener "(" remains
+        (inner, post) <- splitMatching '(' ')' afterFunc
+        argT <- parseGoType (trimWS inner)
+        resT <- parseGoType (trimWS post)
+        Just (GoFunc argT resT)
+
+    -- "struct{ Name T; Name2 T2; }"
+    parseStruct :: String -> Maybe GoType
+    parseStruct s = do
+        let afterStruct = drop 6 s  -- drop "struct"; opener "{" remains
+        (inner, post) <- splitMatching '{' '}' afterStruct
+        if not (null (trimWS post))
+            then Nothing  -- struct{...} must be the entire input
+            else do
+                fields <- parseStructFields (trimWS inner)
+                Just (GoStruct fields)
+
+    -- Inside-struct body: fields separated by ";". Each field "Name Type".
+    -- Trailing semicolon allowed.
+    parseStructFields :: String -> Maybe [(String, GoType)]
+    parseStructFields s
+        | null (trimWS s) = Just []
+        | otherwise =
+            let parts = filter (not . null . trimWS) (splitTopLevelSemi s)
+            in mapM parseStructField parts
+      where
+        parseStructField str =
+            let (nm, rest) = span (/= ' ') (trimWS str)
+                tyStr     = trimWS rest
+            in if null nm || null tyStr
+                then Nothing
+                else do
+                    ty <- parseGoType tyStr
+                    Just (nm, ty)
+
+    -- "<Name>" or "<Name>[arg1, arg2, ...]"
+    --
+    -- Lex the longest run of name-chars at the start.  Then either:
+    --   * end-of-input → bare nullary
+    --   * '[' → split matching ']', parse args, classify head as
+    --           rt.T2..rt.T9 (GoTuple) OR generic Named.
+    --   * anything else → not a valid GoType
+    parseNameWithArgs :: String -> Maybe GoType
+    parseNameWithArgs s =
+        let (nm, after) = span isNameChar s
+        in if null nm
+            then Nothing
+            else case after of
+                "" | isPrimitiveGoType nm -> Just (GoBare nm)
+                "" | isTypeVarTok nm      -> Just (GoTypeVar nm)
+                "" -> Just (GoNamed nm [])
+                '[':rest -> do
+                    -- Splitter expects opener as first char.
+                    (innerArgs, post) <- splitMatching '[' ']' ('[' : rest)
+                    if not (null (trimWS post))
+                        then Nothing  -- trailing garbage after ']'
+                        else do
+                            args <- mapM (parseGoType . trimWS)
+                                        (splitTopLevelComma innerArgs)
+                            case classifyTupleHead nm (length args) of
+                                Just _  -> Just (GoTuple args)
+                                Nothing -> Just (GoNamed nm args)
+                _ -> Nothing  -- e.g. trailing space + junk
+
+    -- "rt.T2"/"rt.T3"/.../"rt.T9" → tuple arity matches.
+    classifyTupleHead :: String -> Int -> Maybe Int
+    classifyTupleHead nm n = case nm of
+        ['r','t','.','T', d]
+            | d >= '2' && d <= '9'
+            , (fromEnum d - fromEnum '0') == n
+            -> Just n
+        _ -> Nothing
+
+    -- "T" + 1+ digits, no other chars → GoTypeVar
+    isTypeVarTok :: String -> Bool
+    isTypeVarTok ('T':ds@(_:_)) = all isDigit ds
+    isTypeVarTok _              = False
+
+    isDigit c = c >= '0' && c <= '9'
+
+    -- Characters that may appear inside an identifier / head name.
+    -- Note: '[' ']' '(' ')' ',' ' ' are STRUCTURAL — they end the name.
+    -- '*' supported as leading char for pointer notation; '/' for paths
+    -- inside synthetic qualifier strings.
+    isNameChar :: Char -> Bool
+    isNameChar c = (c >= 'a' && c <= 'z')
+                || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9')
+                || c == '_' || c == '.' || c == '*' || c == '/'
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Helpers (parser-private)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+isPrefixOf' :: String -> String -> Bool
+isPrefixOf' []     _      = True
+isPrefixOf' _      []     = False
+isPrefixOf' (a:as) (b:bs) = a == b && isPrefixOf' as bs
+
+trimWS :: String -> String
+trimWS = dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse
+
+-- | Given input starting at the FIRST occurrence of @open@, find the
+-- matching @close@ and return (inside, after-close). Tracks nested pairs.
+splitMatching :: Char -> Char -> String -> Maybe (String, String)
+splitMatching open close s = go 0 [] s
+  where
+    go _     _   []           = Nothing
+    go depth acc (c:cs)
+        | c == open  && depth == 0 = go 1 acc cs  -- consume opener
+        | c == open                = go (depth + 1) (c:acc) cs
+        | c == close && depth == 1 = Just (reverse acc, cs)
+        | c == close               = go (depth - 1) (c:acc) cs
+        | otherwise                = go depth (c:acc) cs
+
+-- | Split a string on top-level commas — commas inside nested brackets
+-- are NOT separators.
+splitTopLevelComma :: String -> [String]
+splitTopLevelComma = splitTopLevel ','
+
+splitTopLevelSemi :: String -> [String]
+splitTopLevelSemi = splitTopLevel ';'
+
+splitTopLevel :: Char -> String -> [String]
+splitTopLevel sep = go 0 [] []
+  where
+    go :: Int -> String -> [String] -> String -> [String]
+    go _     acc out []        = reverse (reverse acc : out)
+    go depth acc out (c:cs)
+        | c == sep && depth == 0 = go depth [] (reverse acc : out) cs
+        | c `elem` "([{"         = go (depth + 1) (c:acc) out cs
+        | c `elem` ")]}"         = go (depth - 1) (c:acc) out cs
+        | otherwise              = go depth (c:acc) out cs
+
+
+-- ============================================================================
 -- v0.17 C2 — Structural mapper Sky.Type -> GoType
 -- ============================================================================
 --
