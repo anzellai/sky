@@ -5357,6 +5357,56 @@ isTypedTupleElement s =
 -- legacy 10-primitive set to ANY concrete-element tuple while
 -- staying conservative around the parametric-context shapes that
 -- the legacy whitelist refused.
+-- | v0.17 PR-17 SHIP POINT B — String-level safe-typed-tuple-element
+-- predicate.  Used by the 6 bounded String renderers to decide
+-- whether an element rendered by THEIR per-site renderer is safe to
+-- embed in a typed @rt.T2[A, B]@ slot.
+--
+-- Why a String predicate (not the structural 'shouldTypedTuple')?
+-- Each renderer's per-site String output IS what the typed slot's
+-- contents would be.  Embedding a per-site String in a typed slot
+-- is safe iff every other renderer would have produced the SAME
+-- String for the SAME source type.  Three categories satisfy that
+-- agreement-across-renderers property:
+--
+--   * Go primitives — all 6 renderers produce identical strings
+--     ("string", "int", "float64", ...).
+--   * Record aliases (@_R@ suffix) — all 6 renderers consult the
+--     same env-aware alias-registry path that emits the module-
+--     prefixed @Mod_Foo_R@ form.
+--   * Already-typed tuple instantiations (@rt.T2[...]@..@rt.T9[...]@)
+--     — by induction, the inner gate already agreed.
+--
+-- Excludes (per 2026-06-13 failure modes):
+--   * Bare user-defined ADT names (no @_R@ suffix) — module-prefix
+--     asymmetry; some sites emit @Mod_Foo@, others @Foo@.
+--   * @rt.SkyDict[...]@ — divergent rendering (@solvedTypeToGo@
+--     emits @map[string]V@; @mapSkyTypeToGo@ emits @rt.SkyDict[K, V]@).
+--   * @rt.SkyList[...]@ etc. — depends on per-site rendering of
+--     the inner element; until alignment lands, treat as unsafe.
+--
+-- The legacy per-site @isPrimitive@ definitions delegate to this
+-- helper, widening the typed-tuple emission set from
+-- primitives-only to primitives-plus-record-aliases-plus-nested-
+-- typed-tuples — the SHIP POINT B contract.
+isTypedTupleElementStr :: String -> Bool
+isTypedTupleElementStr s
+    | s `elem` primitiveSet = True
+    | "_R" `isSuffixOf` s = True
+    | any (`isPrefixOf` s) typedTuplePrefixes = True
+    | otherwise = False
+  where
+    primitiveSet =
+        [ "string", "int", "int32", "int64"
+        , "float32", "float64", "bool", "byte", "rune"
+        , "[]byte"
+        ]
+    typedTuplePrefixes =
+        [ "rt.T2[", "rt.T3[", "rt.T4[", "rt.T5["
+        , "rt.T6[", "rt.T7[", "rt.T8[", "rt.T9["
+        ]
+
+
 shouldTypedTuple :: T.Type -> Bool
 shouldTypedTuple ty = case ty of
     T.TTuple a b extras ->
@@ -5407,7 +5457,48 @@ isTypedGoElement gt = case gt of
     GoType.GoUnit          -> True
     GoType.GoFunc _ _      -> True
     GoType.GoMultiFunc _ _ -> True
-    GoType.GoNamed _ args  -> all isTypedGoElement args
+    -- v0.17 PR-17 SHIP POINT B — TIGHTER named-type admission.
+    -- The 2026-06-13 attempt to widen via the permissive
+    -- @GoNamed _ args -> all isTypedGoElement args@ arm failed with
+    -- 3 example regressions (see docs/v0.17-cause-h-step4-blocker.md):
+    --   * @rt.SkyDict[K, V]@ vs @map[string]V@ — divergent per-site rendering
+    --   * bare @Colour@ vs @main.Colour@ — module-prefix asymmetry
+    --   * @[]any{...}@ vs @[]Std_Ui_Transform_Prop@ — list-of-records
+    --     asymmetry inside a record alias
+    -- The widening only stays sound for named types whose Go-string
+    -- rendering is GUARANTEED IDENTICAL across all 6 bounded String
+    -- renderers.  That whitelist:
+    --   * Record aliases (@_R@ suffix) — always module-prefixed by
+    --     every renderer (the @typeStrWithAliasesReg@ + sibling paths
+    --     all consult the alias registry uniformly).
+    --   * Typed-tuple instantiations (@rt.T2..T9@) — recursive case,
+    --     consistent rendering by definition.
+    --   * Sky container aliases where ALL args are themselves typed:
+    --     @rt.SkyList@, @rt.SkyMaybe@, @rt.SkyResult@, @rt.SkyTask@,
+    --     @rt.SkySet@.  These render uniformly across the 6 sites
+    --     because their parametric Go form is the canonical kernel
+    --     emission (no env-aware variant).
+    --   * EXCLUDE @rt.SkyDict@ — explicitly divergent (Compile.hs
+    --     @solvedTypeToGo@ emits @map[string]V@ for Dict; the
+    --     env-free @mapSkyTypeToGo@ emits @rt.SkyDict[K, V]@).
+    --   * EXCLUDE bare user-defined ADT names (no @_R@ suffix) —
+    --     module-prefix asymmetry per the 2026-06-13 Colour bug.
+    --
+    -- Concretely: this admits primitive-of-primitive AND
+    -- record-of-primitive AND list-of-record-of-primitive shapes
+    -- that the legacy whitelist refused; rejects the three failure
+    -- classes from the 2026-06-13 attempt.
+    GoType.GoNamed name args
+        | "_R" `isSuffixOf` name -> all isTypedGoElement args
+        | name `elem` safeNamedContainers -> all isTypedGoElement args
+        | otherwise -> False
+      where
+        safeNamedContainers =
+            [ "rt.SkyList", "rt.SkyMaybe", "rt.SkyResult"
+            , "rt.SkyTask", "rt.SkySet"
+            , "rt.T2", "rt.T3", "rt.T4", "rt.T5"
+            , "rt.T6", "rt.T7", "rt.T8", "rt.T9"
+            ]
     GoType.GoStruct fields -> all (isTypedGoElement . snd) fields
     GoType.GoTuple elems   -> all isTypedGoElement elems
 
@@ -6251,14 +6342,13 @@ safeReturnTypeFullBounded fuel seen t =
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
-            isPrimitive s = s `elem`
-                [ "string", "int", "int32", "int64"
-                , "float32", "float64", "bool", "byte", "rune"
-                , "[]byte"
-                ]
+            -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+            -- 'isPrimitive' replaced with the shared helper that
+            -- admits primitives + record aliases (@_R@ suffix) +
+            -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
             allPrim = not anyTVar
                    && not (null renderedAll)
-                   && all isPrimitive renderedAll
+                   && all isTypedTupleElementStr renderedAll
         in case extras of
              []
                 | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
@@ -6677,14 +6767,13 @@ safeReturnTypeBootstrap recAliases = go 64 Set.empty
                 anyTVar = any
                     (\t -> case t of T.TVar _ -> True; _ -> False)
                     (a : b : extras)
-                isPrimitive s = s `elem`
-                    [ "string", "int", "int32", "int64"
-                    , "float32", "float64", "bool", "byte", "rune"
-                    , "[]byte"
-                    ]
+                -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+                -- 'isPrimitive' replaced with the shared helper that
+                -- admits primitives + record aliases (@_R@ suffix) +
+                -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
                 allPrim = not anyTVar
                        && not (null renderedAll)
-                       && all isPrimitive renderedAll
+                       && all isTypedTupleElementStr renderedAll
             in case extras of
                  []
                     | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
@@ -7486,14 +7575,13 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
-            isPrimitive s = s `elem`
-                [ "string", "int", "int32", "int64"
-                , "float32", "float64", "bool", "byte", "rune"
-                , "[]byte"
-                ]
+            -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+            -- 'isPrimitive' replaced with the shared helper that
+            -- admits primitives + record aliases (@_R@ suffix) +
+            -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
             allPrim = not anyTVar
                    && not (null renderedAll)
-                   && all isPrimitive renderedAll
+                   && all isTypedTupleElementStr renderedAll
         in case extras of
              []
                 | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
@@ -7866,14 +7954,13 @@ safeReturnTypePureBounded fuel seen t =
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : extras)
-            isPrimitive s = s `elem`
-                [ "string", "int", "int32", "int64"
-                , "float32", "float64", "bool", "byte", "rune"
-                , "[]byte"
-                ]
+            -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+            -- 'isPrimitive' replaced with the shared helper that
+            -- admits primitives + record aliases (@_R@ suffix) +
+            -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
             allPrim = not anyTVar
                    && not (null renderedAll)
-                   && all isPrimitive renderedAll
+                   && all isTypedTupleElementStr renderedAll
         in case extras of
              []
                 | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
@@ -16269,14 +16356,13 @@ substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
                 anyTVar = any
                     (\t -> case t of T.TVar _ -> True; _ -> False)
                     (_a : _b : cs)
-                isPrimitive s = s `elem`
-                    [ "string", "int", "int32", "int64"
-                    , "float32", "float64", "bool", "byte", "rune"
-                    , "[]byte"
-                    ]
+                -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+                -- 'isPrimitive' replaced with the shared helper that
+                -- admits primitives + record aliases (@_R@ suffix) +
+                -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
                 allPrim = not anyTVar
                        && not (null renderedAll)
-                       && all isPrimitive renderedAll
+                       && all isTypedTupleElementStr renderedAll
             in case cs of
                  []
                     | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
@@ -16510,14 +16596,13 @@ solvedTypeToGoBounded fuel seen ty =
             anyTVar = any
                 (\t -> case t of T.TVar _ -> True; _ -> False)
                 (a : b : rest)
-            isPrimitive s = s `elem`
-                [ "string", "int", "int32", "int64"
-                , "float32", "float64", "bool", "byte", "rune"
-                , "[]byte"
-                ]
+            -- v0.17 PR-17 SHIP POINT B — widened gate.  Per-site
+            -- 'isPrimitive' replaced with the shared helper that
+            -- admits primitives + record aliases (@_R@ suffix) +
+            -- nested typed tuples (@rt.T2[...]..rt.T9[...]@).
             allPrim = not anyTVar
                    && not (null renderedAll)
-                   && all isPrimitive renderedAll
+                   && all isTypedTupleElementStr renderedAll
         in case rest of
              []
                 | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
