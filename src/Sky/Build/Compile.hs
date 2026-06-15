@@ -7644,7 +7644,8 @@ typeStrWithAliasesReg
     -> T.Type
     -> String
 typeStrWithAliasesReg recAliases fieldIdx tvarMap ty =
-    typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap 64 Set.empty ty
+    typeStrWithAliasesRegBoundedScoped Nothing
+        recAliases fieldIdx tvarMap 64 Set.empty ty
 
 
 -- | v0.17 Cause H step 2c — bounded recursion, same shape as the
@@ -7654,6 +7655,12 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty =
 -- preserves the public 4-arg signature; for any non-pathological
 -- input the rendered string is byte-identical with the pre-guard
 -- renderer.
+--
+-- v0.17 PR-α Session 2 — back-compat wrapper.  Delegates to the
+-- new Scoped variant with @Nothing@ as the dep-mode hint, which
+-- keeps the line 7730 reader on the IORef-fallback path.  Callers
+-- that want to thread a pure dep-mode hint route through
+-- @typeStrWithAliasesRegBoundedScoped@ directly.
 typeStrWithAliasesRegBounded
     :: Set.Set String
     -> Rec.RecordRegistry
@@ -7662,8 +7669,32 @@ typeStrWithAliasesRegBounded
     -> Set.Set String
     -> T.Type
     -> String
-typeStrWithAliasesRegBounded _ _ _ fuel _ _ | fuel <= 0 = "any"
-typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty of
+typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty =
+    typeStrWithAliasesRegBoundedScoped Nothing
+        recAliases fieldIdx tvarMap fuel seen ty
+
+
+-- | v0.17 PR-α Session 2 — scoped variant taking an explicit
+-- dep-mode hint.  When @Just modName@, the Html-arm entry/dep gate
+-- at line 7730 reads from this param instead of consulting the
+-- @globalCurrentDepModule@ IORef.  When @Nothing@, the legacy
+-- IORef fallback governs (back-compat byte-stable).
+--
+-- The thread is incremental: callers can pass @Nothing@ today and
+-- migrate to @Just@ when the call-site has the dep mode in scope.
+-- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@ for
+-- the full migration plan.
+typeStrWithAliasesRegBoundedScoped
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> Int
+    -> Set.Set String
+    -> T.Type
+    -> String
+typeStrWithAliasesRegBoundedScoped _ _ _ _ fuel _ _ | fuel <= 0 = "any"
+typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel seen ty = case ty of
     T.TVar name -> case lookup name tvarMap of
         Just gname -> gname
         Nothing    -> "any"
@@ -7727,6 +7758,11 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
     -- dep-side function bodies stay polymorphic via the bare alias.
     T.TType _ "Html" [arg]
         | (case arg of { T.TVar _ -> False; _ -> True })
+          -- v0.17 PR-α Session 2 — read dep-mode hint from explicit
+          -- arg first; fall back to IORef when caller hasn't
+          -- migrated.  Once every dep-emission call site threads the
+          -- hint, the IORef read disappears entirely.
+        , isNothing depModHint
         , isNothing (unsafePerformIO (readIORef globalCurrentDepModule)) ->
             "Std_Html_Html_T[" ++ rec arg ++ "]"
     T.TType _ "Html" _ -> "Std_Html_Html"
@@ -7877,7 +7913,7 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
             -- semantics: re-entering an alias whose name is already
             -- on the recursion path renders "any" instead of looping.
             cycleHit = Set.member base seen
-            recCycle = typeStrWithAliasesRegBounded
+            recCycle = typeStrWithAliasesRegBoundedScoped depModHint
                           recAliases fieldIdx tvarMap
                           (fuel - 1) (Set.insert base seen)
             qualifiedCandidates =
@@ -7939,7 +7975,7 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
     -- inherited seen-set.  The TAlias arm above overrides this
     -- with `recCycle` to add its base name to seen.
     rec :: T.Type -> String
-    rec = typeStrWithAliasesRegBounded
+    rec = typeStrWithAliasesRegBoundedScoped depModHint
               recAliases fieldIdx tvarMap (fuel - 1) seen
 
 
