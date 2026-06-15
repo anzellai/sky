@@ -1903,7 +1903,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 depSkyToGoTVars = Map.unions
                     [ Map.fromList
                         [ ( prefix ++ "_" ++ goSafeName n
-                          , inferredSigSkyToGo
+                          , inferredSigSkyToGoScoped (Just modName)
                                 earlyAllRecAliases earlyAllFieldIdx
                                 (countParamsFor n depMod)
                                 (renameTypeForExternal ty) )
@@ -7183,7 +7183,24 @@ inferredSigSkyToGo
     -> Int
     -> T.Type
     -> [(String, String)]
-inferredSigSkyToGo recAliases fieldIdx arity funcType =
+inferredSigSkyToGo = inferredSigSkyToGoScoped Nothing
+
+
+-- | v0.17 PR-α Session 3 — scoped variant of 'inferredSigSkyToGo'
+-- that threads the dep-mode hint into the renderer chain.  Callers
+-- in dep-emission scope pass @Just modName@; entry-emission callers
+-- pass @Nothing@ (which is what the legacy wrapper above does).  The
+-- threading reaches 'typeStrWithAliasesRegBoundedScoped' so the
+-- Html-arm gate can read the hint from pure data without the
+-- IORef-fallback being load-bearing.
+inferredSigSkyToGoScoped
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> Int
+    -> T.Type
+    -> [(String, String)]
+inferredSigSkyToGoScoped depModHint recAliases fieldIdx arity funcType =
     let defaulted =
             if errorTypeAvailable recAliases
                 then defaultErrorTVars funcType
@@ -7192,7 +7209,8 @@ inferredSigSkyToGo recAliases fieldIdx arity funcType =
         paramTVars = uniqLocal (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
-        retStrRaw = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
+        retStrRaw = typeStrWithAliasesRegBoundedScoped depModHint
+                        recAliases fieldIdx numbered 64 Set.empty retTy
         renderedSig = unwords (retStrRaw : paramStrsRaw)
     in [ (skyName, goName)
        | (skyName, goName) <- numbered
