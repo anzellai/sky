@@ -561,6 +561,52 @@ func coerceInner[T any](v any) T {
 			return rv.Convert(zt).Interface().(T)
 		}
 	}
+	// v0.17 Cause H Step 4 — typed-tuple narrowing for coerceInner.
+	// Mirror of the rt.Coerce branch (sibling fix at line 5094): Sky's
+	// codegen emits `rt.SkyTuple2 = T2[any, any]` (and SkyTuple3) for
+	// untyped tuple literals in slots that the slot-shape inference
+	// can't reach. Go's nominal generics reject the raw `.(T2[A, B])`
+	// type assertion when the dynamic type is `T2[any, any]`. Walk
+	// V0/V1 (and V2) fields and Coerce each into the target element
+	// type so a `Just (k, v)` flowing into a `Maybe (T2[string,
+	// string])` slot via MaybeCoerce[T2[string, string]] survives.
+	// MUST come BEFORE narrowStructToStruct (which skips T2/T3 by
+	// design — it's meant for record aliases).
+	if rv.Kind() == reflect.Struct {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Struct {
+			ztStr := zt.String()
+			if strings.HasPrefix(ztStr, "rt.T2[") && rv.NumField() >= 2 && zt.NumField() >= 2 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(ztStr, "rt.T3[") && rv.NumField() >= 3 && zt.NumField() >= 3 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				v2Ty := zt.Field(2).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
+	}
 	// v0.15.44 — struct→struct cross-shape narrowing.  Sky-declared
 	// `type alias`es emit as `main.Foo_R` Go structs; runtime FFI
 	// often returns a parallel struct (`rt.HttpResponse`,
