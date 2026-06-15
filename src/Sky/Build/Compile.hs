@@ -1867,7 +1867,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- `rt.Coerce[func(string) any](Msg_Ctor)`
                         -- adapter class.
                         [ ( prefix ++ "_" ++ goSafeName n
-                          , splitInferredSigWithReg earlyAllRecAliases earlyAllFieldIdx (countParamsFor n depMod) sigTy )
+                          , splitInferredSigWithRegScoped (Just modName)
+                                earlyAllRecAliases earlyAllFieldIdx
+                                (countParamsFor n depMod) sigTy )
                         | (n, ty) <- Map.toList depTypes
                         , let sigTy = case annotationTypeFor n depMod of
                                 Just annTy -> annTy
@@ -3500,7 +3502,8 @@ generateDeclsForDep canMod modPrefix =
                       -- Counter.view callable with `func(CMsg) Msg`
                       -- despite Go's no-covariance rule.
                       let baseTy = foldr T.TLambda retTy (map snd typedPats)
-                      in  splitInferredSigWithReg
+                      in  splitInferredSigWithRegScoped
+                              (Just (ModuleName.toString (Can._name canMod)))
                               (Rec._cg_recordAliases env)
                               (Rec._cg_fieldIndex env)
                               (length typedPats)
@@ -7238,7 +7241,23 @@ splitInferredSigWithReg
     -> Int
     -> T.Type
     -> ([String], [String], String)
-splitInferredSigWithReg recAliases fieldIdx arity funcType =
+splitInferredSigWithReg = splitInferredSigWithRegScoped Nothing
+
+
+-- | v0.17 PR-α Session 4 — scoped variant of 'splitInferredSigWithReg'.
+-- Threads the dep-mode hint through both internal
+-- 'typeStrWithAliasesReg' calls (lines 7245, 7282) so the renderer
+-- chain reaches its scoped form without consulting the
+-- @globalCurrentDepModule@ IORef.  Same migration pattern as
+-- 'inferredSigSkyToGoScoped' shipped in Session 3.
+splitInferredSigWithRegScoped
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> Int
+    -> T.Type
+    -> ([String], [String], String)
+splitInferredSigWithRegScoped depModHint recAliases fieldIdx arity funcType =
     let -- Default TVars that appear ONLY in error positions (Result's
         -- first arg, Task's first arg) to `Sky.Core.Error.Error` when
         -- the Error type is reachable in the current module's dep
@@ -7260,7 +7279,8 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
-        retStrRaw = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
+        retStrRaw = typeStrWithAliasesRegBoundedScoped depModHint
+                        recAliases fieldIdx numbered 64 Set.empty retTy
         -- A TVar that `tvarsInEmitted` flagged but never actually
         -- appears in the rendered Go param/return strings produces
         -- a phantom `[T1 any]` declaration that Go can't infer at
@@ -7297,7 +7317,8 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
             , goName `elem` usedTypeParams
             ]
         paramStrs = map (renderHofParamTy recAliases fieldIdx keptNumbered) paramTys
-        retStr = typeStrWithAliasesReg recAliases fieldIdx keptNumbered retTy
+        retStr = typeStrWithAliasesRegBoundedScoped depModHint
+                     recAliases fieldIdx keptNumbered 64 Set.empty retTy
     in (usedTypeParams, paramStrs, retStr)
   where
     collectParams 0 ty = ([], ty)
