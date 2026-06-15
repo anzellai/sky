@@ -103,6 +103,18 @@ data PkgInfo = PkgInfo
     , _pkgName   :: String
     , _pkgFns    :: [FnInfo]
     , _pkgErrors :: [String]
+    , _pkgImplements :: Map.Map String [String]
+        -- ^ v0.17 PR-9 / PR-21b — qualified-name → list of qualified
+        -- interface names satisfied by that type.  Populated by the
+        -- inspector's @computeImplements@ + @buildInterfaceInventory@.
+        -- Empty map when the inspector didn't surface any (older
+        -- kernel.json files or packages with no exported interfaces).
+        -- Consumed by Sky.Type.Unify in PR-21b for cross-FFI interface
+        -- satisfaction.
+    , _pkgPkgAlias :: Map.Map String String
+        -- ^ v0.17 PR-9 — Go import-path → canonical alias.  Includes
+        -- self plus every direct import.  Consumed by codegen-flatten
+        -- (PR-21a) to recover the Go alias for qualified opaque types.
     }
     deriving (Show)
 
@@ -144,6 +156,8 @@ instance A.FromJSON PkgInfo where
         <*> o A..:? "name" A..!= ""
         <*> o A..:? "functions" A..!= []
         <*> o A..:? "errors" A..!= []
+        <*> o A..:? "implements" A..!= Map.empty
+        <*> o A..:? "pkgAlias" A..!= Map.empty
 
 
 runInspector :: String -> IO (Either String PkgInfo)
@@ -380,7 +394,43 @@ emitKernelJson moduleName kernelName pkg =
             in if isSkyParseable st
                   then base ++ ", \"skyType\": " ++ quote st ++ "}"
                   else base ++ "}"
-    in unlines
+        -- v0.17 PR-21b — emit the implements + pkgAlias registries
+        -- the inspector populated (PR-9).  Pre-fix these were dropped
+        -- on the Haskell side, so even when the inspector found
+        -- e.g. @Label@fyne.widget -> [CanvasObject@fyne]@, the
+        -- kernel.json never carried that data.  Sky.Type.Unify
+        -- consumes it in PR-21b's HM axiom.
+        impls = _pkgImplements pkg
+        aliases = _pkgPkgAlias pkg
+        emitMapStrList m =
+            let kvs = Map.toAscList m
+                emitOne (k, vs) =
+                    "      " ++ quote k ++ ": ["
+                    ++ intercalate ", " (map quote vs) ++ "]"
+            in intercalate ",\n" (map emitOne kvs)
+        emitMapStrStr m =
+            let kvs = Map.toAscList m
+                emitOne (k, v) = "      " ++ quote k ++ ": " ++ quote v
+            in intercalate ",\n" (map emitOne kvs)
+        implsSection =
+            if Map.null impls
+                then []
+                else
+                    [ "  ,"
+                    , "  \"implements\": {"
+                    , emitMapStrList impls
+                    , "  }"
+                    ]
+        aliasesSection =
+            if Map.null aliases
+                then []
+                else
+                    [ "  ,"
+                    , "  \"pkgAlias\": {"
+                    , emitMapStrStr aliases
+                    , "  }"
+                    ]
+    in unlines $
         [ "{"
         , "  \"moduleName\": " ++ quote moduleName ++ ","
         , "  \"kernelName\": " ++ quote kernelName ++ ","
@@ -388,8 +438,7 @@ emitKernelJson moduleName kernelName pkg =
         , "  \"functions\": ["
         , fnEntries
         , "  ]"
-        , "}"
-        ]
+        ] ++ implsSection ++ aliasesSection ++ [ "}" ]
 
 
 -- | Sky-side type for an FFI wrapper, including the runtime Result

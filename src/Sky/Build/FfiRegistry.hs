@@ -44,6 +44,14 @@ data FfiModule = FfiModule
     , _fm_kernelName :: !String  -- e.g. "Uuid"
     , _fm_package    :: !String  -- e.g. "github.com/google/uuid"
     , _fm_functions  :: ![FfiFunction]
+    , _fm_implements :: !(Map.Map String [String])
+        -- ^ v0.17 PR-21b — qualified-name → list of satisfied
+        -- qualified interface names.  Populated by the inspector
+        -- (PR-9 + the 2026-06-15 transitive-deps fix); empty for
+        -- older kernel.json files.
+    , _fm_pkgAlias :: !(Map.Map String String)
+        -- ^ v0.17 PR-21b — Go import-path → canonical alias.
+        -- Empty for older kernel.json files.
     }
     deriving (Show, Eq)
 
@@ -87,7 +95,9 @@ instance A.FromJSON FfiModule where
         k  <- o .: "kernelName"
         p  <- o .:? "package" .!= ""
         fs <- o .:? "functions" .!= []
-        return (FfiModule m k p fs)
+        impl <- o .:? "implements" .!= Map.empty
+        alias <- o .:? "pkgAlias" .!= Map.empty
+        return (FfiModule m k p fs impl alias)
 
 
 -- ═══════════════════════════════════════════════════════════
