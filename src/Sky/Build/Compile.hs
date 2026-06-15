@@ -6408,6 +6408,13 @@ safeReturnTypeFullBounded fuel seen t =
     -- of type args (Decoder a, Value a). Match before the []-only
     -- TType branch so `Decoder String` resolves the same way.
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
+    -- v0.17 PR-21a — FFI qualified-mangled identifier flatten.
+    -- When @FfiTypeResolve.goApp@ (post-PR-21c) emits a qualified
+    -- opaque marker as @Bare_at_<pkgmangle>@, this short-circuit
+    -- catches the token and emits @any@ before the user-type lookup
+    -- runs.  No-op today (no path produces the mangled form yet);
+    -- de-risk scaffolding per @docs/v0.17-pr21-design.md@.
+    T.TType _ name _ | Just _ <- splitGoMangledQualified name -> "any"
     -- User-defined named type: only emit when it's a known record
     -- alias (then use `_R` suffix). Plain ADT unions stay `any` until
     -- we can guarantee every call site produces the exact struct type
@@ -6837,6 +6844,9 @@ safeReturnTypeBootstrap recAliases = go 64 Set.empty
                     | otherwise -> "rt.SkyTuple3"
                  _ -> "rt.SkyTupleN"
         T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
+        -- v0.17 PR-21a — FFI qualified-mangled flatten (see
+        -- @docs/v0.17-pr21-design.md@).
+        T.TType _ name _ | Just _ <- splitGoMangledQualified name -> "any"
         -- v0.13 Layer 3: `_` (not `[]`) so a PARAMETERISED Sky ADT
         -- (`Html msg`, `Attribute msg`, `Element msg`) renders to its
         -- erased Go struct name — the ADT emits as a non-generic
@@ -7408,6 +7418,36 @@ substTVarsToTypes subst = go
         T.TUnit -> T.TUnit
 
 
+-- | v0.17 PR-21a — codegen-flatten helper for FFI qualified-mangled
+-- type identifiers.  When 'FfiTypeResolve.goApp' (post-PR-21c) emits
+-- a qualified opaque marker as 'Bare_at_<pkgmangle>' (see
+-- @docs/v0.17-pr21-design.md@), the Go-side emission must short-
+-- circuit that token to @any@ because the literal identifier isn't
+-- defined in any Go scope.
+--
+-- Pattern: @[A-Z][A-Za-z0-9]*_at_[a-z0-9_]+@.  The strict prefix-
+-- no-underscore + capitalised gate keeps Sky-internal identifiers
+-- (@Std_Html_Html@, etc.) outside the false-positive surface —
+-- those always carry at least one @_@ in their prefix.
+--
+-- This helper is currently a no-op in example sweep (no path
+-- produces qualified-mangled identifiers yet).  It lands as
+-- de-risk scaffolding for PR-21c's resolver flip.
+splitGoMangledQualified :: String -> Maybe (String, String)
+splitGoMangledQualified s = go s ""
+  where
+    go ('_' : 'a' : 't' : '_' : suffix) acc
+        | not (null acc)
+        , let bare = reverse acc
+        , Char.isUpper (head bare)
+        , all (\c -> Char.isAlpha c || Char.isDigit c) bare
+        , not (null suffix)
+        , all (\c -> Char.isLower c || Char.isDigit c || c == '_') suffix
+        = Just (bare, suffix)
+    go (c : rest) acc = go rest (c : acc)
+    go [] _ = Nothing
+
+
 -- | Extract Go param types (legacy API, kept for annotation path).
 splitInferredParams :: Int -> T.Type -> [String]
 splitInferredParams n t =
@@ -7661,6 +7701,9 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
     -- coercion bridges `[]any` → `[]Mod_Name` via
     -- `rt.AsListT[Mod_Name]` (coerceArg's stripSlice arm) and
     -- `Mod_Name` ↔ `any` via `rt.Coerce`.
+    -- v0.17 PR-21a — FFI qualified-mangled flatten (see
+    -- @docs/v0.17-pr21-design.md@).
+    T.TType _ name _ | Just _ <- splitGoMangledQualified name -> "any"
     T.TType home name typeArgs ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
@@ -8033,6 +8076,9 @@ safeReturnTypePureBounded fuel seen t =
         -- arity 2-9 aliased fallback uniformly.
         in emitTupleTypeStr allPrim renderedAll
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
+    -- v0.17 PR-21a — FFI qualified-mangled flatten (see
+    -- @docs/v0.17-pr21-design.md@).
+    T.TType _ name _ | Just _ <- splitGoMangledQualified name -> "any"
     -- Known runtime types with concrete Go definitions. Qualified
     -- overrides (e.g. Sky.Core.Http.Response -> rt.HttpResponse) win
     -- over the short-name lookup so the two `Response` types stay
@@ -16584,6 +16630,9 @@ solvedTypeToGoBounded fuel seen ty =
         "map[string]" ++ rec v
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set" _ -> "map[any]bool"
+    -- v0.17 PR-21a — FFI qualified-mangled flatten (see
+    -- @docs/v0.17-pr21-design.md@).
+    T.TType _ name _ | Just _ <- splitGoMangledQualified name -> "any"
     T.TType home name _ ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
