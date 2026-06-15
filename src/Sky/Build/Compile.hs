@@ -1237,6 +1237,19 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 depParamTypes = Map.unions [ p | (p, _, _) <- depTriples ]
                 depRetTypes = Map.unions [ r | (_, r, _) <- depTriples ]
                 depUltRetTypes = Map.unions [ u | (_, _, u) <- depTriples ]
+            -- v0.17 / 16-skychess close — seed globalUnionNames BEFORE
+            -- the HM-time call to splitInferredSigWithReg at line 1857.
+            -- The previous write site at line 4026 happens too late:
+            -- the @unionRecovery@ inside @typeStrWithAliasesRegBounded@
+            -- (which fires for cross-module empty-home ADT references
+            -- like @Colour@ from @Chess.Ai.pickBest@) reads the IORef
+            -- to map bare @Colour@ → qualified @Chess_Piece_Colour@.
+            -- Pre-fix the IORef was empty at sig-rendering time → bare
+            -- @Colour@ leaked into Go → @undefined: Colour@ at @go build@.
+            -- Now the IORef carries every dep's prefixed union name BEFORE
+            -- any HM-time sig rendering.  Closes the 16-skychess pre-
+            -- existing failure as a v0.17 acceptance gate.
+            writeIORef globalUnionNames $! depUnionNames
             putStrLn "-- Type Checking"
             -- Run HM on each dep module so unannotated functions get
             -- inferred types for the typed-codegen tables.
