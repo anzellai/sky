@@ -45,6 +45,8 @@ module Sky.Build.LowerCtx
     , withLambdaGoStrs
     , withLambdaGoTypes
     , withEnclosingTypeParams
+    , withCurrentDepModule
+    , lookupCurrentDepModule
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -135,6 +137,19 @@ data LowerCtx = LowerCtx
         -- Closes Issue #521 and forecloses the entire
         -- `Cfg_R[any]`-cast-panic class for parametric record
         -- aliases (#261/#262/#263/#461/#463/#465/#467).
+    , _lc_currentDepModule :: !(Maybe String)
+        -- ^ v0.17 PR-α — dep-vs-entry emission mode hint.  Set to
+        -- `Just modName` while @generateDeclsForDepScoped@'s dep is
+        -- being rendered; `Nothing` while the entry module is
+        -- being rendered.  Replaces the `globalCurrentDepModule`
+        -- IORef whose lazy-CAF caching pathology required the
+        -- sentinel-bracket pattern at @Compile.hs:3371-3376@.
+        -- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@
+        -- for the full migration plan.  Migration sites (read at
+        -- @Compile.hs:7730@; write at @generateDeclsForDepScoped@)
+        -- thread through PR-α subsequent sessions.  Today: scaffolding
+        -- only — `Nothing` matches the IORef's default; no behavior
+        -- change.
     }
 
 
@@ -153,6 +168,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = Map.empty
     , _lc_enclosingTypeParams = Set.empty
+    , _lc_currentDepModule = Nothing
     }
 
 
@@ -188,6 +204,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = annots
     , _lc_enclosingTypeParams = Set.empty
+    , _lc_currentDepModule = Nothing
     }
 
 
@@ -297,3 +314,21 @@ withEnclosingTypeParams :: [String] -> LowerCtx -> LowerCtx
 withEnclosingTypeParams additions ctx =
     ctx { _lc_enclosingTypeParams =
             Set.union (Set.fromList additions) (_lc_enclosingTypeParams ctx) }
+
+
+-- | v0.17 PR-α — set the dep-mode hint.  Returns a NEW ctx so the
+-- entry-mode parent stays untouched while dep emission threads its
+-- own copy down.  @Nothing@ marks entry-mode (the @generateMainGo@
+-- path); @Just modName@ marks dep-mode (the
+-- @generateDeclsForDepScoped@ path).
+withCurrentDepModule :: Maybe String -> LowerCtx -> LowerCtx
+withCurrentDepModule modHint ctx =
+    ctx { _lc_currentDepModule = modHint }
+
+
+-- | v0.17 PR-α — read the dep-mode hint.  Pure substitute for
+-- @readIORef globalCurrentDepModule@ at the consumer (renderer)
+-- side once threading reaches the consumer.  Today: scaffolding
+-- only — no consumer migrated to call this yet.
+lookupCurrentDepModule :: LowerCtx -> Maybe String
+lookupCurrentDepModule ctx = _lc_currentDepModule ctx
