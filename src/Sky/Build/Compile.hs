@@ -7211,7 +7211,7 @@ inferredSigSkyToGoScoped depModHint recAliases fieldIdx arity funcType =
         (paramTys, retTy) = collectParamsLocal arity defaulted
         paramTVars = uniqLocal (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
-        paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
+        paramStrsRaw = map (renderHofParamTyScoped depModHint recAliases fieldIdx numbered) paramTys
         retStrRaw = typeStrWithAliasesRegBoundedScoped depModHint
                         recAliases fieldIdx numbered 64 Set.empty retTy
         renderedSig = unwords (retStrRaw : paramStrsRaw)
@@ -7278,7 +7278,7 @@ splitInferredSigWithRegScoped depModHint recAliases fieldIdx arity funcType =
         -- which neither Sky nor the FFI emits.
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
-        paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
+        paramStrsRaw = map (renderHofParamTyScoped depModHint recAliases fieldIdx numbered) paramTys
         retStrRaw = typeStrWithAliasesRegBoundedScoped depModHint
                         recAliases fieldIdx numbered 64 Set.empty retTy
         -- A TVar that `tvarsInEmitted` flagged but never actually
@@ -7316,7 +7316,7 @@ splitInferredSigWithRegScoped depModHint recAliases fieldIdx arity funcType =
             | (skyName, goName) <- numbered
             , goName `elem` usedTypeParams
             ]
-        paramStrs = map (renderHofParamTy recAliases fieldIdx keptNumbered) paramTys
+        paramStrs = map (renderHofParamTyScoped depModHint recAliases fieldIdx keptNumbered) paramTys
         retStr = typeStrWithAliasesRegBoundedScoped depModHint
                      recAliases fieldIdx keptNumbered 64 Set.empty retTy
     in (usedTypeParams, paramStrs, retStr)
@@ -7636,11 +7636,28 @@ renderHofParamTy
     -> [(String, String)]
     -> T.Type
     -> String
-renderHofParamTy recAliases fieldIdx tvarMap ty = case ty of
+renderHofParamTy = renderHofParamTyScoped Nothing
+
+
+-- | v0.17 PR-α Session 5 — scoped variant of 'renderHofParamTy'
+-- threading the dep-mode hint into the internal 'go' helper so
+-- function-type parameters in dep emissions also bypass the
+-- @globalCurrentDepModule@ IORef when their parameter or return
+-- positions surface @Html@ types.  Same migration pattern as
+-- 'inferredSigSkyToGoScoped' / 'splitInferredSigWithRegScoped'.
+renderHofParamTyScoped
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> T.Type
+    -> String
+renderHofParamTyScoped depModHint recAliases fieldIdx tvarMap ty = case ty of
     T.TLambda _ _ -> renderLambdaInner ty
     _             -> go ty
   where
-    go = typeStrWithAliasesReg recAliases fieldIdx tvarMap
+    go = typeStrWithAliasesRegBoundedScoped depModHint
+             recAliases fieldIdx tvarMap 64 Set.empty
     renderLambdaInner (T.TLambda from to@T.TLambda{}) =
         "func(" ++ go from ++ ") " ++ renderLambdaInner to
     renderLambdaInner (T.TLambda from to@(T.TVar _)) =
