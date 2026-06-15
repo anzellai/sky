@@ -9371,6 +9371,8 @@ data CoerceTarget
     | CoerceMapStringAny        -- ^ map[string]any
     | CoerceListT     String    -- ^ []T (T != any)
     | CoerceMapStringT String   -- ^ map[string]V (V != any)
+    | CoerceTuple2T   String String          -- ^ rt.T2[A, B] (Cause H)
+    | CoerceTuple3T   String String String   -- ^ rt.T3[A, B, C] (Cause H)
     | CoerceFunc                -- ^ func(…) … (1 arg or N args)
     | CoerceRecordAlias String  -- ^ Foo_R (record-alias struct)
     | CoerceAny                 -- ^ targetTy erases to \"any\"
@@ -9387,12 +9389,61 @@ classifyCoerceTarget targetTy
     | targetTy == "map[string]any"   = CoerceMapStringAny
     | Just elt <- stripListType targetTy = CoerceListT elt
     | Just v   <- stripMapType  targetTy = CoerceMapStringT v
+    -- v0.17 Cause H Step 4 — typed-tuple slots route through
+    -- `rt.AsTuple2T[A, B]` / `rt.AsTuple3T[A, B, C]` runtime helpers
+    -- that field-wise coerce.  Go's nominal generics reject the raw
+    -- type assertion `any(v).(T2[float64, float64])` when v's static
+    -- type is `T2[any, any]` (which `rt.SkyTuple2` aliases).  The
+    -- helper widens by reflect + Coerce per field — the analogue
+    -- of `AsListT[T]` / `AsMapT[V]` for tuples.
+    | Just (a, b)    <- stripTuple2T targetTy = CoerceTuple2T a b
+    | Just (a, b, c) <- stripTuple3T targetTy = CoerceTuple3T a b c
     | "func(" `List.isPrefixOf` erasedTy = CoerceFunc
     | erasedTy == "any"                  = CoerceAny
     | isRecordAliasTy erasedTy           = CoerceRecordAlias erasedTy
     | otherwise                          = CoerceTypeAssert erasedTy
   where
     erasedTy = eraseTypeParams targetTy
+
+
+-- | Recognise `rt.T2[A, B]` and split into element type strings.
+-- Depth-aware split so nested generics don't trip the comma.
+stripTuple2T :: String -> Maybe (String, String)
+stripTuple2T s =
+    case stripParametric "rt.T2" s of
+        Just inner ->
+            case splitTopLevelComma inner of
+                [a, b] -> Just (trimWhitespace a, trimWhitespace b)
+                _      -> Nothing
+        Nothing -> Nothing
+
+
+-- | Recognise `rt.T3[A, B, C]` and split into element type strings.
+stripTuple3T :: String -> Maybe (String, String, String)
+stripTuple3T s =
+    case stripParametric "rt.T3" s of
+        Just inner ->
+            case splitTopLevelComma inner of
+                [a, b, c] -> Just (trimWhitespace a, trimWhitespace b, trimWhitespace c)
+                _         -> Nothing
+        Nothing -> Nothing
+
+
+-- | Split a string on commas at bracket-depth 0.  Walks the string
+-- tracking '[' / ']' depth so a `T2[float64, float64]` argument's
+-- inner comma doesn't accidentally split.
+splitTopLevelComma :: String -> [String]
+splitTopLevelComma = go 0 [] []
+  where
+    go _ acc parts []           = reverse (reverse acc : parts)
+    go 0 acc parts (',':cs)     = go 0 [] (reverse acc : parts) cs
+    go d acc parts ('[':cs)     = go (d + 1) ('[' : acc) parts cs
+    go d acc parts (']':cs)     = go (max 0 (d - 1)) (']' : acc) parts cs
+    go d acc parts (c:cs)       = go d (c : acc) parts cs
+
+
+trimWhitespace :: String -> String
+trimWhitespace = f . f where f = reverse . dropWhile (== ' ')
 
 
 -- | Coerce an expression to a target Go type for struct-field assignment.
@@ -9449,6 +9500,16 @@ coerceToFieldType targetTy e
             CoerceMapStringT v ->
                 GoIr.GoCall (GoIr.GoIdent
                     ("rt.AsMapT[" ++ eraseScoped v ++ "]")) [e]
+            CoerceTuple2T a b ->
+                -- v0.17 Cause H Step 4 — `rt.AsTuple2T[A, B](e)`
+                -- field-wise coerces V0 → A and V1 → B via reflect.
+                -- Replaces the raw `any(e).(rt.T2[A, B])` assertion
+                -- that panics when e's static type is `T2[any, any]`.
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.AsTuple2T[" ++ eraseScoped a ++ ", " ++ eraseScoped b ++ "]")) [e]
+            CoerceTuple3T a b c ->
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.AsTuple3T[" ++ eraseScoped a ++ ", " ++ eraseScoped b ++ ", " ++ eraseScoped c ++ "]")) [e]
             CoerceAny -> e
             CoerceRecordAlias erasedTy ->
                 -- v0.13.x #158: record-alias targets (`_R` suffix) route
@@ -11168,6 +11229,19 @@ coerceArg mSrc e ty
     -- map[string]V: typed dict.
     | Just valTy <- stripMapType ty =
         GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
+    -- v0.17 Cause H Step 4 — typed tuple call-arg targets route through
+    -- `rt.AsTuple2T[A, B]` / `rt.AsTuple3T[A, B, C]` for the same
+    -- reason `[]T` routes through `rt.AsListT[T]`: Go's nominal
+    -- generics reject `any(v).(T2[float64, float64])` when v's
+    -- dynamic type is `T2[any, any]` (which `rt.SkyTuple2` aliases).
+    -- Sibling arm of `coerceToFieldType`'s `CoerceTuple2T` /
+    -- `CoerceTuple3T`.
+    | Just (a, b)    <- stripTuple2T ty =
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsTuple2T[" ++ eraseTypeParams a ++ ", " ++ eraseTypeParams b ++ "]")) [e]
+    | Just (a, b, c) <- stripTuple3T ty =
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsTuple3T[" ++ eraseTypeParams a ++ ", " ++ eraseTypeParams b ++ ", " ++ eraseTypeParams c ++ "]")) [e]
     | otherwise =
         let erasedTy = eraseTypeParams ty
         in if erasedTy == "any"

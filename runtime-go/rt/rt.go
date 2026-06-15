@@ -1469,6 +1469,68 @@ func AsTuple3(v any) SkyTuple3 {
 func Basics_fstAnyT(t SkyTuple2) any { return t.V0 }
 func Basics_sndAnyT(t SkyTuple2) any { return t.V1 }
 
+// AsTuple2T — narrow `v` (typically `any` or `SkyTuple2 = T2[any,any]`)
+// to a typed `T2[A, B]` instantiation.  Field-wise coerces V0 → A and
+// V1 → B via `Coerce[A]` / `Coerce[B]`.  Closes the boundary gap that
+// Go's nominal generics open: a value of static type `T2[any, any]`
+// CANNOT be type-asserted to `T2[float64, float64]` (`.(T2[float64,
+// float64])` panics).  This helper is the analogue of `AsListT[T]` /
+// `AsMapT[V]` for tuples.
+//
+// v0.17 Cause H Step 4 — emitted by `coerceToFieldType` when the slot
+// is a typed `T2[A, B]` and the source has boundary-untyped shape
+// (e.g., a `SkyTuple2` literal from a code path the Sky.Type slot-
+// inference can't reach yet).  Long-term, when every tuple literal
+// is statically typed at construction, this widener becomes a no-op
+// fast-path.
+func AsTuple2T[A any, B any](v any) T2[A, B] {
+	if t, ok := v.(T2[A, B]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple2); ok {
+		return T2[A, B]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T2[A, B]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 2 {
+		return T2[A, B]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+		}
+	}
+	return T2[A, B]{}
+}
+
+// AsTuple3T — arity-3 sibling of `AsTuple2T`.
+func AsTuple3T[A any, B any, C any](v any) T3[A, B, C] {
+	if t, ok := v.(T3[A, B, C]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple3); ok {
+		return T3[A, B, C]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1), V2: Coerce[C](t.V2)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T3[A, B, C]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 3 {
+		return T3[A, B, C]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+			V2: Coerce[C](rv.Field(2).Interface()),
+		}
+	}
+	return T3[A, B, C]{}
+}
+
 // Basics_clampT — common enough to deserve a typed shortcut. Integer
 // version only; Sky's Float clamp is rarely called with literal args.
 func Basics_clampT(lo, hi, n int) int {
@@ -5022,6 +5084,44 @@ func Coerce[T any](v any) T {
 		// the typed-codegen wrap is `Coerce[Sky_Http_Server_Response_R]`.
 		// narrowStructToStruct already exists and is gated against ADT
 		// + tuple shapes, so this is a safe minimal-blast-radius fix.
+		// v0.17 Cause H Step 4 — typed tuple narrowing.  Sky's tuple
+		// literals + value-side fallbacks emit `rt.SkyTuple2 = T2[any, any]`
+		// (see emitTypedTuple2's Nothing arm in Compile.hs).  Go's nominal
+		// generics reject the raw `.(T2[float64, float64])` assertion when
+		// the dynamic type is `T2[any, any]`.  Walk the source's V0/V1/V2
+		// fields and Coerce each into the target element type.  Mirror of
+		// the slice / map narrowing arms above.
+		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
+			tStr := targetTy.String()
+			if strings.HasPrefix(tStr, "rt.T2[") && rv.NumField() >= 2 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(tStr, "rt.T3[") && rv.NumField() >= 3 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				v2Ty := targetTy.Field(2).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
 		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
 			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
 				return narrowed.Interface().(T)
