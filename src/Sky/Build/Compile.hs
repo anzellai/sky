@@ -1980,9 +1980,17 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             -- Detect: if entry's type AND any dep's type
                             -- disagree structurally, run the ambiguity
                             -- pipeline (treat as cross-scope conflict).
+                            -- v0.17 PR-10 migration: sentinel writers
+                            -- use 'Solve.unresolvedSentinel' (typed
+                            -- ADT dispatch) instead of raw TVar
+                            -- string literals.  Underlying TVar
+                            -- representation unchanged; the typed
+                            -- surface prevents typo-class bugs at
+                            -- the writers and makes the sentinel set
+                            -- discoverable.
                             resolveKey k tys
                                 | k `Set.member` entryKeys =
-                                    let entryTy = Map.findWithDefault (T.TVar "_unbound") k typesEnv
+                                    let entryTy = Map.findWithDefault (Solve.unresolvedSentinel Solve.UnresolvedUnbound) k typesEnv
                                         depTys  = [ t | (_, m) <- depSolved
                                                       , Just t <- [Map.lookup k m]
                                                       , isResolved t ]
@@ -1994,16 +2002,16 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                                     in case normalisedAll of
                                         []    -> entryTy
                                         [_]   -> entryTy
-                                        _     -> T.TVar "_ambig"
+                                        _     -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
                                 | otherwise =
                                     let resolved = filter isResolved tys
                                         normalised = List.nub (map normaliseType resolved)
                                     in case normalised of
-                                        []  -> T.TVar "_unresolved"
+                                        []  -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
                                         [_] -> case resolved of
                                                  (t:_) -> t
-                                                 []    -> T.TVar "_unresolved"
-                                        _   -> T.TVar "_ambig"
+                                                 []    -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
+                                        _   -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
                             mergedEnv = Map.mapWithKey resolveKey keyToTypes
                             -- v0.15.6 #365 — per-module region ledger
                             -- carries each dep's own region map under
@@ -14694,8 +14702,15 @@ inferExprType types (A.At r e) = case e of
         -- _stEnv carries them as sentinels because they have no
         -- module-wide type.  Their real types live in the region
         -- map or the scope-pushed lambda-types ledger.
-        let isSentinelTVar t = case t of
-                T.TVar n -> n `elem` ["_unresolved", "_unbound", "_ambig"]
+        -- v0.17 PR-10 migration: sentinel reader uses 'Solve.lookupUnresolved'
+        -- typed dispatch.  The 3 sentinel categories ('UnresolvedCrossModule',
+        -- 'UnresolvedUnbound', 'UnresolvedAmbig') ARE the legacy
+        -- @"_unresolved"@/@"_unbound"@/@"_ambig"@ strings — the
+        -- migration is transparent at the behaviour layer.
+        let isSentinelTVar t = case Solve.lookupUnresolved t of
+                Just Solve.UnresolvedCrossModule -> True
+                Just Solve.UnresolvedUnbound     -> True
+                Just Solve.UnresolvedAmbig       -> True
                 _ -> False
             envHit = case Solve.lookupSolvedVar name types of
                 Just t | not (isSentinelTVar t) -> Just t

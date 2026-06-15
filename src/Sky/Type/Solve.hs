@@ -18,6 +18,9 @@ module Sky.Type.Solve
     , SolvedTypes(..)
     , emptySolvedTypes               -- v0.15.x P37a
     , Unresolved(..)                 -- v0.17 PR-10 sentinel scaffold
+    , unresolvedSentinel             -- v0.17 PR-10: typed sentinel constructor
+    , lookupUnresolved               -- v0.17 PR-10: typed sentinel inspector
+    , unresolvedTag                  -- v0.17 PR-10: String tag accessor
     , lookupSolvedVar                -- v0.15.x P37a
     , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
     , moduleForRegion                -- v0.16.7 PR #124 — region → defining module
@@ -347,7 +350,62 @@ data Unresolved
     | UnresolvedUnbound
       -- ^ Name not present in _stEnv during a downstream lookup;
       -- legacy `T.TVar "_unbound"`.
+    | UnresolvedCrossModule
+      -- ^ Cross-module name resolution returned EMPTY (no candidates
+      -- in any dep's @_stEnv@); legacy `T.TVar "_unresolved"`.
+      -- Distinct from 'UnresolvedAmbig' which is the MULTIPLE-
+      -- candidates case (ambiguity).
     deriving (Eq, Show)
+
+
+-- | v0.17 PR-10 — typed constructor for sentinel TVars.  Replaces
+-- raw @T.TVar "_unresolved"@ / @T.TVar "_unbound"@ / @T.TVar "_ambig"@
+-- string literals at writer sites with a typed dispatch through the
+-- 'Unresolved' ADT.  Underlying representation stays a 'T.TVar' (so
+-- the 100+ downstream pattern-matchers on 'T.TVar' remain valid) —
+-- the typed surface prevents typo-class bugs at the writers and
+-- makes the sentinel set discoverable from the ADT definition.
+unresolvedSentinel :: Unresolved -> T.Type
+unresolvedSentinel u = T.TVar (unresolvedTag u)
+
+
+-- | The String tag for each 'Unresolved' constructor.  Kept in lockstep
+-- with 'unresolvedSentinel' so the underlying TVar string is the
+-- single source of truth.  Exposed separately so readers that need
+-- to construct/inspect tag strings directly can do so without
+-- inventing them inline.
+unresolvedTag :: Unresolved -> String
+unresolvedTag u = case u of
+    UnresolvedLit       -> "_lit"
+    UnresolvedLambdaArg -> "_lambda_arg"
+    UnresolvedUnknown   -> "_unknown"
+    UnresolvedAmbig     -> "_ambig"
+    UnresolvedCycle     -> "_cycle"
+    UnresolvedSuper     -> "_super"
+    UnresolvedError     -> "_error"
+    UnresolvedUnbound   -> "_unbound"
+    UnresolvedCrossModule -> "_unresolved"
+
+
+-- | Inverse of 'unresolvedSentinel' — pattern-matches a 'T.Type' as
+-- one of the typed 'Unresolved' tags.  Returns 'Nothing' for ordinary
+-- types AND for sentinel TVars not yet enrolled in the ADT (e.g.
+-- @_unresolved@ which doesn't map to a current constructor — kept as
+-- a raw sentinel for the cross-module ambiguity reader at
+-- @Compile.hs@'s @isSentinelTVar@ check until that migration lands).
+lookupUnresolved :: T.Type -> Maybe Unresolved
+lookupUnresolved (T.TVar s) = case s of
+    "_lit"        -> Just UnresolvedLit
+    "_lambda_arg" -> Just UnresolvedLambdaArg
+    "_unknown"    -> Just UnresolvedUnknown
+    "_ambig"      -> Just UnresolvedAmbig
+    "_cycle"      -> Just UnresolvedCycle
+    "_super"      -> Just UnresolvedSuper
+    "_error"      -> Just UnresolvedError
+    "_unbound"    -> Just UnresolvedUnbound
+    "_unresolved" -> Just UnresolvedCrossModule
+    _             -> Nothing
+lookupUnresolved _ = Nothing
 
 
 -- | Solver state
@@ -668,7 +726,7 @@ solve constraint = do
             let pickType tys = case List.nub (filter (not . isUnboundTVar) tys) of
                     []  -> head tys  -- all unbound — keep first as-is
                     [t] -> t          -- all resolved types agree
-                    _   -> T.TVar "_ambig"  -- distinct concrete types — ambiguous
+                    _   -> unresolvedSentinel UnresolvedAmbig  -- v0.17 PR-10 typed sentinel  -- distinct concrete types — ambiguous
                 isUnboundTVar (T.TVar n) = "_" `List.isPrefixOf` n || null n
                 isUnboundTVar _ = False
                 localFirst = Map.map pickType (Map.filter (not . null) localTys)
@@ -768,7 +826,7 @@ solveWithInstancesAndRegions constraint = do
             let pickType tys = case List.nub (filter (not . isUnboundTVar) tys) of
                     []  -> head tys
                     [t] -> t
-                    _   -> T.TVar "_ambig"
+                    _   -> unresolvedSentinel UnresolvedAmbig  -- v0.17 PR-10 typed sentinel
                 isUnboundTVar (T.TVar n) = "_" `List.isPrefixOf` n || null n
                 isUnboundTVar _ = False
                 localFirst = Map.map pickType (Map.filter (not . null) localTys)
