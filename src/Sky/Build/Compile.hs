@@ -3933,7 +3933,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                             Just (foldr T.TLambda retTy (map snd typedPats))
                         _ -> Map.lookup n solvedEnv
                 entryInferredSigs = Map.fromList
-                    [ (goSafeName n, splitInferredSigWithReg earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
+                    [ (goSafeName n, splitInferredSigWithRegScoped Nothing earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
                     | (n, _) <- Map.toList solvedEnv
                     , Just ty <- [sigTypeFor n]
                     ]
@@ -3954,7 +3954,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                         T.Forall _ renamed -> renamed
                 entrySkyToGoTVars = Map.fromList
                     [ ( goSafeName n
-                      , inferredSigSkyToGo
+                      , inferredSigSkyToGoScoped Nothing
                             earlyRecAliases earlyFieldIdx
                             (countParamsFor n canMod)
                             (renameTypeForExternal' ty) )
@@ -4872,13 +4872,13 @@ generateDef home def0 solvedTypes =
                 -- type params emit as `func(…) T1` (callback
                 -- covariance via generic inference).
                 let baseTy = foldr T.TLambda retTy (map snd typedPats)
-                in  splitInferredSigWithReg
+                in  splitInferredSigWithRegScoped Nothing
                         (Rec._cg_recordAliases getCgEnv)
                         (Rec._cg_fieldIndex getCgEnv)
                         (length typedPats)
                         baseTy
             (_, _, Just funcType) ->
-                splitInferredSigWithReg
+                splitInferredSigWithRegScoped Nothing
                     (Rec._cg_recordAliases getCgEnv)
                     (Rec._cg_fieldIndex getCgEnv)
                     (length params)
