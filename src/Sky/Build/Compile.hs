@@ -3875,6 +3875,16 @@ generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTyp
 generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
     let
         imports = unsafePerformIO $ do
+            -- v0.17 PR-α-7 — clear globalAnonRecords at codegen entry so
+            -- in-process re-builds (cabal-test running many tests in
+            -- the same GHC process) don't see stale anon-record shapes
+            -- from a previous build's renderer.  The CAF holds the
+            -- IORef across module-load boundaries; without this
+            -- write-reset, generateAnonRecordDecls' module-end read
+            -- would inherit any shapes the prior build registered.
+            -- Race-safe via atomicWriteIORef (the writer side in
+            -- synthAnonRecordName already uses atomicModifyIORef').
+            atomicWriteIORef globalAnonRecords Map.empty
             -- T2/T6: register entry-module + dep-module typed function
             -- signatures so call-site codegen (`coerceCallArgs`) can
             -- emit `any(arg).(T)` coercions when passing args to
