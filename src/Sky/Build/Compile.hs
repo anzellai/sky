@@ -53,6 +53,7 @@ import qualified Sky.Type.Constrain.Module as Constrain
 import qualified Sky.Type.Constrain.Expression as ConstrainExpr
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
+import qualified Sky.Type.Unify as Unify
 import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Build.ModuleGraph as Graph
@@ -708,6 +709,11 @@ loadAndSeedFfiRegistry = do
         pkgAliasMap   = Map.unions [ FfiReg._fm_pkgAlias m   | m <- mods ]
     writeIORef Env.ffiImplementsRef implementsMap
     writeIORef Env.ffiPkgAliasRef   pkgAliasMap
+    -- v0.17 PR-21b — mirror into Sky.Type.Unify's local IORef.  Unify
+    -- can't import Canonicalise.Environment (cycle via Sky.AST.Canonical
+    -- → Sky.Type.Type), so the registry lives in two locations seeded
+    -- atomically here.  Same data, two stable read-only IORefs.
+    writeIORef Unify.ffiImplementsRef implementsMap
     seedTypedFfiNames
     if null mods
         then return ()

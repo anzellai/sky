@@ -9,6 +9,9 @@
 -- aliases, super types.
 module Sky.Type.Unify
     ( unify
+    , ffiImplementsRef        -- v0.17 PR-21b — seeded by Compile.hs
+    , implementsInterface     -- v0.17 PR-21b — A <: I predicate
+    , isFfiInterfacePair      -- v0.17 PR-21b — symmetric implements check
     )
     where
 
@@ -33,6 +36,48 @@ freshRowExtName = do
     n <- readIORef rowExtCounter
     writeIORef rowExtCounter (n + 1)
     return ("_rowext" ++ show n)
+
+
+-- | v0.17 PR-21b — FFI interface-satisfaction registry, populated by
+-- @Sky.Build.Compile.loadAndSeedFfiRegistry@ from the inspector's
+-- @kernel.json@ output.  Mirror of
+-- @Sky.Canonicalise.Environment.ffiImplementsRef@ — kept in this
+-- module to avoid an import cycle (Canonicalise.Environment depends on
+-- Sky.AST.Canonical which transitively depends on Sky.Type.Type).
+--
+-- Keys are qualified type names (@\"Label\@fyne.io/fyne/v2/widget\"@);
+-- values are the qualified interfaces that the key type satisfies.
+-- Consulted in the @App1 ↔ App1@ arm to allow @A <: I@ widening when
+-- a value of an FFI-opaque type is passed where its Go interface is
+-- expected (the canonical case is Fyne's @Label@ implementing
+-- @CanvasObject@).
+--
+-- Empty by default — projects with no FFI deps OR older kernel.json
+-- files that pre-date the implements emission see the legacy strict-
+-- equality unify path.
+{-# NOINLINE ffiImplementsRef #-}
+ffiImplementsRef :: IORef (Map.Map String [String])
+ffiImplementsRef = unsafePerformIO (newIORef Map.empty)
+
+
+-- | v0.17 PR-21b — does the qualified type name @qname@ implement the
+-- qualified interface @iname@?  Reads the global registry; returns
+-- 'False' when @qname@ has no entry (empty list).
+implementsInterface :: String -> String -> Bool
+implementsInterface qname iname =
+    let m = unsafePerformIO (readIORef ffiImplementsRef)
+        ifaces = Map.findWithDefault [] qname m
+    in iname `elem` ifaces
+
+
+-- | v0.17 PR-21b — does either side of an @App1 ↔ App1@ pair satisfy
+-- the other via Go interface satisfaction?  One-way relation: @A@
+-- implementing @I@ does NOT mean @I@-typed values are @A@; the unifier
+-- treats both directions as widenings (preserving HM principal types
+-- via the merged opaque-shape outcome).
+isFfiInterfacePair :: String -> String -> Bool
+isFfiInterfacePair n1 n2 =
+    implementsInterface n1 n2 || implementsInterface n2 n1
 
 
 -- | Unify two type variables. Returns True on success, False on failure.
@@ -223,6 +268,21 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
                 if and results
                     then do merge v1 v2 (T.Structure flat1); return True
                     else return False
+            -- v0.17 PR-21b — FFI interface-satisfaction axiom.  When
+            -- both sides are nullary (qualified-mangled FFI types
+            -- never carry HM args), names differ, AND the inspector
+            -- registry says one side implements the other (Go-side
+            -- structural interface satisfaction), allow the unification
+            -- as a widening.  Closes the canonical Fyne
+            -- @Label\@fyne.io/fyne/v2/widget@ ↔
+            -- @CanvasObject\@fyne.io/fyne/v2@ case + every analogous
+            -- cross-package FFI pair.
+            --
+            -- No-op today (PR-21c hasn't flipped the resolver yet, so
+            -- qualified types still collapse to @Value@ before reaching
+            -- HM).  Safety scaffolding for PR-21c.
+            else if null args1 && null args2 && isFfiInterfacePair name1 name2
+                then do merge v1 v2 (T.Structure flat1); return True
             else return False
 
     (T.Fun1 arg1 res1, T.Fun1 arg2 res2) ->
