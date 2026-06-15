@@ -3885,6 +3885,18 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             -- Race-safe via atomicWriteIORef (the writer side in
             -- synthAnonRecordName already uses atomicModifyIORef').
             atomicWriteIORef globalAnonRecords Map.empty
+            -- v0.17 PR-19 — init over-generic diagnostic (warn-only).
+            -- When the entry module declares `init` and HM produces
+            -- unbound TVars in the return tuple's Model slot, warn the
+            -- user — that's the unannotated `init _req = ({}, Cmd.none)`
+            -- shape where Model + Msg escape as wildcards and the
+            -- emitted Go signature degrades to `func(any) (any, rt.SkyCmd[any])`.
+            -- The bundled console (annotated `init : a -> (Model, Cmd Msg)`)
+            -- and any user app that annotates correctly are NOT flagged
+            -- because their tuple slot 0 is a concrete Model type.
+            -- Lattice-driven inference (deriving Model/Msg from
+            -- `Live.app cfg`'s record-row binding) is deferred to v0.18.
+            warnInitOverGeneric solvedTypes
             -- T2/T6: register entry-module + dep-module typed function
             -- signatures so call-site codegen (`coerceCallArgs`) can
             -- emit `any(arg).(T)` coercions when passing args to
@@ -14558,6 +14570,45 @@ generateMainFunc canMod srcMod solvedTypes =
 panicRecoverDeferStmt :: GoIr.GoStmt
 panicRecoverDeferStmt =
     GoIr.GoExprStmt (GoIr.GoRaw "defer rt.LogPanicAndExit()")
+
+
+-- | v0.17 PR-19 — over-generic init diagnostic.
+--
+-- Walks the entry-module's HM-solved environment to check whether
+-- a top-level binding named @init@ has the canonical TEA shape
+-- @req -> (model, Cmd msg)@ but with an unbound TVar in the tuple's
+-- first slot (the @model@ position).  That's the
+-- @init _req = ({}, Cmd.none)@ class — unannotated, so HM cannot
+-- pin Model; the emitted Go signature degrades to
+-- @func(any) (any, rt.SkyCmd[any])@ and downstream callers (Sky.Live's
+-- runtime) get a structurally-correct but type-erased model.
+--
+-- The warning is non-fatal.  Lattice-driven inference that derives
+-- Model + Msg from @Live.app cfg@'s record-row binding is deferred
+-- to v0.18.  See @docs/v0.17-full-e2e-typed-master-plan.md@ PR-19.
+warnInitOverGeneric :: Solve.SolvedTypes -> IO ()
+warnInitOverGeneric solved =
+    case Solve.lookupSolvedVar "init" solved of
+        Just initTy
+            | Just modelTy <- returnTupleFirstSlot initTy
+            , isUnboundTVar modelTy ->
+                hPutStrLn stderr $
+                    "warning: init has over-generic return type — Model slot " ++
+                    "is an unbound type variable.  Consider annotating:\n" ++
+                    "    init : Request -> (Model, Cmd Msg)"
+        _ -> return ()
+  where
+    -- Peel the function arrows; return the body type.
+    peelLambdas (T.TLambda _ b) = peelLambdas b
+    peelLambdas t = t
+
+    -- Extract the first slot of a 2-tuple return.
+    returnTupleFirstSlot ty = case peelLambdas ty of
+        T.TTuple a _ _ -> Just a
+        _              -> Nothing
+
+    isUnboundTVar (T.TVar _) = True
+    isUnboundTVar _          = False
 
 
 -- | Find the main definition
