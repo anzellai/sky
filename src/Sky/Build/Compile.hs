@@ -14604,7 +14604,7 @@ isConcreteType ty = case ty of
 normaliseTypeForMerge :: T.Type -> T.Type
 normaliseTypeForMerge = go
   where
-    go (T.TVar _) = T.TVar "_norm"
+    go (T.TVar _) = Solve.unresolvedSentinel Solve.UnresolvedNorm  -- v0.17 PR-10 step 3
     go (T.TType h n args) = T.TType h n (map go args)
     go (T.TLambda a b) = T.TLambda (go a) (go b)
     go (T.TRecord fs ext) =
@@ -14803,12 +14803,12 @@ inferExprType types (A.At r e) = case e of
     Can.List items
         | any (callReturnsFreeTVar types) items
           || any (tupleSecondCallsPolymorphic types) items ->
-            Just (mkListType (T.TVar "_lit"))
+            Just (mkListType (Solve.unresolvedSentinel Solve.UnresolvedLit))  -- v0.17 PR-10 step 3
         | otherwise -> case items of
             (x:_) -> case inferExprType types x of
                 Just elemTy -> Just (mkListType elemTy)
-                Nothing -> Just (mkListType (T.TVar "_lit"))
-            [] -> Just (mkListType (T.TVar "_empty"))
+                Nothing -> Just (mkListType (Solve.unresolvedSentinel Solve.UnresolvedLit))  -- v0.17 PR-10 step 3
+            [] -> Just (mkListType (Solve.unresolvedSentinel Solve.UnresolvedEmpty))  -- v0.17 PR-10 step 3
     -- Conditional / case branches: take the type of the first arm
     -- if available. The HM solver already unified all arms, so any
     -- arm's type is representative.
@@ -15027,7 +15027,7 @@ inferExprType types (A.At r e) = case e of
     --
     -- Audit item #2 closure.
     Can.Accessor _fieldName ->
-        Just (T.TVar "_accessor_placeholder")
+        Just (Solve.unresolvedSentinel Solve.UnresolvedAccessor)  -- v0.17 PR-10 step 3
     -- Anything else (chr/other AST shapes already shadowed by the
     -- explicit arms above) — safe fallback.
     _ -> Nothing
@@ -15412,8 +15412,8 @@ patVarTypes pats tys =
         , not (isWildcardSkyType t)
         ]
   where
-    isWildcardSkyType (T.TVar "_unknown") = True
-    isWildcardSkyType _                   = False
+    -- v0.17 PR-10 step 2: typed sentinel reader for '_unknown'.
+    isWildcardSkyType t = Solve.lookupUnresolved t == Just Solve.UnresolvedUnknown
 
 
 -- | Best-effort conversion from a Go type string (e.g. "int",
@@ -15431,7 +15431,7 @@ goTypeStrToSkyType s = case s of
     "string"     -> ConstrainExpr.stringType
     "bool"       -> ConstrainExpr.boolType
     "rune"       -> ConstrainExpr.charType
-    _            -> T.TVar "_unknown"
+    _            -> Solve.unresolvedSentinel Solve.UnresolvedUnknown  -- v0.17 PR-10 step 2
 
 
 -- | v0.13 typed lowerer guard: is this expression guaranteed to lower

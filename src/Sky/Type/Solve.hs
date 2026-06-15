@@ -355,6 +355,14 @@ data Unresolved
       -- in any dep's @_stEnv@); legacy `T.TVar "_unresolved"`.
       -- Distinct from 'UnresolvedAmbig' which is the MULTIPLE-
       -- candidates case (ambiguity).
+    | UnresolvedNorm
+      -- ^ Marker emitted by 'normaliseType' to collapse named TVars
+      -- to a single canonical form; legacy `T.TVar "_norm"`.
+    | UnresolvedEmpty
+      -- ^ Empty-list element type placeholder; legacy `T.TVar "_empty"`.
+    | UnresolvedAccessor
+      -- ^ Accessor field type placeholder; legacy
+      -- `T.TVar "_accessor_placeholder"`.
     deriving (Eq, Show)
 
 
@@ -385,6 +393,9 @@ unresolvedTag u = case u of
     UnresolvedError     -> "_error"
     UnresolvedUnbound   -> "_unbound"
     UnresolvedCrossModule -> "_unresolved"
+    UnresolvedNorm      -> "_norm"
+    UnresolvedEmpty     -> "_empty"
+    UnresolvedAccessor  -> "_accessor_placeholder"
 
 
 -- | Inverse of 'unresolvedSentinel' — pattern-matches a 'T.Type' as
@@ -404,6 +415,9 @@ lookupUnresolved (T.TVar s) = case s of
     "_error"      -> Just UnresolvedError
     "_unbound"    -> Just UnresolvedUnbound
     "_unresolved" -> Just UnresolvedCrossModule
+    "_norm"       -> Just UnresolvedNorm
+    "_empty"      -> Just UnresolvedEmpty
+    "_accessor_placeholder" -> Just UnresolvedAccessor
     _             -> Nothing
 lookupUnresolved _ = Nothing
 
@@ -1284,14 +1298,14 @@ variableToTypeSeen :: [T.Variable] -> T.Variable -> IO T.Type
 variableToTypeSeen seen var = do
     cyc <- anyEquivSeen seen var
     if cyc
-        then return (T.TVar "_cycle")
+        then return (unresolvedSentinel UnresolvedCycle)  -- v0.17 PR-10 step 3
         else do
             desc <- UF.get var
             case T._content desc of
                 T.FlexVar (Just name) -> return (T.TVar name)
                 T.FlexVar Nothing -> return (T.TVar "_")
                 T.FlexSuper T.Number _ -> return (T.TType ModuleName.basics "Int" [])
-                T.FlexSuper _ _ -> return (T.TVar "_super")
+                T.FlexSuper _ _ -> return (unresolvedSentinel UnresolvedSuper)  -- v0.17 PR-10 step 3
                 T.RigidVar name -> return (T.TVar name)
                 T.RigidSuper _ name -> return (T.TVar name)
                 T.Structure flat -> flatTypeToTypeSeen (var : seen) flat
@@ -1307,7 +1321,7 @@ variableToTypeSeen seen var = do
                                         pty <- variableToTypeSeen (var : seen) pv
                                         return (n, pty)) pairVars
                     return (T.TAlias home name pairTys (T.Filled inner))
-                T.Error -> return (T.TVar "_error")
+                T.Error -> return (unresolvedSentinel UnresolvedError)  -- v0.17 PR-10 step 3
 
 
 anyEquivSeen :: [T.Variable] -> T.Variable -> IO Bool
