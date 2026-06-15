@@ -5407,6 +5407,34 @@ isTypedTupleElementStr s
         ]
 
 
+-- | v0.17 PR-17c — uniform tuple-type emission helper.
+--
+-- Replaces the @case extras of [] | [_] | _@ branch pattern that was
+-- duplicated at all 6 tuple-emission sites with a single arity-aware
+-- function.  Supports the full arity-2-9 typed surface (mapping
+-- @rt.T2..rt.T9@ from PR-17a) AND the matching back-compat aliases
+-- (@rt.SkyTuple2..rt.SkyTuple9@).  Arity ≥ 10 falls back to the
+-- slice-backed @rt.SkyTupleN@ regardless of the gate.
+--
+-- Pre-PR-17c the sites only emitted typed at arity 2 and 3; arity 4+
+-- ALWAYS fell back to @rt.SkyTupleN@ even when the elements were
+-- all typed.  This was the artificial @case@-of arity-cap.  Post-
+-- PR-17c the cap moves to the @arity > 9@ boundary which the
+-- runtime's T<N> alias set naturally enforces.
+--
+-- Why arity 10+ stays untyped: Go has no convention for arbitrary-
+-- arity generic tuples; @SkyTupleN@'s slice-backed representation
+-- is the well-defined fallback.  Real-world Sky code at arity 6+
+-- reaches for a record alias anyway.
+emitTupleTypeStr :: Bool -> [String] -> String
+emitTupleTypeStr useTyped renderedAll
+    | arity < 2 || arity > 9 = "rt.SkyTupleN"
+    | useTyped               = "rt.T" ++ show arity ++ "[" ++ intercalate_ ", " renderedAll ++ "]"
+    | otherwise              = "rt.SkyTuple" ++ show arity
+  where
+    arity = length renderedAll
+
+
 shouldTypedTuple :: T.Type -> Bool
 shouldTypedTuple ty = case ty of
     T.TTuple a b extras ->
@@ -6349,14 +6377,12 @@ safeReturnTypeFullBounded fuel seen t =
             allPrim = not anyTVar
                    && not (null renderedAll)
                    && all isTypedTupleElementStr renderedAll
-        in case extras of
-             []
-                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple2"
-             [_]
-                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple3"
-             _ -> "rt.SkyTupleN"
+        -- v0.17 PR-17c — uniform arity-aware emission.  Was a
+        -- hand-coded @case extras of [] | [_] | _@ block capping
+        -- typed emission at arity 3; now delegates to
+        -- 'emitTupleTypeStr' which handles arity 2-9 typed +
+        -- arity 2-9 aliased fallback uniformly.
+        in emitTupleTypeStr allPrim renderedAll
     -- Opaque parameterised types whose Go alias is `any` regardless
     -- of type args (Decoder a, Value a). Match before the []-only
     -- TType branch so `Decoder String` resolves the same way.
@@ -7582,14 +7608,12 @@ typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty = case ty 
             allPrim = not anyTVar
                    && not (null renderedAll)
                    && all isTypedTupleElementStr renderedAll
-        in case extras of
-             []
-                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple2"
-             [_]
-                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple3"
-             _ -> "rt.SkyTupleN"
+        -- v0.17 PR-17c — uniform arity-aware emission.  Was a
+        -- hand-coded @case extras of [] | [_] | _@ block capping
+        -- typed emission at arity 3; now delegates to
+        -- 'emitTupleTypeStr' which handles arity 2-9 typed +
+        -- arity 2-9 aliased fallback uniformly.
+        in emitTupleTypeStr allPrim renderedAll
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Primitives (must check before the user-type catch-all)
     T.TType _ "Int" []    -> "int"
@@ -7961,14 +7985,12 @@ safeReturnTypePureBounded fuel seen t =
             allPrim = not anyTVar
                    && not (null renderedAll)
                    && all isTypedTupleElementStr renderedAll
-        in case extras of
-             []
-                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple2"
-             [_]
-                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple3"
-             _ -> "rt.SkyTupleN"
+        -- v0.17 PR-17c — uniform arity-aware emission.  Was a
+        -- hand-coded @case extras of [] | [_] | _@ block capping
+        -- typed emission at arity 3; now delegates to
+        -- 'emitTupleTypeStr' which handles arity 2-9 typed +
+        -- arity 2-9 aliased fallback uniformly.
+        in emitTupleTypeStr allPrim renderedAll
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Known runtime types with concrete Go definitions. Qualified
     -- overrides (e.g. Sky.Core.Http.Response -> rt.HttpResponse) win
@@ -16363,14 +16385,8 @@ substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
                 allPrim = not anyTVar
                        && not (null renderedAll)
                        && all isTypedTupleElementStr renderedAll
-            in case cs of
-                 []
-                    | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
-                    | otherwise -> "rt.SkyTuple2"
-                 [_]
-                    | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
-                    | otherwise -> "rt.SkyTuple3"
-                 _ -> "rt.SkyTupleN"
+            -- v0.17 PR-17c — uniform arity-aware emission.
+            in emitTupleTypeStr allPrim renderedAll
         -- v0.15 Stage E — recursive-alias self-reference: a TType
         -- referencing the SAME parametric alias being substituted
         -- (e.g. `Tree a` inside `Tree a = { kids : List (Tree a) }`).
@@ -16603,14 +16619,8 @@ solvedTypeToGoBounded fuel seen ty =
             allPrim = not anyTVar
                    && not (null renderedAll)
                    && all isTypedTupleElementStr renderedAll
-        in case rest of
-             []
-                | allPrim -> "rt.T2[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple2"
-             [_]
-                | allPrim -> "rt.T3[" ++ intercalate_ ", " renderedAll ++ "]"
-                | otherwise -> "rt.SkyTuple3"
-             _ -> "rt.SkyTupleN"
+        -- v0.17 PR-17c — uniform arity-aware emission.
+        in emitTupleTypeStr allPrim renderedAll
     T.TAlias home name typeArgs aliasTy ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
