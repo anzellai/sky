@@ -6346,6 +6346,19 @@ safeReturnTypeFullBounded fuel seen t =
     -- `Dict String String` actually holds mixed-type values (e.g.
     -- SQL COUNT(*) columns), the annotation is wrong and needs
     -- fixing.
+    -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg]
+    -- emission.  Symmetric with the gate at line 7559.  When @arg@
+    -- is a concrete (non-TVar) type, emit the typed form so call
+    -- sites can flow Msg through the dispatch loop.  The runtime
+    -- dual-alias 'rt.SkyCmd_T[T] = cmdT' (live.go:1476) makes the
+    -- typed form transparent at runtime; the typed surface is the
+    -- compiler-side hook for HM tracking.
+    T.TType _ "Cmd" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkyCmd_T[" ++ rec arg ++ "]"
+    T.TType _ "Sub" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkySub_T[" ++ rec arg ++ "]"
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   [elem]     ->
@@ -6776,6 +6789,13 @@ safeReturnTypeBootstrap recAliases = go 64 Set.empty
         T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
         T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
                                          ++ ", " ++ rec a ++ "]"
+        -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg].
+        T.TType _ "Cmd" [arg]
+            | (case arg of { T.TVar _ -> False; _ -> True }) ->
+                "rt.SkyCmd_T[" ++ rec arg ++ "]"
+        T.TType _ "Sub" [arg]
+            | (case arg of { T.TVar _ -> False; _ -> True }) ->
+                "rt.SkySub_T[" ++ rec arg ++ "]"
         T.TType _ "Cmd"    _          -> "rt.SkyCmd"
         T.TType _ "Sub"    _          -> "rt.SkySub"
         T.TType _ "List"   [elem]     ->
@@ -7961,6 +7981,19 @@ safeReturnTypePureBounded fuel seen t =
     T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
     T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
                                      ++ ", " ++ rec a ++ "]"
+    -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg]
+    -- emission.  Symmetric with the gate at line 7559.  When @arg@
+    -- is a concrete (non-TVar) type, emit the typed form so call
+    -- sites can flow Msg through the dispatch loop.  The runtime
+    -- dual-alias 'rt.SkyCmd_T[T] = cmdT' (live.go:1476) makes the
+    -- typed form transparent at runtime; the typed surface is the
+    -- compiler-side hook for HM tracking.
+    T.TType _ "Cmd" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkyCmd_T[" ++ rec arg ++ "]"
+    T.TType _ "Sub" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkySub_T[" ++ rec arg ++ "]"
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   [elem]     ->
@@ -16512,6 +16545,13 @@ solvedTypeToGoBounded fuel seen ty =
         let elemGo = rec elem
         in if elemGo == "any" then "[]any" else "[]" ++ elemGo
     T.TType _ "List" _ -> "[]any"
+    -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg].
+    T.TType _ "Cmd" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkyCmd_T[" ++ rec arg ++ "]"
+    T.TType _ "Sub" [arg]
+        | (case arg of { T.TVar _ -> False; _ -> True }) ->
+            "rt.SkySub_T[" ++ rec arg ++ "]"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
     T.TType _ "Maybe" [a] ->
