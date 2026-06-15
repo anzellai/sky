@@ -303,6 +303,28 @@ ffiKernelTypeRef :: IORef (Map.Map (String, String) Can.Annotation)
 ffiKernelTypeRef = unsafePerformIO (newIORef Map.empty)
 
 
+-- | v0.17 PR-21b — FFI interface-satisfaction registry, merged across
+-- every loaded @kernel.json@.  Keys are qualified type names
+-- (@\"Label\@fyne.io/fyne/v2/widget\"@); values are the lists of
+-- qualified interface names that the key type satisfies.  Populated
+-- by 'Sky.Build.Compile.loadAndSeedFfiRegistry' from each
+-- 'Sky.Build.FfiRegistry.FfiModule._fm_implements'.  Consumed via
+-- 'Sky.Type.Solve.withImplementsMap' at the codegen merge site so
+-- HM unify rules (PR-21b proper) can consult @A <: I@ axioms.
+{-# NOINLINE ffiImplementsRef #-}
+ffiImplementsRef :: IORef (Map.Map String [String])
+ffiImplementsRef = unsafePerformIO (newIORef Map.empty)
+
+
+-- | v0.17 PR-21b — Go import-path → canonical alias registry.
+-- Populated alongside 'ffiImplementsRef'.  Reserved for the
+-- forthcoming PR-21c resolver flip (codegen of qualified opaque
+-- types via @pkg.X@ wrappers).
+{-# NOINLINE ffiPkgAliasRef #-}
+ffiPkgAliasRef :: IORef (Map.Map String String)
+ffiPkgAliasRef = unsafePerformIO (newIORef Map.empty)
+
+
 -- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
 -- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
 -- been emitted by FfiGen. Call-site codegen consults this set to

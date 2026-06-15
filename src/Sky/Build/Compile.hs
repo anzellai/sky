@@ -699,6 +699,15 @@ loadAndSeedFfiRegistry = do
     writeIORef Env.ffiKernelFunctionsRef functionMap
     writeIORef Env.ffiKernelArityRef arityMap
     writeIORef Env.ffiKernelTypeRef typeMap
+    -- v0.17 PR-21b — merge each FfiModule's _fm_implements + _fm_pkgAlias
+    -- into a single global registry.  Two FfiModules carrying the same
+    -- key are rare (a qualified type name's full @at@pkg@ form is unique
+    -- to one inspector run) — Map.unions keeps the first occurrence,
+    -- which is deterministic given the input order.
+    let implementsMap = Map.unions [ FfiReg._fm_implements m | m <- mods ]
+        pkgAliasMap   = Map.unions [ FfiReg._fm_pkgAlias m   | m <- mods ]
+    writeIORef Env.ffiImplementsRef implementsMap
+    writeIORef Env.ffiPkgAliasRef   pkgAliasMap
     seedTypedFfiNames
     if null mods
         then return ()
@@ -2038,9 +2047,18 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             perModuleEnv = Map.fromList
                                 ( (entryModName, typesEnv)
                                 : depSolved )
-                        in Solve.withPerModuleEnv perModuleEnv
+                            -- v0.17 PR-21b — install the merged FFI
+                            -- implements registry from the global IORef
+                            -- (seeded at @loadAndSeedFfiRegistry@).  Empty
+                            -- map for projects with no FFI deps; Sky.Type
+                            -- .Unify's @lookupImplements@ then returns
+                            -- @[]@ at every site and the legacy strict-
+                            -- equality unify path stays in force.
+                            implementsMap = readIORefNoCse Env.ffiImplementsRef
+                        in Solve.withImplementsMap implementsMap
+                          (Solve.withPerModuleEnv perModuleEnv
                             (Solve.withPerModuleRegions perModuleRegions
-                                (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing))
+                                (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
                     goCodeRaw = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                     -- v0.13 Layer 2: collect Sky-name → source-region
                     -- for every top-level declaration so the post-emit
@@ -2071,7 +2089,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- auth-boundary helper (region map empty —
                         -- the gate only consults the env).
                         , let depTypesMap = case lookup modName depSolved of
-                                Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing
+                                Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
                                 Nothing -> Solve.emptySolvedTypes
                         , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
                         ]

@@ -31,6 +31,9 @@ module Sky.Type.Solve
     , withCurrentModule              -- v0.15.6 #365 — install per-dep module hint
     , withPerModuleRegions           -- v0.15.6 #365 — install per-module region maps
     , withPerModuleEnv               -- v0.15.6 #365 — install per-module env maps
+    , withImplementsMap              -- v0.17 PR-21b — install FFI implements registry
+    , lookupImplements               -- v0.17 PR-21b — qualified type → interfaces
+    , implementsInterface            -- v0.17 PR-21b — A <: I predicate
     , RegionTypes                    -- v0.15 Stage A
     , CallInstance(..)
     , CallSiteInstance(..)
@@ -151,6 +154,22 @@ data SolvedTypes = SolvedTypes
         -- when this hint is set, falling back to the flat map for
         -- entries that didn't make it into the per-module ledger
         -- (e.g. synthetic regions from monomorphisation).
+    , _stImplementsMap :: !(Map.Map String [String])
+        -- ^ v0.17 PR-21b — FFI interface satisfaction registry,
+        -- merged across every loaded @kernel.json@ FfiModule.  Keys
+        -- are qualified type names (e.g. @"Label@fyne.io/fyne/v2/widget"@);
+        -- values are lists of qualified interface names that the key
+        -- type satisfies (e.g. @["CanvasObject@fyne.io/fyne/v2",
+        -- "Widget@fyne.io/fyne/v2"]@).
+        --
+        -- Populated by @Compile.hs@ at HM-setup time from
+        -- @FfiRegistry._fm_implements@.  Consumed by @Sky.Type.Unify@'s
+        -- App1 arm in PR-21b proper for the @A <: I@ axiom — when
+        -- unifying a @TType _ name1 []@ with a @TType _ name2 []@,
+        -- consult @lookupImplements@ to see whether name1's qualified
+        -- form implements name2's qualified form (or vice versa).
+        -- Empty map for projects with no FFI deps OR older kernel.json
+        -- files that pre-date the inspector's @--implements@ emission.
     }
     deriving (Eq, Show)
 
@@ -159,7 +178,7 @@ data SolvedTypes = SolvedTypes
 -- errored before producing a usable map AND in tests that need a
 -- placeholder.
 emptySolvedTypes :: SolvedTypes
-emptySolvedTypes = SolvedTypes Map.empty Map.empty Map.empty Map.empty Nothing
+emptySolvedTypes = SolvedTypes Map.empty Map.empty Map.empty Map.empty Nothing Map.empty
 
 
 -- | Look up a top-level / let-bound name's HM-resolved type.
@@ -294,6 +313,33 @@ insertSolvedVar n t st = st { _stEnv = Map.insert n t (_stEnv st) }
 unionSolvedEnv :: Map.Map String T.Type -> SolvedTypes -> SolvedTypes
 unionSolvedEnv additions st =
     st { _stEnv = Map.union additions (_stEnv st) }
+
+
+-- | v0.17 PR-21b — install the merged FFI implements registry.
+-- Called once at HM-setup time in 'Compile.hs' with the union of
+-- every loaded 'Sky.Build.FfiRegistry.FfiModule''s '_fm_implements'.
+-- Consumed by 'lookupImplements' / 'implementsInterface'.
+withImplementsMap :: Map.Map String [String] -> SolvedTypes -> SolvedTypes
+withImplementsMap impls st = st { _stImplementsMap = impls }
+
+
+-- | v0.17 PR-21b — look up the qualified interfaces that the given
+-- qualified type name satisfies.  Returns the empty list when the
+-- type isn't in the registry (which is the safe default — Sky.Type
+-- .Unify treats absence as \"no interface relation\" and falls back
+-- to the strict type-equality rule).
+lookupImplements :: String -> SolvedTypes -> [String]
+lookupImplements qname st =
+    Map.findWithDefault [] qname (_stImplementsMap st)
+
+
+-- | v0.17 PR-21b — does qualified type @qname@ implement qualified
+-- interface @iname@?  One-way relation (an @A@ that implements @I@
+-- does NOT mean an @I@-typed value is an @A@); HM consumers treat
+-- this as a @A <: I@ widening axiom.
+implementsInterface :: String -> String -> SolvedTypes -> Bool
+implementsInterface qname iname st =
+    iname `elem` lookupImplements qname st
 
 
 -- | v0.15 Stage A — per-region type map.  Every solved constraint's
@@ -778,7 +824,7 @@ solve constraint = do
             -- a complete SolvedTypes even though they don't yet
             -- consume the regions field.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing))
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing Map.empty))
         Just err -> return (SolveError err)
 
 
@@ -805,7 +851,7 @@ solveWithLocals constraint = do
             envTypes <- readSolvedTypes (_env finalState)
             -- v0.15.x P37a — same freeze pattern as `solve` above.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes envTypes regionTys Map.empty Map.empty Nothing), localTypes)
+            return (SolveOk (SolvedTypes envTypes regionTys Map.empty Map.empty Nothing Map.empty), localTypes)
         Just err ->
             return (SolveError err, localTypes)
 
@@ -880,7 +926,7 @@ solveWithInstancesAndRegions constraint = do
             -- fourth tuple slot (`regionTys`) stays for backward
             -- compatibility — `Compile.hs` still threads it into
             -- `scopeStateRef._lc_regionTypes` directly today.
-            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing), ci, csi, regionTys)
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing Map.empty), ci, csi, regionTys)
         Just err -> do
             -- v0.13 Phase A4: even on error, return whatever
             -- call-site instances were captured BEFORE the error
