@@ -637,9 +637,11 @@ getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 -- CAF) gives the per-dep hint without polluting unrelated readers.
 --
 -- Default `Nothing` (entry-module emission semantics).
-{-# NOINLINE globalCurrentDepModule #-}
-globalCurrentDepModule :: IORef (Maybe String)
-globalCurrentDepModule = unsafePerformIO $ newIORef Nothing
+-- v0.17 PR-α Session 6 — @globalCurrentDepModule@ retired.  The
+-- dep-vs-entry emission gate is now pure-threaded through
+-- @inferredSigSkyToGoScoped@ / @splitInferredSigWithRegScoped@ /
+-- @renderHofParamTyScoped@ / @typeStrWithAliasesRegBoundedScoped@.
+-- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@.
 
 -- v0.17 C24 — runtime flag for CSI key widening.  Read at
 -- post-solve time from SKY_CSI_WIDEN_KEY.  When True, the CSI
@@ -3348,34 +3350,17 @@ locateRuntimeDir = do
 -- type.
 {-# NOINLINE generateDeclsForDepScoped #-}
 generateDeclsForDepScoped :: String -> Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDepScoped modName canMod modPrefix =
-    -- v0.15.6 #365 — Bracket the dep's decls with two sentinel
-    -- `GoDeclRaw` entries whose rendering sets / clears the
-    -- `globalCurrentDepModule` hint at the right moments.  The
-    -- outer renderer processes pkg_decls in order, so the SET
-    -- sentinel runs BEFORE the dep's decls render and the CLEAR
-    -- sentinel runs AFTER.  This way the per-dep `defToStmts`
-    -- lookups (which read the hint via a fresh
-    -- `unsafePerformIO . readIORef`) see the correct module.
-    --
-    -- We CANNOT eagerly render-and-restore here because the lazy
-    -- `getCgEnv` CAF caches its first-evaluated value — if the
-    -- eager render fires before downstream consumers (specDecls,
-    -- inferred-sigs builders) get to read `getCgEnv`, those
-    -- readers receive a stale snapshot and the build breaks.  The
-    -- sentinel approach scopes the hint without touching `cgEnv`.
-    --
-    -- The sentinels emit ZERO Go content (empty strings) so the
-    -- output is byte-identical to the un-scoped path apart from
-    -- the typed-let-bound-name dispatch.
-    setSentinel : (generateDeclsForDep canMod modPrefix ++ [clearSentinel])
-  where
-    setSentinel = GoIr.GoDeclRaw (unsafePerformIO $ do
-        writeIORef globalCurrentDepModule (Just modName)
-        return "")
-    clearSentinel = GoIr.GoDeclRaw (unsafePerformIO $ do
-        writeIORef globalCurrentDepModule Nothing
-        return "")
+generateDeclsForDepScoped _modName canMod modPrefix =
+    -- v0.17 PR-α Session 6 — the dep-mode IORef sentinel pattern is
+    -- retired.  Every renderer entry point now threads the dep-mode
+    -- hint from its caller via pure data (see Compile.hs's
+    -- `inferredSigSkyToGoScoped`, `splitInferredSigWithRegScoped`,
+    -- `renderHofParamTyScoped`, and the Html-arm gate in
+    -- `typeStrWithAliasesRegBoundedScoped`).  The dep-module name
+    -- arg is preserved for callers but is no longer load-bearing
+    -- inside the renderer chain; remove the arg in a follow-up
+    -- cleanup once external imports are audited.
+    generateDeclsForDep canMod modPrefix
 
 
 -- | Generate Go declarations for a dependency module's functions
@@ -7814,12 +7799,15 @@ typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel s
     -- dep-side function bodies stay polymorphic via the bare alias.
     T.TType _ "Html" [arg]
         | (case arg of { T.TVar _ -> False; _ -> True })
-          -- v0.17 PR-α Session 2 — read dep-mode hint from explicit
-          -- arg first; fall back to IORef when caller hasn't
-          -- migrated.  Once every dep-emission call site threads the
-          -- hint, the IORef read disappears entirely.
-        , isNothing depModHint
-        , isNothing (unsafePerformIO (readIORef globalCurrentDepModule)) ->
+          -- v0.17 PR-α Session 6 — pure dep-mode gate.  Every
+          -- renderer entry point (inferredSigSkyToGoScoped,
+          -- splitInferredSigWithRegScoped, renderHofParamTyScoped)
+          -- threads depModHint from its caller's known emission
+          -- context (Just modName for dep emission, Nothing for
+          -- entry).  The legacy @globalCurrentDepModule@ IORef
+          -- fallback has been retired; the sentinel pattern at
+          -- @generateDeclsForDepScoped@ is now a no-op.
+        , isNothing depModHint ->
             "Std_Html_Html_T[" ++ rec arg ++ "]"
     T.TType _ "Html" _ -> "Std_Html_Html"
     -- v0.17 Cause H — typed tuple emission.  When every element
