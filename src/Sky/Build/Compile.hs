@@ -705,8 +705,27 @@ loadAndSeedFfiRegistry = do
     -- key are rare (a qualified type name's full @at@pkg@ form is unique
     -- to one inspector run) — Map.unions keeps the first occurrence,
     -- which is deterministic given the input order.
-    let implementsMap = Map.unions [ FfiReg._fm_implements m | m <- mods ]
-        pkgAliasMap   = Map.unions [ FfiReg._fm_pkgAlias m   | m <- mods ]
+    let implementsMapRaw = Map.unions [ FfiReg._fm_implements m | m <- mods ]
+        pkgAliasMap      = Map.unions [ FfiReg._fm_pkgAlias m   | m <- mods ]
+        -- v0.17 PR-21c prereq — mangle the registry keys + interface
+        -- names so they match what @FfiTypeResolve.goApp@'s post-flip
+        -- form will emit at HM time.  The inspector emits @Name\@pkg@
+        -- (with raw '@' + slash-dotted package path); the resolver flip
+        -- will emit @Name_at_pkgMangle@ (with '_at_' separator + dots/
+        -- slashes/hyphens replaced with underscores).  Mangling both
+        -- sides at LOAD time keeps Unify's @isFfiInterfacePair@ fast
+        -- (no per-call regex/replace), at the cost of memory which is
+        -- negligible at fyne scale (~MB of mangled keys vs the raw
+        -- registry's similar size).
+        manglePkgPart = map (\c -> if c == '/' || c == '.' || c == '-' then '_' else c)
+        mangleQual qn = case break (== '@') qn of
+            (bare, '@' : pkg)
+              | not (null bare), not (null pkg) -> bare ++ "_at_" ++ manglePkgPart pkg
+            _ -> qn   -- non-qualified: leave alone
+        implementsMap = Map.fromList
+            [ (mangleQual k, map mangleQual vs)
+            | (k, vs) <- Map.toList implementsMapRaw
+            ]
     writeIORef Env.ffiImplementsRef implementsMap
     writeIORef Env.ffiPkgAliasRef   pkgAliasMap
     -- v0.17 PR-21b — mirror into Sky.Type.Unify's local IORef.  Unify

@@ -80,6 +80,35 @@ isFfiInterfacePair n1 n2 =
     implementsInterface n1 n2 || implementsInterface n2 n1
 
 
+-- | v0.17 PR-21c — does this identifier carry the qualified-mangled
+-- @_at_@ marker (i.e. @Bare_at_pkgmangle@)?  Used by the
+-- @Value\@qualified bridge@ to recognise post-PR-21c-flip qualified
+-- FFI-opaque types vs ordinary user-defined ADT names.
+--
+-- Required shape: capital-prefixed bare name, no @_@ in the bare,
+-- followed by @_at_@, followed by lowercase-only suffix.  Identical
+-- pattern to @Sky.Build.Compile.splitGoMangledQualified@ — kept
+-- duplicated here to avoid a Compile↔Type cycle.
+hasQualifiedMarker :: String -> Bool
+hasQualifiedMarker s = go s ""
+  where
+    go ('_' : 'a' : 't' : '_' : suffix) acc
+        | not (null acc)
+        , let bare = reverse acc
+        , let h = head bare
+        , h >= 'A' && h <= 'Z'
+        , all (\c -> (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')) bare
+        , not (null suffix)
+        , all (\c -> (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_') suffix
+        = True
+    go (c : rest) acc = go rest (c : acc)
+    go [] _ = False
+
+
 -- | Unify two type variables. Returns True on success, False on failure.
 unify :: T.Variable -> T.Variable -> IO Bool
 unify v1 v2 = do
@@ -277,11 +306,28 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
             -- @Label\@fyne.io/fyne/v2/widget@ ↔
             -- @CanvasObject\@fyne.io/fyne/v2@ case + every analogous
             -- cross-package FFI pair.
-            --
-            -- No-op today (PR-21c hasn't flipped the resolver yet, so
-            -- qualified types still collapse to @Value@ before reaching
-            -- HM).  Safety scaffolding for PR-21c.
             else if null args1 && null args2 && isFfiInterfacePair name1 name2
+                then do merge v1 v2 (T.Structure flat1); return True
+            -- v0.17 PR-21c — Value↔qualified bridge.  Hand-coded
+            -- kernel signatures (e.g. @Context.background@ at
+            -- @Sky.Type.Constrain.Expression.lookupKernelType@) still
+            -- return the legacy @Value@ sentinel because they pre-date
+            -- the inspector's qualified-marker emission.  Post-PR-21c
+            -- resolver flip, the call sites expect a qualified type
+            -- (@Context_at_context@, @CustomerListParams_at_...@, etc).
+            -- This bridge allows @Value@ to flow into any qualified
+            -- nullary slot transparently, mirroring the legacy
+            -- collapse-to-Value behaviour without requiring every
+            -- hand-coded sig to be migrated atomically.
+            --
+            -- One-way safety: the bridge only widens @Value <: Q@ when
+            -- the other side is a qualified-mangled identifier
+            -- (carries @_at_@).  A bare ADT @Color@ vs @Value@ still
+            -- fails strict-equality — only the FFI-opaque qualified
+            -- form bridges.
+            else if null args1 && null args2 &&
+                    ((name1 == "Value" && hasQualifiedMarker name2)
+                    || (name2 == "Value" && hasQualifiedMarker name1))
                 then do merge v1 v2 (T.Structure flat1); return True
             else return False
 

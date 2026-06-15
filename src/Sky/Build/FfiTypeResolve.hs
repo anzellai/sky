@@ -85,25 +85,35 @@ ftyToType _kernelName = go
         -- into the legacy collapse so behaviour is byte-stable.
         Nothing
             | Just (bareName, pkgPath) <- splitQualified name ->
-                -- v0.17 C17c second-attempt — reverted again.
-                -- Inspector audit (commit 7f0f8dfb) closed the
-                -- receiver-side asymmetry, but the resolver flip
-                -- still surfaces 3 distinct second-order issues:
-                --   1. Go interface widening — Fyne's `Label`
-                --      implements `CanvasObject`; pre-flip both
-                --      were `Value` and unified by accident.
-                --   2. More hand-coded sigs returning Value still
-                --      reference now-qualified opaques (net/http
-                --      Handler, more Stripe sites).
-                --   3. Cross-FFI composition surfaces where the
-                --      Go-side widening Sky has no equivalent of.
-                -- The full close needs a Value↔qualified bridge
-                -- rule in `Sky.Type.Solve` so the two shapes unify
-                -- transparently (Option B per
-                -- docs/v0.17-c17c-asymmetry.md).  Until then keep
-                -- the collapse so example-sweep stays green.
-                let _suppressUnused = (bareName, pkgPath, mangleGoIdent pkgPath)
-                in opaqueValue
+                -- v0.17 PR-21c — SHIP POINT D activation.  The 3
+                -- failure modes that broke the 2026-06-13 third
+                -- attempt are now closed by safe scaffolding:
+                --   * PR-21a (codegen flatten) — solvedTypeToGo
+                --     short-circuits the mangled @_at_@ form to
+                --     @any@ at 5 renderer sites.  Closes the
+                --     @undefined: Router_at_...@ class.
+                --   * PR-21b (HM unify axiom) — Sky.Type.Unify's
+                --     App1 arm calls @isFfiInterfacePair@ when a
+                --     qualified↔qualified pair fails strict
+                --     equality.  Closes the Fyne
+                --     @Label@/@CanvasObject@ class via Go's
+                --     structural interface satisfaction.
+                --   * Registry-key mangle in loadAndSeedFfiRegistry
+                --     aligns the registry's @\@@-separated keys
+                --     with the @_at_@-separated names HM sees, so
+                --     the axiom actually fires on the qualified
+                --     form.
+                --
+                -- The flip emits the mangled qualified form
+                -- @Bare_at_<pkgmangle>@ as a nullary @Can.TType@
+                -- with the empty-home sentinel.  Downstream
+                -- consumers see a real qualified name (HM types it
+                -- as the qualified-mangled identifier; the
+                -- codegen-flatten short-circuit erases it to @any@
+                -- at Go emission).
+                Can.TType (ModuleName.Canonical "")
+                    (bareName ++ "_at_" ++ mangleGoIdent pkgPath)
+                    args
             | otherwise -> opaqueValue
       where
         -- Drop @args@ for opaque types — anything generic at the
