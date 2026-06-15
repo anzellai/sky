@@ -8233,12 +8233,21 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         -- `rt.Coerce[rt.T2[string,int]]({Alice 30})` to panic
         -- because T2[string,int] and T2[any,any] are distinct
         -- generic instantiations (not aliased synonyms).
+        -- v0.17 PR-16 — structural slot-shape gate.  The legacy
+        -- @take 5 goRendering == "rt.T2"@ String prefix-check is
+        -- replaced by a structural pattern match on the slot's
+        -- 'GoType.GoTuple [_, _]' shape via 'GoType.parseGoType'.
+        -- Pre-PR-16 the prefix check fired for any String starting
+        -- with @rt.T2@ — true for parametric instantiations
+        -- (@rt.T2[A, B]@) but ALSO for a hypothetical badly-named
+        -- alias.  The structural check fires only for the canonical
+        -- 'GoTuple' shape, matching the value-side emission contract.
         Can.Tuple a b []
-            | take 5 goRendering == "rt.T2" ->
-                emitTypedTuple2 goRendering a b
+            | Just slotTy@(GoType.GoTuple [_, _]) <- GoType.parseGoType goRendering ->
+                emitTypedTuple2 slotTy a b
         Can.Tuple a b [c]
-            | take 5 goRendering == "rt.T3" ->
-                emitTypedTuple3 goRendering a b c
+            | Just slotTy@(GoType.GoTuple [_, _, _]) <- GoType.parseGoType goRendering ->
+                emitTypedTuple3 slotTy a b c
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -9251,29 +9260,62 @@ exprToGo (A.At _ expr) = case expr of
 -- @<<loop>>@ blackhole that Step-4 widening kept tripping over (see
 -- @docs/v0.17-cause-h-step4-blocker.md@) no longer has its first
 -- seam, so the round-trip can be closed end-to-end by PR 5 + 6.
-emitTypedTuple2 :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple2 goRendering a b =
-    case tupleElementSlots a b [] of
-        Just [tA, tB] ->
+-- v0.17 PR-16 — consume 'GoType.GoType' structurally.
+--
+-- Pre-PR-16 took a 'String' rendering and re-derived element types
+-- via 'tupleElementSlots' (which calls 'inferExprType' per element).
+-- That coupled the typed-tuple emission to the solver's ability to
+-- infer each expression's type at the right region, which fails
+-- for the @Just (k, v)@ class where the expression-type-inference
+-- can't reach the tuple literal's component types.
+--
+-- Post-PR-16 takes the slot's 'GoType' directly.  The slot already
+-- carries the element types as a 'GoTuple [tA, tB]' structural
+-- payload (per 'mapSkyTypeToGo' Strategy-C PR-3).  We pattern-match
+-- on the GoTuple and lower each element with its corresponding
+-- typed slot.  The legacy 'tupleElementSlots' inference path stays
+-- as a defensive fallback for the 'Nothing'-from-GoType case the
+-- call-site gate already filters out — kept for robustness if a
+-- future caller passes a non-GoTuple slotTy.
+emitTypedTuple2 :: GoType.GoType -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple2 slotTy a b =
+    let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
+    in case slotTy of
+        GoType.GoTuple [tA, tB] ->
             let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
-            in GoIr.GoStructLit goRendering
+            in GoIr.GoStructLit slotStr
                 [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b)]
-        _ -> GoIr.GoStructLit "rt.SkyTuple2"
-            [("V0", exprToGo a), ("V1", exprToGo b)]
+        _ -> case tupleElementSlots a b [] of
+            Just [tA, tB] ->
+                let strA = GoType.renderGoType GoType.defaultRenderEnv tA
+                    strB = GoType.renderGoType GoType.defaultRenderEnv tB
+                in GoIr.GoStructLit slotStr
+                    [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b)]
+            _ -> GoIr.GoStructLit "rt.SkyTuple2"
+                [("V0", exprToGo a), ("V1", exprToGo b)]
 
-emitTypedTuple3 :: String -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple3 goRendering a b c =
-    case tupleElementSlots a b [c] of
-        Just [tA, tB, tC] ->
+emitTypedTuple3 :: GoType.GoType -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple3 slotTy a b c =
+    let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
+    in case slotTy of
+        GoType.GoTuple [tA, tB, tC] ->
             let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 strC = GoType.renderGoType GoType.defaultRenderEnv tC
-            in GoIr.GoStructLit goRendering
+            in GoIr.GoStructLit slotStr
                 [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b),
                  ("V2", exprToGoExpectGo strC c)]
-        _ -> GoIr.GoStructLit "rt.SkyTuple3"
-            [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
+        _ -> case tupleElementSlots a b [c] of
+            Just [tA, tB, tC] ->
+                let strA = GoType.renderGoType GoType.defaultRenderEnv tA
+                    strB = GoType.renderGoType GoType.defaultRenderEnv tB
+                    strC = GoType.renderGoType GoType.defaultRenderEnv tC
+                in GoIr.GoStructLit slotStr
+                    [("V0", exprToGoExpectGo strA a), ("V1", exprToGoExpectGo strB b),
+                     ("V2", exprToGoExpectGo strC c)]
+            _ -> GoIr.GoStructLit "rt.SkyTuple3"
+                [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
 
 
 -- | v0.17 Strategy-C PR 3 — structural replacement for the legacy
