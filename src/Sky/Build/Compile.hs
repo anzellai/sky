@@ -16794,6 +16794,29 @@ solvedTypeToGoTyped :: T.Type -> GoType.GoType
 solvedTypeToGoTyped = GoType.mapSkyTypeToGo GoType.defaultMappingContext
 
 
+-- | v0.17 Phase ε PR-22 (incremental) — GoType-pipeline equivalent of
+-- 'solvedTypeToGo' that produces the same String output via the
+-- structural typed renderer.
+--
+-- Parity is locked by @test/Sky/Build/RendererParitySpec.hs@: for
+-- every region in the test corpus, the output of
+-- @renderGoType defaultRenderEnv . mapSkyTypeToGo defaultMappingContext@
+-- equals the legacy String renderer.  PR-22 deletes the six legacy
+-- renderers once every call site routes through this helper.
+--
+-- Migration recipe:
+--   * Replace @solvedTypeToGo someTy@ with
+--     @solvedTypeToGoViaPipeline someTy@.
+--   * Run the example sweep — byte-identical Go is produced.
+--   * Once every legacy call site is migrated, the legacy renderer
+--     family (solvedTypeToGo{,Bounded,PreserveTVars}, safeReturnType
+--     family, typeStrWithAliasesReg family) becomes dead code and
+--     can be deleted.
+solvedTypeToGoViaPipeline :: T.Type -> String
+solvedTypeToGoViaPipeline =
+    GoType.renderGoType GoType.defaultRenderEnv . solvedTypeToGoTyped
+
+
 solvedTypeToGoBounded :: Int -> Set.Set String -> T.Type -> String
 solvedTypeToGoBounded fuel _ _ | fuel <= 0 = "any"
 solvedTypeToGoBounded fuel seen ty =
