@@ -22,6 +22,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
+import qualified Sky.Type.Solve as Solve
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Canonicalise.Environment as Env
 
@@ -971,7 +972,7 @@ substTypeVars subst ct = case ct of
     Can.TUnit        -> T.TUnit
     Can.TTuple a b cs -> T.TTuple (substTypeVars subst a) (substTypeVars subst b)
                                   (map (substTypeVars subst) cs)
-    Can.TRecord _ _ -> T.TVar "_rec"  -- records at pattern level not supported
+    Can.TRecord _ _ -> Solve.unresolvedSentinel Solve.UnresolvedPatternRec  -- v0.17 PR-10 step 4
     Can.TAlias h n pairs aliasType ->
         T.TAlias h n
             [(k, substTypeVars subst t) | (k, t) <- pairs]
@@ -992,15 +993,16 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PRecord fields -> map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields
     Can.PUnit -> []
     Can.PTuple a b more ->
+        -- v0.17 PR-10 step 4: typed pattern-side sentinels.
         concat $
-            patternBindings (a, T.TVar "_tup_0")
-            : patternBindings (b, T.TVar "_tup_1")
+            patternBindings (a, Solve.unresolvedSentinel Solve.UnresolvedPatternTup0)
+            : patternBindings (b, Solve.unresolvedSentinel Solve.UnresolvedPatternTup1)
             : zipWith (\i p -> patternBindings (p, T.TVar ("_tup_" ++ show (i :: Int))))
                       [2 ..] more
     Can.PList items ->
-        concatMap (\item -> patternBindings (item, T.TVar "_list_elem")) items
+        concatMap (\item -> patternBindings (item, Solve.unresolvedSentinel Solve.UnresolvedPatternListElem)) items
     Can.PCons h t ->
-        let elemType = T.TVar "_cons_elem"
+        let elemType = Solve.unresolvedSentinel Solve.UnresolvedPatternConsElem
             listType = T.TType ModuleName.list "List" [elemType]
         in patternBindings (h, elemType) ++ patternBindings (t, listType)
     Can.PBool _ -> []

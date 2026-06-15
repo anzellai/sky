@@ -363,6 +363,20 @@ data Unresolved
     | UnresolvedAccessor
       -- ^ Accessor field type placeholder; legacy
       -- `T.TVar "_accessor_placeholder"`.
+    | UnresolvedPatternRec
+      -- ^ Pattern-level record placeholder; legacy `T.TVar "_rec"`.
+    | UnresolvedPatternTup0
+      -- ^ Pattern-level 2-tuple first-slot placeholder; legacy
+      -- `T.TVar "_tup_0"`.
+    | UnresolvedPatternTup1
+      -- ^ Pattern-level 2-tuple second-slot placeholder; legacy
+      -- `T.TVar "_tup_1"`.
+    | UnresolvedPatternListElem
+      -- ^ Pattern-level list-element placeholder; legacy
+      -- `T.TVar "_list_elem"`.
+    | UnresolvedPatternConsElem
+      -- ^ Pattern-level cons-pattern element placeholder; legacy
+      -- `T.TVar "_cons_elem"`.
     deriving (Eq, Show)
 
 
@@ -396,6 +410,11 @@ unresolvedTag u = case u of
     UnresolvedNorm      -> "_norm"
     UnresolvedEmpty     -> "_empty"
     UnresolvedAccessor  -> "_accessor_placeholder"
+    UnresolvedPatternRec       -> "_rec"
+    UnresolvedPatternTup0      -> "_tup_0"
+    UnresolvedPatternTup1      -> "_tup_1"
+    UnresolvedPatternListElem  -> "_list_elem"
+    UnresolvedPatternConsElem  -> "_cons_elem"
 
 
 -- | Inverse of 'unresolvedSentinel' — pattern-matches a 'T.Type' as
@@ -418,6 +437,11 @@ lookupUnresolved (T.TVar s) = case s of
     "_norm"       -> Just UnresolvedNorm
     "_empty"      -> Just UnresolvedEmpty
     "_accessor_placeholder" -> Just UnresolvedAccessor
+    "_rec"        -> Just UnresolvedPatternRec
+    "_tup_0"      -> Just UnresolvedPatternTup0
+    "_tup_1"      -> Just UnresolvedPatternTup1
+    "_list_elem"  -> Just UnresolvedPatternListElem
+    "_cons_elem"  -> Just UnresolvedPatternConsElem
     _             -> Nothing
 lookupUnresolved _ = Nothing
 
