@@ -6508,6 +6508,25 @@ safeReturnTypeFullBounded fuel seen t =
             -- emitting `Bufio_Scanner` would dangle — fall back to any.
             isKnownUnion = Set.member base knownUnions
                         || Set.member name knownUnions
+            -- v0.17 PR-21 follow-up — empty-home cross-module ADT
+            -- recovery.  Mirror 'typeStrWithAliasesRegBounded' 's
+            -- @unionRecovery@: when home is empty and the bare name
+            -- matches the last segment of a registered @Mod_Name@
+            -- union, emit the qualified form.  Closes the
+            -- 16-skychess pre-existing fail: 'Chess.Ai.pickBest'
+            -- 's @colour@ param had empty home → @base = "Colour"@
+            -- → the @isKnownUnion@ gate emitted bare @Colour@
+            -- which Go rejected as undefined.
+            unionRecoveryFull
+              | not (null modStr) = Nothing
+              | otherwise =
+                  let allUnions = readIORefNoCse globalUnionNames
+                  in case [ u | u <- Set.toList allUnions
+                              , '_' `elem` u
+                              , reverse (takeWhile (/= '_') (reverse u)) == name
+                              ] of
+                         [u] -> Just u
+                         _   -> Nothing
         in case matches of
             (m:_) -> m ++ "_R"
             _
@@ -6527,10 +6546,12 @@ safeReturnTypeFullBounded fuel seen t =
                 | not (null modStr) && Set.member base knownUnions -> base
                 | otherwise -> case runtimeTyped of
                     Just goTy -> goTy
-                    Nothing
-                        | isRuntimeOnly -> "any"
-                        | isKnownUnion  -> base
-                        | otherwise     -> "any"
+                    Nothing -> case unionRecoveryFull of
+                        Just u  -> u
+                        Nothing
+                            | isRuntimeOnly -> "any"
+                            | isKnownUnion  -> base
+                            | otherwise     -> "any"
     -- TAlias emitted by the canonicaliser's alias-expansion pass.
     -- Resolve using the same record-alias / runtime-type lookup as
     -- TType so `Profile` → `Main_Profile_R` instead of degenerating
@@ -16705,6 +16726,31 @@ solvedTypeToGoBounded fuel seen ty =
             -- reference for a field of type Bufio.Scanner.
             isKnownUnion = Set.member base (Rec._cg_unionNames env)
                         || Set.member name (Rec._cg_unionNames env)
+            -- v0.17 PR-21 follow-up — empty-home cross-module ADT
+            -- recovery.  When 'home' is empty (a TVar resolved to a
+            -- Sky ADT via cross-decl constraint propagation but with
+            -- the module attribution lost), the bare @base = name@
+            -- renders undefined Go (@Colour@ vs. declared
+            -- @Chess_Piece_Colour@).  Mirror 'typeStrWithAliasesRegBounded'
+            -- 's @unionRecovery@: walk @globalUnionNames@ for any
+            -- @Mod_Name@ entry whose last underscore-segment equals
+            -- the bare name; emit the qualified form.
+            --
+            -- Closes the 16-skychess pre-existing fail: 'Chess.Ai.pickBest'
+            -- 's @colour@ param is typed @Colour@ (empty home) post-HM,
+            -- so the dep-side param sig emitted bare @Colour@ which
+            -- Go rejected.  Post-fix the param sig emits
+            -- @Chess_Piece_Colour@.
+            unionRecovery
+              | not (null modStr) = Nothing
+              | otherwise =
+                  let allUnions = readIORefNoCse globalUnionNames
+                  in case [ u | u <- Set.toList allUnions
+                              , '_' `elem` u
+                              , reverse (takeWhile (/= '_') (reverse u)) == name
+                              ] of
+                         [u] -> Just u
+                         _   -> Nothing
             runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
                 Just goTy -> Just goTy
                 Nothing   -> lookup name runtimeTypedMap
@@ -16712,10 +16758,12 @@ solvedTypeToGoBounded fuel seen ty =
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
                 Just goTy -> goTy
-                Nothing
-                    | isRuntimeOnly -> "any"
-                    | isKnownUnion  -> base
-                    | otherwise     -> "any"
+                Nothing -> case unionRecovery of
+                    Just u  -> u
+                    Nothing
+                        | isRuntimeOnly -> "any"
+                        | isKnownUnion  -> base
+                        | otherwise     -> "any"
     T.TLambda from to -> "func(" ++ rec from ++ ") " ++ rec to
     T.TRecord fields _ ->
         -- v0.15 Stage E — parametric aliases render with explicit
