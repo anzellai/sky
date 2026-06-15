@@ -3445,12 +3445,63 @@ type T5[A, B, C, D, E any] struct {
 	V4 E
 }
 
+// v0.17 PR-17 SHIP POINT B — extend typed tuple aliases to arity 9.
+// Sky's parser accepts arbitrary-arity tuple literals; the master plan
+// caps the typed-instantiation at arity 9 (consistent with what
+// real-world Sky idioms produce — beyond ~6, a record alias is
+// idiomatic anyway).  Arity >9 stays on the slice-backed `SkyTupleN`
+// fallback below.
+type T6[A, B, C, D, E, F any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+}
+type T7[A, B, C, D, E, F, G any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+}
+type T8[A, B, C, D, E, F, G, H any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+}
+type T9[A, B, C, D, E, F, G, H, I any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+	V8 I
+}
+
 // Back-compat aliases. Literal codegen (`Can.Tuple`) still produces
 // `SkyTuple2{V0:..., V1:...}` — with these aliases the same value also
 // types as `rt.T2[any, any]`, so solvedTypeToGo's typed emission and
 // literal emission interop without churn.
 type SkyTuple2 = T2[any, any]
 type SkyTuple3 = T3[any, any, any]
+type SkyTuple4 = T4[any, any, any, any]
+type SkyTuple5 = T5[any, any, any, any, any]
+type SkyTuple6 = T6[any, any, any, any, any, any]
+type SkyTuple7 = T7[any, any, any, any, any, any, any]
+type SkyTuple8 = T8[any, any, any, any, any, any, any, any]
+type SkyTuple9 = T9[any, any, any, any, any, any, any, any, any]
 
 // SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
 // access in generated code is `t.Vs[i]`.
