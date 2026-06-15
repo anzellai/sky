@@ -207,10 +207,24 @@ func main() {
 	// If the loader skipped some (rare — usually means a typo'd path),
 	// we synthesise an empty PackageInfo so the array stays aligned.
 	results := make([]PackageInfo, 0, len(pkgPaths))
-	loadedByPath := make(map[string]*packages.Package, len(pkgs))
-	for _, pkg := range pkgs {
-		loadedByPath[pkg.PkgPath] = pkg
-	}
+	loadedByPath := make(map[string]*packages.Package)
+	// v0.17 PR-21b prereq — walk roots + transitive deps so the
+	// interface inventory covers ALL packages loaded by go/packages,
+	// not just the explicit roots.  Pre-fix, fyne.io/fyne/v2/widget
+	// alone produced an empty `implements` map because the parent
+	// fyne.io/fyne/v2 (where CanvasObject lives) was a transitive
+	// dep, not a root — so buildInterfaceInventory only walked widget's
+	// scope and missed every cross-package interface.
+	//
+	// packages.Visit walks the import graph in post-order with cycle
+	// guarding built in.  Cheaper + safer than a hand-rolled recursive
+	// flood.
+	packages.Visit(pkgs, func(pkg *packages.Package) bool {
+		if pkg != nil && pkg.PkgPath != "" {
+			loadedByPath[pkg.PkgPath] = pkg
+		}
+		return true
+	}, nil)
 
 	// v0.17 PR-9 — build the global interface inventory across every
 	// LOADED package (roots + transitive deps). Each requested package's
