@@ -4584,10 +4584,15 @@ generateAnonRecordDecls = do
         let sortedFields =
                 List.sortOn (T._fieldIndex . snd) (Map.toList fields)
             -- v0.17 Phase ε PR-22 (incremental migration) — route
-            -- through the GoType pipeline.  Parity locked by
-            -- RendererParitySpec.
+            -- through the GoType pipeline.  Use the FLAT variant
+            -- (TVars→"any") to match legacy 'solvedTypeToGo'
+            -- semantics: anonymous-record field types can carry
+            -- leftover monomorphisation TVars (e.g. "any") that
+            -- have no enclosing Go type-parameter scope here, so
+            -- they must widen to "any" not "T_any".  Parity locked
+            -- by RendererParitySpec.
             goField (fname, T.FieldType _ ty) =
-                capitalise_ fname ++ " " ++ solvedTypeToGoViaPipeline ty
+                capitalise_ fname ++ " " ++ solvedTypeToGoViaPipelineFlat ty
             fieldStrs = map goField sortedFields
             structBody =
                 if null fieldStrs
@@ -4614,8 +4619,12 @@ generateAliasTypes canMod =
         _ ->
             -- v0.17 Phase ε PR-22 (incremental migration) — route the
             -- non-record alias body through the GoType pipeline.
+            -- Use the FLAT variant (TVars→"any") to match legacy
+            -- 'solvedTypeToGo' semantics: the @type Foo = …@ Go
+            -- declaration here is non-generic (no @[T any]@ params),
+            -- so any TVar in the body has no enclosing Go scope.
             -- Parity locked by RendererParitySpec.
-            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGoViaPipeline body ]
+            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGoViaPipelineFlat body ]
 
     -- vars carries the Sky-side type parameter NAMES for parametric
     -- aliases (e.g. `type alias Cfg msg = { ... }` has vars = ["msg"]).
@@ -4684,15 +4693,19 @@ generateAliasTypes canMod =
         let goMethods = map (\(fname, T.FieldType _ ftype) ->
                 -- v0.17 Phase ε PR-22 (incremental migration) —
                 -- record-as-interface method params + return types
-                -- now route through the GoType pipeline.
+                -- now route through the GoType pipeline.  FLAT
+                -- variant (TVars→"any") to match legacy
+                -- 'solvedTypeToGo': record-as-interface declarations
+                -- are non-generic Go interfaces, so a leftover TVar
+                -- field type has no enclosing type-param scope.
                 case ftype of
                     T.TLambda from to ->
                         let (params, ret) = collectFuncParams ftype
-                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGoViaPipeline p)) [0::Int ..] params
-                        in (capitalise fname, goParams, solvedTypeToGoViaPipeline ret)
+                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGoViaPipelineFlat p)) [0::Int ..] params
+                        in (capitalise fname, goParams, solvedTypeToGoViaPipelineFlat ret)
                     _ ->
                         -- Getter method
-                        (capitalise fname, [], solvedTypeToGoViaPipeline ftype)
+                        (capitalise fname, [], solvedTypeToGoViaPipelineFlat ftype)
                 ) fields
         in [ GoIr.GoDeclInterface name goMethods ]
 
@@ -16828,6 +16841,35 @@ solvedTypeToGoTyped = GoType.mapSkyTypeToGo GoType.defaultMappingContext
 solvedTypeToGoViaPipeline :: T.Type -> String
 solvedTypeToGoViaPipeline =
     GoType.renderGoType GoType.defaultRenderEnv . solvedTypeToGoTyped
+
+
+-- | v0.17 Phase ε PR-22 — flat (TVar→"any") variant of
+-- 'solvedTypeToGoViaPipeline' that matches the legacy
+-- 'solvedTypeToGoBounded' / 'typeStrWithAliasesRegBounded' TVar
+-- policy.
+--
+-- 'solvedTypeToGoBounded' emits @\"any\"@ for every 'T.TVar' — both
+-- internal (@_X@) and user-named.  The structural pipeline's
+-- default policy is @GoTypeVar (goTypeParam name)@ so a leftover
+-- TVar leaks as a Go type-parameter identifier ("A" / "T_msg" /
+-- etc.) that the enclosing emitted Go declaration doesn't bring
+-- into scope, producing @undefined: A@.
+--
+-- This flat variant flips 'mcTVarsToAny' so the TVar arm lowers to
+-- 'GoAny' instead.  Use at sites where:
+--
+--   1. The caller previously consumed 'solvedTypeToGo' (or a
+--      'Bounded' / 'safeReturnType' sibling) and relied on TVar→any.
+--   2. The input 'T.Type' is otherwise env-safe under
+--      'defaultMappingContext' (no user-ADT / record-alias /
+--      runtimeTyped / unionRecovery dependency).
+--
+-- For sites that DO depend on env data, the migration is gated on
+-- 'MappingContext' widening (separate PR-22 slices).
+solvedTypeToGoViaPipelineFlat :: T.Type -> String
+solvedTypeToGoViaPipelineFlat =
+    GoType.renderGoType GoType.defaultRenderEnv
+        . GoType.mapSkyTypeToGo GoType.flatMappingContext
 
 
 solvedTypeToGoBounded :: Int -> Set.Set String -> T.Type -> String

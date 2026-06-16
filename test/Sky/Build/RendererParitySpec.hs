@@ -33,6 +33,7 @@ import qualified Sky.Type.Solve.GoTypeBuild as GTB
 import qualified Sky.Type.Type as T
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.AST.Canonical as Can
+import qualified Sky.Sky.ModuleName as ModuleName
 
 probesDir :: IO FilePath
 probesDir = do
@@ -235,3 +236,58 @@ spec = describe "v0.17 PR-5 — renderer parity" $ do
                 GoType.renderGoType GoType.defaultRenderEnv (GTB.srGoType sr)
                     `shouldBe` GoType.typeToGo (GTB.srSkyType sr))
                 (Map.elems regionMap)
+
+    describe "PR-22 flatMappingContext — TVar→any policy" $ do
+        -- v0.17 Phase ε PR-22 — the 'mcTVarsToAny' policy gate.
+        -- 'defaultMappingContext' renders TVars as 'GoTypeVar' idents;
+        -- 'flatMappingContext' renders them as 'GoAny'.  This is the
+        -- ONLY difference between the two contexts; all other arms
+        -- recurse via 'mapSkyTypeToGo ctx', so the policy propagates
+        -- into containers (Cmd, Maybe, Result, Task, List, Set, Dict,
+        -- tuple elements, lambda from/to).
+        --
+        -- The flat variant unlocks migration of call sites that
+        -- previously consumed 'solvedTypeToGoBounded' (TVar→"any"
+        -- semantics) without forcing the entire MappingContext to
+        -- carry that policy globally.
+
+        let renderEnv = GoType.defaultRenderEnv
+
+        it "default policy: T.TVar lowers to GoTypeVar (ident)" $ do
+            let go = GoType.mapSkyTypeToGo GoType.defaultMappingContext (T.TVar "a")
+            GoType.renderGoType renderEnv go `shouldBe` "A"
+
+        it "flat policy: T.TVar lowers to GoAny" $ do
+            let go = GoType.mapSkyTypeToGo GoType.flatMappingContext (T.TVar "a")
+            GoType.renderGoType renderEnv go `shouldBe` "any"
+
+        it "flat policy propagates into containers (Maybe a → rt.SkyMaybe[any])" $ do
+            let maybeA = T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]
+            let go = GoType.mapSkyTypeToGo GoType.flatMappingContext maybeA
+            GoType.renderGoType renderEnv go `shouldBe` "rt.SkyMaybe[any]"
+
+        it "flat policy is structural over TLambda (a -> b → func(any) any)" $ do
+            let lam = T.TLambda (T.TVar "a") (T.TVar "b")
+            let go = GoType.mapSkyTypeToGo GoType.flatMappingContext lam
+            GoType.renderGoType renderEnv go `shouldBe` "func(any) any"
+
+        it "flat policy on env-free concrete types is byte-identical to default" $ do
+            -- Concrete primitives don't contain TVars, so the two
+            -- policies agree.  This is the migration-safety lemma —
+            -- swapping a call site from default to flat is byte-
+            -- identical for any concrete-input call.
+            let intTy    = T.TType ModuleName.basics "Int"    []
+                stringTy = T.TType ModuleName.basics "String" []
+                boolTy   = T.TType ModuleName.basics "Bool"   []
+                concreteCorpus =
+                    [ T.TUnit
+                    , intTy
+                    , stringTy
+                    , T.TLambda intTy boolTy
+                    ]
+            mapM_ (\ty ->
+                let defaultGo = GoType.mapSkyTypeToGo GoType.defaultMappingContext ty
+                    flatGo    = GoType.mapSkyTypeToGo GoType.flatMappingContext   ty
+                in GoType.renderGoType renderEnv flatGo
+                    `shouldBe` GoType.renderGoType renderEnv defaultGo)
+                concreteCorpus

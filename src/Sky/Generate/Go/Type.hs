@@ -737,6 +737,18 @@ data MappingContext = MappingContext
       -- CONSUMED BY: PR-7 (defuse @globalAnonRecords@ IORef —
       -- anon-record structural identity reaches the mapper via this
       -- field so the IORef can be retired).
+
+    , mcTVarsToAny     :: !Bool
+      -- ^ v0.17 Phase ε PR-22 — TVar lowering policy.  When True,
+      -- 'mapSkyTypeToGo' emits 'GoAny' for every 'T.TVar' instead
+      -- of 'GoTypeVar' (the default).  This matches the legacy
+      -- 'solvedTypeToGoBounded' / 'typeStrWithAliasesRegBounded'
+      -- TVar→\"any\" policy used at sites where leftover unsolved
+      -- TVars must not leak as Go type-parameter identifiers
+      -- (notably the monomorphisation σ_go substitution, where a
+      -- leftover TVar refers to no enclosing type-parameter scope).
+      -- CONSUMED BY: 'mapSkyTypeToGo' TVar arm.  Default False
+      -- keeps every pre-existing call-site byte-identical.
     }
     deriving (Show)
 
@@ -756,7 +768,20 @@ defaultMappingContext = MappingContext
     , mcUnionNames     = Set.empty
     , mcEnumNames      = Set.empty
     , mcAliases        = Map.empty
+    , mcTVarsToAny     = False
     }
+
+
+-- | v0.17 Phase ε PR-22 — flat MappingContext that mirrors
+-- 'solvedTypeToGoBounded' / 'typeStrWithAliasesRegBounded' TVar
+-- semantics: every 'T.TVar' lowers to 'GoAny'.
+--
+-- Same env-derived defaults as 'defaultMappingContext'; only the
+-- 'mcTVarsToAny' policy differs.  Used by 'solvedTypeToGoViaPipelineFlat'
+-- in @Sky.Build.Compile@ at sites that must match legacy "any"
+-- semantics (e.g. monomorphisation σ_go construction).
+flatMappingContext :: MappingContext
+flatMappingContext = defaultMappingContext { mcTVarsToAny = True }
 
 
 -- | Build a 'MappingContext' from the codegen environment that today's
@@ -780,6 +805,7 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcUnionNames     = Rec._cg_unionNames cgEnv
     , mcEnumNames      = Rec._cg_enumNames cgEnv
     , mcAliases        = Rec._cg_aliases cgEnv
+    , mcTVarsToAny     = False
     }
 
 
@@ -792,8 +818,9 @@ buildMappingContext renderEnv cgEnv = MappingContext
 -- 'typeToGo' has no equivalent path because it never had env access.
 mapSkyTypeToGo :: MappingContext -> T.Type -> GoType
 mapSkyTypeToGo ctx t = case t of
-    T.TVar name ->
-        GoTypeVar (goTypeParam name)
+    T.TVar name
+        | mcTVarsToAny ctx -> GoAny
+        | otherwise        -> GoTypeVar (goTypeParam name)
 
     T.TUnit ->
         GoUnit
