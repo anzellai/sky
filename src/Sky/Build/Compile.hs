@@ -14774,6 +14774,22 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
                 | isRecordAliasBody aliasBody ->
                     let goStruct = recordAliasGoStructName modName aliasName
                     in Just ("rt.Coerce[" ++ goStruct ++ "]")
+            -- v0.17 Gap 10 Tier 3 — user-ADT typed payload.
+            -- ADT ctor field whose Sky type is itself a user-defined
+            -- ADT (e.g. `type Tree = Leaf Int | Node Tree Tree`,
+            -- pattern-matching `Node l r` should give `l, r : Tree`)
+            -- wraps `.Fields[idx]` in `rt.Coerce[<modPrefix>_<name>]`
+            -- so the bound variable carries the concrete ADT struct
+            -- type rather than `any`.  Recognition gate: the type's
+            -- Go name is in `_cg_unionNames` (populated post-env-build
+            -- by `buildCodegenEnv`).  Read via `getCgEnv` CAF.
+            --
+            -- Scope: zero-arg user types (parametric ADTs `Foo a` need
+            -- generic struct construction — Tier 4).
+            T.TType modName typeName []
+                | let goName = unionGoTypeName modName typeName
+                , Set.member goName (Rec._cg_unionNames getCgEnv) ->
+                    Just ("rt.Coerce[" ++ goName ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
             Just fn | isTypedAdtSubject ->
@@ -14839,6 +14855,20 @@ recordAliasGoStructName modName aliasName =
                     then ""
                     else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
     in prefix ++ aliasName ++ "_R"
+
+
+-- | v0.17 Gap 10 Tier 3 — construct the Go ident for a user-defined
+-- ADT (union) type.  Same module-prefix-mangling as
+-- 'recordAliasGoStructName' but WITHOUT the `_R` suffix, matching
+-- the codegen of `type <prefix>_<name> = rt.SkyADT` aliases for
+-- user unions.
+unionGoTypeName :: ModuleName.Canonical -> String -> String
+unionGoTypeName modName typeName =
+    let modStr = ModuleName.toString modName
+        prefix = if null modStr || modStr == "Main"
+                    then ""
+                    else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+    in prefix ++ typeName
 
 
 -- ═══════════════════════════════════════════════════════════
