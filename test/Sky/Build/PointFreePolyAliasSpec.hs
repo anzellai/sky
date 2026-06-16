@@ -100,10 +100,53 @@ spec = describe "point-free top-level alias of a polymorphic function (#398)" $ 
                 ("func joinStr(_skyEta_p0" `isInfixOf` body) `shouldBe` True
                 (", _skyEta_p1" `isInfixOf` body) `shouldBe` True
 
+    it "v0.17 PR-23: expands a partial-application point-free body (add5 = add 5)" $ do
+        -- v0.17 PR-23 Gap 8 — `add5 = add 5` is a `Can.Call`
+        -- expression (not a bare `Var` ref like `tickle =
+        -- String.toUpper`).  Pre-fix `canEtaBody` rejected `Call`
+        -- as a side-effect-risk and the lowerer emitted a 0-arity
+        -- thunk: `func add5() func(int) int { return closure }`,
+        -- which exploded at call sites with `too many arguments`.
+        -- Post-fix `canEtaBody` accepts `Call` when the callee is
+        -- itself safe AND every arg is a literal or safe ref, so
+        -- the binding eta-expands to a real `func add5(p0 int)
+        -- int { return add(5, p0) }`.
+        let src = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , ""
+                , "add : Int -> Int -> Int"
+                , "add a b = a + b"
+                , ""
+                , "add5 : Int -> Int"
+                , "add5 = add 5"
+                , ""
+                , "main = println (String.fromInt (add5 7))"
+                ]
+        result <- compileInProcess src
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk body -> do
+                -- Eta-expanded: real func(int) int — not 0-arity.
+                ("func add5(_skyEta_p0" `isInfixOf` body) `shouldBe` True
+                ("func add5() func(" `isInfixOf` body) `shouldBe` False
+
     it "leaves plain value bindings (no arrows) untouched" $ do
         -- Guard against over-application: a value binding like
         -- `greeting : String; greeting = \"Howdy\"` must NOT be
         -- eta-expanded — it has zero arrows in its type.
+        --
+        -- v0.17 PR-23 (#621) — Assertion tightened: check only the
+        -- @greeting@ binding's own signature, not the entire main.go
+        -- body.  PR-23 extended eta-expansion to `Can.Call` so the
+        -- transitive `Std.Log.println` re-export (which IS arrow-
+        -- typed: `String -> Task Error ()`) now correctly eta-
+        -- expands too — adding a `_skyEta_p0` inside `Std_Log_println_`.
+        -- The intent of THIS test is that `greeting` (arity 0)
+        -- stays untouched, not that the whole main.go is _skyEta_p-
+        -- free.
         let src = unlines
                 [ "module Main exposing (main)"
                 , ""
@@ -119,6 +162,7 @@ spec = describe "point-free top-level alias of a polymorphic function (#398)" $ 
         case result of
             CompileErr e -> expectationFailure ("compile failed: " ++ e)
             CompileOk body -> do
-                ("func greeting()" `isInfixOf` body) `shouldBe` True
-                -- No eta param injected.
-                ("_skyEta_p0" `isInfixOf` body) `shouldBe` False
+                ("func greeting() string" `isInfixOf` body) `shouldBe` True
+                -- No eta param injected into greeting's own sig.
+                ("func greeting(_skyEta_p0" `isInfixOf` body)
+                    `shouldBe` False

@@ -4838,7 +4838,36 @@ etaExpandWith lookupFn solved def = case def of
     -- effects that must not run per call. The reference cases here
     -- are the safe subset where the body is itself a pure name
     -- pointing at a function value.
+    --
+    -- v0.17 PR-23 — Allow @Can.Call callee args@ when the callee is
+    -- itself canEtaBody-safe AND every arg is a literal or a safe
+    -- reference.  Closes the point-free partial-app shape
+    -- @add5 = add 5@ (`Can.Call (VarTopLevel "add") [Int 5]`): per
+    -- Sky's effect system, observable effects are typed @Task@ —
+    -- a binding whose type is @Int -> Int@ is fundamentally pure,
+    -- so eta-expanding it changes neither evaluation count nor
+    -- observable behaviour at the call site (the existing 0-arity
+    -- thunk path ALSO runs the body per call; the eta-expanded
+    -- form just shifts the arity to the correct count).
     canEtaBody (A.At _ inner) = case inner of
+        Can.VarTopLevel _ _   -> True
+        Can.VarKernel _ _     -> True
+        Can.VarLocal _        -> True
+        Can.VarCtor{}         -> True
+        Can.Accessor _        -> True
+        Can.Call callee args  -> canEtaBody callee && all canEtaArg args
+        _                     -> False
+
+    -- Args inside an eta-safe Can.Call: literals + safe refs.
+    -- Excludes Lambda / Let / Case / Call (deeper expressions) to
+    -- keep the safety check conservative — a user can always make
+    -- the binding explicit if the partial-app body is complex.
+    canEtaArg (A.At _ inner) = case inner of
+        Can.Int _             -> True
+        Can.Float _           -> True
+        Can.Str _             -> True
+        Can.Chr _             -> True
+        Can.Unit              -> True
         Can.VarTopLevel _ _   -> True
         Can.VarKernel _ _     -> True
         Can.VarLocal _        -> True
