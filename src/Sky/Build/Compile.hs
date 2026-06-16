@@ -963,6 +963,50 @@ collectIncrementalHashInputs = do
 
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
+    -- v0.17 #625 — defensive reset of cross-compile CAF state.
+    --
+    -- `globalCgEnv` and `scopeStateRef` are NOINLINE CAF IORefs.
+    -- In a fresh process the unsafePerformIO initialiser runs once
+    -- and the refs start empty.  Within a single `compile`, dep-
+    -- module state flows from `imports`-time `modifyIORef
+    -- globalCgEnv` calls into the `prevEnv` reads at lines 3915 +
+    -- 3981 that build the final cgEnv — that is the intended
+    -- channel.
+    --
+    -- In-process test harnesses
+    -- (Sky.Build.Helpers.InProcessCompile via task #491) re-enter
+    -- `compile` multiple times in the SAME GHC RTS instance.
+    -- Without this reset the PRIOR compile's final cgEnv state is
+    -- still in `globalCgEnv` at the next entry, and the `prevEnv`
+    -- reads at 3915/3981 then `Map.union` stale
+    -- `_cg_funcSkyToGoTVars` / `_cg_recordAliases` /
+    -- `_cg_callSiteInstances` into THIS compile's cgEnv.  Same
+    -- leak class for `scopeStateRef`'s `withScoped*`
+    -- restore-to-prev pattern.
+    --
+    -- Production impact: ZERO.  `sky build` forks an OS process
+    -- per compile, so the CAFs initialise fresh every time.  The
+    -- leak is reachable only in the in-process test harness and a
+    -- (rare) long-lived `sky watch` session compiling DIFFERENT
+    -- modules.
+    --
+    -- Note: this reset alone does NOT close #624 (the Gap 8c spec
+    -- flake — `Sky.Core.List.foldl` emits as TYPED generic in
+    -- isolation but as bare-`any` under spec sweep).  Empirically
+    -- the bare-`any` emission persists even with these refs cleared,
+    -- so the root cause is deeper — likely HM-solver row-extension
+    -- counter accumulation (`Sky.Type.Unify.rowExtCounter`, not
+    -- exported), or other un-audited NOINLINE IORefs in the parse
+    -- / canonicalise / typecheck chain.  Tracked at #624.
+    writeIORef globalCgEnv
+        (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
+                        Set.empty Set.empty Set.empty Set.empty
+                        Map.empty Map.empty Map.empty Map.empty
+                        Map.empty Map.empty Map.empty)
+    writeIORef globalUnionNames Set.empty
+    writeIORef scopeStateRef
+        (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
+
     -- v0.16.0 binary-size hardening: reset the console-needed flag at
     -- the start of every compile so successive sky-build / LSP /
     -- sky-watch invocations in one process see a fresh accumulator.
