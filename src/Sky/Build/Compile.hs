@@ -10228,15 +10228,47 @@ parseFuncType s = GoType.parseGoType s >>= destructureSlotFunc
 
 
 -- | True when `ty` looks like a record alias the codegen emits:
--- a Go identifier ending in `_R`, optionally module-qualified.
+-- a Go identifier ending in `_R`, optionally module-qualified, and
+-- optionally suffixed with a `[…]` generic-instantiation block.
+--
 -- Conservative — matches Sky-generated record aliases without
 -- catching arbitrary Go types that happen to share the suffix.
+--
+-- v0.17 #631 — extended to accept parametric instantiations
+-- (`Cfg_R[Msg]`, `RetryPolicy_R[Sky_Core_Error_Error]`).  Before
+-- this, `coerceArg`'s record-alias short-circuit at line 11919
+-- skipped any record alias carrying a concrete type-arg suffix,
+-- routing them through `any(X).(Target)` direct assertion instead
+-- of `rt.Coerce[Target](X)`.  That direct cast panics at runtime
+-- when the source's Go-static instantiation differs from the
+-- target's (`RetryPolicy_R[any]` ≢ `RetryPolicy_R[Error]` per
+-- Go's nominal-generic rules), since #631's
+-- `Task.linearBackoff : Int -> Int -> RetryPolicy e` bakes the
+-- return TVar to `any` in its emitted Go signature.  Routing
+-- through `rt.Coerce[Target]` instead bridges the gap via the
+-- reflect-backed field-walk path, identical to how
+-- `rt.RecordUpdate` handles cross-instantiation coercion.
 isRecordAliasTy :: String -> Bool
-isRecordAliasTy ty =
-    not (null ty)
-    && "_R" `List.isSuffixOf` ty
-    && all (\c -> c == '_' || c == '.' || (c >= 'A' && c <= 'Z')
-                || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) ty
+isRecordAliasTy ty
+    | not (null ty)
+    , (prefix, rest) <- span (/= '[') ty
+    , "_R" `List.isSuffixOf` prefix
+    , isIdentLike prefix
+    , isBracketSuffix rest = True
+    | otherwise = False
+  where
+    isIdentLike s =
+        not (null s)
+        && all (\c -> c == '_' || c == '.' || (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) s
+    isBracketSuffix s = case s of
+        "" -> True
+        '[':inner | last s == ']' ->
+            -- Permissive — any balanced `[…]` block; the prefix
+            -- check already restricts the head to a real `_R`
+            -- record-alias identifier.
+            let _ = inner in True
+        _ -> False
 
 
 -- | If `ty` is a Go slice type `[]T` with T ≠ any, return Just "T".
@@ -11699,10 +11731,29 @@ coerceArg mSrc e ty
     , targetBase == srcBase
         = e
     -- (b) Structural fallback gated on the HM-solved source type.
+    --
+    -- v0.17 #631 — extra gate: the source's HM type must NOT carry
+    -- any unresolved Forall TVar.  When it DOES (the canonical case
+    -- is `Task.linearBackoff : Int -> Int -> RetryPolicy e` where
+    -- `e` only appears in the RETURN type, so the emitted Go fn
+    -- bakes `RetryPolicy_R[any]` into its signature), the source's
+    -- Go-static type is `[any]` regardless of the surrounding HM
+    -- pin.  Short-circuiting here hands `go build` two args whose
+    -- types differ (`RetryPolicy_R[any]` vs `RetryPolicy_R[Error]`)
+    -- and the Go compiler rejects the call.
+    --
+    -- Falling through to the coercion arms below produces an
+    -- `rt.Coerce[<target>](src)` wrap that bridges the [any]→[Error]
+    -- gap at runtime via the same reflect-backed path
+    -- `rt.RecordUpdate` already uses.
     | Just targetBase <- parametricAliasBase ty
     , Just src <- mSrc
     , Just aliasName <- aliasBaseFromCanExpr src
     , aliasName ++ "_R" == targetBase
+    , let solved = Rec._cg_solvedTypes getCgEnv
+    , case inferExprType solved src of
+          Just srcTy -> not (hasUnresolvedSkyTVar solved srcTy)
+          Nothing    -> True
         = e
     -- v0.13 Stage 1 — runtime-kernel HOF arg: when the target slot
     -- expects a typed `func(...) ...` AND the source is a
@@ -15305,6 +15356,37 @@ substTypeVars types = go Set.empty
         T.TLambda a b -> T.TLambda (go seen a) (go seen b)
         T.TTuple a b cs -> T.TTuple (go seen a) (go seen b) (map (go seen) cs)
         _ -> ty
+
+
+-- | v0.17 #631 — top-level "any unresolved-TVar leaf in this type?"
+-- check.  Walk the Sky type chasing 'TVar' substitutions through
+-- 'solved' and return True iff any sub-component remains an
+-- unresolved TVar (the post-substitution leaf is itself a TVar).
+--
+-- Lifted from a local @where@ in 'goExprGoType' so 'coerceArg' can
+-- reuse it for the path-(b) gate that guards 'parametricAliasBase'
+-- short-circuits against sources whose HM type still carries
+-- Forall-quantified TVars (i.e. polymorphic-return-only sites
+-- where Go inference cannot pin the type from the value).
+hasUnresolvedSkyTVar :: Solve.SolvedTypes -> T.Type -> Bool
+hasUnresolvedSkyTVar solved = go Set.empty
+  where
+    go seen t = case t of
+        T.TVar name
+            | Set.member name seen -> True
+            | otherwise -> case Solve.lookupSolvedVar name solved of
+                Just t' | t' /= t -> go (Set.insert name seen) t'
+                _                 -> True
+        T.TType _ _ args         -> any (go seen) args
+        T.TAlias _ _ _ inner     -> case inner of
+            T.Filled t'  -> go seen t'
+            T.Hoisted t' -> go seen t'
+        T.TRecord fs _           -> any
+            (\(T.FieldType _ ft) -> go seen ft) (Map.elems fs)
+        T.TTuple a b cs          -> go seen a || go seen b
+                                      || any (go seen) cs
+        T.TLambda a b            -> go seen a || go seen b
+        T.TUnit                  -> False
 
 
 inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type

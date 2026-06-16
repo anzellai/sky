@@ -96,6 +96,7 @@ import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
 import qualified Sky.Build.PointFreePolyAliasSpec
+import qualified Sky.Build.IsRecordAliasTyParametricSpec
 import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.PartialUserHofSpec
 import qualified Sky.Build.HofTypedMsgSpec
@@ -567,6 +568,12 @@ allSpecs fastMode = do
     -- function. Pre-fix, `tickle = String.toUpper` emitted a
     -- 0-arity Go thunk wrapper; call sites failed `go build`.
     describeT "Sky.Build.PointFreePolyAlias" Sky.Build.PointFreePolyAliasSpec.spec
+    -- #631: isRecordAliasTy used to require literal `_R` suffix and
+    -- silently dropped parametric instantiations like `Cfg_R[Msg]` or
+    -- `RetryPolicy_R[Error]`, routing them through the panicking
+    -- `any(X).(Target)` cast instead of `rt.Coerce[Target](X)`.
+    describeT "Sky.Build.IsRecordAliasTyParametric"
+                                            Sky.Build.IsRecordAliasTyParametricSpec.spec
     -- #463 + #465: partial application of a typed FFI kernel used to
     -- route the under-arity call to the typed companion (e.g.
     -- `rt.Regex_replaceT("-", "_")` with 2 args against a 3-arg
