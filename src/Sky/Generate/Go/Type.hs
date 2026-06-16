@@ -932,13 +932,25 @@ mapNamedType ctx home name args =
             [elem_] -> GoNamed "rt.SkySet" [mapSkyTypeToGo ctx elem_]
             _       -> GoNamed "rt.SkySet" [GoAny]
 
-        (_, "Cmd") -> case args of
-            [msg] -> GoNamed "rt.SkyCmd" [mapSkyTypeToGo ctx msg]
-            _     -> GoNamed "rt.SkyCmd" [GoAny]
+        -- v0.17 PR-18 Cause H5 parity — emit typed `rt.SkyCmd_T[Msg]`
+        -- for concrete-arg Cmd, bare `rt.SkyCmd` for TVar-arg under
+        -- default policy or 0/many-arg (matches legacy
+        -- `safeReturnTypeFull`).  Both runtime aliases resolve to
+        -- `cmdT`, so consumers accept either form.  Bare form for
+        -- legacy TVar→bare degradation under default policy (TVar
+        -- might not be in scope at the emission site, producing
+        -- `undefined: T_msg` in Go).  Flat policy maps TVar→GoAny,
+        -- so the typed form renders as `rt.SkyCmd_T[any]` — always
+        -- valid.
+        (_, "Cmd") | isCmdSubConcreteCaseFn ctx args
+                   -> GoNamed "rt.SkyCmd_T" [mapSkyTypeToGo ctx (head args)]
+                   | otherwise
+                   -> GoNamed "rt.SkyCmd" []
 
-        (_, "Sub") -> case args of
-            [msg] -> GoNamed "rt.SkySub" [mapSkyTypeToGo ctx msg]
-            _     -> GoNamed "rt.SkySub" [GoAny]
+        (_, "Sub") | isCmdSubConcreteCaseFn ctx args
+                   -> GoNamed "rt.SkySub_T" [mapSkyTypeToGo ctx (head args)]
+                   | otherwise
+                   -> GoNamed "rt.SkySub" []
 
         -- Std.Html.Html — codegens non-generic (`= rt.SkyADT`), so
         -- the msg arg is dropped at emission time.  Same special-case
@@ -969,3 +981,18 @@ mapNamedType ctx home name args =
 -- env-free contexts).
 goTypeString :: T.Type -> String
 goTypeString = renderGoType defaultRenderEnv . mapSkyTypeToGo defaultMappingContext
+
+
+-- | v0.17 PR-22 bulk migration helper — does this Cmd/Sub argument
+-- list warrant the typed @rt.SkyCmd_T[Msg]@ form?
+--
+-- True when there's exactly one arg AND (the arg is non-TVar OR the
+-- mapping context uses flat policy mapping TVars to @GoAny@).  False
+-- under the legacy "TVar→bare" degradation under default policy
+-- (where emitting @T_msg@ outside the enclosing generic's scope
+-- would produce @undefined: T_msg@ in Go).
+isCmdSubConcreteCaseFn :: MappingContext -> [T.Type] -> Bool
+isCmdSubConcreteCaseFn _   []        = False
+isCmdSubConcreteCaseFn _   (_:_:_)   = False
+isCmdSubConcreteCaseFn ctx [T.TVar _] = mcTVarsToAny ctx
+isCmdSubConcreteCaseFn _   [_]       = True
