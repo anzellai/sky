@@ -1013,6 +1013,42 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- which is a known suspect for the residual Gap 8c flake
     -- (#624).
     writeIORef Unify.rowExtCounter 0
+    -- v0.17 #624 — extended defensive reset for compile-scope CAFs
+    -- whose writers fire conditionally (DCE branch, .skycache/go
+    -- presence, dep-emission cluster) — without this, in-process
+    -- test compiles inherit stale state from the prior compile
+    -- through Map.adjust-style partial updates (especially
+    -- `globalGoSigMap` at line 4108-4129) and the
+    -- `seedTypedFfiNames` no-op-when-absent fall-through (fresh
+    -- tempdirs always lack `.skycache/go`, so the FFI typed-wrapper
+    -- refs carry the prior compile's set).
+    --
+    -- Per agent diagnosis (#624) the strongest suspects are
+    -- `globalGoSigMap` and the FFI typed-wrapper pair; the rest are
+    -- belt-and-braces.  All 16 writes are no-ops in a fresh process
+    -- (CAFs initialise empty via unsafePerformIO).
+    writeIORef globalAnnotMap Map.empty
+    writeIORef globalKernelAlias Map.empty
+    writeIORef globalCsiByCallee Map.empty
+    writeIORef globalEmittedSpecs Set.empty
+    writeIORef globalGoSigMap Map.empty
+    writeIORef globalAllAliases Map.empty
+    writeIORef globalAllFieldIdx Map.empty
+    writeIORef globalReachableSet Set.empty
+    writeIORef globalReachableProgram Set.empty
+    writeIORef globalAnonRecords Map.empty
+    writeIORef globalDceDisabled False
+    writeIORef globalEntryPath ""
+    writeIORef globalCsiWiden False
+    writeIORef globalTypedTuples False
+    -- Do NOT reset `Env.ffiTypedWrapper{Names,Params}Ref` here:
+    -- `loadAndSeedFfiRegistry` writes them in `compile` BEFORE
+    -- `continueCompile` runs, so resetting here would clobber the
+    -- legitimately-populated FFI registry for the current compile
+    -- (regression observed in examples/13-skyshop —
+    -- `undefined: rt.Go_Firestore_queryDocuments`).  In-process test
+    -- isolation for these refs is handled by `loadAndSeedFfiRegistry`'s
+    -- own writeIORefs at the start of every `compile`.
 
     -- v0.16.0 binary-size hardening: reset the console-needed flag at
     -- the start of every compile so successive sky-build / LSP /
@@ -6026,7 +6062,12 @@ goExprGoType mSrc e = case shapeClassified of
         GoIr.GoIdent name
             | "rt." `List.isPrefixOf` name -> Nothing
         GoIr.GoIdent name -> case lookupLambdaType name of
-            Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
+            -- v0.17 PR-22 Tier 1: migrate to structural pipeline.
+            -- `isTypedPrimitive` gates input to Int/Float/Bool/String/
+            -- Char shapes only, so flat policy is byte-identical to
+            -- legacy `solvedTypeToGo` here (no Cmd/Sub asymmetry, no
+            -- env dependency).
+            Just t | isTypedPrimitive t -> Just (solvedTypeToGoViaPipelineFlat t)
             -- v0.15.3 — typed parametric-record-alias param/let-binding:
             -- recover the Go-rendered alias instantiation so the call-
             -- site coerceArg can short-circuit the nominal `.(Foo_R[any])`
@@ -14713,6 +14754,26 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             T.TType _ "Dict" [_kTy, vTy]
                 | Just goPrim <- ctorPayloadGoPrim vTy ->
                     Just ("rt.AsMapT[" ++ goPrim ++ "]")
+            -- v0.17 Gap 10 Tier 2 — non-parametric record-alias
+            -- payload.  ADT ctor field whose Sky type is a
+            -- user-defined record alias (e.g. `type alias User =
+            -- { name : String, age : Int }`, then `type Event =
+            -- Joined User`) wraps `.Fields[idx]` in `rt.Coerce[<Mod>_<Alias>_R]`
+            -- so the bound variable carries the concrete struct
+            -- type rather than `any`.  Downstream usage in
+            -- record-typed contexts (`u.name`, `u.age`) still
+            -- routes through `rt.Field` reflectively today; this
+            -- closes the codegen-time type contract without
+            -- requiring CodegenEnv threading into bindCtorArg.
+            --
+            -- Scope:  only the simple shape — alias with NO type
+            -- parameters (`args = []`).  Parametric record aliases
+            -- (`type alias Cfg msg = { ... }`) require generic
+            -- struct type-arg construction and stay in Tier 3.
+            T.TAlias modName aliasName [] aliasBody
+                | isRecordAliasBody aliasBody ->
+                    let goStruct = recordAliasGoStructName modName aliasName
+                    in Just ("rt.Coerce[" ++ goStruct ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
             Just fn | isTypedAdtSubject ->
@@ -14753,6 +14814,31 @@ ctorPayloadGoPrim ty = case ty of
     T.TType _ "String" [] -> Just "string"
     T.TType _ "Char"   [] -> Just "rune"
     _                     -> Nothing
+
+
+-- | v0.17 Gap 10 Tier 2 — does an alias body wrap a record type?
+-- Both `Hoisted` and `Filled` variants are records when their
+-- inner `T.Type` is a `T.TRecord`.
+isRecordAliasBody :: T.AliasType -> Bool
+isRecordAliasBody (T.Hoisted (T.TRecord _ _)) = True
+isRecordAliasBody (T.Filled  (T.TRecord _ _)) = True
+isRecordAliasBody _                           = False
+
+
+-- | v0.17 Gap 10 Tier 2 — construct the Go struct name for a
+-- non-parametric record alias.  Mirrors the codegen at
+-- `generateAliasForDep` / `Compile.hs:6604` so the result matches
+-- whatever name the dep-module emission actually produced for the
+-- alias.  Module path `.` separators become `_`; the `Main` module
+-- emits with no prefix.  Suffixed `_R` per the auto-record-ctor
+-- naming convention.
+recordAliasGoStructName :: ModuleName.Canonical -> String -> String
+recordAliasGoStructName modName aliasName =
+    let modStr = ModuleName.toString modName
+        prefix = if null modStr || modStr == "Main"
+                    then ""
+                    else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+    in prefix ++ aliasName ++ "_R"
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -16137,7 +16223,11 @@ inferDictValueGoType types e = case inferExprType types e of
 inferDictKeyGoType :: Solve.SolvedTypes -> Can.Expr -> String
 inferDictKeyGoType types e = case inferExprType types e of
     Just (T.TType _ "Dict" [keyTy, _]) ->
-        case solvedTypeToGo keyTy of
+        -- v0.17 PR-22 Tier 1: migrate to structural pipeline.  The
+        -- string-equality downstream gate accepts only ground
+        -- primitives — anything else falls to "any".  Flat policy
+        -- is byte-identical here.
+        case solvedTypeToGoViaPipelineFlat keyTy of
             "string"  -> "string"
             "int"     -> "int"
             "float64" -> "float64"
