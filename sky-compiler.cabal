@@ -178,6 +178,7 @@ executable sky
     -- Go code generation
     Sky.Generate.Go.Ir
     Sky.Generate.Go.Builder
+    Sky.Generate.Go.RuntimeMaps
     Sky.Generate.Go.Type
     Sky.Generate.Go.Kernel
     Sky.Generate.Go.Record
