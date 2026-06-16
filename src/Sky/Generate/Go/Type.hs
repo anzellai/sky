@@ -18,6 +18,7 @@
 -- drift. See @docs/v0.17-fully-typed-codegen-v5-plan.md@.
 module Sky.Generate.Go.Type where
 
+import Data.List (isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Sky.AST.Canonical as Can
@@ -910,9 +911,27 @@ mapNamedType ctx home name args =
         -- match legacy 'typeToGo'.  Runtime Cmd/Sub/Tuple non-genericity
         -- (root cause F, H) is closed by C13-runtime / C6 — this
         -- commit only mirrors today's output.
+        -- v0.17 PR-22 bulk root-cause fix — these three arms previously
+        -- emitted `rt.SkyList[T]` / `rt.SkyDict[K, V]` / `rt.SkySet[T]`
+        -- which DIVERGE from the legacy `solvedTypeToGoBounded`
+        -- output.  The runtime exposes none of those generic
+        -- aliases — `List` is implemented as Go's native slice
+        -- (`[]T`), `Dict` as `map[string]V` (string keys only — the
+        -- key arg is dropped at emission), `Set` as `map[any]bool`
+        -- (args dropped entirely; runtime operations route through
+        -- `rt.Set_insert` / etc.).  Pre-fix, bulk-replacing
+        -- `solvedTypeToGo` with `solvedTypeToGoViaPipelineFlat`
+        -- broke `examples/00-standard-libs` with `CODEGEN ERROR
+        -- E4005: rt.SkyList undefined`.  The fix routes through
+        -- the inner `renderGoType` so the element type recurses
+        -- correctly under the same context (TVars→any policy
+        -- preserved) and wraps in `GoBare` to match legacy
+        -- byte-for-byte.
         (_, "List")   -> case args of
-            [elem_] -> GoNamed "rt.SkyList" [mapSkyTypeToGo ctx elem_]
-            _       -> GoNamed "rt.SkyList" [GoAny]
+            [elem_] ->
+                let innerStr = renderGoType (mcRenderEnv ctx) (mapSkyTypeToGo ctx elem_)
+                in GoBare ("[]" ++ innerStr)
+            _       -> GoBare "[]any"
 
         (_, "Maybe")  -> case args of
             [inner] -> GoNamed "rt.SkyMaybe" [mapSkyTypeToGo ctx inner]
@@ -930,15 +949,15 @@ mapNamedType ctx home name args =
                     [mapSkyTypeToGo ctx err, mapSkyTypeToGo ctx ok]
             _ -> GoNamed "rt.SkyTask" [GoAny, GoAny]
 
+        -- Dict — string keys only at the emission layer (drops K).
         (_, "Dict") -> case args of
-            [k, v] ->
-                GoNamed "rt.SkyDict"
-                    [mapSkyTypeToGo ctx k, mapSkyTypeToGo ctx v]
-            _ -> GoNamed "rt.SkyDict" [GoAny, GoAny]
+            [_k, v] ->
+                let innerStr = renderGoType (mcRenderEnv ctx) (mapSkyTypeToGo ctx v)
+                in GoBare ("map[string]" ++ innerStr)
+            _ -> GoBare "map[string]any"
 
-        (_, "Set") -> case args of
-            [elem_] -> GoNamed "rt.SkySet" [mapSkyTypeToGo ctx elem_]
-            _       -> GoNamed "rt.SkySet" [GoAny]
+        -- Set — args dropped entirely (runtime uses untyped element).
+        (_, "Set") -> GoBare "map[any]bool"
 
         -- v0.17 PR-18 Cause H5 parity — emit typed `rt.SkyCmd_T[Msg]`
         -- for concrete-arg Cmd, bare `rt.SkyCmd` for TVar-arg under
@@ -966,12 +985,88 @@ mapNamedType ctx home name args =
         (_, "Html") -> GoNamed "Std_Html_Html" []
 
         -- User-defined types: Module_Name or Module_Name[T1, T2]
+        --
+        -- v0.17 PR-22 bulk root-cause fix — env-aware classification.
+        -- Mirrors legacy 'solvedTypeToGoBounded' user-ADT fallback at
+        -- 'Sky.Build.Compile.hs:17350-17416':
+        --
+        --   1. Record alias (in 'mcRecordAliases') → 'Foo_R[args]'
+        --      (parametric Go-generic form, args preserved).
+        --   2. Known union (in 'mcUnionNames') → bare 'Foo' (NO args
+        --      — Go-side declaration is 'type Foo = rt.SkyADT', so
+        --      passing 'Foo[any]' breaks `go build` with "not a
+        --      generic type").
+        --   3. Unknown name → bare 'Foo' fallback (legacy emits "any"
+        --      here, but bare-name preserves Cause G satisfaction for
+        --      FFI opaque types — see PR-21b).
         _ ->
             let prefix = goModulePrefix home
-                goName = prefix ++ "_" ++ name
-            in case args of
-                [] -> GoNamed goName []
-                _  -> GoNamed goName (map (mapSkyTypeToGo ctx) args)
+                base = if null prefix
+                          then name
+                          else prefix ++ "_" ++ name
+                aliasName = base ++ "_R"
+                isRecordAlias = Set.member aliasName (mcRecordAliases ctx)
+                              || Set.member (name ++ "_R") (mcRecordAliases ctx)
+                isKnownUnion = Set.member base (mcUnionNames ctx)
+                             || Set.member name (mcUnionNames ctx)
+                -- v0.17 PR-22 bulk root-cause fix — cross-module union
+                -- recovery.  Mirrors legacy 'unionRecovery' at
+                -- 'Sky.Build.Compile.hs:17394-17403': when 'home' is
+                -- empty (TVar resolved to a Sky ADT via cross-decl
+                -- constraint propagation but the module attribution
+                -- lost), walk mcUnionNames for any 'Mod_Name' entry
+                -- whose last underscore-segment equals the bare name.
+                -- Empty-home + emit bare 'Foo' would render as
+                -- 'undefined: Foo' in Go.
+                unionRecovery =
+                    if not (null prefix)
+                       then Nothing
+                       else case [ u | u <- Set.toList (mcUnionNames ctx)
+                                     , '_' `elem` u
+                                     , let lastSeg =
+                                             reverse (takeWhile (/= '_')
+                                                 (reverse u))
+                                     , lastSeg == name
+                                     ] of
+                                [u] -> Just u
+                                _   -> Nothing
+                -- Record alias recovery for empty-home case — same
+                -- shape as union recovery but on the record-alias
+                -- registry (entries carry the '_R' suffix).
+                aliasRecovery =
+                    if not (null prefix)
+                       then Nothing
+                       else case [ a | a <- Set.toList (mcRecordAliases ctx)
+                                     , '_' `elem` a
+                                     , "_R" `isSuffixOf` a
+                                     , let bareAlias = take (length a - 2) a
+                                     , let lastSeg =
+                                             reverse (takeWhile (/= '_')
+                                                 (reverse bareAlias))
+                                     , lastSeg == name
+                                     ] of
+                                [a] -> Just a
+                                _   -> Nothing
+            in case (aliasRecovery, isRecordAlias) of
+                (Just a, _) -> case args of
+                    [] -> GoNamed a []
+                    _  -> GoNamed a (map (mapSkyTypeToGo ctx) args)
+                (_, True) ->
+                    let raliasName =
+                            if Set.member aliasName (mcRecordAliases ctx)
+                               then aliasName
+                               else name ++ "_R"
+                    in case args of
+                        [] -> GoNamed raliasName []
+                        _  -> GoNamed raliasName
+                                (map (mapSkyTypeToGo ctx) args)
+                _ -> case unionRecovery of
+                    Just u -> GoNamed u []
+                    Nothing
+                        | isKnownUnion -> GoNamed base []
+                        | otherwise -> case args of
+                            [] -> GoNamed base []
+                            _  -> GoNamed base []  -- drop args by default
 
 
 -- | Canonical "Sky type → Go type string" entry point — routes a

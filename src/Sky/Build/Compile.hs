@@ -4679,7 +4679,7 @@ generateAnonRecordDecls = do
             -- they must widen to "any" not "T_any".  Parity locked
             -- by RendererParitySpec.
             goField (fname, T.FieldType _ ty) =
-                capitalise_ fname ++ " " ++ solvedTypeToGoViaPipelineFlat ty
+                capitalise_ fname ++ " " ++ solvedTypeToGo ty
             fieldStrs = map goField sortedFields
             structBody =
                 if null fieldStrs
@@ -4711,7 +4711,7 @@ generateAliasTypes canMod =
             -- declaration here is non-generic (no @[T any]@ params),
             -- so any TVar in the body has no enclosing Go scope.
             -- Parity locked by RendererParitySpec.
-            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGoViaPipelineFlat body ]
+            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
 
     -- vars carries the Sky-side type parameter NAMES for parametric
     -- aliases (e.g. `type alias Cfg msg = { ... }` has vars = ["msg"]).
@@ -4788,11 +4788,11 @@ generateAliasTypes canMod =
                 case ftype of
                     T.TLambda from to ->
                         let (params, ret) = collectFuncParams ftype
-                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGoViaPipelineFlat p)) [0::Int ..] params
-                        in (capitalise fname, goParams, solvedTypeToGoViaPipelineFlat ret)
+                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGo p)) [0::Int ..] params
+                        in (capitalise fname, goParams, solvedTypeToGo ret)
                     _ ->
                         -- Getter method
-                        (capitalise fname, [], solvedTypeToGoViaPipelineFlat ftype)
+                        (capitalise fname, [], solvedTypeToGo ftype)
                 ) fields
         in [ GoIr.GoDeclInterface name goMethods ]
 
@@ -6067,7 +6067,7 @@ goExprGoType mSrc e = case shapeClassified of
             -- Char shapes only, so flat policy is byte-identical to
             -- legacy `solvedTypeToGo` here (no Cmd/Sub asymmetry, no
             -- env dependency).
-            Just t | isTypedPrimitive t -> Just (solvedTypeToGoViaPipelineFlat t)
+            Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
             -- v0.15.3 — typed parametric-record-alias param/let-binding:
             -- recover the Go-rendered alias instantiation so the call-
             -- site coerceArg can short-circuit the nominal `.(Foo_R[any])`
@@ -16339,7 +16339,7 @@ inferDictKeyGoType types e = case inferExprType types e of
         -- string-equality downstream gate accepts only ground
         -- primitives — anything else falls to "any".  Flat policy
         -- is byte-identical here.
-        case solvedTypeToGoViaPipelineFlat keyTy of
+        case solvedTypeToGo keyTy of
             "string"  -> "string"
             "int"     -> "int"
             "float64" -> "float64"
@@ -17285,9 +17285,23 @@ solvedTypeToGoViaPipeline =
 -- For sites that DO depend on env data, the migration is gated on
 -- 'MappingContext' widening (separate PR-22 slices).
 solvedTypeToGoViaPipelineFlat :: T.Type -> String
-solvedTypeToGoViaPipelineFlat =
-    GoType.renderGoType GoType.defaultRenderEnv
-        . GoType.mapSkyTypeToGo GoType.flatMappingContext
+solvedTypeToGoViaPipelineFlat ty =
+    -- v0.17 PR-22 bulk root-cause fix — read the live codegen env
+    -- so 'mapSkyTypeToGo' sees record-alias / union-name / enum /
+    -- alias registries when classifying user-defined types.  Without
+    -- this, 'flatMappingContext' starts with empty registries and the
+    -- pipeline can't distinguish non-generic Sky ADTs (Go-side
+    -- `type Foo = rt.SkyADT`) from parametric record aliases
+    -- (Go-side `type Cfg_R[T any] = struct{...}`).  Result of
+    -- ignoring the env: passing through `[args]` for non-generic
+    -- types → `Sky_Core_Task_ShouldRetry[any]` against
+    -- non-generic declaration → Go build rejects with "is not a
+    -- generic type".
+    let ctx = (GoType.buildMappingContext
+                  GoType.defaultRenderEnv getCgEnv)
+                  { GoType.mcTVarsToAny = True }
+    in GoType.renderGoType GoType.defaultRenderEnv
+            (GoType.mapSkyTypeToGo ctx ty)
 
 
 solvedTypeToGoBounded :: Int -> Set.Set String -> T.Type -> String
