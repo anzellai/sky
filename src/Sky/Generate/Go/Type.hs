@@ -121,13 +121,21 @@ goNamedType home name args = case (ModuleName.toString home, name) of
         [elem] -> "rt.SkySet[" ++ typeToGo elem ++ "]"
         _      -> "rt.SkySet[any]"
 
+    -- v0.17 PR-22 parity — Cmd/Sub typed emission for concrete args,
+    -- bare for TVar args (matches the widened structural pipeline
+    -- mapSkyTypeToGo).  Runtime exposes `rt.SkyCmd = cmdT` AND
+    -- `rt.SkyCmd_T[T any] = cmdT` as aliases, so both forms accept
+    -- the same value; the typed form preserves more HM context at
+    -- emission sites where Msg is concrete.
     (_, "Cmd") -> case args of
-        [msg] -> "rt.SkyCmd[" ++ typeToGo msg ++ "]"
-        _     -> "rt.SkyCmd[any]"
+        [T.TVar _] -> "rt.SkyCmd"
+        [msg]      -> "rt.SkyCmd_T[" ++ typeToGo msg ++ "]"
+        _          -> "rt.SkyCmd"
 
     (_, "Sub") -> case args of
-        [msg] -> "rt.SkySub[" ++ typeToGo msg ++ "]"
-        _     -> "rt.SkySub[any]"
+        [T.TVar _] -> "rt.SkySub"
+        [msg]      -> "rt.SkySub_T[" ++ typeToGo msg ++ "]"
+        _          -> "rt.SkySub"
 
     -- Std.Html.Html — the Layer-3 HTML ADT. htmlType in the
     -- constraint generator carries an empty home (so it unifies
