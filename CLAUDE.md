@@ -1854,10 +1854,13 @@ verified against HEAD.
    `Css.zero ()`, `Css.auto ()`, `Css.none ()`. Bare form is now
    a clean type error rather than the silent function-pointer
    leak it used to be, but the `()` is still required.
-10. **Multi-line function signatures.** `name\n    : T` (the `:`
-    on a continuation line) parses cleanly. Continuation INSIDE
-    the type body (`T1\n    -> T2`) is not supported — extract a
-    `type alias` for the whole arrow type.
+10. ~~**Multi-line function signatures.**~~ — CLOSED in v0.17
+    PR-25 / #628.  Both forms parse cleanly:
+    `name\n    : T` (colon on continuation line) AND
+    `name\n    : T1\n    -> T2\n    -> T3` (arrow on continuation
+    line, off-side-rule indented).  `typeAnnotation` retries with
+    `freshLine + checkIndent + "->"` when the arrow doesn't appear
+    on the current line.  No workaround needed.
 ### Closed in v0.16 (kept here for grep)
 
 - ~~`Std.Db.exec` / `Std.Db.query` reject mixed-type parameter lists

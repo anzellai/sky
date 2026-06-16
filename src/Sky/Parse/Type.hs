@@ -4,18 +4,25 @@ module Sky.Parse.Type where
 
 import qualified Data.Text as T
 import Sky.Parse.Primitives
-import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
+import Sky.Parse.Space (spaces, freshLine, skipWhitespace, checkIndent)
 import Sky.Parse.Variable (lower, upper, isLowerLike, isIdentChar)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
 
 -- | Parse a type annotation (top level — handles ->)
+--
+-- v0.17 — closes CLAUDE.md Limitation #10.  The arrow `->` may sit
+-- either on the same line as the previous type OR on a freshly-
+-- indented continuation line, mirroring the Elm / Haskell off-side
+-- convention.  The continuation-line branch consumes a fresh line +
+-- indent check before reading `->`; if that fails the parser falls
+-- back to the bare type without the arrow.
 typeAnnotation :: (Row -> Col -> x) -> Parser x Src.TypeAnnotation
 typeAnnotation mkError = do
     t <- typeApply mkError
     spaces
-    -- Check for ->
+    -- Check for `->` either on this line or on a fresh-indented line.
     mc <- peek
     case mc of
         Just '-' ->
@@ -27,7 +34,29 @@ typeAnnotation mkError = do
                     return (Src.TLambda t ret)
                 ]
                 t
-        _ -> return t
+        _ ->
+            -- Continuation-line arrow:
+            --   name
+            --       : T1
+            --       -> T2
+            -- The `freshLine` skips whitespace + newlines; `checkIndent`
+            -- requires the next token's column to be strictly greater
+            -- than the enclosing layout indent (which Declaration.hs
+            -- has already opened for the annotation body).  When the
+            -- next non-whitespace input isn't `->`, the inner block
+            -- aborts via the string-match failure and the fallback
+            -- returns the bare type — byte-identical to pre-fix
+            -- behaviour for all existing single-line annotations.
+            oneOfWithFallback
+                [ do
+                    freshLine mkError
+                    checkIndent mkError
+                    string mkError (T.pack "->")
+                    spaces
+                    ret <- typeAnnotation mkError
+                    return (Src.TLambda t ret)
+                ]
+                t
 
 
 -- | Parse a type application: Maybe Int, Result String Int, etc.
