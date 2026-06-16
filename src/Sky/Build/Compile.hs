@@ -5778,7 +5778,11 @@ goExprGoType mSrc e = case shapeClassified of
                   -- restricts to primitives for the same reason.
                   | hasUnresolvedTVar solved ty -> Nothing
                 Just ty ->
-                    let goTy = solvedTypeToGo ty
+                    -- v0.17 Phase ε PR-22 (incremental migration) —
+                    -- this branch is only reached when ty has no
+                    -- unresolved TVars (guarded above), so the
+                    -- GoType pipeline produces byte-identical output.
+                    let goTy = solvedTypeToGoViaPipeline ty
                     in if goTy /= "any"
                           && goTy /= ""
                           && not (isGenericTypeParam goTy)
