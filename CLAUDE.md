@@ -1825,11 +1825,13 @@ verified against HEAD.
    sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
    `FyneApp.new ()` are *all* needed because their sigs are
    `() -> Task Error a` / `() -> any`. Calling a `: String`
-   binding with `()` triggers a known codegen bug for arity-0
-   kernels (`Uuid.v4 ()` mis-applies the unit); stick to the
-   declared shape. Dict / Set / Maybe / Result stay bare for
-   their `empty` / `none` etc. because those have non-function
-   types too.
+   binding with `()` is now correctly rejected by HM with
+   `Foreign 'Sky.Core.Uuid.v4': String vs a -> b` — the historical
+   codegen mis-application is closed by the v0.17 PR-23 HM
+   tightening.  Stick to the declared shape (or use
+   `Sky.Core.Pure` for a uniform `()`-arrow surface).  Dict / Set
+   / Maybe / Result stay bare for their `empty` / `none` etc.
+   because those have non-function types too.
 
    **v0.15.50 mitigation — `Sky.Core.Pure`.** New code
    targeting a uniform `() -> Task Error a` shape can import
