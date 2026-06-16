@@ -11313,12 +11313,46 @@ buildCurryAdapter name inputTys finalRet =
         declaredParams = Map.findWithDefault [] name (Rec._cg_funcParamTypes env)
         declaredRet = Map.findWithDefault "any" name (Rec._cg_funcRetType env)
         n = length inputTys
-    in if length declaredParams /= n
-            || take n declaredParams /= inputTys
-            || declaredRet /= finalRet
+        -- v0.17 PR-23 Gap 8b — TVar-input slots accept the
+        -- function's declared concrete types verbatim.  When the
+        -- slot type is `func(T1) func(T2) T2` (kernel HOF sig
+        -- before instantiation), the adapter still emits with
+        -- concrete input types from the source function (e.g.
+        -- `add : func(int, int) int` → adapter `func(int) func(int) int`).
+        -- Go's call-site inference at the surrounding call then
+        -- unifies T1=int, T2=int.  Pre-fix the exact-match check
+        -- rejected this shape and the bare uncurried fn flowed
+        -- to the polymorphic kernel, failing `go build` with
+        -- "type func(a int, b int) int of add does not match
+        -- func(T1) func(T2) T2".
+        --
+        -- Pair-wise compat: each slot input either is a TVar
+        -- (accept the declared concrete type) or exactly matches
+        -- the declared type (existing strictness).  Same rule
+        -- for the return type.
+        slotCompat slotTy declTy = isGoTVar slotTy || slotTy == declTy
+        inputsOk = and (zipWith slotCompat inputTys (take n declaredParams))
+        retOk = slotCompat finalRet declaredRet
+        -- Choose adapter input/return types: use slot type when
+        -- concrete, else fall back to declared (TVar-slot case).
+        adapterInputs = zipWith chooseTy inputTys (take n declaredParams)
+        adapterRet = chooseTy finalRet declaredRet
+        chooseTy slotTy declTy
+            | isGoTVar slotTy = declTy
+            | otherwise       = slotTy
+    in if length declaredParams /= n || not inputsOk || not retOk
        then Nothing
-       else Just (buildChain 0 inputTys finalRet)
+       else Just (buildChain 0 adapterInputs adapterRet)
   where
+    -- Recognise Go type-parameter idents (T, T1, T_msg, etc.) —
+    -- single capital letter optionally followed by digits or
+    -- underscore-suffixed lowercase.  Matches what `goTypeParam`
+    -- emits via `Sky.Generate.Go.Type.goTypeParam`.
+    isGoTVar :: String -> Bool
+    isGoTVar ('T':rest) | all isTVarRest rest = True
+    isGoTVar _ = False
+    isTVarRest c = Char.isDigit c || c == '_' || (c >= 'a' && c <= 'z')
+
     -- Build the chain inner-to-outer.
     buildChain :: Int -> [String] -> String -> GoIr.GoExpr
     buildChain _ [] _ = GoIr.GoIdent "BUG_buildChain_empty"
