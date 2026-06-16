@@ -34,8 +34,52 @@ module Sky.Build.PointFreePolyAliasSpec (spec) where
 
 import Test.Hspec
 import Data.List (isInfixOf)
+import System.Directory (getCurrentDirectory, createDirectoryIfMissing,
+                         doesFileExist)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
+import System.Exit (ExitCode(..))
 
 import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
+
+
+-- | v0.17 #624 — subprocess sky-build helper.  Gap 8c (test #6) is
+-- routed through a fresh `sky` subprocess instead of `compileInProcess`
+-- because the in-process compile path inherits CAF-IORef state from
+-- the 5 sibling tests above it, and the residual leak is wider than
+-- the (already-applied) 18-CAF defensive reset can close.  Subprocess
+-- compile = fresh GHC RTS per call = zero cross-test state.  Cost: one
+-- extra `sky build` per spec run (~1-2 s); benefit: deterministic
+-- isolation matching every other example spec in the suite.
+runSkyBuildSubprocess :: String -> IO CompileResult
+runSkyBuildSubprocess src = do
+    cwd <- getCurrentDirectory
+    let sky = cwd </> "sky-out" </> "sky"
+    skyOk <- doesFileExist sky
+    if not skyOk
+        then return (CompileErr ("sky binary missing at " ++ sky))
+        else withSystemTempDirectory "skypfa" $ \tmp -> do
+            createDirectoryIfMissing True (tmp </> "src")
+            writeFile (tmp </> "sky.toml")
+                ("name = \"pfa-gap8c\"\nversion = \"0.0.0\"\n"
+                 ++ "entry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n")
+            writeFile (tmp </> "src" </> "Main.sky") src
+            (exitCode, stdoutStr, stderrStr) <-
+                readCreateProcessWithExitCode
+                    ((proc sky ["build", "src/Main.sky"]) { cwd = Just tmp })
+                    ""
+            case exitCode of
+                ExitFailure n ->
+                    return (CompileErr ("sky build exit=" ++ show n
+                        ++ "\nstdout:\n" ++ stdoutStr
+                        ++ "\nstderr:\n" ++ stderrStr))
+                ExitSuccess -> do
+                    let mainGoPath = tmp </> "sky-out" </> "main.go"
+                    mainOk <- doesFileExist mainGoPath
+                    if mainOk
+                        then CompileOk <$> readFile mainGoPath
+                        else return (CompileErr "sky build succeeded but main.go missing")
 
 
 spec :: Spec
@@ -167,7 +211,11 @@ spec = describe "point-free top-level alias of a polymorphic function (#398)" $ 
                 , ""
                 , "main = println (String.fromInt (sumAll nums))"
                 ]
-        result <- compileInProcess src
+        -- v0.17 #624 — routed via subprocess sky-build because the
+        -- in-process compile path's NOINLINE-CAF state from the 5
+        -- sibling tests above poisons the typed-foldl emission.
+        -- See `runSkyBuildSubprocess` at the bottom of this file.
+        result <- runSkyBuildSubprocess src
         case result of
             CompileErr e -> expectationFailure ("compile failed: " ++ e)
             CompileOk body -> do
