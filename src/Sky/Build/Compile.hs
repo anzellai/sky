@@ -4682,14 +4682,17 @@ generateAliasTypes canMod =
 
     generateInterface name fields =
         let goMethods = map (\(fname, T.FieldType _ ftype) ->
+                -- v0.17 Phase ε PR-22 (incremental migration) —
+                -- record-as-interface method params + return types
+                -- now route through the GoType pipeline.
                 case ftype of
                     T.TLambda from to ->
                         let (params, ret) = collectFuncParams ftype
-                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGo p)) [0::Int ..] params
-                        in (capitalise fname, goParams, solvedTypeToGo ret)
+                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGoViaPipeline p)) [0::Int ..] params
+                        in (capitalise fname, goParams, solvedTypeToGoViaPipeline ret)
                     _ ->
                         -- Getter method
-                        (capitalise fname, [], solvedTypeToGo ftype)
+                        (capitalise fname, [], solvedTypeToGoViaPipeline ftype)
                 ) fields
         in [ GoIr.GoDeclInterface name goMethods ]
 
