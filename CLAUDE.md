@@ -1809,16 +1809,14 @@ verified against HEAD.
 3. **No custom operators.**
 4. **Negative literal arguments need parens.** `f -1` parses as
    subtraction. Use `f (-1)`.
-5. **`Dict.toList` typed-key inference is inline-only.**
-   `Dict.toList (Dict.fromList [(1, "a")])` chained in the same
-   expression returns real `Int` keys (v0.15.45 closed the soundness
-   hole for that shape). For let-bound intermediates — `let d =
-   Dict.fromList […] in Dict.toList d` — the solver doesn't expose
-   `d`'s typed shape at the use-site's region, so the routing falls
-   back to the legacy String-key path. Workaround: inline the chain
-   directly, or wrap the result in a typed accessor
-   (`d |> Dict.toList`). v0.16+ tracking covers the let-region
-   propagation fix.
+5. ~~**`Dict.toList` typed-key inference is inline-only.**~~ —
+   CLOSED in v0.17 PR-23 verification.  Both inline
+   (`Dict.toList (Dict.fromList [(1, "a")])`) and let-bound
+   (`let d = Dict.fromList [...] in Dict.toList d`) routes through
+   the typed `rt.Dict_toListIntKey` path and emits the typed
+   `[]rt.T2[int, string]` return.  The let-region propagation fix
+   landed via v0.17 PR-13 structural σ and the per-region typed
+   GoType pipeline (PR-5).  No workaround needed.
 6. **`sky check` does not fully model Go interface satisfaction.**
    Opaque FFI types unify with each other; concrete-satisfies-
    interface checks fall through.
