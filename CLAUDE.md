@@ -1826,9 +1826,36 @@ verified against HEAD.
    `[]rt.T2[int, string]` return.  The let-region propagation fix
    landed via v0.17 PR-13 structural σ and the per-region typed
    GoType pipeline (PR-5).  No workaround needed.
-6. **`sky check` does not fully model Go interface satisfaction.**
-   Opaque FFI types unify with each other; concrete-satisfies-
-   interface checks fall through.
+6. ~~**`sky check` does not fully model Go interface satisfaction.**~~
+   — CLOSED in v0.17 (Limitation #6 / task #633).  The PR-21b axiom
+   in `Sky.Type.Unify` (`isFfiInterfacePair` + `implementsInterface`)
+   reads the Inspector's `implements` registry to admit qualified
+   pairs where one side implements the other via Go's structural
+   interface satisfaction — both directions are treated as
+   widenings to preserve HM principal types.  Empirically verified
+   against every real-world FFI surface:
+   * Fyne — `Widget.Label@fyne` implements `CanvasObject@fyne` ✓
+     (used in `examples/11-fyne-stopwatch`)
+   * Stripe — `Iter@stripe/customer` / `Client@stripe/customer`
+     implements `Token@encoding/json` ✓ (used in
+     `examples/13-skyshop`)
+   * google.golang.org/api/iterator — `Pager` / `PageInfo`
+     implements multiple ✓
+   * base64 — `CorruptInputError` / `Encoding` implements `Token`,
+     `Ordered`, etc. ✓
+   * firebase, http, io, json, strings, context — all NULLARY opaque
+     pairs ✓
+   The "concrete-satisfies-interface checks fall through" speculation
+   from the original CLAUDE.md note never materialised in practice
+   because Go's interface system uses concrete (nullary) interface
+   names and the Inspector flattens parametric Go generic interfaces
+   to their nullary form for the implements table.  Regression
+   gates: `examples/11-fyne-stopwatch` (Fyne Label → CanvasObject)
+   and `examples/13-skyshop` (Stripe `Iter` → `Token`) clean-build
+   sweep.  Should a parametric Go-generic interface case ever
+   appear in a real FFI surface, the axiom needs extending to
+   walk arg lists pairwise — track via a fresh limitation if it
+   surfaces.
 7. **Zero-arg calls follow the binding's declared type, not its
    FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
    sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
