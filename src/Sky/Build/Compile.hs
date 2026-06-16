@@ -12192,6 +12192,22 @@ unifyGoTypes pty argTy
                 | length pIns == length aIns ->
                     Map.unions (unifyGoTypes pOut aOut
                                 : zipWith unifyGoTypes pIns aIns)
+                -- v0.17 PR-23 Gap 8c — curry-vs-flat unification.
+                -- When pty is a curried chain (`func(T1) func(T2)
+                -- T2`) and argTy is uncurried multi-arg (Sky's
+                -- `add : Int -> Int -> Int` lowers to `func(int,
+                -- int) int`), the existing length check rejects
+                -- the pair (1 input vs 2).  Flatten the curry
+                -- chain via 'splitCurriedFuncStr' and pair-wise
+                -- unify the FULL input lists + final return.
+                -- σ-recovery at the partial-app wrapper site
+                -- then pins T1 := int from `add` (sibling arg)
+                -- so the missing `[]T1` slot widens to `[]int`,
+                -- not `[]any`.
+                | Just (curriedIns, curriedRet) <- splitCurriedFuncStr pty
+                , length curriedIns == length aIns ->
+                    Map.unions (unifyGoTypes curriedRet aOut
+                                : zipWith unifyGoTypes curriedIns aIns)
             _ -> Map.empty
     | otherwise =
         -- Try parametric-bracket match: `Name[args]` vs `Name[args]`.

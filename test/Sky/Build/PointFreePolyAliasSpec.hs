@@ -133,6 +133,50 @@ spec = describe "point-free top-level alias of a polymorphic function (#398)" $ 
                 ("func add5(_skyEta_p0" `isInfixOf` body) `shouldBe` True
                 ("func add5() func(" `isInfixOf` body) `shouldBe` False
 
+    it "v0.17 PR-23 Gap 8c: sumAll = List.foldl add 0 compiles + runs" $ do
+        -- v0.17 PR-23 Gap 8c — full point-free shape over a kernel
+        -- HOF.  `add : Int -> Int -> Int` is Sky-uncurried at the
+        -- Go layer (`func(int, int) int`); `Sky_Core_List_foldl`'s
+        -- kernel sig is curried `func(T1) func(T2) T2`.  The fix
+        -- is two-part:
+        --
+        --   1. `buildCurryAdapter` accepts TVar-input slots,
+        --      emitting the adapter using `add`'s declared concrete
+        --      `int` types.
+        --   2. `unifyGoTypes` handles curry-vs-flat at the σ
+        --      recovery site — `func(T1) func(T2) T2` unifies with
+        --      `func(int, int) int` as σ = {T1: int, T2: int}.
+        --      Without this the missing `[]T1` slot erased to
+        --      `[]any`, blowing the inner pp* wrapper apart at
+        --      `go build`.
+        let src = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Sky.Core.List as List"
+                , "import Std.Log exposing (println)"
+                , ""
+                , "add : Int -> Int -> Int"
+                , "add a b = a + b"
+                , ""
+                , "nums : List Int"
+                , "nums = [1, 2, 3]"
+                , ""
+                , "sumAll : List Int -> Int"
+                , "sumAll = List.foldl add 0"
+                , ""
+                , "main = println (String.fromInt (sumAll nums))"
+                ]
+        result <- compileInProcess src
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk body -> do
+                -- sumAll is eta-expanded.
+                ("func sumAll(_skyEta_p0" `isInfixOf` body) `shouldBe` True
+                -- Curry adapter for add fires at the foldl call.
+                ("func(__c0 int) func(int) int" `isInfixOf` body)
+                    `shouldBe` True
+
     it "leaves plain value bindings (no arrows) untouched" $ do
         -- Guard against over-application: a value binding like
         -- `greeting : String; greeting = \"Howdy\"` must NOT be
