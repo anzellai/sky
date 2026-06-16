@@ -14656,12 +14656,56 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
         -- typed-Ffi `.OkValue` etc.) — leave those untouched.
         -- The other paths already wrap with `any()` or unwrap
         -- through typed-FFI selectors that don't need this layer.
-        payloadCoercer = case ctorPayloadGoPrim pcaTy of
-            Just "int"     -> Just "rt.AsInt"
-            Just "string"  -> Just "rt.AsString"
-            Just "float64" -> Just "rt.AsFloat"
-            Just "bool"    -> Just "rt.AsBool"
-            Just "rune"    -> Just "rt.AsRune"
+        payloadCoercer = case pcaTy of
+            T.TType _ "Int"    [] -> Just "rt.AsInt"
+            T.TType _ "Float"  [] -> Just "rt.AsFloat"
+            T.TType _ "Bool"   [] -> Just "rt.AsBool"
+            T.TType _ "String" [] -> Just "rt.AsString"
+            T.TType _ "Char"   [] -> Just "rt.AsRune"
+            -- v0.17 Gap 10 Tier 1 — typed container payloads
+            -- (List / Maybe / Result / Task / Tuple{2,3} / Dict).
+            -- ADT ctor field whose Sky type is e.g. `List Int` (or
+            -- any other container with primitive-only elements)
+            -- wraps `.Fields[idx]` in the matching typed coercer so
+            -- the bound variable carries the concrete Go shape
+            -- (`[]int`, `rt.SkyMaybe[int]`, `rt.T2[int, string]`,
+            -- `map[string]int`, …) rather than `any`.  Downstream
+            -- usage in container-typed contexts emits without
+            -- defensive `rt.AsX` retrofits.  Pure-extension — every
+            -- primitive + non-container arm above keeps its
+            -- byte-identical emission, and any container with
+            -- non-primitive elements (records, ADTs, nested
+            -- containers) still falls through to `Nothing` (bare
+            -- `any` extraction) per Tier 2's scope.
+            T.TType _ "List" [inner]
+                | Just goPrim <- ctorPayloadGoPrim inner ->
+                    Just ("rt.AsListT[" ++ goPrim ++ "]")
+            T.TType _ "Maybe" [inner]
+                | Just goPrim <- ctorPayloadGoPrim inner ->
+                    Just ("rt.MaybeCoerce[" ++ goPrim ++ "]")
+            T.TType _ "Result" [eTy, aTy]
+                | Just ge <- ctorPayloadGoPrim eTy
+                , Just ga <- ctorPayloadGoPrim aTy ->
+                    Just ("rt.ResultCoerce[" ++ ge ++ ", " ++ ga ++ "]")
+            T.TType _ "Task" [eTy, aTy]
+                | Just ge <- ctorPayloadGoPrim eTy
+                , Just ga <- ctorPayloadGoPrim aTy ->
+                    Just ("rt.TaskCoerceT[" ++ ge ++ ", " ++ ga ++ "]")
+            T.TTuple ta tb []
+                | Just ga <- ctorPayloadGoPrim ta
+                , Just gb <- ctorPayloadGoPrim tb ->
+                    Just ("rt.AsTuple2T[" ++ ga ++ ", " ++ gb ++ "]")
+            T.TTuple ta tb [tc]
+                | Just ga <- ctorPayloadGoPrim ta
+                , Just gb <- ctorPayloadGoPrim tb
+                , Just gc <- ctorPayloadGoPrim tc ->
+                    Just ("rt.AsTuple3T[" ++ ga ++ ", " ++ gb
+                          ++ ", " ++ gc ++ "]")
+            -- Sky Dict keys are always String; only the value
+            -- type needs primitive narrowing.
+            T.TType _ "Dict" [_kTy, vTy]
+                | Just goPrim <- ctorPayloadGoPrim vTy ->
+                    Just ("rt.AsMapT[" ++ goPrim ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
             Just fn | isTypedAdtSubject ->
