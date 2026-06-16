@@ -1006,6 +1006,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     writeIORef globalUnionNames Set.empty
     writeIORef scopeStateRef
         (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
+    -- Reset HM-solver row-extension fresh-var counter so each
+    -- in-process compile names its rowext vars `_rowext0..N`
+    -- deterministically.  Without this, compile #2's row
+    -- extensions are named with compile #1's terminal index,
+    -- which is a known suspect for the residual Gap 8c flake
+    -- (#624).
+    writeIORef Unify.rowExtCounter 0
 
     -- v0.16.0 binary-size hardening: reset the console-needed flag at
     -- the start of every compile so successive sky-build / LSP /

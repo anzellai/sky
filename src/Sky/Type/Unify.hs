@@ -12,6 +12,7 @@ module Sky.Type.Unify
     , ffiImplementsRef        -- v0.17 PR-21b — seeded by Compile.hs
     , implementsInterface     -- v0.17 PR-21b — A <: I predicate
     , isFfiInterfacePair      -- v0.17 PR-21b — symmetric implements check
+    , rowExtCounter           -- v0.17 #624 — reset per compile (in-process)
     )
     where
 
