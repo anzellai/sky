@@ -4583,11 +4583,8 @@ generateAnonRecordDecls = do
     structDecl (name, fields) =
         let sortedFields =
                 List.sortOn (T._fieldIndex . snd) (Map.toList fields)
-            -- v0.17 Phase ε PR-22 (incremental migration) — route
-            -- through the GoType pipeline.  Parity locked by
-            -- RendererParitySpec.
             goField (fname, T.FieldType _ ty) =
-                capitalise_ fname ++ " " ++ solvedTypeToGoViaPipeline ty
+                capitalise_ fname ++ " " ++ solvedTypeToGo ty
             fieldStrs = map goField sortedFields
             structBody =
                 if null fieldStrs
@@ -4612,10 +4609,7 @@ generateAliasTypes canMod =
             let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
             in generateStruct userDefinedNames name vars fieldList
         _ ->
-            -- v0.17 Phase ε PR-22 (incremental migration) — route the
-            -- non-record alias body through the GoType pipeline.
-            -- Parity locked by RendererParitySpec.
-            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGoViaPipeline body ]
+            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
 
     -- vars carries the Sky-side type parameter NAMES for parametric
     -- aliases (e.g. `type alias Cfg msg = { ... }` has vars = ["msg"]).
