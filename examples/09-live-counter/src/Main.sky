@@ -171,8 +171,8 @@ pageStyles =
         [ rule
               "*, *::before, *::after"
               [ property "box-sizing" "border-box"
-              , margin (zero ())
-              , padding (zero ())
+              , margin zero
+              , padding zero
               ]
         , rule
               "body"
@@ -184,7 +184,7 @@ pageStyles =
         , rule
               ".app"
               [ maxWidth (px 600)
-              , margin2 (zero ()) (auto ())
+              , margin2 zero auto
               , padding (rem 2.0)
               ]
         , rule
@@ -210,7 +210,7 @@ pageStyles =
         , rule
               ".counter h1"
               [ property "margin-bottom" "2rem", fontSize (rem 1.5) ]
-        , rule ".count" [margin2 (rem 2.0) (zero ())]
+        , rule ".count" [margin2 (rem 2.0) zero]
         , rule
               ".count-value"
               [ fontSize (rem 4.0), fontWeight Bold, color (hex "2563eb") ]
@@ -219,7 +219,7 @@ pageStyles =
               [ display Flex
               , gap (rem 1.0)
               , justifyContent Center
-              , margin2 (rem 2.0) (zero ())
+              , margin2 (rem 2.0) zero
               ]
         , rule
               ".btn"

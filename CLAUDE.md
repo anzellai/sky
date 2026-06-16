@@ -1850,10 +1850,16 @@ verified against HEAD.
    `reverseHelp`) are auto-TCO'd to constant stack. For very
    large lists (200k+ elements) prefer the tail-recursive
    accumulator pattern.
-9. **Zero-arg `Css.*` keyword constants require `()`** —
-   `Css.zero ()`, `Css.auto ()`, `Css.none ()`. Bare form is now
-   a clean type error rather than the silent function-pointer
-   leak it used to be, but the `()` is still required.
+9. ~~**Zero-arg `Css.*` keyword constants require `()`**~~ —
+   CLOSED in v0.17 PR-26.  `Css.zero` / `Css.auto` / `Css.none`
+   / `Css.transparent` / `Css.currentColor` / `Css.systemFont`
+   are now bare-value constants (`: Length` / `: Color` /
+   `: String`) — call them WITHOUT `()`.  The v0.17
+   canonicaliser tightening (PR-19) closed the original Go
+   init() ordering interaction that motivated the `() -> X`
+   workaround, so pure-literal constants ship as plain values
+   matching Sky's stdlib convention (`Dict.empty`,
+   `Maybe.Nothing`, etc.).
 10. ~~**Multi-line function signatures.**~~ — CLOSED in v0.17
     PR-25 / #628.  Both forms parse cleanly:
     `name\n    : T` (colon on continuation line) AND
