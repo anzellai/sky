@@ -12,7 +12,7 @@ import qualified Sky.Parse.Keyword
 import Sky.Parse.Number (number, Number(..))
 import Sky.Parse.String (stringLiteral, charLiteral, StringResult(..))
 import Sky.Parse.Symbol (operator)
-import Sky.Parse.Pattern (pattern_)
+import Sky.Parse.Pattern (pattern_, peekNextIsNegativeDigit)
 import Sky.Parse.Type (typeAnnotation)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
@@ -94,7 +94,30 @@ exprApp mkError = do
 
 
 -- | Parse zero or more application arguments (same line only)
--- Stops before operator characters to let binopRest handle them
+-- Stops before operator characters to let binopRest handle them.
+--
+-- v0.17 Limitation #4 — special case for the negative-literal arg
+-- shape: `f -1` (no whitespace between `-` and the digit) treats
+-- `-` as introducing a negative literal argument, not as a binary
+-- subtraction operator.  Matches Elm semantics; closes
+-- `Math.atan2 0 -1`, `Time.addDays today -1`, `Stripe.backoff 100
+-- -50` etc.
+--
+-- The disambiguation is **strictly whitespace-based**: `appArgs`
+-- runs after `spaces` has consumed inter-token whitespace, so by
+-- the time we peek there's no whitespace BEFORE `-`.
+-- `peekNextIsNegativeDigit` then checks the char AFTER `-` — if
+-- it's a digit, `-` is a unary negate prefix and we admit the
+-- argument; otherwise (`f - 1` after a space then `-` then a
+-- space, or `f -x` with `x` a non-digit identifier), `-` stays a
+-- binary operator and we fall through to `binopRest`.
+--
+-- Identifier-shaped negatives (`f -x` for negate-of-x) still
+-- require explicit parens (`f (-x)`) — Sky has no unary-negate
+-- operator on bindings, so disambiguating `-x` would require
+-- looking ahead at every identifier-shaped arg.  Numeric literals
+-- carry the bulk of the user-visible annoyance per the
+-- limitation note.
 appArgs :: (Row -> Col -> x) -> Parser x [Src.Expr]
 appArgs mkError =
     oneOfWithFallback
@@ -102,8 +125,15 @@ appArgs mkError =
             col <- getCol
             indent <- getIndent
             mc <- peek
-            -- Stop if next char is an operator (not a valid atom start for args)
+            -- Check `-<digit>` shape (unary-negate prefix) before
+            -- the generic operator-start guard fires.
+            negDigit <- case mc of
+                Just '-' -> peekNextIsNegativeDigit
+                _ -> return False
+            -- Stop if next char is an operator (not a valid atom
+            -- start for args).
             let isArgStart = case mc of
+                    Just '-' | negDigit -> col > indent
                     Just c -> not (isOperatorChar c) && (col > indent)
                     Nothing -> False
             if isArgStart

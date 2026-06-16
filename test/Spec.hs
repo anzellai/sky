@@ -14,6 +14,7 @@ import qualified Sky.Build.ForeignFatalSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
+import qualified Sky.Parse.NegativeLiteralArgSpec
 import qualified Sky.Parse.MultiLineExposingSpec
 import qualified Sky.Parse.MultiLineParenAppSpec
 import qualified Sky.Parse.MultiLineRecordFieldSpec
@@ -190,6 +191,11 @@ allSpecs fastMode = do
     -- like rt.AsBool: expected bool, got rt.SkyResult[…].
     describeT "Sky.Build.ForeignFatal"    Sky.Build.ForeignFatalSpec.spec
     describeT "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
+    -- #632 / Limitation #4: negative literal in application-arg
+    -- position. `add 10 -5` now parses as `add 10 (-5)` instead of
+    -- `(add 10) - 5`. Binary subtract with explicit whitespace
+    -- (`n - m`) remains binary.
+    describeT "Sky.Parse.NegativeLiteralArg" Sky.Parse.NegativeLiteralArgSpec.spec
     -- Multi-line `module/import ... exposing (…)` parser fix +
     -- parse-error-is-fatal regression fence (compiler bug #1).
     describeT "Sky.Parse.MultiLineExposing" Sky.Parse.MultiLineExposingSpec.spec

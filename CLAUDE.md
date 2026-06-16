@@ -1807,8 +1807,17 @@ verified against HEAD.
 1. **No higher-kinded types.** HM only.
 2. **No `where` clauses.** Use `let…in`.
 3. **No custom operators.**
-4. **Negative literal arguments need parens.** `f -1` parses as
-   subtraction. Use `f (-1)`.
+4. ~~**Negative literal arguments need parens.**~~ — CLOSED in
+   v0.17 (Limitation #4 / task #632).  `f -1` now parses as
+   `f (-1)` — the application-argument parser peeks one char
+   ahead and admits `-<digit>` (no whitespace between) as a
+   unary-negate prefix introducing a negative-literal argument.
+   `f - 1` (spaces around `-`) remains binary subtraction.
+   Identifier-shaped negatives (`f -x` for negate-of-x) still
+   require parens because Sky has no unary-negate operator on
+   bindings.  Closes `Math.atan2 0 -1`, `Time.addDays today -1`,
+   `Stripe.backoff 100 -50`, etc.  Regression:
+   `Sky.Parse.NegativeLiteralArg` (5 cases).
 5. ~~**`Dict.toList` typed-key inference is inline-only.**~~ —
    CLOSED in v0.17 PR-23 verification.  Both inline
    (`Dict.toList (Dict.fromList [(1, "a")])`) and let-bound
