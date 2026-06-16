@@ -1,10 +1,15 @@
 -- | Sky.Core.Uuid — UUID generation + parsing (Layer 3 Sky source).
 --
--- Note: `v4` / `v7` are zero-arg bindings (called without `()`)
--- following the Sky kernel convention for runtime-arity-0
--- bindings.  Calling them as `Uuid.v4 ()` hits a pre-existing
--- codegen bug for arity-0 kernels with a unit argument; use the
--- bare form `Uuid.v4` instead.
+-- v0.17 Limitation #7 close: `v4` / `v7` are declared
+-- `Task Error String` matching the runtime kernel's actual shape
+-- (`func() any { return Ok/Err }`).  Pre-v0.17 they were declared
+-- `: String` which was a soundness lie — bare `println Uuid.v4`
+-- printed the closure pointer (`0x10....`) instead of a UUID.
+--
+-- Call convention: `Uuid.v4 |> Task.run` (or `Cmd.perform Uuid.v4 ...`
+-- in TEA apps).  The `Sky.Core.Pure.uuidV4 ()` companion provides
+-- a `() -> Task Error String` arrow form for AI-written code
+-- targeting a uniform arity-1 shape.
 module Sky.Core.Uuid exposing
     ( v4, v7
     , parse
@@ -12,18 +17,19 @@ module Sky.Core.Uuid exposing
 
 
 import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
 
 
 -- | Random UUID v4 (122 bits of entropy).  Use when you need a
 -- collision-resistant ID and don't care about ordering.
-v4 : String
+v4 : Task Error String
 v4 = Ffi.kernel "Uuid_v4"
 
 
 -- | Time-ordered UUID v7 (Unix-time milliseconds prefix +
 -- entropy).  Use for database PKs — sorts lexicographically by
 -- creation time, plays well with B-tree indexes.
-v7 : String
+v7 : Task Error String
 v7 = Ffi.kernel "Uuid_v7"
 
 
