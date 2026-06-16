@@ -14536,7 +14536,7 @@ patternBindings subject pat = case pat of
 -- Go's type check. For user-defined Tag-based ADTs, the outer case already
 -- asserted the subject to the struct type so `.Fields[i]` works directly.
 bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
-bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
+bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
     let (A.At _ innerPat) = pat
         -- P7: a subject name suffixed with "_tFfi" is the typed-FFI
         -- shortcut — the outer caseToGo already guarantees it's a
@@ -14596,10 +14596,37 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
                 GoIr.GoCall
                     (GoIr.GoQualified "rt" "AdtField")
                     [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject], GoIr.GoIntLit idx]
+        -- v0.17 PR-23 Gap 10 — User-ADT typed payload extraction.
+        -- The custom-ADT path (typed-AdtSubject) reads
+        -- `__subject_tAdt.Fields[idx]` which is `any`-typed because
+        -- the runtime `rt.SkyADT` shape stores `Fields []any`.  When
+        -- the case-pattern's expected payload type is a primitive Go
+        -- shape (`int` / `string` / `float64` / `bool` / `rune` /
+        -- `[]byte`), wrap the field access in the matching typed
+        -- coercer so the bound name (`n` / `s` / etc.) carries
+        -- concrete Go type, not `any`.  Closes the bare-`Fields[i]`
+        -- → `any` typing loss without changing the runtime SkyADT
+        -- shape.
+        --
+        -- Sentinel for non-typed-AdtSubject paths (`rt.AdtField` /
+        -- typed-Ffi `.OkValue` etc.) — leave those untouched.
+        -- The other paths already wrap with `any()` or unwrap
+        -- through typed-FFI selectors that don't need this layer.
+        payloadCoercer = case ctorPayloadGoPrim pcaTy of
+            Just "int"     -> Just "rt.AsInt"
+            Just "string"  -> Just "rt.AsString"
+            Just "float64" -> Just "rt.AsFloat"
+            Just "bool"    -> Just "rt.AsBool"
+            Just "rune"    -> Just "rt.AsRune"
+            _              -> Nothing
+        typedField raw = case payloadCoercer of
+            Just fn | isTypedAdtSubject ->
+                GoIr.GoCall (GoIr.GoIdent fn) [raw]
+            _ -> raw
         fieldAccess =
             if isTypedFfiSubject
                 then GoIr.GoCall (GoIr.GoIdent "any") [rawField]
-                else rawField
+                else typedField rawField
     in case innerPat of
         Can.PVar name ->
             if isDiscardName name
@@ -14616,6 +14643,21 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
             in GoIr.GoShortDecl tmp fieldAccess
                : GoIr.GoAssign "_" (GoIr.GoIdent tmp)
                : patternBindings tmp innerPat
+
+
+-- | v0.17 PR-23 Gap 10 — extract a primitive Go type ident from a
+-- ctor-arg pattern's expected Sky type.  Returns Nothing for
+-- non-primitive payloads (records, ADTs, lists, etc.) where the
+-- existing `any`-binding contract stays load-bearing for downstream
+-- coercion at the consumer.
+ctorPayloadGoPrim :: T.Type -> Maybe String
+ctorPayloadGoPrim ty = case ty of
+    T.TType _ "Int"    [] -> Just "int"
+    T.TType _ "Float"  [] -> Just "float64"
+    T.TType _ "Bool"   [] -> Just "bool"
+    T.TType _ "String" [] -> Just "string"
+    T.TType _ "Char"   [] -> Just "rune"
+    _                     -> Nothing
 
 
 -- ═══════════════════════════════════════════════════════════
