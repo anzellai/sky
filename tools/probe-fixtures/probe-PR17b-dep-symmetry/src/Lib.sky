@@ -1,0 +1,33 @@
+module Lib exposing
+    ( generic
+    , snapshotToDict
+    )
+
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+
+
+-- v0.17 PR-17b regression — dep-module dual-decl repro.
+--
+-- This module mimics the 13-skyshop Lib_Db pattern: ONE generic
+-- decl (typed param T1) AND ONE non-generic decl that uses Dict
+-- operations.  Pre-PR-17b, emission would leak T1 into the
+-- non-generic decl's body because the bodyExpr's IORef-reading
+-- thunks deferred evaluation until after the generic decl's
+-- scope push.
+
+
+-- Generic typed-param decl.  Forces the dep emission path to
+-- push T1 onto scopeStateRef.
+generic : a -> a
+generic x =
+    x
+
+
+-- Non-generic decl that uses Dict.fromList / Dict.get / Dict.insert.
+-- Pre-PR-17b: the rt.AsMapT[...] inside Dict ops would emit as
+-- rt.AsMapT[T1] (T1 from generic above) instead of rt.AsMapT[string].
+snapshotToDict : String -> String -> Dict String String
+snapshotToDict k v =
+    Dict.insert k v Dict.empty

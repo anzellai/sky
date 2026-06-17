@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Lib
+
+
+-- v0.17 PR-17b regression — driver that exercises both Lib decls.
+-- A clean build proves the dep-module emission for both Lib.generic
+-- (typed param) and Lib.snapshotToDict (non-typed-param, uses Dict)
+-- doesn't leak Lib.generic's T1 into snapshotToDict's body.
+main =
+    let
+        forced = Lib.generic "hello"
+        dict = Lib.snapshotToDict "k" "v"
+    in
+        println (forced ++ " — dict has " ++ String.fromInt (Dict.size dict) ++ " entries")

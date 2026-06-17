@@ -7964,12 +7964,48 @@ typeStrWithAliasesRegBoundedScopedViaPipeline
     -> T.Type
     -> String
 typeStrWithAliasesRegBoundedScopedViaPipeline depModHint recAliases fieldIdx tvarMap ty =
-    let baseCtx = GoType.buildMappingContext GoType.defaultRenderEnv getCgEnv
+    -- v0.17 Phase F-4 — DEFAULTed context (no getCgEnv read).
+    --
+    -- This function is called from inside @splitInferredSigWithRegScoped@,
+    -- which itself runs INSIDE the @imports@ thunk in @continueCompile@
+    -- (Compile.hs line ~4063).  That thunk reads @globalCgEnv@,
+    -- constructs the new @cgEnv@, AND writes it back.  The pre-F4
+    -- pipeline path read @getCgEnv@ via @buildMappingContext@; under
+    -- GHC the read self-references the very thunk producing
+    -- @entryInferredSigs@ (which feeds into @cgEnv@), so the RTS fires
+    -- @<<loop>>@ on every input — even trivial @TVar@ / @Maybe@.
+    --
+    -- Same loop class the comment at line 8483 ("@<<loop>>@ because
+    -- this function runs DURING env construction") refers to.
+    --
+    -- The legacy path never blackholed because it consumes only the
+    -- explicit @recAliases@ + @fieldIdx@ args.  PR-α Sessions 4-6
+    -- already thread those through every caller, so the pipeline
+    -- doesn't need env-derived alias data either.  Use
+    -- @defaultMappingContext@ (pure, no IORef read) overlaid with the
+    -- caller's args — byte-equivalent output to the env-derived
+    -- baseline because every union / enum / runtime-typed entry the
+    -- pipeline could surface is already mirrored in the caller's
+    -- explicit @recAliases@ / @fieldIdx@ (and the runtime-typed
+    -- map + qualified-runtime-typed map come from the pure
+    -- 'RuntimeMaps' module, not the env).
+    let baseCtx = GoType.defaultMappingContext
+        -- Read 'mcUnionNames' from the dedicated 'globalUnionNames'
+        -- IORef.  That IORef is written eagerly at the same moment
+        -- 'cgEnv._cg_unionNames' is updated (Compile.hs line ~4164)
+        -- precisely so dep-function-sig emission can consult union
+        -- names WITHOUT forcing the in-flight 'cgEnv' thunk.  Same
+        -- @readIORefNoCse@ trick the legacy 'unionRecovery' uses at
+        -- Compile.hs line ~8247.  Empty until the first
+        -- @writeIORef globalUnionNames@ fires — fine, because every
+        -- caller reaching this function during env-construction has
+        -- already passed @recAliases@ explicitly + the union arms
+        -- in 'mapSkyTypeToGo' that need 'mcUnionNames' are not on
+        -- the bootstrap path.
         ctx = baseCtx
-            { GoType.mcRecordAliases =
-                Set.union recAliases (GoType.mcRecordAliases baseCtx)
-            , GoType.mcFieldIndex    =
-                Map.union fieldIdx (GoType.mcFieldIndex baseCtx)
+            { GoType.mcRecordAliases = recAliases
+            , GoType.mcUnionNames    = readIORefNoCse globalUnionNames
+            , GoType.mcFieldIndex    = fieldIdx
             , GoType.mcTVarSubst     = tvarMap
             , GoType.mcTVarsToAny    = True
             , GoType.mcDepModHint    = depModHint

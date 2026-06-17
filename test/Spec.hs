@@ -93,6 +93,7 @@ import qualified Sky.Build.FfiGenMultiSpec
 import qualified Sky.Build.FfiTypeParserSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
+import qualified Sky.Build.Pr17bDepSymmetrySpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
@@ -559,6 +560,12 @@ allSpecs fastMode = do
     -- code paths end-to-end. v0.16.14.
     unless fastMode $
         describeT "Sky.Build.CheckIsBuild" Sky.Build.CheckIsBuildSpec.spec
+    -- v0.17 PR-17b — dep-module emission symmetry regression. The
+    -- T1 leak class is closed by eager render-to-GoRaw of every dep
+    -- decl's body. Compiles the dual-decl fixture clean and asserts
+    -- no unbound T-var sneaks into a non-generic dep decl's body.
+    describeT "Sky.Build.Pr17bDepSymmetry"
+        Sky.Build.Pr17bDepSymmetrySpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describeT "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
     -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
