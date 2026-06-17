@@ -127,9 +127,15 @@ globalConsoleNeeded = unsafePerformIO $ newIORef False
 -- before invoking `sky build` on `sky-bundled/console/src/Main.sky`.
 -- User-app builds never set it, so behaviour for normal Sky.Live +
 -- Sky.Http.Server projects is unchanged.
-{-# NOINLINE globalIsInlineConsoleBuild #-}
-globalIsInlineConsoleBuild :: IORef Bool
-globalIsInlineConsoleBuild = unsafePerformIO $ newIORef False
+-- v0.17 IORef defusing #3 — globalIsInlineConsoleBuild was an
+-- env-var snapshot.  Replaced with a pure CAF that reads
+-- SKY_BUILD_IS_INLINE_CONSOLE directly; no mutation, no reset
+-- cycle.
+{-# NOINLINE isInlineConsoleBuild #-}
+isInlineConsoleBuild :: Bool
+isInlineConsoleBuild = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_BUILD_IS_INLINE_CONSOLE"
+    return (v == Just "1")
 
 
 -- | v0.13 Phase A5: entry-module source path, set once per
@@ -1054,12 +1060,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- Src.Module's imports are scanned by `noteImportsForConsoleHint`.
     writeIORef globalConsoleNeeded False
 
-    -- v0.16.4 — read the "this build IS the inline console source"
-    -- gate. The regenerate-console.sh pipeline sets
-    -- SKY_BUILD_IS_INLINE_CONSOLE=1 before invoking sky build so
-    -- collectGoImports skips the self-import.
-    inlineConsoleEnv <- System.Environment.lookupEnv "SKY_BUILD_IS_INLINE_CONSOLE"
-    writeIORef globalIsInlineConsoleBuild (inlineConsoleEnv == Just "1")
+    -- v0.17 IORef defusing #3 — globalIsInlineConsoleBuild retired
+    -- (pure CAF 'isInlineConsoleBuild' reads SKY_BUILD_IS_INLINE_CONSOLE
+    -- directly at the read site in goPreambleParts).
 
     -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
     -- with no cross-module dependencies, so it parallelises trivially.
@@ -4468,7 +4471,7 @@ collectGoImports _canMod srcMod =
     -- dependency is fine (Go links the side-effect import without
     -- triggering the cycle — see runtime-go/rt/console_inline.go for
     -- the registration shim).
-    ++ ( if readIORefNoCse globalIsInlineConsoleBuild
+    ++ ( if isInlineConsoleBuild
          then
             -- v0.16.4 — the current build IS the inline console
             -- source. Suppress the self-referential import; otherwise
