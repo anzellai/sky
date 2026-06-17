@@ -1366,6 +1366,28 @@ deriveDepSigs earlyAllRecAliases validDeps =
         ]
 
 
+-- | v0.17 PR-α Stage 3c — pure kernel-alias scan.
+--
+-- Walks the entry module + every dep, collecting Sky-source bindings
+-- whose body is exactly @Ffi.kernel "K_n"@.  The resulting Map keys
+-- each (home, name) pair to its (kernelMod, kernelName) destination
+-- so codegen rewrites call sites to the typed kernel dispatch.
+--
+-- The entry module is registered under its 'mainModuleName' (default
+-- @\"Main\"@); deps keep their module name unchanged.
+buildKernelAliasMap
+    :: Src.Module
+    -> Can.Module
+    -> [(String, Can.Module)]
+    -> Map.Map (ModuleName.Canonical, String) (String, String)
+buildKernelAliasMap entrySrcMod canMod validDeps =
+    let entryModNameAlias = case mainModuleName entrySrcMod of
+            Just n  -> n
+            Nothing -> "Main"
+        allModsForAlias = (entryModNameAlias, canMod) : validDeps
+    in Map.fromList (concatMap collectKernelAliases allModsForAlias)
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1827,13 +1849,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- `Ffi.kernel "K_n"`. Register each (home, name)
                     -- → (kernelMod, kernelName) so codegen rewrites
                     -- call sites to the typed kernel dispatch.
-                    let entryModNameAlias = case mainModuleName entrySrcMod of
-                            Just n  -> n
-                            Nothing -> "Main"
-                        allModsForAlias =
-                            (entryModNameAlias, canMod) : validDeps
-                        kernelAliasMap = Map.fromList $
-                            concatMap collectKernelAliases allModsForAlias
+                    -- v0.17 PR-α Stage 3c — kernel-alias scan extracted
+                    -- to 'buildKernelAliasMap'; pure derivation, IORef
+                    -- write kept here so the existing reader contract
+                    -- (lines ~9297, 11138) is preserved.
+                    let kernelAliasMap =
+                            buildKernelAliasMap entrySrcMod canMod validDeps
                     writeIORef globalKernelAlias kernelAliasMap
                     -- v0.13 F: whole-program Sky DCE.  Walk every
                     -- module's call graph from `(entryMod, "main")`
@@ -1904,7 +1925,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- (no specialisation needed — original func is
                     -- already non-generic) — the spec emission step
                     -- in generateGoMulti applies the same filter.
-                    env0 <- readIORef globalCgEnv
+                    -- v0.17 PR-α Stage 3c — dead 'env0 <- readIORef
+                    -- globalCgEnv' removed (read result was never
+                    -- referenced; the diff/trace blocks below use
+                    -- 'envForGoSig' which already snapshots the env).
                     -- v0.17 C12: σ-projection reads GoSig primary
                     -- with side-table fallback.  Behaviour unchanged
                     -- on the happy path (GoSig + side-tables agree).
