@@ -7807,14 +7807,10 @@ tvarsIn t = case t of
     T.TUnit           -> []
 
 
--- | Convert a Sky type to Go with a TVar → Go type param substitution.
--- Falls back to safeReturnTypePure for non-TVar nodes.
-typeStrWith :: [(String, String)] -> T.Type -> String
-typeStrWith = typeStrWithAliases Set.empty
-
--- | Variant with record alias set for cross-module resolution.
-typeStrWithAliases :: Set.Set String -> [(String, String)] -> T.Type -> String
-typeStrWithAliases recAliases = typeStrWithAliasesReg recAliases Map.empty
+-- v0.17 Phase F — dead public wrappers @typeStrWith@,
+-- @typeStrWithAliases@ removed (no in-tree callers).  The sole live
+-- entry point into the trio is @typeStrWithAliasesRegBoundedScoped@.
+-- See Phase F note below the type for the migration plan.
 
 
 -- | Render a user-HOF parameter type. Params that are themselves
@@ -7900,45 +7896,9 @@ renderHofParamTyScoped depModHint recAliases fieldIdx tvarMap ty = case ty of
         "func(" ++ go from ++ ") " ++ go to
     renderLambdaInner other = go other
 
--- | Like `typeStrWithAliases` but additionally consults a field-set →
--- alias-name registry so bare `T.TRecord` nodes (emitted by HM after
--- row-polymorphic unification) resolve to their `_R` Go struct name
--- instead of degrading to `any`.
-typeStrWithAliasesReg
-    :: Set.Set String
-    -> Rec.RecordRegistry
-    -> [(String, String)]
-    -> T.Type
-    -> String
-typeStrWithAliasesReg recAliases fieldIdx tvarMap ty =
-    typeStrWithAliasesRegBoundedScoped Nothing
-        recAliases fieldIdx tvarMap 64 Set.empty ty
-
-
--- | v0.17 Cause H step 2c — bounded recursion, same shape as the
--- guard in solvedTypeToGoBounded / safeReturnTypeFullBounded /
--- safeReturnTypeBootstrap.  Fuel cap (64) + visited-set keyed on
--- the qualified type name at the TAlias arm.  Top-level entry
--- preserves the public 4-arg signature; for any non-pathological
--- input the rendered string is byte-identical with the pre-guard
--- renderer.
---
--- v0.17 PR-α Session 2 — back-compat wrapper.  Delegates to the
--- new Scoped variant with @Nothing@ as the dep-mode hint, which
--- keeps the line 7730 reader on the IORef-fallback path.  Callers
--- that want to thread a pure dep-mode hint route through
--- @typeStrWithAliasesRegBoundedScoped@ directly.
-typeStrWithAliasesRegBounded
-    :: Set.Set String
-    -> Rec.RecordRegistry
-    -> [(String, String)]
-    -> Int
-    -> Set.Set String
-    -> T.Type
-    -> String
-typeStrWithAliasesRegBounded recAliases fieldIdx tvarMap fuel seen ty =
-    typeStrWithAliasesRegBoundedScoped Nothing
-        recAliases fieldIdx tvarMap fuel seen ty
+-- v0.17 Phase F — dead trampolines @typeStrWithAliasesReg@ and
+-- @typeStrWithAliasesRegBounded@ removed (no in-tree callers).
+-- Sole live entry: 'typeStrWithAliasesRegBoundedScoped'.
 
 
 -- | v0.17 PR-α Session 2 — scoped variant taking an explicit
