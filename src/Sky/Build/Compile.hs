@@ -966,7 +966,37 @@ collectIncrementalHashInputs = do
     return (tomlPath : ffiFiles)
 
 
--- | v0.17 PR-α Stage 1 — defensive reset of all cross-compile CAF
+-- | v0.17 PR-α Stage 1b — parse phase outcome.  Distinguishes the
+-- three terminal states of 'parsePhase' to keep error handling
+-- explicit at the call site (no more if-then-else chains).
+data ParseOutcome
+    = ParseError !String
+        -- ^ At least one module failed to parse; this is the first
+        -- error string (matches the legacy behaviour of returning
+        -- 'head errors').  The structured Diagnostic has already
+        -- been rendered to stderr inside 'parsePhase'.
+    | ParseEmpty
+        -- ^ No modules parsed successfully.  Legacy "No modules
+        -- found" error case.
+    | ParseOk
+        { _po_parsed        :: ![(String, Src.Module)]
+        , _po_consoleNeeded :: !Bool
+        }
+
+
+-- | v0.17 PR-α Stage 1b — parse-and-render phase.  Extracted from
+-- 'continueCompile' (was lines 1061-1098 of the monolithic
+-- function).  Parses every module in 'moduleOrder' concurrently,
+-- renders any failures as structured Diagnostics, and accumulates
+-- the 'consoleNeeded' Bool (was 'globalConsoleNeeded' before #8
+-- defusing).
+--
+-- Diagnostic rendering MUST stay inside the phase — the structured
+-- output is the user-facing artifact.  The phase returns a short
+-- marker string ("Parse error in …: …") matching the legacy
+-- 'errors' handling at the call site.
+--
+-- v0.17 PR-α Stage 1 — defensive reset of all cross-compile CAF
 -- IORefs at the start of every 'continueCompile' invocation.
 -- Extracted from continueCompile's prelude (was lines 1006-1054
 -- of the monolithic function).  Production impact: zero — `sky
@@ -1012,6 +1042,50 @@ resetCompileState = do
     writeIORef globalAnonRecords Map.empty
 
 
+parsePhase :: [Graph.ModuleInfo] -> IO ParseOutcome
+parsePhase moduleOrder = do
+    putStrLn "-- Parsing"
+    parseResults <- Async.forConcurrently moduleOrder $ \modInfo -> do
+        src <- TIO.readFile (Graph._mi_path modInfo)
+        case Parse.parseModule src of
+            Left err ->
+                return (modInfo, Left err)
+            Right srcMod ->
+                return (modInfo, Right srcMod)
+    let formatted = flip map parseResults $ \(modInfo, r) -> case r of
+            Left err ->
+                Left $ "Parse error in " ++ Graph._mi_name modInfo ++ ": " ++ show err
+            Right srcMod ->
+                Right (Graph._mi_name modInfo, srcMod)
+    -- v0.13 Layer 1: render each parser failure as a structured
+    -- Diagnostic.  The block carries the offending file + line:col,
+    -- a source snippet around the failure, and a short variant-
+    -- specific reason ("module name expected here", etc.).  This
+    -- replaces the previous `PARSE FAILED: <module> <ctor>` line
+    -- which surfaced the Haskell constructor name to end users.
+    mapM_ (\(modInfo, r) -> case r of
+        Left err -> do
+            let diag = Parse.moduleErrorToDiagnostic
+                         (Graph._mi_path modInfo) err
+            rendered <- Render.renderCli diag
+            putStrLn rendered
+        Right srcMod ->
+            let declCount = length (Src._values srcMod)
+            in putStrLn $ "   " ++ Graph._mi_name modInfo ++ ": " ++ show declCount ++ " declarations"
+        ) parseResults
+    let errors = [e | Left e <- formatted]
+        parsed = [(n, m) | Right (n, m) <- formatted]
+        -- v0.17 IORef defusing #8 — OR every parsed module's
+        -- consoleNeededFromImports into a single Bool.  Threaded
+        -- down to 'generateGoMulti' / 'generateGo' /
+        -- 'collectGoImports' instead of stored in 'globalConsoleNeeded'.
+        consoleNeeded = any (consoleNeededFromImports . snd) parsed
+    return $ case (errors, parsed) of
+        (e:_, _) -> ParseError e
+        (_, [])  -> ParseEmpty
+        _        -> ParseOk parsed consoleNeeded
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1054,52 +1128,15 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- counter accumulation (`Sky.Type.Unify.rowExtCounter`, not
     -- exported), or other un-audited NOINLINE IORefs in the parse
     -- / canonicalise / typecheck chain.  Tracked at #624.
-    -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
-    -- with no cross-module dependencies, so it parallelises trivially.
-    -- We preserve topo order in the result list so downstream phases see the
-    -- same ordering as a sequential build.
-    putStrLn "-- Parsing"
-    parseResults <- Async.forConcurrently moduleOrder $ \modInfo -> do
-        src <- TIO.readFile (Graph._mi_path modInfo)
-        case Parse.parseModule src of
-            Left err ->
-                return (modInfo, Left err)
-            Right srcMod ->
-                return (modInfo, Right srcMod)
-    let formatted = flip map parseResults $ \(modInfo, r) -> case r of
-            Left err ->
-                Left $ "Parse error in " ++ Graph._mi_name modInfo ++ ": " ++ show err
-            Right srcMod ->
-                Right (Graph._mi_name modInfo, srcMod)
-    -- v0.13 Layer 1: render each parser failure as a structured
-    -- Diagnostic.  The block carries the offending file + line:col,
-    -- a source snippet around the failure, and a short variant-
-    -- specific reason ("module name expected here", etc.).  This
-    -- replaces the previous `PARSE FAILED: <module> <ctor>` line
-    -- which surfaced the Haskell constructor name to end users.
-    mapM_ (\(modInfo, r) -> case r of
-        Left err -> do
-            let diag = Parse.moduleErrorToDiagnostic
-                         (Graph._mi_path modInfo) err
-            rendered <- Render.renderCli diag
-            putStrLn rendered
-        Right srcMod ->
-            let declCount = length (Src._values srcMod)
-            in putStrLn $ "   " ++ Graph._mi_name modInfo ++ ": " ++ show declCount ++ " declarations"
-        ) parseResults
-    let parseResults' = formatted
-
-    let errors = [e | Left e <- parseResults']
-        parsed = [(n, m) | Right (n, m) <- parseResults']
-        -- v0.17 IORef defusing #8 — OR every parsed module's
-        -- consoleNeededFromImports into a single Bool.  Threaded
-        -- down to 'generateGoMulti' / 'generateGo' /
-        -- 'collectGoImports' instead of stored in 'globalConsoleNeeded'.
-        consoleNeeded = any (consoleNeededFromImports . snd) parsed
-
-    if not (null errors) then return (Left $ head errors)
-      else if null parsed then return (Left "No modules found")
-      else do
+    -- v0.17 PR-α Stage 1b — parse phase extracted to 'parsePhase'.
+    -- Behaviour byte-identical to the legacy inline parse loop;
+    -- ParseOutcome carries the same three terminal states the
+    -- previous if-then-else chain modelled.
+    parseOutcome <- parsePhase moduleOrder
+    case parseOutcome of
+      ParseError err -> return (Left err)
+      ParseEmpty     -> return (Left "No modules found")
+      ParseOk parsed consoleNeeded -> do
         -- Phase 3: Canonicalise (entry module + merge deps)
         putStrLn "-- Canonicalising"
         let entrySrcMod = snd (last parsed)
