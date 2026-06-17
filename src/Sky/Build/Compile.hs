@@ -6532,6 +6532,41 @@ collectFreeTVars = nubOrd . go
 -- duplicates; each serves a distinct data-availability phase of the
 -- lowering pipeline.  See Cause J in
 -- @docs/v0.17-fully-typed-codegen-v5-plan.md@.
+-- | v0.17 close — shared primitive renderer used by
+-- 'safeReturnTypeFullBounded', 'safeReturnTypeBootstrap',
+-- 'safeReturnTypePureBounded', and 'typeStrWithAliasesRegBoundedScoped'.
+-- These four renderers carry independent fuel/scope/alias state
+-- but emit byte-identical output for the simple-primitive +
+-- Result/Maybe/Task arms.  Extracting the shared prefix into
+-- 'renderPrimitiveT' deletes ~40 LOC of pattern-match duplication
+-- per renderer and gives every legacy renderer one canonical place
+-- to receive future primitive-arm changes.
+--
+-- Returns 'Just' when the type matches a handled primitive arm;
+-- 'Nothing' otherwise (caller falls through to its renderer-
+-- specific arms).
+--
+-- The recursion callback ('rec') is the renderer's own bounded
+-- continuation — passing it in keeps fuel + visited-set semantics
+-- intact at every recursive position.
+renderPrimitiveT :: (T.Type -> String) -> T.Type -> Maybe String
+renderPrimitiveT rec ty = case ty of
+    T.TUnit                   -> Just "struct{}"
+    T.TType _ "Int" []        -> Just "int"
+    T.TType _ "Float" []      -> Just "float64"
+    T.TType _ "Bool" []       -> Just "bool"
+    T.TType _ "String" []     -> Just "string"
+    T.TType _ "Char" []       -> Just "rune"
+    T.TType _ "Bytes" []      -> Just "[]byte"
+    T.TType _ "Result" [e, a] ->
+        Just ("rt.SkyResult[" ++ rec e ++ ", " ++ rec a ++ "]")
+    T.TType _ "Maybe" [x]     ->
+        Just ("rt.SkyMaybe[" ++ rec x ++ "]")
+    T.TType _ "Task" [e, a]   ->
+        Just ("rt.SkyTask[" ++ rec e ++ ", " ++ rec a ++ "]")
+    _                         -> Nothing
+
+
 -- | v0.17 Cause H step 2 — bounded variant of safeReturnTypeFull,
 -- analogue of `solvedTypeToGoBounded`.  Same fuel + visited-set
 -- shape; the top-level entry preserves the public single-arg
@@ -6544,21 +6579,13 @@ safeReturnTypeFullBounded :: Int -> Set.Set String -> T.Type -> String
 safeReturnTypeFullBounded fuel _ _ | fuel <= 0 = "any"
 safeReturnTypeFullBounded fuel seen t =
     let rec = safeReturnTypeFullBounded (fuel - 1) seen
-    in case t of
-    -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
-    -- generic-instantiation mismatch at the return wrap.
-    T.TUnit                       -> "struct{}"
-    T.TType _ "Int" []            -> "int"
-    T.TType _ "Float" []          -> "float64"
-    T.TType _ "Bool" []           -> "bool"
-    T.TType _ "String" []         -> "string"
-    T.TType _ "Char" []           -> "rune"
-    T.TType _ "Bytes" []          -> "[]byte"
-    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
-                                     ++ ", " ++ rec a ++ "]"
-    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
-    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
-                                     ++ ", " ++ rec a ++ "]"
+    in case renderPrimitiveT rec t of
+        Just s -> s
+        Nothing -> safeReturnTypeFullBoundedRest rec fuel seen t
+
+safeReturnTypeFullBoundedRest
+    :: (T.Type -> String) -> Int -> Set.Set String -> T.Type -> String
+safeReturnTypeFullBoundedRest rec fuel seen t = case t of
     -- T5: list/dict/set typed as concrete Go types. User-code audit
     -- required in parallel — when a function annotated to return
     -- `Dict String String` actually holds mixed-type values (e.g.
@@ -6936,19 +6963,16 @@ safeReturnTypeBootstrap recAliases = go 64 Set.empty
     -- arm.  Output byte-identical for non-pathological types.
     go :: Int -> Set.Set String -> T.Type -> String
     go fuel _ _ | fuel <= 0 = "any"
-    go fuel seen t = case t of
-        T.TUnit                       -> "struct{}"
-        T.TType _ "Int" []            -> "int"
-        T.TType _ "Float" []          -> "float64"
-        T.TType _ "Bool" []           -> "bool"
-        T.TType _ "String" []         -> "string"
-        T.TType _ "Char" []           -> "rune"
-        T.TType _ "Bytes" []          -> "[]byte"
-        T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
-                                         ++ ", " ++ rec a ++ "]"
-        T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
-        T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
-                                         ++ ", " ++ rec a ++ "]"
+    go fuel seen t =
+        let rec = go (fuel - 1) seen
+        in case renderPrimitiveT rec t of
+            Just s  -> s
+            Nothing -> goRest fuel seen t
+
+    goRest :: Int -> Set.Set String -> T.Type -> String
+    goRest fuel seen t =
+        let rec = go (fuel - 1) seen
+        in case t of
         -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg].
         T.TType _ "Cmd" [arg]
             | (case arg of { T.TVar _ -> False; _ -> True }) ->
@@ -8254,21 +8278,13 @@ safeReturnTypePureBounded :: Int -> Set.Set String -> T.Type -> String
 safeReturnTypePureBounded fuel _ _ | fuel <= 0 = "any"
 safeReturnTypePureBounded fuel seen t =
     let rec = safeReturnTypePureBounded (fuel - 1) seen
-    in case t of
-    -- T4: Unit returns safely typed now — rt.ResultCoerce handles the
-    -- generic-instantiation mismatch at the return wrap.
-    T.TUnit                       -> "struct{}"
-    T.TType _ "Int" []            -> "int"
-    T.TType _ "Float" []          -> "float64"
-    T.TType _ "Bool" []           -> "bool"
-    T.TType _ "String" []         -> "string"
-    T.TType _ "Char" []           -> "rune"
-    T.TType _ "Bytes" []          -> "[]byte"
-    T.TType _ "Result" [e, a]     -> "rt.SkyResult[" ++ rec e
-                                     ++ ", " ++ rec a ++ "]"
-    T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ rec x ++ "]"
-    T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ rec e
-                                     ++ ", " ++ rec a ++ "]"
+    in case renderPrimitiveT rec t of
+        Just s  -> s
+        Nothing -> safeReturnTypePureBoundedRest rec fuel seen t
+
+safeReturnTypePureBoundedRest
+    :: (T.Type -> String) -> Int -> Set.Set String -> T.Type -> String
+safeReturnTypePureBoundedRest rec fuel seen t = case t of
     -- v0.17 PR-18 (Cause H5) — typed Cmd_T[Msg] / Sub_T[Msg]
     -- emission.  Symmetric with the gate at line 7559.  When @arg@
     -- is a concrete (non-TVar) type, emit the typed form so call
