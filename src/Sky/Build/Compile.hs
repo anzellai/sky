@@ -6571,8 +6571,66 @@ renderPrimitiveT rec ty = case ty of
 -- analogue of `solvedTypeToGoBounded`.  Same fuel + visited-set
 -- shape; the top-level entry preserves the public single-arg
 -- signature so every call site continues to work unchanged.
+--
+-- v0.17 close — when the diff gate is enabled, every call routes
+-- through BOTH the legacy and the pipeline rendering, warning on
+-- per-input divergence.  Default still legacy until a clean diff
+-- run validates the pipeline is byte-stable across all 18 call
+-- sites.
 safeReturnTypeFull :: T.Type -> String
-safeReturnTypeFull = safeReturnTypeFullBounded 64 Set.empty
+safeReturnTypeFull ty
+    | rendererFullLegacyEnabled =
+        safeReturnTypeFullBounded 64 Set.empty ty
+    | rendererDiffFullEnabled =
+        let legacy   = safeReturnTypeFullBounded 64 Set.empty ty
+            pipeline = safeReturnTypeFullViaPipeline ty
+        in if legacy == pipeline
+            then pipeline
+            else unsafePerformIO $ do
+                hPutStrLn stderr $
+                    "SKY_RENDERER_DIFF_FULL: legacy=" ++ show legacy
+                        ++ " pipeline=" ++ show pipeline
+                        ++ " sky-type=" ++ show ty
+                return pipeline
+    | otherwise = safeReturnTypeFullViaPipeline ty
+
+
+-- | v0.17 close — emergency-bisect escape hatch matching the
+-- 'SKY_RENDERER_LEGACY' shape used for 'solvedTypeToGo' and
+-- 'SKY_RENDERER_BOOTSTRAP_LEGACY' used for 'safeReturnTypeBootstrap'.
+{-# NOINLINE rendererFullLegacyEnabled #-}
+rendererFullLegacyEnabled :: Bool
+rendererFullLegacyEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_FULL_LEGACY"
+    return (v == Just "1" || v == Just "true")
+
+
+-- | v0.17 close — pipeline-routed sibling of 'safeReturnTypeFull'.
+-- Delegates to 'GoType.mapSkyTypeToGo' with the live
+-- 'buildMappingContext' (which reads 'getCgEnv') overlaid with
+-- 'mcTVarsToAny = True' — the legacy 'safeReturnTypeFullBounded'
+-- collapses every 'T.TVar' to @"any"@ (line 7242 of pre-S6
+-- 'solvedTypeToGoBounded', mirrored at
+-- 'safeReturnTypeFullBounded').  Without this overlay the pipeline
+-- emits @goTypeParam@ identifiers ("A", "E", "T_msg", …) that leak
+-- as undefined Go names at call sites where the surrounding
+-- function isn't generic.
+safeReturnTypeFullViaPipeline :: T.Type -> String
+safeReturnTypeFullViaPipeline ty =
+    let ctx = (GoType.buildMappingContext GoType.defaultRenderEnv getCgEnv)
+                  { GoType.mcTVarsToAny = True }
+    in GoType.renderGoType GoType.defaultRenderEnv
+            (GoType.mapSkyTypeToGo ctx ty)
+
+
+-- | v0.17 close — env-gated diff between legacy + pipeline full
+-- renderers.  Same pattern as 'SKY_RENDERER_DIFF' /
+-- 'SKY_RENDERER_DIFF_BOOTSTRAP'.
+{-# NOINLINE rendererDiffFullEnabled #-}
+rendererDiffFullEnabled :: Bool
+rendererDiffFullEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_DIFF_FULL"
+    return (v == Just "1" || v == Just "true")
 
 
 safeReturnTypeFullBounded :: Int -> Set.Set String -> T.Type -> String
