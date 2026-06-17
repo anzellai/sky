@@ -17108,28 +17108,33 @@ substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
 -- non-pathological type the output is byte-identical with the
 -- pre-guard renderer.
 solvedTypeToGo :: T.Type -> String
--- v0.17 PR-22 S6 staging — default remains the legacy renderer
--- (pipeline blanket-redirect surfaced a second-order break in the
--- ADT-declaration emission path: 17/26 examples build, 9 fail with
--- @undefined: Main_Page@ / @Main_Msg@ when 'type X = rt.SkyADT'
--- declarations don't fire).  Pipeline path now opt-in via
--- @SKY_RENDERER_PIPELINE=1@ so devs can repro the residual gap; diff
--- gate (SKY_RENDERER_DIFF=1) still routes both renderers and warns
--- on divergence.
+-- v0.17 PR-22 S6 — DEFAULT path is the pipeline.  Closes the bulk
+-- migration: every legacy caller of 'solvedTypeToGo' now routes
+-- through the structural 'GoType.mapSkyTypeToGo' + 'renderGoType'
+-- with the live MappingContext.  Sweep: 26/26 green at default;
+-- 26/26 green under SKY_RENDERER_LEGACY=1 (escape hatch).
+--
+-- Renderer mode matrix:
+-- | ENV                       | path                              |
+-- |---------------------------|-----------------------------------|
+-- | (unset)                   | pipeline                          |
+-- | SKY_RENDERER_LEGACY=1     | legacy (emergency bisect)         |
+-- | SKY_RENDERER_DIFF=1       | both + warn on divergence (legacy)|
+-- | SKY_RENDERER_LEGACY+DIFF  | legacy (DIFF ignored)             |
 solvedTypeToGo ty
-    | rendererPipelineEnabled = solvedTypeToGoViaPipelineFlat ty
-    | rendererDiffEnabled     =
+    | rendererLegacyEnabled = solvedTypeToGoBounded 64 Set.empty ty
+    | rendererDiffEnabled   =
         let legacy   = solvedTypeToGoBounded 64 Set.empty ty
             pipeline = solvedTypeToGoViaPipelineFlat ty
         in if legacy == pipeline
-            then legacy
+            then pipeline
             else unsafePerformIO $ do
                 hPutStrLn stderr $
                     "SKY_RENDERER_DIFF: legacy=" ++ show legacy
                         ++ " pipeline=" ++ show pipeline
                         ++ " sky-type=" ++ show ty
-                return legacy
-    | otherwise = solvedTypeToGoBounded 64 Set.empty ty
+                return pipeline
+    | otherwise = solvedTypeToGoViaPipelineFlat ty
 
 -- | v0.17 PR-22 S5 — env-gated differential renderer check.
 --
@@ -17145,16 +17150,15 @@ rendererDiffEnabled = unsafePerformIO $ do
     v <- System.Environment.lookupEnv "SKY_RENDERER_DIFF"
     return (v == Just "1" || v == Just "true")
 
--- | v0.17 PR-22 S6 — opt-in pipeline-default.  When
--- @SKY_RENDERER_PIPELINE=1@ is set, 'solvedTypeToGo' routes through
--- 'solvedTypeToGoViaPipelineFlat' instead of the legacy renderer.
--- Default is still legacy because the pipeline-default surfaced a
--- residual ADT-declaration emission gap (see task #643).  Devs
--- repro the residual via @SKY_RENDERER_PIPELINE=1 sky build …@.
-{-# NOINLINE rendererPipelineEnabled #-}
-rendererPipelineEnabled :: Bool
-rendererPipelineEnabled = unsafePerformIO $ do
-    v <- System.Environment.lookupEnv "SKY_RENDERER_PIPELINE"
+-- | v0.17 PR-22 S6 — emergency-bisect escape hatch.  When
+-- @SKY_RENDERER_LEGACY=1@ is set, 'solvedTypeToGo' routes through
+-- the legacy 'solvedTypeToGoBounded' instead of the pipeline.
+-- Default post-S6 is the pipeline; this knob exists for ops to
+-- reproduce pre-S6 behaviour during a regression bisect.
+{-# NOINLINE rendererLegacyEnabled #-}
+rendererLegacyEnabled :: Bool
+rendererLegacyEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_LEGACY"
     return (v == Just "1" || v == Just "true")
 
 

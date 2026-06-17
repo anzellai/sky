@@ -150,10 +150,16 @@ goNamedType home name args = case (ModuleName.toString home, name) of
     -- so the `msg` arg is dropped.
     (_, "Html") -> "Std_Html_Html"
 
-    -- User-defined types: Module_Name or Module_Name[T1, T2]
+    -- User-defined types: Module_Name or Module_Name[T1, T2].
+    -- v0.17 PR-22 S6 fix: when home is "Main" or empty,
+    -- 'goModulePrefix' returns "" — emit the bare name (matches
+    -- legacy convention; the entry-module ADT declaration emits as
+    -- bare @Page@, not @Main_Page@).
     _ ->
         let prefix = goModulePrefix home
-            goName = prefix ++ "_" ++ name
+            goName = if null prefix
+                        then name
+                        else prefix ++ "_" ++ name
         in case args of
             [] -> goName
             _  -> goName ++ "[" ++ commaJoin (map typeToGo args) ++ "]"
@@ -172,10 +178,28 @@ goRecordType fields =
     capitalize (c:cs) = toEnum (fromEnum c - 32) : cs
 
 
--- | Module name to Go prefix: Sky.Core.List -> Sky_Core_List
+-- | Module name to Go prefix: Sky.Core.List -> Sky_Core_List.
+--
+-- v0.17 PR-22 S6 fix — the entry module ("Main") and the unnamed
+-- root module (empty string) STRIP to empty prefix.  Legacy codegen
+-- uses this convention at every renderer site that builds a Go
+-- module-prefixed identifier (Compile.hs:6643, 7003, 7028, 7946,
+-- 8031, 8339, etc.):
+--
+--     prefix = if null modStr || modStr == "Main"
+--                then ""
+--                else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+--
+-- Without this strip, entry-module ADT references render as
+-- @Main_Page@ but the corresponding declaration (emitted via
+-- 'generateUnionTypes' in Compile.hs:4569) stays bare @Page@, so
+-- @go build@ fails with @undefined: Main_Page@.
 goModulePrefix :: ModuleName.Canonical -> String
 goModulePrefix home =
-    map (\c -> if c == '.' then '_' else c) (ModuleName.toString home)
+    let s = ModuleName.toString home
+    in if null s || s == "Main"
+        then ""
+        else map (\c -> if c == '.' then '_' else c) s
 
 
 -- HELPERS
@@ -375,28 +399,48 @@ renderGoType env (GoStruct fields)  =
     renderField e (name, ty) = name ++ " " ++ renderGoType e ty ++ ";"
 renderGoType _   (GoTypeVar n)      = n
 renderGoType env (GoTuple args)     =
-    -- The legacy String renderers emit one of three forms depending
-    -- on arity + a primitive-only whitelist on every element string:
-    --   * 2-tuple, all elements pass the gate → @rt.T2[A, B]@
-    --   * 2-tuple, gate fails               → @rt.SkyTuple2@
-    --   * 3-tuple analogues                 → @rt.T3[...]@ / @rt.SkyTuple3@
-    --   * arity ≥ 4                         → @rt.SkyTupleN@
+    -- v0.17 PR-22 S6 — structural typed-tuple gate.  Mirrors legacy
+    -- 'solvedTypeToGoBounded' TTuple arm (Compile.hs:17381-17391):
+    -- when every element is a known concrete Go primitive (Int /
+    -- Float / Bool / String / rt.T2[..] / rt.T3[..] / record alias
+    -- with _R suffix / etc.), emit the typed generic form
+    -- @rt.T2[A,B]@.  When any element is a TVar / GoAny / unresolved
+    -- name, fall back to @rt.SkyTuple2@.  This matches legacy parity
+    -- precisely: the SkyMaybe[(Float,Float)] case in 26-ui-showcase
+    -- needs @rt.SkyMaybe[rt.T2[float64,float64]]@ to interop with
+    -- struct-literal call sites that hand-write the typed form.
     --
-    -- The C1 'GoTuple' carries the typed element list explicitly, so
-    -- the renderer no longer needs to re-tokenise.  Today the
-    -- 'renderTupleGeneric' policy gate is False (matches legacy
-    -- @typeToGo@ output — alias form for arity 2 / 3); once Cause-H
-    -- Step 4 lands across all consumers, callers will construct
-    -- 'GoTuple' only when they want the generic instantiation AND
-    -- flip the policy gate to True simultaneously.  Until then the
-    -- alias form ships verbatim.
-    case args of
+    -- 'renderTupleGeneric env' override (legacy policy switch) is
+    -- still honoured: when True, ALWAYS emit the typed form
+    -- regardless of element shape.
+    let isTypedTupleElem g = case g of
+            GoAny                -> False
+            GoTypeVar _          -> False
+            GoBare "int"         -> True
+            GoBare "float64"     -> True
+            GoBare "string"      -> True
+            GoBare "bool"        -> True
+            GoBare "rune"        -> True
+            GoBare "[]byte"      -> True
+            GoBare s | take 5 s == "rt.T2"
+                      || take 5 s == "rt.T3"
+                      || take 5 s == "rt.T4"
+                      || take 5 s == "rt.T5"
+                      || take 5 s == "rt.T6"
+                      || take 5 s == "rt.T7"
+                      || take 5 s == "rt.T8"
+                      || take 5 s == "rt.T9" -> True
+            GoNamed n _ | "_R" `isSuffixOf` n -> True
+            _                    -> False
+        allTyped = not (null args) && all isTypedTupleElem args
+        emitTyped = renderTupleGeneric env || allTyped
+    in case args of
       [_, _]
-        | renderTupleGeneric env ->
+        | emitTyped ->
             "rt.T2[" ++ commaJoin (map (renderGoType env) args) ++ "]"
         | otherwise -> "rt.SkyTuple2"
       [_, _, _]
-        | renderTupleGeneric env ->
+        | emitTyped ->
             "rt.T3[" ++ commaJoin (map (renderGoType env) args) ++ "]"
         | otherwise -> "rt.SkyTuple3"
       _ -> "rt.SkyTupleN"
