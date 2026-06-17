@@ -4338,7 +4338,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                         -- the record DOES have a Go alias; only the
                         -- genuinely-anonymous slots widen).
                         σ_go = Map.fromList
-                            [ (gn, sanitiseTypedDeep (solvedTypeToGo cty))
+                            [ (gn, solvedTypeToGo cty)
                             | (sn, gn) <- skyToGo
                             , Just cty <- [Map.lookup sn σ_sky]
                             ]
@@ -10829,7 +10829,7 @@ coerceCallArgsAt region qualName args =
                     (concatMap tvarsInGoTypeStr paramTypes)
             , not (null pTVars) ->
                 let σ = Map.fromList
-                          [ (tv, sanitiseTypedDeep (solvedTypeToGo cty))
+                          [ (tv, solvedTypeToGo cty)
                           | (tv, cty) <- zip pTVars concreteTys
                           ]
                     substituted = map (substTVarsInGoType σ) paramTypes
@@ -10867,7 +10867,7 @@ coerceCallArgsAt region qualName args =
                 -- routed path.
                 let skyToConcrete = Map.fromList (zip quants concreteTys)
                     σ = Map.fromList
-                          [ (goName, sanitiseTypedDeep (solvedTypeToGo cty))
+                          [ (goName, solvedTypeToGo cty)
                           | (skyName, goName) <- skyToGo
                           , Just cty <- [Map.lookup skyName skyToConcrete]
                           ]
@@ -16121,33 +16121,9 @@ sanitiseTypedElem go
     | otherwise = go
 
 
--- | v0.13 Phase A5+: recursive variant of `sanitiseTypedElem` that
--- walks a complete Go-type string and replaces every embedded
--- `Anon_R_<hash>` identifier token (anonymous record with no Go
--- type-alias counterpart) with `any`.  Used by the call-site
--- substitution path so a Result/Maybe wrapper around an anonymous
--- record (`Result Error { name : String, … }`) collapses to a
--- usable `rt.SkyResult[Error, any]` instead of emitting
--- `rt.SkyResult[Error, Anon_R_…]` which Go can't resolve.
---
--- Identifier-aware: only replaces tokens that BEGIN with `Anon_R_`
--- and whose preceding char is a non-identifier boundary, so
--- `Anon_R_xxx_in_a_bigger_name` isn't false-matched.  The walker
--- preserves brackets, commas, and other type-string punctuation
--- verbatim so structural shapes (`[]X`, `map[string]X`,
--- `rt.SkyResult[E, A]`) survive intact.
--- | v0.13 E removed the `Anon_R_*` → `any` rewrite that this
--- function used to apply: `synthAnonRecordName` now registers
--- every produced shape into `globalAnonRecords`, and
--- `generateAnonRecordDecls` (wired into `generateGoMulti` after
--- the user decls evaluate) emits one `type Anon_R_<hash> =
--- struct {…}` for each. The token is now a valid Go type
--- identifier, so the pre-E defensive cover-up is no longer
--- needed. Kept as a no-op pass-through so call sites don't
--- have to be touched.
-sanitiseTypedDeep :: String -> String
-sanitiseTypedDeep s = s
-
+-- v0.17 — 'sanitiseTypedDeep' was a no-op (s = s) preserved as a
+-- pass-through after v0.13 E shipped 'generateAnonRecordDecls'.
+-- Every caller inlined to 'solvedTypeToGo' directly.
 
 -- | Strip a Go type string of the form `rt.SkyMaybe[INNER]` returning
 -- INNER. Returns Nothing for any other shape. Used by wrapAsT to
