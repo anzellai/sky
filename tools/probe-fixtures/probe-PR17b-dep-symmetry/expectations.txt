@@ -1,0 +1,32 @@
+v0.17 PR-17b regression — dep-module emission symmetry — no T1 leak in mixed-arity dep.
+
+Fixture exercises the T1-leak class closed by removing the
+`if null depTypeParams` early-out in the bodyExpr arm + the
+`| null tps = stmts` early-out in withScopedEnclosingTypeParamsStmts.
+Both early-outs deferred eager body materialization to lazy thunks
+that captured the in-flight scope-state IORef, leaking the sibling
+generic decl's T1 binding into the non-generic decl's body.
+
+Lib.sky contains TWO decls — `generic` (typed param T1, forces
+scope push) and `snapshotToDict` (non-generic, calls Dict.insert).
+Pre-fix, `snapshotToDict`'s body would emit
+`rt.AsMapT[T1]` where T1 was bound by `generic`'s header,
+producing Sky-success / go-build-fail with `undefined: T1`.
+
+Expected post-fix Go (verified end-to-end):
+
+- `Lib_generic` is a generic Go function:
+  `func Lib_generic[T1 any](x T1) T1 { return x }`
+- `Lib_snapshotToDict` is a non-generic Go function:
+  `func Lib_snapshotToDict(k string, v string) map[string]string`
+- ALL `rt.AsMapT[<ident>]` inside `Lib_snapshotToDict`'s body are
+  bound by Sky.Core.Dict.insert's own generic header — i.e. emerge
+  inside `func Sky_Core_Dict_insert[T1 any, T2 any](...)`.
+- NO `rt.AsMapT[Tn]` or `rt.AsListT[Tn]` appears at module-scope
+  (outside an enclosing generic header).
+
+The regression spec at `test/Sky/Build/Pr17bDepSymmetrySpec.hs`
+encodes this invariant: builds the fixture clean, parses the
+emitted `sky-out/main.go` line-by-line tracking generic-header
+T-var binders, asserts every `rt.As{Map,List}T[Tn]` reference
+resolves to a binder in scope.
