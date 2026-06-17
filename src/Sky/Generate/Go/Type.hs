@@ -21,6 +21,7 @@ module Sky.Generate.Go.Type where
 import Data.List (isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Sky.Generate.Go.RuntimeMaps as RuntimeMaps
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Type.Type as T
 import qualified Sky.Sky.ModuleName as ModuleName
@@ -758,6 +759,24 @@ data MappingContext = MappingContext
       -- leftover TVar refers to no enclosing type-parameter scope).
       -- CONSUMED BY: 'mapSkyTypeToGo' TVar arm.  Default False
       -- keeps every pre-existing call-site byte-identical.
+
+    -- v0.17 PR-22 S1 fields (close runtimeTypedMap divergence).
+    , mcQualRuntimeTyped :: ![((String, String), String)]
+      -- ^ Module-qualified overrides — wins over bare-name lookup.
+      -- Disambiguates same-named types in different stdlib modules
+      -- (Sky.Core.Http.Response → @rt.HttpResponse@ vs
+      -- Sky.Http.Server.Response → @rt.SkyResponse@).  CONSUMED BY:
+      -- 'mapNamedType' user-ADT fallback — checked BEFORE
+      -- 'mcRuntimeTypedMap'.  Source: 'RuntimeMaps.qualifiedRuntimeTypedMap'.
+
+    , mcRuntimeTypedMap :: ![(String, String)]
+      -- ^ Bare-name fallback mappings to runtime aliases
+      -- (Decoder → @rt.SkyDecoder@, Error → @Sky_Core_Error_Error@,
+      -- Db → @*rt.SkyDb@, etc.).  CONSUMED BY: 'mapNamedType' —
+      -- checked AFTER 'mcQualRuntimeTyped' and BEFORE the bare-name
+      -- fallback.  Closes the 1566+ hits of @undefined: Decoder@,
+      -- @undefined: Sky_Core_Error_Error@, etc. that the previous
+      -- bulk-replace surfaced.  Source: 'RuntimeMaps.runtimeTypedMap'.
     }
     deriving (Show)
 
@@ -778,6 +797,12 @@ defaultMappingContext = MappingContext
     , mcEnumNames      = Set.empty
     , mcAliases        = Map.empty
     , mcTVarsToAny     = False
+    -- v0.17 PR-22 S1 — static runtime-type registries are not
+    -- env-derived, so they live as constants populated from the
+    -- 'Sky.Generate.Go.RuntimeMaps' module.  Every MappingContext
+    -- (default, flat, buildMappingContext-derived) carries them.
+    , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
+    , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
     }
 
 
@@ -815,6 +840,8 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcEnumNames      = Rec._cg_enumNames cgEnv
     , mcAliases        = Rec._cg_aliases cgEnv
     , mcTVarsToAny     = False
+    , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
+    , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
     }
 
 
@@ -988,15 +1015,18 @@ mapNamedType ctx home name args =
         --
         -- v0.17 PR-22 bulk root-cause fix — env-aware classification.
         -- Mirrors legacy 'solvedTypeToGoBounded' user-ADT fallback at
-        -- 'Sky.Build.Compile.hs:17350-17416':
+        -- 'Sky.Build.Compile.hs:17350-17416' — lookup order:
         --
-        --   1. Record alias (in 'mcRecordAliases') → 'Foo_R[args]'
+        --   1. 'mcQualRuntimeTyped' module-qualified override (S1).
+        --   2. Record alias (in 'mcRecordAliases') → 'Foo_R[args]'
         --      (parametric Go-generic form, args preserved).
-        --   2. Known union (in 'mcUnionNames') → bare 'Foo' (NO args
+        --   3. 'mcRuntimeTypedMap' bare-name fallback (S1) —
+        --      Decoder → @rt.SkyDecoder@, Error → @Sky_Core_Error_Error@.
+        --   4. Known union (in 'mcUnionNames') → bare 'Foo' (NO args
         --      — Go-side declaration is 'type Foo = rt.SkyADT', so
         --      passing 'Foo[any]' breaks `go build` with "not a
         --      generic type").
-        --   3. Unknown name → bare 'Foo' fallback (legacy emits "any"
+        --   5. Unknown name → bare 'Foo' fallback (legacy emits "any"
         --      here, but bare-name preserves Cause G satisfaction for
         --      FFI opaque types — see PR-21b).
         _ ->
@@ -1005,6 +1035,9 @@ mapNamedType ctx home name args =
                           then name
                           else prefix ++ "_" ++ name
                 aliasName = base ++ "_R"
+                modStr = ModuleName.toString home
+                qualHit = lookup (modStr, name) (mcQualRuntimeTyped ctx)
+                runtimeHit = lookup name (mcRuntimeTypedMap ctx)
                 isRecordAlias = Set.member aliasName (mcRecordAliases ctx)
                               || Set.member (name ++ "_R") (mcRecordAliases ctx)
                 isKnownUnion = Set.member base (mcUnionNames ctx)
@@ -1047,26 +1080,30 @@ mapNamedType ctx home name args =
                                      ] of
                                 [a] -> Just a
                                 _   -> Nothing
-            in case (aliasRecovery, isRecordAlias) of
-                (Just a, _) -> case args of
-                    [] -> GoNamed a []
-                    _  -> GoNamed a (map (mapSkyTypeToGo ctx) args)
-                (_, True) ->
-                    let raliasName =
-                            if Set.member aliasName (mcRecordAliases ctx)
-                               then aliasName
-                               else name ++ "_R"
-                    in case args of
-                        [] -> GoNamed raliasName []
-                        _  -> GoNamed raliasName
-                                (map (mapSkyTypeToGo ctx) args)
-                _ -> case unionRecovery of
-                    Just u -> GoNamed u []
-                    Nothing
-                        | isKnownUnion -> GoNamed base []
-                        | otherwise -> case args of
-                            [] -> GoNamed base []
-                            _  -> GoNamed base []  -- drop args by default
+            in case qualHit of
+                Just q -> GoBare q
+                Nothing -> case (aliasRecovery, isRecordAlias) of
+                    (Just a, _) -> case args of
+                        [] -> GoNamed a []
+                        _  -> GoNamed a (map (mapSkyTypeToGo ctx) args)
+                    (_, True) ->
+                        let raliasName =
+                                if Set.member aliasName (mcRecordAliases ctx)
+                                   then aliasName
+                                   else name ++ "_R"
+                        in case args of
+                            [] -> GoNamed raliasName []
+                            _  -> GoNamed raliasName
+                                    (map (mapSkyTypeToGo ctx) args)
+                    _ -> case runtimeHit of
+                        Just r -> GoBare r
+                        Nothing -> case unionRecovery of
+                            Just u -> GoNamed u []
+                            Nothing
+                                | isKnownUnion -> GoNamed base []
+                                | otherwise -> case args of
+                                    [] -> GoNamed base []
+                                    _  -> GoNamed base []  -- drop args
 
 
 -- | Canonical "Sky type → Go type string" entry point — routes a
