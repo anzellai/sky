@@ -966,8 +966,59 @@ collectIncrementalHashInputs = do
     return (tomlPath : ffiFiles)
 
 
+-- | v0.17 PR-α Stage 1 — defensive reset of all cross-compile CAF
+-- IORefs at the start of every 'continueCompile' invocation.
+-- Extracted from continueCompile's prelude (was lines 1006-1054
+-- of the monolithic function).  Production impact: zero — `sky
+-- build` forks an OS process per compile so CAFs initialise
+-- fresh; the reset is reachable only in the in-process test
+-- harness (task #491) and long-lived `sky watch`.
+--
+-- v0.17 #625 originating comment preserved at the call site for
+-- the rationale; this function is the mechanical extraction.
+--
+-- v0.17 IORef defusing batch documented inline:
+--   - #2 globalDceDisabled retired (env-var CAF 'dceDisabled')
+--   - #7 globalEntryPath retired (dead chain)
+--   - #8 globalConsoleNeeded retired (pure threading)
+--   - #3 globalIsInlineConsoleBuild retired (env-var CAF)
+-- Env.ffiTypedWrapper{Names,Params}Ref intentionally NOT reset
+-- here — 'loadAndSeedFfiRegistry' fires earlier in 'compile' and
+-- would be clobbered.
+resetCompileState :: IO ()
+resetCompileState = do
+    writeIORef globalCgEnv
+        (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
+                        Set.empty Set.empty Set.empty Set.empty
+                        Map.empty Map.empty Map.empty Map.empty
+                        Map.empty Map.empty Map.empty)
+    writeIORef globalUnionNames Set.empty
+    writeIORef scopeStateRef
+        (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
+    -- Reset HM-solver row-extension fresh-var counter so each
+    -- in-process compile names its rowext vars `_rowext0..N`
+    -- deterministically.  Without this, compile #2's row
+    -- extensions are named with compile #1's terminal index,
+    -- which is a known suspect for the residual Gap 8c flake.
+    writeIORef Unify.rowExtCounter 0
+    writeIORef globalAnnotMap Map.empty
+    writeIORef globalKernelAlias Map.empty
+    writeIORef globalCsiByCallee Map.empty
+    writeIORef globalGoSigMap Map.empty
+    writeIORef globalAllAliases Map.empty
+    writeIORef globalAllFieldIdx Map.empty
+    writeIORef globalReachableSet Set.empty
+    writeIORef globalReachableProgram Set.empty
+    writeIORef globalAnonRecords Map.empty
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
+    -- v0.17 PR-α Stage 1 — defensive reset extracted to
+    -- 'resetCompileState' (the long rationale comment that used
+    -- to live here is preserved in that function's haddock).
+    resetCompileState
+
     -- v0.17 #625 — defensive reset of cross-compile CAF state.
     --
     -- `globalCgEnv` and `scopeStateRef` are NOINLINE CAF IORefs.
@@ -1003,66 +1054,6 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- counter accumulation (`Sky.Type.Unify.rowExtCounter`, not
     -- exported), or other un-audited NOINLINE IORefs in the parse
     -- / canonicalise / typecheck chain.  Tracked at #624.
-    writeIORef globalCgEnv
-        (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
-                        Set.empty Set.empty Set.empty Set.empty
-                        Map.empty Map.empty Map.empty Map.empty
-                        Map.empty Map.empty Map.empty)
-    writeIORef globalUnionNames Set.empty
-    writeIORef scopeStateRef
-        (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
-    -- Reset HM-solver row-extension fresh-var counter so each
-    -- in-process compile names its rowext vars `_rowext0..N`
-    -- deterministically.  Without this, compile #2's row
-    -- extensions are named with compile #1's terminal index,
-    -- which is a known suspect for the residual Gap 8c flake
-    -- (#624).
-    writeIORef Unify.rowExtCounter 0
-    -- v0.17 #624 — extended defensive reset for compile-scope CAFs
-    -- whose writers fire conditionally (DCE branch, .skycache/go
-    -- presence, dep-emission cluster) — without this, in-process
-    -- test compiles inherit stale state from the prior compile
-    -- through Map.adjust-style partial updates (especially
-    -- `globalGoSigMap` at line 4108-4129) and the
-    -- `seedTypedFfiNames` no-op-when-absent fall-through (fresh
-    -- tempdirs always lack `.skycache/go`, so the FFI typed-wrapper
-    -- refs carry the prior compile's set).
-    --
-    -- Per agent diagnosis (#624) the strongest suspects are
-    -- `globalGoSigMap` and the FFI typed-wrapper pair; the rest are
-    -- belt-and-braces.  All 16 writes are no-ops in a fresh process
-    -- (CAFs initialise empty via unsafePerformIO).
-    writeIORef globalAnnotMap Map.empty
-    writeIORef globalKernelAlias Map.empty
-    writeIORef globalCsiByCallee Map.empty
-    writeIORef globalGoSigMap Map.empty
-    writeIORef globalAllAliases Map.empty
-    writeIORef globalAllFieldIdx Map.empty
-    writeIORef globalReachableSet Set.empty
-    writeIORef globalReachableProgram Set.empty
-    writeIORef globalAnonRecords Map.empty
-    -- v0.17 IORef defusing #2 — globalDceDisabled retired (env-var
-    -- CAF 'dceDisabled' replaces it).
-    -- v0.17 IORef defusing #7 — globalEntryPath retired (dead chain).
-    -- Do NOT reset `Env.ffiTypedWrapper{Names,Params}Ref` here:
-    -- `loadAndSeedFfiRegistry` writes them in `compile` BEFORE
-    -- `continueCompile` runs, so resetting here would clobber the
-    -- legitimately-populated FFI registry for the current compile
-    -- (regression observed in examples/13-skyshop —
-    -- `undefined: rt.Go_Firestore_queryDocuments`).  In-process test
-    -- isolation for these refs is handled by `loadAndSeedFfiRegistry`'s
-    -- own writeIORefs at the start of every `compile`.
-
-    -- v0.17 IORef defusing #8 — globalConsoleNeeded retired.  The
-    -- per-module 'consoleNeededFromImports' calls below produce a
-    -- 'Bool' that the parse loop ORs into 'consoleNeeded' for
-    -- threading down to 'generateGoMulti' / 'generateGo' /
-    -- 'collectGoImports'.  No reset cycle, no mutation, no IORef.
-
-    -- v0.17 IORef defusing #3 — globalIsInlineConsoleBuild retired
-    -- (pure CAF 'isInlineConsoleBuild' reads SKY_BUILD_IS_INLINE_CONSOLE
-    -- directly at the read site in goPreambleParts).
-
     -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
     -- with no cross-module dependencies, so it parallelises trivially.
     -- We preserve topo order in the result list so downstream phases see the
