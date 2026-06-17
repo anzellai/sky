@@ -17108,7 +17108,34 @@ substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
 -- non-pathological type the output is byte-identical with the
 -- pre-guard renderer.
 solvedTypeToGo :: T.Type -> String
-solvedTypeToGo = solvedTypeToGoBounded 64 Set.empty
+solvedTypeToGo ty =
+    let legacy = solvedTypeToGoBounded 64 Set.empty ty
+    in if rendererDiffEnabled
+        then
+            let pipeline = solvedTypeToGoViaPipelineFlat ty
+            in if legacy == pipeline
+                then legacy
+                else unsafePerformIO $ do
+                    hPutStrLn stderr $
+                        "SKY_RENDERER_DIFF: legacy=" ++ show legacy
+                            ++ " pipeline=" ++ show pipeline
+                            ++ " sky-type=" ++ show ty
+                    return legacy
+        else legacy
+
+-- | v0.17 PR-22 S5 — env-gated differential renderer check.
+--
+-- When @SKY_RENDERER_DIFF=1@ is set, every call to 'solvedTypeToGo'
+-- runs BOTH the legacy 'solvedTypeToGoBounded' and the new
+-- 'solvedTypeToGoViaPipelineFlat' and warns to stderr on divergence.
+-- Reads the env at module init via @unsafePerformIO@; cheap (no
+-- IORef indirection at the hot path), correct (env doesn't change
+-- mid-process for a CLI).
+{-# NOINLINE rendererDiffEnabled #-}
+rendererDiffEnabled :: Bool
+rendererDiffEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_DIFF"
+    return (v == Just "1" || v == Just "true")
 
 
 -- | v0.17 Strategy-C PR 2 — typed sibling of 'solvedTypeToGo'.
