@@ -1276,6 +1276,96 @@ seedEarlyCgEnv canMod validDeps = do
     return earlyAllRecAliases
 
 
+-- | v0.17 PR-α Stage 3b — pure dep-signature derivation.
+--
+-- Derives five maps used downstream (sig merging, codegen,
+-- monomorphisation) from the validated deps + 'earlyAllRecAliases':
+--
+--   * 'dsRecAliases'    — every dep's record-alias name set,
+--                          module-prefixed (e.g. @Lib_Db_Conn@).
+--   * 'dsUnionNames'    — every dep's ADT/union name set, prefixed.
+--   * 'dsEnumNames'     — subset of 'dsUnionNames' whose @_u_opts@
+--                          is 'Can.Enum' (zero value is @0@, not @X{}@).
+--   * 'dsArities'       — per-dep function arity table, prefixed +
+--                          'goSafeName'-mangled.
+--   * 'dsParamTypes' / 'dsRetTypes' / 'dsUltRetTypes' — typed param
+--                          + return tables collected via
+--                          'collectFuncTypesWith' (annotated bindings
+--                          only at this stage; HM-inferred sigs are
+--                          merged in by the later sig-merge phase).
+--
+-- Pure: no IORef reads/writes.  Replaces a ~50-line inline @let@
+-- block at the head of the solver phase; the call site becomes a
+-- single binding plus record destructure.
+data DepSigs = DepSigs
+    { dsRecAliases   :: !(Set.Set String)
+    , dsUnionNames   :: !(Set.Set String)
+    , dsEnumNames    :: !(Set.Set String)
+    , dsArities      :: !(Map.Map String Int)
+    , dsParamTypes   :: !(Map.Map String [String])
+    , dsRetTypes     :: !(Map.Map String String)
+    , dsUltRetTypes  :: !(Map.Map String String)
+    }
+
+deriveDepSigs
+    :: Set.Set String
+    -> [(String, Can.Module)]
+    -> DepSigs
+deriveDepSigs earlyAllRecAliases validDeps =
+    DepSigs
+        { dsRecAliases  = recAliases
+        , dsUnionNames  = unionNames
+        , dsEnumNames   = enumNames
+        , dsArities     = arities
+        , dsParamTypes  = Map.unions [ p | (p, _, _) <- triples ]
+        , dsRetTypes    = Map.unions [ r | (_, r, _) <- triples ]
+        , dsUltRetTypes = Map.unions [ u | (_, _, u) <- triples ]
+        }
+  where
+    recAliases = Set.unions
+        [ Set.map (\n -> prefix ++ "_" ++ n)
+                 (Rec.collectRecordAliases (Can._aliases depMod))
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+    unionNames = Set.unions
+        [ Set.map (\n -> prefix ++ "_" ++ n)
+                 (Set.fromList (Map.keys (Can._unions depMod)))
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+    -- v0.13 typed lowerer: dep-module ENUM union names (prefixed).
+    -- An enum emits @type X = int@, so its zero value is @0@ —
+    -- 'goZeroValue' needs this to distinguish from tagged ADTs
+    -- (@type X = rt.SkyADT@, zero @X{}@).
+    enumNames = Set.unions
+        [ Set.map (\n -> prefix ++ "_" ++ n)
+                 (Set.fromList
+                    [ uname
+                    | (uname, u) <- Map.toList (Can._unions depMod)
+                    , Can._u_opts u == Can.Enum
+                    ])
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+    arities = Map.unions
+        [ Map.mapKeys (\n -> prefix ++ "_" ++ goSafeName n)
+                      (Rec.collectFuncArities (Can._decls depMod))
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+    -- T2/T6: collect typed param + return signatures from every dep
+    -- module's annotated declarations. Names are module-prefixed
+    -- (Lib_Db_exec) to match the call-site emission convention.
+    -- Uses the merged record-alias set so cross-module record types
+    -- resolve.
+    triples =
+        [ collectFuncTypesWith earlyAllRecAliases prefix depMod
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1352,58 +1442,19 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- calls in Sky-source kernel bodies emitting
             -- `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)`
             -- adapters with bare TVars. See plan doc.
-            let depRecAliases = Set.unions
-                    [ Set.map (\n -> prefix ++ "_" ++ n)
-                             (Rec.collectRecordAliases (Can._aliases depMod))
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                -- All Sky-defined ADT/union names with the dep's module
-                -- prefix. safeReturnTypeFull uses this set to distinguish
-                -- "type Sky_Core_Error_Error = rt.SkyADT" (alias is
-                -- emitted, name is safe to use as a Go type) from
-                -- "Bufio_Scanner" (FFI-opaque, no Go alias exists, must
-                -- fall back to `any` so Go compilation succeeds).
-                depUnionNames = Set.unions
-                    [ Set.map (\n -> prefix ++ "_" ++ n)
-                             (Set.fromList (Map.keys (Can._unions depMod)))
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                -- v0.13 typed lowerer: dep-module ENUM union names
-                -- (prefixed).  An enum emits `type X = int`, so its
-                -- zero value is `0` — `goZeroValue` needs this to
-                -- distinguish from tagged ADTs (`type X = rt.SkyADT`,
-                -- zero `X{}`).
-                depEnumNames = Set.unions
-                    [ Set.map (\n -> prefix ++ "_" ++ n)
-                             (Set.fromList
-                                [ uname
-                                | (uname, u) <- Map.toList (Can._unions depMod)
-                                , Can._u_opts u == Can.Enum
-                                ])
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                depArities = Map.unions
-                    [ Map.mapKeys (\n -> prefix ++ "_" ++ goSafeName n)
-                                  (Rec.collectFuncArities (Can._decls depMod))
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                -- T2/T6: collect typed param + return signatures from
-                -- every dep module's annotated declarations. Names are
-                -- module-prefixed (Lib_Db_exec) to match the call-site
-                -- emission convention. Uses the merged record-alias
-                -- set so cross-module record types resolve.
-                depTriples =
-                    [ collectFuncTypesWith earlyAllRecAliases prefix depMod
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                depParamTypes = Map.unions [ p | (p, _, _) <- depTriples ]
-                depRetTypes = Map.unions [ r | (_, r, _) <- depTriples ]
-                depUltRetTypes = Map.unions [ u | (_, _, u) <- depTriples ]
+            --
+            -- v0.17 PR-α Stage 3b — five pure dep-sig Maps extracted
+            -- to 'deriveDepSigs'.  Local names below kept identical
+            -- so the rest of the solver phase (sig merging, codegen,
+            -- mono) is byte-identical to the legacy let-block.
+            let depSigs        = deriveDepSigs earlyAllRecAliases validDeps
+                depRecAliases  = dsRecAliases  depSigs
+                depUnionNames  = dsUnionNames  depSigs
+                depEnumNames   = dsEnumNames   depSigs
+                depArities     = dsArities     depSigs
+                depParamTypes  = dsParamTypes  depSigs
+                depRetTypes    = dsRetTypes    depSigs
+                depUltRetTypes = dsUltRetTypes depSigs
             -- v0.17 / 16-skychess close — seed globalUnionNames BEFORE
             -- the HM-time call to splitInferredSigWithReg at line 1857.
             -- The previous write site at line 4026 happens too late:
