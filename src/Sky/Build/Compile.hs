@@ -6963,21 +6963,37 @@ safeReturnTypeBootstrapViaPipeline recAliases ty =
         (GoType.mapSkyTypeToGo (GoType.bootstrapMappingContext recAliases) ty)
 
 
+-- v0.17 close — safeReturnTypeBootstrap now defaults to the pipeline.
+-- The legacy implementation is retained behind @SKY_RENDERER_BOOTSTRAP_LEGACY=1@
+-- as an emergency-bisect escape hatch, and the diff gate
+-- (@SKY_RENDERER_DIFF_BOOTSTRAP=1@) still surfaces per-input divergences
+-- between the two paths.
 safeReturnTypeBootstrap :: Set.Set String -> T.Type -> String
 safeReturnTypeBootstrap recAliases ty
+    | rendererBootstrapLegacyEnabled =
+        safeReturnTypeBootstrapLegacy recAliases ty
     | rendererDiffBootstrapEnabled =
         let legacy   = safeReturnTypeBootstrapLegacy recAliases ty
             pipeline = safeReturnTypeBootstrapViaPipeline recAliases ty
         in if legacy == pipeline
-            then legacy
+            then pipeline
             else unsafePerformIO $ do
                 hPutStrLn stderr $
                     "SKY_RENDERER_DIFF_BOOTSTRAP: legacy=" ++ show legacy
                         ++ " pipeline=" ++ show pipeline
                         ++ " aliases=" ++ show (Set.size recAliases)
                         ++ " sky-type=" ++ show ty
-                return legacy
-    | otherwise = safeReturnTypeBootstrapLegacy recAliases ty
+                return pipeline
+    | otherwise = safeReturnTypeBootstrapViaPipeline recAliases ty
+
+
+-- | v0.17 close — emergency-bisect escape hatch matching the
+-- 'SKY_RENDERER_LEGACY' shape used for 'solvedTypeToGo'.
+{-# NOINLINE rendererBootstrapLegacyEnabled #-}
+rendererBootstrapLegacyEnabled :: Bool
+rendererBootstrapLegacyEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_BOOTSTRAP_LEGACY"
+    return (v == Just "1" || v == Just "true")
 
 
 -- | v0.17 close — env-gated diff between legacy + pipeline bootstrap

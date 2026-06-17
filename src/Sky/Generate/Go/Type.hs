@@ -832,6 +832,30 @@ data MappingContext = MappingContext
       -- the renderer emits @Foo_R@ (or @Foo_R[args]@) instead of
       -- @struct {...}@ or a synthesised @Anon_R_…@ name.
       -- CONSUMED BY: 'mapRecordType'.  Source: 'Rec._cg_fieldIndex'.
+
+    -- v0.17 close — bootstrap-phase parity policy.
+    , mcDropTypeArgs :: !Bool
+      -- ^ When True, 'mapAliasType' suppresses the @[args]@
+      -- suffix on parametric record aliases so @TAlias ... [args]@
+      -- emits as @Foo_R@ instead of @Foo_R[any]@.  Needed for
+      -- bootstrap-phase callers (Compile.hs:safeReturnTypeBootstrap)
+      -- because the corresponding Go declarations at this phase are
+      -- non-parametric (@type Foo = rt.SkyADT@).  The full-env
+      -- callers want @Foo_R[args]@ — the parametric Go-generic
+      -- instantiation — so the default is False.  CONSUMED BY:
+      -- 'mapAliasType'.
+
+    , mcAssumeKnownUnion :: !Bool
+      -- ^ When True, 'mapNamedType' treats every otherwise-unknown
+      -- user-defined TType as if it were in 'mcUnionNames' — i.e.
+      -- emits the bare module-qualified base name instead of
+      -- @GoAny@.  Needed for bootstrap-phase callers because at
+      -- that point 'mcUnionNames' is empty (the union registry
+      -- isn't built yet) but every Sky user-ADT WILL be declared
+      -- as @type Foo = rt.SkyADT@ by the time the emitted Go
+      -- compiles.  Full-env callers want the @GoAny@ fallback
+      -- (where unknown means genuinely unresolved), so the default
+      -- is False.  CONSUMED BY: 'mapNamedType'.
     }
     deriving (Show)
 
@@ -859,6 +883,8 @@ defaultMappingContext = MappingContext
     , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
     , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
     , mcFieldIndex       = Map.empty
+    , mcDropTypeArgs     = False
+    , mcAssumeKnownUnion = False
     }
 
 
@@ -890,8 +916,10 @@ flatMappingContext = defaultMappingContext { mcTVarsToAny = True }
 -- and ships as part of the Phase D close.
 bootstrapMappingContext :: Set.Set String -> MappingContext
 bootstrapMappingContext recAliases = defaultMappingContext
-    { mcRecordAliases = recAliases
-    , mcTVarsToAny    = True
+    { mcRecordAliases    = recAliases
+    , mcTVarsToAny       = True
+    , mcDropTypeArgs     = True
+    , mcAssumeKnownUnion = True
     }
 
 
@@ -920,6 +948,8 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
     , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
     , mcFieldIndex       = Rec._cg_fieldIndex cgEnv
+    , mcDropTypeArgs     = False
+    , mcAssumeKnownUnion = False
     }
 
 
@@ -1065,7 +1095,15 @@ mapAliasType ctx home name typeArgs aliasTy =
                   then name
                   else prefix ++ "_" ++ name
 
-        renderedArgs = map (mapSkyTypeToGo ctx . snd) typeArgs
+        -- v0.17 close — bootstrap-phase parity.  When the context
+        -- requests args-suppressed output (legacy
+        -- 'safeReturnTypeBootstrap' shape), emit @[]@ instead of the
+        -- typed-args list so the rendered name is @Foo_R@ instead of
+        -- @Foo_R[any]@.  Full-env callers keep their parametric
+        -- instantiation.
+        renderedArgs
+            | mcDropTypeArgs ctx = []
+            | otherwise          = map (mapSkyTypeToGo ctx . snd) typeArgs
 
         allAliases = mcRecordAliases ctx
         qualifiedCandidates =
@@ -1106,6 +1144,7 @@ mapAliasType ctx home name typeArgs aliasTy =
                 Nothing
                     | isRecord -> GoNamed (base ++ "_R") renderedArgs
                     | isRuntimeOnly -> GoAny
+                    | mcAssumeKnownUnion ctx -> GoNamed base []
                     | isKnownUnion -> GoNamed base []
                     | Just unfolded <- chainUnfolded -> unfolded
                     | otherwise -> GoAny
@@ -1366,6 +1405,17 @@ mapNamedType ctx home name args
                                 -- @go build@ with @undefined: Route@.
                                 | name `elem` RuntimeMaps.runtimeOnlyTypes
                                                 -> GoAny
+                                -- v0.17 close — bootstrap-phase parity.
+                                -- When 'mcAssumeKnownUnion' is True the
+                                -- caller knows every user-defined ADT
+                                -- will get a @type Foo = rt.SkyADT@
+                                -- declaration emitted later (the union
+                                -- registry isn't built yet at this
+                                -- phase).  Emit the bare base name to
+                                -- match legacy 'safeReturnTypeBootstrap'
+                                -- output (Compile.hs:7095-7097).
+                                | mcAssumeKnownUnion ctx
+                                                -> GoNamed base []
                                 | isKnownUnion -> GoNamed base []
                                 -- v0.17 PR-22 S6 — UNKNOWN-NAME COLLAPSE.
                                 -- Mirrors legacy 'solvedTypeToGoBounded'
