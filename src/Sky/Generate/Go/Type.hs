@@ -890,6 +890,19 @@ data MappingContext = MappingContext
       -- arg is concrete (not a TVar), emits the typed sibling.
       -- Only @typeStrWithAliasesRegBoundedScopedViaPipeline@
       -- enables this.
+
+    , mcAliasSeen :: !(Set.Set String)
+      -- ^ v0.17 Phase F-3 cycle guard for 'mapAliasType'.  Set of
+      -- module-prefixed alias base names already on the recursion
+      -- path.  Re-entering an alias name already in this set
+      -- collapses the chain unfold to 'GoAny' — matches the
+      -- legacy 'seen' set in
+      -- 'typeStrWithAliasesRegBoundedScoped'
+      -- (Compile.hs:7994).  Without this guard, self-referential
+      -- aliases that fall through to @chainUnfolded@ enter an
+      -- unbounded structural recursion and the Haskell runtime
+      -- blackholes the thunk (\@\<\<loop\>\>\@).  Empty default —
+      -- only 'mapAliasType' threads it through recursive descents.
     }
     deriving (Show)
 
@@ -922,6 +935,7 @@ defaultMappingContext = MappingContext
     , mcTVarSubst        = []
     , mcDepModHint       = Nothing
     , mcHtmlTypedEmit    = False
+    , mcAliasSeen        = Set.empty
     }
 
 
@@ -990,6 +1004,7 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcTVarSubst        = []
     , mcDepModHint       = Nothing
     , mcHtmlTypedEmit    = False
+    , mcAliasSeen        = Set.empty
     }
 
 
@@ -1178,23 +1193,35 @@ mapAliasType ctx home name typeArgs aliasTy =
             Set.member base (mcUnionNames ctx)
                 || Set.member name (mcUnionNames ctx)
 
-        chainUnfolded = case aliasTy of
-            T.Hoisted inner -> Just (mapSkyTypeToGo ctx inner)
-            T.Filled  inner -> Just (mapSkyTypeToGo ctx inner)
-            _ -> Nothing
-    in case matches of
-        (m:_) -> GoNamed (m ++ "_R") renderedArgs
-        _ -> case qualHit of
-            Just q -> GoBare q
-            Nothing -> case runtimeHit of
-                Just r -> GoBare r
-                Nothing
-                    | isRecord -> GoNamed (base ++ "_R") renderedArgs
-                    | isRuntimeOnly -> GoAny
-                    | mcAssumeKnownUnion ctx -> GoNamed base []
-                    | isKnownUnion -> GoNamed base []
-                    | Just unfolded <- chainUnfolded -> unfolded
-                    | otherwise -> GoAny
+        -- v0.17 Phase F-3 cycle guard.  Re-entering the same alias
+        -- base name on the recursion path collapses to GoAny so a
+        -- self-referential alias chain terminates instead of black-
+        -- holing.  Mirror of the legacy seen-set guard at
+        -- 'Compile.hs:7994'.
+        cycleHit = Set.member base (mcAliasSeen ctx)
+        ctxNext  = ctx { mcAliasSeen = Set.insert base (mcAliasSeen ctx) }
+
+        chainUnfolded
+            | cycleHit  = Just GoAny
+            | otherwise = case aliasTy of
+                T.Hoisted inner -> Just (mapSkyTypeToGo ctxNext inner)
+                T.Filled  inner -> Just (mapSkyTypeToGo ctxNext inner)
+                _ -> Nothing
+    in if cycleHit
+        then GoAny
+        else case matches of
+            (m:_) -> GoNamed (m ++ "_R") renderedArgs
+            _ -> case qualHit of
+                Just q -> GoBare q
+                Nothing -> case runtimeHit of
+                    Just r -> GoBare r
+                    Nothing
+                        | isRecord -> GoNamed (base ++ "_R") renderedArgs
+                        | isRuntimeOnly -> GoAny
+                        | mcAssumeKnownUnion ctx -> GoNamed base []
+                        | isKnownUnion -> GoNamed base []
+                        | Just unfolded <- chainUnfolded -> unfolded
+                        | otherwise -> GoAny
 
 
 -- | v0.17 PR-22 S4 — detect FFI qualified-mangled flatten names.

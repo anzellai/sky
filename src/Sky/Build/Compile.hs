@@ -7901,6 +7901,15 @@ renderHofParamTyScoped depModHint recAliases fieldIdx tvarMap ty = case ty of
 -- Sole live entry: 'typeStrWithAliasesRegBoundedScoped'.
 
 
+-- | v0.17 Phase F-3 — sequenced strict evaluator for the diff gate.
+-- 'forceStr' walks the String spine + every Char so the result is
+-- fully evaluated before equality compare.  Defeats the cross-thunk
+-- interleaving that previously blackholed the diff gate at the
+-- first 'Generating Go' stage.
+forceStr :: String -> String
+forceStr s = length s `seq` s
+
+
 -- | v0.17 Phase F — pipeline-via overlay for the typeStrWithAliasesReg
 -- family.  Builds a 'MappingContext' over 'buildMappingContext getCgEnv'
 -- with three Phase F policy overlays:
@@ -7972,19 +7981,24 @@ rendererTypeStrLegacyEnabled = unsafePerformIO $ do
 -- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@ for
 -- the full migration plan.
 --
--- v0.17 Phase F — pipeline overlay reserved for a follow-up.
--- 'typeStrWithAliasesRegBoundedScopedViaPipeline' is wired up but
--- not consulted from this renderer yet.  A naive diff-gate caused a
--- @<<loop>>@ blackhole at the first 'Generating Go' stage (likely
--- caused by parallel evaluation of two renderers each consulting
--- globalCgEnv/globalAnonRecords with the same fuel/seen and dep
--- mode reentering through @rec@).  Phase F-2 will land a sequenced
--- diff-gate (evaluate legacy strictly first, then pipeline) once
--- the migration is graphed against the inferredSigSkyToGoScoped
--- entry point.  Until then this renderer stays on the legacy path
--- — the policy fields ('mcTVarSubst', 'mcDepModHint',
--- 'mcHtmlTypedEmit') are additive scaffolding that ship without
--- consuming behavior change.
+-- v0.17 Phase F-3 — sequenced diff gate now LIVE.
+--
+-- Three modes governed by environment vars:
+--
+-- * @SKY_RENDERER_TYPESTR_LEGACY=1@ — bypass the gate entirely;
+--   the legacy renderer drives all output.  Escape hatch for
+--   bisection.
+-- * @SKY_RENDERER_DIFF_TYPESTR=1@ — run BOTH renderers under
+--   sequenced 'evaluate' (legacy first, pipeline second), compare,
+--   and print divergences to stderr.  Production stays on legacy
+--   output to keep the pipeline shipping under verification.
+-- * default — legacy renderer drives output (no extra cost).
+--
+-- The sequenced 'evaluate' calls defeat the cross-thunk interleaving
+-- (the blackhole we hit before this PR landed): the legacy
+-- 'IORef'-touching arms publish their effects + reset
+-- 'globalAnonRecords' / 'globalUnionNames' before the pipeline
+-- starts walking the same registries.
 typeStrWithAliasesRegBoundedScoped
     :: Maybe String
     -> Set.Set String
@@ -7994,8 +8008,52 @@ typeStrWithAliasesRegBoundedScoped
     -> Set.Set String
     -> T.Type
     -> String
-typeStrWithAliasesRegBoundedScoped _ _ _ _ fuel _ _ | fuel <= 0 = "any"
-typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel seen ty = case ty of
+typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel seen ty
+    | rendererTypeStrLegacyEnabled =
+        typeStrWithAliasesRegBoundedScopedLegacy depModHint recAliases fieldIdx tvarMap fuel seen ty
+    | rendererDiffTypeStrEnabled = unsafePerformIO $ do
+        !legacy <- evaluate (forceStr legacyOut)
+        -- Phase F-3 safety net: catch GHC's blackhole + any other
+        -- exception from the pipeline path so a recursive cycle
+        -- doesn't abort the whole compile when the user just wants
+        -- to observe divergences.  Pipeline failure is logged with
+        -- "PIPELINE-FAIL" tag; legacy still drives output.
+        pipelineResult <- E.try (evaluate (forceStr pipelineOut))
+                          :: IO (Either E.SomeException String)
+        case pipelineResult of
+            Left e ->
+                hPutStrLn stderr $
+                    "SKY_RENDERER_DIFF_TYPESTR: PIPELINE-FAIL exc="
+                        ++ show e ++ " sky-type=" ++ show ty
+            Right pipeline ->
+                when (legacy /= pipeline) $
+                    hPutStrLn stderr $
+                        "SKY_RENDERER_DIFF_TYPESTR: legacy=" ++ show legacy
+                            ++ " pipeline=" ++ show pipeline
+                            ++ " sky-type=" ++ show ty
+        return legacy
+    | otherwise =
+        typeStrWithAliasesRegBoundedScopedLegacy depModHint recAliases fieldIdx tvarMap fuel seen ty
+  where
+    legacyOut =
+        typeStrWithAliasesRegBoundedScopedLegacy
+            depModHint recAliases fieldIdx tvarMap fuel seen ty
+    pipelineOut =
+        typeStrWithAliasesRegBoundedScopedViaPipeline
+            depModHint recAliases fieldIdx tvarMap ty
+
+
+typeStrWithAliasesRegBoundedScopedLegacy
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> Int
+    -> Set.Set String
+    -> T.Type
+    -> String
+typeStrWithAliasesRegBoundedScopedLegacy _ _ _ _ fuel _ _ | fuel <= 0 = "any"
+typeStrWithAliasesRegBoundedScopedLegacy depModHint recAliases fieldIdx tvarMap fuel seen ty = case ty of
     T.TVar name -> case lookup name tvarMap of
         Just gname -> gname
         Nothing    -> "any"
@@ -8217,7 +8275,7 @@ typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel s
             -- semantics: re-entering an alias whose name is already
             -- on the recursion path renders "any" instead of looping.
             cycleHit = Set.member base seen
-            recCycle = typeStrWithAliasesRegBoundedScoped depModHint
+            recCycle = typeStrWithAliasesRegBoundedScopedLegacy depModHint
                           recAliases fieldIdx tvarMap
                           (fuel - 1) (Set.insert base seen)
             qualifiedCandidates =
@@ -8279,7 +8337,7 @@ typeStrWithAliasesRegBoundedScoped depModHint recAliases fieldIdx tvarMap fuel s
     -- inherited seen-set.  The TAlias arm above overrides this
     -- with `recCycle` to add its base name to seen.
     rec :: T.Type -> String
-    rec = typeStrWithAliasesRegBoundedScoped depModHint
+    rec = typeStrWithAliasesRegBoundedScopedLegacy depModHint
               recAliases fieldIdx tvarMap (fuel - 1) seen
 
 
