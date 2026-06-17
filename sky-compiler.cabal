@@ -179,6 +179,7 @@ executable sky
     Sky.Generate.Go.Ir
     Sky.Generate.Go.Builder
     Sky.Generate.Go.RuntimeMaps
+    Sky.Generate.Go.AnonRecords
     Sky.Generate.Go.Type
     Sky.Generate.Go.Kernel
     Sky.Generate.Go.Record

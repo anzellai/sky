@@ -62,6 +62,8 @@ import Sky.Generate.Go.RuntimeMaps
     , qualifiedRuntimeTypedMap
     , runtimeTypedMap
     )
+import qualified Sky.Generate.Go.AnonRecords as AnonRec
+import Sky.Generate.Go.AnonRecords (globalAnonRecords, synthAnonRecordName)
 import qualified Sky.Build.ModuleGraph as Graph
 import qualified Sky.Build.Dce as Dce
 import qualified Sky.Build.FfiRegistry as FfiReg
@@ -187,22 +189,11 @@ globalDceDisabled :: IORef Bool
 globalDceDisabled = unsafePerformIO $ newIORef False
 
 
--- | v0.13 E: anon-record shape registry. Populated by
--- `synthAnonRecordName` whenever the renderer hits an unmatched
--- `T.TRecord` shape and synthesises a `Anon_R_<hash>` name.
--- Consumed by `generateAnonRecordDecls` (wired into `generateGoMulti`
--- before user decls) which emits one `type Anon_R_<hash> = struct
--- { ... }` per registered shape, plus a `gob.RegisterName` so the
--- session-store round-tripping works.
---
--- Pre-E (`sanitiseTypedDeep` rewriting `Anon_R_*` → `any`) was a
--- contract-violation cover-up: any function signature that
--- mentioned an anon-record collapsed to `any`-typed. Now the
--- struct decls actually exist, so the typed Go names round-trip
--- without the workaround.
-{-# NOINLINE globalAnonRecords #-}
-globalAnonRecords :: IORef (Map.Map String (Map.Map String T.FieldType))
-globalAnonRecords = unsafePerformIO $ newIORef Map.empty
+-- v0.13 E: anon-record shape registry — moved to
+-- 'Sky.Generate.Go.AnonRecords' (v0.17 PR-22 S2) so both the
+-- legacy renderer here and the new pipeline in
+-- 'Sky.Generate.Go.Type.mapRecordType' share the SAME IORef.
+-- Imported above as 'globalAnonRecords' + 'synthAnonRecordName'.
 
 
 -- | v0.16.5 #492 residual — CSE-resistant IORef read for pure
@@ -18290,49 +18281,7 @@ renderExhaustDiags ds = intercalate_ "\n  " (map render1 ds)
         in "at line " ++ show l ++ ":" ++ show c ++ " — " ++ hint
 
 
--- | Synthesise a deterministic Go struct name for an anonymous record.
--- Keyed by the full (fieldName, fieldType) shape so records with the
--- same field names but different field types are distinct Go types
--- (per P4). Format: `Anon_R_<sorted names>__<short hash of types>`.
---
--- The hash is a simple polynomial over the Show-representation of the
--- field types. It isn't cryptographic — we only need it to discriminate
--- between distinct shapes within a single compile unit.
-synthAnonRecordName :: Map.Map String T.FieldType -> String
-synthAnonRecordName fields =
-    let sorted = Map.toAscList fields
-        names  = map fst sorted
-        typeStr = concatMap (\(_, T.FieldType _ ty) -> show ty) sorted
-        nameTag = case names of
-            [] -> "Empty"
-            _  -> intercalate_ "_" (map sanitiseField names)
-        nameStr = "Anon_R_" ++ nameTag ++ "__" ++ shortHash (nameTag ++ typeStr)
-    in unsafePerformIO $ do
-        -- v0.13 E: register the shape so `generateAnonRecordDecls`
-        -- can emit a concrete Go struct decl for this name.
-        -- atomicModifyIORef' so racing typed-codegen passes (which
-        -- compute renderer strings concurrently for different
-        -- modules) accumulate every shape; the latest one wins on
-        -- collision because identical shapes hash to the same name.
-        atomicModifyIORef' globalAnonRecords
-            (\m -> (Map.insertWith (\_ old -> old) nameStr fields m, ()))
-        return nameStr
-  where
-    sanitiseField = map (\c -> if c == '.' || c == '\'' || c == '"' then '_' else c)
-
-
--- | Simple polynomial hash, base-32 encoded for short readable names.
-shortHash :: String -> String
-shortHash s =
-    let h = foldl (\acc c -> acc * 131 + fromIntegral (fromEnum c)) (17 :: Integer) s
-        absH = abs h
-    in take 8 (toBase32 absH)
-  where
-    toBase32 n
-        | n <= 0    = "0"
-        | otherwise = reverse (go n)
-    go 0 = ""
-    go n =
-        let (q, r) = n `divMod` 32
-            c     = "0123456789abcdefghijklmnopqrstuv" !! fromIntegral r
-        in c : go q
+-- v0.17 PR-22 S2 — 'synthAnonRecordName' + 'shortHash' moved to
+-- 'Sky.Generate.Go.AnonRecords' so both the legacy renderer and
+-- the new pipeline ('Sky.Generate.Go.Type.mapRecordType') populate
+-- the SAME 'globalAnonRecords' IORef.  Imported via 'AnonRec'.

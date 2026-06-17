@@ -22,6 +22,7 @@ import Data.List (isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Sky.Generate.Go.RuntimeMaps as RuntimeMaps
+import qualified Sky.Generate.Go.AnonRecords as AnonRec
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Type.Type as T
 import qualified Sky.Sky.ModuleName as ModuleName
@@ -777,6 +778,15 @@ data MappingContext = MappingContext
       -- fallback.  Closes the 1566+ hits of @undefined: Decoder@,
       -- @undefined: Sky_Core_Error_Error@, etc. that the previous
       -- bulk-replace surfaced.  Source: 'RuntimeMaps.runtimeTypedMap'.
+
+    -- v0.17 PR-22 S2 — anon-record + alias-lookup machinery.
+    , mcFieldIndex :: !Rec.RecordRegistry
+      -- ^ Map from field-name set → alias name.  Drives the legacy
+      -- 'lookupRecordAlias' shape inside 'mapRecordType': when an
+      -- anonymous Sky 'T.TRecord' matches a known alias's field set,
+      -- the renderer emits @Foo_R@ (or @Foo_R[args]@) instead of
+      -- @struct {...}@ or a synthesised @Anon_R_…@ name.
+      -- CONSUMED BY: 'mapRecordType'.  Source: 'Rec._cg_fieldIndex'.
     }
     deriving (Show)
 
@@ -803,6 +813,7 @@ defaultMappingContext = MappingContext
     -- (default, flat, buildMappingContext-derived) carries them.
     , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
     , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
+    , mcFieldIndex       = Map.empty
     }
 
 
@@ -842,6 +853,7 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcTVarsToAny     = False
     , mcQualRuntimeTyped = RuntimeMaps.qualifiedRuntimeTypedMap
     , mcRuntimeTypedMap  = RuntimeMaps.runtimeTypedMap
+    , mcFieldIndex       = Rec._cg_fieldIndex cgEnv
     }
 
 
@@ -893,16 +905,35 @@ mapSkyTypeToGo ctx t = case t of
         mapSkyTypeToGo ctx inner
 
 
--- | Map a closed-record type to a 'GoStruct'.
+-- | Map a closed-record type to its Go form.
+--
+-- v0.17 PR-22 S2 — mirror the legacy 'solvedTypeToGoBounded' arm
+-- (Compile.hs:17356-17366):
+--
+--   1. Look up @fields@ in 'mcFieldIndex'.  Match → emit
+--      @AliasName_R[args]@ or @AliasName_R@ (bare).  Args resolution
+--      is deferred to S3 — for now, bare @_R@ when there's a match.
+--   2. No match → 'AnonRec.synthAnonRecordName' produces a
+--      deterministic @Anon_R_…@ name AND registers the shape in the
+--      global registry, so 'generateAnonRecordDecls' emits the
+--      backing struct decl.  Emit @GoNamed synthName []@.
+--
+-- The pre-S2 fallback (inline @GoStruct@) diverged from the legacy
+-- renderer: legacy ALWAYS emits a named type — never an inline
+-- @struct{...}@.  An inline struct in a top-level type position
+-- breaks Go's @type@ rules (a struct literal type is not a
+-- well-formed type identifier in many positions).
 mapRecordType :: MappingContext -> Map.Map String T.FieldType -> GoType
 mapRecordType ctx fields =
-    GoStruct (map (mapField ctx) (Map.toList fields))
-  where
-    mapField c (name, T.FieldType _ ty) =
-        (capitalise name, mapSkyTypeToGo c ty)
-
-    capitalise [] = []
-    capitalise (c:cs) = toEnum (fromEnum c - 32) : cs
+    let names = Map.keys fields
+    in case Rec.lookupRecordAlias (mcFieldIndex ctx) names of
+        Just aliasName ->
+            -- S2 narrows to the bare-alias shape — typed-args
+            -- resolution lives in S3 because it requires
+            -- 'aliasGenericArgs' machinery still in Compile.
+            GoNamed (aliasName ++ "_R") []
+        Nothing ->
+            GoNamed (AnonRec.synthAnonRecordName fields) []
 
 
 -- | Map a named-type application (e.g. @List Int@, @Result Error Foo@,
