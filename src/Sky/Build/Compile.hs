@@ -103,15 +103,11 @@ globalUnionNames = unsafePerformIO $ newIORef Set.empty
 -- transitively imports Sky.Live's HTTP + DB + auth stack and only the
 -- side-effect init() registration was making it appear "used".
 --
--- Set lazily in the parse phase by `noteImportsForConsoleHint`
--- (called from `continueCompile` after `parseModule` succeeds for the
--- entry module + every dep) — every Src.Module's import list is
--- scanned. Reset to False at the start of every compile so successive
--- `sky build` invocations within one process (LSP, watch mode) see a
--- fresh accumulator.
-{-# NOINLINE globalConsoleNeeded #-}
-globalConsoleNeeded :: IORef Bool
-globalConsoleNeeded = unsafePerformIO $ newIORef False
+-- v0.17 IORef defusing #8 — @globalConsoleNeeded@ retired.  The
+-- console-import accumulator now flows as a pure @Bool@ from the
+-- parse loop (via 'consoleNeededFromImports') through
+-- 'generateGoMulti' / 'generateGo' and into 'collectGoImports'.  No
+-- mid-compile mutation, no reset cycle, no NOINLINE cargo.
 
 
 -- | v0.16.4 — gate for "the current `sky build` IS itself producing
@@ -1057,12 +1053,11 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- isolation for these refs is handled by `loadAndSeedFfiRegistry`'s
     -- own writeIORefs at the start of every `compile`.
 
-    -- v0.16.0 binary-size hardening: reset the console-needed flag at
-    -- the start of every compile so successive sky-build / LSP /
-    -- sky-watch invocations in one process see a fresh accumulator.
-    -- The flag is OR'd True later in this function as each parsed
-    -- Src.Module's imports are scanned by `noteImportsForConsoleHint`.
-    writeIORef globalConsoleNeeded False
+    -- v0.17 IORef defusing #8 — globalConsoleNeeded retired.  The
+    -- per-module 'consoleNeededFromImports' calls below produce a
+    -- 'Bool' that the parse loop ORs into 'consoleNeeded' for
+    -- threading down to 'generateGoMulti' / 'generateGo' /
+    -- 'collectGoImports'.  No reset cycle, no mutation, no IORef.
 
     -- v0.17 IORef defusing #3 — globalIsInlineConsoleBuild retired
     -- (pure CAF 'isInlineConsoleBuild' reads SKY_BUILD_IS_INLINE_CONSOLE
@@ -1078,12 +1073,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
         case Parse.parseModule src of
             Left err ->
                 return (modInfo, Left err)
-            Right srcMod -> do
-                -- v0.16.0 binary-size hardening: scan this module's
-                -- imports for Std.Live* / Sky.Http.Server* so
-                -- `collectGoImports` can conditionally emit the
-                -- blank `_ "sky-app/rt/console_app"` import.
-                noteImportsForConsoleHint srcMod
+            Right srcMod ->
                 return (modInfo, Right srcMod)
     let formatted = flip map parseResults $ \(modInfo, r) -> case r of
             Left err ->
@@ -1110,6 +1100,11 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
 
     let errors = [e | Left e <- parseResults']
         parsed = [(n, m) | Right (n, m) <- parseResults']
+        -- v0.17 IORef defusing #8 — OR every parsed module's
+        -- consoleNeededFromImports into a single Bool.  Threaded
+        -- down to 'generateGoMulti' / 'generateGo' /
+        -- 'collectGoImports' instead of stored in 'globalConsoleNeeded'.
+        consoleNeeded = any (consoleNeededFromImports . snd) parsed
 
     if not (null errors) then return (Left $ head errors)
       else if null parsed then return (Left "No modules found")
@@ -2169,7 +2164,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                           (Solve.withPerModuleEnv perModuleEnv
                             (Solve.withPerModuleRegions perModuleRegions
                                 (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                    goCodeRaw = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                    goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                     -- v0.13 Layer 2: collect Sky-name → source-region
                     -- for every top-level declaration so the post-emit
                     -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -2281,6 +2276,10 @@ parseSingle config entryPath outDir = do
                     Just (A.At _ names) -> concatMap id names
                     Nothing -> "Main"
                 declCount = length (Src._values srcMod) + length (Src._unions srcMod) + length (Src._aliases srcMod)
+                -- v0.17 IORef defusing #8 — single-module path: only the
+                -- entry module is visible, so the OR-accumulator collapses
+                -- to a single check.
+                consoleNeeded = consoleNeededFromImports srcMod
             putStrLn $ "   Module: " ++ modName
             putStrLn $ "   " ++ show declCount ++ " declarations"
 
@@ -2311,7 +2310,7 @@ parseSingle config entryPath outDir = do
 
                     -- Phase 5: Generate Go (using solved types)
                     putStrLn "-- Generating Go"
-                    let goCode = generateGo canMod srcMod config types
+                    let goCode = generateGo consoleNeeded canMod srcMod config types
 
                     -- Phase 6: Write output
                     createDirectoryIfMissing True outDir
@@ -3140,13 +3139,12 @@ typecheckWorkspace config entryPath = do
     let moduleOrder = Graph.compilationOrder modules
 
     -- Parse all
-    writeIORef globalConsoleNeeded False
+    -- v0.17 IORef defusing #8 — typecheckWorkspace doesn't reach codegen,
+    -- so it never read the console-needed accumulator.  The old reset +
+    -- per-module IORef write here were dead.
     parsed <- Async.forConcurrently moduleOrder $ \modInfo -> do
         src <- TIO.readFile (Graph._mi_path modInfo)
         let parseRes = Parse.parseModule src
-        case parseRes of
-            Right srcMod -> noteImportsForConsoleHint srcMod
-            Left _       -> return ()
         return (modInfo, src, parseRes)
     let okParsed =
             [ (Graph._mi_name mi, Graph._mi_path mi, src, m)
@@ -3950,8 +3948,8 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
+generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
+generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
     let
         imports = unsafePerformIO $ do
             -- v0.17 PR-α-7 — clear globalAnonRecords at codegen entry so
@@ -4155,7 +4153,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                         existingGoSig
                         updates
                 writeIORef globalGoSigMap updatedGoSig
-            return $ collectGoImports canMod srcMod
+            return $ collectGoImports consoleNeeded canMod srcMod
         -- Force `imports` before anything else so the env is set up
         -- before depDecls / decls are evaluated (they read getCgEnv).
         importsForced = imports `seq` imports
@@ -4406,14 +4404,14 @@ escapeGoString s = "\"" ++ concatMap esc s ++ "\""
 
 
 -- | Generate Go source from a canonical module with solved types (single module)
-generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
-generateGo canMod srcMod config solvedTypes =
+generateGo :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
+generateGo consoleNeeded canMod srcMod config solvedTypes =
     let
         imports = unsafePerformIO $ do
             let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
             writeIORef globalUnionNames $! Rec._cg_unionNames cgEnv
-            return $ collectGoImports canMod srcMod
+            return $ collectGoImports consoleNeeded canMod srcMod
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
@@ -4429,8 +4427,8 @@ generateGo canMod srcMod config solvedTypes =
 
 
 -- | Collect Go imports needed
-collectGoImports :: Can.Module -> Src.Module -> [GoIr.GoImport]
-collectGoImports _canMod srcMod =
+collectGoImports :: Bool -> Can.Module -> Src.Module -> [GoIr.GoImport]
+collectGoImports consoleNeeded _canMod srcMod =
     -- Import as blank to avoid "imported and not used" when user's main is
     -- a pure value. If main uses rt.* anywhere, Go doesn't complain about
     -- adding a blank import alongside the aliased one.
@@ -4467,7 +4465,7 @@ collectGoImports _canMod srcMod =
             -- the post-transform `package console_app` would import
             -- itself and `go build` rejects the cycle.
             []
-         else if readIORefNoCse globalConsoleNeeded
+         else if consoleNeeded
                  || entryUsesConsole
               then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
               else [] )
@@ -4500,17 +4498,22 @@ collectGoImports _canMod srcMod =
 
 
 -- | v0.16.0 binary-size hardening: scan a parsed Src.Module's imports
--- and OR the console-needed flag into the global accumulator. Called
--- once per parsed module during the parse phase. Triggers on any
--- import whose dotted path begins with `Std.Live` or
--- `Sky.Http.Server` — both runtimes call `MountEmbeddedConsole` which
--- requires the inline-console subpackage's init() registration.
--- Module name prefixes are matched at SEGMENT boundaries so a future
--- `Std.LiveExt`-shaped name doesn't accidentally trigger.
-noteImportsForConsoleHint :: Src.Module -> IO ()
-noteImportsForConsoleHint srcMod =
-    let needed = any importTriggersConsole (Src._imports srcMod)
-    in when needed (writeIORef globalConsoleNeeded True)
+-- to decide whether the console-needed flag must flip True for this
+-- compile.  Triggers on any import whose dotted path begins with
+-- @Std.Live@ or @Sky.Http.Server@ — both runtimes call
+-- @MountEmbeddedConsole@ which requires the inline-console
+-- subpackage's @init()@ registration.  Module name prefixes are
+-- matched at SEGMENT boundaries so a future @Std.LiveExt@-shaped name
+-- doesn't accidentally trigger.
+--
+-- v0.17 IORef defusing #8 — pure 'Src.Module -> Bool'.  The previous
+-- 'noteImportsForConsoleHint :: Src.Module -> IO ()' wrote into
+-- 'globalConsoleNeeded'; that IORef is retired.  Callers now OR the
+-- per-module 'Bool' results into a single accumulator and thread it
+-- through to 'collectGoImports'.
+consoleNeededFromImports :: Src.Module -> Bool
+consoleNeededFromImports srcMod =
+    any importTriggersConsole (Src._imports srcMod)
   where
     importTriggersConsole imp =
         let A.At _ segs = Src._importName imp
