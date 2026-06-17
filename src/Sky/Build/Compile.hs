@@ -16217,13 +16217,13 @@ inferListElemGoType types e
     -- actual type. Detected by walking the AST element-by-element.
     | literalListElementsPolymorphic types e = "any"
     | otherwise = case inferExprType types e of
-        Just (T.TType _ "List" [elemTy]) -> sanitiseTypedElem (solvedTypeToGo elemTy)
+        Just (T.TType _ "List" [elemTy]) -> solvedTypeToGo elemTy
         Just (T.TAlias _ _ _ aliasInner) ->
             let inner = case aliasInner of
                     T.Filled  i -> i
                     T.Hoisted i -> i
             in case inner of
-                T.TType _ "List" [elemTy] -> sanitiseTypedElem (solvedTypeToGo elemTy)
+                T.TType _ "List" [elemTy] -> solvedTypeToGo elemTy
                 _ -> "any"
         _ -> "any"
 
@@ -16349,14 +16349,11 @@ literalListElementsPolymorphic _ _ = False
 -- name and replaces the key with a TVar (resolves to "any" in
 -- solvedTypeToGo). With the conflict-detection merge, this filter
 -- is no longer load-bearing for the `rt.*` class.
--- v0.17 #648 verification — sanitiseTypedElem is being tested as a
--- pass-through.  The historical Anon_R_<hash> → "any" rewrite was a
--- workaround for cross-module name shadowing; the root cause was
--- closed by typesWithDeps's conflict-detection merge, so the rewrite
--- should be redundant.  If the example sweep stays 26/26 with this
--- pass-through, the function (and all 5 call sites) get deleted.
-sanitiseTypedElem :: String -> String
-sanitiseTypedElem = id
+-- v0.17 #648 — sanitiseTypedElem deleted.  Confirmed pass-through
+-- across 26 examples + 688 cabal tests; the historical Anon_R_<hash>
+-- → "any" rewrite was workaround for cross-module name shadowing that
+-- typesWithDeps's conflict-detection merge closed years ago.  All 5
+-- call sites inlined to direct solvedTypeToGo / value references.
 
 
 -- v0.17 — 'sanitiseTypedDeep' was a no-op (s = s) preserved as a
@@ -16645,7 +16642,7 @@ kernelTypedCall types modName funcName args goArgs =
                     (ModuleName.toString home) ++ "_" ++ name
             in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
                 Just params | length params > idx ->
-                    let s = sanitiseTypedElem (params !! idx)
+                    let s = params !! idx
                     in if s == "any" then Nothing else Just s
                 _ -> Nothing
         -- Derive the lambda's RETURN type (B in `a -> b`) from a
@@ -16659,8 +16656,7 @@ kernelTypedCall types modName funcName args goArgs =
                         (ModuleName.toString home) ++ "_" ++ name
                 in case Map.lookup qualKey (Rec._cg_funcRetType env) of
                     Just r ->
-                        let s = sanitiseTypedElem r
-                        in if s == "any" then Nothing else Just s
+                        if r == "any" then Nothing else Just r
                     _ -> Nothing
             _ -> Nothing
         -- Prefer the lambda-input-derived element type; fall back
@@ -16969,7 +16965,7 @@ kernelTypedCall types modName funcName args goArgs =
                     A.At _ (Can.Lambda _ body) ->
                         let innermost = peelLambda body
                         in case inferExprType types innermost of
-                            Just bodyTy -> sanitiseTypedElem (solvedTypeToGo bodyTy)
+                            Just bodyTy -> solvedTypeToGo bodyTy
                             Nothing -> "any"
                     _ -> "any"
                 -- Route as long as the OUTPUT type is concrete. Even
