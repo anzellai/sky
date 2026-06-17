@@ -596,20 +596,36 @@ withScopedEnclosingTypeParams tps x = unsafePerformIO $ do
 -- @rt.MaybeCoerce[any](...)@ emission with an empty scope set —
 -- the assignment @m = rt.MaybeCoerce[any](__tco_t1)@ then failed
 -- against @m@'s declared @rt.SkyMaybe[T1]@ type.
+-- v0.17 PR-17b — null-tps early-out RETIRED.
+--
+-- The early-out at this site was a perf optimisation that skipped
+-- the read/write/seq/restore round-trip when no generic params
+-- needed pushing.  But it had a load-bearing side effect: it kept
+-- the body's render-time scope = the AMBIENT scopeStateRef value
+-- at outer-print time, not at decl-construction time.  When a
+-- sibling decl in the same dep module had non-empty depTypeParams
+-- and ran AFTER this one in the emission order, its scope push
+-- leaked into the first decl's bodyExpr thunks — re-introducing
+-- the T1 leak class that v0.17 PR-17a fixed at the entry-module
+-- side.
+--
+-- Always force, even with empty tps, to snap every lazy IORef
+-- read (enclosingTypeParamInScope / globalCgEnv / globalAnonRecords)
+-- inside the body NOW, before any sibling decl shifts state.
+-- The Set.union {} prev = prev semantics of the empty-tps push
+-- make this safe; only the eager force matters.
 withScopedEnclosingTypeParamsStmts :: [String] -> [GoIr.GoStmt] -> [GoIr.GoStmt]
-withScopedEnclosingTypeParamsStmts tps stmts
-    | null tps  = stmts
-    | otherwise = unsafePerformIO $ do
-        prev <- readIORef scopeStateRef
-        writeIORef scopeStateRef (LC.withEnclosingTypeParams tps prev)
-        let rendered = unlines (concatMap GoBuilder.renderStmt stmts)
-            forced = length rendered
-        forced `seq` writeIORef scopeStateRef prev
-        -- Return a single GoExprStmt containing a GoRaw — the
-        -- rendered text contains complete statements, so emitting
-        -- it verbatim at the body-list level preserves Go's
-        -- statement boundaries.
-        return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
+withScopedEnclosingTypeParamsStmts tps stmts = unsafePerformIO $ do
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withEnclosingTypeParams tps prev)
+    let rendered = unlines (concatMap GoBuilder.renderStmt stmts)
+        forced = length rendered
+    forced `seq` writeIORef scopeStateRef prev
+    -- Return a single GoExprStmt containing a GoRaw — the
+    -- rendered text contains complete statements, so emitting
+    -- it verbatim at the body-list level preserves Go's
+    -- statement boundaries.
+    return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
 
 
 -- | Membership test: is `t` a generic type parameter declared on
@@ -3730,9 +3746,20 @@ generateDeclsForDep canMod modPrefix =
               -- pins in-scope TVars instead of widening them to `any`.
               -- Outermost wrapper: scope must be live when the inner
               -- scopes' render-forcing fires.
-              bodyExpr = if null depTypeParams
-                  then bodyExpr0
-                  else withScopedEnclosingTypeParams depTypeParams bodyExpr0
+              --
+              -- v0.17 PR-17b — the prior `if null depTypeParams then
+              -- bodyExpr0 else ...` early-out left non-generic dep
+              -- decls' bodyExpr as lazy GoExpr trees.  IORef-reading
+              -- thunks inside them (enclosingTypeParamInScope /
+              -- globalCgEnv) deferred evaluation to outer-print time,
+              -- so a sibling generic dep decl's scope push could leak
+              -- into the non-generic decl's body — 13-skyshop's
+              -- Lib_Db_snapshotToDict emitted `rt.AsMapT[T1](rawData)`
+              -- where T1 was the sibling's param.  Always wrap, even
+              -- with empty depTypeParams, to snap the body's lazy
+              -- reads NOW.  Set.union {} prev = prev makes empty-tps
+              -- a no-op semantically; only the eager force matters.
+              bodyExpr = withScopedEnclosingTypeParams depTypeParams bodyExpr0
               -- v0.14.x TCO: same shape as the entry-module emission.
               -- Tail-recursive dep functions (Sky.Core.List.foldl,
               -- find, any, all, …) emit as a `for {}` loop with
