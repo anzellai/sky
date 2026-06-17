@@ -6944,8 +6944,56 @@ ultimateReturnType t                  = t
 -- @T.TLambda _ _@ arm (renders function types) that Full lacks
 -- because Full is called after alias resolution is complete and
 -- function-typed slots already have a typed Go rendering elsewhere.
+-- | v0.17 close — pipeline-routed sibling of 'safeReturnTypeBootstrap'.
+--
+-- Mirrors the structural shape established by 'solvedTypeToGoViaPipelineFlat':
+-- delegate to 'GoType.mapSkyTypeToGo' with a phase-appropriate
+-- 'MappingContext' (here 'bootstrapMappingContext', carrying the
+-- caller's alias set + TVars→any policy + empty everything else).
+--
+-- Today this is the additive landing point — neither default nor opt-in
+-- yet.  The next slice flips a diff gate so a sweep with
+-- @SKY_RENDERER_DIFF_BOOTSTRAP=1@ logs per-input divergence between
+-- this and the legacy 'safeReturnTypeBootstrap'.  Subsequent slices
+-- close any divergence, then flip the default + delete the legacy
+-- body.
+safeReturnTypeBootstrapViaPipeline :: Set.Set String -> T.Type -> String
+safeReturnTypeBootstrapViaPipeline recAliases ty =
+    GoType.renderGoType GoType.defaultRenderEnv
+        (GoType.mapSkyTypeToGo (GoType.bootstrapMappingContext recAliases) ty)
+
+
 safeReturnTypeBootstrap :: Set.Set String -> T.Type -> String
-safeReturnTypeBootstrap recAliases = go 64 Set.empty
+safeReturnTypeBootstrap recAliases ty
+    | rendererDiffBootstrapEnabled =
+        let legacy   = safeReturnTypeBootstrapLegacy recAliases ty
+            pipeline = safeReturnTypeBootstrapViaPipeline recAliases ty
+        in if legacy == pipeline
+            then legacy
+            else unsafePerformIO $ do
+                hPutStrLn stderr $
+                    "SKY_RENDERER_DIFF_BOOTSTRAP: legacy=" ++ show legacy
+                        ++ " pipeline=" ++ show pipeline
+                        ++ " aliases=" ++ show (Set.size recAliases)
+                        ++ " sky-type=" ++ show ty
+                return legacy
+    | otherwise = safeReturnTypeBootstrapLegacy recAliases ty
+
+
+-- | v0.17 close — env-gated diff between legacy + pipeline bootstrap
+-- renderers.  Same pattern as 'SKY_RENDERER_DIFF' for solvedTypeToGo
+-- (Phase C of PR-22).  Use to enumerate inputs where the pipeline
+-- output diverges from legacy, then close those gaps in mapSkyTypeToGo
+-- before flipping the default.
+{-# NOINLINE rendererDiffBootstrapEnabled #-}
+rendererDiffBootstrapEnabled :: Bool
+rendererDiffBootstrapEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_DIFF_BOOTSTRAP"
+    return (v == Just "1" || v == Just "true")
+
+
+safeReturnTypeBootstrapLegacy :: Set.Set String -> T.Type -> String
+safeReturnTypeBootstrapLegacy recAliases = go 64 Set.empty
   where
     -- Extract module prefixes that appear in the alias set (everything
     -- before the last "_"). Lets us find "State_Model_R" from a TType

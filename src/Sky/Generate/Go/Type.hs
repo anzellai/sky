@@ -874,6 +874,27 @@ flatMappingContext :: MappingContext
 flatMappingContext = defaultMappingContext { mcTVarsToAny = True }
 
 
+-- | v0.17 close — bootstrap-phase MappingContext.  Used by
+-- 'Sky.Build.Compile.safeReturnTypeBootstrap' (and its callers
+-- across cross-module-externals building) at sites that run BEFORE
+-- 'globalCgEnv' is finalised — only the alias set is available.
+--
+-- Compared to 'defaultMappingContext':
+-- * 'mcRecordAliases' is populated from the caller's @Set String@.
+-- * 'mcTVarsToAny' is True (matches legacy @safeReturnTypeBootstrap@'s
+--   TVar-to-"any" semantics).
+-- * Every other registry stays empty — no union recovery, no
+--   field-index lookup (since 'globalCgEnv' isn't finalised yet).
+--
+-- This is the structural counterpart to the legacy bootstrap path
+-- and ships as part of the Phase D close.
+bootstrapMappingContext :: Set.Set String -> MappingContext
+bootstrapMappingContext recAliases = defaultMappingContext
+    { mcRecordAliases = recAliases
+    , mcTVarsToAny    = True
+    }
+
+
 -- | Build a 'MappingContext' from the codegen environment that today's
 -- 'solvedTypeToGo' reads ambient via 'getCgEnv'.  This is the structural
 -- counterpart to the IORef-soup approach — same data, threaded explicitly.
