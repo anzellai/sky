@@ -1193,6 +1193,89 @@ canonPhase entryPath moduleOrder entrySrcMod depModules = do
                     return $ CanonOk canMod validDeps
 
 
+-- | v0.17 PR-α Stage 3a — early cgEnv seed phase.  Extracted from
+-- continueCompile (was lines 1258-1318 of the monolithic
+-- function).  Populates 'globalAllAliases' + 'globalAllFieldIdx'
+-- IORefs and primes 'globalCgEnv's typed-func-table fields
+-- BEFORE dep-decl emission, so cross-module call-site codegen
+-- can resolve typed param types.
+--
+-- Returns 'earlyAllRecAliases' — the rec-alias set the downstream
+-- 'depRecAliases'/'depTriples' computations need (in continueCompile
+-- between Stage 3a and the eventual Stage 3b solver extraction).
+--
+-- The 3 IORef writes stay alive (they are the channels the lowerer
+-- reads from); the returned 'Set' enables future Stage-3b-onwards
+-- substages to thread the value explicitly without re-deriving.
+seedEarlyCgEnv
+    :: Can.Module
+    -> [(String, Can.Module)]
+    -> IO (Set.Set String)
+seedEarlyCgEnv canMod validDeps = do
+    -- v0.15 Stage E — populate the all-alias map EARLY (before
+    -- any sig emission) so the parametric-alias generic-args
+    -- renderer can recover alias type-args from row-poly HM
+    -- inferred records.  Both raw + prefixed alias names are
+    -- registered so the lookup-with-prefix-strip path always
+    -- resolves.
+    let allAliasesMap = Map.unions
+            (Can._aliases canMod
+             : [ Map.mapKeys (\n -> prefix ++ "_" ++ n)
+                              (Can._aliases dm)
+               | (mn, dm) <- validDeps
+               , let prefix = map (\c -> if c == '.' then '_' else c) mn
+               ]
+             ++ [ Can._aliases dm | (_, dm) <- validDeps ])
+    writeIORef globalAllAliases allAliasesMap
+    -- v0.15 Stage E — same for the field-index registry.  Used by
+    -- 'tvarsInEmitted' to detect parametric-alias-shaped records
+    -- WITHOUT triggering the cgEnv lazy thunk's `<<loop>>` black-hole
+    -- during env construction.
+    let allFieldIdx = Map.union
+            (Rec.buildRegistry (Can._aliases canMod))
+            (Rec.buildDepFieldIndex
+                [ (prefix, Can._aliases dm)
+                | (mn, dm) <- validDeps
+                , let prefix = map (\c -> if c == '.' then '_' else c) mn
+                ])
+    writeIORef globalAllFieldIdx allFieldIdx
+    -- T2/T6: prime the global codegen env's function-type tables
+    -- BEFORE dep-decl emission, so call-site codegen in dep bodies
+    -- (Can.Call → coerceCallArgs) can see typed param types for
+    -- cross-module calls.
+    let earlyAllRecAliases = Set.unions
+            [ Set.union
+                (Rec.collectRecordAliases (Can._aliases m))
+                (Set.map (\n -> p ++ "_" ++ n)
+                         (Rec.collectRecordAliases (Can._aliases m)))
+            | (mn, m) <- validDeps
+            , let p = map (\c -> if c == '.' then '_' else c) mn
+            ] `Set.union`
+            Rec.collectRecordAliases (Can._aliases canMod)
+        earlyDepTriples =
+            [ collectFuncTypesWith earlyAllRecAliases prefix depMod
+            | (modName, depMod) <- validDeps
+            , let prefix = map (\c -> if c == '.' then '_' else c) modName
+            ]
+        earlyDepParamTypes = Map.unions
+            [ p | (p, _, _) <- earlyDepTriples ]
+        earlyDepRetTypes = Map.unions
+            [ r | (_, r, _) <- earlyDepTriples ]
+        earlyDepUltRetTypes = Map.unions
+            [ u | (_, _, u) <- earlyDepTriples ]
+        (earlyEntryParams, earlyEntryRet, earlyEntryUltRet) =
+            collectFuncTypesWith earlyAllRecAliases "" canMod
+    modifyIORef globalCgEnv $ \e -> e
+        { Rec._cg_funcParamTypes =
+            Map.union earlyEntryParams earlyDepParamTypes
+        , Rec._cg_funcRetType =
+            Map.union earlyEntryRet earlyDepRetTypes
+        , Rec._cg_funcUltimateRetType =
+            Map.union earlyEntryUltRet earlyDepUltRetTypes
+        }
+    return earlyAllRecAliases
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1255,67 +1338,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
          CanonDepError marker -> return (Left marker)
          CanonEntryError      -> return (Left "Canonicalise error")
          CanonOk canMod validDeps -> do
-            -- v0.15 Stage E — populate the all-alias map EARLY (before
-            -- any sig emission) so the parametric-alias generic-args
-            -- renderer can recover alias type-args from row-poly HM
-            -- inferred records.  Both raw + prefixed alias names are
-            -- registered so the lookup-with-prefix-strip path always
-            -- resolves.
-            let allAliasesMap = Map.unions
-                    (Can._aliases canMod
-                     : [ Map.mapKeys (\n -> prefix ++ "_" ++ n)
-                                      (Can._aliases dm)
-                       | (mn, dm) <- validDeps
-                       , let prefix = map (\c -> if c == '.' then '_' else c) mn
-                       ]
-                     ++ [ Can._aliases dm | (_, dm) <- validDeps ])
-            writeIORef globalAllAliases allAliasesMap
-            -- v0.15 Stage E — same for the field-index registry.
-            -- Used by `tvarsInEmitted` to detect parametric-alias-
-            -- shaped records WITHOUT triggering the cgEnv lazy
-            -- thunk's `<<loop>>` black-hole during env construction.
-            let allFieldIdx = Map.union
-                    (Rec.buildRegistry (Can._aliases canMod))
-                    (Rec.buildDepFieldIndex
-                        [ (prefix, Can._aliases dm)
-                        | (mn, dm) <- validDeps
-                        , let prefix = map (\c -> if c == '.' then '_' else c) mn
-                        ])
-            writeIORef globalAllFieldIdx allFieldIdx
-            -- T2/T6: prime the global codegen env's function-type
-            -- tables BEFORE dep-decl emission, so call-site codegen
-            -- in dep bodies (Can.Call → coerceCallArgs) can also see
-            -- typed param types for cross-module calls.
-            let earlyAllRecAliases = Set.unions
-                    [ Set.union
-                        (Rec.collectRecordAliases (Can._aliases m))
-                        (Set.map (\n -> p ++ "_" ++ n)
-                                 (Rec.collectRecordAliases (Can._aliases m)))
-                    | (mn, m) <- validDeps
-                    , let p = map (\c -> if c == '.' then '_' else c) mn
-                    ] `Set.union`
-                    Rec.collectRecordAliases (Can._aliases canMod)
-                earlyDepTriples =
-                    [ collectFuncTypesWith earlyAllRecAliases prefix depMod
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                earlyDepParamTypes = Map.unions
-                    [ p | (p, _, _) <- earlyDepTriples ]
-                earlyDepRetTypes = Map.unions
-                    [ r | (_, r, _) <- earlyDepTriples ]
-                earlyDepUltRetTypes = Map.unions
-                    [ u | (_, _, u) <- earlyDepTriples ]
-                (earlyEntryParams, earlyEntryRet, earlyEntryUltRet) =
-                    collectFuncTypesWith earlyAllRecAliases "" canMod
-            modifyIORef globalCgEnv $ \e -> e
-                { Rec._cg_funcParamTypes =
-                    Map.union earlyEntryParams earlyDepParamTypes
-                , Rec._cg_funcRetType =
-                    Map.union earlyEntryRet earlyDepRetTypes
-                , Rec._cg_funcUltimateRetType =
-                    Map.union earlyEntryUltRet earlyDepUltRetTypes
-                }
+            -- v0.17 PR-α Stage 3a — early cgEnv seed extracted to
+            -- 'seedEarlyCgEnv'.  Populates globalAllAliases +
+            -- globalAllFieldIdx + primes globalCgEnv's func-type
+            -- tables; returns earlyAllRecAliases used by
+            -- depRecAliases/depTriples downstream.
+            earlyAllRecAliases <- seedEarlyCgEnv canMod validDeps
             -- v0.13 Stage 1 (task #189) — depDecls computation moved
             -- LATER in the pipeline (just before generateGoMulti) so
             -- the dep-emit-time `getCgEnv` sees `funcSkyToGoTVars`
