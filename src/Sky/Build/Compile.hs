@@ -356,14 +356,13 @@ globalKernelAlias :: IORef (Map.Map (ModuleName.Canonical, String) (String, Stri
 globalKernelAlias = unsafePerformIO $ newIORef Map.empty
 
 
--- | v0.13 Phase A4: the set of specialised function names that
--- `generateGoMulti` actually emitted as separate Go decls.  Used
--- by `instanceMangledName` to gate call-site mangled-name
--- rewriting — only use the mangled name when its spec exists,
--- else fall back to the generic version.
-{-# NOINLINE globalEmittedSpecs #-}
-globalEmittedSpecs :: IORef (Set.Set String)
-globalEmittedSpecs = unsafePerformIO $ newIORef Set.empty
+-- v0.17 IORef defusing #5 — @globalEmittedSpecs@ deleted.  The
+-- IORef carried the set of specialised function names that
+-- @generateGoMulti@ actually emitted.  Reader was
+-- @instanceMangledName@'s mangled-name-rewriting gate, but the
+-- mangled-name path was reworked when σ-projection landed and the
+-- reader fell away.  3 writes / 0 reads at deletion time; safe
+-- code-only removal.
 
 
 -- | v0.13 Phase A4: per-callee annotation Forall quantifier-name list,
@@ -1050,7 +1049,6 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     writeIORef globalAnnotMap Map.empty
     writeIORef globalKernelAlias Map.empty
     writeIORef globalCsiByCallee Map.empty
-    writeIORef globalEmittedSpecs Set.empty
     writeIORef globalGoSigMap Map.empty
     writeIORef globalAllAliases Map.empty
     writeIORef globalAllFieldIdx Map.empty
@@ -1796,39 +1794,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- Opt-in cross-check via SKY_GOSIG_DIFF=1 emits
                     -- stderr warnings on any divergence (caught
                     -- BEFORE the side-table delete in a later commit).
-                    goSigMapForSpec <- readIORef globalGoSigMap
-                    let lookupSkyToGo skyName =
-                            let goName = map (\c -> if c == '.' then '_' else c) skyName
-                                fromSig = Map.lookup skyName goSigMapForSpec >>= _gs_typeParams
-                            in case fromSig of
-                                Just pairs -> pairs
-                                Nothing    ->
-                                    Map.findWithDefault []
-                                        goName
-                                        (Rec._cg_funcSkyToGoTVars env0)
-                        lookupQuants skyName =
-                            case Map.lookup skyName goSigMapForSpec of
-                                Just sig -> case _gs_annotation sig of
-                                    Just (T.Forall vs _) -> filter (/= "any") vs
-                                    Nothing -> case Map.lookup skyName annotMap of
-                                        Just (T.Forall vs _) -> filter (/= "any") vs
-                                        Nothing -> []
-                                Nothing -> case Map.lookup skyName annotMap of
-                                    Just (T.Forall vs _) -> filter (/= "any") vs
-                                    Nothing -> []
-                    let specNames = Set.fromList
-                            [ Mono.mangleInstance
-                                (Solve.CallInstance skyName tys [])
-                            | (skyName, tys) <- Set.toList reached
-                            , not (null tys)
-                            , let skyToGo = lookupSkyToGo skyName
-                                  quants  = lookupQuants skyName
-                                  σ_sky = Map.fromList (zip quants tys)
-                                  σ_go = [() | (sn, _) <- skyToGo
-                                             , Map.member sn σ_sky ]
-                            , not (null σ_go)
-                            ]
-                    writeIORef globalEmittedSpecs specNames
+                    -- v0.17 IORef defusing #5 — globalEmittedSpecs
+                    -- retired (dead IORef).  The let-bound
+                    -- lookupSkyToGo / lookupQuants helpers that fed
+                    -- the specNames computation were dropped with it;
+                    -- the GoSig differential below reads its target
+                    -- map directly via _gs_* accessors and never
+                    -- needed those helpers.
                     -- v0.17 GoSig differential self-check (opt-in via
                     -- SKY_GOSIG_DIFF=1).  Compares globalGoSigMap to
                     -- the legacy side-tables at the σ-projection site;
@@ -4389,12 +4361,10 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                 -- Go; emitting both is a `redeclared in this block`
                 -- compile error. Map.fromList collapses on the key.
                 dedupedSpecs = Map.toList (Map.fromList emittedSpecs)
-                specNames = Set.fromList (map fst dedupedSpecs)
                 specials = map snd dedupedSpecs
-            -- Record emitted spec names so call sites can decide
-            -- whether to use the mangled name or fall back to the
-            -- generic version.
-            writeIORef globalEmittedSpecs specNames
+            -- v0.17 IORef defusing #5 — globalEmittedSpecs retired
+            -- (dead IORef, write-only).  specNames Set.fromList drop
+            -- is part of the cleanup.
             return specials
         -- v0.13 Phase A4: keep generic versions alongside specs.
         -- Drop pass tracked for v0.14 — needs spec emission to
