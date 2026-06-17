@@ -1441,6 +1441,90 @@ buildGoSigMap annotMap csiByCallee funcSkyToGoTVars =
         [ (skyName, mkGoSig skyName) | skyName <- Set.toList allCalleeNames ]
 
 
+-- | v0.17 PR-α Stage 3g — pure whole-program DCE reachability.
+--
+-- Builds the @(entryModName, canMod) : validDeps@ allModsMap and
+-- runs 'Dce.reachableWholeProgram' from the entry module's @"main"@
+-- with no externally-pinned roots.  The result is the set of every
+-- @VarTopLevel@ / @VarKernel@ (FFI) / @VarCtor@ ref reachable from
+-- main across module boundaries — codegen consults it to prune
+-- unreachable Sky-side decls + FFI bindings before lowering.
+--
+-- Pure, no IORef I/O; the caller writes the result to
+-- @globalReachableProgram@ when DCE is enabled.
+computeReachableProgram
+    :: Src.Module
+    -> Can.Module
+    -> [(String, Can.Module)]
+    -> Set.Set Dce.Ref
+computeReachableProgram entrySrcMod canMod validDeps =
+    let entryModName = case mainModuleName entrySrcMod of
+            Just n  -> n
+            Nothing -> "Main"
+        allModsMap = Map.fromList ((entryModName, canMod) : validDeps)
+    in Dce.reachableWholeProgram entryModName allModsMap Set.empty
+
+
+-- | v0.17 PR-α Stage 3f — flat (modName, line, col) → CallInstance
+-- registry consumed by 'Mono.reachableInstances'.
+--
+-- Same iteration shape as 'buildCsiByRegion' but emits a flat value
+-- (single 'CallInstance' instead of a nested 'Map callee instance')
+-- and folds duplicates via 'Map.fromList' (LAST-write-wins) rather
+-- than 'Map.fromListWith Map.union' — Mono's reachability walker
+-- consumes one instance per key and won't notice the last-wins
+-- discriminator since CSIs at the same (mod, line, col) point to
+-- the same call expression.
+buildCsiMapForReach
+    :: [Solve.CallSiteInstance]
+    -> [(String, [Solve.CallSiteInstance])]
+    -> Map.Map (String, Int, Int) Solve.CallInstance
+buildCsiMapForReach callSiteInstances depCsiByMod =
+    Map.fromList
+        [ ( ( modName
+            , A._line (A._start (Solve._cs_region csi))
+            , A._col  (A._start (Solve._cs_region csi)) )
+          , Solve._cs_instance csi
+          )
+        | (modName, csis) <- ("", callSiteInstances) : depCsiByMod
+        , csi <- csis
+        ]
+
+
+-- | v0.17 PR-α Stage 3e — pure per-region call-site instance registry.
+--
+-- Walks the entry-module + per-dep 'CallSiteInstance' lists once and
+-- keys each by (modName, line, col) of its source-region start.
+-- Each key maps to a single-element @Map calleeName CallInstance@;
+-- duplicate (region, callee) pairs at the same key fold via
+-- 'Map.fromListWith Map.union' so multiple callees inferred at the
+-- exact same source position remain disambiguable by name.
+--
+-- The write convention is "dep CSIs isolated under their own modName,
+-- entry-module under @\"\"@"; the read convention always queries by
+-- @\"\"@ — see 'instanceMangledName' for the rationale (cross-module
+-- collisions at the same (line, col) are negligible in practice).
+--
+-- Replaces an inline ~20-line list-comprehension at the head of the
+-- post-solve setup.
+buildCsiByRegion
+    :: [Solve.CallSiteInstance]
+    -> [(String, [Solve.CallSiteInstance])]
+    -> Map.Map (String, Int, Int) (Map.Map String Solve.CallInstance)
+buildCsiByRegion callSiteInstances depCsiByMod =
+    Map.fromListWith Map.union
+        [ ( ( modName
+            , A._line (A._start (Solve._cs_region csi))
+            , A._col  (A._start (Solve._cs_region csi)) )
+          , Map.singleton
+              (Solve._instance_callee (Solve._cs_instance csi))
+              (Solve._cs_instance csi)
+          )
+        | (modName, csis) <- ("", callSiteInstances) : depCsiByMod
+        , csi <- csis
+        ]
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1819,25 +1903,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- v0.17 IORef defusing #1 — globalCsiWiden /
             -- globalTypedTuples retired (write-only with zero
             -- readers).  Both behaviours are hard-coded inline.
-            let csiEntries =
-                    -- v0.17 — WRITE keeps dep CSIs isolated under
-                    -- their own modName so they don't collide with
-                    -- entry CSIs at the same (line, col); LOOKUP
-                    -- always uses "".  Entry-module calls live in
-                    -- the entry file's region — and a call from
-                    -- entry TO a dep-defined binding still gets
-                    -- captured at the entry's "" key.
-                    [ ( ( modName
-                        , A._line (A._start (Solve._cs_region csi))
-                        , A._col  (A._start (Solve._cs_region csi)) )
-                      , Map.singleton
-                          (Solve._instance_callee (Solve._cs_instance csi))
-                          (Solve._cs_instance csi)
-                      )
-                    | (modName, csis) <-
-                        ("", callSiteInstances) : depCsiByMod
-                    , csi <- csis ]
-                csiByRegion = Map.fromListWith Map.union csiEntries
+            -- v0.17 PR-α Stage 3e — pure (modName, line, col) → callee
+            -- map extracted to 'buildCsiByRegion'.  WRITE convention
+            -- preserved (dep CSIs isolated under modName, entry CSIs
+            -- under "") and the LOOKUP-by-"" convention at
+            -- 'instanceMangledName' is unchanged.
+            let csiByRegion = buildCsiByRegion callSiteInstances depCsiByMod
             modifyIORef globalCgEnv $ \e ->
                 Rec.withCallSiteInstances csiByRegion e
             -- v0.17 IORef defusing #7 — globalEntryPath retired.
@@ -1873,22 +1944,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- per-instance specialisations.
                     let defMap = buildDefMap canMod validDeps
                         annotMap = buildAnnotMap (Solve._stEnv t) depSolved
-                        -- v0.17 — same shape as the codegen-side
-                        -- csiByRegion: deps under their modName,
-                        -- entry under "".  Mono's reachableInstances
-                        -- consults the map by hostMod-derived key,
-                        -- so keeping dep keys isolated lets it walk
-                        -- per-module call graphs without entry
-                        -- collisions.
-                        csiMapForReach = Map.fromList
-                            [ ( ( modName
-                                , A._line (A._start (Solve._cs_region csi))
-                                , A._col  (A._start (Solve._cs_region csi)) )
-                              , Solve._cs_instance csi
-                              )
-                            | (modName, csis) <-
-                                ("", callSiteInstances) : depCsiByMod
-                            , csi <- csis ]
+                        -- v0.17 PR-α Stage 3f — flat
+                        -- (modName, line, col) → CallInstance map
+                        -- extracted to 'buildCsiMapForReach'.  Same
+                        -- "" / per-dep key convention as
+                        -- 'buildCsiByRegion'.
+                        csiMapForReach =
+                            buildCsiMapForReach callSiteInstances depCsiByMod
                         entryName = case mainModuleName entrySrcMod of
                             Just n  -> n ++ ".main"
                             Nothing -> "Main.main"
@@ -1918,17 +1980,14 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- v0.17 IORef defusing #2 — pure CAF 'dceDisabled'
                     -- replaces 'globalDceDisabled'; reads SKY_DCE
                     -- directly at the read site (see line ~3452).
-                    if dceDisabled
-                        then return ()
-                        else do
-                            let entryModName = case mainModuleName entrySrcMod of
-                                    Just n  -> n
-                                    Nothing -> "Main"
-                                allModsMap = Map.fromList
-                                    ((entryModName, canMod) : validDeps)
-                                progReached = Dce.reachableWholeProgram
-                                    entryModName allModsMap Set.empty
-                            writeIORef globalReachableProgram progReached
+                    -- v0.17 PR-α Stage 3g — pure whole-program DCE
+                    -- derivation extracted to 'computeReachableProgram';
+                    -- IORef write kept here so the existing reader at
+                    -- line ~208 (frozen-snapshot comment) + lowerer reads
+                    -- keep their contract.
+                    unless dceDisabled $
+                        writeIORef globalReachableProgram
+                            (computeReachableProgram entrySrcMod canMod validDeps)
                     -- v0.13 Phase A4: stash per-callee captured
                     -- quantifier names so spec emission uses the
                     -- SAME ordering the solver instantiated with.
