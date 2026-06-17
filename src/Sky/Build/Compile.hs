@@ -640,22 +640,15 @@ getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 -- @renderHofParamTyScoped@ / @typeStrWithAliasesRegBoundedScoped@.
 -- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@.
 
--- v0.17 C24 — runtime flag for CSI key widening.  Read at
--- post-solve time from SKY_CSI_WIDEN_KEY.  When True, the CSI
--- registry keys by (modName, line, col); when False (default),
--- the modName slot is "" so existing behaviour is preserved.
-{-# NOINLINE globalCsiWiden #-}
-globalCsiWiden :: IORef Bool
-globalCsiWiden = unsafePerformIO $ newIORef False
-
--- v0.17 Cause H — runtime flag for typed tuple emission.
--- Read at post-solve time from SKY_TYPED_TUPLES.  When True,
--- T.TTuple slots emit `rt.T2[A, B]` for all-primitive element
--- types; when False (default), the alias form `rt.SkyTuple2`
--- is used everywhere.
-{-# NOINLINE globalTypedTuples #-}
-globalTypedTuples :: IORef Bool
-globalTypedTuples = unsafePerformIO $ newIORef False
+-- v0.17 IORef defusing #1 — globalCsiWiden + globalTypedTuples
+-- deleted: write-only flags with zero readers in tree.  Their
+-- behaviour is now hard-coded at the emission sites (CSI uses
+-- "" modName; tuples emit typed forms when all elements are
+-- primitive — see 'isTypedTupleElementStr' and
+-- 'emitTupleTypeStr').  The original env-var hooks
+-- (SKY_CSI_WIDEN_KEY, SKY_TYPED_TUPLES) were never wired to
+-- reads — they were defused inline as soon as the typed-tuple
+-- gate landed in v0.17 PR-17.
 
 
 -- | Read ffi/*.kernel.json and write the resulting module/function maps into
@@ -1036,8 +1029,6 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     writeIORef globalAnonRecords Map.empty
     writeIORef globalDceDisabled False
     writeIORef globalEntryPath ""
-    writeIORef globalCsiWiden False
-    writeIORef globalTypedTuples False
     -- Do NOT reset `Env.ffiTypedWrapper{Names,Params}Ref` here:
     -- `loadAndSeedFfiRegistry` writes them in `compile` BEFORE
     -- `continueCompile` runs, so resetting here would clobber the
@@ -1609,8 +1600,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- `instanceMangledName` for why the dep-module
             -- bracketing attempt was reverted.  Cross-module
             -- (line, col) collisions are negligible in practice.
-            writeIORef globalCsiWiden False
-            writeIORef globalTypedTuples True
+            -- v0.17 IORef defusing #1 — globalCsiWiden /
+            -- globalTypedTuples retired (write-only with zero
+            -- readers).  Both behaviours are hard-coded inline.
             let csiEntries =
                     -- v0.17 — WRITE keeps dep CSIs isolated under
                     -- their own modName so they don't collide with
