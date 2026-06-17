@@ -184,9 +184,17 @@ globalReachableProgram = unsafePerformIO $ newIORef Set.empty
 -- | v0.13 F: dce-disabled flag.  Read once at compile start from
 -- `SKY_DCE`.  When True, all reachability checks return True so no
 -- pruning fires — debug aid.
-{-# NOINLINE globalDceDisabled #-}
-globalDceDisabled :: IORef Bool
-globalDceDisabled = unsafePerformIO $ newIORef False
+-- v0.17 IORef defusing #2 — globalDceDisabled was an env-var
+-- snapshot read once in 'continueCompile' then read once in
+-- 'generateDeclsForDep'.  The env var never changes during a
+-- compile, so the IORef indirection added no value.  Pure CAF
+-- reads @SKY_DCE@ directly at first use; subsequent reads share
+-- the CAF.  No mutation, no reset cycle, no NOINLINE cargo.
+{-# NOINLINE dceDisabled #-}
+dceDisabled :: Bool
+dceDisabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_DCE"
+    return (v == Just "0")
 
 
 -- v0.13 E: anon-record shape registry — moved to
@@ -1027,7 +1035,8 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     writeIORef globalReachableSet Set.empty
     writeIORef globalReachableProgram Set.empty
     writeIORef globalAnonRecords Map.empty
-    writeIORef globalDceDisabled False
+    -- v0.17 IORef defusing #2 — globalDceDisabled retired (env-var
+    -- CAF 'dceDisabled' replaces it).
     writeIORef globalEntryPath ""
     -- Do NOT reset `Env.ffiTypedWrapper{Names,Params}Ref` here:
     -- `loadAndSeedFfiRegistry` writes them in `compile` BEFORE
@@ -1698,9 +1707,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- + VarKernel (FFI) + VarCtor refs.  Stored
                     -- globally for loadAndSeedFfiRegistry's pruning
                     -- step + generateDeclsForDep's per-decl skip.
-                    dceOff <- System.Environment.lookupEnv "SKY_DCE"
-                    let dceDisabled = dceOff == Just "0"
-                    writeIORef globalDceDisabled dceDisabled
+                    -- v0.17 IORef defusing #2 — pure CAF 'dceDisabled'
+                    -- replaces 'globalDceDisabled'; reads SKY_DCE
+                    -- directly at the read site (see line ~3452).
                     if dceDisabled
                         then return ()
                         else do
@@ -3449,7 +3458,7 @@ generateDeclsForDep canMod modPrefix =
         -- `SKY_DCE=0` or pre-canon-fixpoint code path).
         canonicalModName = ModuleName.toString (Can._name canMod)
         reached = readIORefNoCse globalReachableProgram
-        dceOff  = readIORefNoCse globalDceDisabled
+        dceOff  = dceDisabled
         keepName n =
             dceOff
             || Set.null reached
