@@ -153,15 +153,11 @@ entryPathRef = unsafePerformIO $ readIORef globalEntryPath
 
 
 -- | v0.13 Phase A5++: per-module source path that codegen sets
--- before lowering each dep module so `coerceCallArgsAt`'s CSI
--- lookup uses the right (file, line, col) triple.  The entry
--- module always uses `globalEntryPath`; each dep's lowering
--- swaps this to the dep's `_mi_path`.  Without this, the CSI
--- map collisions across files surface as bare-`T1` leaks in the
--- emitted Go.
-{-# NOINLINE globalSourceFile #-}
-globalSourceFile :: IORef FilePath
-globalSourceFile = unsafePerformIO $ newIORef ""
+-- v0.17 IORef defusing #6 — @globalSourceFile@ deleted.  Orphan
+-- IORef with 0 readers and 0 writers across the whole codebase.
+-- Originally introduced to scope CSI lookups per dep-module, but
+-- the consumer was reworked during the PR-α dep-mode IORef
+-- defusing (#603) and the IORef was left behind.
 
 
 -- | v0.13 Phase A4: the transitively-reachable instance set from
