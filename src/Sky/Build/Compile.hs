@@ -1086,6 +1086,113 @@ parsePhase moduleOrder = do
         _        -> ParseOk parsed consoleNeeded
 
 
+-- | v0.17 PR-α Stage 2 — outcome of the two-pass canonicalisation
+-- fixpoint.  Three terminal states modelling the 3 case-arms of
+-- the legacy `case depErrors of (e:_) -> ... [] -> case ... -> ...`
+-- chain.
+data CanonOutcome
+    = CanonDepError !String
+        -- ^ At least one dep module failed canonicalisation.
+        -- Carries the marker string the legacy code returned
+        -- ("Canonicalise error in <modname>").  The structured
+        -- Diagnostic has already been rendered to stderr inside
+        -- 'canonPhase'.
+    | CanonEntryError
+        -- ^ Entry module canonicalisation failed AFTER dep fixpoint
+        -- succeeded.  Legacy marker "Canonicalise error".  Renderer
+        -- has fired already.
+    | CanonOk
+        { _co_canMod    :: !Can.Module
+            -- ^ The canonicalised entry module.
+        , _co_validDeps :: ![(String, Can.Module)]
+            -- ^ Topologically-ordered dep modules that survived the
+            -- fixpoint with cross-module ADT visibility.
+        }
+
+
+-- | v0.17 PR-α Stage 2 — two-pass canonicalisation phase.  Extracted
+-- from continueCompile (was lines 1140-1233 of the monolithic
+-- function).
+--
+-- A dependency chain of depth N needs N canonicalisation passes —
+-- a Sky-stdlib module can use ANOTHER stdlib module's ADT
+-- constructors (e.g. `Std.Html.Events` builds
+-- `EventAttr (OnMsg …)` from `Std.Html.Attributes`).  The fixpoint
+-- iterates `canonPassWith` until the success-set stabilises (cap
+-- 16 passes — a genuinely-broken module never enters the success
+-- set so the cap only bounds wasted work).
+--
+-- Diagnostic rendering for both dep-canon AND entry-canon errors
+-- happens INSIDE this phase via 'Render.renderCli', matching the
+-- legacy behaviour exactly.  The phase returns the short marker
+-- string the outer caller used to short-circuit with.
+canonPhase
+    :: FilePath -- ^ entryPath (for dep-error fallback + entry-error path lookup)
+    -> [Graph.ModuleInfo] -- ^ moduleOrder (for dep-error source-path lookup)
+    -> Src.Module -- ^ entrySrcMod (canonicalised with the dep fixpoint result)
+    -> [(String, Src.Module)] -- ^ depModules (everything except the entry)
+    -> IO CanonOutcome
+canonPhase entryPath moduleOrder entrySrcMod depModules = do
+    putStrLn "-- Canonicalising"
+    let buildDepInfoMap valids = Map.fromList
+            [ (modName, Canonicalise.DepInfo
+                { Canonicalise._dep_name = Can._name depMod
+                , Canonicalise._dep_unions =
+                    [ (typeName, Can._u_vars union, Can._u_alts union)
+                    | (typeName, union) <- Map.toList (Can._unions depMod)
+                    ]
+                , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                , Canonicalise._dep_aliasDefs = Can._aliases depMod
+                , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
+                , Canonicalise._dep_exports = Can._exports depMod
+                })
+            | (modName, depMod) <- valids
+            ]
+        canonPassWith m = Async.forConcurrently depModules $ \(n, srcMod) ->
+            case Canonicalise.canonicaliseWithDeps m srcMod of
+                Right cm -> return (Right (n, cm))
+                Left err -> return (Left (n, err))
+        canonFixpoint
+            :: Set.Set String
+            -> Map.Map String Canonicalise.DepInfo
+            -> Int
+            -> IO ([(String, Can.Module)], [(String, String)])
+        canonFixpoint prevSucc curMap iter = do
+            results <- canonPassWith curMap
+            let valids = [x | Right x <- results]
+                errs   = [(n, e) | Left (n, e) <- results]
+                succSet = Set.fromList (map fst valids)
+            if succSet == prevSucc || iter >= 16
+                then return (valids, errs)
+                else canonFixpoint succSet (buildDepInfoMap valids) (iter + 1)
+    (validDeps, depErrors) <- canonFixpoint Set.empty Map.empty (0 :: Int)
+    let depInfoMap2 = buildDepInfoMap validDeps
+    case depErrors of
+        ((n, err):_) -> do
+            -- v0.13 Layer 1: render the dep-module canonicalise
+            -- error through the structured Diagnostic pipeline.
+            let depPath = case [p | mi <- moduleOrder
+                                  , Graph._mi_name mi == n
+                                  , let p = Graph._mi_path mi ] of
+                            (p:_) -> p
+                            _     -> entryPath
+                diag = Canonicalise.legacyToDiag depPath err
+            rendered <- Render.renderCli diag
+            putStrLn rendered
+            return $ CanonDepError ("Canonicalise error in " ++ n)
+        [] ->
+            case Canonicalise.canonicaliseWithDeps depInfoMap2 entrySrcMod of
+                Left err -> do
+                    -- v0.13 Layer 1: same treatment for the entry module.
+                    let diag = Canonicalise.legacyToDiag entryPath err
+                    rendered <- Render.renderCli diag
+                    putStrLn rendered
+                    return CanonEntryError
+                Right canMod -> do
+                    putStrLn "   Names resolved"
+                    return $ CanonOk canMod validDeps
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1137,101 +1244,17 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
       ParseError err -> return (Left err)
       ParseEmpty     -> return (Left "No modules found")
       ParseOk parsed consoleNeeded -> do
-        -- Phase 3: Canonicalise (entry module + merge deps)
-        putStrLn "-- Canonicalising"
+        -- v0.17 PR-α Stage 2 — canonicalisation extracted to 'canonPhase'.
+        -- Two-pass fixpoint over deps + entry canon, both renderers
+        -- inline, matches legacy behaviour byte-for-byte.
         let entrySrcMod = snd (last parsed)
             -- Dependency modules are all parsed modules except the entry.
             depModules = if length parsed > 1 then init parsed else []
-
-        -- Two-pass canonicalisation so dep modules can reference each
-        -- other's ADT constructors:
-        --   1. Canonicalise each dep in isolation (only its own ADTs visible)
-        --      to build a depInfoMap with every module's union constructors.
-        --   2. Re-canonicalise every dep AND the entry with the full map.
-        -- Canonicalise dependency modules to a FIXPOINT.
-        --
-        -- A single isolated pass + one pass-with-deps is NOT enough.
-        -- A Sky-stdlib module can use ANOTHER stdlib module's ADT
-        -- constructors — e.g. `Std.Html.Events` builds `EventAttr
-        -- (OnMsg …)` from `Std.Html.Attributes`.  Those constructors
-        -- are invisible in isolation (pass 1), so `Std.Html.Events`
-        -- fails pass 1 and is absent from the dep map; a THIRD
-        -- module that imports it (`Page.Dashboard`) then canonicalises
-        -- in pass 2 WITHOUT `Std.Html.Events` in scope and silently
-        -- resolves `import Std.Html.Events` to the KERNEL — so
-        -- `onClick` came back as the kernel's arity-0 `Attribute`
-        -- alias instead of the Sky module's `Attribute msg`.
-        --
-        -- A dependency chain of depth N needs N canonicalisation
-        -- passes.  So iterate: rebuild the dep map from each pass's
-        -- successes and re-canonicalise EVERY dep (pass-1 home
-        -- resolutions are wrong anyway) until the success set
-        -- stabilises.  Capped at 16 iterations — a genuinely-broken
-        -- module never enters the success set, so the cap only
-        -- bounds wasted passes, and its error still surfaces in
-        -- `depErrors` below.
-        let buildDepInfoMap valids = Map.fromList
-                [ (modName, Canonicalise.DepInfo
-                    { Canonicalise._dep_name = Can._name depMod
-                    , Canonicalise._dep_unions =
-                        [ (typeName, Can._u_vars union, Can._u_alts union)
-                        | (typeName, union) <- Map.toList (Can._unions depMod)
-                        ]
-                    , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
-                    , Canonicalise._dep_aliasDefs = Can._aliases depMod
-                    , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
-                    , Canonicalise._dep_exports = Can._exports depMod
-                    })
-                | (modName, depMod) <- valids
-                ]
-            canonPassWith m = Async.forConcurrently depModules $ \(n, srcMod) ->
-                case Canonicalise.canonicaliseWithDeps m srcMod of
-                    Right cm -> return (Right (n, cm))
-                    Left err -> return (Left (n, err))
-            canonFixpoint
-                :: Set.Set String
-                -> Map.Map String Canonicalise.DepInfo
-                -> Int
-                -> IO ([(String, Can.Module)], [(String, String)])
-            canonFixpoint prevSucc curMap iter = do
-                results <- canonPassWith curMap
-                let valids = [x | Right x <- results]
-                    errs   = [(n, e) | Left (n, e) <- results]
-                    succSet = Set.fromList (map fst valids)
-                if succSet == prevSucc || iter >= 16
-                    then return (valids, errs)
-                    else canonFixpoint succSet (buildDepInfoMap valids) (iter + 1)
-        (validDeps, depErrors) <- canonFixpoint Set.empty Map.empty (0 :: Int)
-        -- The dep map for the entry module is rebuilt from the
-        -- fixpoint's final (complete) success set.
-        let depInfoMap2 = buildDepInfoMap validDeps
-        case depErrors of
-         ((n, err):_) -> do
-            -- v0.13 Layer 1: render the dep-module canonicalise
-            -- error through the structured Diagnostic pipeline so
-            -- the user sees the Elm-style block (file:line:col +
-            -- source snippet + reason) instead of a bare prefixed
-            -- string.  Look up the dep's source path so the snippet
-            -- comes from the right file.
-            let depPath = case [p | mi <- moduleOrder
-                                  , Graph._mi_name mi == n
-                                  , let p = Graph._mi_path mi ] of
-                            (p:_) -> p
-                            _     -> entryPath
-                diag = Canonicalise.legacyToDiag depPath err
-            rendered <- Render.renderCli diag
-            putStrLn rendered
-            return (Left $ "Canonicalise error in " ++ n)
-         [] ->
-          case Canonicalise.canonicaliseWithDeps depInfoMap2 entrySrcMod of
-           Left err -> do
-            -- v0.13 Layer 1: same treatment for the entry module.
-            let diag = Canonicalise.legacyToDiag entryPath err
-            rendered <- Render.renderCli diag
-            putStrLn rendered
-            return (Left "Canonicalise error")
-           Right canMod -> do
-            putStrLn "   Names resolved"
+        canonOutcome <- canonPhase entryPath moduleOrder entrySrcMod depModules
+        case canonOutcome of
+         CanonDepError marker -> return (Left marker)
+         CanonEntryError      -> return (Left "Canonicalise error")
+         CanonOk canMod validDeps -> do
             -- v0.15 Stage E — populate the all-alias map EARLY (before
             -- any sig emission) so the parametric-alias generic-args
             -- renderer can recover alias type-args from row-poly HM
