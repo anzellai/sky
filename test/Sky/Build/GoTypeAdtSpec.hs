@@ -112,15 +112,36 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
     --     renderGoType defaultRenderEnv
     --         (mapSkyTypeToGo defaultMappingContext ty)
     --
-    -- This locks the C2 contract: structural mapper produces identical
-    -- output to the legacy String-based path.  C8+ enriches
-    -- MappingContext with env data; those paths get their own asserts
-    -- (no env data today → C2 parity remains green by construction).
+    -- v0.17 close: the C2 byte-identity contract has been INTENTIONALLY
+    -- invalidated for 6 arms where the pipeline now carries policies
+    -- the legacy 'typeToGo' doesn't.  Surface-area changes:
+    --
+    -- * TTuple of primitives — pipeline emits typed @rt.T2[A, B]@ via
+    --   PR-17 SHIP POINT B; legacy emits @rt.SkyTuple2@.
+    -- * TRecord (closed/extensible) — pipeline emits @Anon_R_<hash>@
+    --   via 'synthAnonRecordName'; legacy emits inline @struct{...}@.
+    -- * TType parameterised core types — pipeline routes Error,
+    --   Decoder, Db, Cmd, Sub through 'mcRuntimeTypedMap'; legacy
+    --   emits the bare name.
+    -- * TType user-defined parameterised — pipeline strips type args
+    --   for non-record-alias ADTs (the runtime alias is
+    --   @type X = rt.SkyADT@); legacy preserves them.
+    -- * Deeply nested composites — combination of the above.
+    --
+    -- These divergences are CORRECT (pipeline is strictly more typed
+    -- + env-aware).  Parity tests that survived are documented below;
+    -- failing arms were retired or restated to assert the post-v0.17
+    -- pipeline shape directly.
     describe "C2 differential parity — typeToGo vs renderGoType . mapSkyTypeToGo" $ do
         let parity ty =
                 renderGoType defaultRenderEnv
                     (mapSkyTypeToGo defaultMappingContext ty)
                     `shouldBe` typeToGo ty
+
+        let pipelineEmits ty expected =
+                renderGoType defaultRenderEnv
+                    (mapSkyTypeToGo defaultMappingContext ty)
+                    `shouldBe` expected
 
         let basicsHome = Canonical "Sky.Core.Basics"
         let bareHome   = Canonical ""
@@ -143,33 +164,52 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
                     (T.TType bareHome "Int" [])
                     (T.TLambda (T.TType bareHome "String" []) (T.TType bareHome "Bool" [])))
 
-        it "parity on TTuple arities 2/3/4" $ do
-            -- 2-tuple — TTuple a b []
-            parity (T.TTuple (T.TType bareHome "Int" []) (T.TType bareHome "String" []) [])
-            -- 3-tuple — TTuple a b [c]
-            parity
+        it "TTuple arities 2/3/4 emit post-PR-17 typed forms" $ do
+            -- v0.17 PR-17 SHIP POINT B — primitive-only tuples emit
+            -- typed @rt.T{2,3}[...]@; arity 4+ stays on rt.SkyTupleN
+            -- alias (no Go-side generic SkyTupleN).
+            pipelineEmits
+                (T.TTuple (T.TType bareHome "Int" []) (T.TType bareHome "String" []) [])
+                "rt.T2[int, string]"
+            pipelineEmits
                 (T.TTuple
                     (T.TType bareHome "Int" [])
                     (T.TType bareHome "String" [])
                     [T.TType bareHome "Bool" []])
-            -- N-tuple — TTuple a b [c, d]
-            parity
+                "rt.T3[int, string, bool]"
+            pipelineEmits
                 (T.TTuple
                     (T.TType bareHome "Int" [])
                     (T.TType bareHome "String" [])
                     [T.TType bareHome "Bool" [], T.TType bareHome "Float" []])
+                "rt.SkyTupleN"
 
-        it "parity on TRecord (closed)" $ do
+        it "TRecord (closed) emits synthAnonRecordName-derived Anon_R_… alias" $ do
+            -- v0.17 PR-22 S2 — bare anonymous records register a
+            -- deterministic Anon_R_<fieldsHash>__<typesHash> name via
+            -- 'synthAnonRecordName' so the codegen pass can emit the
+            -- backing Go struct decl.  Legacy 'typeToGo' emitted an
+            -- inline @struct{...}@ literal that broke @go build@ at
+            -- type-position uses.
             let fields = Map.fromList
                     [ ("name", T.FieldType 0 (T.TType bareHome "String" []))
                     , ("age",  T.FieldType 1 (T.TType bareHome "Int" []))
                     ]
-            parity (T.TRecord fields Nothing)
+                rendered = renderGoType defaultRenderEnv
+                    (mapSkyTypeToGo defaultMappingContext (T.TRecord fields Nothing))
+            -- Deterministic prefix + hash suffix; can't assert exact hash
+            -- (depends on Show of FieldType), but shape is stable.
+            take 7 rendered `shouldBe` "Anon_R_"
 
-        it "parity on TRecord (extensible — fallback raw)" $ do
+        it "TRecord (extensible) routes through the same record mapper" $ do
+            -- v0.17 PR-22 S4 — extensible records now route through
+            -- 'mapRecordType' instead of the pre-S4 'any /* extensible
+            -- record */' fallback.  Output is the same Anon_R_ alias.
             let fields = Map.fromList
                     [ ("name", T.FieldType 0 (T.TType bareHome "String" [])) ]
-            parity (T.TRecord fields (Just "rec"))
+                rendered = renderGoType defaultRenderEnv
+                    (mapSkyTypeToGo defaultMappingContext (T.TRecord fields (Just "rec")))
+            take 7 rendered `shouldBe` "Anon_R_"
 
         it "parity on TType primitives (qualified + bare)" $ do
             parity (T.TType basicsHome "Int" [])
@@ -184,47 +224,85 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
             parity (T.TType bareHome "Char" [])
             parity (T.TType bareHome "Bytes" [])
 
-        it "parity on TType parameterised core types" $ do
-            parity (T.TType listHome "List" [T.TType bareHome "Int" []])
-            parity (T.TType bareHome "Maybe" [T.TType bareHome "String" []])
-            parity
+        it "TType parameterised core types — pipeline-shape asserts" $ do
+            -- v0.17 — pipeline routes List/Dict/Set through native Go
+            -- collections (slice / map[string]V / map[any]bool) instead
+            -- of @rt.SkyList[X]@ aliases that don't exist in the runtime.
+            -- Maybe/Result/Task keep their typed-named form.
+            pipelineEmits
+                (T.TType listHome "List" [T.TType bareHome "Int" []])
+                "[]int"
+            pipelineEmits
+                (T.TType bareHome "Maybe" [T.TType bareHome "String" []])
+                "rt.SkyMaybe[string]"
+            pipelineEmits
                 (T.TType bareHome "Result"
                     [ T.TType bareHome "String" []
                     , T.TType bareHome "Int" []
                     ])
-            parity
+                "rt.SkyResult[string, int]"
+            -- TVar in Task position → GoTypeVar "A" (default policy
+            -- preserves the type-param name; mcTVarsToAny=True policy
+            -- would map to GoAny).
+            pipelineEmits
                 (T.TType bareHome "Task"
                     [ T.TType bareHome "String" []
                     , T.TVar "a"
                     ])
-            parity
+                "rt.SkyTask[string, A]"
+            pipelineEmits
                 (T.TType bareHome "Dict"
                     [ T.TType bareHome "String" []
                     , T.TType bareHome "Int" []
                     ])
-            parity (T.TType bareHome "Set" [T.TType bareHome "Int" []])
-            parity (T.TType bareHome "Cmd" [T.TVar "msg"])
-            parity (T.TType bareHome "Sub" [T.TVar "msg"])
+                "map[string]int"
+            pipelineEmits
+                (T.TType bareHome "Set" [T.TType bareHome "Int" []])
+                "map[any]bool"
+            -- v0.17 PR-18 — Cmd/Sub stay on bare alias for TVar args
+            -- because the typed sibling @rt.SkyCmd_T[X]@ requires the
+            -- concrete X to be in Go scope.
+            pipelineEmits
+                (T.TType bareHome "Cmd" [T.TVar "msg"])
+                "rt.SkyCmd"
+            pipelineEmits
+                (T.TType bareHome "Sub" [T.TVar "msg"])
+                "rt.SkySub"
 
         it "parity on TType Html (special-cased)" $
             parity (T.TType bareHome "Html" [T.TVar "msg"])
 
-        it "parity on TType user-defined (nullary + parameterised)" $ do
-            parity (T.TType userHome "Color" [])
-            parity (T.TType userHome "Widget" [T.TVar "msg"])
-            parity
+        it "TType user-defined under default ctx falls through to any" $ do
+            -- v0.17 PR-22 S6 — without env data the user-ADT fallback
+            -- can't classify the type as a record-alias / union /
+            -- runtime-typed shape, so 'mapNamedType' emits 'GoAny'.
+            -- Real codegen uses 'buildMappingContext getCgEnv' which
+            -- populates the registries — this default-ctx behaviour is
+            -- intentional (a TVar fallback under empty env).
+            pipelineEmits (T.TType userHome "Color" []) "any"
+            pipelineEmits
+                (T.TType userHome "Widget" [T.TVar "msg"])
+                "any"
+            pipelineEmits
                 (T.TType userHome "Cfg"
                     [ T.TVar "msg"
                     , T.TType bareHome "Int" []
                     ])
+                "any"
 
         it "parity on TAlias (Hoisted + Filled — both pass through to inner)" $ do
             let inner = T.TType bareHome "Int" []
             parity (T.TAlias bareHome "Age" [] (T.Hoisted inner))
             parity (T.TAlias bareHome "Age" [] (T.Filled inner))
 
-        it "parity on deeply nested composites" $ do
+        it "deeply nested composites under default ctx — pipeline-shape assert" $ do
             -- List (Result Error (Maybe (Cfg msg)))
+            -- v0.17 pipeline emits:
+            --   * List X → []X (native Go slice)
+            --   * Error → Sky_Core_Error_Error (mcRuntimeTypedMap)
+            --   * Cfg msg → any (user ADT with TVar arg under default ctx
+            --     — no record-alias match, no union match, falls through
+            --     to GoAny via the unknown-name fallback)
             let inner =
                     T.TType bareHome "List"
                         [ T.TType bareHome "Result"
@@ -233,7 +311,8 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
                                 [ T.TType userHome "Cfg" [T.TVar "msg"] ]
                             ]
                         ]
-            parity inner
+            pipelineEmits inner
+                "[]rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]]"
 
     -- ========================================================================
     -- PR 1 — GoTuple constructor + goTypeArgs accessor
@@ -252,15 +331,30 @@ spec = describe "v0.17 C1 — Sky.Generate.Go.Type" $ do
                 defaultRenderEnv { renderTupleGeneric = True }
             bareHome = Canonical ""
 
-        it "renders 2-tuple as rt.SkyTuple2 under defaultRenderEnv" $
+        -- v0.17 PR-17 SHIP POINT B widening: when every element is a
+        -- primitive (int / string / bool / rune / float64 / []byte) or
+        -- already-typed (rt.T2..rt.T9 / _R-suffix alias), the renderer
+        -- emits the typed form even under defaultRenderEnv.  Tests below
+        -- assert the post-SHIP-POINT-B output.  The pre-widening "always
+        -- alias under defaultRenderEnv" contract was a one-step gate
+        -- the PR-17 widening retired.
+        it "renders 2-tuple of primitives as rt.T2[A, B] under defaultRenderEnv" $
             renderGoType env
                 (GoTuple [GoBare "int", GoBare "string"])
-                `shouldBe` "rt.SkyTuple2"
+                `shouldBe` "rt.T2[int, string]"
 
-        it "renders 3-tuple as rt.SkyTuple3 under defaultRenderEnv" $
+        it "renders 3-tuple of primitives as rt.T3[A, B, C] under defaultRenderEnv" $
             renderGoType env
                 (GoTuple [GoBare "int", GoBare "string", GoBare "bool"])
-                `shouldBe` "rt.SkyTuple3"
+                `shouldBe` "rt.T3[int, string, bool]"
+
+        it "renders 2-tuple with a non-typed element as rt.SkyTuple2 under defaultRenderEnv" $
+            -- GoAny element fails the allTyped check, so the renderer
+            -- falls back to the SkyTuple alias form.  This is the
+            -- back-compat path for parametric/uncertain shapes.
+            renderGoType env
+                (GoTuple [GoBare "int", GoAny])
+                `shouldBe` "rt.SkyTuple2"
 
         it "renders N≥4 as rt.SkyTupleN under defaultRenderEnv" $
             renderGoType env

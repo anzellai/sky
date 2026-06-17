@@ -100,11 +100,17 @@ spec = describe "v0.17 PR-3 — GoType ↔ Go-string round trip" $ do
             $ roundTrips (GoStruct [("X", GoBare "int")])
 
     describe "lossy cases (documented exceptions)" $ do
-        it "GoTuple under defaultEnv collapses to rt.SkyTuple2 alias" $ do
-            -- Default env emits the back-compat alias form. The parser
-            -- can recover only the alias name, not the element types.
+        it "GoTuple under defaultEnv with a non-typed element collapses to rt.SkyTuple2 alias" $ do
+            -- Default env emits the back-compat alias form only when at
+            -- least one element fails the 'isTypedTupleElem' check (e.g.
+            -- 'GoAny' from an unresolved TVar).  The parser can recover
+            -- only the alias name, not the element types.
+            --
+            -- v0.17 PR-17 SHIP POINT B widened defaultEnv emission: when
+            -- every element is primitive / typed, the renderer emits the
+            -- typed form even under defaultEnv (see GoTypeAdtSpec).
             let rendered = renderGoType defaultRenderEnv
-                              (GoTuple [GoBare "int", GoBare "string"])
+                              (GoTuple [GoBare "int", GoAny])
             rendered `shouldBe` "rt.SkyTuple2"
             parseGoType rendered `shouldBe` Just (GoNamed "rt.SkyTuple2" [])
 
