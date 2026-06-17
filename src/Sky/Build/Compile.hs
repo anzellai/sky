@@ -4184,6 +4184,8 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             fieldIdx <- readIORef globalAllFieldIdx
             unions <- readIORef globalUnionNames
             annots <- readIORef globalAnnotMap
+            reached <- readIORef globalReachableSet
+            reachedProg <- readIORef globalReachableProgram
             return $ LC.buildLowerCtx
                 (Can._name canMod)
                 solvedTypes
@@ -4191,6 +4193,8 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
                 fieldIdx
                 unions
                 annots
+                reached
+                reachedProg
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
@@ -10997,7 +11001,11 @@ coerceCallArgs qualName args =
 instanceMangledName :: A.Region -> String -> Maybe String
 instanceMangledName region qualName = unsafePerformIO $ do
     env <- readIORef globalCgEnv
-    reached <- readIORef globalReachableSet
+    -- v0.17 PR-α S2 — reachable set read via LowerCtx (installed in
+    -- 'scopeStateRef' by 'lowerExpr' before any 'instanceMangledName'
+    -- call could fire).  Replaces 'readIORef globalReachableSet'.
+    ctx <- readIORef scopeStateRef
+    let reached = LC._lc_reachableSet ctx
     _annotMap' <- readIORef globalAnnotMap
     -- v0.17 C24 — CSI key uses (line, col) of the call's source
     -- region.  Cross-module collisions at the same (line, col)

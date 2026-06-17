@@ -53,6 +53,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import qualified Sky.AST.Canonical as Can
+import qualified Sky.Build.Dce as Dce
+import qualified Sky.Build.Monomorphise as Mono
 import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Sky.ModuleName as ModuleName
@@ -150,6 +152,22 @@ data LowerCtx = LowerCtx
         -- thread through PR-α subsequent sessions.  Today: scaffolding
         -- only — `Nothing` matches the IORef's default; no behavior
         -- change.
+    , _lc_reachableSet :: !Mono.ReachableSet
+        -- ^ v0.17 PR-α S2 — whole-program reachable-instance set
+        -- (snapshot of @globalReachableSet@).  Populated at
+        -- 'buildLowerCtx' after the solver runs.  Read by
+        -- 'instanceMangledName' via the @scopeStateRef@ channel
+        -- (which carries the entire @LowerCtx@), replacing the
+        -- direct IORef read.  Written ONCE per compile; never
+        -- mutates after.
+    , _lc_reachableProgram :: !(Set.Set Dce.Ref)
+        -- ^ v0.17 PR-α S2 — whole-program DCE reachable-ref set
+        -- (snapshot of @globalReachableProgram@).  Populated at
+        -- 'buildLowerCtx'.  Threaded explicitly to
+        -- 'generateDeclsForDep' (which previously read the IORef)
+        -- + read inline from the LC value at sites that already
+        -- accept a 'LowerCtx'.  Same write-once-at-solver-done
+        -- semantics as '_lc_reachableSet'.
     }
 
 
@@ -169,6 +187,8 @@ emptyLowerCtx home = LowerCtx
     , _lc_annotMap    = Map.empty
     , _lc_enclosingTypeParams = Set.empty
     , _lc_currentDepModule = Nothing
+    , _lc_reachableSet = Set.empty
+    , _lc_reachableProgram = Set.empty
     }
 
 
@@ -191,8 +211,10 @@ buildLowerCtx
     -> Rec.RecordRegistry
     -> Set.Set String
     -> Map.Map String T.Annotation
+    -> Mono.ReachableSet
+    -> Set.Set Dce.Ref
     -> LowerCtx
-buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
+buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = LowerCtx
     { _lc_module      = home
     , _lc_solved      = solved
     , _lc_lambdaTypes = Map.empty
@@ -205,6 +227,8 @@ buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
     , _lc_annotMap    = annots
     , _lc_enclosingTypeParams = Set.empty
     , _lc_currentDepModule = Nothing
+    , _lc_reachableSet = reached
+    , _lc_reachableProgram = reachedProg
     }
 
 
