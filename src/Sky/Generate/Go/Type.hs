@@ -1208,9 +1208,17 @@ mapNamedType ctx home name args
         --      — Go-side declaration is 'type Foo = rt.SkyADT', so
         --      passing 'Foo[any]' breaks `go build` with "not a
         --      generic type").
-        --   5. Unknown name → bare 'Foo' fallback (legacy emits "any"
-        --      here, but bare-name preserves Cause G satisfaction for
-        --      FFI opaque types — see PR-21b).
+        --   5. Unknown name → @any@ (v0.17 PR-22 S6 — matches legacy
+        --      'solvedTypeToGoBounded' at Compile.hs:17368).  The
+        --      previous "bare-name preserves Cause G" comment was
+        --      stale: PR-21b's FFI Cause G satisfaction lives in the
+        --      HM unifier ('Sky.Type.Unify.isFfiInterfacePair'), NOT
+        --      in codegen.  By the time TType reaches this arm any
+        --      FFI-satisfied type has already routed through @qualHit@
+        --      / @runtimeHit@ / @runtimeOnly@ above; what's left
+        --      really is unknown and leaking the bare token produces
+        --      @undefined: T1@ / @undefined: T_e@ (TVar residues from
+        --      σ_go).
         _ ->
             let prefix = goModulePrefix home
                 base = if null prefix
@@ -1294,9 +1302,29 @@ mapNamedType ctx home name args
                                 | name `elem` RuntimeMaps.runtimeOnlyTypes
                                                 -> GoAny
                                 | isKnownUnion -> GoNamed base []
-                                | otherwise -> case args of
-                                    [] -> GoNamed base []
-                                    _  -> GoNamed base []  -- drop args
+                                -- v0.17 PR-22 S6 — UNKNOWN-NAME COLLAPSE.
+                                -- Mirrors legacy 'solvedTypeToGoBounded'
+                                -- at Compile.hs:17368: when none of the
+                                -- prior arms match (qualHit / runtimeHit
+                                -- / record alias / runtimeOnly /
+                                -- isKnownUnion / unionRecovery), the
+                                -- name is genuinely unknown.  Emit
+                                -- @any@ instead of leaking the bare
+                                -- token.  Pre-S6 the pipeline emitted
+                                -- @GoNamed base []@ which renders as
+                                -- the literal identifier — fine when
+                                -- @base@ is a declared Sky ADT in
+                                -- main.go but produces @undefined: T1@
+                                -- (or @T_e@, etc.) when @base@ is a
+                                -- TVar residue from σ_go.  Adversary-
+                                -- reviewed: this DOES NOT regress
+                                -- PR-21b (FFI Cause G satisfaction lives
+                                -- in the HM unifier, NOT codegen — by
+                                -- the time TType reaches this arm, any
+                                -- FFI-satisfied type has already routed
+                                -- through @qualHit@/@runtimeHit@/
+                                -- @runtimeOnly@ earlier).
+                                | otherwise    -> GoAny
 
 
 -- | Canonical "Sky type → Go type string" entry point — routes a
