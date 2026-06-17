@@ -1388,6 +1388,59 @@ buildKernelAliasMap entrySrcMod canMod validDeps =
     in Map.fromList (concatMap collectKernelAliases allModsForAlias)
 
 
+-- | v0.17 PR-α Stage 3d — pure per-callee quantifier table.
+--
+-- Walks the entry-module 'CallSiteInstanceRecord' list + every
+-- dep's 'CallSiteInstanceRecord' list, keying the FIRST (left-bias
+-- via 'Map.fromListWith') quantifier list it sees per callee name.
+-- Filters out call instances with empty quantifier lists — non-
+-- polymorphic callees have no σ-projection to do at codegen.
+--
+-- Replaces an inline ~7-line list-comprehension at the head of the
+-- SolveOk arm.
+buildCsiByCallee
+    :: [Solve.CallSiteInstance]
+    -> [(String, [Solve.CallSiteInstance])]
+    -> Map.Map String [String]
+buildCsiByCallee callSiteInstances depCsiByMod =
+    Map.fromListWith (\a _ -> a)
+        [ (Solve._instance_callee inst, Solve._instance_quantifiers inst)
+        | csi <- callSiteInstances ++ concatMap snd depCsiByMod
+        , let inst = Solve._cs_instance csi
+        , not (null (Solve._instance_quantifiers inst))
+        ]
+
+
+-- | v0.17 PR-α Stage 3d — pure GoSig aggregation.
+--
+-- Aggregates the three independent side-tables ('annotMap' /
+-- @_cg_funcSkyToGoTVars@ / 'csiByCallee') into a single
+-- @Map String GoSig@.  This is the data the eventual C12
+-- σ-projection migration will read primary; today it's a
+-- byte-equivalent union of the three legacy IORef states, kept
+-- live via the differential gate at SKY_GOSIG_DIFF=1.
+--
+-- All keys are Sky-form binding names (the Go-form lookup for
+-- @_gs_typeParams@ happens inside via the @'.' → '_'@ rewrite).
+buildGoSigMap
+    :: Map.Map String T.Annotation               -- annotMap
+    -> Map.Map String [String]                    -- csiByCallee
+    -> Map.Map String [(String, String)]          -- _cg_funcSkyToGoTVars
+    -> Map.Map String GoSig
+buildGoSigMap annotMap csiByCallee funcSkyToGoTVars =
+    let allCalleeNames =
+            Set.union (Map.keysSet annotMap) (Map.keysSet csiByCallee)
+        mkGoSig skyName =
+            let goName = map (\c -> if c == '.' then '_' else c) skyName
+            in GoSig
+                { _gs_annotation = Map.lookup skyName annotMap
+                , _gs_typeParams = Map.lookup goName funcSkyToGoTVars
+                , _gs_quantifiers = Map.lookup skyName csiByCallee
+                }
+    in Map.fromList
+        [ (skyName, mkGoSig skyName) | skyName <- Set.toList allCalleeNames ]
+
+
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
@@ -1879,13 +1932,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- v0.13 Phase A4: stash per-callee captured
                     -- quantifier names so spec emission uses the
                     -- SAME ordering the solver instantiated with.
-                    let csiByCallee = Map.fromListWith (\a _ -> a)
-                            [ (Solve._instance_callee inst,
-                               Solve._instance_quantifiers inst)
-                            | csi <- callSiteInstances ++ concatMap snd depCsiByMod
-                            , let inst = Solve._cs_instance csi
-                            , not (null (Solve._instance_quantifiers inst))
-                            ]
+                    -- v0.17 PR-α Stage 3d — csiByCallee derivation
+                    -- extracted to 'buildCsiByCallee'.
+                    let csiByCallee = buildCsiByCallee callSiteInstances depCsiByMod
                     writeIORef globalCsiByCallee csiByCallee
                     -- v0.17 C9: parallel population of globalGoSigMap.
                     -- Aggregates annotMap + csiByCallee + the env's
@@ -1895,25 +1944,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- write is byte-equivalent to the union of the
                     -- three existing IORef states; the differential
                     -- test (opt-in via SKY_GOSIG_DIFF=1) verifies.
+                    -- v0.17 PR-α Stage 3d — pure aggregation extracted
+                    -- to 'buildGoSigMap'; envForGoSig snapshot kept
+                    -- inline (the trailing GoSig diff block consumes it).
                     envForGoSig <- readIORef globalCgEnv
-                    let funcSkyToGoTVars = Rec._cg_funcSkyToGoTVars envForGoSig
-                        allCalleeNames = Set.union
-                            (Map.keysSet annotMap)
-                            (Map.keysSet csiByCallee)
-                        mkGoSig skyName =
-                            let goName = map (\c -> if c == '.' then '_' else c) skyName
-                                tparams = Map.lookup goName funcSkyToGoTVars
-                                annot   = Map.lookup skyName annotMap
-                                quants  = Map.lookup skyName csiByCallee
-                            in GoSig
-                                { _gs_annotation = annot
-                                , _gs_typeParams = tparams
-                                , _gs_quantifiers = quants
-                                }
-                        goSigMap = Map.fromList
-                            [ (skyName, mkGoSig skyName)
-                            | skyName <- Set.toList allCalleeNames
-                            ]
+                    let goSigMap = buildGoSigMap annotMap csiByCallee
+                            (Rec._cg_funcSkyToGoTVars envForGoSig)
                     writeIORef globalGoSigMap goSigMap
                     -- v0.13 Phase A4: eagerly compute the set of
                     -- specialised mangled names that WOULD be
