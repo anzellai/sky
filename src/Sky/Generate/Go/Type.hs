@@ -856,6 +856,40 @@ data MappingContext = MappingContext
       -- compiles.  Full-env callers want the @GoAny@ fallback
       -- (where unknown means genuinely unresolved), so the default
       -- is False.  CONSUMED BY: 'mapNamedType'.
+
+    -- v0.17 Phase F — typeStrWithAliasesReg pipeline parity policies.
+    , mcTVarSubst :: ![(String, String)]
+      -- ^ TVar name → Go-type string substitution.  Consumed by
+      -- 'mapSkyTypeToGo' TVar arm BEFORE 'mcTVarsToAny' and the
+      -- 'goTypeParam' fallback: when name is in this assoc list,
+      -- the rendered string is the mapped value verbatim (wrapped
+      -- in 'GoBare').  Empty by default — only Phase F's
+      -- @typeStrWithAliasesRegBoundedScopedViaPipeline@ populates
+      -- it via overlay.  Closes the parametric-monomorphisation
+      -- path where TVar @msg@ must render as e.g. @T1@ at the
+      -- generic-instantiation site.  Source: caller's per-call
+      -- @tvarMap@ argument.
+
+    , mcDepModHint :: !(Maybe String)
+      -- ^ Dep-vs-entry module mode hint.  @Nothing@ means we're
+      -- emitting code for the entry module (typed Std.Html.Html_T
+      -- variant available); @Just modName@ means we're inside a
+      -- dep-module emission where typed-Html instantiation would
+      -- refer to types not in scope (the dep's Go file doesn't see
+      -- entry-module @Msg@).  Mirror of the legacy
+      -- @typeStrWithAliasesRegBoundedScoped@'s @depModHint@ param
+      -- (see Compile.hs:7944).  Default 'Nothing' BUT typed Html
+      -- emission stays gated behind 'mcHtmlTypedEmit'.
+
+    , mcHtmlTypedEmit :: !Bool
+      -- ^ Master gate for the typed @Std_Html_Html_T[arg]@ variant
+      -- in 'mapNamedType' Html arm.  When False (default), the
+      -- bare @Std_Html_Html@ is always emitted — preserves
+      -- byte-identical output for every pre-existing pipeline
+      -- caller.  When True AND 'mcDepModHint' is 'Nothing' AND
+      -- arg is concrete (not a TVar), emits the typed sibling.
+      -- Only @typeStrWithAliasesRegBoundedScopedViaPipeline@
+      -- enables this.
     }
     deriving (Show)
 
@@ -885,6 +919,9 @@ defaultMappingContext = MappingContext
     , mcFieldIndex       = Map.empty
     , mcDropTypeArgs     = False
     , mcAssumeKnownUnion = False
+    , mcTVarSubst        = []
+    , mcDepModHint       = Nothing
+    , mcHtmlTypedEmit    = False
     }
 
 
@@ -950,6 +987,9 @@ buildMappingContext renderEnv cgEnv = MappingContext
     , mcFieldIndex       = Rec._cg_fieldIndex cgEnv
     , mcDropTypeArgs     = False
     , mcAssumeKnownUnion = False
+    , mcTVarSubst        = []
+    , mcDepModHint       = Nothing
+    , mcHtmlTypedEmit    = False
     }
 
 
@@ -963,6 +1003,13 @@ buildMappingContext renderEnv cgEnv = MappingContext
 mapSkyTypeToGo :: MappingContext -> T.Type -> GoType
 mapSkyTypeToGo ctx t = case t of
     T.TVar name
+        -- v0.17 Phase F — TVar subst overlay.  When the caller's
+        -- per-call tvarMap maps this name to a concrete Go-type
+        -- string, emit it verbatim (legacy parity with
+        -- 'typeStrWithAliasesRegBoundedScoped').  Falls through to
+        -- the 'mcTVarsToAny' / 'goTypeParam' policy when the name
+        -- isn't in the subst.
+        | Just goStr <- lookup name (mcTVarSubst ctx) -> GoBare goStr
         | mcTVarsToAny ctx -> GoAny
         | otherwise        -> GoTypeVar (goTypeParam name)
 
@@ -1295,7 +1342,25 @@ mapNamedType ctx home name args
         -- Std.Html.Html — codegens non-generic (`= rt.SkyADT`), so
         -- the msg arg is dropped at emission time.  Same special-case
         -- as legacy 'goNamedType'.
-        (_, "Html") -> GoNamed "Std_Html_Html" []
+        --
+        -- v0.17 Phase F — typed @Std_Html_Html_T[arg]@ variant.
+        -- Mirrors legacy 'typeStrWithAliasesRegBoundedScoped' at
+        -- Compile.hs:8026: when 'mcHtmlTypedEmit' is True AND
+        -- depModHint is Nothing (entry-module emission) AND arg is
+        -- concrete (not a TVar), emit the typed sibling.  The
+        -- runtime's @type Std_Html_Html_T[T any] = rt.SkyADT@ alias
+        -- makes this transparent at runtime.  Dep-module emission
+        -- stays bare because the entry-module's @Msg@ type isn't in
+        -- scope in dep Go files.  Default off — only Phase F's
+        -- typeStrWithAliasesRegBoundedScopedViaPipeline enables it.
+        (_, "Html")
+            | mcHtmlTypedEmit ctx
+            , Nothing <- mcDepModHint ctx
+            , [arg] <- args
+            , (case arg of { T.TVar _ -> False; _ -> True })
+            -> GoNamed "Std_Html_Html_T" [mapSkyTypeToGo ctx arg]
+            | otherwise
+            -> GoNamed "Std_Html_Html" []
 
         -- User-defined types: Module_Name or Module_Name[T1, T2]
         --

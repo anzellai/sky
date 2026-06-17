@@ -7901,6 +7901,66 @@ renderHofParamTyScoped depModHint recAliases fieldIdx tvarMap ty = case ty of
 -- Sole live entry: 'typeStrWithAliasesRegBoundedScoped'.
 
 
+-- | v0.17 Phase F — pipeline-via overlay for the typeStrWithAliasesReg
+-- family.  Builds a 'MappingContext' over 'buildMappingContext getCgEnv'
+-- with three Phase F policy overlays:
+--
+-- * 'mcTVarSubst'     = caller's tvarMap (TVar name → Go-type string)
+-- * 'mcTVarsToAny'    = True (legacy parity: TVar not in subst → @any@)
+-- * 'mcRecordAliases' = caller's alias set unioned with env-derived
+-- * 'mcFieldIndex'    = caller's regfield index unioned with env-derived
+-- * 'mcDepModHint'    = caller's dep-mode hint
+-- * 'mcHtmlTypedEmit' = True (legacy parity: typed @Std_Html_Html_T@)
+--
+-- Fuel + seen are dropped — 'mapSkyTypeToGo' is structurally bounded
+-- by the input type's depth, so the legacy recursion guard is
+-- redundant in the pipeline path.  Diff-gate via
+-- @SKY_RENDERER_DIFF_TYPESTR@ surfaces any output divergence.
+typeStrWithAliasesRegBoundedScopedViaPipeline
+    :: Maybe String
+    -> Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> T.Type
+    -> String
+typeStrWithAliasesRegBoundedScopedViaPipeline depModHint recAliases fieldIdx tvarMap ty =
+    let baseCtx = GoType.buildMappingContext GoType.defaultRenderEnv getCgEnv
+        ctx = baseCtx
+            { GoType.mcRecordAliases =
+                Set.union recAliases (GoType.mcRecordAliases baseCtx)
+            , GoType.mcFieldIndex    =
+                Map.union fieldIdx (GoType.mcFieldIndex baseCtx)
+            , GoType.mcTVarSubst     = tvarMap
+            , GoType.mcTVarsToAny    = True
+            , GoType.mcDepModHint    = depModHint
+            , GoType.mcHtmlTypedEmit = True
+            }
+    in GoType.renderGoType (GoType.mcRenderEnv ctx)
+           (GoType.mapSkyTypeToGo ctx ty)
+
+
+-- | v0.17 Phase F — env knob enabling the differential diff gate
+-- between the legacy 'typeStrWithAliasesRegBoundedScoped' renderer
+-- and the pipeline-via overlay.  Set @SKY_RENDERER_DIFF_TYPESTR=1@
+-- to instrument every call: on divergence, both rendered strings
+-- plus the input type print to stderr.  Default off — zero overhead.
+{-# NOINLINE rendererDiffTypeStrEnabled #-}
+rendererDiffTypeStrEnabled :: Bool
+rendererDiffTypeStrEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_DIFF_TYPESTR"
+    return (v == Just "1" || v == Just "true")
+
+
+-- | v0.17 Phase F — escape hatch reverting to the legacy renderer
+-- byte-for-byte.  Set @SKY_RENDERER_TYPESTR_LEGACY=1@ to bypass the
+-- pipeline overlay entirely.  Default off.
+{-# NOINLINE rendererTypeStrLegacyEnabled #-}
+rendererTypeStrLegacyEnabled :: Bool
+rendererTypeStrLegacyEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_RENDERER_TYPESTR_LEGACY"
+    return (v == Just "1" || v == Just "true")
+
+
 -- | v0.17 PR-α Session 2 — scoped variant taking an explicit
 -- dep-mode hint.  When @Just modName@, the Html-arm entry/dep gate
 -- at line 7730 reads from this param instead of consulting the
@@ -7911,6 +7971,20 @@ renderHofParamTyScoped depModHint recAliases fieldIdx tvarMap ty = case ty of
 -- migrate to @Just@ when the call-site has the dep mode in scope.
 -- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@ for
 -- the full migration plan.
+--
+-- v0.17 Phase F — pipeline overlay reserved for a follow-up.
+-- 'typeStrWithAliasesRegBoundedScopedViaPipeline' is wired up but
+-- not consulted from this renderer yet.  A naive diff-gate caused a
+-- @<<loop>>@ blackhole at the first 'Generating Go' stage (likely
+-- caused by parallel evaluation of two renderers each consulting
+-- globalCgEnv/globalAnonRecords with the same fuel/seen and dep
+-- mode reentering through @rec@).  Phase F-2 will land a sequenced
+-- diff-gate (evaluate legacy strictly first, then pipeline) once
+-- the migration is graphed against the inferredSigSkyToGoScoped
+-- entry point.  Until then this renderer stays on the legacy path
+-- — the policy fields ('mcTVarSubst', 'mcDepModHint',
+-- 'mcHtmlTypedEmit') are additive scaffolding that ship without
+-- consuming behavior change.
 typeStrWithAliasesRegBoundedScoped
     :: Maybe String
     -> Set.Set String
