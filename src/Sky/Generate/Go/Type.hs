@@ -18,6 +18,7 @@
 -- drift. See @docs/v0.17-fully-typed-codegen-v5-plan.md@.
 module Sky.Generate.Go.Type where
 
+import qualified Data.Char as Char
 import Data.List (isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -889,11 +890,16 @@ mapSkyTypeToGo ctx t = case t of
         -- 'parseTupleTypeArgs'.
         GoTuple (map (mapSkyTypeToGo ctx) (a : b : extras))
 
-    T.TRecord fields Nothing ->
+    -- v0.17 PR-22 S4 — both closed and open records route through
+    -- 'mapRecordType'.  Legacy's @T.TRecord fields _@ arm (single
+    -- pattern, ignored row-tail) emits the same alias-then-
+    -- synthesised-name result whether the row is closed or open;
+    -- the pre-S4 'any /* extensible record */' divergence would
+    -- emit @any@ at Go sites where legacy emitted a typed alias
+    -- (Surface 2 row-poly Cfg pattern), losing per-record
+    -- discrimination at the field-access boundary.
+    T.TRecord fields _ ->
         mapRecordType ctx fields
-
-    T.TRecord _ (Just _) ->
-        GoRaw "any /* extensible record */"
 
     T.TType home name args ->
         mapNamedType ctx home name args
@@ -1040,6 +1046,38 @@ mapAliasType ctx home name typeArgs aliasTy =
                     | otherwise -> GoAny
 
 
+-- | v0.17 PR-22 S4 — detect FFI qualified-mangled flatten names.
+--
+-- Structural mirror of the legacy 'splitGoMangledQualified' at
+-- 'Sky.Build.Compile.hs:7617'.  Names of the shape @Foo_at_pkg@
+-- carry a Go-package-qualified import; both legacy renderers
+-- short-circuit them to @any@ because:
+--
+--   * the bare 'Foo' is not a valid Go identifier (the runtime
+--     never declares it under the flatten alias), AND
+--   * the FFI surface routes the type through the runtime's
+--     untyped channel anyway.
+--
+-- @Just (bare, suffix)@ means the name looks like
+-- @\<bare>_at_\<suffix>@ where @bare@ starts uppercase + alnum and
+-- @suffix@ is non-empty lowercase/digit/underscore.  We don't
+-- consume the result (the legacy site only pattern-matches on
+-- @Just _@); 'mapNamedType' fires its @GoAny@ branch on a hit.
+splitGoMangledQualified :: String -> Maybe (String, String)
+splitGoMangledQualified s = go s ""
+  where
+    go ('_' : 'a' : 't' : '_' : suffix) acc
+        | not (null acc)
+        , let bare = reverse acc
+        , Char.isUpper (head bare)
+        , all (\c -> Char.isAlpha c || Char.isDigit c) bare
+        , not (null suffix)
+        , all (\c -> Char.isLower c || Char.isDigit c || c == '_') suffix
+        = Just (bare, suffix)
+    go (c : rest) acc = go rest (c : acc)
+    go [] _ = Nothing
+
+
 -- | Map a named-type application (e.g. @List Int@, @Result Error Foo@,
 -- user-defined @Std.Ui.Element msg@) to its Go shape.
 --
@@ -1054,7 +1092,16 @@ mapNamedType
     -> String
     -> [T.Type]
     -> GoType
-mapNamedType ctx home name args =
+mapNamedType ctx home name args
+    -- v0.17 PR-22 S4 — early gate for FFI qualified-mangled flatten
+    -- names (Compile.hs:17274).  Names of the shape @Foo_at_pkg@
+    -- come from the FFI re-export of imported Go types.  Both
+    -- legacy renderers short-circuit to @any@ before any other
+    -- lookup because the bare 'Foo' is not a valid Go identifier
+    -- (it's a flattened path) and the runtime doesn't carry a
+    -- typed alias for it.
+    | Just _ <- splitGoMangledQualified name = GoAny
+    | otherwise =
     case (ModuleName.toString home, name) of
         -- Primitives — both qualified (Sky.Core.Basics) and bare paths
         ("Sky.Core.Basics", "Int")    -> GoBare "int"
@@ -1235,6 +1282,17 @@ mapNamedType ctx home name args =
                         Nothing -> case unionRecovery of
                             Just u -> GoNamed u []
                             Nothing
+                                -- v0.17 PR-22 S4 — Route + other
+                                -- 'runtimeOnly' types (in the registry
+                                -- but with no corresponding Go type
+                                -- declaration anywhere — only the FFI
+                                -- runtime hand-codes them) fall to
+                                -- @any@.  Without this gate the bare
+                                -- @GoNamed "Route" []@ would render
+                                -- as @Route@ in Go and break
+                                -- @go build@ with @undefined: Route@.
+                                | name `elem` RuntimeMaps.runtimeOnlyTypes
+                                                -> GoAny
                                 | isKnownUnion -> GoNamed base []
                                 | otherwise -> case args of
                                     [] -> GoNamed base []
