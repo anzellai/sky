@@ -16287,10 +16287,14 @@ literalListElementsPolymorphic _ _ = False
 -- name and replaces the key with a TVar (resolves to "any" in
 -- solvedTypeToGo). With the conflict-detection merge, this filter
 -- is no longer load-bearing for the `rt.*` class.
+-- v0.17 #648 verification — sanitiseTypedElem is being tested as a
+-- pass-through.  The historical Anon_R_<hash> → "any" rewrite was a
+-- workaround for cross-module name shadowing; the root cause was
+-- closed by typesWithDeps's conflict-detection merge, so the rewrite
+-- should be redundant.  If the example sweep stays 26/26 with this
+-- pass-through, the function (and all 5 call sites) get deleted.
 sanitiseTypedElem :: String -> String
-sanitiseTypedElem go
-    | "Anon_R_" `List.isPrefixOf` go = "any"
-    | otherwise = go
+sanitiseTypedElem = id
 
 
 -- v0.17 — 'sanitiseTypedDeep' was a no-op (s = s) preserved as a
