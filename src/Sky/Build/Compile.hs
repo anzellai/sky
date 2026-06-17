@@ -4284,7 +4284,9 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
         -- use the mangled names and drop the generic emission.
         specDecls = unsafePerformIO $ do
             reached <- readIORef globalReachableSet
-            _annotMap' <- readIORef globalAnnotMap
+            -- v0.17 PR-α — dead read of @globalAnnotMap@ removed
+            -- (was @_annotMap' <- readIORef globalAnnotMap@; the
+            -- result was never consumed in this block).
             csiByCallee <- readIORef globalCsiByCallee
             env <- readIORef globalCgEnv
             -- v0.17 C12 (this site): GoSig-primary read for the
@@ -11006,7 +11008,8 @@ instanceMangledName region qualName = unsafePerformIO $ do
     -- call could fire).  Replaces 'readIORef globalReachableSet'.
     ctx <- readIORef scopeStateRef
     let reached = LC._lc_reachableSet ctx
-    _annotMap' <- readIORef globalAnnotMap
+    -- v0.17 PR-α — dead read of @globalAnnotMap@ removed (was
+    -- @_annotMap' <- readIORef globalAnnotMap@; result never used).
     -- v0.17 C24 — CSI key uses (line, col) of the call's source
     -- region.  Cross-module collisions at the same (line, col)
     -- are extremely rare (different source files); the modName-
