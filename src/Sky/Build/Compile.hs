@@ -138,18 +138,12 @@ isInlineConsoleBuild = unsafePerformIO $ do
     return (v == Just "1")
 
 
--- | v0.13 Phase A5: entry-module source path, set once per
--- compilation, read at call-site codegen to key into
--- `_cg_callSiteInstances` by (path, line, col).  Set in
--- `continueCompile` before generateGoMulti runs.
-{-# NOINLINE globalEntryPath #-}
-globalEntryPath :: IORef FilePath
-globalEntryPath = unsafePerformIO $ newIORef ""
-
-
-{-# NOINLINE entryPathRef #-}
-entryPathRef :: FilePath
-entryPathRef = unsafePerformIO $ readIORef globalEntryPath
+-- v0.17 IORef defusing #7 — @globalEntryPath@ + @entryPathRef@ deleted.
+-- Chain was 2 writes / 1 read at @entryPathRef@, but @entryPathRef@
+-- itself had 0 consumers anywhere in the tree.  Originally fed CSI
+-- lookups by (path, line, col) keys; the lookup path was rewired
+-- during the PR-13 σ_go region-based lookup landing and the indirection
+-- through @entryPathRef@ was left orphan.
 
 
 -- | v0.13 Phase A5++: per-module source path that codegen sets
@@ -1053,7 +1047,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     writeIORef globalAnonRecords Map.empty
     -- v0.17 IORef defusing #2 — globalDceDisabled retired (env-var
     -- CAF 'dceDisabled' replaces it).
-    writeIORef globalEntryPath ""
+    -- v0.17 IORef defusing #7 — globalEntryPath retired (dead chain).
     -- Do NOT reset `Env.ffiTypedWrapper{Names,Params}Ref` here:
     -- `loadAndSeedFfiRegistry` writes them in `compile` BEFORE
     -- `continueCompile` runs, so resetting here would clobber the
@@ -1646,7 +1640,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 csiByRegion = Map.fromListWith Map.union csiEntries
             modifyIORef globalCgEnv $ \e ->
                 Rec.withCallSiteInstances csiByRegion e
-            writeIORef globalEntryPath entryPath
+            -- v0.17 IORef defusing #7 — globalEntryPath retired.
+            -- entryPath is now used directly by callers without the
+            -- IORef indirection.
             -- HM type errors are FATAL (promoted from warning). No
             -- silent degradation to `any`. This enforces the
             -- "if it compiles, it works" promise at the entry module.
