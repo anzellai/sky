@@ -898,11 +898,24 @@ mapSkyTypeToGo ctx t = case t of
     T.TType home name args ->
         mapNamedType ctx home name args
 
-    T.TAlias _ _ _ (T.Hoisted inner) ->
-        mapSkyTypeToGo ctx inner
-
-    T.TAlias _ _ _ (T.Filled inner) ->
-        mapSkyTypeToGo ctx inner
+    -- v0.17 PR-22 S3 — TAlias arm.  Mirror legacy
+    -- 'solvedTypeToGoBounded' lookup order from Compile.hs:17394:
+    --
+    --   1. Match in 'mcRecordAliases' → @aliasName_R[args]@
+    --   2. Runtime-typed override (qualified or bare)
+    --   3. Aliased TRecord → @base_R[args]@
+    --   4. Runtime-only → @any@
+    --   5. Known union → @base@
+    --   6. Chain unfolding into the aliased inner type
+    --   7. Fallback → @any@
+    --
+    -- The pre-S3 fallback (always unfold to inner) silently dropped
+    -- alias names + typeArgs, so the pipeline output diverged from
+    -- legacy at every TAlias site.  After S3 the pipeline emits the
+    -- same generic instantiation legacy already does for parametric
+    -- record aliases (Surface 2 + 3).
+    T.TAlias home name typeArgs aliasTy ->
+        mapAliasType ctx home name typeArgs aliasTy
 
 
 -- | Map a closed-record type to its Go form.
@@ -934,6 +947,97 @@ mapRecordType ctx fields =
             GoNamed (aliasName ++ "_R") []
         Nothing ->
             GoNamed (AnonRec.synthAnonRecordName fields) []
+
+
+-- | v0.17 PR-22 S3 — Map a 'T.TAlias' to its Go form.
+--
+-- Lookup mirrors the legacy 'solvedTypeToGoBounded' TAlias arm at
+-- 'Compile.hs:17394' (lookup order in the function comment).  Key
+-- points:
+--
+-- * @typeArgs@ is @[(String, T.Type)]@; the @snd@ projection feeds
+--   the generic-args suffix (matching legacy's
+--   @[ recCycle argTy | (_, argTy) <- typeArgs ]@).
+--
+-- * Empty-home + cross-module qualified-candidate recovery uses the
+--   same trailing-segment match as the legacy: walk every
+--   registered alias name (@Mod_Name@) and admit candidates whose
+--   last underscore-segment equals @name@.
+--
+-- * @isRecord@ tests the aliased inner type — if the alias resolves
+--   to a 'T.TRecord' shape, we know the base name has a backing
+--   record-alias struct (@Foo_R@).
+--
+-- * No cycle 'seen' set yet — the @Hoisted/Filled@ unwrap is one
+--   level so cycles are limited by the canonicaliser's own
+--   alias-expansion bound, not the renderer.  Phase ε's
+--   structural recursion via 'mapSkyTypeToGo' continues without a
+--   'seen' set because every recursive arm bottoms out at
+--   primitives.  The legacy 'seen' guard mattered for the
+--   @recursedFromChain@ branch which fed the inner @aliasTy@ back
+--   into the renderer — we deliberately only invoke the chain
+--   fallback when nothing else matches, and the pipeline's
+--   bounded slot-by-slot rendering means a self-referential alias
+--   would unfold once and the inner @TAlias@ would hit the same
+--   match-first → @_R@ branch, terminating cleanly.
+mapAliasType
+    :: MappingContext
+    -> ModuleName.Canonical
+    -> String
+    -> [(String, T.Type)]
+    -> T.AliasType
+    -> GoType
+mapAliasType ctx home name typeArgs aliasTy =
+    let modStr = ModuleName.toString home
+        prefix = goModulePrefix home
+        base = if null prefix
+                  then name
+                  else prefix ++ "_" ++ name
+
+        renderedArgs = map (mapSkyTypeToGo ctx . snd) typeArgs
+
+        allAliases = mcRecordAliases ctx
+        qualifiedCandidates =
+            [ p ++ "_" ++ name
+            | a <- Set.toList allAliases
+            , '_' `elem` a
+            , let p = reverse (drop 1 (dropWhile (/= '_') (reverse a)))
+            , not (null p)
+            ]
+        candidates = if null prefix
+                       then qualifiedCandidates ++ [name]
+                       else base : qualifiedCandidates ++ [name]
+        matches = [ c | c <- candidates, Set.member c allAliases ]
+
+        qualHit = lookup (modStr, name) (mcQualRuntimeTyped ctx)
+        runtimeHit = lookup name (mcRuntimeTypedMap ctx)
+
+        isRecord = case aliasTy of
+            T.Hoisted (T.TRecord _ _) -> True
+            T.Filled  (T.TRecord _ _) -> True
+            _ -> False
+
+        isRuntimeOnly = name `elem` RuntimeMaps.runtimeOnlyTypes
+        isKnownUnion =
+            Set.member base (mcUnionNames ctx)
+                || Set.member name (mcUnionNames ctx)
+
+        chainUnfolded = case aliasTy of
+            T.Hoisted inner -> Just (mapSkyTypeToGo ctx inner)
+            T.Filled  inner -> Just (mapSkyTypeToGo ctx inner)
+            _ -> Nothing
+    in case matches of
+        (m:_) -> GoNamed (m ++ "_R") renderedArgs
+        _ -> case qualHit of
+            Just q -> GoBare q
+            Nothing -> case runtimeHit of
+                Just r -> GoBare r
+                Nothing
+                    | isRecord -> GoNamed (base ++ "_R") renderedArgs
+                    | isRuntimeOnly -> GoAny
+                    | isKnownUnion -> GoNamed base []
+                    | Just unfolded <- chainUnfolded -> unfolded
+                    | otherwise -> GoAny
 
 
 -- | Map a named-type application (e.g. @List Int@, @Result Error Foo@,
