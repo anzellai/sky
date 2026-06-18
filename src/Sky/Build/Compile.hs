@@ -2627,7 +2627,8 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- misses, etc.). Safe because Go's `any` is the
                     -- universal interface; an out-of-scope TVar would
                     -- have failed go build anyway.
-                    let goCode' = eraseUndeclaredTVarsInGoSource goCode
+                    -- v0.17 Wave 3 probe: band-aid OFF to surface raw T1 leak
+                    let goCode' = goCode
                     writeFile mainGoPath goCode'
                     putStrLn $ "   Wrote " ++ mainGoPath
                     -- v0.13 Layer 2: codegen-stage validator runs after
