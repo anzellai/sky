@@ -11174,7 +11174,7 @@ emitPartialCtor func suppliedArgs missing =
         -- parametric-record passing on partial-applied ctors.
         suppliedGo  = zipWithDefaultExpect suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (ctxFromIORef ()) Nothing (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
         -- Wrap outer-first (last extra wrapped first) so the chain is
@@ -11411,7 +11411,7 @@ coerceCallArgsAt region qualName args =
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
-                                    else coerceArg (Just e) (exprToGo e) subbed
+                                    else coerceArg (ctxFromIORef ()) (Just e) (exprToGo e) subbed
                 in zipWith3Default coerceOne paramTypes substituted args
         (_, Just (Solve.CallInstance _ concreteTys quants))
             | length quants == length concreteTys
@@ -11590,7 +11590,7 @@ coerceCallArgsAt region qualName args =
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
-                                    else coerceArg (Just e) (exprToGo e) subbed
+                                    else coerceArg (ctxFromIORef ()) (Just e) (exprToGo e) subbed
                 in zipWith3Default coerceOne paramTypes substituted args
         _ ->
             -- v0.13 Phase A5+: when no CSI is captured at this call
@@ -11797,7 +11797,7 @@ coerceCallArgsAt region qualName args =
                         _ ->
                             if subbed == "any" && containsTypeParam orig
                                 then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
-                                else coerceArg (Just e) (exprToGo e) subbed
+                                else coerceArg (ctxFromIORef ()) (Just e) (exprToGo e) subbed
             in zipWith3Default coerceFallback paramTypes substituted args
 
 
@@ -12116,8 +12116,15 @@ splitFuncTypeStr s
 -- don't have an underlying `Can.Expr` (synthesised
 -- `__p0 / __tco_t0` identifiers in over-application + TCO jumps)
 -- pass `Nothing` and the new arm cleanly no-ops.
-coerceArg :: Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
-coerceArg mSrc e ty
+-- v0.17 PR-17b Reader-threading Stage 2 — explicit LowerCtx
+-- parameter feeds the eraseScopedCtx predicate in the three
+-- parametric coerce arms (SkyResult/SkyMaybe/SkyTask) below.
+-- Callers thread their own ctx; bridge sites pass 'ctxFromIORef ()'
+-- to preserve the legacy 'enclosingTypeParamInScope' (unsafePerformIO
+-- on scopeStateRef) byte-identical behaviour until Stage 4 migrates
+-- exprToGo's arms to thread upstream ctx explicitly.
+coerceArg :: LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
+coerceArg ctx mSrc e ty
     | ty == "any" || null ty = e
     -- Generic type parameter (T1, T2, ...) — when the arg's static
     -- Go type is concrete (`int`, `string`, `[]T1`, `rt.SkyResult
@@ -12318,12 +12325,12 @@ coerceArg mSrc e ty
     | Just params <- stripParametric "rt.SkyResult" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.ResultCoerce["
-                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope params
+                ++ eraseScopedCtx ctx params
                 ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.MaybeCoerce["
-                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope inner
+                ++ eraseScopedCtx ctx inner
                 ++ "]")) [e]
     -- Audit: parametric SkyTask param targets need TaskCoerceT for the
     -- same nominal-typing reason — `func() any` from the runtime helpers
@@ -12334,7 +12341,7 @@ coerceArg mSrc e ty
     | Just params <- stripParametric "rt.SkyTask" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.TaskCoerceT["
-                ++ eraseTypeParamsExceptScope enclosingTypeParamInScope params
+                ++ eraseScopedCtx ctx params
                 ++ "]")) [e]
     | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
@@ -12755,7 +12762,10 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
             | isParametricAliasInstantiation subbed
             , not (containsGenericTypeParam subbed) ->
                 exprToGoExpectGo subbed e
-        _ -> coerceArg (Just e) (exprToGo e) subbed
+        -- v0.17 PR-17b S2 — this is inside kernelCoerceArg, NOT a
+        -- recursive coerceArg self-call.  Bridge to ctxFromIORef so
+        -- behaviour matches the legacy enclosingTypeParamInScope read.
+        _ -> coerceArg (ctxFromIORef ()) (Just e) (exprToGo e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
@@ -13038,7 +13048,7 @@ lowerArgExpect ty e@(A.At _ expr)
     , not (containsGenericTypeParam ty)
     = lowerExprExpectGo (ctxFromIORef ()) ty e
     | otherwise
-    = coerceArg (Just e) (exprToGo e) ty
+    = coerceArg (ctxFromIORef ()) (Just e) (exprToGo e) ty
 
 
 -- | Over-application: the call supplied MORE args than the callee's
@@ -13157,7 +13167,7 @@ emitPartialUserCall func suppliedArgs missing =
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
         suppliedGo = zipWithDefaultExpect suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (ctxFromIORef ()) Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         -- #580 — when σ-recovery pinned every TVar in the callee's
         -- param list (no remaining unbound generics), drop the
@@ -14427,7 +14437,9 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
             -- original arg recovers it.
             coerceForTco mSrc ge ty
                 | take 5 ty == "func(" = ge
-                | otherwise = coerceArg mSrc ge ty
+                -- v0.17 PR-17b S2 bridge: TCO continuation site,
+                -- no upstream ctx threaded yet — read via IORef.
+                | otherwise = coerceArg (ctxFromIORef ()) mSrc ge ty
             -- Build the (param, tmp, ty, src) tuple list and walk.
             zip4tco (a:as) (b:bs) (c:cs) (d:ds) =
                 (a, b, c, d) : zip4tco as bs cs ds
