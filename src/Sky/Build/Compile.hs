@@ -624,6 +624,27 @@ enclosingTypeParamInScope t = unsafePerformIO $ do
 {-# NOINLINE enclosingTypeParamInScope #-}
 
 
+-- | v0.17 PR-17b Reader-threading Stage 0 — pure substitute for
+-- 'enclosingTypeParamInScope' that takes the LowerCtx explicitly
+-- instead of reading 'scopeStateRef' via 'unsafePerformIO'.  Used
+-- by the new threaded readers; the legacy 'enclosingTypeParamInScope'
+-- wrapper above is kept as a thin shim during the staged migration
+-- (Stages 1-5) and deleted in Stage 6.  Equivalent to
+-- 'LC.lookupEnclosingTypeParam' but namespaced for the migration so
+-- the legacy/threaded call counts are greppable.
+enclosingTypeParamInScopeCtx :: LC.LowerCtx -> String -> Bool
+enclosingTypeParamInScopeCtx ctx = LC.lookupEnclosingTypeParam ctx
+
+
+-- | v0.17 PR-17b Reader-threading Stage 0 — ctx-aware companion to
+-- the legacy @eraseScoped = eraseTypeParamsExceptScope enclosingTypeParamInScope@
+-- one-liner at the multiple coerce sites (Compile.hs:10475 et al).
+-- Migrating callers from the legacy form to 'eraseScopedCtx ctx' is
+-- the seam that closes the GoExpr construction-time T1 leak.
+eraseScopedCtx :: LC.LowerCtx -> String -> String
+eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ctx)
+
+
 -- | Read the global codegen env (for use in pure codegen functions).
 -- NOINLINE so GHC doesn't CSE the IORef read across call sites —
 -- each `getCgEnv` invocation must see the LATEST mutation. Without
