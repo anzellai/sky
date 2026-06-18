@@ -3919,21 +3919,16 @@ generateDeclsForDep canMod modPrefix =
               -- `isEmittableGoType` gate keeps it sound: a non-
               -- emittable `depRetType` falls back to plain `exprToGo`
               -- and the outer `typeIIFE` still coerces.
-              -- v0.17 PR-17b Stage 5 — thread a fully-composed ctx
-              -- through body lowering.  Mirrors the same scope-push
-              -- nesting the wraps establish via IORef so leaves use
-              -- threaded ctx for the new ctx-aware code paths while
-              -- legacy IORef readers keep working under the wraps.
-              lowerDepBody c e =
+              lowerDepBody e =
                   if depRetType /= "any"
-                      then exprToGoExpectGo c depRetType e
-                      else exprToGo c e
+                      then exprToGoExpectGo (ctxFromIORef ()) depRetType e
+                      else exprToGo (ctxFromIORef ()) e
               -- `typeIIFE` runs on the GoExpr STRUCTURE — before
               -- `withScopedLambdaTypes` renders it to a String — so it
               -- can still see a `GoBlock` and convert it to a typed
               -- `func() <depRetType>` IIFE.  Idempotent on an
               -- already-typed `GoTypedBlock` (no redundant re-wrap).
-              typedBody = typeIIFE depRetType (lowerDepBody depFullCtx body)
+              typedBody = typeIIFE depRetType (lowerDepBody body)
               -- v0.13 Stage 1 (task #189) — register func-typed
               -- params in the Go-string registry too, so the
               -- recursive call-site `goExprGoType` resolves
@@ -3957,19 +3952,6 @@ generateDeclsForDep canMod modPrefix =
                   , take 5 pgo == "func("
                      || isJust (parametricAliasBase pgo)
                   ]
-              -- v0.17 PR-17b Stage 5 — composed ctx that mirrors the
-              -- wrap nesting below.  Order: enclosing-type-params
-              -- OUTERMOST (matches the wrap call order), lambda-types
-              -- MIDDLE, lambda-go-strs INNERMOST.  Layered onto
-              -- ctxFromIORef () so the entry-/dep-mode hint + module
-              -- env stay live.  Passed into `lowerDepBody` so leaves
-              -- that take ctx use the proper composed scope instead
-              -- of the IORef snapshot at body-build time.
-              depFullCtx =
-                  LC.withEnclosingTypeParams depTypeParams
-                $ LC.withLambdaTypes paramTypeBindings
-                $ LC.withLambdaGoStrs goStringBindings
-                $ ctxFromIORef ()
               -- Go-strings INNER, Sky-types OUTER so both bindings are
               -- active during typedBody's render (which is forced
               -- eagerly inside the innermost withScoped wrapper).
@@ -4014,13 +3996,9 @@ generateDeclsForDep canMod modPrefix =
               -- coerceToFieldType reads inside the loop preserve
               -- T-vars instead of erasing to `any`.  Closes
               -- probe-TCO-4 (polymorphic case-arm tail jump).
-              -- v0.17 PR-17b Stage 5 — thread the composed ctx so
-              -- the TCO body's coerceArg / coerceToFieldType reads
-              -- see the dep function's declared T-vars + scoped param
-              -- bindings via ctx, not just via the IORef wrap.
               tcoBody = withScopedEnclosingTypeParamsStmts depTypeParams
                           [GoIr.GoForever
-                              (tcoBodyStmts depFullCtx depHome name (length params)
+                              (tcoBodyStmts (ctxFromIORef ()) depHome name (length params)
                                             depParamNames depParamTyped depRetType body)]
               normalBody = [GoIr.GoReturn bodyExpr]
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -5341,26 +5319,16 @@ generateDef home def0 solvedTypes =
             -- `isEmittableGoType` gate keeps it sound: a non-emittable
             -- `goRetType` falls back to plain `exprToGo` and the outer
             -- `typeIIFE` still coerces.
-            -- v0.17 PR-17b Stage 5 — thread a fully-composed ctx
-            -- through body lowering (sibling of the dep-emit site).
-            -- Order mirrors the wrap nesting: enclosing-type-params
-            -- OUTERMOST, lambda-types INNERMOST.  Entry-emit doesn't
-            -- need a Go-string binding (no `func(T1) T2` recursive-
-            -- callsite recovery on entry-module bindings).
-            entryFullCtx =
-                LC.withEnclosingTypeParams entryTypeParams
-              $ LC.withLambdaTypes paramTypeBindings
-              $ ctxFromIORef ()
-            lowerFnBody c e =
+            lowerFnBody e =
                 if goRetType /= "any"
-                    then exprToGoExpectGo c goRetType e
-                    else exprToGo c e
+                    then exprToGoExpectGo (ctxFromIORef ()) goRetType e
+                    else exprToGo (ctxFromIORef ()) e
             -- `typeIIFE` runs on the GoExpr STRUCTURE — before
             -- `withScopedLambdaTypes` renders it to a String — so it
             -- can still see a `GoBlock` and convert it to a typed
             -- `func() <goRetType>` IIFE.  Idempotent on an already-
             -- typed `GoTypedBlock` (no redundant re-wrap).
-            typedBody = typeIIFE goRetType (lowerFnBody entryFullCtx body)
+            typedBody = typeIIFE goRetType (lowerFnBody body)
             bodyExpr0 = if Map.null paramTypeBindings
                 then typedBody
                 else withScopedLambdaTypes paramTypeBindings typedBody
@@ -5394,12 +5362,10 @@ generateDef home def0 solvedTypes =
             -- (tuple-pattern locals re-bind each iteration; closes
             -- probe-TCO-2).  PR-17c wraps the body in the enclosing
             -- type-param scope (probe-TCO-4 closer).
-            -- v0.17 PR-17b Stage 5 — thread the composed ctx into
-            -- TCO body emission (sibling of dep TCO site).
             tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
                         [GoIr.GoForever
                             (destructStmts ++
-                                tcoBodyStmts entryFullCtx home name (length params)
+                                tcoBodyStmts (ctxFromIORef ()) home name (length params)
                                              paramNames paramTyped goRetType body)]
             normalBody = [GoIr.GoReturn bodyExpr]
         in
