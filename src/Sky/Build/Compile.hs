@@ -3998,7 +3998,7 @@ generateDeclsForDep canMod modPrefix =
               -- probe-TCO-4 (polymorphic case-arm tail jump).
               tcoBody = withScopedEnclosingTypeParamsStmts depTypeParams
                           [GoIr.GoForever
-                              (tcoBodyStmts depHome name (length params)
+                              (tcoBodyStmts (ctxFromIORef ()) depHome name (length params)
                                             depParamNames depParamTyped depRetType body)]
               normalBody = [GoIr.GoReturn bodyExpr]
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -5365,7 +5365,7 @@ generateDef home def0 solvedTypes =
             tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
                         [GoIr.GoForever
                             (destructStmts ++
-                                tcoBodyStmts home name (length params)
+                                tcoBodyStmts (ctxFromIORef ()) home name (length params)
                                              paramNames paramTyped goRetType body)]
             normalBody = [GoIr.GoReturn bodyExpr]
         in
@@ -9037,8 +9037,10 @@ snapshotCallerCtx () = unsafePerformIO $ do
 -- threads transitively because `caseToGo Just`/`ifToGo Just`/`letToGo
 -- Just` call `typeIIFE`, whose `coerceReturnExprT` recurses into
 -- nested `GoBlock` returns.
-exprToGoExpect :: T.Type -> Can.Expr -> GoIr.GoExpr
-exprToGoExpect expectedTy e = exprToGoExpectGo (ctxFromIORef ()) (solvedTypeToGo expectedTy) e
+-- v0.17 PR-17b S4 batch 3: takes ctx as first arg; callers thread
+-- their own ctx instead of reading the legacy IORef.
+exprToGoExpect :: LC.LowerCtx -> T.Type -> Can.Expr -> GoIr.GoExpr
+exprToGoExpect ctx expectedTy e = exprToGoExpectGo ctx (solvedTypeToGo expectedTy) e
 
 
 -- | Like `exprToGoExpect` but takes the expected GO TYPE STRING
@@ -9099,7 +9101,7 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
             , Just (paramTys, retTy) <- destructureSlotFunc gt
             , length paramTys == length pats
             , all (/= "any") paramTys -> do
-                lowerTypedLambda pats paramTys retTy body
+                lowerTypedLambda ctx pats paramTys retTy body
 
         -- #590 — Stage C curried-shape arm.  When the slot type is
         -- `func(T1) func(T2) ... func(TN) R` (a curried Go function)
@@ -9236,12 +9238,13 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
 -- nested constructs (let / case / if) get the typed-return
 -- treatment too.
 lowerTypedLambda
-    :: [Can.Pattern]
+    :: LC.LowerCtx
+    -> [Can.Pattern]
     -> [String]        -- typed Go param types (parallel to patterns)
     -> String          -- typed Go return type
     -> Can.Expr        -- body
     -> GoIr.GoExpr
-lowerTypedLambda pats paramTys retTy body =
+lowerTypedLambda parentCtx pats paramTys retTy body =
     let (params, destructStmts) = unzip (zipWith oneParam [0 :: Int ..] (zip pats paramTys))
         allDestructStmts = concat destructStmts
         -- v0.17 PR-11 — register PVar param types in the structural
@@ -9278,7 +9281,8 @@ lowerTypedLambda pats paramTys retTy body =
         -- uniform.  The wrapper re-installs the same ctx (no-op
         -- write+restore) so the rest of the IORef-based machinery
         -- is unaffected.
-        parentCtx = ctxFromIORef ()
+        -- v0.17 PR-17b S4 batch 3: parentCtx threaded from caller
+        -- (single caller in exprToGoExpectGo where ctx is in scope).
         lambdaCtx = LC.withLambdaGoTypes paramGoTypeBindings parentCtx
         bodyExpr = lowerExprExpectGo lambdaCtx retTy body
         wrappedBody =
@@ -9550,7 +9554,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             -- assertion. Falls back to the default any-routing when
             -- the list type isn't concrete (polymorphic helpers).
             Can.VarKernel modName funcName
-                | let typedCall = kernelTypedCall
+                | let typedCall = kernelTypedCall ctx
                         (Rec._cg_solvedTypes getCgEnv) modName funcName args
                         (map (exprToGo ctx) args)
                 , Just expr <- typedCall ->
@@ -10132,13 +10136,9 @@ exprToGo ctx (A.At _ expr) = case expr of
                     lowerFieldValue fname fexpr =
                         let fieldGoTy =
                                 Map.findWithDefault "any" fname fieldTypeMap
-                        -- v0.17 PR-17b S1 — RecordUpdate arm has no
-                        -- explicit ctx threaded yet; bridge via
-                        -- ctxFromIORef so behaviour is byte-identical
-                        -- to the legacy scopeStateRef-driven read.
-                        -- S4 migrates exprToGo's RecordUpdate arm
-                        -- to thread the upstream ctx explicitly.
-                        in coerceToFieldType (ctxFromIORef ())
+                        -- v0.17 PR-17b S4 batch 3: ctx threaded from
+                        -- enclosing exprToGoExpectGo (RecordUpdate arm).
+                        in coerceToFieldType ctx
                                 fieldGoTy
                                 (exprToGoExpectGo ctx fieldGoTy fexpr)
                     initStmt = GoIr.GoShortDecl "_u" baseGoExpr
@@ -10199,11 +10199,9 @@ exprToGo ctx (A.At _ expr) = case expr of
                     -- propagate fully (will be retreated in Stage D).
                     lowerField fn fe =
                         let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
-                        -- v0.17 PR-17b S1 — Record-literal arm has
-                        -- no explicit ctx threaded yet; bridge via
-                        -- ctxFromIORef.  S4 migrates exprToGo's
-                        -- Record arm to thread upstream ctx.
-                        in coerceToFieldType (ctxFromIORef ())
+                        -- v0.17 PR-17b S4 batch 3: ctx threaded from
+                        -- enclosing exprToGoExpectGo (Record arm).
+                        in coerceToFieldType ctx
                                 fieldGoTy
                                 (exprToGoExpectGo ctx fieldGoTy fe)
                 in GoIr.GoStructLit structName
@@ -13584,10 +13582,10 @@ letToGo _outerCtx mExpectedGo def body =
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
                 , Just dt <- letBindingType solvedTypes dn valExpr ->
-                    letBindStmts dn (exprToGoExpect dt valExpr)
+                    letBindStmts dn (exprToGoExpect bodyCtx dt valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
                 | Just dt <- letBindingType solvedTypes dn valExpr ->
-                    letBindStmts dn (exprToGoExpect dt valExpr)
+                    letBindStmts dn (exprToGoExpect bodyCtx dt valExpr)
             _ -> defToStmts bodyCtx def
         bodyGo = if Map.null bindingExtras
             then lowerBody body
@@ -13898,7 +13896,7 @@ defToStmts ctx def = case def of
             let solved = Rec._cg_solvedTypes getCgEnv
             in case letBindingType solved name body of
                 Just dt ->
-                    letBindStmts name (exprToGoExpect dt body)
+                    letBindStmts name (exprToGoExpect ctx dt body)
                 Nothing ->
                     letBindStmts name (exprToGo ctx body)
 
@@ -14239,7 +14237,7 @@ caseToGo ctx mExpectedGo subject branches =
         -- auto-force convention for "keep evaluated, ignore result".
         subjectDiscard = GoIr.GoExprStmt
             (GoIr.GoRaw ("_ = " ++ subjectName))
-        branchStmts = concatMap (caseBranchToStmts subjectName) branches
+        branchStmts = concatMap (caseBranchToStmts ctx subjectName) branches
         -- P3: exhaustiveness is verified before codegen, so this arm is
         -- statically unreachable. Audit P0-5: route through
         -- rt.Unreachable instead of a raw panic so any future
@@ -14282,10 +14280,13 @@ detectSubjectType branches =
     patternGoType _ = Nothing
 
 
--- | Convert a case branch to Go if-statement
-caseBranchToStmts :: String -> Can.CaseBranch -> [GoIr.GoStmt]
-caseBranchToStmts subject =
-    caseBranchToStmtsWith subject (\body -> [GoIr.GoReturn (exprToGo (ctxFromIORef ()) body)])
+-- | Convert a case branch to Go if-statement.
+-- v0.17 PR-17b S4 batch 3: takes ctx as first arg so the default
+-- leaf emitter (`return exprToGo body`) gets the upstream ctx
+-- threaded explicitly instead of reading the legacy IORef.
+caseBranchToStmts :: LC.LowerCtx -> String -> Can.CaseBranch -> [GoIr.GoStmt]
+caseBranchToStmts ctx subject =
+    caseBranchToStmtsWith subject (\body -> [GoIr.GoReturn (exprToGo ctx body)])
 
 
 -- | Same as `caseBranchToStmts` but with a customisable leaf
@@ -14322,7 +14323,8 @@ caseBranchToStmtsWith subject leafFn (Can.CaseBranch pat body) =
 -- of scope — `isTailRecursive` rules those out before this is
 -- called.
 tcoBodyStmts
-    :: ModuleName.Canonical
+    :: LC.LowerCtx
+    -> ModuleName.Canonical
     -> String
     -> Int
     -> [String]
@@ -14330,7 +14332,7 @@ tcoBodyStmts
     -> String     -- function return Go type (for leaf-return coercion)
     -> Can.Expr
     -> [GoIr.GoStmt]
-tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
+tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
   where
     lowerTail :: Can.Expr -> [GoIr.GoStmt]
     lowerTail (A.At _ e) = case e of
@@ -14343,7 +14345,7 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
             -- pattern conditions use `len(rt.AsList(__subject))`
             -- which accepts an any-typed source.
             let subjectName = "__tco_subject"
-                rawSubjExpr = exprToGo (ctxFromIORef ()) subj
+                rawSubjExpr = exprToGo ctx subj
                 anyWrap e0 = GoIr.GoCall (GoIr.GoIdent "any") [e0]
                 subjExpr = case detectSubjectType branches of
                     Nothing -> rawSubjExpr
@@ -14404,7 +14406,7 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
         -- `coerceReturnExprT` so a base case like `[] -> []`
         -- coerces `[]any{}` to the function's typed return
         -- (`[]T1`, `rt.SkyMaybe[T1]`, …).
-        _ -> [GoIr.GoReturn (coerceReturnExprT goRetType (exprToGo (ctxFromIORef ()) (A.At A.one e)))]
+        _ -> [GoIr.GoReturn (coerceReturnExprT goRetType (exprToGo ctx (A.At A.one e)))]
 
     -- Emit param-reassign + continue for a tail self-call.
     -- Tmps capture the OLD param values before reassignment so a
@@ -14423,7 +14425,7 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
     tcoJump args =
         let tmps = ["__tco_t" ++ show i | i <- [0 .. length args - 1]]
             decls = zipWith
-                (\t a -> GoIr.GoShortDecl t (exprToGo (ctxFromIORef ()) a))
+                (\t a -> GoIr.GoShortDecl t (exprToGo ctx a))
                 tmps args
             -- v0.15.x hardening / Gap A1 — pass the underlying
             -- Can.Expr through to coerceArg so the structural-
@@ -14434,9 +14436,8 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
             -- original arg recovers it.
             coerceForTco mSrc ge ty
                 | take 5 ty == "func(" = ge
-                -- v0.17 PR-17b S2 bridge: TCO continuation site,
-                -- no upstream ctx threaded yet — read via IORef.
-                | otherwise = coerceArg (ctxFromIORef ()) mSrc ge ty
+                -- v0.17 PR-17b S4 batch 3: ctx threaded from caller.
+                | otherwise = coerceArg ctx mSrc ge ty
             -- Build the (param, tmp, ty, src) tuple list and walk.
             zip4tco (a:as) (b:bs) (c:cs) (d:ds) =
                 (a, b, c, d) : zip4tco as bs cs ds
@@ -14461,7 +14462,7 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
     ifToTcoStmts branches elseExpr =
         foldr
             (\(c, b) acc ->
-                [GoIr.GoIf (toBoolExpr (exprToGo (ctxFromIORef ()) c)) (tcoLeaf b) acc])
+                [GoIr.GoIf (toBoolExpr (exprToGo ctx c)) (tcoLeaf b) acc])
             (tcoLeaf elseExpr)
             branches
 
@@ -15433,7 +15434,7 @@ generateMainFunc canMod srcMod solvedTypes =
         Just def ->
             let body = defBody def
                 hasTask = any isTaskImport (Src._imports srcMod)
-                stmts = exprToMainStmtsTyped solvedTypes body
+                stmts = exprToMainStmtsTyped (ctxFromIORef ()) solvedTypes body
                 wrappedStmts = if hasTask
                     then stmts  -- TODO: wrap in rt.RunMainTask
                     else stmts
@@ -15537,9 +15538,11 @@ defBody (Can.TypedDef _ _ _ body _) = body
 defBody (Can.DestructDef _ body) = body
 
 
--- | Convert the main body to Go statements, using typed codegen where possible
-exprToMainStmtsTyped :: Solve.SolvedTypes -> Can.Expr -> [GoIr.GoStmt]
-exprToMainStmtsTyped types (A.At _ expr) = case expr of
+-- | Convert the main body to Go statements, using typed codegen where possible.
+-- v0.17 PR-17b S4 batch 3: takes ctx as first arg so internal defToStmts /
+-- exprToGoMain calls thread the upstream ctx instead of reading the legacy IORef.
+exprToMainStmtsTyped :: LC.LowerCtx -> Solve.SolvedTypes -> Can.Expr -> [GoIr.GoStmt]
+exprToMainStmtsTyped ctx types (A.At _ expr) = case expr of
     Can.Let def body ->
         -- v0.15.3 — register the let-binding's HM type into the
         -- in-scope lambda-types map BEFORE defToStmts runs so
@@ -15551,14 +15554,15 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
         -- coerceArg's parametric-record short-circuit doesn't
         -- fire, and the legacy nominal cast panics at runtime.
         registerMainLetBindingType types def `seq`
-            (defToStmts (ctxFromIORef ()) def ++ exprToMainStmtsTyped types body)
+            (defToStmts ctx def ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetRec defs body ->
         foldr seq () (map (registerMainLetBindingType types) defs) `seq`
-            (concatMap (defToStmts (ctxFromIORef ())) defs ++ exprToMainStmtsTyped types body)
+            (concatMap (defToStmts ctx) defs ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetDestruct _pat valExpr body ->
-        [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
+        [GoIr.GoExprStmt (exprToGoMain ctx types valExpr)]
+            ++ exprToMainStmtsTyped ctx types body
 
     -- Calls are valid Go expression statements. Wrap in
     -- `rt.AnyTaskRun` so a Task-returning call (the new normal under
@@ -15574,7 +15578,7 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
         [GoIr.GoAssign "_"
             (GoIr.GoCall
                 (GoIr.GoQualified "rt" "AnyTaskRun")
-                [exprToGoMain types (A.At A.one expr)])]
+                [exprToGoMain ctx types (A.At A.one expr)])]
 
     -- Non-call values (e.g. literals, vars): same AnyTaskRun wrap so
     -- `main = someTask` (a Task-typed value reference) also fires.
@@ -15582,7 +15586,7 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
         [GoIr.GoAssign "_"
             (GoIr.GoCall
                 (GoIr.GoQualified "rt" "AnyTaskRun")
-                [exprToGoMain types (A.At A.one expr)])]
+                [exprToGoMain ctx types (A.At A.one expr)])]
 
 
 -- | Generate Go for main body expressions. Delegates to the standard
@@ -15590,13 +15594,14 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
 -- call sites just like anywhere else — main used to have a parallel
 -- codegen path that skipped coerceCallArgs, causing typed callee args
 -- to fail at go build when called from `main`.
-exprToGoMain :: Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
-exprToGoMain _types e = exprToGo (ctxFromIORef ()) e
+-- v0.17 PR-17b S4 batch 3: takes ctx as first arg.
+exprToGoMain :: LC.LowerCtx -> Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
+exprToGoMain ctx _types e = exprToGo ctx e
 
 
 -- | Legacy untyped main stmts (kept for reference)
 exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
-exprToMainStmts = exprToMainStmtsTyped Solve.emptySolvedTypes
+exprToMainStmts = exprToMainStmtsTyped (ctxFromIORef ()) Solve.emptySolvedTypes
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -15642,7 +15647,11 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
             -- of `rt.List_mapAny(...)`. v0.12.x typed-codegen Phase 3.
             typedKernelCall = case func of
                 A.At _ (Can.VarKernel m f) ->
-                    kernelTypedCall types m f args goArgs
+                    -- v0.17 PR-17b S4 batch 3: exprToGoTyped is an
+                    -- entry-point caller without a threaded ctx;
+                    -- bridge here (Stage 5 territory for the typed
+                    -- path-b lowerer).
+                    kernelTypedCall (ctxFromIORef ()) types m f args goArgs
                 _ -> Nothing
             callExpr = case typedKernelCall of
                 Just expr -> expr
@@ -16944,13 +16953,14 @@ inferResultGoTypes types e = case inferExprType types e of
 -- regression-safe — every example that currently builds keeps
 -- building.
 kernelTypedCall
-    :: Solve.SolvedTypes
+    :: LC.LowerCtx
+    -> Solve.SolvedTypes
     -> String       -- ^ module name
     -> String       -- ^ function name
     -> [Can.Expr]   -- ^ call-site args
     -> [GoIr.GoExpr] -- ^ pre-lowered Go args
     -> Maybe GoIr.GoExpr
-kernelTypedCall types modName funcName args goArgs =
+kernelTypedCall ctx types modName funcName args goArgs =
     -- Helper: wrap an arg with rt.AsListT[ElemType] so a runtime
     -- any-typed value (e.g. from rt.Field or List_mapAny) is
     -- converted to the typed Go slice []ElemType the typed kernel
@@ -17046,7 +17056,7 @@ kernelTypedCall types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (ctxFromIORef ()) body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "any" pats body'
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapT[" ++ elemGo ++ ", any]"))
@@ -17081,7 +17091,7 @@ kernelTypedCall types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (ctxFromIORef ()) body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "bool" pats body'
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_filterT[" ++ elemGo ++ "]"))
@@ -17193,7 +17203,7 @@ kernelTypedCall types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (ctxFromIORef ()) body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "bool" pats body'
                             -- TA helper expects fn as any; box the
                             -- typed func.
@@ -17364,7 +17374,7 @@ kernelTypedCall types modName funcName args goArgs =
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body)
                       | all isSimpleVarPattern pats ->
-                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (ctxFromIORef ()) body)
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo ctx body)
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.Maybe_mapT[" ++ inner ++ ", any]"))
                             [typedFn, wrapMaybe inner goMaybe])
@@ -17382,7 +17392,7 @@ kernelTypedCall types modName funcName args goArgs =
                     case args !! 0 of
                         A.At _ (Can.Lambda pats body)
                           | all isSimpleVarPattern pats ->
-                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (ctxFromIORef ()) body)
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo ctx body)
                             in Just (GoIr.GoCall
                                 (GoIr.GoIdent ("rt.Result_mapT[" ++ eGo ++ ", " ++ aGo ++ ", any]"))
                                 [typedFn, wrapResult eGo aGo goResult])
@@ -17405,7 +17415,7 @@ kernelTypedCall types modName funcName args goArgs =
                         [goFn, goMaybe])
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
-                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (ctxFromIORef ()) body)
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo ctx body)
                             anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
                         in Just (GoIr.GoCall
                             (GoIr.GoQualified "rt" "Maybe_andThenAnyT")
@@ -17421,7 +17431,7 @@ kernelTypedCall types modName funcName args goArgs =
                 Just (_, aGo) ->
                     case args !! 0 of
                         A.At _ (Can.Lambda pats body) ->
-                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (ctxFromIORef ()) body)
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo ctx body)
                                 anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
                             in Just (GoIr.GoCall
                                 (GoIr.GoQualified "rt" "Result_andThenAnyT")
