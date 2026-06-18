@@ -9372,7 +9372,11 @@ lowerRecordLiteralTo targetTy fields =
         fieldCtx = snapshotCallerCtx ()
         lowerField fn fe =
             let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
-            in coerceToFieldType fieldGoTy
+            -- v0.17 PR-17b S1 — thread fieldCtx (the WHNF-forced
+            -- snapshot) through coerceToFieldType so the erase-scope
+            -- decision matches the ctx the inner lowerExprExpectGo
+            -- already drives.
+            in coerceToFieldType fieldCtx fieldGoTy
                    (lowerExprExpectGo fieldCtx fieldGoTy fe)
     in GoIr.GoStructLit targetTy
         [ (capitalise_ fn, lowerField fn fe)
@@ -10131,8 +10135,15 @@ exprToGo (A.At _ expr) = case expr of
                     lowerFieldValue fname fexpr =
                         let fieldGoTy =
                                 Map.findWithDefault "any" fname fieldTypeMap
-                        in coerceToFieldType fieldGoTy
-                               (exprToGoExpectGo fieldGoTy fexpr)
+                        -- v0.17 PR-17b S1 — RecordUpdate arm has no
+                        -- explicit ctx threaded yet; bridge via
+                        -- ctxFromIORef so behaviour is byte-identical
+                        -- to the legacy scopeStateRef-driven read.
+                        -- S4 migrates exprToGo's RecordUpdate arm
+                        -- to thread the upstream ctx explicitly.
+                        in coerceToFieldType (ctxFromIORef ())
+                                fieldGoTy
+                                (exprToGoExpectGo fieldGoTy fexpr)
                     initStmt = GoIr.GoShortDecl "_u" baseGoExpr
                     assignStmts =
                         [ GoIr.GoAssign ("_u." ++ capitalise_ fname)
@@ -10191,8 +10202,13 @@ exprToGo (A.At _ expr) = case expr of
                     -- propagate fully (will be retreated in Stage D).
                     lowerField fn fe =
                         let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
-                        in coerceToFieldType fieldGoTy
-                               (exprToGoExpectGo fieldGoTy fe)
+                        -- v0.17 PR-17b S1 — Record-literal arm has
+                        -- no explicit ctx threaded yet; bridge via
+                        -- ctxFromIORef.  S4 migrates exprToGo's
+                        -- Record arm to thread upstream ctx.
+                        in coerceToFieldType (ctxFromIORef ())
+                                fieldGoTy
+                                (exprToGoExpectGo fieldGoTy fe)
                 in GoIr.GoStructLit structName
                     [ (capitalise_ fn, lowerField fn fe)
                     | (fn, fe) <- entries
@@ -10462,8 +10478,16 @@ trimWhitespace = f . f where f = reverse . dropWhile (== ' ')
 -- | Coerce an expression to a target Go type for struct-field assignment.
 -- When the target is `any` (or unknown), pass through. Otherwise wrap as
 -- `any(expr).(TargetType)` which is safe across concrete and any-typed sources.
-coerceToFieldType :: String -> GoIr.GoExpr -> GoIr.GoExpr
-coerceToFieldType targetTy e
+-- v0.17 PR-17b Reader-threading Stage 1 — explicit LowerCtx
+-- parameter replaces the implicit IORef-backed
+-- 'enclosingTypeParamInScope' read.  The ctx parameter feeds the
+-- per-call eraseScoped predicate via 'eraseScopedCtx ctx', closing
+-- the dependency on 'scopeStateRef' at this site.  Callers thread
+-- their own LowerCtx; sites that don't yet have one in scope pass
+-- 'ctxFromIORef ()' as a transitional bridge (preserves legacy
+-- byte-identical behavior until upstream stages migrate them).
+coerceToFieldType :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceToFieldType ctx targetTy e
     | targetTy == "any" || null targetTy = e
     -- v0.15 Stage D — elide the wrap when the expression's IR
     -- already has the target's Go type.  After Stages C/E,
@@ -10492,8 +10516,10 @@ coerceToFieldType targetTy e
     -- nominal generics reject `SkyMaybe[any]` ≢ `SkyMaybe[T1]`.
     -- The scoped erasure preserves T1 whenever the enclosing Go
     -- function declared it (via `withScopedEnclosingTypeParams`).
+    -- v0.17 PR-17b Stage 1 — eraseScoped now reads from the ctx
+    -- parameter, not the scopeStateRef IORef.
     | otherwise =
-        let eraseScoped = eraseTypeParamsExceptScope enclosingTypeParamInScope
+        let eraseScoped = eraseScopedCtx ctx
         in case classifyCoerceTarget targetTy of
             CoerceSkipPassThrough -> e
             CoerceSkyResultT inner ->
