@@ -2627,23 +2627,6 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- misses, etc.). Safe because Go's `any` is the
                     -- universal interface; an out-of-scope TVar would
                     -- have failed go build anyway.
-                    -- v0.17 PR-17b: late-stage band-aid retained.
-                    --
-                    -- Probe 2026-06-18 with band-aid OFF after Wave 1
-                    -- batch 2 (Tier 6+7 migration) showed 22/26 still
-                    -- pass — 4 examples (02-go-stdlib, 08-notes-app,
-                    -- 12-skyvote, 13-skyshop) leak T1 through
-                    -- non-generic wrapper functions
-                    -- (Lib_Db_conn-style: `func() *rt.SkyDb { ...
-                    -- rt.TaskCoerceT[T1, any] ... }`). The remaining
-                    -- leak is at wrapTypedReturn where ctx claims T1
-                    -- is in scope (via σ-recovery's T1-promotion of
-                    -- inferred HOF type params) but the outer Go func
-                    -- doesn't declare [T1 any]. Closing it cleanly
-                    -- needs ctx provenance redesign — separating
-                    -- "T1 was inferred for this expression" from
-                    -- "T1 is a declared typeParam of the enclosing
-                    -- Go func". Tracked as Wave 2 follow-up.
                     let goCode' = eraseUndeclaredTVarsInGoSource goCode
                     writeFile mainGoPath goCode'
                     putStrLn $ "   Wrote " ++ mainGoPath
