@@ -45,6 +45,7 @@ module Sky.Build.LowerCtx
     , withLambdaGoStrs
     , withLambdaGoTypes
     , withEnclosingTypeParams
+    , setEnclosingTypeParams
     , withCurrentDepModule
     , lookupCurrentDepModule
     ) where
@@ -334,10 +335,35 @@ lookupEnclosingTypeParam ctx k = Set.member k (_lc_enclosingTypeParams ctx)
 -- the parent ctx is unaffected, so nested generic functions obey
 -- lexical structure automatically (child wins on shadowing via
 -- `Set.union additions prev`).
+--
+-- USE FOR: nested lambda emissions inside an outer Sky function,
+-- where the closure should capture the outer Go func's declared
+-- type params.
 withEnclosingTypeParams :: [String] -> LowerCtx -> LowerCtx
 withEnclosingTypeParams additions ctx =
     ctx { _lc_enclosingTypeParams =
             Set.union (Set.fromList additions) (_lc_enclosingTypeParams ctx) }
+
+
+-- | Replace the enclosing-type-param scope with the given typeParams,
+-- discarding any prior scope.  Returns a NEW ctx.
+--
+-- USE FOR: dep / entry function ENTRY emission — the outer Go func
+-- being emitted is a fresh top-level binding, so prior siblings'
+-- declared T-vars must NOT leak in.  Without this, a non-generic
+-- function emitted after a generic sibling in the same dep module
+-- would inherit the sibling's T1 via 'withEnclosingTypeParams'
+-- union, causing `rt.TaskCoerceT[T1, any]` to be emitted inside a
+-- non-generic Go func that declares no `[T1 any]`.
+--
+-- v0.17 PR-17b Wave 2 — closes the 4-example T1-leak class
+-- (Lib_Db_conn-style functions in 02-go-stdlib / 08-notes-app /
+-- 12-skyvote / 13-skyshop) without breaking Issue #521 (generic
+-- outer functions still receive their declared T-vars via the
+-- explicit set, just with cleaner provenance).
+setEnclosingTypeParams :: [String] -> LowerCtx -> LowerCtx
+setEnclosingTypeParams params ctx =
+    ctx { _lc_enclosingTypeParams = Set.fromList params }
 
 
 -- | v0.17 PR-α — set the dep-mode hint.  Returns a NEW ctx so the
