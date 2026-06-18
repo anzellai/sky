@@ -9063,11 +9063,11 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
     | not (isEmittableGoType goRendering) = exprToGo ctx e
     | otherwise = case expr of
         Can.If branches elseExpr ->
-            ifToGo (Just goRendering) branches elseExpr
+            ifToGo ctx (Just goRendering) branches elseExpr
         Can.Let def body ->
-            letToGo (Just goRendering) def body
+            letToGo ctx (Just goRendering) def body
         Can.Case subject branches ->
-            caseToGo (Just goRendering) subject branches
+            caseToGo ctx (Just goRendering) subject branches
         -- v0.15 Stage C — type-directed Can.Lambda lowering.
         --
         -- When a lambda fills a typed slot (e.g. a parametric record
@@ -9207,10 +9207,10 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
         -- 'GoTuple' shape, matching the value-side emission contract.
         Can.Tuple a b []
             | Just slotTy@(GoType.GoTuple [_, _]) <- GoType.parseGoType goRendering ->
-                emitTypedTuple2 slotTy a b
+                emitTypedTuple2 ctx slotTy a b
         Can.Tuple a b [c]
             | Just slotTy@(GoType.GoTuple [_, _, _]) <- GoType.parseGoType goRendering ->
-                emitTypedTuple3 slotTy a b c
+                emitTypedTuple3 ctx slotTy a b c
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -9525,7 +9525,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             _ -> GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo ctx inner]
 
     Can.Binop op opHome opName _annot left right ->
-        binopToGo op left right
+        binopToGo ctx op left right
 
     Can.Lambda params body ->
         -- Generate curried function: \a b -> body becomes func(a any) any { return func(b any) any { return body } }
@@ -9584,7 +9584,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             Can.VarKernel modName funcName
                 | Just kernelArity <- kernelArityOf modName funcName
                 , length args < kernelArity ->
-                    emitPartialKernelCall modName funcName args
+                    emitPartialKernelCall ctx modName funcName args
                         (kernelArity - length args)
 
             -- P7 step 5: generalise the zero-arg FFI migration. Any
@@ -9621,7 +9621,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                 , length paramTys == length args ->
                     let anyWrapperName = modName ++ "_" ++ funcName
                     in GoIr.GoCall (GoIr.GoQualified "rt" typedName)
-                                (zipWith3 (coerceFfiArgViaAlias anyWrapperName)
+                                (zipWith3 (coerceFfiArgViaAlias ctx anyWrapperName)
                                           [0 :: Int ..]
                                           paramTys
                                           args)
@@ -9660,7 +9660,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                             typedKernelAltName
                     in GoIr.GoCall
                         (GoIr.GoQualified "rt" (modName ++ "_" ++ altSuffix))
-                        (zipWith coerceTypedKernelArg coercers args)
+                        (zipWith (coerceTypedKernelArg ctx) coercers args)
 
             -- v0.13 Stage 1 — kernel call fallback with recovery σ.
             -- Reads the kernel's HM signature via `lookupKernelType`,
@@ -9737,7 +9737,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                         -- fallback (handles Can.Lambda → typed
                         -- emission, regular args → coerceArg).
                         goArgs = zipWith3
-                            (kernelCoerceArg substitutedParams)
+                            (kernelCoerceArg ctx substitutedParams)
                             [0 :: Int ..]
                             substitutedParams
                             args
@@ -9750,7 +9750,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                     got = length args
                     paramTys = ctorParamTypes annot
                 in if got < declared
-                    then emitPartialCtor func args (declared - got)
+                    then emitPartialCtor ctx func args (declared - got)
                     -- T1: coerce each arg to the ctor's declared param type.
                     -- v0.15.2: route through `zipWithDefaultExpect` so a
                     -- Can.Record literal passed to a parametric record
@@ -9758,7 +9758,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                     -- generic Cfg_R[any] + Coerce wrap that panics on
                     -- Go's nominal generic types.
                     else GoIr.GoCall (exprToGo ctx func)
-                          (zipWithDefaultExpect paramTys args)
+                          (zipWithDefaultExpect ctx paramTys args)
             Can.VarTopLevel home name ->
                 -- Partial application of a top-level function:
                 -- `canViewMonitor session` where canViewMonitor : Session -> Monitor -> Bool
@@ -9778,7 +9778,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                     declared = Map.findWithDefault (length args) qualName (Rec._cg_funcArities env)
                     got = length args
                 in if got < declared && declared > 0
-                    then emitPartialUserCall func args (declared - got)
+                    then emitPartialUserCall ctx func args (declared - got)
                     -- Over-application: callee returns a function value
                     -- which we apply further.  `pickIf : Bool -> (Int -> Int)`
                     -- called as `pickIf True 10` must lower to a chain
@@ -9790,7 +9790,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                     -- runtime-built MakeFunc value).  Cost: ~100 ns per
                     -- extra-arg call site.
                     else if got > declared && declared > 0
-                    then emitOverApplication func args declared
+                    then emitOverApplication ctx func args declared
                     -- T2/T6: when the callee has typed params (recorded
                     -- in env._cg_funcParamTypes), coerce each `any`-arg
                     -- expression to the expected param type.
@@ -9819,6 +9819,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                             callName = maybe qualName id mMangled
                         in GoIr.GoCall (GoIr.GoIdent callName)
                                        (coerceCallArgsAt
+                                            ctx
                                             (A.toRegion func)
                                             qualName
                                             args)
@@ -9862,9 +9863,9 @@ exprToGo ctx (A.At _ expr) = case expr of
                             -- wrap that panics under Go's nominal generic
                             -- type assertions).  Behaviour identical for
                             -- non-special args (falls through to coerceArg).
-                            zipWithDefaultExpect (ctorParamTypes ++ repeat "any") args
+                            zipWithDefaultExpect ctx (ctorParamTypes ++ repeat "any") args
                         | not (null localQual) =
-                            coerceCallArgs localQual args
+                            coerceCallArgs ctx localQual args
                         | otherwise = map (exprToGo ctx) args
                     -- v0.15.10 / Gap A5 — typed-callable HOF fast-path.
                     --
@@ -9947,7 +9948,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                                   Nothing -> Nothing
                 in case typedCallableShape of
                     Just (typedParamTys, _typedRetTy) ->
-                        let typedArgs = zipWithDefaultExpect
+                        let typedArgs = zipWithDefaultExpect ctx
                                             (typedParamTys ++ repeat "any") args
                         in GoIr.GoCall goFunc typedArgs
                     Nothing ->
@@ -9959,13 +9960,13 @@ exprToGo ctx (A.At _ expr) = case expr of
     Can.If branches elseExpr ->
         -- Generic context — no expected type known here.  The typed
         -- path is reached via `exprToGoExpect`.
-        ifToGo Nothing branches elseExpr
+        ifToGo ctx Nothing branches elseExpr
 
     Can.Let def body ->
-        letToGo Nothing def body
+        letToGo ctx Nothing def body
 
     Can.LetRec defs body ->
-        let stmts = concatMap defToStmts defs
+        let stmts = concatMap (defToStmts ctx) defs
         in GoIr.GoBlock stmts (exprToGo ctx body)
 
     Can.LetDestruct pat valExpr body ->
@@ -9980,7 +9981,7 @@ exprToGo ctx (A.At _ expr) = case expr of
         in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo ctx body)
 
     Can.Case subject branches ->
-        caseToGo Nothing subject branches
+        caseToGo ctx Nothing subject branches
 
     Can.Accessor field ->
         -- Record accessor function: .field → func(r any) any { return rt.Field(r, "Field") }
@@ -10260,26 +10261,26 @@ exprToGo ctx (A.At _ expr) = case expr of
 -- as a defensive fallback for the 'Nothing'-from-GoType case the
 -- call-site gate already filters out — kept for robustness if a
 -- future caller passes a non-GoTuple slotTy.
-emitTypedTuple2 :: GoType.GoType -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple2 slotTy a b =
+emitTypedTuple2 :: LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple2 ctx slotTy a b =
     let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
     in case slotTy of
         GoType.GoTuple [tA, tB] ->
             let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo (ctxFromIORef ()) strA a), ("V1", exprToGoExpectGo (ctxFromIORef ()) strB b)]
+                [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b)]
         _ -> case tupleElementSlots a b [] of
             Just [tA, tB] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo (ctxFromIORef ()) strA a), ("V1", exprToGoExpectGo (ctxFromIORef ()) strB b)]
+                    [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b)]
             _ -> GoIr.GoStructLit "rt.SkyTuple2"
-                [("V0", exprToGo (ctxFromIORef ()) a), ("V1", exprToGo (ctxFromIORef ()) b)]
+                [("V0", exprToGo ctx a), ("V1", exprToGo ctx b)]
 
-emitTypedTuple3 :: GoType.GoType -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple3 slotTy a b c =
+emitTypedTuple3 :: LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple3 ctx slotTy a b c =
     let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
     in case slotTy of
         GoType.GoTuple [tA, tB, tC] ->
@@ -10287,18 +10288,18 @@ emitTypedTuple3 slotTy a b c =
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 strC = GoType.renderGoType GoType.defaultRenderEnv tC
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo (ctxFromIORef ()) strA a), ("V1", exprToGoExpectGo (ctxFromIORef ()) strB b),
-                 ("V2", exprToGoExpectGo (ctxFromIORef ()) strC c)]
+                [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b),
+                 ("V2", exprToGoExpectGo ctx strC c)]
         _ -> case tupleElementSlots a b [c] of
             Just [tA, tB, tC] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                     strC = GoType.renderGoType GoType.defaultRenderEnv tC
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo (ctxFromIORef ()) strA a), ("V1", exprToGoExpectGo (ctxFromIORef ()) strB b),
-                     ("V2", exprToGoExpectGo (ctxFromIORef ()) strC c)]
+                    [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b),
+                     ("V2", exprToGoExpectGo ctx strC c)]
             _ -> GoIr.GoStructLit "rt.SkyTuple3"
-                [("V0", exprToGo (ctxFromIORef ()) a), ("V1", exprToGo (ctxFromIORef ()) b), ("V2", exprToGo (ctxFromIORef ()) c)]
+                [("V0", exprToGo ctx a), ("V1", exprToGo ctx b), ("V2", exprToGo ctx c)]
 
 
 -- | v0.17 Strategy-C PR 3 — structural replacement for the legacy
@@ -10947,15 +10948,15 @@ typedKernelArgCoerce = Map.fromList
 -- "AsString" is special-cased as `fmt.Sprintf("%v", arg)` to match
 -- the existing convention; AsInt / AsFloat / AsBool are direct
 -- rt.* calls. Literals pass through as-is.
-coerceTypedKernelArg :: String -> Can.Expr -> GoIr.GoExpr
-coerceTypedKernelArg coercer arg
-    | isPrimLiteralArg arg = exprToGo (ctxFromIORef ()) arg
+coerceTypedKernelArg :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
+coerceTypedKernelArg ctx coercer arg
+    | isPrimLiteralArg arg = exprToGo ctx arg
     -- "Pass" erases the arg's concrete type via `any(arg)` so Go
     -- generic inference picks V=any uniformly (e.g. Dict_insertT[V]
     -- where the dict side came in as map[string]any via AsDict).
-    | coercer == "Pass" = GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (ctxFromIORef ()) arg]
+    | coercer == "Pass" = GoIr.GoCall (GoIr.GoIdent "any") [exprToGo ctx arg]
     | otherwise =
-        GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo (ctxFromIORef ()) arg]
+        GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo ctx arg]
 
 
 typedKernelLiterals :: Set.Set (String, String)
@@ -11052,9 +11053,9 @@ isCallerVisibleGoType t =
 -- matches, reflect-based numeric widening, and (post-skyshop-fix)
 -- slice coercion (`[]any` → `[]ConcreteT`) so an empty list `[]`
 -- in Sky can flow into a Go function expecting `[]option.ClientOption`.
-coerceFfiArg :: String -> Can.Expr -> GoIr.GoExpr
-coerceFfiArg goType arg =
-    let goArg = exprToGo (ctxFromIORef ()) arg
+coerceFfiArg :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
+coerceFfiArg ctx goType arg =
+    let goArg = exprToGo ctx arg
     in if isPrimLiteralArg arg
         then goArg
         else coerceVia goType goArg
@@ -11065,14 +11066,14 @@ coerceFfiArg goType arg =
 -- emits those aliases alongside every typed wrapper whose params or
 -- return reference an FFI-file-local type, so main.go can cast
 -- through them without needing the underlying Go package import.
-coerceFfiArgViaAlias :: String -> Int -> String -> Can.Expr -> GoIr.GoExpr
-coerceFfiArgViaAlias anyWrapperName idx goType arg
-    | isPrimLiteralArg arg   = exprToGo (ctxFromIORef ()) arg
+coerceFfiArgViaAlias :: LC.LowerCtx -> String -> Int -> String -> Can.Expr -> GoIr.GoExpr
+coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
+    | isPrimLiteralArg arg   = exprToGo ctx arg
     | isCallerVisibleGoType goType =
-        coerceVia goType (exprToGo (ctxFromIORef ()) arg)
+        coerceVia goType (exprToGo ctx arg)
     | otherwise =
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in coerceVia aliasName (exprToGo (ctxFromIORef ()) arg)
+        in coerceVia aliasName (exprToGo ctx arg)
 
 
 -- | Emit `rt.Coerce[T](expr)` (or the named shortcut for prim
@@ -11135,8 +11136,8 @@ ctorArity (Can.Forall _ t) = countArrows t
 
 -- | Emit a lambda that supplies the already-collected args then takes the
 -- remaining `missing` args one at a time and calls the constructor.
-emitPartialCtor :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
-emitPartialCtor func suppliedArgs missing =
+emitPartialCtor :: LC.LowerCtx -> Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitPartialCtor ctx func suppliedArgs missing =
     let -- T1 partial-app coercion: recover the ctor's declared param
         -- types from its annotation so both already-supplied args and
         -- the closure-captured extras coerce to the right Go types.
@@ -11168,11 +11169,11 @@ emitPartialCtor func suppliedArgs missing =
         -- (see note at the helper definition near the bottom of this
         -- file).  Required for `Editor.view editorCfg` and similar
         -- parametric-record passing on partial-applied ctors.
-        suppliedGo  = zipWithDefaultExpect suppliedTys suppliedArgs
+        suppliedGo  = zipWithDefaultExpect ctx suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (ctxFromIORef ()) Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
-        finalCall = GoIr.GoCall (exprToGo (ctxFromIORef ()) func) (suppliedGo ++ extraIdents)
+        finalCall = GoIr.GoCall (exprToGo ctx func) (suppliedGo ++ extraIdents)
         -- Wrap outer-first (last extra wrapped first) so the chain is
         -- func(extraN-1) func(...) ... func(extra0) Ret.
         -- Build from innermost up. innermost return type = ctorRetTy.
@@ -11206,19 +11207,19 @@ emitPartialCtor func suppliedArgs missing =
 -- param type is not registered (callee is `any`-typed), pass the arg
 -- through unchanged. The `any(arg).(T)` form works whether `arg` is
 -- already typed `T` (redundant assertion) or `any` (real coercion).
-coerceCallArgs :: String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgs qualName args =
+coerceCallArgs :: LC.LowerCtx -> String -> [Can.Expr] -> [GoIr.GoExpr]
+coerceCallArgs ctx qualName args =
     let env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
-         then map (exprToGo (ctxFromIORef ())) args
+         then map (exprToGo ctx) args
          else
              -- v0.13 Stage 1 — same recovery σ pattern as
              -- `coerceCallArgsAt`: pin TVars from typed arg sides;
              -- only erase un-pinned TVars. Critical for recursive
              -- calls in Sky-source kernel bodies (`Sky_Core_List_map_`'s
              -- `map fn rest` where fn has typed `func(T1) T2` sig).
-             let goArgs = map (exprToGo (ctxFromIORef ())) args
+             let goArgs = map (exprToGo ctx) args
                  -- v0.15.8 (P2): σ-recovery stays strict — passes
                  -- Nothing.  See the rationale comment in the
                  -- VarKernel branch of `coerceCallArgsAt`.
@@ -11251,18 +11252,18 @@ coerceCallArgs qualName args =
                                  , not (Map.member t recovered) ]
                          outOfScope =
                              [ t | t <- unboundTVars
-                                 , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
+                                 , not (enclosingTypeParamInScopeCtx ctx t) ]
                      in if null unboundTVars
                           then subbed
                           else if null outOfScope
                                  then subbed
                                  else if containsGenericTypeParam subbed
                                         -- v0.17 PR-17b S3
-                                        then eraseScopedCtx (ctxFromIORef ()) subbed
+                                        then eraseScopedCtx ctx subbed
                                         else subbed
                  substituted = map substituteOnly paramTypes
              -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
-             in zipWithDefaultExpect substituted args
+             in zipWithDefaultExpect ctx substituted args
 
 
 -- | v0.13 Phase A5 — call-site-aware variant of `coerceCallArgs`.
@@ -11345,8 +11346,8 @@ unmangleQual :: String -> String
 unmangleQual = map (\c -> if c == '_' then '.' else c)
 
 
-coerceCallArgsAt :: A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgsAt region qualName args =
+coerceCallArgsAt :: LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
+coerceCallArgsAt ctx region qualName args =
     let env = getCgEnv
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
         -- v0.17 C24 — CSI key uses ("" :: modName, line, col).
@@ -11366,7 +11367,7 @@ coerceCallArgsAt region qualName args =
         skyToGo = Map.findWithDefault [] qualName
                     (Rec._cg_funcSkyToGoTVars env)
     in case (paramTypes, instM) of
-        ([], _) -> map (exprToGo (ctxFromIORef ())) args
+        ([], _) -> map (exprToGo ctx) args
         -- v0.17 C24 closer — CSI fires AND user-defined function has
         -- typed param TVars BUT skyToGo registry is empty.  Happens
         -- for Sky bindings whose annotation is inferred (no explicit
@@ -11402,12 +11403,12 @@ coerceCallArgsAt region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (ctxFromIORef ()) subbed e
+                                    exprToGoExpectGo ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
-                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (ctxFromIORef ()) e]
-                                    else coerceArg (ctxFromIORef ()) (Just e) (exprToGo (ctxFromIORef ()) e) subbed
-                in zipWith3Default coerceOne paramTypes substituted args
+                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo ctx e]
+                                    else coerceArg ctx (Just e) (exprToGo ctx e) subbed
+                in zipWith3Default ctx coerceOne paramTypes substituted args
         (_, Just (Solve.CallInstance _ concreteTys quants))
             | length quants == length concreteTys
             , not (null skyToGo) ->
@@ -11517,8 +11518,8 @@ coerceCallArgsAt region qualName args =
                                         bodyPreTyped = isEmittableGoType finalRet
                                         rawBody =
                                             if bodyPreTyped
-                                                then exprToGoExpectGo (ctxFromIORef ()) finalRet body
-                                                else exprToGo (ctxFromIORef ()) body
+                                                then exprToGoExpectGo ctx finalRet body
+                                                else exprToGo ctx body
                                         body' = withScopedLambdaTypes bindings rawBody
                                     in if bodyPreTyped
                                         then curryLambdaPatTypedPre inputTypes finalRet
@@ -11549,15 +11550,15 @@ coerceCallArgsAt region qualName args =
                             Can.Case{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (ctxFromIORef ()) subbed e
+                                    exprToGoExpectGo ctx subbed e
                             Can.If{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (ctxFromIORef ()) subbed e
+                                    exprToGoExpectGo ctx subbed e
                             Can.Let{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (ctxFromIORef ()) subbed e
+                                    exprToGoExpectGo ctx subbed e
                             -- v0.15.2: Can.Record at a parametric-alias
                             -- monomorphisation slot (`Cfg_R[Msg]`).  Route
                             -- to `exprToGoExpectGo` so the literal emits
@@ -11581,12 +11582,12 @@ coerceCallArgsAt region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (ctxFromIORef ()) subbed e
+                                    exprToGoExpectGo ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
-                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (ctxFromIORef ()) e]
-                                    else coerceArg (ctxFromIORef ()) (Just e) (exprToGo (ctxFromIORef ()) e) subbed
-                in zipWith3Default coerceOne paramTypes substituted args
+                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo ctx e]
+                                    else coerceArg ctx (Just e) (exprToGo ctx e) subbed
+                in zipWith3Default ctx coerceOne paramTypes substituted args
         _ ->
             -- v0.13 Phase A5+: when no CSI is captured at this call
             -- site (e.g. the call lives inside a `Can.Update` field
@@ -11623,7 +11624,7 @@ coerceCallArgsAt region qualName args =
             -- type params that NO arg can pin fall back to the `any`-
             -- widen — and there it's applied to EVERY position
             -- mentioning that param, so Go infers it = any uniformly.
-            let goArgs = map (exprToGo (ctxFromIORef ())) args
+            let goArgs = map (exprToGo ctx) args
                 -- partial σ: bare-type-param ↦ concrete Go type, for
                 -- every position whose arg has a known static type.
                 --
@@ -11705,14 +11706,14 @@ coerceCallArgsAt region qualName args =
                                 , not (Map.member t recovered) ]
                         outOfScope =
                             [ t | t <- unboundTVars
-                                , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
+                                , not (enclosingTypeParamInScopeCtx ctx t) ]
                     in if null unboundTVars
                          then subbed
                          else if null outOfScope
                                 then subbed
                                 else if containsGenericTypeParam subbed
                                        -- v0.17 PR-17b S3
-                                       then eraseScopedCtx (ctxFromIORef ()) subbed
+                                       then eraseScopedCtx ctx subbed
                                        else subbed
                 substituted = map substituteOnly paramTypes
                 -- v0.13 D-Lambda-Lowerer: when an arg is a literal
@@ -11780,8 +11781,8 @@ coerceCallArgsAt region qualName args =
                                     bodyPreTyped = isEmittableGoType finalRet
                                     rawBody =
                                         if bodyPreTyped
-                                            then exprToGoExpectGo (ctxFromIORef ()) finalRet body
-                                            else exprToGo (ctxFromIORef ()) body
+                                            then exprToGoExpectGo ctx finalRet body
+                                            else exprToGo ctx body
                                     body' = withScopedLambdaTypes bindings rawBody
                                 in if bodyPreTyped
                                     then curryLambdaPatTypedPre inputTypes finalRet
@@ -11790,9 +11791,9 @@ coerceCallArgsAt region qualName args =
                                             pats body'
                         _ ->
                             if subbed == "any" && containsTypeParam orig
-                                then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (ctxFromIORef ()) e]
-                                else coerceArg (ctxFromIORef ()) (Just e) (exprToGo (ctxFromIORef ()) e) subbed
-            in zipWith3Default coerceFallback paramTypes substituted args
+                                then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo ctx e]
+                                else coerceArg ctx (Just e) (exprToGo ctx e) subbed
+            in zipWith3Default ctx coerceFallback paramTypes substituted args
 
 
 -- | Three-way zip that pairs default args after lists run out.  Used
@@ -11801,12 +11802,13 @@ coerceCallArgsAt region qualName args =
 -- than args (variadic / over-supplied positions fall back to
 -- exprToGo with no coercion).
 zipWith3Default
-    :: (String -> String -> Can.Expr -> GoIr.GoExpr)
+    :: LC.LowerCtx
+    -> (String -> String -> Can.Expr -> GoIr.GoExpr)
     -> [String] -> [String] -> [Can.Expr] -> [GoIr.GoExpr]
-zipWith3Default _ [] _ args = map (exprToGo (ctxFromIORef ())) args
-zipWith3Default _ _ [] args = map (exprToGo (ctxFromIORef ())) args
-zipWith3Default _ _ _ [] = []
-zipWith3Default f (o:os) (s:ss) (a:as) = f o s a : zipWith3Default f os ss as
+zipWith3Default ctx _ [] _ args = map (exprToGo ctx) args
+zipWith3Default ctx _ _ [] args = map (exprToGo ctx) args
+zipWith3Default _ _ _ _ [] = []
+zipWith3Default ctx f (o:os) (s:ss) (a:as) = f o s a : zipWith3Default ctx f os ss as
 
 
 -- | Substitute generic type variables (`T1`, `T2`, …) in a
@@ -12692,8 +12694,8 @@ kernelParamGoTypes ty n =
 -- coerceCallArgsAt) so kernel callbacks like Cmd.perform's
 -- `(Result e a -> msg)` arg emit as `func(__p State_Msg) any`
 -- instead of `func(__p any) any`.
-kernelCoerceArg :: [String] -> Int -> String -> Can.Expr -> GoIr.GoExpr
-kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
+kernelCoerceArg :: LC.LowerCtx -> [String] -> Int -> String -> Can.Expr -> GoIr.GoExpr
+kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
     case inner of
         Can.Lambda pats body
             | all isSimpleVarPattern pats
@@ -12734,8 +12736,8 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
                     bodyPreTyped = isEmittableGoType finalRet
                     rawBody =
                         if bodyPreTyped
-                            then exprToGoExpectGo (ctxFromIORef ()) finalRet body
-                            else exprToGo (ctxFromIORef ()) body
+                            then exprToGoExpectGo ctx finalRet body
+                            else exprToGo ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
                     then curryLambdaPatTypedPre inputTypes finalRet pats body'
@@ -12755,11 +12757,11 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
         Can.Record _
             | isParametricAliasInstantiation subbed
             , not (containsGenericTypeParam subbed) ->
-                exprToGoExpectGo (ctxFromIORef ()) subbed e
-        -- v0.17 PR-17b S2 — this is inside kernelCoerceArg, NOT a
-        -- recursive coerceArg self-call.  Bridge to ctxFromIORef so
-        -- behaviour matches the legacy enclosingTypeParamInScope read.
-        _ -> coerceArg (ctxFromIORef ()) (Just e) (exprToGo (ctxFromIORef ()) e) subbed
+                exprToGoExpectGo ctx subbed e
+        -- v0.17 PR-17b S2 — Stage 4 threads ctx from the enclosing
+        -- caller through `kernelCoerceArg`'s signature; the legacy
+        -- IORef snapshot is no longer needed here.
+        _ -> coerceArg ctx (Just e) (exprToGo ctx e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
@@ -13005,11 +13007,11 @@ zipWithDefault f fb (a:as) (c:cs) = f (fb c) a : zipWithDefault f fb as cs
 -- The pre-existing `coerceArg` would have wrapped a generic
 -- `func(any) any` body with `rt.Coerce[func(X) Y]`, working but
 -- reflecting through MakeFunc on every call.
-zipWithDefaultExpect :: [String] -> [Can.Expr] -> [GoIr.GoExpr]
-zipWithDefaultExpect [] cs = map (exprToGo (ctxFromIORef ())) cs
-zipWithDefaultExpect _ [] = []
-zipWithDefaultExpect (ty:tys) (e:es) =
-    lowerArgExpect ty e : zipWithDefaultExpect tys es
+zipWithDefaultExpect :: LC.LowerCtx -> [String] -> [Can.Expr] -> [GoIr.GoExpr]
+zipWithDefaultExpect ctx [] cs = map (exprToGo ctx) cs
+zipWithDefaultExpect _ _ [] = []
+zipWithDefaultExpect ctx (ty:tys) (e:es) =
+    lowerArgExpect ctx ty e : zipWithDefaultExpect ctx tys es
 
 
 -- | v0.15.2 — single arg lowering with target type awareness.
@@ -13024,8 +13026,8 @@ zipWithDefaultExpect (ty:tys) (e:es) =
 -- Typed-lambda arm already excludes generic param targets via
 -- `all (/= "any") paramTys` (a func type containing a TVar would
 -- have at least one "any" position).
-lowerArgExpect :: String -> Can.Expr -> GoIr.GoExpr
-lowerArgExpect ty e@(A.At _ expr)
+lowerArgExpect :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
+lowerArgExpect ctx ty e@(A.At _ expr)
     -- v0.15.x P6 (Phase 2) — call-arg lowering at the two
     -- type-directed slots routes via `lowerExprExpectGo` so the
     -- "call arg" structural-backbone slot threads ctx explicitly.
@@ -13034,15 +13036,15 @@ lowerArgExpect ty e@(A.At _ expr)
     | isParametricAliasInstantiation ty
     , not (containsGenericTypeParam ty)
     , Can.Record _ <- expr
-    = lowerExprExpectGo (ctxFromIORef ()) ty e
+    = lowerExprExpectGo ctx ty e
     | Just (paramTys, _retTy) <- parseFuncType ty
     , Can.Lambda pats _ <- expr
     , length pats == length paramTys
     , all (/= "any") paramTys
     , not (containsGenericTypeParam ty)
-    = lowerExprExpectGo (ctxFromIORef ()) ty e
+    = lowerExprExpectGo ctx ty e
     | otherwise
-    = coerceArg (ctxFromIORef ()) (Just e) (exprToGo (ctxFromIORef ()) e) ty
+    = coerceArg ctx (Just e) (exprToGo ctx e) ty
 
 
 -- | Over-application: the call supplied MORE args than the callee's
@@ -13063,8 +13065,8 @@ lowerArgExpect ty e@(A.At _ expr)
 --
 -- For N extras the dispatcher fold-applies them left-to-right:
 --   rt.SkyCall(rt.SkyCall(f(a), b), c)
-emitOverApplication :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
-emitOverApplication func allArgs declared =
+emitOverApplication :: LC.LowerCtx -> Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitOverApplication ctx func allArgs declared =
     let (firstK, rest) = splitAt declared allArgs
         modStr = case A.toValue func of
             Can.VarTopLevel home _ -> ModuleName.toString home
@@ -13079,15 +13081,15 @@ emitOverApplication func allArgs declared =
         mMangled = instanceMangledName (A.toRegion func) qualName
         callName = maybe qualName id mMangled
         baseCall = GoIr.GoCall (GoIr.GoIdent callName)
-                       (coerceCallArgsAt (A.toRegion func) qualName firstK)
+                       (coerceCallArgsAt ctx (A.toRegion func) qualName firstK)
         applyOne acc arg = GoIr.GoCall
             (GoIr.GoQualified "rt" "SkyCall")
-            [acc, exprToGo (ctxFromIORef ()) arg]
+            [acc, exprToGo ctx arg]
     in foldl applyOne baseCall rest
 
 
-emitPartialUserCall :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
-emitPartialUserCall func suppliedArgs missing =
+emitPartialUserCall :: LC.LowerCtx -> Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitPartialUserCall ctx func suppliedArgs missing =
     let -- Resolve callee qualified name so we can look up its typed
         -- param signature and coerce both the supplied args and the
         -- closure-captured extras.
@@ -13135,7 +13137,7 @@ emitPartialUserCall func suppliedArgs missing =
             [ recovered
             | (paramTy, srcArg) <- zip suppliedTypes suppliedArgs
             , containsGenericTypeParam paramTy
-            , let srcGoExpr = exprToGo (ctxFromIORef ()) srcArg
+            , let srcGoExpr = exprToGo ctx srcArg
             , Just srcGoTy <- [goExprGoType (Just srcArg) srcGoExpr]
             , srcGoTy /= "any"
             , not (containsGenericTypeParam srcGoTy)
@@ -13159,9 +13161,9 @@ emitPartialUserCall func suppliedArgs missing =
                         (Map.findWithDefault "any" qualName
                            (Rec._cg_funcUltimateRetType env))
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
-        suppliedGo = zipWithDefaultExpect suppliedTypes suppliedArgs
+        suppliedGo = zipWithDefaultExpect ctx suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (ctxFromIORef ()) Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         -- #580 — when σ-recovery pinned every TVar in the callee's
         -- param list (no remaining unbound generics), drop the
@@ -13179,7 +13181,7 @@ emitPartialUserCall func suppliedArgs missing =
                               && not (null availableExtras)
         finalCallTarget
             | allExtrasConcrete = GoIr.GoIdent qualName
-            | otherwise         = exprToGo (ctxFromIORef ()) func
+            | otherwise         = exprToGo ctx func
         finalCall = GoIr.GoCall finalCallTarget (suppliedGo ++ extraIdents)
         -- Build the curried wrapper chain from the inside out.
         -- Innermost wrapper returns `ultRetType`; each outer
@@ -13241,12 +13243,13 @@ kernelArityOf modName funcName =
 -- return. The dynamic kernel accepts `any` for every position and
 -- returns `any` — zero impedance mismatch with the wrapping HOF.
 emitPartialKernelCall
-    :: String          -- ^ kernel module name (e.g. "Regex")
+    :: LC.LowerCtx
+    -> String          -- ^ kernel module name (e.g. "Regex")
     -> String          -- ^ kernel function name (e.g. "replace")
     -> [Can.Expr]      -- ^ supplied args at the call site
     -> Int             -- ^ missing args = arity - length supplied
     -> GoIr.GoExpr
-emitPartialKernelCall modName funcName suppliedArgs missing =
+emitPartialKernelCall ctx modName funcName suppliedArgs missing =
     let -- Resolve the kernel's dynamic (any-typed) Go name. Prefer the
         -- registry entry — it carries the canonical `rt.<Mod>_<fn>`
         -- string and would otherwise diverge from `_<func>` naming
@@ -13257,7 +13260,7 @@ emitPartialKernelCall modName funcName suppliedArgs missing =
             Nothing  -> "rt." ++ modName ++ "_" ++ funcName
         -- Closure param names for the missing args, plus their
         -- supplied counterparts (already-evaluated Sky exprs).
-        suppliedGo = map (exprToGo (ctxFromIORef ())) suppliedArgs
+        suppliedGo = map (exprToGo ctx) suppliedArgs
         extraNames = [ "__pk" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = map GoIr.GoIdent extraNames
         -- Build the final kernel invocation: all supplied + all
@@ -13308,8 +13311,8 @@ ctorToGo _opts home typeName ctorName _annot = case ctorName of
 -- ═══════════════════════════════════════════════════════════
 
 -- | Convert a binary operator application to Go
-binopToGo :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-binopToGo op left right =
+binopToGo :: LC.LowerCtx -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+binopToGo ctx op left right =
     -- v0.13 typed lowerer: consult HM-inferred operand types to decide
     -- Go-native vs `rt.*` any-routed.  Soundness restriction: only
     -- optimise when BOTH operands are statically typed in Go — i.e.
@@ -13339,34 +13342,34 @@ binopToGo op left right =
     in case op of
     -- Pipe operators — desugar to function application
     -- a |> f becomes f(a), but if f is already a call f(x), becomes f(x, a)
-    "|>" -> pipeApply left right
-    "<|" -> pipeApply right left
+    "|>" -> pipeApply ctx left right
+    "<|" -> pipeApply ctx right left
 
     -- Composition operators (>> and <<)
-    ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+    ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo ctx left, exprToGo ctx right]
+    "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo ctx left, exprToGo ctx right]
 
     -- String concat (++) when both operands type to String: emit
     -- Go-native concat which is `+` on string. List concat keeps the
     -- runtime helper (slice concat needs reflect).
     "++"
       | bothAre strTy ->
-          GoIr.GoBinary "+" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+          GoIr.GoBinary "+" (exprToGo ctx left) (exprToGo ctx right)
       | otherwise ->
-          GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+          GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGo ctx left, exprToGo ctx right]
 
     -- Cons operator
-    "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+    "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo ctx left, exprToGo ctx right]
 
     -- Equality — Go-native when both operands type to a known primitive
     -- (Go's `==` is well-defined for these). Avoids reflect dispatch
     -- through rt.Eq and the polymorphic-comparable trap.
     "==" | anyOf [intTy, floatTy, boolTy, strTy] ->
-        GoIr.GoBinary "==" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "==" (exprToGo ctx left) (exprToGo ctx right)
     "/=" | anyOf [intTy, floatTy, boolTy, strTy] ->
-        GoIr.GoBinary "!=" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
-    "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+        GoIr.GoBinary "!=" (exprToGo ctx left) (exprToGo ctx right)
+    "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo ctx left, exprToGo ctx right]
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo ctx left, exprToGo ctx right]
 
     -- Arithmetic — Go-native when both operands are Int OR both Float.
     -- Mixed / unknown types fall back to rt.* helpers which reflect-
@@ -13374,57 +13377,57 @@ binopToGo op left right =
     -- is `++`); Go's `+` is overloaded for string but rt.Add handles
     -- both numeric cases.
     "+" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "+" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "+" (exprToGo ctx left) (exprToGo ctx right)
     "-" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "-" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "-" (exprToGo ctx left) (exprToGo ctx right)
     "*" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "*" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "*" (exprToGo ctx left) (exprToGo ctx right)
     "/" | bothAre floatTy ->
-        GoIr.GoBinary "/" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "/" (exprToGo ctx left) (exprToGo ctx right)
     "//" | bothAre intTy ->
-        GoIr.GoBinary "/" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
-    "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "//" -> GoIr.GoCall (GoIr.GoQualified "rt" "IntDiv") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+        GoIr.GoBinary "/" (exprToGo ctx left) (exprToGo ctx right)
+    "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo ctx left, exprToGo ctx right]
+    "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo ctx left, exprToGo ctx right]
+    "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo ctx left, exprToGo ctx right]
+    "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo ctx left, exprToGo ctx right]
+    "//" -> GoIr.GoCall (GoIr.GoQualified "rt" "IntDiv") [exprToGo ctx left, exprToGo ctx right]
 
     -- Comparison operators — Go-native for known orderable primitives.
     ">"  | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary ">" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary ">" (exprToGo ctx left) (exprToGo ctx right)
     "<"  | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary "<" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "<" (exprToGo ctx left) (exprToGo ctx right)
     ">=" | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary ">=" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary ">=" (exprToGo ctx left) (exprToGo ctx right)
     "<=" | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary "<=" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
-    ">"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Gt") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "<"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Lt") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    ">=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Gte") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "<=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Lte") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+        GoIr.GoBinary "<=" (exprToGo ctx left) (exprToGo ctx right)
+    ">"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Gt") [exprToGo ctx left, exprToGo ctx right]
+    "<"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Lt") [exprToGo ctx left, exprToGo ctx right]
+    ">=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Gte") [exprToGo ctx left, exprToGo ctx right]
+    "<=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Lte") [exprToGo ctx left, exprToGo ctx right]
 
     -- Logic — Go-native when both Bool (the only valid operand type).
     "&&" | bothAre boolTy ->
-        GoIr.GoBinary "&&" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+        GoIr.GoBinary "&&" (exprToGo ctx left) (exprToGo ctx right)
     "||" | bothAre boolTy ->
-        GoIr.GoBinary "||" (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
-    "&&" -> GoIr.GoCall (GoIr.GoQualified "rt" "And") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
-    "||" -> GoIr.GoCall (GoIr.GoQualified "rt" "Or") [exprToGo (ctxFromIORef ()) left, exprToGo (ctxFromIORef ()) right]
+        GoIr.GoBinary "||" (exprToGo ctx left) (exprToGo ctx right)
+    "&&" -> GoIr.GoCall (GoIr.GoQualified "rt" "And") [exprToGo ctx left, exprToGo ctx right]
+    "||" -> GoIr.GoCall (GoIr.GoQualified "rt" "Or") [exprToGo ctx left, exprToGo ctx right]
 
     -- Other operators
-    _ -> GoIr.GoBinary op (exprToGo (ctxFromIORef ()) left) (exprToGo (ctxFromIORef ()) right)
+    _ -> GoIr.GoBinary op (exprToGo ctx left) (exprToGo ctx right)
 
 
 -- | Apply a pipe: `value |> func` becomes `func(value)`
 -- If func is already a call `f(args...)`, append value as additional arg: `f(args..., value)`
-pipeApply :: Can.Expr -> Can.Expr -> GoIr.GoExpr
-pipeApply valueExpr funcExpr =
+pipeApply :: LC.LowerCtx -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+pipeApply ctx valueExpr funcExpr =
     -- Reify `value |> func args` as a regular Can.Call so it goes
     -- through the same exprToGo Can.Call branch — this picks up the
     -- typed-FFI / typed-kernel migrations that would otherwise be
     -- missed by the bypass that calls exprToGo on each piece directly.
     let region = case funcExpr of A.At r _ -> r
-        synth f xs = exprToGo (ctxFromIORef ()) (A.At region (Can.Call f xs))
+        synth f xs = exprToGo ctx (A.At region (Can.Call f xs))
     in case funcExpr of
         A.At _ (Can.Call innerFunc innerArgs) ->
             synth innerFunc (innerArgs ++ [valueExpr])
@@ -13445,19 +13448,19 @@ pipeApply valueExpr funcExpr =
 -- typed too.  `Nothing` keeps the legacy `func() any` shape (used
 -- when `ifToGo` is reached from generic `exprToGo` with no
 -- expected-type context).
-ifToGo :: Maybe String -> [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
-ifToGo mExpectedGo branches elseExpr =
+ifToGo :: LC.LowerCtx -> Maybe String -> [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
+ifToGo ctx mExpectedGo branches elseExpr =
     let
         -- When the expected Go type is known, lower each branch body
         -- (and the else) via `exprToGoExpectGo` so a nested
         -- case/if/let in a branch gets the type threaded DIRECTLY —
         -- not just through `typeIIFE`'s return-position recursion.
         lowerBody = case mExpectedGo of
-            Just gt -> exprToGoExpectGo (ctxFromIORef ()) gt
-            Nothing -> exprToGo (ctxFromIORef ())
+            Just gt -> exprToGoExpectGo ctx gt
+            Nothing -> exprToGo ctx
         buildIf [] = [GoIr.GoReturn (lowerBody elseExpr)]
         buildIf ((cond, body):rest) =
-            [GoIr.GoIf (toBoolExpr (exprToGo (ctxFromIORef ()) cond)) [GoIr.GoReturn (lowerBody body)] (buildIf rest)]
+            [GoIr.GoIf (toBoolExpr (exprToGo ctx cond)) [GoIr.GoReturn (lowerBody body)] (buildIf rest)]
         raw = GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "nil")
     in case mExpectedGo of
         Just gt -> typeIIFE gt raw
@@ -13480,8 +13483,8 @@ toBoolExpr expr = case expr of
 
 -- | Convert let-in to Go (IIFE with local declarations).  Takes the
 -- surrounding context's expected type — see `ifToGo`.
-letToGo :: Maybe String -> Can.Def -> Can.Expr -> GoIr.GoExpr
-letToGo mExpectedGo def body =
+letToGo :: LC.LowerCtx -> Maybe String -> Can.Def -> Can.Expr -> GoIr.GoExpr
+letToGo _outerCtx mExpectedGo def body =
     -- v0.13 typed lowerer: when the def binds a primitive-typed
     -- local from a statically-typed value, register it under the
     -- body's scope so binops on this local can emit Go-native.
@@ -13585,7 +13588,7 @@ letToGo mExpectedGo def body =
             Can.TypedDef (A.At _ dn) _ [] valExpr _
                 | Just dt <- letBindingType solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
-            _ -> defToStmts def
+            _ -> defToStmts bodyCtx def
         bodyGo = if Map.null bindingExtras
             then lowerBody body
             else withScopedLambdaTypes bindingExtras (lowerBody body)
@@ -13629,20 +13632,20 @@ splitOn c = foldr f [[]]
 -- types.  The caller still wraps the result in `rt.AnyTaskRun`, so
 -- the auto-force semantics are untouched — only the IIFE's own
 -- return type is tightened.
-loweredDiscard :: Can.Expr -> GoIr.GoExpr
-loweredDiscard body@(A.At _ inner) = case inner of
+loweredDiscard :: LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
+loweredDiscard ctx body@(A.At _ inner) = case inner of
     Can.Case{} -> typed
     Can.If{}   -> typed
     Can.Let{}  -> typed
-    _          -> exprToGo (ctxFromIORef ()) body
+    _          -> exprToGo ctx body
   where
     typed = case inferExprType (Rec._cg_solvedTypes getCgEnv) body of
         Just t ->
             let gt = solvedTypeToGo t
             in if isEmittableGoType gt
-                 then exprToGoExpectGo (ctxFromIORef ()) gt body
-                 else exprToGo (ctxFromIORef ()) body
-        Nothing -> exprToGo (ctxFromIORef ()) body
+                 then exprToGoExpectGo ctx gt body
+                 else exprToGo ctx body
+        Nothing -> exprToGo ctx body
 
 
 -- | v0.15.3 — register a `main`-body let-binding's HM type into
@@ -13836,12 +13839,12 @@ letBindingType solvedTypes _name body@(A.At r _) =
                 _ -> Nothing
 
 
-defToStmts :: Can.Def -> [GoIr.GoStmt]
-defToStmts def = case def of
+defToStmts :: LC.LowerCtx -> Can.Def -> [GoIr.GoStmt]
+defToStmts ctx def = case def of
     Can.DestructDef pat valExpr ->
         let tmp = "__destruct__"
             (A.At _ p) = pat
-            valStmt   = GoIr.GoShortDecl tmp (exprToGo (ctxFromIORef ()) valExpr)
+            valStmt   = GoIr.GoShortDecl tmp (exprToGo ctx valExpr)
             sink      = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
             bindStmts = patternBindings tmp p
         in valStmt : sink : bindStmts
@@ -13875,7 +13878,7 @@ defToStmts def = case def of
             -- type is tightened.
             [GoIr.GoAssign "_"
                 (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun")
-                    [loweredDiscard body])]
+                    [loweredDiscard ctx body])]
         else
             -- v0.15.3: prefer the HM-solved type for the binding
             -- over `inferExprType`. `solvedTypes` carries the fully
@@ -13897,7 +13900,7 @@ defToStmts def = case def of
                 Just dt ->
                     letBindStmts name (exprToGoExpect dt body)
                 Nothing ->
-                    letBindStmts name (exprToGo (ctxFromIORef ()) body)
+                    letBindStmts name (exprToGo ctx body)
 
     Can.Def (A.At _ name) params body ->
         -- v0.13 Stage 1 — for unannotated multi-pattern let-defs,
@@ -13977,13 +13980,13 @@ defToStmts def = case def of
                         else "any"
                 Nothing -> "any"
             bodyExpr = if retGoTy == "any"
-                then exprToGo (ctxFromIORef ()) body
-                else exprToGoExpectGo (ctxFromIORef ()) retGoTy body
+                then exprToGo ctx body
+                else exprToGoExpectGo ctx retGoTy body
         in letBindStmts name
             (GoIr.GoFuncLit goParams retGoTy [GoIr.GoReturn bodyExpr])
 
     Can.TypedDef (A.At _ name) _ [] body _ ->
-        letBindStmts name (exprToGo (ctxFromIORef ()) body)
+        letBindStmts name (exprToGo ctx body)
 
     Can.TypedDef (A.At _ name) _ typedPats body retType ->
         -- v0.13 Stage 1 — multi-pattern annotated let-def: use the
@@ -13998,8 +14001,8 @@ defToStmts def = case def of
             -- body when return can't be safely typed.
             (effectiveRet, bodyExpr) =
                 if isEmittableGoType retGoTy
-                    then (retGoTy, exprToGoExpectGo (ctxFromIORef ()) retGoTy body)
-                    else ("any", exprToGo (ctxFromIORef ()) body)
+                    then (retGoTy, exprToGoExpectGo ctx retGoTy body)
+                    else ("any", exprToGo ctx body)
         in letBindStmts name
             (GoIr.GoFuncLit typedGoParams effectiveRet [GoIr.GoReturn bodyExpr])
 
@@ -14013,10 +14016,10 @@ defToStmts def = case def of
 -- the IIFE is wrapped via `typeIIFE` so it returns the concrete Go
 -- type and every branch `return` is coerced; nested IIFE return
 -- values recurse.
-caseToGo :: Maybe String -> Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
-caseToGo mExpectedGo subject branches =
+caseToGo :: LC.LowerCtx -> Maybe String -> Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
+caseToGo ctx mExpectedGo subject branches =
     let
-        goSubject = exprToGo (ctxFromIORef ()) subject
+        goSubject = exprToGo ctx subject
         subjectType = detectSubjectType branches
         -- v0.13.x: derive the subject's concrete typed shape from
         -- HM inference when available. The legacy `MaybeCoerce[any]`
@@ -15548,11 +15551,11 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
         -- coerceArg's parametric-record short-circuit doesn't
         -- fire, and the legacy nominal cast panics at runtime.
         registerMainLetBindingType types def `seq`
-            (defToStmts def ++ exprToMainStmtsTyped types body)
+            (defToStmts (ctxFromIORef ()) def ++ exprToMainStmtsTyped types body)
 
     Can.LetRec defs body ->
         foldr seq () (map (registerMainLetBindingType types) defs) `seq`
-            (concatMap defToStmts defs ++ exprToMainStmtsTyped types body)
+            (concatMap (defToStmts (ctxFromIORef ())) defs ++ exprToMainStmtsTyped types body)
 
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
@@ -15710,8 +15713,8 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
 
 typedBinop :: Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
 typedBinop types retType op left right = case op of
-    "|>" -> pipeApply left right
-    "<|" -> pipeApply right left
+    "|>" -> pipeApply (ctxFromIORef ()) left right
+    "<|" -> pipeApply (ctxFromIORef ()) right left
     -- String concat: use rt.Concat which returns any, then assert to string if needed
     "++" -> let concatExpr = GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGoTyped types retType left, exprToGoTyped types retType right]
             in if retType == "string"
