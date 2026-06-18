@@ -5568,7 +5568,7 @@ destructureParams pats =
         Can.PUnit     -> (GoIr.GoParam "_" "any", [])
         _ ->
             let tmp = "_p" ++ show idx
-            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
+            in (GoIr.GoParam tmp "any", patternBindings (ctxFromIORef ()) tmp pat)
 
 
 -- | Escape Sky identifiers that collide with Go reserved/builtin
@@ -5802,28 +5802,6 @@ isPolymorphicRet s
 -- the body is built via the default `rt.Ok[any, any]` and the target
 -- has specific E/A — the generic instantiations are distinct Go types.
 -- ResultCoerce/MaybeCoerce reconstruct the value with target params.
--- | Render an inline coercion expression from `any` to `goTy`. String
--- fragment, emitted inside record-ctor field initialisers. See
--- wrapTypedReturn for the GoExpr-level equivalent.
-coerceExprFor :: String -> String -> String
-coerceExprFor goTy src = case goTy of
-    "any"     -> src
-    "string"  -> "rt.CoerceString(" ++ src ++ ")"
-    "int"     -> "rt.CoerceInt(" ++ src ++ ")"
-    "bool"    -> "rt.CoerceBool(" ++ src ++ ")"
-    "float64" -> "rt.CoerceFloat(" ++ src ++ ")"
-    _
-      -- Cross-instantiation coerce for containers: SkyMaybe[any] → SkyMaybe[T]
-      | Just params <- stripParametric "rt.SkyResult" goTy
-        -> "rt.ResultCoerce[" ++ eraseTypeParams params ++ "](" ++ src ++ ")"
-      | Just inner <- stripParametric "rt.SkyMaybe" goTy
-        -> "rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "](" ++ src ++ ")"
-      | otherwise ->
-          let erased = eraseTypeParams goTy
-          in if erased == "any" then src
-             else "rt.Coerce[" ++ erased ++ "](" ++ src ++ ")"
-
-
 -- | v0.13 typed lowerer: zero value literal for a Go type.  Returns
 -- Nothing for types whose zero value can't be written as a simple
 -- literal (Result/Maybe/Task generic structs, opaque aliases) — in
@@ -6605,14 +6583,15 @@ wrapTypedReturn ctx retType body
     | goExprGoType ctx Nothing body == Just retType = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]"))
+            (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseScopedCtx ctx params ++ "]"))
             [body]
     | Just inner <- stripParametric "rt.SkyMaybe" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]"))
+            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseScopedCtx ctx inner ++ "]"))
             [body]
     | Just params <- stripParametric "rt.SkyTask" retType =
-        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ params ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.TaskCoerceT[" ++ eraseScopedCtx ctx params ++ "]")) [body]
     -- Audit P0-3: replace raw `any(body).(T)` with a runtime Coerce
     -- helper. Direct assertion panics with a cryptic 'interface
     -- conversion' message on mismatch; Coerce gives a site-identified
@@ -6633,11 +6612,14 @@ wrapTypedReturn ctx retType body
     -- rt.Coerce[[]T] / rt.Coerce[map[string]V] would panic on the
     -- `[]any{}` → typed-slice/map case.
     | Just elemGo <- stripSlice retType =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsListT[" ++ eraseScopedCtx ctx elemGo ++ "]")) [body]
     | Just valGo <- stripStringMap retType =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsMapT[" ++ eraseScopedCtx ctx valGo ++ "]")) [body]
     | otherwise =
-        GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retType ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.Coerce[" ++ eraseScopedCtx ctx retType ++ "]")) [body]
 
 
 -- | If `s` is shaped like `<prefix>[params]`, return `params`;
@@ -9471,7 +9453,7 @@ lowerTypedLambda parentCtx pats paramTys retTy body =
         Can.PUnit     -> (GoIr.GoParam "_" gty, [])
         _ ->
             let tmp = "_lp" ++ show idx
-            in (GoIr.GoParam tmp gty, patternBindings tmp pat)
+            in (GoIr.GoParam tmp gty, patternBindings (ctxFromIORef ()) tmp pat)
 
 
 -- v0.17 PR-11 — `inferTypeFromGoString` (lossy String→T.Type reverse
@@ -10161,7 +10143,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             (A.At _ p) = pat
             valStmt = GoIr.GoShortDecl tmp (exprToGo ctx valExpr)
             sink    = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-            bindStmts = patternBindings tmp p
+            bindStmts = patternBindings ctx tmp p
         in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo ctx body)
 
     Can.Case subject branches ->
@@ -11273,9 +11255,12 @@ coerceVia ctx goType goArg = case goType of
     "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
     "float64" -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [goArg]
     _ -> case stripSkyMaybe goType of
-        Just inner -> GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [goArg]
+        Just inner -> GoIr.GoCall (GoIr.GoIdent
+            ("rt.MaybeCoerce[" ++ eraseScopedCtx ctx inner ++ "]")) [goArg]
         Nothing -> case stripSkyResult goType of
-            Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [goArg]
+            Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent
+                ("rt.ResultCoerce[" ++ eraseScopedCtx ctx eGo ++ ", "
+                ++ eraseScopedCtx ctx aGo ++ "]")) [goArg]
             Nothing -> case stripSlice goType of
                 Just elemGo -> GoIr.GoCall (GoIr.GoIdent
                     ("rt.AsListT[" ++ eraseScopedCtx ctx elemGo ++ "]")) [goArg]
@@ -12560,10 +12545,13 @@ coerceArg ctx mSrc e ty
     -- `CoerceTuple3T`.
     | Just (a, b)    <- stripTuple2T ty =
         GoIr.GoCall (GoIr.GoIdent
-            ("rt.AsTuple2T[" ++ eraseTypeParams a ++ ", " ++ eraseTypeParams b ++ "]")) [e]
+            ("rt.AsTuple2T[" ++ eraseScopedCtx ctx a ++ ", "
+            ++ eraseScopedCtx ctx b ++ "]")) [e]
     | Just (a, b, c) <- stripTuple3T ty =
         GoIr.GoCall (GoIr.GoIdent
-            ("rt.AsTuple3T[" ++ eraseTypeParams a ++ ", " ++ eraseTypeParams b ++ ", " ++ eraseTypeParams c ++ "]")) [e]
+            ("rt.AsTuple3T[" ++ eraseScopedCtx ctx a ++ ", "
+            ++ eraseScopedCtx ctx b ++ ", "
+            ++ eraseScopedCtx ctx c ++ "]")) [e]
     | otherwise =
         let erasedTy = eraseTypeParams ty
         in if erasedTy == "any"
@@ -14036,7 +14024,7 @@ defToStmts ctx def = case def of
             (A.At _ p) = pat
             valStmt   = GoIr.GoShortDecl tmp (exprToGo ctx valExpr)
             sink      = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-            bindStmts = patternBindings tmp p
+            bindStmts = patternBindings ctx tmp p
         in valStmt : sink : bindStmts
 
     Can.Def (A.At _ name) [] body ->
@@ -14299,17 +14287,21 @@ caseToGo ctx mExpectedGo subject branches =
             | Just _ <- stripParametric "rt.SkyResult" typeName
             , Just inferred <- inferredSubjectGoType
             , Just params <- stripParametric "rt.SkyResult" inferred =
-                GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.ResultCoerce[" ++ eraseScopedCtx ctx params ++ "]")) [e]
             | Just params <- stripParametric "rt.SkyResult" typeName =
-                GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.ResultCoerce[" ++ eraseScopedCtx ctx params ++ "]")) [e]
             | Just _ <- stripParametric "rt.SkyMaybe" typeName, isTypedFfiCall e =
                 e
             | Just _ <- stripParametric "rt.SkyMaybe" typeName
             , Just inferred <- inferredSubjectGoType
             , Just inner <- stripParametric "rt.SkyMaybe" inferred =
-                GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.MaybeCoerce[" ++ eraseScopedCtx ctx inner ++ "]")) [e]
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
-                GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent
+                    ("rt.MaybeCoerce[" ++ eraseScopedCtx ctx inner ++ "]")) [e]
             | otherwise =
                 -- Strict assertion: case-on-ADT subjects must be the
                 -- expected SkyADT type. If a non-ADT (e.g. a function
@@ -14495,7 +14487,7 @@ caseBranchToStmtsWith subject leafFn (Can.CaseBranch pat body) =
     let
         (A.At _ patInner) = pat
         cond = patternCondition subject patInner
-        bindings = patternBindings subject patInner
+        bindings = patternBindings (ctxFromIORef ()) subject patInner
         bodyStmts = bindings ++ leafFn body
     in
     case cond of
@@ -15215,8 +15207,8 @@ tuplePatternCondition subj pats =
 
 
 -- | Generate Go variable bindings from a pattern
-patternBindings :: String -> Can.Pattern_ -> [GoIr.GoStmt]
-patternBindings subject pat = case pat of
+patternBindings :: LC.LowerCtx -> String -> Can.Pattern_ -> [GoIr.GoStmt]
+patternBindings ctx subject pat = case pat of
     Can.PVar name ->
         if isDiscardName name
             then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
@@ -15231,7 +15223,7 @@ patternBindings subject pat = case pat of
 
     Can.PCtor _home typeName _union ctorName _ctorIdx args ->
         -- Bind constructor arguments
-        concatMap (bindCtorArg subject ctorName) args
+        concatMap (bindCtorArg ctx subject ctorName) args
 
     -- head :: tail  →  h := rt.AsList(subject)[0]; t := rt.AsList(subject)[1:]
     -- `rt.AsList` widens any Go slice (typed or `[]any`) to `[]any`
@@ -15260,7 +15252,7 @@ patternBindings subject pat = case pat of
                 Can.PAnything -> [ GoIr.GoAssign "_" headExpr ]
                 _ -> GoIr.GoShortDecl headName headExpr
                     : GoIr.GoAssign "_" (GoIr.GoIdent headName)
-                    : patternBindings headName hPat
+                    : patternBindings ctx headName hPat
             tailStmts = case tPat of
                 Can.PVar name ->
                     if isDiscardName name
@@ -15271,7 +15263,7 @@ patternBindings subject pat = case pat of
                 Can.PAnything -> [ GoIr.GoAssign "_" tailExpr ]
                 _ -> GoIr.GoShortDecl tailName tailExpr
                     : GoIr.GoAssign "_" (GoIr.GoIdent tailName)
-                    : patternBindings tailName tPat
+                    : patternBindings ctx tailName tPat
         in headStmts ++ tailStmts
 
     -- [a, b, c]  →  bind each element by index
@@ -15289,7 +15281,7 @@ patternBindings subject pat = case pat of
                     let sub = "__sky_li_" ++ show i ++ "_" ++ subject
                     in GoIr.GoShortDecl sub (asSlice i)
                         : GoIr.GoAssign "_" (GoIr.GoIdent sub)
-                        : patternBindings sub p
+                        : patternBindings ctx sub p
         in concat (zipWith bindEl [0::Int ..] xs)
 
     -- (a, b[, c, ...])  →  bind V0/V1/V2 (SkyTuple2/3) or Vs[N] (SkyTupleN)
@@ -15329,7 +15321,7 @@ patternBindings subject pat = case pat of
                     let sub = "__sky_t_V" ++ show i ++ "_" ++ subject
                     in GoIr.GoShortDecl sub (accessor i)
                        : GoIr.GoAssign "_" (GoIr.GoIdent sub)
-                       : patternBindings sub p
+                       : patternBindings ctx sub p
         in concat (zipWith bindField [0 :: Int ..] allPats)
 
     -- { name }  →  name := rt.Field(subject, "Name")
@@ -15351,7 +15343,7 @@ patternBindings subject pat = case pat of
             aliasStmt = if isDiscardName name
                 then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
                 else [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
-        in aliasStmt ++ patternBindings subject innerPat
+        in aliasStmt ++ patternBindings ctx subject innerPat
 
 
 -- | Bind a constructor argument to a local variable.
@@ -15360,8 +15352,8 @@ patternBindings subject pat = case pat of
 -- destructure temp) — otherwise `.OkValue` / `.JustValue` on `any` fails
 -- Go's type check. For user-defined Tag-based ADTs, the outer case already
 -- asserted the subject to the struct type so `.Fields[i]` works directly.
-bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
-bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
+bindCtorArg :: LC.LowerCtx -> String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
+bindCtorArg ctx subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
     let (A.At _ innerPat) = pat
         -- P7: a subject name suffixed with "_tFfi" is the typed-FFI
         -- shortcut — the outer caseToGo already guarantees it's a
@@ -15460,33 +15452,37 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             -- `any` extraction) per Tier 2's scope.
             T.TType _ "List" [inner]
                 | Just goPrim <- ctorPayloadGoPrim inner ->
-                    Just ("rt.AsListT[" ++ goPrim ++ "]")
+                    Just ("rt.AsListT[" ++ eraseScopedCtx ctx goPrim ++ "]")
             T.TType _ "Maybe" [inner]
                 | Just goPrim <- ctorPayloadGoPrim inner ->
-                    Just ("rt.MaybeCoerce[" ++ goPrim ++ "]")
+                    Just ("rt.MaybeCoerce[" ++ eraseScopedCtx ctx goPrim ++ "]")
             T.TType _ "Result" [eTy, aTy]
                 | Just ge <- ctorPayloadGoPrim eTy
                 , Just ga <- ctorPayloadGoPrim aTy ->
-                    Just ("rt.ResultCoerce[" ++ ge ++ ", " ++ ga ++ "]")
+                    Just ("rt.ResultCoerce[" ++ eraseScopedCtx ctx ge
+                          ++ ", " ++ eraseScopedCtx ctx ga ++ "]")
             T.TType _ "Task" [eTy, aTy]
                 | Just ge <- ctorPayloadGoPrim eTy
                 , Just ga <- ctorPayloadGoPrim aTy ->
-                    Just ("rt.TaskCoerceT[" ++ ge ++ ", " ++ ga ++ "]")
+                    Just ("rt.TaskCoerceT[" ++ eraseScopedCtx ctx ge
+                          ++ ", " ++ eraseScopedCtx ctx ga ++ "]")
             T.TTuple ta tb []
                 | Just ga <- ctorPayloadGoPrim ta
                 , Just gb <- ctorPayloadGoPrim tb ->
-                    Just ("rt.AsTuple2T[" ++ ga ++ ", " ++ gb ++ "]")
+                    Just ("rt.AsTuple2T[" ++ eraseScopedCtx ctx ga
+                          ++ ", " ++ eraseScopedCtx ctx gb ++ "]")
             T.TTuple ta tb [tc]
                 | Just ga <- ctorPayloadGoPrim ta
                 , Just gb <- ctorPayloadGoPrim tb
                 , Just gc <- ctorPayloadGoPrim tc ->
-                    Just ("rt.AsTuple3T[" ++ ga ++ ", " ++ gb
-                          ++ ", " ++ gc ++ "]")
+                    Just ("rt.AsTuple3T[" ++ eraseScopedCtx ctx ga
+                          ++ ", " ++ eraseScopedCtx ctx gb
+                          ++ ", " ++ eraseScopedCtx ctx gc ++ "]")
             -- Sky Dict keys are always String; only the value
             -- type needs primitive narrowing.
             T.TType _ "Dict" [_kTy, vTy]
                 | Just goPrim <- ctorPayloadGoPrim vTy ->
-                    Just ("rt.AsMapT[" ++ goPrim ++ "]")
+                    Just ("rt.AsMapT[" ++ eraseScopedCtx ctx goPrim ++ "]")
             -- v0.17 Gap 10 Tier 2 — non-parametric record-alias
             -- payload.  ADT ctor field whose Sky type is a
             -- user-defined record alias (e.g. `type alias User =
@@ -15506,7 +15502,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             T.TAlias modName aliasName [] aliasBody
                 | isRecordAliasBody aliasBody ->
                     let goStruct = recordAliasGoStructName modName aliasName
-                    in Just ("rt.Coerce[" ++ goStruct ++ "]")
+                    in Just ("rt.Coerce[" ++ eraseScopedCtx ctx goStruct ++ "]")
             -- v0.17 Gap 10 Tier 3 — user-ADT typed payload.
             -- ADT ctor field whose Sky type is itself a user-defined
             -- ADT (e.g. `type Tree = Leaf Int | Node Tree Tree`,
@@ -15522,7 +15518,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             T.TType modName typeName []
                 | let goName = unionGoTypeName modName typeName
                 , Set.member goName (Rec._cg_unionNames getCgEnv) ->
-                    Just ("rt.Coerce[" ++ goName ++ "]")
+                    Just ("rt.Coerce[" ++ eraseScopedCtx ctx goName ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
             Just fn | isTypedAdtSubject ->
@@ -15547,7 +15543,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             let tmp = "__sky_cf_" ++ show idx ++ "_" ++ subject
             in GoIr.GoShortDecl tmp fieldAccess
                : GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-               : patternBindings tmp innerPat
+               : patternBindings ctx tmp innerPat
 
 
 -- | v0.17 PR-23 Gap 10 — extract a primitive Go type ident from a
@@ -18018,7 +18014,7 @@ curryLambdaPat pats body =
         Can.PUnit     -> (GoIr.GoParam "_" "any", [])
         _ ->
             let tmp = "_lp" ++ show idx
-            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
+            in (GoIr.GoParam tmp "any", patternBindings (ctxFromIORef ()) tmp pat)
 
 
 -- | Typed variant of curryLambdaPat: emit a Sky lambda with typed
@@ -18155,7 +18151,7 @@ curryLambdaPatTypedW bodyPreTyped paramTypes retType pats body
                     else [GoIr.GoShortDecl tmpAny
                             (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent tmp])]
             in ( GoIr.GoParam tmp paramTy
-               , rebind ++ patternBindings tmpAny pat
+               , rebind ++ patternBindings (ctxFromIORef ()) tmpAny pat
                , [] )
 
 
