@@ -9726,15 +9726,14 @@ exprToGo (A.At _ expr) = case expr of
                                         , not (Map.member t recovered) ]
                                 outOfScope =
                                     [ t | t <- unboundTVars
-                                        , not (enclosingTypeParamInScope t) ]
+                                        , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
                             in if null unboundTVars
                                  then subbed
                                  else if null outOfScope
                                         then subbed
                                         else if containsGenericTypeParam subbed
-                                               then eraseTypeParamsExceptScope
-                                                        enclosingTypeParamInScope
-                                                        subbed
+                                               -- v0.17 PR-17b S3
+                                               then eraseScopedCtx (ctxFromIORef ()) subbed
                                                else subbed
                         substitutedParams = map substituteOnly kernelParamGoTys
                         -- Route each arg through the typed-aware
@@ -11255,15 +11254,14 @@ coerceCallArgs qualName args =
                                  , not (Map.member t recovered) ]
                          outOfScope =
                              [ t | t <- unboundTVars
-                                 , not (enclosingTypeParamInScope t) ]
+                                 , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
                      in if null unboundTVars
                           then subbed
                           else if null outOfScope
                                  then subbed
                                  else if containsGenericTypeParam subbed
-                                        then eraseTypeParamsExceptScope
-                                                 enclosingTypeParamInScope
-                                                 subbed
+                                        -- v0.17 PR-17b S3
+                                        then eraseScopedCtx (ctxFromIORef ()) subbed
                                         else subbed
                  substituted = map substituteOnly paramTypes
              -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
@@ -11710,15 +11708,14 @@ coerceCallArgsAt region qualName args =
                                 , not (Map.member t recovered) ]
                         outOfScope =
                             [ t | t <- unboundTVars
-                                , not (enclosingTypeParamInScope t) ]
+                                , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
                     in if null unboundTVars
                          then subbed
                          else if null outOfScope
                                 then subbed
                                 else if containsGenericTypeParam subbed
-                                       then eraseTypeParamsExceptScope
-                                                enclosingTypeParamInScope
-                                                subbed
+                                       -- v0.17 PR-17b S3
+                                       then eraseScopedCtx (ctxFromIORef ()) subbed
                                        else subbed
                 substituted = map substituteOnly paramTypes
                 -- v0.13 D-Lambda-Lowerer: when an arg is a literal
