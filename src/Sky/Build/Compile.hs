@@ -650,6 +650,140 @@ eraseScopedCtx :: LC.LowerCtx -> String -> String
 eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ctx)
 
 
+-- | task #660 — defensive late-stage Go-source rewrite.
+--
+-- Walks each top-level `func NAME[TPS] ...{ body }` and erases any
+-- `T<N>` reference inside the body that ISN'T declared in TPS,
+-- replacing with `any`.  Catches T1/T2 leaks from emission paths the
+-- σ-recovery missed (Sky-source HOFs routed through `VarLocal` where
+-- `_cg_funcInferredSigs` lookup misses, etc.).  Safe because Go's
+-- `any` is the universal interface — an out-of-scope TVar would have
+-- failed `go build` anyway, so widening to `any` strictly improves
+-- soundness (rt.AsListT[any] / rt.Coerce[any] are no-op widenings).
+--
+-- Only rewrites within `[T<digit>]` and `[T<digit>,...]` brackets —
+-- conservative pattern that won't touch unrelated identifiers.
+eraseUndeclaredTVarsInGoSource :: String -> String
+eraseUndeclaredTVarsInGoSource src = goSplit src
+  where
+    -- Split at top-level `func ` boundaries; for each chunk, parse
+    -- the typeParams (if any) and rewrite the body.
+    goSplit [] = []
+    goSplit s =
+        case findNextFunc s of
+            Nothing -> s
+            Just (preamble, funcChunk, rest) ->
+                preamble ++ rewriteFunc funcChunk ++ goSplit rest
+
+    -- Locate the next top-level `func ...{` and return the preamble,
+    -- the func chunk (header + body to matching close brace), and the
+    -- rest of the source.
+    findNextFunc s =
+        case List.stripPrefix "func " s of
+            Just _  ->
+                let (chunk, rest) = splitFunc s
+                in Just ("", chunk, rest)
+            Nothing -> findFuncIn s ""
+
+    findFuncIn [] _ = Nothing
+    findFuncIn s@('\n':'f':'u':'n':'c':' ':_) acc =
+        let (chunk, rest) = splitFunc (drop 1 s)
+        in Just (reverse acc ++ "\n", chunk, rest)
+    findFuncIn (c:cs) acc = findFuncIn cs (c:acc)
+
+    -- Walk from start of `func ` until we hit the body's opening `{`,
+    -- then balance braces to find the closing `}` at top level.
+    splitFunc s =
+        let (header, afterOpen) = splitAtOpenBrace s
+            (body, rest)        = balanceBraces afterOpen 1
+        in (header ++ "{" ++ body ++ "}", drop 1 rest)
+
+    -- Find the body's `{` — skip `{` inside brackets (`struct{}` in
+    -- a return type, parametric `[...]`, generic constraints) by
+    -- tracking depth of `[` / `(` / `{` inside the type expression.
+    -- The body's `{` is the first one at top level after the header.
+    splitAtOpenBrace = goSplitAt 0 0
+    goSplitAt _ _ [] = ([], [])
+    -- Inline `{}` (empty struct in return type) — skip both chars.
+    goSplitAt b p ('{':'}':rest) =
+        let (h, r) = goSplitAt b p rest in ('{':'}':h, r)
+    goSplitAt b p ('{':rest)
+        | b == 0 && p == 0 = ("", rest)
+        | otherwise =
+            let (h, r) = goSplitAt b p rest in ('{':h, r)
+    goSplitAt b p ('}':rest) =
+        let (h, r) = goSplitAt b p rest in ('}':h, r)
+    goSplitAt b p ('[':rest) =
+        let (h, r) = goSplitAt (b + 1) p rest in ('[':h, r)
+    goSplitAt b p (']':rest) =
+        let (h, r) = goSplitAt (b - 1) p rest in (']':h, r)
+    goSplitAt b p ('(':rest) =
+        let (h, r) = goSplitAt b (p + 1) rest in ('(':h, r)
+    goSplitAt b p (')':rest) =
+        let (h, r) = goSplitAt b (p - 1) rest in (')':h, r)
+    goSplitAt b p (c:cs) =
+        let (h, r) = goSplitAt b p cs in (c:h, r)
+
+    balanceBraces [] _ = ([], [])
+    balanceBraces ('}':rest) 1 = ("", '}':rest)
+    balanceBraces ('}':rest) n =
+        let (body, after) = balanceBraces rest (n - 1)
+        in ('}':body, after)
+    balanceBraces ('{':rest) n =
+        let (body, after) = balanceBraces rest (n + 1)
+        in ('{':body, after)
+    balanceBraces (c:rest) n =
+        let (body, after) = balanceBraces rest n
+        in (c:body, after)
+
+    rewriteFunc chunk =
+        let (header, body) = splitAtOpenBrace chunk
+            declared       = extractTypeParams header
+        in header ++ "{" ++ eraseTVarsInBody declared (init body) ++ "}"
+
+    -- Extract TVar names from `[T1 any, T2 any, ...]` in header.
+    extractTypeParams hdr =
+        case dropWhile (/= '[') hdr of
+            ('[':rest) ->
+                let (inside, _) = break (== ']') rest
+                    toks = words (map (\c -> if c == ',' then ' ' else c) inside)
+                    isTV ('T':ds) = not (null ds) && all (\c -> c >= '0' && c <= '9') ds
+                    isTV _ = False
+                in Set.toList (Set.fromList (filter isTV toks))
+            _ -> []
+
+    -- Rewrite all `T<digit>` occurrences inside `[...]` brackets that
+    -- aren't in `declared`.  Replace with `any`.  Walk char-by-char
+    -- to be conservative about non-bracket contexts.
+    eraseTVarsInBody declared body =
+        let declSet = Set.fromList declared
+        in walkBody declSet body
+
+    -- Word-boundary aware TVar rewriting.  Scans the body for any
+    -- `T<digit>` token (preceded by a non-identifier char) and
+    -- replaces it with `any` if not in `declared`.  Handles both
+    -- `[T1, T2]` brackets AND `func(_lp_p T1) bool` lambda-param
+    -- positions.
+    walkBody decls body = walkBody' decls ' ' body
+
+    walkBody' _ _ [] = []
+    walkBody' decls prev ('T':rest)
+        -- prev /= '.' guards qualified names like `rt.T2` (runtime
+        -- type alias) where T2 is NOT a TVar but part of a qualified
+        -- type reference.  TVar refs only appear after delimiters
+        -- like `[`, `,`, `(`, ` `, `\n`.
+        | prev /= '.'
+        , not (isIdentChar prev)
+        , (digits, tail') <- span Char.isDigit rest
+        , not (null digits)
+        , null tail' || not (isIdentChar (head tail'))
+        , not (Set.member ('T':digits) decls)
+        = "any" ++ walkBody' decls 'y' tail'
+    walkBody' decls _ (c:rest) = c : walkBody' decls c rest
+
+    isIdentChar c = Char.isAlphaNum c || c == '_'
+
+
 -- | Read the global codegen env (for use in pure codegen functions).
 -- NOINLINE so GHC doesn't CSE the IORef read across call sites —
 -- each `getCgEnv` invocation must see the LATEST mutation. Without
@@ -2483,7 +2617,18 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                   else do
                     createDirectoryIfMissing True outDir
                     let mainGoPath = outDir </> "main.go"
-                    writeFile mainGoPath goCode
+                    -- task #660 — defensive late-stage pass: walk
+                    -- each top-level `func NAME[TPS]...{ ... }` and
+                    -- erase any TVar reference (T1/T2/...) inside the
+                    -- body that ISN'T declared in TPS, replacing with
+                    -- `any`.  This catches T1 leaks from emission paths
+                    -- the σ-recovery missed (Sky-source HOFs via
+                    -- VarLocal where _cg_funcInferredSigs lookup
+                    -- misses, etc.). Safe because Go's `any` is the
+                    -- universal interface; an out-of-scope TVar would
+                    -- have failed go build anyway.
+                    let goCode' = eraseUndeclaredTVarsInGoSource goCode
+                    writeFile mainGoPath goCode'
                     putStrLn $ "   Wrote " ++ mainGoPath
                     -- v0.13 Layer 2: codegen-stage validator runs after
                     -- writing main.go but before any downstream tooling
@@ -2889,10 +3034,7 @@ extractRtIdents src = go Nothing src
     unwrap (Just c) = c
     lastOf = last
 
-    isIdentChar c = (c >= 'a' && c <= 'z')
-                 || (c >= 'A' && c <= 'Z')
-                 || (c >= '0' && c <= '9')
-                 || c == '_'
+    isIdentChar c = Char.isAlphaNum c || c == '_'
 
 
 -- | Rewrite a bindings file keeping only functions that are (a) in the
@@ -3935,16 +4077,25 @@ generateDeclsForDep canMod modPrefix =
               -- `isEmittableGoType` gate keeps it sound: a non-
               -- emittable `depRetType` falls back to plain `exprToGo`
               -- and the outer `typeIIFE` still coerces.
+              -- task #660 — compose ctx with depTypeParams via UNION
+              -- (LC.withEnclosingTypeParams) so substituteOnly at
+              -- coerceCallArgsAt's σ-recovery (Compile.hs:9744+9753)
+              -- correctly sees this fn's declared typeParams at
+              -- GoExpr CONSTRUCTION time. The IORef path at render
+              -- time still works via `withScopedEnclosingTypeParams`
+              -- wraps below (kept for downstream lazy readers).
+              depBodyCtx = LC.withEnclosingTypeParams depTypeParams
+                              (ctxFromIORef ())
               lowerDepBody e =
                   if depRetType /= "any"
-                      then exprToGoExpectGo (ctxFromIORef ()) depRetType e
-                      else exprToGo (ctxFromIORef ()) e
+                      then exprToGoExpectGo depBodyCtx depRetType e
+                      else exprToGo depBodyCtx e
               -- `typeIIFE` runs on the GoExpr STRUCTURE — before
               -- `withScopedLambdaTypes` renders it to a String — so it
               -- can still see a `GoBlock` and convert it to a typed
               -- `func() <depRetType>` IIFE.  Idempotent on an
               -- already-typed `GoTypedBlock` (no redundant re-wrap).
-              typedBody = typeIIFE (ctxFromIORef ()) depRetType (lowerDepBody body)
+              typedBody = typeIIFE depBodyCtx depRetType (lowerDepBody body)
               -- v0.13 Stage 1 (task #189) — register func-typed
               -- params in the Go-string registry too, so the
               -- recursive call-site `goExprGoType` resolves
@@ -4014,7 +4165,7 @@ generateDeclsForDep canMod modPrefix =
               -- probe-TCO-4 (polymorphic case-arm tail jump).
               tcoBody = withScopedEnclosingTypeParamsStmts depTypeParams
                           [GoIr.GoForever
-                              (tcoBodyStmts (ctxFromIORef ()) depHome name (length params)
+                              (tcoBodyStmts depBodyCtx depHome name (length params)
                                             depParamNames depParamTyped depRetType body)]
               normalBody = [GoIr.GoReturn bodyExpr]
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -5335,16 +5486,22 @@ generateDef home def0 solvedTypes =
             -- `isEmittableGoType` gate keeps it sound: a non-emittable
             -- `goRetType` falls back to plain `exprToGo` and the outer
             -- `typeIIFE` still coerces.
+            -- task #660 — compose ctx with entryTypeParams (UNION,
+            -- not overwrite) so substituteOnly at construction time
+            -- correctly sees the enclosing fn's declared TVars.
+            -- Mirror of dep-side depBodyCtx.
+            entryBodyCtx = LC.withEnclosingTypeParams entryTypeParams
+                              (ctxFromIORef ())
             lowerFnBody e =
                 if goRetType /= "any"
-                    then exprToGoExpectGo (ctxFromIORef ()) goRetType e
-                    else exprToGo (ctxFromIORef ()) e
+                    then exprToGoExpectGo entryBodyCtx goRetType e
+                    else exprToGo entryBodyCtx e
             -- `typeIIFE` runs on the GoExpr STRUCTURE — before
             -- `withScopedLambdaTypes` renders it to a String — so it
             -- can still see a `GoBlock` and convert it to a typed
             -- `func() <goRetType>` IIFE.  Idempotent on an already-
             -- typed `GoTypedBlock` (no redundant re-wrap).
-            typedBody = typeIIFE (ctxFromIORef ()) goRetType (lowerFnBody body)
+            typedBody = typeIIFE entryBodyCtx goRetType (lowerFnBody body)
             bodyExpr0 = if Map.null paramTypeBindings
                 then typedBody
                 else withScopedLambdaTypes paramTypeBindings typedBody
@@ -5381,7 +5538,7 @@ generateDef home def0 solvedTypes =
             tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
                         [GoIr.GoForever
                             (destructStmts ++
-                                tcoBodyStmts (ctxFromIORef ()) home name (length params)
+                                tcoBodyStmts entryBodyCtx home name (length params)
                                              paramNames paramTyped goRetType body)]
             normalBody = [GoIr.GoReturn bodyExpr]
         in
@@ -9743,14 +9900,21 @@ exprToGo ctx (A.At _ expr) = case expr of
                                         , not (Map.member t recovered) ]
                                 outOfScope =
                                     [ t | t <- unboundTVars
-                                        , not (enclosingTypeParamInScopeCtx (ctxFromIORef ()) t) ]
+                                        , not (enclosingTypeParamInScopeCtx ctx t) ]
                             in if null unboundTVars
                                  then subbed
                                  else if null outOfScope
                                         then subbed
                                         else if containsGenericTypeParam subbed
-                                               -- v0.17 PR-17b S3
-                                               then eraseScopedCtx (ctxFromIORef ()) subbed
+                                               -- v0.17 PR-17b S3 + task #660
+                                               -- read threaded ctx (composed
+                                               -- with entry/dep typeParams)
+                                               -- instead of stale IORef so
+                                               -- non-generic outer fn
+                                               -- correctly erases T1 → any
+                                               -- AND generic outer fn (#521)
+                                               -- preserves T1.
+                                               then eraseScopedCtx ctx subbed
                                                else subbed
                         substitutedParams = map substituteOnly kernelParamGoTys
                         -- Route each arg through the typed-aware
@@ -10541,25 +10705,25 @@ coerceToFieldType ctx targetTy e
                     ("rt.MaybeCoerce[" ++ eraseScoped inner ++ "]")) [e]
             CoerceSkyTask inner ->
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.TaskCoerceT[" ++ eraseScoped inner ++ "]")) [e]
+                    ("rt.TaskCoerceT[" ++ eraseScopedCtx ctx inner ++ "]")) [e]
             CoerceListAny      -> GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
             CoerceMapStringAny -> GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
             CoerceListT elt ->
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.AsListT[" ++ eraseScoped elt ++ "]")) [e]
+                    ("rt.AsListT[" ++ eraseScopedCtx ctx elt ++ "]")) [e]
             CoerceMapStringT v ->
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.AsMapT[" ++ eraseScoped v ++ "]")) [e]
+                    ("rt.AsMapT[" ++ eraseScopedCtx ctx v ++ "]")) [e]
             CoerceTuple2T a b ->
                 -- v0.17 Cause H Step 4 — `rt.AsTuple2T[A, B](e)`
                 -- field-wise coerces V0 → A and V1 → B via reflect.
                 -- Replaces the raw `any(e).(rt.T2[A, B])` assertion
                 -- that panics when e's static type is `T2[any, any]`.
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.AsTuple2T[" ++ eraseScoped a ++ ", " ++ eraseScoped b ++ "]")) [e]
+                    ("rt.AsTuple2T[" ++ eraseScopedCtx ctx a ++ ", " ++ eraseScopedCtx ctx b ++ "]")) [e]
             CoerceTuple3T a b c ->
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.AsTuple3T[" ++ eraseScoped a ++ ", " ++ eraseScoped b ++ ", " ++ eraseScoped c ++ "]")) [e]
+                    ("rt.AsTuple3T[" ++ eraseScopedCtx ctx a ++ ", " ++ eraseScopedCtx ctx b ++ ", " ++ eraseScopedCtx ctx c ++ "]")) [e]
             CoerceAny -> e
             CoerceRecordAlias erasedTy ->
                 -- v0.13.x #158: record-alias targets (`_R` suffix) route
@@ -11072,7 +11236,7 @@ coerceFfiArg ctx goType arg =
     let goArg = exprToGo ctx arg
     in if isPrimLiteralArg arg
         then goArg
-        else coerceVia goType goArg
+        else coerceVia ctx goType goArg
 
 
 -- | Call-site coercion that consults the `rt.FfiT_<Name>_P<N>` alias
@@ -11084,10 +11248,10 @@ coerceFfiArgViaAlias :: LC.LowerCtx -> String -> Int -> String -> Can.Expr -> Go
 coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
     | isPrimLiteralArg arg   = exprToGo ctx arg
     | isCallerVisibleGoType goType =
-        coerceVia goType (exprToGo ctx arg)
+        coerceVia ctx goType (exprToGo ctx arg)
     | otherwise =
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in coerceVia aliasName (exprToGo ctx arg)
+        in coerceVia ctx aliasName (exprToGo ctx arg)
 
 
 -- | Emit `rt.Coerce[T](expr)` (or the named shortcut for prim
@@ -11102,8 +11266,8 @@ coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
 -- shape — including a polymorphic Nothing[any]() or empty
 -- []any{} — so the strict rt.Coerce panic can't fire on a
 -- structurally-compatible source.
-coerceVia :: String -> GoIr.GoExpr -> GoIr.GoExpr
-coerceVia goType goArg = case goType of
+coerceVia :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceVia ctx goType goArg = case goType of
     "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
     "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
@@ -11113,10 +11277,13 @@ coerceVia goType goArg = case goType of
         Nothing -> case stripSkyResult goType of
             Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [goArg]
             Nothing -> case stripSlice goType of
-                Just elemGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [goArg]
+                Just elemGo -> GoIr.GoCall (GoIr.GoIdent
+                    ("rt.AsListT[" ++ eraseScopedCtx ctx elemGo ++ "]")) [goArg]
                 Nothing -> case stripStringMap goType of
-                    Just valGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [goArg]
-                    Nothing -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goType ++ "]")) [goArg]
+                    Just valGo -> GoIr.GoCall (GoIr.GoIdent
+                        ("rt.AsMapT[" ++ eraseScopedCtx ctx valGo ++ "]")) [goArg]
+                    Nothing -> GoIr.GoCall (GoIr.GoIdent
+                        ("rt.Coerce[" ++ eraseScopedCtx ctx goType ++ "]")) [goArg]
 
 
 -- | Can we emit a direct Go call for this callee expression?
@@ -12161,6 +12328,11 @@ coerceArg ctx mSrc e ty
         case goExprGoType ctx Nothing e of
             Just t | t /= "any" -> e
             _ ->
+                -- Emit raw rt.Coerce[ty] — keeps generic outer fns
+                -- (#521) correct (T1 preserved for monomorphisation
+                -- to substitute), and the LATE-STAGE go-source pass
+                -- (eraseUndeclaredTVarsInGoSource) erases unwanted
+                -- T<n> for non-generic outer fns at write time.
                 GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ ty ++ "]")) [e]
     -- v0.15.3 — parametric record alias instantiation.  The callee
     -- almost always emits as a Go-generic function whose param
@@ -12370,11 +12542,15 @@ coerceArg ctx mSrc e ty
     | ty == "map[string]any" =
         GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
     -- Typed slice `[]T`: runtime may hand us `[]any`, walk-and-cast.
+    -- task #660 — erase out-of-scope TVars in `elt`.
     | Just elt <- stripListType ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsListT[" ++ eraseScopedCtx ctx elt ++ "]")) [e]
     -- map[string]V: typed dict.
+    -- task #660 — erase out-of-scope TVars in `valTy`.
     | Just valTy <- stripMapType ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent
+            ("rt.AsMapT[" ++ eraseScopedCtx ctx valTy ++ "]")) [e]
     -- v0.17 Cause H Step 4 — typed tuple call-arg targets route through
     -- `rt.AsTuple2T[A, B]` / `rt.AsTuple3T[A, B, C]` for the same
     -- reason `[]T` routes through `rt.AsListT[T]`: Go's nominal
