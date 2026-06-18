@@ -613,25 +613,14 @@ withScopedEnclosingTypeParamsStmts tps stmts = unsafePerformIO $ do
     return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
 
 
--- | Membership test: is `t` a generic type parameter declared on
--- the enclosing Go function?  Used by the arg-coercion paths to
--- decide whether to erase a TVar (out-of-scope → erase to `any`)
--- or preserve it (in-scope → pin as-is, let monomorphise rewrite).
-enclosingTypeParamInScope :: String -> Bool
-enclosingTypeParamInScope t = unsafePerformIO $ do
-    ctx <- readIORef scopeStateRef
-    return (LC.lookupEnclosingTypeParam ctx t)
-{-# NOINLINE enclosingTypeParamInScope #-}
-
-
--- | v0.17 PR-17b Reader-threading Stage 0 — pure substitute for
--- 'enclosingTypeParamInScope' that takes the LowerCtx explicitly
--- instead of reading 'scopeStateRef' via 'unsafePerformIO'.  Used
--- by the new threaded readers; the legacy 'enclosingTypeParamInScope'
--- wrapper above is kept as a thin shim during the staged migration
--- (Stages 1-5) and deleted in Stage 6.  Equivalent to
--- 'LC.lookupEnclosingTypeParam' but namespaced for the migration so
--- the legacy/threaded call counts are greppable.
+-- | v0.17 PR-17b Reader-threading — pure ctx-aware predicate that
+-- replaced the legacy 'enclosingTypeParamInScope' (deleted at
+-- Stage 6).  Membership test: is `t` a generic type parameter
+-- declared on the enclosing Go function?  Used by the arg-coercion
+-- paths to decide whether to erase a TVar (out-of-scope → erase
+-- to `any`) or preserve it (in-scope → pin as-is, let monomorphise
+-- rewrite).  Equivalent to 'LC.lookupEnclosingTypeParam'; namespaced
+-- here for greppability in the v0.17 IORef-defusing work.
 enclosingTypeParamInScopeCtx :: LC.LowerCtx -> String -> Bool
 enclosingTypeParamInScopeCtx ctx = LC.lookupEnclosingTypeParam ctx
 
