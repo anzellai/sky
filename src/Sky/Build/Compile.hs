@@ -6255,8 +6255,8 @@ typeIIFE ctx retType body
             in if canType
                  then GoIr.GoTypedBlock retType
                         (coerceBlockReturnsT ctx retType stmts) result'
-                 else wrapTypedReturn ctx retType body
-        _ -> wrapTypedReturn ctx retType body
+                 else wrapTypedReturn ctx Nothing retType body
+        _ -> wrapTypedReturn ctx Nothing retType body
 
 
 -- | Walk IIFE-level statements coercing every `return` value to
@@ -6294,7 +6294,7 @@ coerceReturnExprT ctx retType e = case e of
     GoIr.GoRaw "nil" -> case goZeroValue retType of
         Just zv -> GoIr.GoRaw zv
         Nothing -> e
-    _ -> wrapTypedReturn ctx retType e
+    _ -> wrapTypedReturn ctx Nothing retType e
 
 
 -- | v0.13 typed lowerer: best-effort STATIC Go type of a GoExpr.
@@ -6636,28 +6636,27 @@ goExprGoType ctx mSrc e = case shapeClassified of
     rtCalleeName _ = Nothing
 
 
-wrapTypedReturn :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
-wrapTypedReturn ctx retType body
+-- v0.17 Wave 3: takes optional source Can.Expr so the SkyResult /
+-- SkyMaybe / SkyTask wraps can consult HM via Solve.lookupSolvedRegion
+-- and substitute concrete types into the wrap params (closes T1 leak
+-- at substitution time).
+wrapTypedReturn :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+wrapTypedReturn ctx mSrc retType body
     | retType == "any" = body
     -- v0.13 typed lowerer: skip the coercion when `body` is already
     -- provably the target type — no redundant `rt.CoerceInt(int)` /
     -- `rt.Coerce[T](T)` wrap.
-    --
-    -- v0.15.8 (P2): no source `Can.Expr` is in scope here (the
-    -- caller has already lowered the expression).  Keep the strict
-    -- by-shape recovery; structural fallback fires at the
-    -- call-arg sites where the source expr IS still in scope.
     | goExprGoType ctx Nothing body == Just retType = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]"))
+            (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParams ctx mSrc "Result" params ++ "]"))
             [body]
     | Just inner <- stripParametric "rt.SkyMaybe" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]"))
+            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ resolveWrapParams ctx mSrc "Maybe" inner ++ "]"))
             [body]
     | Just params <- stripParametric "rt.SkyTask" retType =
-        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ params ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ resolveWrapParams ctx mSrc "Task" params ++ "]")) [body]
     -- Audit P0-3: replace raw `any(body).(T)` with a runtime Coerce
     -- helper. Direct assertion panics with a cryptic 'interface
     -- conversion' message on mismatch; Coerce gives a site-identified
@@ -15863,7 +15862,7 @@ exprToGoTypedWithRet types retType expr = exprToGoTyped types retType expr
 -- | Generate Go expression in typed context — uses direct Go operators
 -- instead of any-typed runtime wrappers.
 exprToGoTyped :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoTyped types retType (A.At _ expr) = case expr of
+exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
     Can.Int n -> GoIr.GoIntLit n
     Can.Float f -> GoIr.GoFloatLit f
     Can.Str s -> GoIr.GoStringLit s
@@ -15952,7 +15951,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
                 -- untyped thunk (typical of the Db.* / Time.* helpers).
                 -- wrapTypedReturn already encapsulates the Coerce-vs-assert
                 -- choice for every parametric shape.
-                wrapTypedReturn (ctxFromIORef ()) (solvedTypeToGo rt) callExpr
+                wrapTypedReturn (ctxFromIORef ()) (Just origExpr) (solvedTypeToGo rt) callExpr
             _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
