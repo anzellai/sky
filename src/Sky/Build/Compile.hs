@@ -650,6 +650,50 @@ eraseScopedCtx :: LC.LowerCtx -> String -> String
 eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ctx)
 
 
+-- | v0.17 Wave 3 — substitute polymorphic kernel template T-vars in a
+-- wrap's params string with the HM-solved concrete types from the
+-- source expression's region.
+--
+-- When the wrap target is e.g. @rt.SkyTask[T1, any]@ — the polymorphic
+-- kernel template form — and HM has solved the call-site instantiation
+-- (e.g. @Task Error Db@ for @Db.open "sqlite" "..."@), we can render
+-- the concrete Go types @Sky_Core_Error_Error, *rt.SkyDb@ and use
+-- them as the wrap params. This closes the T1-leak class at
+-- substitution time without relying on the late-stage Go-source
+-- band-aid (@eraseUndeclaredTVarsInGoSource@).
+--
+-- Falls back to 'eraseScopedCtx' when the source region's solved type
+-- doesn't match the expected kind, or when @mSrc@ is absent, or when
+-- the solved type still contains TVars (HM didn't fully pin them).
+resolveWrapParams
+    :: LC.LowerCtx
+    -> Maybe Can.Expr  -- ^ source expression
+    -> String          -- ^ expected kind: "Task" | "Result" | "Maybe"
+    -> String          -- ^ fallback params (already T-var-erased)
+    -> String
+resolveWrapParams ctx mSrc kind fallback =
+    case mSrc of
+        Just src ->
+            let region = A.toRegion src
+                solved = LC._lc_solved ctx
+            in case Solve.lookupSolvedRegion region solved of
+                Just (T.TType _ k args)
+                    | k == kind
+                    , all (not . hasTVar) args ->
+                        List.intercalate ", " (map solvedTypeToGo args)
+                _ -> eraseScopedCtx ctx fallback
+        Nothing -> eraseScopedCtx ctx fallback
+  where
+    hasTVar :: T.Type -> Bool
+    hasTVar (T.TVar _) = True
+    hasTVar (T.TType _ _ args) = any hasTVar args
+    hasTVar (T.TLambda from to) = hasTVar from || hasTVar to
+    hasTVar (T.TRecord fields _) = any (\(T.FieldType _ ft) -> hasTVar ft) (Map.elems fields)
+    hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
+    hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
+    hasTVar T.TUnit = False
+
+
 -- | task #660 — defensive late-stage Go-source rewrite.
 --
 -- Walks each top-level `func NAME[TPS] ...{ body }` and erases any
@@ -12508,12 +12552,12 @@ coerceArg ctx mSrc e ty
     | Just params <- stripParametric "rt.SkyResult" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.ResultCoerce["
-                ++ eraseScopedCtx ctx params
+                ++ resolveWrapParams ctx mSrc "Result" params
                 ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.MaybeCoerce["
-                ++ eraseScopedCtx ctx inner
+                ++ resolveWrapParams ctx mSrc "Maybe" inner
                 ++ "]")) [e]
     -- Audit: parametric SkyTask param targets need TaskCoerceT for the
     -- same nominal-typing reason — `func() any` from the runtime helpers
@@ -12521,10 +12565,16 @@ coerceArg ctx mSrc e ty
     -- `SkyTask[Error, A]` under Go's generic-instantiation rules. Without
     -- this branch the codegen emits `any(arg).(rt.SkyTask[Error, A])`
     -- which panics at runtime on any cross-instantiation pass-through.
+    --
+    -- v0.17 Wave 3: when `params` contains unresolved T-vars (from
+    -- polymorphic kernel template rendering), consult mSrc's HM-solved
+    -- type via Solve.lookupSolvedRegion and substitute concrete Go
+    -- types. Closes T1-leak class at substitution time, not via
+    -- late-stage band-aid.
     | Just params <- stripParametric "rt.SkyTask" ty =
         GoIr.GoCall (GoIr.GoIdent
             ("rt.TaskCoerceT["
-                ++ eraseScopedCtx ctx params
+                ++ resolveWrapParams ctx mSrc "Task" params
                 ++ "]")) [e]
     | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
