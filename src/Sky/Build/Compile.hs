@@ -579,7 +579,7 @@ lookupLambdaGoStr ctx k = unsafePerformIO $ do
 withScopedEnclosingTypeParams :: [String] -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedEnclosingTypeParams tps x = unsafePerformIO $ do
     prev <- readIORef scopeStateRef
-    writeIORef scopeStateRef (LC.setEnclosingTypeParams tps prev)
+    writeIORef scopeStateRef (LC.withEnclosingTypeParams tps prev)
     let rendered = GoBuilder.renderExpr x
         forced = length rendered
     forced `seq` writeIORef scopeStateRef prev
@@ -618,7 +618,7 @@ withScopedEnclosingTypeParams tps x = unsafePerformIO $ do
 withScopedEnclosingTypeParamsStmts :: [String] -> [GoIr.GoStmt] -> [GoIr.GoStmt]
 withScopedEnclosingTypeParamsStmts tps stmts = unsafePerformIO $ do
     prev <- readIORef scopeStateRef
-    writeIORef scopeStateRef (LC.setEnclosingTypeParams tps prev)
+    writeIORef scopeStateRef (LC.withEnclosingTypeParams tps prev)
     let rendered = unlines (concatMap GoBuilder.renderStmt stmts)
         forced = length rendered
     forced `seq` writeIORef scopeStateRef prev
@@ -2629,21 +2629,21 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- have failed go build anyway.
                     -- v0.17 PR-17b: late-stage band-aid retained.
                     --
-                    -- Wave 2 attempt (setEnclosingTypeParams REPLACE
-                    -- at dep+entry function emission entry points)
-                    -- did NOT close the 4-example leak. The
-                    -- contamination doesn't come from sibling-leak
-                    -- at function-entry time — it comes from
-                    -- σ-recovery's T-var promotion DURING body
-                    -- emission (substituteOnly at Compile.hs:9744+
-                    -- 9753 composes T-vars into ctx for polymorphic
-                    -- HOF call sites). That T1 then leaks back into
-                    -- the outer non-generic Go func's body when
-                    -- emission unwinds. Closing it cleanly requires
-                    -- separating "T-var inferred for this Sky type"
-                    -- from "T-var declared on enclosing Go func" as
-                    -- two distinct ctx fields. Tracked as v0.17
-                    -- continuation work.
+                    -- Probe 2026-06-18 with band-aid OFF after Wave 1
+                    -- batch 2 (Tier 6+7 migration) showed 22/26 still
+                    -- pass — 4 examples (02-go-stdlib, 08-notes-app,
+                    -- 12-skyvote, 13-skyshop) leak T1 through
+                    -- non-generic wrapper functions
+                    -- (Lib_Db_conn-style: `func() *rt.SkyDb { ...
+                    -- rt.TaskCoerceT[T1, any] ... }`). The remaining
+                    -- leak is at wrapTypedReturn where ctx claims T1
+                    -- is in scope (via σ-recovery's T1-promotion of
+                    -- inferred HOF type params) but the outer Go func
+                    -- doesn't declare [T1 any]. Closing it cleanly
+                    -- needs ctx provenance redesign — separating
+                    -- "T1 was inferred for this expression" from
+                    -- "T1 is a declared typeParam of the enclosing
+                    -- Go func". Tracked as Wave 2 follow-up.
                     let goCode' = eraseUndeclaredTVarsInGoSource goCode
                     writeFile mainGoPath goCode'
                     putStrLn $ "   Wrote " ++ mainGoPath
@@ -4101,16 +4101,7 @@ generateDeclsForDep canMod modPrefix =
               -- GoExpr CONSTRUCTION time. The IORef path at render
               -- time still works via `withScopedEnclosingTypeParams`
               -- wraps below (kept for downstream lazy readers).
-              -- v0.17 PR-17b Wave 2: setEnclosingTypeParams REPLACES
-              -- rather than UNIONs. The dep function being emitted
-              -- is a fresh top-level Go binding — prior siblings'
-              -- declared T-vars must NOT leak in. Without this, a
-              -- non-generic function emitted after a generic
-              -- sibling in the same dep module would inherit the
-              -- sibling's T1, causing `rt.TaskCoerceT[T1, any]` to
-              -- appear inside a non-generic Go func. Closes the
-              -- Lib_Db_conn / 4-example T1-leak class.
-              depBodyCtx = LC.setEnclosingTypeParams depTypeParams
+              depBodyCtx = LC.withEnclosingTypeParams depTypeParams
                               (ctxFromIORef ())
               lowerDepBody e =
                   if depRetType /= "any"
@@ -5512,11 +5503,11 @@ generateDef home def0 solvedTypes =
             -- `isEmittableGoType` gate keeps it sound: a non-emittable
             -- `goRetType` falls back to plain `exprToGo` and the outer
             -- `typeIIFE` still coerces.
-            -- v0.17 PR-17b Wave 2: setEnclosingTypeParams REPLACES.
-            -- The entry function being emitted is a fresh top-level
-            -- Go binding — prior siblings' declared T-vars must NOT
-            -- leak in. Mirror of dep-side. Closes T1-leak class.
-            entryBodyCtx = LC.setEnclosingTypeParams entryTypeParams
+            -- task #660 — compose ctx with entryTypeParams (UNION,
+            -- not overwrite) so substituteOnly at construction time
+            -- correctly sees the enclosing fn's declared TVars.
+            -- Mirror of dep-side depBodyCtx.
+            entryBodyCtx = LC.withEnclosingTypeParams entryTypeParams
                               (ctxFromIORef ())
             lowerFnBody e =
                 if goRetType /= "any"
