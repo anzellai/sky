@@ -73,7 +73,56 @@ import qualified Sky.Canonicalise.Environment as Env
 import qualified System.Environment
 
 
--- | Global codegen environment (set once per compilation, read during codegen)
+-- | Global codegen environment.
+--
+-- == v0.17 task #654 close — load-bearing-but-pure invariant ==
+--
+-- This IORef is morally `IORef CodegenEnv` written exactly ONCE
+-- per compilation (the C1 reset + cascade of monotonic
+-- modifyIORef writes inside 'continueCompile' / 'solvePhase' /
+-- the 'imports' lazy thunk collapse to a single final value
+-- visible at every read site).
+--
+-- The architectural contract is:
+--
+--   1. PURE COMPUTATION.  The C10 final-state assembly is
+--      'buildFinalCgEnv' (iter 22a, line ~4860), a pure
+--      'Rec.CodegenEnv -> … -> Rec.CodegenEnv' function.
+--      The IORef write at line ~5019 is a single side-effect.
+--
+--   2. MONOTONIC WRITE ORDERING.  All 'writeIORef' / 'modifyIORef'
+--      sites for this ref live in the range
+--      'continueCompile' → end of the 'imports' lazy thunk.
+--      The barrier 'importsForced \`seq\`' at Compile.hs:5079
+--      forces the thunk before the renderer walks '_pkg_decls'.
+--      ★ INVARIANT: NEVER add a 'writeIORef'/'modifyIORef' for
+--      'globalCgEnv' AFTER the 'importsForced \`seq\`' barrier.
+--      Doing so silently breaks the monotonicity contract and
+--      reintroduces the iter 20 anon-record 'Anon_R_*' undefined
+--      failure class.
+--
+--   3. RENDERER PURITY.  'src/Sky/Generate/Go/Builder.hs'
+--      ('renderExpr' / 'renderStmt' / 'renderDecl') is pure
+--      'GoExpr / GoStmt / GoDecl -> [String]' — NO 'readIORef'
+--      'globalCgEnv' or 'getCgEnv' reads inside the Go renderer.
+--
+--   4. FROZEN READS.  Every 'getCgEnv' / 'readIORef globalCgEnv'
+--      read in this file fires from a lazy thunk evaluated
+--      strictly AFTER the 'importsForced \`seq\`' barrier (or
+--      sits inside the 'imports' thunk itself before the C10
+--      writes, where prevEnv-style snapshots are the contract).
+--      Every read therefore observes the SAME final post-C10
+--      value.
+--
+-- Iters 22a+22b extracted the C10 cgEnv + goSigMap computations
+-- to pure builders ('buildFinalCgEnv' / 'buildFinalGoSigMap').
+-- Per the v0.17 architectural-close criterion B's "OR" clause,
+-- 'globalCgEnv' is now documented as load-bearing-but-pure
+-- rather than deleted: full deletion would require rewriting
+-- every 'getCgEnv' use-site (10+ inside lazy GoExpr thunks),
+-- and the iter 20 attempt revealed an evaluation-order failure
+-- class ('Anon_R_*' undefined) that recurs when the IORef
+-- semantics are altered.
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
 globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty Set.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty)
@@ -439,6 +488,39 @@ emptyGoSig = GoSig
 
 -- | Global GoSig registry — keyed by Sky-dotted qualified name.
 -- Population: C9 entry-module path only; C10/C11 widen.
+--
+-- == v0.17 task #654 close — load-bearing-but-pure invariant ==
+--
+-- Same architectural contract as 'globalCgEnv' above (read that
+-- comment first).  Specifically:
+--
+--   1. PURE COMPUTATION.  The C10 typeParams update is
+--      'buildFinalGoSigMap' (iter 22b, line ~4790), a pure
+--      'Map String GoSig -> Map String [(String,String)] ->
+--      Map String GoSig' function.
+--
+--   2. MONOTONIC WRITE ORDERING.  All writes live in
+--      'continueCompile' (C1 reset at line ~1278), 'solvePhase'
+--      (C9 entry-write at line ~2001 + SKY_GOSIG_DIFF probe at
+--      line ~2040), and the 'imports' lazy thunk (C10 dep-merge
+--      at line ~5041).  ★ NEVER add a 'writeIORef' /
+--      'modifyIORef' for 'globalGoSigMap' AFTER the
+--      'importsForced \`seq\`' barrier at Compile.hs:5079.
+--
+--   3. RENDERER PURITY.  No reads in
+--      'src/Sky/Generate/Go/Builder.hs'.
+--
+--   4. FROZEN READS.  The two post-imports readers (line ~5181
+--      for spec-decl build, line ~11960 in 'instanceMangledName')
+--      both see the post-C10 final value.  The opt-in
+--      SKY_GOSIG_DIFF probe at line ~2040 reads C9-state only,
+--      by design — it runs before C10 fires.
+--
+-- Per criterion B's "OR" clause, this IORef is documented as
+-- load-bearing-but-pure rather than deleted.  Iter 22b's pure
+-- builder closed the computational impurity; the IORef write
+-- remains as a single well-defined side effect with monotonic
+-- ordering enforced by 'importsForced'.
 {-# NOINLINE globalGoSigMap #-}
 globalGoSigMap :: IORef (Map.Map String GoSig)
 globalGoSigMap = unsafePerformIO $ newIORef Map.empty
@@ -860,6 +942,25 @@ eraseUndeclaredTVarsInGoSource src = goSplit src
 -- read was lifted to the top level as a pure constant). v0.12.x
 -- typed-codegen close-out diagnosed this when dep-module solved
 -- types failed to propagate post-merge.
+--
+-- == v0.17 task #654 close — post-importsForced contract ==
+--
+-- Every call site of 'getCgEnv' in this file sits inside a lazy
+-- thunk that the renderer at Compile.hs:5079 forces strictly
+-- AFTER 'importsForced \`seq\`'.  By the time any such read
+-- fires, 'globalCgEnv' holds its final post-C10 value
+-- ('buildFinalCgEnv' output at line ~5019).  No 'getCgEnv' read
+-- ever observes a transient intermediate state.
+--
+-- ★ INVARIANT (do not break in future refactors):
+--
+--   * No 'modifyIORef'/'writeIORef' on 'globalCgEnv' after line
+--     5079 (the 'importsForced \`seq\`' barrier).
+--   * No 'getCgEnv' use inside 'src/Sky/Generate/Go/Builder.hs'
+--     (the renderer stays pure 'GoExpr -> String').
+--   * The 'imports' lazy thunk's writes must complete BEFORE
+--     'importsForced' is evaluated — sequencing guaranteed by
+--     'imports `seq` imports' at line 5045.
 {-# NOINLINE getCgEnv #-}
 getCgEnv :: Rec.CodegenEnv
 getCgEnv = unsafePerformIO $ readIORef globalCgEnv
