@@ -676,7 +676,7 @@ resolveWrapParams ctx mSrc kind fallback =
         Just src ->
             let region = A.toRegion src
                 solved = LC._lc_solved ctx
-            in case Solve.lookupSolvedRegion region solved of
+            in case Solve.lookupSolvedRegionScoped region solved of
                 Just (T.TType _ k args)
                     | k == kind
                     , all (not . hasTVar) args ->
@@ -2671,8 +2671,20 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- misses, etc.). Safe because Go's `any` is the
                     -- universal interface; an out-of-scope TVar would
                     -- have failed go build anyway.
-                    -- v0.17 Wave 3 probe: band-aid OFF to surface raw T1 leak
-                    let goCode' = goCode
+                    -- v0.17 Wave 3 (#660): band-aid ON as a defensive
+                    -- floor while the architectural close ships.  The
+                    -- band-aid widens any T<N> ref undeclared in the
+                    -- enclosing func's TPS to `any`, which is sound
+                    -- under Go (interface universal) but reads as a
+                    -- type-erasure in the emitted Go.  The proper close
+                    -- is to thread the merged `Solve.SolvedTypes` into
+                    -- the dep-emission lowerCtx so `resolveWrapParams`'
+                    -- `lookupSolvedRegionScoped` returns the HM-solved
+                    -- concrete type — see memory v017_wave3_emission_paths
+                    -- for the diagnosis. resolveWrapParams now consults
+                    -- the per-module scoped region map but currently
+                    -- finds empty SolvedTypes in dep emission.
+                    let goCode' = eraseUndeclaredTVarsInGoSource goCode
                     writeFile mainGoPath goCode'
                     putStrLn $ "   Wrote " ++ mainGoPath
                     -- v0.13 Layer 2: codegen-stage validator runs after
