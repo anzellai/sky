@@ -161,17 +161,15 @@ isInlineConsoleBuild = unsafePerformIO $ do
 -- block.  No IORef indirection, no hidden global state.
 
 
--- | v0.13 F: whole-program Sky-side reachable set.  Populated by
--- continueCompile after the canon fixpoint runs (the same hook where
--- `globalReachableProgram` gets the mono-instance reachable set).  Read by
--- `loadAndSeedFfiRegistry` to prune unused FFI sigs (the Stripe-SDK
--- win) and by `generateDeclsForDep` to skip emission of unreachable
--- dep-module decls.  Set `SKY_DCE=0` to disable pruning (escape
--- hatch — value stays Set.empty so every reachable check returns True
--- via the empty-set fallback below).
-{-# NOINLINE globalReachableProgram #-}
-globalReachableProgram :: IORef (Set.Set Dce.Ref)
-globalReachableProgram = unsafePerformIO $ newIORef Set.empty
+-- | v0.13 F: whole-program Sky-side reachable set.
+--
+-- v0.17 iter 16 (task #654) — IORef removed.  The DCE reachable
+-- set now flows as 'SolveOutputs._so_reachableProg' →
+-- 'generateDeclsForDepScoped' → 'generateDeclsForDep'
+-- 'reachableProg' parameter.  The value is computed inside
+-- 'solvePhase' immediately after the canon fixpoint settles
+-- (via 'computeReachableProgram', or @Set.empty@ when DCE is
+-- disabled).  No IORef indirection, no CSE risk, no reset cycle.
 
 
 -- | v0.13 F: dce-disabled flag.  Read once at compile start from
@@ -226,7 +224,8 @@ dceDisabled = unsafePerformIO $ do
 -- Use this at every let-binding site in pure functions that
 -- reads a compile-scoped global. Replaces the residual sites
 -- documented in #492:
---   - generateAliasForDep (globalReachableProgram, globalDceDisabled)
+--   - generateDeclsForDep (globalReachableProgram — defused
+--     in v0.17 iter 16, now a 'reachableProg' parameter)
 --   - goPreambleParts (globalIsInlineConsoleBuild, globalConsoleNeeded)
 --   - generateUnionForDep (globalUnionNames)
 --   - record-field codegen (globalAllFieldIdx)
@@ -1247,7 +1246,9 @@ resetCompileState = do
     writeIORef globalAllFieldIdx Map.empty
     -- v0.17 iter 13 (task #654) — globalReachableSet reset removed; IORef
     -- is gone.  ReachableSet now flows as SolveOutputs._so_reached.
-    writeIORef globalReachableProgram Set.empty
+    -- v0.17 iter 16 (task #654) — globalReachableProgram reset removed;
+    -- IORef is gone.  DCE reachable set flows as
+    -- SolveOutputs._so_reachableProg → generateDeclsForDep param.
     writeIORef globalAnonRecords Map.empty
 
 
@@ -1490,6 +1491,17 @@ data SolveOutputs = SolveOutputs
         -- each specialised emission.  Previously bridged via
         -- @globalCsiByCallee@ IORef; this field defuses that
         -- IORef entirely.
+    , _so_reachableProg       :: !(Set.Set Dce.Ref)
+        -- ^ v0.17 iter 16 (task #654) — whole-program Sky-side DCE
+        -- reachable-Ref set computed by 'computeReachableProgram'
+        -- after the post-solve canon fixpoint runs.  Consumed by
+        -- 'generateDeclsForDep' to skip emission of unreachable
+        -- dep-module decls (the Stripe-SDK pruning win).
+        -- Previously bridged via @globalReachableProgram@ IORef;
+        -- this field defuses that IORef entirely.  When DCE is
+        -- disabled ('dceDisabled' = True) the value is Set.empty;
+        -- the empty-set reader fallback at 'generateDeclsForDep'
+        -- preserves keep-everything semantics.
     }
 
 
@@ -1826,7 +1838,11 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- surface 'csiByCallee' so it flows into
                     -- SolveOutputs._so_csiByCallee (defuses
                     -- 'globalCsiByCallee' IORef).
-                    (types, reached, csiByCallee) <- case solveResult of
+                    -- v0.17 iter 16 (task #654) — extend tuple to also
+                    -- surface 'reachableProgram' so it flows into
+                    -- SolveOutputs._so_reachableProg (defuses
+                    -- 'globalReachableProgram' IORef).
+                    (types, reached, csiByCallee, reachableProgram) <- case solveResult of
                         Solve.SolveOk t -> do
                             putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                             -- v0.13 Phase A3: log the captured instance table.
@@ -1892,13 +1908,18 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                             -- replaces 'globalDceDisabled'; reads SKY_DCE
                             -- directly at the read site (see line ~3452).
                             -- v0.17 PR-α Stage 3g — pure whole-program DCE
-                            -- derivation extracted to 'computeReachableProgram';
-                            -- IORef write kept here so the existing reader at
-                            -- line ~208 (frozen-snapshot comment) + lowerer reads
-                            -- keep their contract.
-                            unless dceDisabled $
-                                writeIORef globalReachableProgram
-                                    (computeReachableProgram entrySrcMod canMod validDeps)
+                            -- derivation extracted to 'computeReachableProgram'.
+                            -- v0.17 iter 16 (task #654) — IORef write removed;
+                            -- 'reachableProgram' is now a pure 'let' surfaced
+                            -- via 'SolveOutputs._so_reachableProg' and threaded
+                            -- to 'generateDeclsForDep' as a parameter.  When
+                            -- DCE is disabled the value is Set.empty (matches
+                            -- the IORef's pre-iter-16 default + the
+                            -- 'unless dceDisabled' gate).
+                            let reachableProgram =
+                                    if dceDisabled
+                                        then Set.empty
+                                        else computeReachableProgram entrySrcMod canMod validDeps
                             -- v0.13 Phase A4: stash per-callee captured
                             -- quantifier names so spec emission uses the
                             -- SAME ordering the solver instantiated with.
@@ -1991,7 +2012,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                         putStrLn $ "     " ++ Mono.mangleInstance
                                             (Solve.CallInstance q ts [])) (Set.toList reached)
                                 _ -> return ()
-                            return (t, reached, csiByCallee)
+                            return (t, reached, csiByCallee, reachableProgram)
                         Solve.SolveError err -> do
                             -- v0.13 Layer 1: route position-prefixed type
                             -- errors through the structured Diagnostic
@@ -2009,7 +2030,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                     let diag = Solve.solveErrorToDiagnostic entryPath err
                                     rendered <- Render.renderCli diag
                                     putStrLn rendered
-                            return (Solve.emptySolvedTypes, Set.empty, Map.empty)
+                            return (Solve.emptySolvedTypes, Set.empty, Map.empty, Set.empty)
                     -- P3: exhaustiveness — walk the entry + every dep's canonical
                     -- tree for non-exhaustive case expressions. A miss is a
                     -- compile-time error with source context; the `panic("non-
@@ -2196,6 +2217,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , _so_depInferredSigs      = depInferredSigs
                         , _so_reached              = reached
                         , _so_csiByCallee          = csiByCallee
+                        , _so_reachableProg        = reachableProgram
                         }
 
 
@@ -2456,8 +2478,11 @@ buildGoSigMap annotMap csiByCallee funcSkyToGoTVars =
 -- main across module boundaries — codegen consults it to prune
 -- unreachable Sky-side decls + FFI bindings before lowering.
 --
--- Pure, no IORef I/O; the caller writes the result to
--- @globalReachableProgram@ when DCE is enabled.
+-- Pure, no IORef I/O.
+--
+-- v0.17 iter 16 (task #654) — caller (solvePhase) now stores the
+-- result in 'SolveOutputs._so_reachableProg' and threads it to
+-- 'generateDeclsForDep' as a pure parameter.  No IORef hop.
 computeReachableProgram
     :: Src.Module
     -> Can.Module
@@ -2686,6 +2711,11 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- from SolveOutputs to 'generateGoMulti' (replaces
                     -- 'readIORef globalCsiByCallee').
                     csiByCallee          = _so_csiByCallee         solveOut
+                    -- v0.17 iter 16 (task #654) — 'reachableProgram' threaded
+                    -- from SolveOutputs to 'generateDeclsForDepScoped' /
+                    -- 'generateDeclsForDep' (replaces 'readIORefNoCse
+                    -- globalReachableProgram').
+                    reachableProgram     = _so_reachableProg       solveOut
                 -- Bail BEFORE codegen if HM rejected the program. Previously
                 -- "-- Generating Go" printed unconditionally, which made the
                 -- "TYPE ERROR" buried two lines up easy to miss + suggested
@@ -2723,7 +2753,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- render as `func(any) any`.
                     let depDecls = concatMap (\(modName, depMod) ->
                             let prefix = map (\c -> if c == '.' then '_' else c) modName
-                            in generateDeclsForDepScoped modName depMod prefix) validDeps
+                            in generateDeclsForDepScoped reachableProgram modName depMod prefix) validDeps
                     let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                                         | (mn, depMod) <- validDeps ]
                         -- Conflict-detection merge with TVar normalisation.
@@ -4104,8 +4134,8 @@ locateRuntimeDir = do
 -- callback's typed slot reflects the right module's element
 -- type.
 {-# NOINLINE generateDeclsForDepScoped #-}
-generateDeclsForDepScoped :: String -> Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDepScoped _modName canMod modPrefix =
+generateDeclsForDepScoped :: Set.Set Dce.Ref -> String -> Can.Module -> String -> [GoIr.GoDecl]
+generateDeclsForDepScoped reachableProg _modName canMod modPrefix =
     -- v0.17 PR-α Session 6 — the dep-mode IORef sentinel pattern is
     -- retired.  Every renderer entry point now threads the dep-mode
     -- hint from its caller via pure data (see Compile.hs's
@@ -4115,6 +4145,10 @@ generateDeclsForDepScoped _modName canMod modPrefix =
     -- arg is preserved for callers but is no longer load-bearing
     -- inside the renderer chain; remove the arg in a follow-up
     -- cleanup once external imports are audited.
+    --
+    -- v0.17 iter 16 (task #654) — 'reachableProg' threaded as a
+    -- pure parameter (replaces 'readIORefNoCse
+    -- globalReachableProgram' inside 'generateDeclsForDep').
     --
     -- v0.17 Wave 3 (#660) attempt 2: tried installing merged
     -- Solve.SolvedTypes scoped to dep render via scopeStateRef
@@ -4126,19 +4160,22 @@ generateDeclsForDepScoped _modName canMod modPrefix =
     -- explanation.  The architectural close requires lazy-thunk
     -- isolation (NOINLINE-per-decl + sharing-busting wrapper) —
     -- multi-session work.
-    generateDeclsForDep canMod modPrefix
+    generateDeclsForDep reachableProg canMod modPrefix
 
 
 -- | Generate Go declarations for a dependency module's functions
-generateDeclsForDep :: Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDep canMod modPrefix =
+--
+-- v0.17 iter 16 (task #654) — 'reachableProg' threaded as a pure
+-- parameter (replaces 'readIORefNoCse globalReachableProgram').
+generateDeclsForDep :: Set.Set Dce.Ref -> Can.Module -> String -> [GoIr.GoDecl]
+generateDeclsForDep reachableProg canMod modPrefix =
     let userDefs = collectDeclNames (Can._decls canMod)
         -- v0.13 F: whole-program DCE. Drop dep-module decls that
         -- aren't transitively reachable from the entry module's
         -- `main`. Empty reached set → keep everything (DCE off via
         -- `SKY_DCE=0` or pre-canon-fixpoint code path).
         canonicalModName = ModuleName.toString (Can._name canMod)
-        reached = readIORefNoCse globalReachableProgram
+        reached = reachableProg
         dceOff  = dceDisabled
         keepName n =
             dceOff
