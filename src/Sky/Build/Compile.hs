@@ -353,15 +353,12 @@ globalKernelAlias = unsafePerformIO $ newIORef Map.empty
 -- code-only removal.
 
 
--- | v0.13 Phase A4: per-callee annotation Forall quantifier-name list,
--- captured from the actual `CallInstance.quantifiers` the solver
--- recorded.  Used for spec emission's σ build instead of re-deriving
--- via `generaliseToAnnotation` (which can produce DIFFERENT Forall
--- ordering across pass 1 / pass 2 because the solver's internal TVar
--- names differ between passes).
-{-# NOINLINE globalCsiByCallee #-}
-globalCsiByCallee :: IORef (Map.Map String [String])
-globalCsiByCallee = unsafePerformIO $ newIORef Map.empty
+-- v0.17 iter 14 (task #654) — globalCsiByCallee IORef defused.
+-- The per-callee annotation Forall quantifier-name list (derived
+-- from the actual 'CallInstance.quantifiers' the solver recorded)
+-- now flows as 'SolveOutputs._so_csiByCallee' → 'generateGoMulti'
+-- 'csiByCallee' parameter → consumed in the 'specDecls' block.
+-- See 'SolveOutputs' field doc for the flow.
 
 
 -- | v0.17 C9 — consolidated σ-projection signature record.
@@ -1242,7 +1239,9 @@ resetCompileState = do
     -- block at Compile.hs:4673).  globalAllFieldIdx still alive
     -- (line 8994 reads it inside `tvarsInEmitted`).
     writeIORef globalKernelAlias Map.empty
-    writeIORef globalCsiByCallee Map.empty
+    -- v0.17 iter 14 (task #654) — globalCsiByCallee reset removed;
+    -- IORef is gone.  csiByCallee now flows as
+    -- SolveOutputs._so_csiByCallee.
     writeIORef globalGoSigMap Map.empty
     writeIORef globalAllAliases Map.empty
     writeIORef globalAllFieldIdx Map.empty
@@ -1483,6 +1482,14 @@ data SolveOutputs = SolveOutputs
         -- 'generateGoMulti' to emit per-instance specialised Go
         -- funcs.  Previously bridged via @globalReachableSet@
         -- IORef; this field defuses that IORef entirely.
+    , _so_csiByCallee         :: !(Map.Map String [String])
+        -- ^ v0.17 iter 14 (task #654) — per-callee captured
+        -- annotation Forall quantifier-name list derived from the
+        -- solver's 'CallInstance.quantifiers'.  Consumed by
+        -- 'generateGoMulti's specDecls block to compute σ_go for
+        -- each specialised emission.  Previously bridged via
+        -- @globalCsiByCallee@ IORef; this field defuses that
+        -- IORef entirely.
     }
 
 
@@ -1815,7 +1822,11 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- only escaped via 'writeIORef globalReachableSet';
                     -- now we return (SolvedTypes, ReachableSet) and bind
                     -- both outside.
-                    (types, reached) <- case solveResult of
+                    -- v0.17 iter 14 (task #654) — extend tuple to also
+                    -- surface 'csiByCallee' so it flows into
+                    -- SolveOutputs._so_csiByCallee (defuses
+                    -- 'globalCsiByCallee' IORef).
+                    (types, reached, csiByCallee) <- case solveResult of
                         Solve.SolveOk t -> do
                             putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                             -- v0.13 Phase A3: log the captured instance table.
@@ -1893,8 +1904,12 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                             -- SAME ordering the solver instantiated with.
                             -- v0.17 PR-α Stage 3d — csiByCallee derivation
                             -- extracted to 'buildCsiByCallee'.
+                            -- v0.17 iter 14 (task #654) — writeIORef
+                            -- globalCsiByCallee removed; csiByCallee is
+                            -- surfaced via 'SolveOutputs._so_csiByCallee'
+                            -- and threaded as a 'generateGoMulti'
+                            -- parameter.  The IORef is now gone.
                             let csiByCallee = buildCsiByCallee callSiteInstances depCsiByMod
-                            writeIORef globalCsiByCallee csiByCallee
                             -- v0.17 C9: parallel population of globalGoSigMap.
                             -- Aggregates annotMap + csiByCallee + the env's
                             -- _cg_funcSkyToGoTVars into ONE record-per-binding.
@@ -1976,7 +1991,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                         putStrLn $ "     " ++ Mono.mangleInstance
                                             (Solve.CallInstance q ts [])) (Set.toList reached)
                                 _ -> return ()
-                            return (t, reached)
+                            return (t, reached, csiByCallee)
                         Solve.SolveError err -> do
                             -- v0.13 Layer 1: route position-prefixed type
                             -- errors through the structured Diagnostic
@@ -1994,7 +2009,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                     let diag = Solve.solveErrorToDiagnostic entryPath err
                                     rendered <- Render.renderCli diag
                                     putStrLn rendered
-                            return (Solve.emptySolvedTypes, Set.empty)
+                            return (Solve.emptySolvedTypes, Set.empty, Map.empty)
                     -- P3: exhaustiveness — walk the entry + every dep's canonical
                     -- tree for non-exhaustive case expressions. A miss is a
                     -- compile-time error with source context; the `panic("non-
@@ -2180,6 +2195,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , _so_depInferredRets      = depInferredRets
                         , _so_depInferredSigs      = depInferredSigs
                         , _so_reached              = reached
+                        , _so_csiByCallee          = csiByCallee
                         }
 
 
@@ -2666,6 +2682,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- from SolveOutputs to 'generateGoMulti' (replaces
                     -- 'readIORef globalReachableSet').
                     reached              = _so_reached             solveOut
+                    -- v0.17 iter 14 (task #654) — 'csiByCallee' threaded
+                    -- from SolveOutputs to 'generateGoMulti' (replaces
+                    -- 'readIORef globalCsiByCallee').
+                    csiByCallee          = _so_csiByCallee         solveOut
                 -- Bail BEFORE codegen if HM rejected the program. Previously
                 -- "-- Generating Go" printed unconditionally, which made the
                 -- "TYPE ERROR" buried two lines up easy to miss + suggested
@@ -2812,7 +2832,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                               (Solve.withPerModuleEnv perModuleEnv
                                 (Solve.withPerModuleRegions perModuleRegions
                                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached
+                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee
                         -- v0.13 Layer 2: collect Sky-name → source-region
                         -- for every top-level declaration so the post-emit
                         -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -4637,11 +4657,11 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> String
+generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> String
 -- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
 -- 'globalReachableSet' IORef.  Consumed by the 'specDecls' block
 -- (~line 4967) to drive per-instance specialised Go function emission.
-generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached =
+generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee =
     let
         imports = unsafePerformIO $ do
             -- v0.17 PR-α-7 — clear globalAnonRecords at codegen entry so
@@ -4974,10 +4994,12 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- v0.17 iter 13 (task #654) — 'reached' is now the
             -- 'generateGoMulti' parameter (replaces 'readIORef
             -- globalReachableSet').  The IORef is gone.
+            -- v0.17 iter 14 (task #654) — 'csiByCallee' is now the
+            -- 'generateGoMulti' parameter (replaces 'readIORef
+            -- globalCsiByCallee').  The IORef is gone.
             -- v0.17 PR-α — dead read of @globalAnnotMap@ removed
             -- (was @_annotMap' <- readIORef globalAnnotMap@; the
             -- result was never consumed in this block).
-            csiByCallee <- readIORef globalCsiByCallee
             env <- readIORef globalCgEnv
             -- v0.17 C12 (this site): GoSig-primary read for the
             -- spec-decl σ-projection.  Mirrors the partial flip at
