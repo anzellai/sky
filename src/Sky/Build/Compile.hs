@@ -90,16 +90,33 @@ import qualified System.Environment
 --      'Rec.CodegenEnv -> … -> Rec.CodegenEnv' function.
 --      The IORef write at line ~5019 is a single side-effect.
 --
---   2. MONOTONIC WRITE ORDERING.  All 'writeIORef' / 'modifyIORef'
---      sites for this ref live in the range
---      'continueCompile' → end of the 'imports' lazy thunk.
---      The barrier 'importsForced \`seq\`' at Compile.hs:5079
---      forces the thunk before the renderer walks '_pkg_decls'.
---      ★ INVARIANT: NEVER add a 'writeIORef'/'modifyIORef' for
---      'globalCgEnv' AFTER the 'importsForced \`seq\`' barrier.
---      Doing so silently breaks the monotonicity contract and
---      reintroduces the iter 20 anon-record 'Anon_R_*' undefined
---      failure class.
+--   2. MONOTONIC WRITE ORDERING.  Two parallel codegen entries
+--      each have their own 'imports' lazy thunk containing all
+--      'writeIORef'/'modifyIORef' on this ref:
+--
+--        (a) 'generateGoMulti' (multi-module path) — writes
+--            occur in 'continueCompile' / 'solvePhase' / the
+--            'imports' thunk (lines ~1349 / 1967 / 2342 / 2455
+--            / 5120).  Barrier:
+--            @importsForced \`seq\` return ()@ at line ~5180
+--            forces the thunk before the renderer walks
+--            '_pkg_decls'.
+--        (b) 'generateGo' (single-module path) — writes occur
+--            in the function-local 'imports' thunk (line
+--            ~5405).  No explicit @\`seq\`@ barrier; the
+--            'GoBuilder.renderPackage' pass implicitly forces
+--            'imports' when it consults '_pkg_imports' before
+--            walking '_pkg_decls'.  The implicit ordering
+--            replaces the explicit barrier in this path.
+--
+--      ★ INVARIANT (per-function, NOT file-wide): NEVER add a
+--      'writeIORef'/'modifyIORef' for 'globalCgEnv' AFTER the
+--      enclosing function's 'imports' thunk capture.  In
+--      'generateGoMulti' that is after the line-5180 barrier;
+--      in 'generateGo' that is outside the line-5403 lazy
+--      thunk.  Doing so silently breaks the monotonicity
+--      contract and reintroduces the iter 20 anon-record
+--      'Anon_R_*' undefined failure class.
 --
 --   3. RENDERER PURITY.  'src/Sky/Generate/Go/Builder.hs'
 --      ('renderExpr' / 'renderStmt' / 'renderDecl') is pure
@@ -502,10 +519,17 @@ emptyGoSig = GoSig
 --   2. MONOTONIC WRITE ORDERING.  All writes live in
 --      'continueCompile' (C1 reset at line ~1278), 'solvePhase'
 --      (C9 entry-write at line ~2001 + SKY_GOSIG_DIFF probe at
---      line ~2040), and the 'imports' lazy thunk (C10 dep-merge
---      at line ~5041).  ★ NEVER add a 'writeIORef' /
---      'modifyIORef' for 'globalGoSigMap' AFTER the
---      'importsForced \`seq\`' barrier at Compile.hs:5079.
+--      line ~2040), and 'generateGoMulti's 'imports' lazy thunk
+--      (C10 dep-merge at line ~5142).  ★ NEVER add a
+--      'writeIORef' / 'modifyIORef' for 'globalGoSigMap' AFTER
+--      'generateGoMulti's @importsForced \`seq\`@ barrier at
+--      line ~5180.  Note: the standalone 'generateGo'
+--      single-module entry (line ~5400) deliberately does NOT
+--      update 'globalGoSigMap' — the single-module path has no
+--      downstream spec-decl reader that needs post-C10 typeParams
+--      merging.  If a single-module spec-emission consumer is
+--      ever added, mirror 'generateGoMulti's C10 update there
+--      with its own per-function barrier.
 --
 --   3. RENDERER PURITY.  No reads in
 --      'src/Sky/Generate/Go/Builder.hs'.
@@ -946,21 +970,29 @@ eraseUndeclaredTVarsInGoSource src = goSplit src
 -- == v0.17 task #654 close — post-importsForced contract ==
 --
 -- Every call site of 'getCgEnv' in this file sits inside a lazy
--- thunk that the renderer at Compile.hs:5079 forces strictly
--- AFTER 'importsForced \`seq\`'.  By the time any such read
+-- thunk forced by the renderer (either after 'generateGoMulti's
+-- @importsForced \`seq\`@ at line ~5180, or transitively via
+-- 'generateGo's 'GoBuilder.renderPackage' consultation of
+-- '_pkg_imports' at line ~5423).  By the time any such read
 -- fires, 'globalCgEnv' holds its final post-C10 value
--- ('buildFinalCgEnv' output at line ~5019).  No 'getCgEnv' read
--- ever observes a transient intermediate state.
+-- ('buildFinalCgEnv' output at line ~5120 for the multi-module
+-- path; 'Rec.buildCodegenEnv' output at line ~5405 for the
+-- single-module path).  No 'getCgEnv' read ever observes a
+-- transient intermediate state.
 --
 -- ★ INVARIANT (do not break in future refactors):
 --
---   * No 'modifyIORef'/'writeIORef' on 'globalCgEnv' after line
---     5079 (the 'importsForced \`seq\`' barrier).
+--   * No 'modifyIORef'/'writeIORef' on 'globalCgEnv' after the
+--     enclosing function's 'imports' thunk capture
+--     ('generateGoMulti': after line-5180 barrier;
+--     'generateGo': outside the line-5403 thunk).
 --   * No 'getCgEnv' use inside 'src/Sky/Generate/Go/Builder.hs'
 --     (the renderer stays pure 'GoExpr -> String').
 --   * The 'imports' lazy thunk's writes must complete BEFORE
 --     'importsForced' is evaluated — sequencing guaranteed by
---     'imports `seq` imports' at line 5045.
+--     'imports `seq` imports' at line ~5145 in
+--     'generateGoMulti'.  'generateGo's barrier is implicit
+--     via 'GoBuilder.renderPackage'.
 {-# NOINLINE getCgEnv #-}
 getCgEnv :: Rec.CodegenEnv
 getCgEnv = unsafePerformIO $ readIORef globalCgEnv
