@@ -8627,6 +8627,108 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 	}
 }
 
+// Middleware.withCsrf : Handler -> Handler
+//
+// task #663 — CSRF protection via the double-submit cookie pattern.
+// See sky-stdlib/Sky/Http/Middleware.sky's `withCsrf` docstring for
+// the full contract.  Defaults (cookie name `__Host-sky_csrf`,
+// header `X-Csrf-Token`, form field `_csrf`) are baked in; a future
+// config-record overload can ship if real apps demand it.
+//
+// Token gen: 32 bytes from crypto/rand → base64-URL (no padding).
+// Token compare: subtle.ConstantTimeCompare (no timing leak).
+// Cookie attrs: Path=/; Secure; SameSite=Lax.  `securifyCookieAttrs`
+// strips Secure in dev mode if the user is testing without TLS.
+func Middleware_withCsrf(handler any) any {
+	const (
+		csrfCookie    = "__Host-sky_csrf"
+		csrfHeader    = "X-Csrf-Token"
+		csrfFormField = "_csrf"
+	)
+	return func(req any) any {
+		return func() any {
+			r, ok := asSkyRequest(req)
+			if !ok {
+				// Non-request shape: defer to handler.
+				task := SkyCall(handler, req)
+				return any(anyTaskInvoke(task))
+			}
+			method := strings.ToUpper(r.Method)
+			isSafe := method == "GET" || method == "HEAD" || method == "OPTIONS"
+
+			if isSafe {
+				// Safe method — pass through; ensure cookie is set
+				// if not already present so the next unsafe request
+				// can supply the matching token.
+				task := SkyCall(handler, req)
+				var resp any = anyTaskInvoke(task)
+				if _, hasCookie := r.Cookies[csrfCookie]; !hasCookie {
+					b := make([]byte, 32)
+					if _, err := cryptorand.Read(b); err == nil {
+						token := base64.RawURLEncoding.EncodeToString(b)
+						// anyTaskInvoke returns the handler's payload —
+						// commonly Ok[any, any](SkyResponse{...}). Unwrap
+						// the SkyResponse so the Set-Cookie header lands
+						// on the response struct, then re-wrap.
+						cookieHeader := fmt.Sprintf("%s=%s; %s",
+							csrfCookie, token,
+							securifyCookieAttrs("Path=/; Secure; SameSite=Lax"))
+						if okResult, isResult := resp.(SkyResult[any, any]); isResult && okResult.Tag == 0 {
+							if sr, isResp := okResult.OkValue.(SkyResponse); isResp {
+								if sr.Headers == nil {
+									sr.Headers = map[string]string{}
+								}
+								sr.Headers["Set-Cookie"] = cookieHeader
+								return Ok[any, any](any(sr))
+							}
+						}
+						// Fallback for handlers that return a bare
+						// SkyResponse rather than Ok-wrapped.
+						resp = setCookieHeader(resp, csrfCookie, token, "Path=/; Secure; SameSite=Lax")
+					}
+				}
+				return resp
+			}
+
+			// Unsafe method — validate.
+			cookieToken, hasCookie := r.Cookies[csrfCookie]
+			if !hasCookie || cookieToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token cookie. Submit the form after first loading a safe (GET) page.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Header takes precedence over form field.
+			var providedToken string
+			if v, ok := r.Headers[csrfHeader].(string); ok && v != "" {
+				providedToken = v
+			} else if r.Form != nil {
+				if v, ok := r.Form[csrfFormField]; ok {
+					providedToken = v
+				}
+			}
+			if providedToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token in request. Include the token via X-Csrf-Token header or _csrf form field.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(providedToken)) != 1 {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: token mismatch. Re-load the form and re-submit.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Validated — defer to handler.
+			task := SkyCall(handler, req)
+			return any(anyTaskInvoke(task))
+		}
+	}
+}
+
 // Server.getCookie : String -> Request -> Maybe String
 func Server_getCookie(name any, req any) any {
 	r, ok := asSkyRequest(req)

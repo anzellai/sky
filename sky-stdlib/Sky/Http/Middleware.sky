@@ -13,7 +13,13 @@
 --
 --     myAuthed : Handler -> Handler
 --     myAuthed = Mw.withBasicAuth "user" "pass"
-module Sky.Http.Middleware exposing (withCors, withLogging, withBasicAuth, withRateLimit)
+module Sky.Http.Middleware exposing
+    ( withCors
+    , withLogging
+    , withBasicAuth
+    , withRateLimit
+    , withCsrf
+    )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Prelude exposing (..)
@@ -49,3 +55,39 @@ withBasicAuth =
 withRateLimit : String -> Int -> Int -> Handler -> Handler
 withRateLimit =
     Ffi.kernel "Middleware_withRateLimit"
+
+
+-- | `withCsrf handler` — CSRF protection via the double-submit
+-- cookie pattern (OWASP-recommended for stateless protection;
+-- integrates cleanly with Sky.Live's cookie+session model).
+--
+-- Behaviour:
+--
+-- 1. **Safe methods** (GET / HEAD / OPTIONS) pass through.  If
+--    the `__Host-sky_csrf` cookie is absent, the middleware sets
+--    it with a freshly-generated 32-byte URL-safe token before
+--    returning the response.
+-- 2. **Unsafe methods** (POST / PUT / DELETE / PATCH) require BOTH:
+--    - The `__Host-sky_csrf` cookie set on a prior safe request, AND
+--    - A matching token in either the `X-Csrf-Token` request header
+--      OR a `_csrf` form field in an `application/x-www-form-urlencoded`
+--      body.
+--    Mismatch / absence → 403 with a clear diagnostic body.
+-- 3. **Token comparison** uses constant-time compare to avoid timing
+--    side channels.
+--
+-- For Sky.Live apps: pair this middleware with `Ui.form` + a hidden
+-- `_csrf` input rendered from `getCookie req "__Host-sky_csrf"`.
+-- The `/_sky/event` endpoint is exempt (Sky.Live runtime has its
+-- own session+sky-id binding that supersedes CSRF).
+--
+-- Example:
+--
+--     main =
+--         Server.listen 8000
+--             [ Server.post "/api/transfer" (Mw.withCsrf transfer)
+--             , Server.get "/dashboard" dashboard
+--             ]
+withCsrf : Handler -> Handler
+withCsrf =
+    Ffi.kernel "Middleware_withCsrf"

@@ -122,6 +122,8 @@ registry = Map.fromList
     , (("Middleware", "withRateLimit"),   KernelInfo "rt.Middleware_withRateLimit" 4 False)
     -- audit P1-2: simple per-IP fixed-window rate limit
     , (("Middleware", "rateLimit"),        KernelInfo "rt.Middleware_rateLimit" 2 False)
+    -- task #663 — CSRF protection (double-submit cookie pattern)
+    , (("Middleware", "withCsrf"),         KernelInfo "rt.Middleware_withCsrf" 1 False)
 
     -- Sky.Ffi — name-based dispatch to user-supplied Go bindings
     , (("Ffi", "call"),           KernelInfo "rt.Ffi_call" 2 False)
