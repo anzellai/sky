@@ -323,9 +323,10 @@ aliasGenericArgs aliasName actualFields =
 -- derive σ for each reachable instance.  Same map shape as
 -- `buildCrossModuleExternalsWithMods` but keyed by full
 -- Sky-qualified name (`"Sky.Core.List.foldl"`).
-{-# NOINLINE globalAnnotMap #-}
-globalAnnotMap :: IORef (Map.Map String T.Annotation)
-globalAnnotMap = unsafePerformIO $ newIORef Map.empty
+-- v0.17 iteration 8 (task #654) — `globalAnnotMap` removed.
+-- Same rationale as `globalAllFieldIdx` above: the only reader
+-- was the LowerCtx scaffolding block at Compile.hs:4673, which
+-- was eliminated as part of iteration 8.  See commit log.
 
 
 -- | v0.14.x Stage 4: Ffi.kernel alias registry.  Populated from
@@ -1235,7 +1236,10 @@ resetCompileState = do
     -- extensions are named with compile #1's terminal index,
     -- which is a known suspect for the residual Gap 8c flake.
     writeIORef Unify.rowExtCounter 0
-    writeIORef globalAnnotMap Map.empty
+    -- v0.17 iteration 8 (task #654) — globalAnnotMap removed (truly
+    -- dead: only readers were comments + the eliminated scaffolding
+    -- block at Compile.hs:4673).  globalAllFieldIdx still alive
+    -- (line 8994 reads it inside `tvarsInEmitted`).
     writeIORef globalKernelAlias Map.empty
     writeIORef globalCsiByCallee Map.empty
     writeIORef globalGoSigMap Map.empty
@@ -2162,7 +2166,8 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             defMap annotMap csiMapForReach
                             [(entryName, [])]
                     writeIORef globalReachableSet reached
-                    writeIORef globalAnnotMap annotMap
+                    -- v0.17 iteration 8 (task #654) — writeIORef
+                    -- globalAnnotMap removed; IORef is gone.
                     -- v0.14.x Stage 4: scan every canon module for
                     -- Sky-source bindings whose body is exactly
                     -- `Ffi.kernel "K_n"`. Register each (home, name)
@@ -4671,24 +4676,20 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
         -- flow purely through `Solve.SolvedTypes._stRegions`, which
         -- the `solvedTypes` value passed in already carries.
         lowerCtx = unsafePerformIO $ do
-            -- Sequence the snapshot AFTER `importsForced` so writes
-            -- to `globalCgEnv` + `globalUnionNames` are visible.
+            -- v0.17 iteration 8 (task #654 — IORef defusing batch):
+            -- the LowerCtx value built here was always discarded;
+            -- the renderer reads `ctxFromIORef ()` via scopeStateRef
+            -- at force time and does not consume this snapshot.  This
+            -- block existed as a scaffolding-verifier (per the v0.16
+            -- PR 1 cascade comment) which is no longer load-bearing
+            -- now that PR-α phase extraction has migrated the canon
+            -- writes into typed helpers (#658/#659).  The only
+            -- remaining purpose is the SEQUENCING BARRIER — force
+            -- `importsForced` BEFORE the renderer at line 4874 walks
+            -- `_pkg_decls`, so writes to `globalCgEnv` +
+            -- `globalUnionNames` are visible to subsequent
+            -- `ctxFromIORef ()` reads.
             importsForced `seq` return ()
-            aliases <- readIORef globalAllAliases
-            fieldIdx <- readIORef globalAllFieldIdx
-            unions <- readIORef globalUnionNames
-            annots <- readIORef globalAnnotMap
-            reached <- readIORef globalReachableSet
-            reachedProg <- readIORef globalReachableProgram
-            return $ LC.buildLowerCtx
-                (Can._name canMod)
-                solvedTypes
-                aliases
-                fieldIdx
-                unions
-                annots
-                reached
-                reachedProg
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
