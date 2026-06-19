@@ -132,6 +132,7 @@ import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.KernelStdlibCoverageSpec
 import qualified Sky.Build.PureModuleSpec
 import qualified Sky.Build.HeapBoundedHmSpec
+import qualified Sky.Build.RepoRootGuardSpec
 import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
@@ -797,6 +798,7 @@ allSpecs fastMode = do
     -- the same compilation paths end-to-end). v0.16.14.
     unless fastMode $
         describeT "Sky.Build.HeapBoundedHm" Sky.Build.HeapBoundedHmSpec.spec
+    describeT "Sky.Build.RepoRootGuard" Sky.Build.RepoRootGuardSpec.spec
     -- Limitation #17 hardening: defensive bound on the HM solver.
     -- Caps total solveHelp invocations per `solve` call; trips
     -- with TYPE ERROR before unbounded heap consumption can OOM

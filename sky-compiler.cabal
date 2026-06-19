@@ -410,6 +410,7 @@ test-suite sky-tests
       Sky.Build.KernelStdlibCoverageSpec
       Sky.Build.PureModuleSpec
       Sky.Build.HeapBoundedHmSpec
+      Sky.Build.RepoRootGuardSpec
       Sky.Build.IORefBoundarySpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
