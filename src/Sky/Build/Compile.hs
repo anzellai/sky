@@ -1401,6 +1401,615 @@ canonPhase entryPath moduleOrder entrySrcMod depModules = do
                     return $ CanonOk canMod validDeps
 
 
+-- | v0.17 PR-α Stage 3 (task #659 iter 11) — solve phase outcome.
+--
+-- Two terminal states model the legacy dep-fixpoint exit path vs the
+-- happy path:
+--
+--   * 'SolveDepError' carries a fully-rendered error message ready
+--     for stderr; the caller is responsible for the
+--     'System.Exit.exitWith' call (kept at outer scope to match the
+--     'parsePhase' / 'canonPhase' idiom).
+--   * 'SolveOk' carries the typed outputs the rest of
+--     'continueCompile' needs at outer scope to build 'typesWithDeps'
+--     and feed 'generateGoMulti'.
+--
+-- The 'solverError' / 'exhaustErr' Maybes are intentionally
+-- propagated to the caller; the legacy code gates codegen on the
+-- @case (solverError, exhaustErr) of@ pair AFTER the boundary, and
+-- iteration 11 preserves that exact ordering.
+data SolveOutcome
+    = SolveDepError !String
+        -- ^ Dep fixpoint failed.  Carries the rendered diagnostic
+        -- marker.  The caller does 'System.Exit.exitWith'.
+    | SolveOk !SolveOutputs
+        -- ^ Solve phase completed; downstream gates fire at caller.
+
+
+-- | v0.17 PR-α Stage 3 (task #659 iter 11) — solve phase outputs.
+--
+-- Five load-bearing values from the solve boundary that flow into the
+-- post-boundary @typesWithDeps@ builder + the codegen gate.  All IORef
+-- writes stay inside 'solvePhase' (byte-equivalent invariant); these
+-- fields surface the PURE values the outer caller still needs to
+-- inspect.
+--
+-- Two additional pure values ('depSolved', 'depRegionTysByModule')
+-- flow out as fields too — they are NOT IORef-bridged, are referenced
+-- by 'typesWithDeps' construction at outer scope (lines 2531/2566/2598/
+-- 2612/2654 in the post-extraction layout), and there is no
+-- byte-equivalent way to recover them without re-running the solve
+-- fixpoint.  Iter 10's "5 fields" target gates the IORef-bridged
+-- channels; the two pure ones must travel.
+data SolveOutputs = SolveOutputs
+    { _so_types               :: !Solve.SolvedTypes
+        -- ^ HM solver's entry-module result.  Consumed by
+        -- 'typesWithDeps' at line ~2521.
+    , _so_entryRegionTys      :: !(Map.Map A.Region T.Type)
+        -- ^ Entry module's per-region HM types.  Used by the
+        -- per-module region ledger inside 'typesWithDeps'.
+    , _so_mergedRegionTys     :: !(Map.Map A.Region T.Type)
+        -- ^ Entry + every dep's region map merged.  Wrapped into the
+        -- final 'Solve.SolvedTypes' the lowerer reads via
+        -- 'Solve.lookupSolvedRegion'.
+    , _so_solverError         :: !(Maybe String)
+        -- ^ 'Just' when HM rejected the entry module; gates codegen.
+    , _so_exhaustErr          :: !(Maybe String)
+        -- ^ 'Just' when exhaustiveness rejected at least one
+        -- @case ... of@; gates codegen.
+    , _so_depSolved           :: ![(String, Map.Map String T.Type)]
+        -- ^ Per-dep solved env (top-level decls only) — fed into
+        -- 'typesWithDeps' as @allMaps@ and into @resolveKey@'s
+        -- ambiguity-resolution pipeline.
+    , _so_depRegionTysByModule :: ![(String, Map.Map A.Region T.Type)]
+        -- ^ Per-dep region ledger keyed by dotted module name.  Drives
+        -- the @perModuleRegions@ map inside 'typesWithDeps'.
+    }
+
+
+-- | v0.17 PR-α Stage 3 (task #659 iter 11) — extracted solve phase.
+--
+-- Wraps the inline dep-fixpoint + entry-solve + post-solve seeding
+-- + exhaustiveness check block that used to live at
+-- 'continueCompile' lines ~1858-2343 of the pre-extraction layout.
+--
+-- ALL writeIORef / modifyIORef calls stay INSIDE this function
+-- (byte-equivalent invariant) — they are the channels the rest of
+-- the lowerer reads from.  The two architectural changes are:
+--
+--   1. The dep-fixpoint @System.Exit.exitWith@ moves OUT to the
+--      caller per the 'parsePhase' / 'canonPhase' idiom — this
+--      function returns 'SolveDepError' with the marker string the
+--      legacy caller logged; the structured diagnostics are already
+--      rendered to stderr before the return.
+--
+--   2. The HM solver's outputs ('types', 'entryRegionTys',
+--      'mergedRegionTys', 'solverError') + the exhaustiveness check
+--      result ('exhaustErr') + the two pure dep-side values used by
+--      'typesWithDeps' construction at outer scope ('depSolved',
+--      'depRegionTysByModule') are surfaced via the 'SolveOutputs'
+--      record.  Everything else stays IORef-bridged (Stage 3
+--      scaffolding; iter 12+ promote more fields).
+solvePhase
+    :: FilePath
+    -- ^ entryPath — for dep-error fallback + entry-error path lookup.
+    -> [Graph.ModuleInfo]
+    -- ^ moduleOrder — for dep-error source-path lookup.
+    -> Src.Module
+    -- ^ entrySrcMod — used to derive @entryName@ for reach-trace +
+    -- 'buildKernelAliasMap' + 'computeReachableProgram'.
+    -> Can.Module
+    -- ^ canMod — the canonicalised entry module.
+    -> [(String, Can.Module)]
+    -- ^ validDeps — topologically-ordered dep modules that survived
+    -- the canon fixpoint.
+    -> IO SolveOutcome
+solvePhase entryPath moduleOrder entrySrcMod canMod validDeps = do
+            -- Pass 1: solve each dep in isolation.
+            depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
+                cs <- Constrain.constrainModule depMod
+                r  <- Solve.solve cs
+                case r of
+                    Solve.SolveOk t -> return (modName, t)
+                    Solve.SolveError _ -> return (modName, Solve.emptySolvedTypes)
+            -- Pass 2: re-solve each dep with cross-module externals
+            -- from pass 1. Serialised (mapM not Async.forConcurrently)
+            -- because the external-ref write is global — parallel
+            -- writes would race. Acceptable cost: dep solves are fast.
+            --
+            -- Pass 2 surfaces TWO error classes that pass 1 cannot
+            -- catch (it has no cross-module info):
+            --
+            --   1. **Foreign-call mismatches** — a dep calls a
+            --      cross-module function (`Ui.paddingEach 8 12 8 12`,
+            --      `String.toUpper "x" "y"`, etc.) with the wrong
+            --      arity / arg type / record shape. The error string
+            --      starts with `Foreign 'Mod.fn':` and is ALWAYS a
+            --      real bug — pass 2 is fatal for these.
+            --
+            --   2. **Local-typing artefacts** — pass 2 happens to
+            --      detect a constraint that pass 1 missed (e.g. an
+            --      already-broken tuple-shape ambiguity, an
+            --      already-broken let binding) because the externals
+            --      let it propagate further. These are real bugs too,
+            --      but they pre-date this round and live in examples
+            --      we know carry latent issues. Surfacing them now
+            --      would block the round-7 release. So pass 2
+            --      tolerates non-Foreign errors via the pass-1
+            --      fallback, leaving them visible-but-non-fatal for
+            --      a follow-up cleanup pass.
+            --
+            -- Pre-fix bug: pass 2 errors ALL fell back to pass 1.
+            -- That masked the Foreign class entirely, letting bad
+            -- cross-module call sites compile and surface as
+            -- confusing `go build` errors like
+            --   "too many arguments in call to Std_Ui_paddingEach"
+            -- long after sky check should have caught them.
+            let isForeignErr s = "Foreign '" `List.isInfixOf` s
+            -- v0.13 Phase A5: use `solveWithInstances` on each dep so
+            -- monomorphisation captures dep-module call sites too.
+            -- Pass 1 (`depSolved0`, above) stays on plain `solve`: its
+            -- job is dep-isolation typing; captures aren't useful since
+            -- externals are empty.  Every subsequent round has the full
+            -- externals built from the previous round — that's where
+            -- real call-site instances surface.
+            --
+            -- v0.13 Layer 3: the dep-solve is now a true FIXPOINT, not
+            -- a fixed 2 extra passes.  Migrating
+            -- Std.Html{,/Attributes,/Events} from kernel pseudo-modules
+            -- to Sky-source stdlib deepened the dependency chain
+            -- (Std.Html.Attributes → Std.Html → Ui.Layout → Page.* →
+            -- Main).  A hard-coded pass count silently under-solves
+            -- every module past the cap: its cross-module callees
+            -- resolve against incomplete externals, HM infers a wrong
+            -- type (classically a `Dict String String`-polluted `msg`
+            -- var leaking out of an event handler), and that wrong type
+            -- propagates into every consumer.  Iterating until the
+            -- solved type sets stop changing makes the depth of the
+            -- module graph irrelevant.  The cap (16) only guards
+            -- against a pathological oscillation — real graphs
+            -- converge in `depth-of-chain` rounds.
+            -- Each round's per-module result is
+            --   `Right (types, csi, mErr)` — solved (mErr=Nothing) OR
+            --     fell back to the previous round's types because THIS
+            --     round still had a non-Foreign error (mErr=Just err);
+            --   `Left err` — a Foreign error, or a non-Foreign error
+            --     with no previous-round types to fall back to.
+            -- The fell-back `Just err` is what closes the v0.13 Layer 3
+            -- soundness hole: DURING the fixpoint a module legitimately
+            -- errors because its externals aren't ready yet, so we keep
+            -- iterating; but at CONVERGENCE the externals are complete,
+            -- so a module that STILL errors has a REAL type bug and is
+            -- surfaced FATALLY (see `depErrors` below) instead of
+            -- silently shipping its stale round-1 typing.  Pre-fix, a
+            -- typed dep param (`Css.padding2 : Length -> Length`)
+            -- failed to reject a `String` arg in a consumer because the
+            -- consumer module's own non-Foreign solve error was
+            -- tolerated and its polymorphic round-1 types shipped.
+            -- Per-dep top-level declaration names. Computed ONCE
+            -- outside the fixpoint so each round can filter the
+            -- externals map down to genuine top-level decls (the
+            -- merged solve result includes let-locals + lambda
+            -- params via the `_locals` merge — those are bound by
+            -- structural keys and would silently pollute the
+            -- cross-module externals if exported).
+            let depDeclaredNamesFix =
+                    [ (mn, Set.toList (collectDeclNames (Can._decls dm)))
+                    | (mn, dm) <- validDeps
+                    ]
+                filterToTopLevel ext = Map.filterWithKey
+                    (\(m, n) _ -> case lookup m depDeclaredNamesFix of
+                        Just names -> n `elem` names
+                        Nothing    -> False)
+                    ext
+            let solveRound prevSolved = do
+                    let externals =
+                            filterToTopLevel
+                                -- v0.15.x P37a: `prevSolved` carries
+                                -- the new `Solve.SolvedTypes` records;
+                                -- the externals helper still consumes
+                                -- the bare `Map.Map String T.Type`
+                                -- view, so extract `_stEnv` here.
+                                (buildCrossModuleExternalsWithMods validDeps
+                                    [(mn, Solve._stEnv s) | (mn, s) <- prevSolved])
+                    -- v0.13 Phase A5: use `solveWithInstances` so per-call
+                    -- instance capture flows through dep-module callsites
+                    -- (used by monomorphisation).
+                    mapM (\(modName, depMod) -> do
+                        cs <- Constrain.constrainModuleWithExternals externals depMod
+                        -- v0.15 Stage A/B: dep modules also get
+                        -- per-region types.  Merge into the global
+                        -- map below, after the fixpoint converges,
+                        -- so the lowerer can query dep-body regions
+                        -- too.  Pass-through `regionTys` per dep.
+                        (r, _, csi, regionTys)
+                            <- Solve.solveWithInstancesAndRegions cs
+                        case r of
+                            Solve.SolveOk t ->
+                                return (modName, Right (t, csi, regionTys, Nothing))
+                            Solve.SolveError err
+                                | isForeignErr err -> return (modName, Left err)
+                                | otherwise -> case lookup modName prevSolved of
+                                    Just p | not (Map.null (Solve._stEnv p)) ->
+                                        return (modName, Right (p, csi, regionTys, Just err))
+                                    _ -> return (modName, Left err)) validDeps
+                depTypesOf results =
+                    [(mn, t) | (mn, Right (t, _, _, _)) <- results]
+                solveFixpoint prevSolved n = do
+                    results <- solveRound prevSolved
+                    let curSolved = depTypesOf results
+                    if curSolved == prevSolved || n >= (16 :: Int)
+                        then return results
+                        else solveFixpoint curSolved (n + 1)
+            finalResults <- solveFixpoint depSolved0 (0 :: Int)
+            let depErrors = [(mn, e) | (mn, Left e) <- finalResults]
+                         -- Converged-round non-Foreign errors are real.
+                         ++ [ (mn, e)
+                            | (mn, Right (_, _, _, Just e)) <- finalResults
+                            ]
+                -- v0.15.x P37a: `t` is the new `Solve.SolvedTypes`
+                -- record; helpers downstream (`buildAnnotMap`,
+                -- `buildCrossModuleExternalsWithMods`) take the raw
+                -- `Map.Map String T.Type` view.  Extract `_stEnv`
+                -- here so the existing helper signatures stay put.
+                depSolved = [(mn, Solve._stEnv t) | (mn, Right (t, _, _, _)) <- finalResults]
+                depCsiByMod = [(mn, csi) | (mn, Right (_, csi, _, _)) <- finalResults]
+                -- v0.15 Stage A/B: merge per-region types from every
+                -- dep into one map.  Entry-module region types added
+                -- after solveWithInstancesAndRegions on the entry
+                -- below; the merged map is written into
+                -- `scopeStateRef`'s `_lc_regionTypes` field there
+                -- (v0.15.5 PR 3 — consolidated with the rest of the
+                -- lowering-scope state).
+                depRegionTys = Map.unions
+                    [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
+                -- v0.15.6 #365 — preserve EACH dep's region map under
+                -- its own module name so the per-module lookup in
+                -- `letBindingType` / `inferExprType (Can.Lambda)` can
+                -- disambiguate same-position lambdas across modules.
+                -- The flat `depRegionTys` is preserved for fallback;
+                -- the per-module ledger is the primary source under
+                -- `_stCurrentModule`-installed scopes.
+                depRegionTysByModule =
+                    [ (mn, rt) | (mn, Right (_, _, rt, _)) <- finalResults ]
+            -- v0.17 PR-α Stage 3 (iter 11) — dep-fixpoint short-circuit.
+            -- Diagnostics rendered inline (preserving the legacy
+            -- behaviour); the caller does 'System.Exit.exitWith' on
+            -- 'SolveDepError', so this function returns instead of
+            -- exiting itself.
+            if not (null depErrors)
+                then do
+                    -- v0.13 Layer 1: route dep-module type errors through the
+                    -- structured Diagnostic renderer too.  Pre-fix each was
+                    -- printed as `   TYPE ERROR (Lib.Auth): 114:17: ...` and
+                    -- then `error`'d out with a Haskell CallStack visible to
+                    -- the user.  Now each emits the same Elm-style block
+                    -- with TYPE ERROR header + source snippet + [E2001] code,
+                    -- and the discovery stage exits cleanly with code 1.
+                    mapM_ (\(mn, e) -> do
+                        let depPath = case [p | mi <- moduleOrder
+                                              , Graph._mi_name mi == mn
+                                              , let p = Graph._mi_path mi ] of
+                                        (p:_) -> p
+                                        _     -> entryPath
+                            diag = Solve.solveErrorToDiagnostic depPath e
+                        rendered <- Render.renderCli diag
+                        putStrLn rendered) depErrors
+                    return (SolveDepError "dep-fixpoint failed")
+                else do
+                    -- Entry module gets cross-module externals so VarTopLevel
+                    -- references to dep values emit CForeign with the dep's
+                    -- solved annotation. Only fully-concrete types (no free
+                    -- TVars) cross, so call-site fresh instantiation can't
+                    -- introduce spurious unifications. Dep-defined user ADTs
+                    -- that appear in those types are fine because the entry
+                    -- module already imported them via its env.
+                    -- Restrict externals to names actually DECLARED as
+                    -- top-level values in their home module. Solver env
+                    -- entries include every name that flowed through
+                    -- (imports, constructors, etc.) — using those as
+                    -- cross-module annotations leaks spurious unifications.
+                    let depDeclaredNames =
+                            [ (mn, Set.toList (collectDeclNames (Can._decls dm)))
+                            | (mn, dm) <- validDeps
+                            ]
+                        rawExternals = Map.filterWithKey
+                            (\(m, n) _ -> case lookup m depDeclaredNames of
+                                Just names -> n `elem` names
+                                Nothing    -> False)
+                            (buildCrossModuleExternalsWithMods validDeps depSolved)
+                        -- DEBUG bisect: keep only first N entries
+                        depExternals = rawExternals
+                    _ <- return depDeclaredNames  -- silence unused warning on release path
+                    constraints <- Constrain.constrainModuleWithExternals depExternals canMod
+                    putStrLn $ "   cross-module externals: " ++ show (Map.size depExternals)
+                    -- v0.13 Phase A3: use `solveWithInstances` so we also
+                    -- capture the call-site instance table for the
+                    -- monomorphisation pass.  Behaviour-equivalent to
+                    -- `Solve.solve` for the SolvedTypes portion — the
+                    -- new path merges `_locals` into the returned map
+                    -- identically (the missing merge was a subtle
+                    -- regression on Live.app's `init_` function-value
+                    -- references that's now fixed).
+                    -- v0.15 Stage A/B: collect per-region types so the
+                    -- typed-directed lowerer can look up sub-expression HM
+                    -- types by region.  Merge entry-module + every dep's
+                    -- region map.  Consumed downstream by
+                    -- `Solve.lookupSolvedRegion` against the SolvedTypes
+                    -- record (which now carries the merged region map in
+                    -- `_stRegions` — see the `typesWithDeps` builder at
+                    -- line ~1611 for the wire-up).
+                    (solveResult, callInstances, callSiteInstances, entryRegionTys)
+                        <- Solve.solveWithInstancesAndRegions constraints
+                    -- v0.15.x P37b — the per-region map no longer lives on
+                    -- `scopeStateRef._lc_regionTypes` (that field was
+                    -- deleted).  Region types now flow purely through
+                    -- `Solve.SolvedTypes._stRegions`, populated when we
+                    -- rebuild SolvedTypes for `generateGoMulti`.
+                    let mergedRegionTys = Map.union entryRegionTys depRegionTys
+                    -- v0.13 Phase A5: install the per-call-site instance
+                    -- registry into `_cg_callSiteInstances` so call-site
+                    -- codegen can pick the right generic instantiation
+                    -- (concrete types) instead of erasing every TVar to
+                    -- `any`.  Key: (file, line, col) of the call's source
+                    -- region start.  Entry-module callsites go under
+                    -- entryPath; each dep's callsites use the dep's own
+                    -- source path (looked up via `moduleOrder`).
+                    -- v0.13 Phase A5++: CSI map is keyed by
+                    -- (line, col) AND nested by callee name, so calls at the
+                    -- same source position in different files (or different
+                    -- callees inferred at the same point) don't overwrite
+                    -- each other.  Lookups consult the inner map by the
+                    -- expected callee's Sky-form name.
+                    -- v0.17 — typed tuples ALWAYS on.  CSI key uses
+                    -- ("" :: modName, line, col) — see comment in
+                    -- `instanceMangledName` for why the dep-module
+                    -- bracketing attempt was reverted.  Cross-module
+                    -- (line, col) collisions are negligible in practice.
+                    -- v0.17 IORef defusing #1 — globalCsiWiden /
+                    -- globalTypedTuples retired (write-only with zero
+                    -- readers).  Both behaviours are hard-coded inline.
+                    -- v0.17 PR-α Stage 3e — pure (modName, line, col) → callee
+                    -- map extracted to 'buildCsiByRegion'.  WRITE convention
+                    -- preserved (dep CSIs isolated under modName, entry CSIs
+                    -- under "") and the LOOKUP-by-"" convention at
+                    -- 'instanceMangledName' is unchanged.
+                    let csiByRegion = buildCsiByRegion callSiteInstances depCsiByMod
+                    modifyIORef globalCgEnv $ \e ->
+                        Rec.withCallSiteInstances csiByRegion e
+                    -- v0.17 IORef defusing #7 — globalEntryPath retired.
+                    -- entryPath is now used directly by callers without the
+                    -- IORef indirection.
+                    -- HM type errors are FATAL (promoted from warning). No
+                    -- silent degradation to `any`. This enforces the
+                    -- "if it compiles, it works" promise at the entry module.
+                    let solverError = case solveResult of
+                            Solve.SolveError e -> Just e
+                            _                  -> Nothing
+                    types <- case solveResult of
+                        Solve.SolveOk t -> do
+                            putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
+                            -- v0.13 Phase A3: log the captured instance table.
+                            -- Format: "<N> instances across <M> functions".
+                            -- Set SKY_MONO_TRACE=1 to dump every instance.
+                            let callsiteCount = length callInstances
+                                uniqueCallees =
+                                    length (List.nub (map Solve._instance_callee callInstances))
+                            putStrLn $ "   Monomorphisation: "
+                                    ++ show callsiteCount ++ " instances across "
+                                    ++ show uniqueCallees ++ " polymorphic callees"
+                            monoTrace <- System.Environment.lookupEnv "SKY_MONO_TRACE"
+                            case monoTrace of
+                                Just "1" -> mapM_ (\ci ->
+                                    putStrLn $ "     " ++ Mono.mangleInstance ci) callInstances
+                                _ -> return ()
+                            -- v0.13 Phase A4 + A7: compute the REACHABLE
+                            -- subset of captured instances by walking
+                            -- transitively from `main`.  Stored globally for
+                            -- generateGoMulti to consume when emitting
+                            -- per-instance specialisations.
+                            let defMap = buildDefMap canMod validDeps
+                                annotMap = buildAnnotMap (Solve._stEnv t) depSolved
+                                -- v0.17 PR-α Stage 3f — flat
+                                -- (modName, line, col) → CallInstance map
+                                -- extracted to 'buildCsiMapForReach'.  Same
+                                -- "" / per-dep key convention as
+                                -- 'buildCsiByRegion'.
+                                csiMapForReach =
+                                    buildCsiMapForReach callSiteInstances depCsiByMod
+                                entryName = case mainModuleName entrySrcMod of
+                                    Just n  -> n ++ ".main"
+                                    Nothing -> "Main.main"
+                                reached = Mono.reachableInstances
+                                    defMap annotMap csiMapForReach
+                                    [(entryName, [])]
+                            writeIORef globalReachableSet reached
+                            -- v0.17 iteration 8 (task #654) — writeIORef
+                            -- globalAnnotMap removed; IORef is gone.
+                            -- v0.14.x Stage 4: scan every canon module for
+                            -- Sky-source bindings whose body is exactly
+                            -- `Ffi.kernel "K_n"`. Register each (home, name)
+                            -- → (kernelMod, kernelName) so codegen rewrites
+                            -- call sites to the typed kernel dispatch.
+                            -- v0.17 PR-α Stage 3c — kernel-alias scan extracted
+                            -- to 'buildKernelAliasMap'; pure derivation, IORef
+                            -- write kept here so the existing reader contract
+                            -- (lines ~9297, 11138) is preserved.
+                            let kernelAliasMap =
+                                    buildKernelAliasMap entrySrcMod canMod validDeps
+                            writeIORef globalKernelAlias kernelAliasMap
+                            -- v0.13 F: whole-program Sky DCE.  Walk every
+                            -- module's call graph from `(entryMod, "main")`
+                            -- across module boundaries, tracking VarTopLevel
+                            -- + VarKernel (FFI) + VarCtor refs.  Stored
+                            -- globally for loadAndSeedFfiRegistry's pruning
+                            -- step + generateDeclsForDep's per-decl skip.
+                            -- v0.17 IORef defusing #2 — pure CAF 'dceDisabled'
+                            -- replaces 'globalDceDisabled'; reads SKY_DCE
+                            -- directly at the read site (see line ~3452).
+                            -- v0.17 PR-α Stage 3g — pure whole-program DCE
+                            -- derivation extracted to 'computeReachableProgram';
+                            -- IORef write kept here so the existing reader at
+                            -- line ~208 (frozen-snapshot comment) + lowerer reads
+                            -- keep their contract.
+                            unless dceDisabled $
+                                writeIORef globalReachableProgram
+                                    (computeReachableProgram entrySrcMod canMod validDeps)
+                            -- v0.13 Phase A4: stash per-callee captured
+                            -- quantifier names so spec emission uses the
+                            -- SAME ordering the solver instantiated with.
+                            -- v0.17 PR-α Stage 3d — csiByCallee derivation
+                            -- extracted to 'buildCsiByCallee'.
+                            let csiByCallee = buildCsiByCallee callSiteInstances depCsiByMod
+                            writeIORef globalCsiByCallee csiByCallee
+                            -- v0.17 C9: parallel population of globalGoSigMap.
+                            -- Aggregates annotMap + csiByCallee + the env's
+                            -- _cg_funcSkyToGoTVars into ONE record-per-binding.
+                            -- No reader uses globalGoSigMap yet — C10/C11
+                            -- extend population, C12 flips authority.  This
+                            -- write is byte-equivalent to the union of the
+                            -- three existing IORef states; the differential
+                            -- test (opt-in via SKY_GOSIG_DIFF=1) verifies.
+                            -- v0.17 PR-α Stage 3d — pure aggregation extracted
+                            -- to 'buildGoSigMap'; envForGoSig snapshot kept
+                            -- inline (the trailing GoSig diff block consumes it).
+                            envForGoSig <- readIORef globalCgEnv
+                            let goSigMap = buildGoSigMap annotMap csiByCallee
+                                    (Rec._cg_funcSkyToGoTVars envForGoSig)
+                            writeIORef globalGoSigMap goSigMap
+                            -- v0.13 Phase A4: eagerly compute the set of
+                            -- specialised mangled names that WOULD be
+                            -- emitted, so call-site codegen (which runs
+                            -- during lazy evaluation of `decls`) knows
+                            -- whether to use the mangled name without
+                            -- depending on `specDecls` having been forced
+                            -- first.  Skips instances whose σ_go is empty
+                            -- (no specialisation needed — original func is
+                            -- already non-generic) — the spec emission step
+                            -- in generateGoMulti applies the same filter.
+                            -- v0.17 PR-α Stage 3c — dead 'env0 <- readIORef
+                            -- globalCgEnv' removed (read result was never
+                            -- referenced; the diff/trace blocks below use
+                            -- 'envForGoSig' which already snapshots the env).
+                            -- v0.17 C12: σ-projection reads GoSig primary
+                            -- with side-table fallback.  Behaviour unchanged
+                            -- on the happy path (GoSig + side-tables agree).
+                            -- Opt-in cross-check via SKY_GOSIG_DIFF=1 emits
+                            -- stderr warnings on any divergence (caught
+                            -- BEFORE the side-table delete in a later commit).
+                            -- v0.17 IORef defusing #5 — globalEmittedSpecs
+                            -- retired (dead IORef).  The let-bound
+                            -- lookupSkyToGo / lookupQuants helpers that fed
+                            -- the specNames computation were dropped with it;
+                            -- the GoSig differential below reads its target
+                            -- map directly via _gs_* accessors and never
+                            -- needed those helpers.
+                            -- v0.17 GoSig differential self-check (opt-in via
+                            -- SKY_GOSIG_DIFF=1).  Compares globalGoSigMap to
+                            -- the legacy side-tables at the σ-projection site;
+                            -- if any binding's annotation OR typeParams OR
+                            -- quantifiers differ between the two paths, emit a
+                            -- stderr warning naming the binding.  Off by
+                            -- default; protects future Phase γ commits from
+                            -- silent drift between GoSig and side-tables.
+                            diffMode <- System.Environment.lookupEnv "SKY_GOSIG_DIFF"
+                            case diffMode of
+                                Just "1" -> do
+                                    goSigForDiff <- readIORef globalGoSigMap
+                                    let mismatches =
+                                            [ skyName
+                                            | (skyName, sig) <- Map.toList goSigForDiff
+                                            , let goName = map (\c -> if c == '.' then '_' else c) skyName
+                                                  sideAnnot = Map.lookup skyName annotMap
+                                                  sideTParams = Map.lookup goName (Rec._cg_funcSkyToGoTVars envForGoSig)
+                                                  sideQuants = Map.lookup skyName csiByCallee
+                                                  annotMatch = _gs_annotation sig == sideAnnot
+                                                  tparamsMatch = _gs_typeParams sig == sideTParams
+                                                  quantsMatch = _gs_quantifiers sig == sideQuants
+                                            , not (annotMatch && tparamsMatch && quantsMatch)
+                                            ]
+                                    mapM_ (\skyName ->
+                                        System.IO.hPutStrLn System.IO.stderr
+                                            ("[SKY_GOSIG_DIFF] divergence at " ++ skyName))
+                                        mismatches
+                                _ -> return ()
+                            reachTrace <- System.Environment.lookupEnv "SKY_REACH_TRACE"
+                            case reachTrace of
+                                Just "1" -> do
+                                    putStrLn $ "   [REACH] from " ++ entryName
+                                            ++ ": " ++ show (Set.size reached)
+                                            ++ " instances"
+                                    mapM_ (\(q, ts) ->
+                                        putStrLn $ "     " ++ Mono.mangleInstance
+                                            (Solve.CallInstance q ts [])) (Set.toList reached)
+                                _ -> return ()
+                            return t
+                        Solve.SolveError err -> do
+                            -- v0.13 Layer 1: route position-prefixed type
+                            -- errors through the structured Diagnostic
+                            -- renderer (Elm-style ERROR header + source
+                            -- snippet + code). Solver-budget errors and
+                            -- other pre-formatted multi-line guidance blocks
+                            -- (anything that already begins with "TYPE
+                            -- ERROR") are printed verbatim — the renderer
+                            -- would otherwise wrap the helpful body inside
+                            -- a `[E2001]` header that misattributes the
+                            -- cause.
+                            if "TYPE ERROR" `isPrefixOf` err
+                                then putStrLn $ "   TYPE ERROR: " ++ entryPath ++ ":" ++ err
+                                else do
+                                    let diag = Solve.solveErrorToDiagnostic entryPath err
+                                    rendered <- Render.renderCli diag
+                                    putStrLn rendered
+                            return Solve.emptySolvedTypes
+                    -- P3: exhaustiveness — walk the entry + every dep's canonical
+                    -- tree for non-exhaustive case expressions. A miss is a
+                    -- compile-time error with source context; the `panic("non-
+                    -- exhaustive case expression")` fallback in codegen never
+                    -- fires on well-checked code.
+                    -- v0.13 Layer 1: each exhaustiveness `Exhaust.Diag`
+                    -- becomes a structured `Diagnostic` (category=Exhaust,
+                    -- code=E3001) with the offending region as the caret
+                    -- target.  The renderer adds source-context lines so
+                    -- the user sees the actual `case … of` block instead of
+                    -- a bare "at line N:M — hint" prefix.  Entry-module
+                    -- diags are attributed to the entry path; dep-module
+                    -- diags fall back to the entry path too because
+                    -- `Exhaust.checkModule` doesn't carry a per-module
+                    -- source path today (deferred to Layer 1 follow-up).
+                    let entryDiagsExh = Exhaust.checkModule canMod
+                        depDiagsExh   = concatMap (\(_, dm) -> Exhaust.checkModule dm) validDeps
+                        allExhDiags   = entryDiagsExh ++ depDiagsExh
+                        exhDiagnostics =
+                            [ Diag.withHint (_diag_hintFor d)
+                              (Diag.mkError entryPath (_diag_locFor d)
+                                  Diag.CatExhaustiveness Diag.exhaustE_NonExhaustive
+                                  (_diag_msgFor d))
+                            | d <- allExhDiags ]
+                        _diag_locFor (Exhaust.Diag r _ _) = r
+                        _diag_hintFor (Exhaust.Diag _ _ h) = h
+                        _diag_msgFor (Exhaust.Diag _ missing _) =
+                            "Non-exhaustive case expression. Missing pattern(s): " ++
+                            List.intercalate ", " missing
+                        exhaustErr
+                            | null allExhDiags = Nothing
+                            | otherwise = Just $ renderExhaustDiags allExhDiags
+                    case exhDiagnostics of
+                        [] -> return ()
+                        ds -> do
+                            rendered <- Render.renderCliMany ds
+                            putStrLn rendered
+                    return $ SolveOk SolveOutputs
+                        { _so_types                = types
+                        , _so_entryRegionTys       = entryRegionTys
+                        , _so_mergedRegionTys      = mergedRegionTys
+                        , _so_solverError          = solverError
+                        , _so_exhaustErr           = exhaustErr
+                        , _so_depSolved            = depSolved
+                        , _so_depRegionTysByModule = depRegionTysByModule
+                        }
+
+
 -- | v0.17 PR-α Stage 3a — early cgEnv seed phase.  Extracted from
 -- continueCompile (was lines 1258-1318 of the monolithic
 -- function).  Populates 'globalAllAliases' + 'globalAllFieldIdx'
@@ -1854,893 +2463,427 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- (an unforced Task thunk's func-pointer being string-
             -- split because the dep's HM error was hidden).
 
-                    -- Pass 1: solve each dep in isolation.
-            depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
-                cs <- Constrain.constrainModule depMod
-                r  <- Solve.solve cs
-                case r of
-                    Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError _ -> return (modName, Solve.emptySolvedTypes)
-            -- Pass 2: re-solve each dep with cross-module externals
-            -- from pass 1. Serialised (mapM not Async.forConcurrently)
-            -- because the external-ref write is global — parallel
-            -- writes would race. Acceptable cost: dep solves are fast.
-            --
-            -- Pass 2 surfaces TWO error classes that pass 1 cannot
-            -- catch (it has no cross-module info):
-            --
-            --   1. **Foreign-call mismatches** — a dep calls a
-            --      cross-module function (`Ui.paddingEach 8 12 8 12`,
-            --      `String.toUpper "x" "y"`, etc.) with the wrong
-            --      arity / arg type / record shape. The error string
-            --      starts with `Foreign 'Mod.fn':` and is ALWAYS a
-            --      real bug — pass 2 is fatal for these.
-            --
-            --   2. **Local-typing artefacts** — pass 2 happens to
-            --      detect a constraint that pass 1 missed (e.g. an
-            --      already-broken tuple-shape ambiguity, an
-            --      already-broken let binding) because the externals
-            --      let it propagate further. These are real bugs too,
-            --      but they pre-date this round and live in examples
-            --      we know carry latent issues. Surfacing them now
-            --      would block the round-7 release. So pass 2
-            --      tolerates non-Foreign errors via the pass-1
-            --      fallback, leaving them visible-but-non-fatal for
-            --      a follow-up cleanup pass.
-            --
-            -- Pre-fix bug: pass 2 errors ALL fell back to pass 1.
-            -- That masked the Foreign class entirely, letting bad
-            -- cross-module call sites compile and surface as
-            -- confusing `go build` errors like
-            --   "too many arguments in call to Std_Ui_paddingEach"
-            -- long after sky check should have caught them.
-            let isForeignErr s = "Foreign '" `List.isInfixOf` s
-            -- v0.13 Phase A5: use `solveWithInstances` on each dep so
-            -- monomorphisation captures dep-module call sites too.
-            -- Pass 1 (`depSolved0`, above) stays on plain `solve`: its
-            -- job is dep-isolation typing; captures aren't useful since
-            -- externals are empty.  Every subsequent round has the full
-            -- externals built from the previous round — that's where
-            -- real call-site instances surface.
-            --
-            -- v0.13 Layer 3: the dep-solve is now a true FIXPOINT, not
-            -- a fixed 2 extra passes.  Migrating
-            -- Std.Html{,/Attributes,/Events} from kernel pseudo-modules
-            -- to Sky-source stdlib deepened the dependency chain
-            -- (Std.Html.Attributes → Std.Html → Ui.Layout → Page.* →
-            -- Main).  A hard-coded pass count silently under-solves
-            -- every module past the cap: its cross-module callees
-            -- resolve against incomplete externals, HM infers a wrong
-            -- type (classically a `Dict String String`-polluted `msg`
-            -- var leaking out of an event handler), and that wrong type
-            -- propagates into every consumer.  Iterating until the
-            -- solved type sets stop changing makes the depth of the
-            -- module graph irrelevant.  The cap (16) only guards
-            -- against a pathological oscillation — real graphs
-            -- converge in `depth-of-chain` rounds.
-            -- Each round's per-module result is
-            --   `Right (types, csi, mErr)` — solved (mErr=Nothing) OR
-            --     fell back to the previous round's types because THIS
-            --     round still had a non-Foreign error (mErr=Just err);
-            --   `Left err` — a Foreign error, or a non-Foreign error
-            --     with no previous-round types to fall back to.
-            -- The fell-back `Just err` is what closes the v0.13 Layer 3
-            -- soundness hole: DURING the fixpoint a module legitimately
-            -- errors because its externals aren't ready yet, so we keep
-            -- iterating; but at CONVERGENCE the externals are complete,
-            -- so a module that STILL errors has a REAL type bug and is
-            -- surfaced FATALLY (see `depErrors` below) instead of
-            -- silently shipping its stale round-1 typing.  Pre-fix, a
-            -- typed dep param (`Css.padding2 : Length -> Length`)
-            -- failed to reject a `String` arg in a consumer because the
-            -- consumer module's own non-Foreign solve error was
-            -- tolerated and its polymorphic round-1 types shipped.
-            -- Per-dep top-level declaration names. Computed ONCE
-            -- outside the fixpoint so each round can filter the
-            -- externals map down to genuine top-level decls (the
-            -- merged solve result includes let-locals + lambda
-            -- params via the `_locals` merge — those are bound by
-            -- structural keys and would silently pollute the
-            -- cross-module externals if exported).
-            let depDeclaredNamesFix =
-                    [ (mn, Set.toList (collectDeclNames (Can._decls dm)))
-                    | (mn, dm) <- validDeps
-                    ]
-                filterToTopLevel ext = Map.filterWithKey
-                    (\(m, n) _ -> case lookup m depDeclaredNamesFix of
-                        Just names -> n `elem` names
-                        Nothing    -> False)
-                    ext
-            let solveRound prevSolved = do
-                    let externals =
-                            filterToTopLevel
-                                -- v0.15.x P37a: `prevSolved` carries
-                                -- the new `Solve.SolvedTypes` records;
-                                -- the externals helper still consumes
-                                -- the bare `Map.Map String T.Type`
-                                -- view, so extract `_stEnv` here.
-                                (buildCrossModuleExternalsWithMods validDeps
-                                    [(mn, Solve._stEnv s) | (mn, s) <- prevSolved])
-                    -- v0.13 Phase A5: use `solveWithInstances` so per-call
-                    -- instance capture flows through dep-module callsites
-                    -- (used by monomorphisation).
-                    mapM (\(modName, depMod) -> do
-                        cs <- Constrain.constrainModuleWithExternals externals depMod
-                        -- v0.15 Stage A/B: dep modules also get
-                        -- per-region types.  Merge into the global
-                        -- map below, after the fixpoint converges,
-                        -- so the lowerer can query dep-body regions
-                        -- too.  Pass-through `regionTys` per dep.
-                        (r, _, csi, regionTys)
-                            <- Solve.solveWithInstancesAndRegions cs
-                        case r of
-                            Solve.SolveOk t ->
-                                return (modName, Right (t, csi, regionTys, Nothing))
-                            Solve.SolveError err
-                                | isForeignErr err -> return (modName, Left err)
-                                | otherwise -> case lookup modName prevSolved of
-                                    Just p | not (Map.null (Solve._stEnv p)) ->
-                                        return (modName, Right (p, csi, regionTys, Just err))
-                                    _ -> return (modName, Left err)) validDeps
-                depTypesOf results =
-                    [(mn, t) | (mn, Right (t, _, _, _)) <- results]
-                solveFixpoint prevSolved n = do
-                    results <- solveRound prevSolved
-                    let curSolved = depTypesOf results
-                    if curSolved == prevSolved || n >= (16 :: Int)
-                        then return results
-                        else solveFixpoint curSolved (n + 1)
-            finalResults <- solveFixpoint depSolved0 (0 :: Int)
-            let depErrors = [(mn, e) | (mn, Left e) <- finalResults]
-                         -- Converged-round non-Foreign errors are real.
-                         ++ [ (mn, e)
-                            | (mn, Right (_, _, _, Just e)) <- finalResults
+            -- v0.17 PR-α Stage 3 (task #659 iter 11) — solve phase
+            -- extracted to 'solvePhase'.  ALL writeIORef calls + the
+            -- post-solve seeding stay inside 'solvePhase'; the
+            -- dep-fixpoint exitWith moves out per the parsePhase /
+            -- canonPhase idiom (caller handles it below).  Seven HM
+            -- + exhaustiveness outputs flow out via 'SolveOutputs'
+            -- so the existing 'case (solverError, exhaustErr) of'
+            -- gate at line ~2485 (pre-extraction) keeps its byte-
+            -- equivalent semantics.
+            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps
+            case solveOutcome of
+              SolveDepError _ ->
+                  System.Exit.exitWith (System.Exit.ExitFailure 1)
+              SolveOk solveOut -> do
+                let types                = _so_types               solveOut
+                    entryRegionTys       = _so_entryRegionTys      solveOut
+                    mergedRegionTys      = _so_mergedRegionTys     solveOut
+                    solverError          = _so_solverError         solveOut
+                    exhaustErr           = _so_exhaustErr          solveOut
+                    depSolved            = _so_depSolved           solveOut
+                    depRegionTysByModule = _so_depRegionTysByModule solveOut
+                -- Merge inferred dep types into the param + return tables
+                -- keyed by module-prefixed Go names. Annotation-derived
+                -- entries already in the tables win over inferred ones.
+                -- T4b: only record inferred sigs for UNANNOTATED bindings;
+                -- annotated functions use their declared types verbatim,
+                -- and if HM happens to infer spurious TVars for them we'd
+                -- mistakenly emit `[any, any]` instantiations at call sites.
+                let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
+                        Just (Can.TypedDef{}) -> True
+                        _                     -> False
+                    -- Field-set → alias-name registry covering the entry
+                    -- module + every dep module (prefixed form) so HM-inferred
+                    -- record returns resolve to their `_R` struct name here too.
+                    earlyAllFieldIdx = Map.union
+                        (Rec.buildRegistry (Can._aliases canMod))
+                        (Rec.buildDepFieldIndex
+                            [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                            | (mn, depMod) <- validDeps
+                            ])
+                    -- HM-inferred sigs for dep module unannotated functions.
+                    -- TVars become Go type params for polymorphic functions.
+                    fullSigs = Map.unions
+                        [ Map.fromList
+                            -- v0.13 Layer 3 fix: dep-emitted Go names go
+                            -- through `goSafeName` (so a Sky function
+                            -- named `map` lands as `Sky_Core_X_map_`).
+                            -- The sig-table key MUST use the same
+                            -- mangled form or call-site coercion can't
+                            -- look it up.  Pre-fix, cross-module calls
+                            -- to Sky-source Result.map got no coercion
+                            -- and `go build` rejected the call site.
+                            -- v0.13 Stage 1 — INCLUDE annotated functions
+                            -- too. Previously skipped because HM-inferred
+                            -- TVars for annotated functions could be
+                            -- spurious; for annotated functions we use the
+                            -- ANNOTATION TYPE (reconstructed from pats +
+                            -- retType) rather than the HM-solved type
+                            -- because HM may not preserve the full TLambda
+                            -- structure when the annotation grounds the
+                            -- type (e.g. `node` ends up solved as just
+                            -- `Html msg` losing the 3 input arrows).
+                            -- Using the annotation directly yields
+                            -- TVar-preserving sigs like
+                            -- `func(string) T1` that early
+                            -- `collectFuncTypesWith` would have erased to
+                            -- `func(string) any`. Critical for closing the
+                            -- `rt.Coerce[func(string) any](Msg_Ctor)`
+                            -- adapter class.
+                            [ ( prefix ++ "_" ++ goSafeName n
+                              , splitInferredSigWithRegScoped (Just modName)
+                                    earlyAllRecAliases earlyAllFieldIdx
+                                    (countParamsFor n depMod) sigTy )
+                            | (n, ty) <- Map.toList depTypes
+                            , let sigTy = case annotationTypeFor n depMod of
+                                    Just annTy -> annTy
+                                    Nothing -> ty
                             ]
-                -- v0.15.x P37a: `t` is the new `Solve.SolvedTypes`
-                -- record; helpers downstream (`buildAnnotMap`,
-                -- `buildCrossModuleExternalsWithMods`) take the raw
-                -- `Map.Map String T.Type` view.  Extract `_stEnv`
-                -- here so the existing helper signatures stay put.
-                depSolved = [(mn, Solve._stEnv t) | (mn, Right (t, _, _, _)) <- finalResults]
-                depCsiByMod = [(mn, csi) | (mn, Right (_, csi, _, _)) <- finalResults]
-                -- v0.15 Stage A/B: merge per-region types from every
-                -- dep into one map.  Entry-module region types added
-                -- after solveWithInstancesAndRegions on the entry
-                -- below; the merged map is written into
-                -- `scopeStateRef`'s `_lc_regionTypes` field there
-                -- (v0.15.5 PR 3 — consolidated with the rest of the
-                -- lowering-scope state).
-                depRegionTys = Map.unions
-                    [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
-                -- v0.15.6 #365 — preserve EACH dep's region map under
-                -- its own module name so the per-module lookup in
-                -- `letBindingType` / `inferExprType (Can.Lambda)` can
-                -- disambiguate same-position lambdas across modules.
-                -- The flat `depRegionTys` is preserved for fallback;
-                -- the per-module ledger is the primary source under
-                -- `_stCurrentModule`-installed scopes.
-                depRegionTysByModule =
-                    [ (mn, rt) | (mn, Right (_, _, rt, _)) <- finalResults ]
-            unless (null depErrors) $ do
-                -- v0.13 Layer 1: route dep-module type errors through the
-                -- structured Diagnostic renderer too.  Pre-fix each was
-                -- printed as `   TYPE ERROR (Lib.Auth): 114:17: ...` and
-                -- then `error`'d out with a Haskell CallStack visible to
-                -- the user.  Now each emits the same Elm-style block
-                -- with TYPE ERROR header + source snippet + [E2001] code,
-                -- and the discovery stage exits cleanly with code 1.
-                mapM_ (\(mn, e) -> do
-                    let depPath = case [p | mi <- moduleOrder
-                                          , Graph._mi_name mi == mn
-                                          , let p = Graph._mi_path mi ] of
-                                    (p:_) -> p
-                                    _     -> entryPath
-                        diag = Solve.solveErrorToDiagnostic depPath e
-                    rendered <- Render.renderCli diag
-                    putStrLn rendered) depErrors
-                System.Exit.exitWith (System.Exit.ExitFailure 1)
-            -- Entry module gets cross-module externals so VarTopLevel
-            -- references to dep values emit CForeign with the dep's
-            -- solved annotation. Only fully-concrete types (no free
-            -- TVars) cross, so call-site fresh instantiation can't
-            -- introduce spurious unifications. Dep-defined user ADTs
-            -- that appear in those types are fine because the entry
-            -- module already imported them via its env.
-            -- Restrict externals to names actually DECLARED as
-            -- top-level values in their home module. Solver env
-            -- entries include every name that flowed through
-            -- (imports, constructors, etc.) — using those as
-            -- cross-module annotations leaks spurious unifications.
-            let depDeclaredNames =
-                    [ (mn, Set.toList (collectDeclNames (Can._decls dm)))
-                    | (mn, dm) <- validDeps
-                    ]
-                rawExternals = Map.filterWithKey
-                    (\(m, n) _ -> case lookup m depDeclaredNames of
-                        Just names -> n `elem` names
-                        Nothing    -> False)
-                    (buildCrossModuleExternalsWithMods validDeps depSolved)
-                -- DEBUG bisect: keep only first N entries
-                depExternals = rawExternals
-            _ <- return depDeclaredNames  -- silence unused warning on release path
-            constraints <- Constrain.constrainModuleWithExternals depExternals canMod
-            putStrLn $ "   cross-module externals: " ++ show (Map.size depExternals)
-            -- v0.13 Phase A3: use `solveWithInstances` so we also
-            -- capture the call-site instance table for the
-            -- monomorphisation pass.  Behaviour-equivalent to
-            -- `Solve.solve` for the SolvedTypes portion — the
-            -- new path merges `_locals` into the returned map
-            -- identically (the missing merge was a subtle
-            -- regression on Live.app's `init_` function-value
-            -- references that's now fixed).
-            -- v0.15 Stage A/B: collect per-region types so the
-            -- typed-directed lowerer can look up sub-expression HM
-            -- types by region.  Merge entry-module + every dep's
-            -- region map.  Consumed downstream by
-            -- `Solve.lookupSolvedRegion` against the SolvedTypes
-            -- record (which now carries the merged region map in
-            -- `_stRegions` — see the `typesWithDeps` builder at
-            -- line ~1611 for the wire-up).
-            (solveResult, callInstances, callSiteInstances, entryRegionTys)
-                <- Solve.solveWithInstancesAndRegions constraints
-            -- v0.15.x P37b — the per-region map no longer lives on
-            -- `scopeStateRef._lc_regionTypes` (that field was
-            -- deleted).  Region types now flow purely through
-            -- `Solve.SolvedTypes._stRegions`, populated when we
-            -- rebuild SolvedTypes for `generateGoMulti`.
-            let mergedRegionTys = Map.union entryRegionTys depRegionTys
-            -- v0.13 Phase A5: install the per-call-site instance
-            -- registry into `_cg_callSiteInstances` so call-site
-            -- codegen can pick the right generic instantiation
-            -- (concrete types) instead of erasing every TVar to
-            -- `any`.  Key: (file, line, col) of the call's source
-            -- region start.  Entry-module callsites go under
-            -- entryPath; each dep's callsites use the dep's own
-            -- source path (looked up via `moduleOrder`).
-            -- v0.13 Phase A5++: CSI map is keyed by
-            -- (line, col) AND nested by callee name, so calls at the
-            -- same source position in different files (or different
-            -- callees inferred at the same point) don't overwrite
-            -- each other.  Lookups consult the inner map by the
-            -- expected callee's Sky-form name.
-            -- v0.17 — typed tuples ALWAYS on.  CSI key uses
-            -- ("" :: modName, line, col) — see comment in
-            -- `instanceMangledName` for why the dep-module
-            -- bracketing attempt was reverted.  Cross-module
-            -- (line, col) collisions are negligible in practice.
-            -- v0.17 IORef defusing #1 — globalCsiWiden /
-            -- globalTypedTuples retired (write-only with zero
-            -- readers).  Both behaviours are hard-coded inline.
-            -- v0.17 PR-α Stage 3e — pure (modName, line, col) → callee
-            -- map extracted to 'buildCsiByRegion'.  WRITE convention
-            -- preserved (dep CSIs isolated under modName, entry CSIs
-            -- under "") and the LOOKUP-by-"" convention at
-            -- 'instanceMangledName' is unchanged.
-            let csiByRegion = buildCsiByRegion callSiteInstances depCsiByMod
-            modifyIORef globalCgEnv $ \e ->
-                Rec.withCallSiteInstances csiByRegion e
-            -- v0.17 IORef defusing #7 — globalEntryPath retired.
-            -- entryPath is now used directly by callers without the
-            -- IORef indirection.
-            -- HM type errors are FATAL (promoted from warning). No
-            -- silent degradation to `any`. This enforces the
-            -- "if it compiles, it works" promise at the entry module.
-            let solverError = case solveResult of
-                    Solve.SolveError e -> Just e
-                    _                  -> Nothing
-            types <- case solveResult of
-                Solve.SolveOk t -> do
-                    putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
-                    -- v0.13 Phase A3: log the captured instance table.
-                    -- Format: "<N> instances across <M> functions".
-                    -- Set SKY_MONO_TRACE=1 to dump every instance.
-                    let callsiteCount = length callInstances
-                        uniqueCallees =
-                            length (List.nub (map Solve._instance_callee callInstances))
-                    putStrLn $ "   Monomorphisation: "
-                            ++ show callsiteCount ++ " instances across "
-                            ++ show uniqueCallees ++ " polymorphic callees"
-                    monoTrace <- System.Environment.lookupEnv "SKY_MONO_TRACE"
-                    case monoTrace of
-                        Just "1" -> mapM_ (\ci ->
-                            putStrLn $ "     " ++ Mono.mangleInstance ci) callInstances
-                        _ -> return ()
-                    -- v0.13 Phase A4 + A7: compute the REACHABLE
-                    -- subset of captured instances by walking
-                    -- transitively from `main`.  Stored globally for
-                    -- generateGoMulti to consume when emitting
-                    -- per-instance specialisations.
-                    let defMap = buildDefMap canMod validDeps
-                        annotMap = buildAnnotMap (Solve._stEnv t) depSolved
-                        -- v0.17 PR-α Stage 3f — flat
-                        -- (modName, line, col) → CallInstance map
-                        -- extracted to 'buildCsiMapForReach'.  Same
-                        -- "" / per-dep key convention as
-                        -- 'buildCsiByRegion'.
-                        csiMapForReach =
-                            buildCsiMapForReach callSiteInstances depCsiByMod
-                        entryName = case mainModuleName entrySrcMod of
-                            Just n  -> n ++ ".main"
-                            Nothing -> "Main.main"
-                        reached = Mono.reachableInstances
-                            defMap annotMap csiMapForReach
-                            [(entryName, [])]
-                    writeIORef globalReachableSet reached
-                    -- v0.17 iteration 8 (task #654) — writeIORef
-                    -- globalAnnotMap removed; IORef is gone.
-                    -- v0.14.x Stage 4: scan every canon module for
-                    -- Sky-source bindings whose body is exactly
-                    -- `Ffi.kernel "K_n"`. Register each (home, name)
-                    -- → (kernelMod, kernelName) so codegen rewrites
-                    -- call sites to the typed kernel dispatch.
-                    -- v0.17 PR-α Stage 3c — kernel-alias scan extracted
-                    -- to 'buildKernelAliasMap'; pure derivation, IORef
-                    -- write kept here so the existing reader contract
-                    -- (lines ~9297, 11138) is preserved.
-                    let kernelAliasMap =
-                            buildKernelAliasMap entrySrcMod canMod validDeps
-                    writeIORef globalKernelAlias kernelAliasMap
-                    -- v0.13 F: whole-program Sky DCE.  Walk every
-                    -- module's call graph from `(entryMod, "main")`
-                    -- across module boundaries, tracking VarTopLevel
-                    -- + VarKernel (FFI) + VarCtor refs.  Stored
-                    -- globally for loadAndSeedFfiRegistry's pruning
-                    -- step + generateDeclsForDep's per-decl skip.
-                    -- v0.17 IORef defusing #2 — pure CAF 'dceDisabled'
-                    -- replaces 'globalDceDisabled'; reads SKY_DCE
-                    -- directly at the read site (see line ~3452).
-                    -- v0.17 PR-α Stage 3g — pure whole-program DCE
-                    -- derivation extracted to 'computeReachableProgram';
-                    -- IORef write kept here so the existing reader at
-                    -- line ~208 (frozen-snapshot comment) + lowerer reads
-                    -- keep their contract.
-                    unless dceDisabled $
-                        writeIORef globalReachableProgram
-                            (computeReachableProgram entrySrcMod canMod validDeps)
-                    -- v0.13 Phase A4: stash per-callee captured
-                    -- quantifier names so spec emission uses the
-                    -- SAME ordering the solver instantiated with.
-                    -- v0.17 PR-α Stage 3d — csiByCallee derivation
-                    -- extracted to 'buildCsiByCallee'.
-                    let csiByCallee = buildCsiByCallee callSiteInstances depCsiByMod
-                    writeIORef globalCsiByCallee csiByCallee
-                    -- v0.17 C9: parallel population of globalGoSigMap.
-                    -- Aggregates annotMap + csiByCallee + the env's
-                    -- _cg_funcSkyToGoTVars into ONE record-per-binding.
-                    -- No reader uses globalGoSigMap yet — C10/C11
-                    -- extend population, C12 flips authority.  This
-                    -- write is byte-equivalent to the union of the
-                    -- three existing IORef states; the differential
-                    -- test (opt-in via SKY_GOSIG_DIFF=1) verifies.
-                    -- v0.17 PR-α Stage 3d — pure aggregation extracted
-                    -- to 'buildGoSigMap'; envForGoSig snapshot kept
-                    -- inline (the trailing GoSig diff block consumes it).
-                    envForGoSig <- readIORef globalCgEnv
-                    let goSigMap = buildGoSigMap annotMap csiByCallee
-                            (Rec._cg_funcSkyToGoTVars envForGoSig)
-                    writeIORef globalGoSigMap goSigMap
-                    -- v0.13 Phase A4: eagerly compute the set of
-                    -- specialised mangled names that WOULD be
-                    -- emitted, so call-site codegen (which runs
-                    -- during lazy evaluation of `decls`) knows
-                    -- whether to use the mangled name without
-                    -- depending on `specDecls` having been forced
-                    -- first.  Skips instances whose σ_go is empty
-                    -- (no specialisation needed — original func is
-                    -- already non-generic) — the spec emission step
-                    -- in generateGoMulti applies the same filter.
-                    -- v0.17 PR-α Stage 3c — dead 'env0 <- readIORef
-                    -- globalCgEnv' removed (read result was never
-                    -- referenced; the diff/trace blocks below use
-                    -- 'envForGoSig' which already snapshots the env).
-                    -- v0.17 C12: σ-projection reads GoSig primary
-                    -- with side-table fallback.  Behaviour unchanged
-                    -- on the happy path (GoSig + side-tables agree).
-                    -- Opt-in cross-check via SKY_GOSIG_DIFF=1 emits
-                    -- stderr warnings on any divergence (caught
-                    -- BEFORE the side-table delete in a later commit).
-                    -- v0.17 IORef defusing #5 — globalEmittedSpecs
-                    -- retired (dead IORef).  The let-bound
-                    -- lookupSkyToGo / lookupQuants helpers that fed
-                    -- the specNames computation were dropped with it;
-                    -- the GoSig differential below reads its target
-                    -- map directly via _gs_* accessors and never
-                    -- needed those helpers.
-                    -- v0.17 GoSig differential self-check (opt-in via
-                    -- SKY_GOSIG_DIFF=1).  Compares globalGoSigMap to
-                    -- the legacy side-tables at the σ-projection site;
-                    -- if any binding's annotation OR typeParams OR
-                    -- quantifiers differ between the two paths, emit a
-                    -- stderr warning naming the binding.  Off by
-                    -- default; protects future Phase γ commits from
-                    -- silent drift between GoSig and side-tables.
-                    diffMode <- System.Environment.lookupEnv "SKY_GOSIG_DIFF"
-                    case diffMode of
-                        Just "1" -> do
-                            goSigForDiff <- readIORef globalGoSigMap
-                            let mismatches =
-                                    [ skyName
-                                    | (skyName, sig) <- Map.toList goSigForDiff
-                                    , let goName = map (\c -> if c == '.' then '_' else c) skyName
-                                          sideAnnot = Map.lookup skyName annotMap
-                                          sideTParams = Map.lookup goName (Rec._cg_funcSkyToGoTVars envForGoSig)
-                                          sideQuants = Map.lookup skyName csiByCallee
-                                          annotMatch = _gs_annotation sig == sideAnnot
-                                          tparamsMatch = _gs_typeParams sig == sideTParams
-                                          quantsMatch = _gs_quantifiers sig == sideQuants
-                                    , not (annotMatch && tparamsMatch && quantsMatch)
-                                    ]
-                            mapM_ (\skyName ->
-                                System.IO.hPutStrLn System.IO.stderr
-                                    ("[SKY_GOSIG_DIFF] divergence at " ++ skyName))
-                                mismatches
-                        _ -> return ()
-                    reachTrace <- System.Environment.lookupEnv "SKY_REACH_TRACE"
-                    case reachTrace of
-                        Just "1" -> do
-                            putStrLn $ "   [REACH] from " ++ entryName
-                                    ++ ": " ++ show (Set.size reached)
-                                    ++ " instances"
-                            mapM_ (\(q, ts) ->
-                                putStrLn $ "     " ++ Mono.mangleInstance
-                                    (Solve.CallInstance q ts [])) (Set.toList reached)
-                        _ -> return ()
-                    return t
-                Solve.SolveError err -> do
-                    -- v0.13 Layer 1: route position-prefixed type
-                    -- errors through the structured Diagnostic
-                    -- renderer (Elm-style ERROR header + source
-                    -- snippet + code). Solver-budget errors and
-                    -- other pre-formatted multi-line guidance blocks
-                    -- (anything that already begins with "TYPE
-                    -- ERROR") are printed verbatim — the renderer
-                    -- would otherwise wrap the helpful body inside
-                    -- a `[E2001]` header that misattributes the
-                    -- cause.
-                    if "TYPE ERROR" `isPrefixOf` err
-                        then putStrLn $ "   TYPE ERROR: " ++ entryPath ++ ":" ++ err
-                        else do
-                            let diag = Solve.solveErrorToDiagnostic entryPath err
-                            rendered <- Render.renderCli diag
-                            putStrLn rendered
-                    return Solve.emptySolvedTypes
-            -- P3: exhaustiveness — walk the entry + every dep's canonical
-            -- tree for non-exhaustive case expressions. A miss is a
-            -- compile-time error with source context; the `panic("non-
-            -- exhaustive case expression")` fallback in codegen never
-            -- fires on well-checked code.
-            -- v0.13 Layer 1: each exhaustiveness `Exhaust.Diag`
-            -- becomes a structured `Diagnostic` (category=Exhaust,
-            -- code=E3001) with the offending region as the caret
-            -- target.  The renderer adds source-context lines so
-            -- the user sees the actual `case … of` block instead of
-            -- a bare "at line N:M — hint" prefix.  Entry-module
-            -- diags are attributed to the entry path; dep-module
-            -- diags fall back to the entry path too because
-            -- `Exhaust.checkModule` doesn't carry a per-module
-            -- source path today (deferred to Layer 1 follow-up).
-            let entryDiagsExh = Exhaust.checkModule canMod
-                depDiagsExh   = concatMap (\(_, dm) -> Exhaust.checkModule dm) validDeps
-                allExhDiags   = entryDiagsExh ++ depDiagsExh
-                exhDiagnostics =
-                    [ Diag.withHint (_diag_hintFor d)
-                      (Diag.mkError entryPath (_diag_locFor d)
-                          Diag.CatExhaustiveness Diag.exhaustE_NonExhaustive
-                          (_diag_msgFor d))
-                    | d <- allExhDiags ]
-                _diag_locFor (Exhaust.Diag r _ _) = r
-                _diag_hintFor (Exhaust.Diag _ _ h) = h
-                _diag_msgFor (Exhaust.Diag _ missing _) =
-                    "Non-exhaustive case expression. Missing pattern(s): " ++
-                    List.intercalate ", " missing
-                exhaustErr
-                    | null allExhDiags = Nothing
-                    | otherwise = Just $ renderExhaustDiags allExhDiags
-            case exhDiagnostics of
-                [] -> return ()
-                ds -> do
-                    rendered <- Render.renderCliMany ds
-                    putStrLn rendered
-            -- Merge inferred dep types into the param + return tables
-            -- keyed by module-prefixed Go names. Annotation-derived
-            -- entries already in the tables win over inferred ones.
-            -- T4b: only record inferred sigs for UNANNOTATED bindings;
-            -- annotated functions use their declared types verbatim,
-            -- and if HM happens to infer spurious TVars for them we'd
-            -- mistakenly emit `[any, any]` instantiations at call sites.
-            let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
-                    Just (Can.TypedDef{}) -> True
-                    _                     -> False
-                -- Field-set → alias-name registry covering the entry
-                -- module + every dep module (prefixed form) so HM-inferred
-                -- record returns resolve to their `_R` struct name here too.
-                earlyAllFieldIdx = Map.union
-                    (Rec.buildRegistry (Can._aliases canMod))
-                    (Rec.buildDepFieldIndex
-                        [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
-                        | (mn, depMod) <- validDeps
-                        ])
-                -- HM-inferred sigs for dep module unannotated functions.
-                -- TVars become Go type params for polymorphic functions.
-                fullSigs = Map.unions
-                    [ Map.fromList
-                        -- v0.13 Layer 3 fix: dep-emitted Go names go
-                        -- through `goSafeName` (so a Sky function
-                        -- named `map` lands as `Sky_Core_X_map_`).
-                        -- The sig-table key MUST use the same
-                        -- mangled form or call-site coercion can't
-                        -- look it up.  Pre-fix, cross-module calls
-                        -- to Sky-source Result.map got no coercion
-                        -- and `go build` rejected the call site.
-                        -- v0.13 Stage 1 — INCLUDE annotated functions
-                        -- too. Previously skipped because HM-inferred
-                        -- TVars for annotated functions could be
-                        -- spurious; for annotated functions we use the
-                        -- ANNOTATION TYPE (reconstructed from pats +
-                        -- retType) rather than the HM-solved type
-                        -- because HM may not preserve the full TLambda
-                        -- structure when the annotation grounds the
-                        -- type (e.g. `node` ends up solved as just
-                        -- `Html msg` losing the 3 input arrows).
-                        -- Using the annotation directly yields
-                        -- TVar-preserving sigs like
-                        -- `func(string) T1` that early
-                        -- `collectFuncTypesWith` would have erased to
-                        -- `func(string) any`. Critical for closing the
-                        -- `rt.Coerce[func(string) any](Msg_Ctor)`
-                        -- adapter class.
-                        [ ( prefix ++ "_" ++ goSafeName n
-                          , splitInferredSigWithRegScoped (Just modName)
-                                earlyAllRecAliases earlyAllFieldIdx
-                                (countParamsFor n depMod) sigTy )
-                        | (n, ty) <- Map.toList depTypes
-                        , let sigTy = case annotationTypeFor n depMod of
-                                Just annTy -> annTy
-                                Nothing -> ty
+                        | (modName, depTypes) <- depSolved
+                        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                        , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
                         ]
-                    | (modName, depTypes) <- depSolved
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
-                    ]
-            let
-                depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
-                depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
-                depInferredSigs   = fullSigs
-                -- v0.13 Phase A5+: per-function SkyName→GoName mapping
-                -- for the SAME dep functions.  Drives the call-site
-                -- coercion path so `CallInstance.quantifiers`
-                -- (annotation Forall names) project to the Go-generic
-                -- names that actually appear in the dep's emitted
-                -- signature.
-                -- Critical: align Sky-TVar names with what the
-                -- solver's CForeign captures.  Externals are stored
-                -- via `generaliseToAnnotation` which renames solver-
-                -- internal names (`_arg_47`) to user-friendly ones
-                -- (`a, b, c`); the CForeign's instantiation then
-                -- uses those user-friendly names as `quants`.  If
-                -- we computed `inferredSigSkyToGo` on the un-
-                -- renamed type, the SkyNames would be the solver-
-                -- internal forms and the lookup in `coerceCallArgsAt`
-                -- would always miss.  Rename first.
-                renameTypeForExternal t =
-                    case generaliseToAnnotation t of
-                        T.Forall _ renamed -> renamed
-                depSkyToGoTVars = Map.unions
-                    [ Map.fromList
-                        [ ( prefix ++ "_" ++ goSafeName n
-                          , inferredSigSkyToGoScoped (Just modName)
-                                earlyAllRecAliases earlyAllFieldIdx
-                                (countParamsFor n depMod)
-                                (renameTypeForExternal ty) )
-                        | (n, ty) <- Map.toList depTypes
-                        , not (hasAnnotation n depMod)
+                let
+                    depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
+                    depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
+                    depInferredSigs   = fullSigs
+                    -- v0.13 Phase A5+: per-function SkyName→GoName mapping
+                    -- for the SAME dep functions.  Drives the call-site
+                    -- coercion path so `CallInstance.quantifiers`
+                    -- (annotation Forall names) project to the Go-generic
+                    -- names that actually appear in the dep's emitted
+                    -- signature.
+                    -- Critical: align Sky-TVar names with what the
+                    -- solver's CForeign captures.  Externals are stored
+                    -- via `generaliseToAnnotation` which renames solver-
+                    -- internal names (`_arg_47`) to user-friendly ones
+                    -- (`a, b, c`); the CForeign's instantiation then
+                    -- uses those user-friendly names as `quants`.  If
+                    -- we computed `inferredSigSkyToGo` on the un-
+                    -- renamed type, the SkyNames would be the solver-
+                    -- internal forms and the lookup in `coerceCallArgsAt`
+                    -- would always miss.  Rename first.
+                    renameTypeForExternal t =
+                        case generaliseToAnnotation t of
+                            T.Forall _ renamed -> renamed
+                    depSkyToGoTVars = Map.unions
+                        [ Map.fromList
+                            [ ( prefix ++ "_" ++ goSafeName n
+                              , inferredSigSkyToGoScoped (Just modName)
+                                    earlyAllRecAliases earlyAllFieldIdx
+                                    (countParamsFor n depMod)
+                                    (renameTypeForExternal ty) )
+                            | (n, ty) <- Map.toList depTypes
+                            , not (hasAnnotation n depMod)
+                            ]
+                        | (modName, depTypes) <- depSolved
+                        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                        , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
                         ]
-                    | (modName, depTypes) <- depSolved
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
-                    ]
-            putStrLn $ "   HM infer (deps): "
-                ++ show (Map.size depInferredParams) ++ " functions typed"
-            -- Merge each dep module's solvedTypes into the global
-            -- _cg_solvedTypes so dep-body codegen sees per-function
-            -- locals (params, let-binders, case-binders) for typed-
-            -- kernel routing. v0.12.x Gap 3 close-out: without this,
-            -- `togglePostUpvote post` looks up `post` in the entry
-            -- module's solvedTypes and finds nothing, falling back
-            -- to any-routing.
-            --
-            -- Name collisions: if multiple deps have a same-named
-            -- local, Map.union takes the first; the typed-routing
-            -- check `if elemGo == "any" then Nothing` then gracefully
-            -- falls back when the wrong type causes a mismatch. Safe.
-            -- (Per-dep types are merged via the caller's
-            -- `typesWithDeps` pass-through; see line ~722. The
-            -- modifyIORef here only registers per-function sig data
-            -- that subsequent codegen passes consult.)
-            modifyIORef globalCgEnv $ \e -> e
-                -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
-                -- AFTER typecheck and preserve TVar names (`func(string)
-                -- T1`). The pre-typecheck `collectFuncTypesWith`
-                -- entries use `safeReturnTypeBootstrap` which ERASES TVars
-                -- to `any` (`func(string) any`). Union order matters:
-                -- the typed (post-HM) entries must WIN over the early
-                -- erased entries so call-site σ-recovery can pin
-                -- TVars from typed args. `Map.union` keeps the LEFT
-                -- side, so put depInferredParams first.
-                { Rec._cg_funcParamTypes =
-                    Map.union depInferredParams (Rec._cg_funcParamTypes e)
-                , Rec._cg_funcRetType =
-                    Map.union depInferredRets (Rec._cg_funcRetType e)
-                , Rec._cg_funcInferredSigs =
-                    Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
-                , Rec._cg_funcSkyToGoTVars =
-                    Map.union (Rec._cg_funcSkyToGoTVars e) depSkyToGoTVars
-                }
-            -- Bail BEFORE codegen if HM rejected the program. Previously
-            -- "-- Generating Go" printed unconditionally, which made the
-            -- "TYPE ERROR" buried two lines up easy to miss + suggested
-            -- the build was succeeding. We also delete any stale main.go
-            -- and binary from a previous successful build so the user
-            -- can't accidentally run an outdated executable. Issue #52.
-            case (solverError, exhaustErr) of
-              (Just _, _) -> do
-                  removeStaleBuildOutput outDir (Toml._binName config)
-                  -- v0.13 Layer 1: the structured Diagnostic has
-                  -- already been rendered above (renderCli at the
-                  -- SolveError branch, or the verbatim solver-
-                  -- budget block). Return a one-line marker so the
-                  -- outer caller can surface non-zero exit + a
-                  -- stable grep target ("Type error") without
-                  -- double-printing the full body.
-                  return (Left ("Type error: " ++ entryPath))
-              (_, Just _) -> do
-                  removeStaleBuildOutput outDir (Toml._binName config)
-                  -- v0.13 Layer 1: the structured Diagnostic block
-                  -- has been rendered above (one per non-exhaustive
-                  -- branch).  Return a one-line marker; the renderer
-                  -- already shows where and how to fix each case.
-                  return (Left ("Non-exhaustive patterns: " ++ entryPath))
-              _ -> do
-                putStrLn "-- Generating Go"
-                -- v0.13 Stage 1 (task #189) — emit dep-module decls
-                -- AFTER typecheck has populated `funcSkyToGoTVars`.
-                -- This is the critical point: dep bodies use
-                -- `withScopedLambdaTypes` to register typed func-
-                -- param names, which `goExprGoType` then resolves
-                -- via `solvedTypeToGo` with Go-side TVar names
-                -- (T1, T2, ...). Without the env populated, the
-                -- skyToGo rename produces empty σ and func types
-                -- render as `func(any) any`.
-                let depDecls = concatMap (\(modName, depMod) ->
-                        let prefix = map (\c -> if c == '.' then '_' else c) modName
-                        in generateDeclsForDepScoped modName depMod prefix) validDeps
-                let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
-                                    | (mn, depMod) <- validDeps ]
-                    -- Conflict-detection merge with TVar normalisation.
-                    -- See typesWithDepsBuilder below for the algorithm.
-                    typesWithDeps =
-                        -- v0.15.x P37a: `types` is now the new
-                        -- `Solve.SolvedTypes` record.  The merge logic
-                        -- below works over the `_stEnv` Map view;
-                        -- after merging, we re-wrap with the
-                        -- `mergedRegionTys` region map computed
-                        -- earlier so `generateGoMulti` continues to
-                        -- receive a full `Solve.SolvedTypes` value.
-                        let typesEnv = Solve._stEnv types
-                            entryKeys = Map.keysSet typesEnv
-                            allMaps = typesEnv : [t | (_, t) <- depSolved]
-                            keyToTypes = Map.unionsWith (++)
-                                [ Map.map (:[]) m | m <- allMaps ]
-                            isResolved (T.TVar _) = False
-                            isResolved _ = True
-                            normaliseType = normaliseTypeForMerge
-                            -- Bug fix: a key in `entryKeys` may have come
-                            -- from the entry module's `_locals` ledger
-                            -- (lambda params / inner-let bindings) rather
-                            -- than from a real top-level binding. When the
-                            -- same key also exists in a DEP module's
-                            -- solvedTypes — and disagrees structurally —
-                            -- the dep version is the genuine top-level
-                            -- declaration of THAT module; the entry's is
-                            -- pollution from a same-named local.
-                            -- Concrete case: Main.sky has functions like
-                            -- `fetchLogs parent filter = …` whose lambda
-                            -- param `filter : LogFilter` leaks into
-                            -- solvedTypes; Sky.Core.List.filter (the real
-                            -- HOF) gets shadowed and View.sky's
-                            -- `List.filter (...)` then infers as LogFilter.
-                            -- Detect: if entry's type AND any dep's type
-                            -- disagree structurally, run the ambiguity
-                            -- pipeline (treat as cross-scope conflict).
-                            -- v0.17 PR-10 migration: sentinel writers
-                            -- use 'Solve.unresolvedSentinel' (typed
-                            -- ADT dispatch) instead of raw TVar
-                            -- string literals.  Underlying TVar
-                            -- representation unchanged; the typed
-                            -- surface prevents typo-class bugs at
-                            -- the writers and makes the sentinel set
-                            -- discoverable.
-                            resolveKey k tys
-                                | k `Set.member` entryKeys =
-                                    let entryTy = Map.findWithDefault (Solve.unresolvedSentinel Solve.UnresolvedUnbound) k typesEnv
-                                        depTys  = [ t | (_, m) <- depSolved
-                                                      , Just t <- [Map.lookup k m]
-                                                      , isResolved t ]
-                                        allCands = if isResolved entryTy
-                                                       then entryTy : depTys
-                                                       else depTys
-                                        normalisedAll = List.nub
-                                            (map normaliseType allCands)
-                                    in case normalisedAll of
-                                        []    -> entryTy
-                                        [_]   -> entryTy
-                                        _     -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
-                                | otherwise =
-                                    let resolved = filter isResolved tys
-                                        normalised = List.nub (map normaliseType resolved)
-                                    in case normalised of
-                                        []  -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
-                                        [_] -> case resolved of
-                                                 (t:_) -> t
-                                                 []    -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
-                                        _   -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
-                            mergedEnv = Map.mapWithKey resolveKey keyToTypes
-                            -- v0.15.6 #365 — per-module region ledger
-                            -- carries each dep's own region map under
-                            -- its dotted name, plus the entry module's.
-                            -- Consumers `lookupSolvedRegionScoped`
-                            -- consult this ledger first when a
-                            -- `_stCurrentModule` hint is installed by
-                            -- `generateGoMulti`'s per-dep scope.
-                            entryModName = ModuleName.toString (Can._name canMod)
-                            perModuleRegions = Map.fromList
-                                ( (entryModName, entryRegionTys)
-                                : depRegionTysByModule )
-                            -- v0.15.6 #365 — per-module env ledger.
-                            -- Each dep's _stEnv (carrying its own
-                            -- let-bound locals' types like `encodeOne`)
-                            -- is preserved separately so consumers
-                            -- consulting via `lookupSolvedVarScoped`
-                            -- under a `_stCurrentModule` hint see the
-                            -- right module's let-bound type — without
-                            -- this, the cross-module merge collapsed
-                            -- distinct `encodeOne` types across modules
-                            -- to whichever survived the ambiguity
-                            -- pick.
-                            perModuleEnv = Map.fromList
-                                ( (entryModName, typesEnv)
-                                : depSolved )
-                            -- v0.17 PR-21b — install the merged FFI
-                            -- implements registry from the global IORef
-                            -- (seeded at @loadAndSeedFfiRegistry@).  Empty
-                            -- map for projects with no FFI deps; Sky.Type
-                            -- .Unify's @lookupImplements@ then returns
-                            -- @[]@ at every site and the legacy strict-
-                            -- equality unify path stays in force.
-                            implementsMap = readIORefNoCse Env.ffiImplementsRef
-                        in Solve.withImplementsMap implementsMap
-                          (Solve.withPerModuleEnv perModuleEnv
-                            (Solve.withPerModuleRegions perModuleRegions
-                                (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                    goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
-                    -- v0.13 Layer 2: collect Sky-name → source-region
-                    -- for every top-level declaration so the post-emit
-                    -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
-                    -- comments next to the matching Go function decl.
-                    -- The validator + `go build` error refiner consult
-                    -- the resulting OriginMap to map Go-line errors back
-                    -- to Sky source.
-                    declOriginMap = collectDeclOrigins entryPath canMod
-                    goCode = Validator.injectOriginComments
-                                declOriginMap goCodeRaw
-                    -- v0.15.12 P5 / Gap A6 — Auth typed-boundary gate.
-                    -- Scan the entry module + every validated dep for
-                    -- Auth.* kernel call sites whose String-typed
-                    -- slots receive an `any`-typed argument. The
-                    -- check runs BEFORE codegen writes main.go so
-                    -- the user sees the soundness gap at the source
-                    -- instead of a runtime `mustStringTyped` failure
-                    -- on the request hot path.
-                    authDiagsEntry = authBoundaryDiagnostics
-                                        entryPath typesWithDeps canMod
-                    authDiagsDeps =
-                        [ d
-                        | (modName, depMod) <- validDeps
-                        -- v0.15.x P37a: `depSolved` was extracted via
-                        -- `Solve._stEnv` at the assembly site; wrap
-                        -- back into a `SolvedTypes` record for the
-                        -- auth-boundary helper (region map empty —
-                        -- the gate only consults the env).
-                        , let depTypesMap = case lookup modName depSolved of
-                                Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
-                                Nothing -> Solve.emptySolvedTypes
-                        , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
-                        ]
-                    authDiags = authDiagsEntry ++ authDiagsDeps
-                if not (null authDiags)
-                  then do
-                      rendered <- Render.renderCliMany authDiags
-                      putStrLn rendered
+                putStrLn $ "   HM infer (deps): "
+                    ++ show (Map.size depInferredParams) ++ " functions typed"
+                -- Merge each dep module's solvedTypes into the global
+                -- _cg_solvedTypes so dep-body codegen sees per-function
+                -- locals (params, let-binders, case-binders) for typed-
+                -- kernel routing. v0.12.x Gap 3 close-out: without this,
+                -- `togglePostUpvote post` looks up `post` in the entry
+                -- module's solvedTypes and finds nothing, falling back
+                -- to any-routing.
+                --
+                -- Name collisions: if multiple deps have a same-named
+                -- local, Map.union takes the first; the typed-routing
+                -- check `if elemGo == "any" then Nothing` then gracefully
+                -- falls back when the wrong type causes a mismatch. Safe.
+                -- (Per-dep types are merged via the caller's
+                -- `typesWithDeps` pass-through; see line ~722. The
+                -- modifyIORef here only registers per-function sig data
+                -- that subsequent codegen passes consult.)
+                modifyIORef globalCgEnv $ \e -> e
+                    -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
+                    -- AFTER typecheck and preserve TVar names (`func(string)
+                    -- T1`). The pre-typecheck `collectFuncTypesWith`
+                    -- entries use `safeReturnTypeBootstrap` which ERASES TVars
+                    -- to `any` (`func(string) any`). Union order matters:
+                    -- the typed (post-HM) entries must WIN over the early
+                    -- erased entries so call-site σ-recovery can pin
+                    -- TVars from typed args. `Map.union` keeps the LEFT
+                    -- side, so put depInferredParams first.
+                    { Rec._cg_funcParamTypes =
+                        Map.union depInferredParams (Rec._cg_funcParamTypes e)
+                    , Rec._cg_funcRetType =
+                        Map.union depInferredRets (Rec._cg_funcRetType e)
+                    , Rec._cg_funcInferredSigs =
+                        Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
+                    , Rec._cg_funcSkyToGoTVars =
+                        Map.union (Rec._cg_funcSkyToGoTVars e) depSkyToGoTVars
+                    }
+                -- Bail BEFORE codegen if HM rejected the program. Previously
+                -- "-- Generating Go" printed unconditionally, which made the
+                -- "TYPE ERROR" buried two lines up easy to miss + suggested
+                -- the build was succeeding. We also delete any stale main.go
+                -- and binary from a previous successful build so the user
+                -- can't accidentally run an outdated executable. Issue #52.
+                case (solverError, exhaustErr) of
+                  (Just _, _) -> do
                       removeStaleBuildOutput outDir (Toml._binName config)
-                      return (Left ("Sky.Auth.UntypedBoundary: " ++ entryPath))
-                  else do
-                    createDirectoryIfMissing True outDir
-                    let mainGoPath = outDir </> "main.go"
-                    -- task #660 — defensive late-stage pass: walk
-                    -- each top-level `func NAME[TPS]...{ ... }` and
-                    -- erase any TVar reference (T1/T2/...) inside the
-                    -- body that ISN'T declared in TPS, replacing with
-                    -- `any`.  This catches T1 leaks from emission paths
-                    -- the σ-recovery missed (Sky-source HOFs via
-                    -- VarLocal where _cg_funcInferredSigs lookup
-                    -- misses, etc.). Safe because Go's `any` is the
-                    -- universal interface; an out-of-scope TVar would
-                    -- have failed go build anyway.
-                    -- v0.17 Wave 3 (#660): band-aid ON as a defensive
-                    -- floor while the architectural close ships.  The
-                    -- band-aid widens any T<N> ref undeclared in the
-                    -- enclosing func's TPS to `any`, which is sound
-                    -- under Go (interface universal) but reads as a
-                    -- type-erasure in the emitted Go.  The proper close
-                    -- is to thread the merged `Solve.SolvedTypes` into
-                    -- the dep-emission lowerCtx so `resolveWrapParams`'
-                    -- `lookupSolvedRegionScoped` returns the HM-solved
-                    -- concrete type — see memory v017_wave3_emission_paths
-                    -- for the diagnosis. resolveWrapParams now consults
-                    -- the per-module scoped region map but currently
-                    -- finds empty SolvedTypes in dep emission.
-                    let goCode' = eraseUndeclaredTVarsInGoSource goCode
-                    writeFile mainGoPath goCode'
-                    putStrLn $ "   Wrote " ++ mainGoPath
-                    -- v0.13 Layer 2: codegen-stage validator runs after
-                    -- writing main.go but before any downstream tooling
-                    -- (DCE / go build).  It scans the emitted Go for
-                    -- known-bad shapes (typed-kernel call with raw any
-                    -- arg, etc.) and emits a structured Diagnostic with
-                    -- a Sky-source region if the bug shape is found.
-                    -- This gives "if it compiles, it works" defence in
-                    -- depth — even if a new codegen regression slips
-                    -- past the cabal tests, the validator catches it
-                    -- pre-build and prints an actionable Diagnostic
-                    -- instead of a cryptic `go build` error.
-                    let originMap = Validator.parseOriginComments goCode
-                        valDiags  = Validator.validateEmittedGo
-                                      mainGoPath originMap goCode
-                    if not (null valDiags)
+                      -- v0.13 Layer 1: the structured Diagnostic has
+                      -- already been rendered above (renderCli at the
+                      -- SolveError branch, or the verbatim solver-
+                      -- budget block). Return a one-line marker so the
+                      -- outer caller can surface non-zero exit + a
+                      -- stable grep target ("Type error") without
+                      -- double-printing the full body.
+                      return (Left ("Type error: " ++ entryPath))
+                  (_, Just _) -> do
+                      removeStaleBuildOutput outDir (Toml._binName config)
+                      -- v0.13 Layer 1: the structured Diagnostic block
+                      -- has been rendered above (one per non-exhaustive
+                      -- branch).  Return a one-line marker; the renderer
+                      -- already shows where and how to fix each case.
+                      return (Left ("Non-exhaustive patterns: " ++ entryPath))
+                  _ -> do
+                    putStrLn "-- Generating Go"
+                    -- v0.13 Stage 1 (task #189) — emit dep-module decls
+                    -- AFTER typecheck has populated `funcSkyToGoTVars`.
+                    -- This is the critical point: dep bodies use
+                    -- `withScopedLambdaTypes` to register typed func-
+                    -- param names, which `goExprGoType` then resolves
+                    -- via `solvedTypeToGo` with Go-side TVar names
+                    -- (T1, T2, ...). Without the env populated, the
+                    -- skyToGo rename produces empty σ and func types
+                    -- render as `func(any) any`.
+                    let depDecls = concatMap (\(modName, depMod) ->
+                            let prefix = map (\c -> if c == '.' then '_' else c) modName
+                            in generateDeclsForDepScoped modName depMod prefix) validDeps
+                    let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                                        | (mn, depMod) <- validDeps ]
+                        -- Conflict-detection merge with TVar normalisation.
+                        -- See typesWithDepsBuilder below for the algorithm.
+                        typesWithDeps =
+                            -- v0.15.x P37a: `types` is now the new
+                            -- `Solve.SolvedTypes` record.  The merge logic
+                            -- below works over the `_stEnv` Map view;
+                            -- after merging, we re-wrap with the
+                            -- `mergedRegionTys` region map computed
+                            -- earlier so `generateGoMulti` continues to
+                            -- receive a full `Solve.SolvedTypes` value.
+                            let typesEnv = Solve._stEnv types
+                                entryKeys = Map.keysSet typesEnv
+                                allMaps = typesEnv : [t | (_, t) <- depSolved]
+                                keyToTypes = Map.unionsWith (++)
+                                    [ Map.map (:[]) m | m <- allMaps ]
+                                isResolved (T.TVar _) = False
+                                isResolved _ = True
+                                normaliseType = normaliseTypeForMerge
+                                -- Bug fix: a key in `entryKeys` may have come
+                                -- from the entry module's `_locals` ledger
+                                -- (lambda params / inner-let bindings) rather
+                                -- than from a real top-level binding. When the
+                                -- same key also exists in a DEP module's
+                                -- solvedTypes — and disagrees structurally —
+                                -- the dep version is the genuine top-level
+                                -- declaration of THAT module; the entry's is
+                                -- pollution from a same-named local.
+                                -- Concrete case: Main.sky has functions like
+                                -- `fetchLogs parent filter = …` whose lambda
+                                -- param `filter : LogFilter` leaks into
+                                -- solvedTypes; Sky.Core.List.filter (the real
+                                -- HOF) gets shadowed and View.sky's
+                                -- `List.filter (...)` then infers as LogFilter.
+                                -- Detect: if entry's type AND any dep's type
+                                -- disagree structurally, run the ambiguity
+                                -- pipeline (treat as cross-scope conflict).
+                                -- v0.17 PR-10 migration: sentinel writers
+                                -- use 'Solve.unresolvedSentinel' (typed
+                                -- ADT dispatch) instead of raw TVar
+                                -- string literals.  Underlying TVar
+                                -- representation unchanged; the typed
+                                -- surface prevents typo-class bugs at
+                                -- the writers and makes the sentinel set
+                                -- discoverable.
+                                resolveKey k tys
+                                    | k `Set.member` entryKeys =
+                                        let entryTy = Map.findWithDefault (Solve.unresolvedSentinel Solve.UnresolvedUnbound) k typesEnv
+                                            depTys  = [ t | (_, m) <- depSolved
+                                                          , Just t <- [Map.lookup k m]
+                                                          , isResolved t ]
+                                            allCands = if isResolved entryTy
+                                                           then entryTy : depTys
+                                                           else depTys
+                                            normalisedAll = List.nub
+                                                (map normaliseType allCands)
+                                        in case normalisedAll of
+                                            []    -> entryTy
+                                            [_]   -> entryTy
+                                            _     -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
+                                    | otherwise =
+                                        let resolved = filter isResolved tys
+                                            normalised = List.nub (map normaliseType resolved)
+                                        in case normalised of
+                                            []  -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
+                                            [_] -> case resolved of
+                                                     (t:_) -> t
+                                                     []    -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
+                                            _   -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
+                                mergedEnv = Map.mapWithKey resolveKey keyToTypes
+                                -- v0.15.6 #365 — per-module region ledger
+                                -- carries each dep's own region map under
+                                -- its dotted name, plus the entry module's.
+                                -- Consumers `lookupSolvedRegionScoped`
+                                -- consult this ledger first when a
+                                -- `_stCurrentModule` hint is installed by
+                                -- `generateGoMulti`'s per-dep scope.
+                                entryModName = ModuleName.toString (Can._name canMod)
+                                perModuleRegions = Map.fromList
+                                    ( (entryModName, entryRegionTys)
+                                    : depRegionTysByModule )
+                                -- v0.15.6 #365 — per-module env ledger.
+                                -- Each dep's _stEnv (carrying its own
+                                -- let-bound locals' types like `encodeOne`)
+                                -- is preserved separately so consumers
+                                -- consulting via `lookupSolvedVarScoped`
+                                -- under a `_stCurrentModule` hint see the
+                                -- right module's let-bound type — without
+                                -- this, the cross-module merge collapsed
+                                -- distinct `encodeOne` types across modules
+                                -- to whichever survived the ambiguity
+                                -- pick.
+                                perModuleEnv = Map.fromList
+                                    ( (entryModName, typesEnv)
+                                    : depSolved )
+                                -- v0.17 PR-21b — install the merged FFI
+                                -- implements registry from the global IORef
+                                -- (seeded at @loadAndSeedFfiRegistry@).  Empty
+                                -- map for projects with no FFI deps; Sky.Type
+                                -- .Unify's @lookupImplements@ then returns
+                                -- @[]@ at every site and the legacy strict-
+                                -- equality unify path stays in force.
+                                implementsMap = readIORefNoCse Env.ffiImplementsRef
+                            in Solve.withImplementsMap implementsMap
+                              (Solve.withPerModuleEnv perModuleEnv
+                                (Solve.withPerModuleRegions perModuleRegions
+                                    (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
+                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                        -- v0.13 Layer 2: collect Sky-name → source-region
+                        -- for every top-level declaration so the post-emit
+                        -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
+                        -- comments next to the matching Go function decl.
+                        -- The validator + `go build` error refiner consult
+                        -- the resulting OriginMap to map Go-line errors back
+                        -- to Sky source.
+                        declOriginMap = collectDeclOrigins entryPath canMod
+                        goCode = Validator.injectOriginComments
+                                    declOriginMap goCodeRaw
+                        -- v0.15.12 P5 / Gap A6 — Auth typed-boundary gate.
+                        -- Scan the entry module + every validated dep for
+                        -- Auth.* kernel call sites whose String-typed
+                        -- slots receive an `any`-typed argument. The
+                        -- check runs BEFORE codegen writes main.go so
+                        -- the user sees the soundness gap at the source
+                        -- instead of a runtime `mustStringTyped` failure
+                        -- on the request hot path.
+                        authDiagsEntry = authBoundaryDiagnostics
+                                            entryPath typesWithDeps canMod
+                        authDiagsDeps =
+                            [ d
+                            | (modName, depMod) <- validDeps
+                            -- v0.15.x P37a: `depSolved` was extracted via
+                            -- `Solve._stEnv` at the assembly site; wrap
+                            -- back into a `SolvedTypes` record for the
+                            -- auth-boundary helper (region map empty —
+                            -- the gate only consults the env).
+                            , let depTypesMap = case lookup modName depSolved of
+                                    Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
+                                    Nothing -> Solve.emptySolvedTypes
+                            , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
+                            ]
+                        authDiags = authDiagsEntry ++ authDiagsDeps
+                    if not (null authDiags)
                       then do
-                          rendered <- Render.renderCliMany valDiags
+                          rendered <- Render.renderCliMany authDiags
                           putStrLn rendered
                           removeStaleBuildOutput outDir (Toml._binName config)
-                          return (Left "Codegen validation rejected the emitted Go")
+                          return (Left ("Sky.Auth.UntypedBoundary: " ++ entryPath))
                       else do
-                          -- copyRuntime also copies runtime-go/go.mod + go.sum into
-                          -- outDir when it can locate the runtime. Only fall back
-                          -- to a minimal go.mod here if copyRuntime didn't write
-                          -- one (no runtime found).
-                          copyRuntime outDir
-                          hasOutMod <- doesFileExist (outDir </> "go.mod")
-                          if not hasOutMod
-                              then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
-                              else return ()
-                          -- Pull in Go deps declared in sky.toml so generated
-                          -- ffi/*_bindings.go can resolve imports.
-                          seedGoDependencies outDir (Toml._goDeps config)
-                          -- P7: strip unreferenced FFI wrappers from
-                          -- sky-out/rt/*_bindings.go.  Tens of thousands of
-                          -- any/any wrapper bodies user code never calls
-                          -- (stripe alone contributes 74k).
-                          dceFfiWrappers outDir
-                          -- Write cache hash to enable incremental rebuild skip
-                          let cacheDir = ".skycache"
-                          createDirectoryIfMissing True cacheDir
-                          writeFile (cacheDir </> "source.hash") srcHash
-                          -- v0.15.42 (audit §3.4): Sky lowering succeeded, but
-                          -- `go build` hasn't run yet. The CLI prints
-                          -- "Compilation successful" only after Go returns 0,
-                          -- so users never see a "successful" banner followed
-                          -- by a go-build failure.
-                          putStrLn "Sky lowering succeeded"
-                          return (Right mainGoPath)
+                        createDirectoryIfMissing True outDir
+                        let mainGoPath = outDir </> "main.go"
+                        -- task #660 — defensive late-stage pass: walk
+                        -- each top-level `func NAME[TPS]...{ ... }` and
+                        -- erase any TVar reference (T1/T2/...) inside the
+                        -- body that ISN'T declared in TPS, replacing with
+                        -- `any`.  This catches T1 leaks from emission paths
+                        -- the σ-recovery missed (Sky-source HOFs via
+                        -- VarLocal where _cg_funcInferredSigs lookup
+                        -- misses, etc.). Safe because Go's `any` is the
+                        -- universal interface; an out-of-scope TVar would
+                        -- have failed go build anyway.
+                        -- v0.17 Wave 3 (#660): band-aid ON as a defensive
+                        -- floor while the architectural close ships.  The
+                        -- band-aid widens any T<N> ref undeclared in the
+                        -- enclosing func's TPS to `any`, which is sound
+                        -- under Go (interface universal) but reads as a
+                        -- type-erasure in the emitted Go.  The proper close
+                        -- is to thread the merged `Solve.SolvedTypes` into
+                        -- the dep-emission lowerCtx so `resolveWrapParams`'
+                        -- `lookupSolvedRegionScoped` returns the HM-solved
+                        -- concrete type — see memory v017_wave3_emission_paths
+                        -- for the diagnosis. resolveWrapParams now consults
+                        -- the per-module scoped region map but currently
+                        -- finds empty SolvedTypes in dep emission.
+                        let goCode' = eraseUndeclaredTVarsInGoSource goCode
+                        writeFile mainGoPath goCode'
+                        putStrLn $ "   Wrote " ++ mainGoPath
+                        -- v0.13 Layer 2: codegen-stage validator runs after
+                        -- writing main.go but before any downstream tooling
+                        -- (DCE / go build).  It scans the emitted Go for
+                        -- known-bad shapes (typed-kernel call with raw any
+                        -- arg, etc.) and emits a structured Diagnostic with
+                        -- a Sky-source region if the bug shape is found.
+                        -- This gives "if it compiles, it works" defence in
+                        -- depth — even if a new codegen regression slips
+                        -- past the cabal tests, the validator catches it
+                        -- pre-build and prints an actionable Diagnostic
+                        -- instead of a cryptic `go build` error.
+                        let originMap = Validator.parseOriginComments goCode
+                            valDiags  = Validator.validateEmittedGo
+                                          mainGoPath originMap goCode
+                        if not (null valDiags)
+                          then do
+                              rendered <- Render.renderCliMany valDiags
+                              putStrLn rendered
+                              removeStaleBuildOutput outDir (Toml._binName config)
+                              return (Left "Codegen validation rejected the emitted Go")
+                          else do
+                              -- copyRuntime also copies runtime-go/go.mod + go.sum into
+                              -- outDir when it can locate the runtime. Only fall back
+                              -- to a minimal go.mod here if copyRuntime didn't write
+                              -- one (no runtime found).
+                              copyRuntime outDir
+                              hasOutMod <- doesFileExist (outDir </> "go.mod")
+                              if not hasOutMod
+                                  then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+                                  else return ()
+                              -- Pull in Go deps declared in sky.toml so generated
+                              -- ffi/*_bindings.go can resolve imports.
+                              seedGoDependencies outDir (Toml._goDeps config)
+                              -- P7: strip unreferenced FFI wrappers from
+                              -- sky-out/rt/*_bindings.go.  Tens of thousands of
+                              -- any/any wrapper bodies user code never calls
+                              -- (stripe alone contributes 74k).
+                              dceFfiWrappers outDir
+                              -- Write cache hash to enable incremental rebuild skip
+                              let cacheDir = ".skycache"
+                              createDirectoryIfMissing True cacheDir
+                              writeFile (cacheDir </> "source.hash") srcHash
+                              -- v0.15.42 (audit §3.4): Sky lowering succeeded, but
+                              -- `go build` hasn't run yet. The CLI prints
+                              -- "Compilation successful" only after Go returns 0,
+                              -- so users never see a "successful" banner followed
+                              -- by a go-build failure.
+                              putStrLn "Sky lowering succeeded"
+                              return (Right mainGoPath)
 
 
 -- LEGACY: single-module parse entry (no longer used from compile)
