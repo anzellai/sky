@@ -155,14 +155,15 @@ isInlineConsoleBuild = unsafePerformIO $ do
 -- consumed by `generateGoMulti` to emit per-instance specialised
 -- Go functions alongside (and eventually replacing) the generic
 -- versions.
-{-# NOINLINE globalReachableSet #-}
-globalReachableSet :: IORef Mono.ReachableSet
-globalReachableSet = unsafePerformIO $ newIORef Set.empty
+-- v0.17 iter 13 (task #654) — 'globalReachableSet' IORef removed.
+-- The reachable mono-instance set now flows as 'SolveOutputs._so_reached'
+-- → 'generateGoMulti' 'reached' parameter → consumed in the 'specDecls'
+-- block.  No IORef indirection, no hidden global state.
 
 
 -- | v0.13 F: whole-program Sky-side reachable set.  Populated by
 -- continueCompile after the canon fixpoint runs (the same hook where
--- `globalReachableSet` gets the mono-instance reachable set).  Read by
+-- `globalReachableProgram` gets the mono-instance reachable set).  Read by
 -- `loadAndSeedFfiRegistry` to prune unused FFI sigs (the Stripe-SDK
 -- win) and by `generateDeclsForDep` to skip emission of unreachable
 -- dep-module decls.  Set `SKY_DCE=0` to disable pruning (escape
@@ -1245,7 +1246,8 @@ resetCompileState = do
     writeIORef globalGoSigMap Map.empty
     writeIORef globalAllAliases Map.empty
     writeIORef globalAllFieldIdx Map.empty
-    writeIORef globalReachableSet Set.empty
+    -- v0.17 iter 13 (task #654) — globalReachableSet reset removed; IORef
+    -- is gone.  ReachableSet now flows as SolveOutputs._so_reached.
     writeIORef globalReachableProgram Set.empty
     writeIORef globalAnonRecords Map.empty
 
@@ -1474,6 +1476,13 @@ data SolveOutputs = SolveOutputs
     , _so_depInferredSigs     :: !(Map.Map String ([String], [String], String))
         -- ^ HM-inferred per-dep full sigs (typeParams, paramTypes,
         -- retType).  Drives @_cg_funcInferredSigs@ + @generateGoMulti@.
+    , _so_reached             :: !Mono.ReachableSet
+        -- ^ v0.17 iter 13 (task #654) — whole-program reachable
+        -- mono-instance set computed by 'Mono.reachableInstances'
+        -- after the post-solve fixpoint settles.  Consumed by
+        -- 'generateGoMulti' to emit per-instance specialised Go
+        -- funcs.  Previously bridged via @globalReachableSet@
+        -- IORef; this field defuses that IORef entirely.
     }
 
 
@@ -1800,7 +1809,13 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     let solverError = case solveResult of
                             Solve.SolveError e -> Just e
                             _                  -> Nothing
-                    types <- case solveResult of
+                    -- v0.17 iter 13 (task #654) — surface 'reached' to outer
+                    -- scope so it can flow into SolveOutputs._so_reached.
+                    -- Previously 'reached' was bound inside this case and
+                    -- only escaped via 'writeIORef globalReachableSet';
+                    -- now we return (SolvedTypes, ReachableSet) and bind
+                    -- both outside.
+                    (types, reached) <- case solveResult of
                         Solve.SolveOk t -> do
                             putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                             -- v0.13 Phase A3: log the captured instance table.
@@ -1837,7 +1852,11 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                 reached = Mono.reachableInstances
                                     defMap annotMap csiMapForReach
                                     [(entryName, [])]
-                            writeIORef globalReachableSet reached
+                            -- v0.17 iter 13 (task #654) — writeIORef
+                            -- globalReachableSet removed; 'reached'
+                            -- is surfaced via 'SolveOutputs._so_reached'
+                            -- and threaded as a 'generateGoMulti'
+                            -- parameter.  The IORef is now gone.
                             -- v0.17 iteration 8 (task #654) — writeIORef
                             -- globalAnnotMap removed; IORef is gone.
                             -- v0.14.x Stage 4: scan every canon module for
@@ -1957,7 +1976,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                         putStrLn $ "     " ++ Mono.mangleInstance
                                             (Solve.CallInstance q ts [])) (Set.toList reached)
                                 _ -> return ()
-                            return t
+                            return (t, reached)
                         Solve.SolveError err -> do
                             -- v0.13 Layer 1: route position-prefixed type
                             -- errors through the structured Diagnostic
@@ -1975,7 +1994,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                     let diag = Solve.solveErrorToDiagnostic entryPath err
                                     rendered <- Render.renderCli diag
                                     putStrLn rendered
-                            return Solve.emptySolvedTypes
+                            return (Solve.emptySolvedTypes, Set.empty)
                     -- P3: exhaustiveness — walk the entry + every dep's canonical
                     -- tree for non-exhaustive case expressions. A miss is a
                     -- compile-time error with source context; the `panic("non-
@@ -2160,6 +2179,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , _so_depInferredParams    = depInferredParams
                         , _so_depInferredRets      = depInferredRets
                         , _so_depInferredSigs      = depInferredSigs
+                        , _so_reached              = reached
                         }
 
 
@@ -2642,6 +2662,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     depInferredParams    = _so_depInferredParams   solveOut
                     depInferredRets      = _so_depInferredRets     solveOut
                     depInferredSigs      = _so_depInferredSigs     solveOut
+                    -- v0.17 iter 13 (task #654) — 'reached' threaded
+                    -- from SolveOutputs to 'generateGoMulti' (replaces
+                    -- 'readIORef globalReachableSet').
+                    reached              = _so_reached             solveOut
                 -- Bail BEFORE codegen if HM rejected the program. Previously
                 -- "-- Generating Go" printed unconditionally, which made the
                 -- "TYPE ERROR" buried two lines up easy to miss + suggested
@@ -2788,7 +2812,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                               (Solve.withPerModuleEnv perModuleEnv
                                 (Solve.withPerModuleRegions perModuleRegions
                                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached
                         -- v0.13 Layer 2: collect Sky-name → source-region
                         -- for every top-level declaration so the post-emit
                         -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -4613,8 +4637,11 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
-generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
+generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> String
+-- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
+-- 'globalReachableSet' IORef.  Consumed by the 'specDecls' block
+-- (~line 4967) to drive per-instance specialised Go function emission.
+generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached =
     let
         imports = unsafePerformIO $ do
             -- v0.17 PR-α-7 — clear globalAnonRecords at codegen entry so
@@ -4944,7 +4971,9 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
         -- are dead.  Successive commits will switch call sites to
         -- use the mangled names and drop the generic emission.
         specDecls = unsafePerformIO $ do
-            reached <- readIORef globalReachableSet
+            -- v0.17 iter 13 (task #654) — 'reached' is now the
+            -- 'generateGoMulti' parameter (replaces 'readIORef
+            -- globalReachableSet').  The IORef is gone.
             -- v0.17 PR-α — dead read of @globalAnnotMap@ removed
             -- (was @_annotMap' <- readIORef globalAnnotMap@; the
             -- result was never consumed in this block).
