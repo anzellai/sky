@@ -4782,6 +4782,64 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
             [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
 
 
+-- | v0.17 iter 22b (task #654) — pure builder for the post-C10
+-- GoSig map.
+--
+-- Lifts the C10 goSigMap dep-update block (formerly at
+-- Compile.hs:4974-4996, inside the 'imports' lazy thunk of
+-- 'generateGoMulti') into a standalone pure function.  The
+-- 'readIORef globalGoSigMap' read collapses into the
+-- 'existingGoSig' parameter — the caller snapshots once at the
+-- IORef and passes the value in.
+--
+-- C9 (in solvePhase) populates 'globalGoSigMap' with entry-module
+-- bindings via 'buildGoSigMap'.  C10 (here) refreshes the
+-- '_gs_typeParams' field for every binding whose Go-mangled name
+-- matches a key in the merged 'cgEnv._cg_funcSkyToGoTVars' —
+-- this is where dep-module typeParams flow in after
+-- 'buildFinalCgEnv' merges them.  Other GoSig fields
+-- (annotation, quantifiers) are preserved from C9.
+--
+-- BYTE-EQUIVALENT: same skyNameByGo derivation, same updates
+-- list-comprehension, same 'Map.adjust' / 'foldr' fold.
+--
+-- SKY_GOSIG_DIFF caveat: the diagnostic read at
+-- Compile.hs:~2040 fires INSIDE solvePhase right after the C9
+-- write, BEFORE C10 ever runs.  So the C10 extraction here is
+-- invisible to the diff-mode reader — no ordering hazard.
+--
+-- Sub-iter 22b goal: prove mechanical extractability for
+-- goSigMap, matching iter 22a's cgEnv treatment.  The IORef
+-- stays alive (writeIORef at line ~4996).
+buildFinalGoSigMap
+    :: Map.Map String GoSig
+        -- ^ existingGoSig: snapshot of globalGoSigMap at C10 entry
+    -> Map.Map String [(String, String)]
+        -- ^ depFuncSkyToGoTVars: 'Rec._cg_funcSkyToGoTVars cgEnv'
+        --   AFTER buildFinalCgEnv merged dep-module state
+    -> Map.Map String GoSig
+buildFinalGoSigMap existingGoSig depFuncSkyToGoTVars =
+    let skyNameByGo = Map.fromList
+            [ ( map (\c -> if c == '.' then '_' else c) sk
+              , sk
+              )
+            | sk <- Map.keys existingGoSig
+            ]
+        updates =
+            [ (skyName, pairs)
+            | (goName, pairs) <- Map.toList depFuncSkyToGoTVars
+            , Just skyName <- [Map.lookup goName skyNameByGo]
+            ]
+    in foldr
+        (\(skyName, pairs) acc ->
+            Map.adjust
+                (\sig -> sig { _gs_typeParams = Just pairs })
+                skyName
+                acc)
+        existingGoSig
+        updates
+
+
 -- | v0.17 iter 22a (task #654) — pure builder for the post-C10
 -- codegen environment.
 --
@@ -4971,28 +5029,15 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- full map is in cgEnv.  Re-update _gs_typeParams for
             -- every Sky-named binding the merged map now knows about.
             -- Preserves the annotation/quantifier fields from C9.
+            -- v0.17 iter 22b (task #654) — C10 goSigMap update
+            -- extracted to the pure builder 'buildFinalGoSigMap'.
+            -- Single 'readIORef globalGoSigMap' snapshot at call
+            -- site; pure function does the typeParams adjust;
+            -- single 'writeIORef' commits.
             do
                 existingGoSig <- readIORef globalGoSigMap
-                let depFuncSkyToGoTVars = Rec._cg_funcSkyToGoTVars cgEnv
-                    skyNameByGo = Map.fromList
-                        [ ( map (\c -> if c == '.' then '_' else c) sk
-                          , sk
-                          )
-                        | sk <- Map.keys existingGoSig
-                        ]
-                    updates =
-                        [ (skyName, pairs)
-                        | (goName, pairs) <- Map.toList depFuncSkyToGoTVars
-                        , Just skyName <- [Map.lookup goName skyNameByGo]
-                        ]
-                    updatedGoSig = foldr
-                        (\(skyName, pairs) acc ->
-                            Map.adjust
-                                (\sig -> sig { _gs_typeParams = Just pairs })
-                                skyName
-                                acc)
-                        existingGoSig
-                        updates
+                let updatedGoSig = buildFinalGoSigMap existingGoSig
+                        (Rec._cg_funcSkyToGoTVars cgEnv)
                 writeIORef globalGoSigMap updatedGoSig
             return $ collectGoImports consoleNeeded canMod srcMod
         -- Force `imports` before anything else so the env is set up
