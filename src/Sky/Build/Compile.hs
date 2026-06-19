@@ -1464,6 +1464,16 @@ data SolveOutputs = SolveOutputs
     , _so_depRegionTysByModule :: ![(String, Map.Map A.Region T.Type)]
         -- ^ Per-dep region ledger keyed by dotted module name.  Drives
         -- the @perModuleRegions@ map inside 'typesWithDeps'.
+    , _so_depInferredParams   :: !(Map.Map String [String])
+        -- ^ HM-inferred per-dep function param types, keyed by
+        -- module-prefixed @goSafeName@-mangled name.  Consumed by
+        -- 'generateGoMulti' as the typed-codegen param table.
+    , _so_depInferredRets     :: !(Map.Map String String)
+        -- ^ HM-inferred per-dep function return types, same key
+        -- convention as @_so_depInferredParams@.
+    , _so_depInferredSigs     :: !(Map.Map String ([String], [String], String))
+        -- ^ HM-inferred per-dep full sigs (typeParams, paramTypes,
+        -- retType).  Drives @_cg_funcInferredSigs@ + @generateGoMulti@.
     }
 
 
@@ -1503,8 +1513,12 @@ solvePhase
     -> [(String, Can.Module)]
     -- ^ validDeps — topologically-ordered dep modules that survived
     -- the canon fixpoint.
+    -> Set.Set String
+    -- ^ earlyAllRecAliases — merged record-alias set (entry + deps,
+    -- prefixed + bare forms) from 'seedEarlyCgEnv'.  Used by the
+    -- HM-inferred dep sig table builders below.
     -> IO SolveOutcome
-solvePhase entryPath moduleOrder entrySrcMod canMod validDeps = do
+solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases = do
             -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 cs <- Constrain.constrainModule depMod
@@ -1999,6 +2013,142 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps = do
                         ds -> do
                             rendered <- Render.renderCliMany ds
                             putStrLn rendered
+                    -- v0.17 PR-α Stage 3 (iter 12) — extended boundary.
+                    -- Merge inferred dep types into the param + return tables
+                    -- keyed by module-prefixed Go names. Annotation-derived
+                    -- entries already in the tables win over inferred ones.
+                    -- T4b: only record inferred sigs for UNANNOTATED bindings;
+                    -- annotated functions use their declared types verbatim,
+                    -- and if HM happens to infer spurious TVars for them we'd
+                    -- mistakenly emit `[any, any]` instantiations at call sites.
+                    let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
+                            Just (Can.TypedDef{}) -> True
+                            _                     -> False
+                        -- Field-set → alias-name registry covering the entry
+                        -- module + every dep module (prefixed form) so HM-inferred
+                        -- record returns resolve to their `_R` struct name here too.
+                        earlyAllFieldIdx = Map.union
+                            (Rec.buildRegistry (Can._aliases canMod))
+                            (Rec.buildDepFieldIndex
+                                [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                                | (mn, depMod) <- validDeps
+                                ])
+                        -- HM-inferred sigs for dep module unannotated functions.
+                        -- TVars become Go type params for polymorphic functions.
+                        fullSigs = Map.unions
+                            [ Map.fromList
+                                -- v0.13 Layer 3 fix: dep-emitted Go names go
+                                -- through `goSafeName` (so a Sky function
+                                -- named `map` lands as `Sky_Core_X_map_`).
+                                -- The sig-table key MUST use the same
+                                -- mangled form or call-site coercion can't
+                                -- look it up.  Pre-fix, cross-module calls
+                                -- to Sky-source Result.map got no coercion
+                                -- and `go build` rejected the call site.
+                                -- v0.13 Stage 1 — INCLUDE annotated functions
+                                -- too. Previously skipped because HM-inferred
+                                -- TVars for annotated functions could be
+                                -- spurious; for annotated functions we use the
+                                -- ANNOTATION TYPE (reconstructed from pats +
+                                -- retType) rather than the HM-solved type
+                                -- because HM may not preserve the full TLambda
+                                -- structure when the annotation grounds the
+                                -- type (e.g. `node` ends up solved as just
+                                -- `Html msg` losing the 3 input arrows).
+                                -- Using the annotation directly yields
+                                -- TVar-preserving sigs like
+                                -- `func(string) T1` that early
+                                -- `collectFuncTypesWith` would have erased to
+                                -- `func(string) any`. Critical for closing the
+                                -- `rt.Coerce[func(string) any](Msg_Ctor)`
+                                -- adapter class.
+                                [ ( prefix ++ "_" ++ goSafeName n
+                                  , splitInferredSigWithRegScoped (Just modName)
+                                        earlyAllRecAliases earlyAllFieldIdx
+                                        (countParamsFor n depMod) sigTy )
+                                | (n, ty) <- Map.toList depTypes
+                                , let sigTy = case annotationTypeFor n depMod of
+                                        Just annTy -> annTy
+                                        Nothing -> ty
+                                ]
+                            | (modName, depTypes) <- depSolved
+                            , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                            , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
+                            ]
+                    let
+                        depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
+                        depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
+                        depInferredSigs   = fullSigs
+                        -- v0.13 Phase A5+: per-function SkyName→GoName mapping
+                        -- for the SAME dep functions.  Drives the call-site
+                        -- coercion path so `CallInstance.quantifiers`
+                        -- (annotation Forall names) project to the Go-generic
+                        -- names that actually appear in the dep's emitted
+                        -- signature.
+                        -- Critical: align Sky-TVar names with what the
+                        -- solver's CForeign captures.  Externals are stored
+                        -- via `generaliseToAnnotation` which renames solver-
+                        -- internal names (`_arg_47`) to user-friendly ones
+                        -- (`a, b, c`); the CForeign's instantiation then
+                        -- uses those user-friendly names as `quants`.  If
+                        -- we computed `inferredSigSkyToGo` on the un-
+                        -- renamed type, the SkyNames would be the solver-
+                        -- internal forms and the lookup in `coerceCallArgsAt`
+                        -- would always miss.  Rename first.
+                        renameTypeForExternal t =
+                            case generaliseToAnnotation t of
+                                T.Forall _ renamed -> renamed
+                        depSkyToGoTVars = Map.unions
+                            [ Map.fromList
+                                [ ( prefix ++ "_" ++ goSafeName n
+                                  , inferredSigSkyToGoScoped (Just modName)
+                                        earlyAllRecAliases earlyAllFieldIdx
+                                        (countParamsFor n depMod)
+                                        (renameTypeForExternal ty) )
+                                | (n, ty) <- Map.toList depTypes
+                                , not (hasAnnotation n depMod)
+                                ]
+                            | (modName, depTypes) <- depSolved
+                            , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                            , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
+                            ]
+                    putStrLn $ "   HM infer (deps): "
+                        ++ show (Map.size depInferredParams) ++ " functions typed"
+                    -- Merge each dep module's solvedTypes into the global
+                    -- _cg_solvedTypes so dep-body codegen sees per-function
+                    -- locals (params, let-binders, case-binders) for typed-
+                    -- kernel routing. v0.12.x Gap 3 close-out: without this,
+                    -- `togglePostUpvote post` looks up `post` in the entry
+                    -- module's solvedTypes and finds nothing, falling back
+                    -- to any-routing.
+                    --
+                    -- Name collisions: if multiple deps have a same-named
+                    -- local, Map.union takes the first; the typed-routing
+                    -- check `if elemGo == "any" then Nothing` then gracefully
+                    -- falls back when the wrong type causes a mismatch. Safe.
+                    -- (Per-dep types are merged via the caller's
+                    -- `typesWithDeps` pass-through; see line ~722. The
+                    -- modifyIORef here only registers per-function sig data
+                    -- that subsequent codegen passes consult.)
+                    modifyIORef globalCgEnv $ \e -> e
+                        -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
+                        -- AFTER typecheck and preserve TVar names (`func(string)
+                        -- T1`). The pre-typecheck `collectFuncTypesWith`
+                        -- entries use `safeReturnTypeBootstrap` which ERASES TVars
+                        -- to `any` (`func(string) any`). Union order matters:
+                        -- the typed (post-HM) entries must WIN over the early
+                        -- erased entries so call-site σ-recovery can pin
+                        -- TVars from typed args. `Map.union` keeps the LEFT
+                        -- side, so put depInferredParams first.
+                        { Rec._cg_funcParamTypes =
+                            Map.union depInferredParams (Rec._cg_funcParamTypes e)
+                        , Rec._cg_funcRetType =
+                            Map.union depInferredRets (Rec._cg_funcRetType e)
+                        , Rec._cg_funcInferredSigs =
+                            Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
+                        , Rec._cg_funcSkyToGoTVars =
+                            Map.union (Rec._cg_funcSkyToGoTVars e) depSkyToGoTVars
+                        }
                     return $ SolveOk SolveOutputs
                         { _so_types                = types
                         , _so_entryRegionTys       = entryRegionTys
@@ -2007,6 +2157,9 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps = do
                         , _so_exhaustErr           = exhaustErr
                         , _so_depSolved            = depSolved
                         , _so_depRegionTysByModule = depRegionTysByModule
+                        , _so_depInferredParams    = depInferredParams
+                        , _so_depInferredRets      = depInferredRets
+                        , _so_depInferredSigs      = depInferredSigs
                         }
 
 
@@ -2463,16 +2616,18 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- (an unforced Task thunk's func-pointer being string-
             -- split because the dep's HM error was hidden).
 
-            -- v0.17 PR-α Stage 3 (task #659 iter 11) — solve phase
-            -- extracted to 'solvePhase'.  ALL writeIORef calls + the
-            -- post-solve seeding stay inside 'solvePhase'; the
-            -- dep-fixpoint exitWith moves out per the parsePhase /
-            -- canonPhase idiom (caller handles it below).  Seven HM
-            -- + exhaustiveness outputs flow out via 'SolveOutputs'
-            -- so the existing 'case (solverError, exhaustErr) of'
-            -- gate at line ~2485 (pre-extraction) keeps its byte-
-            -- equivalent semantics.
-            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps
+            -- v0.17 PR-α Stage 3 (task #659 iter 12) — solve phase
+            -- boundary extended downward to cover the depInferred*
+            -- sig-merge + 'modifyIORef globalCgEnv' block (previously
+            -- continueCompile lines 2487-2621, pre-iter-12 layout).
+            -- ALL writeIORef + modifyIORef calls stay INSIDE solvePhase
+            -- (byte-equivalent invariant).  Three new fields surface
+            -- the HM-inferred dep sig maps for 'generateGoMulti'.
+            -- The 'case (solverError, exhaustErr) of' gate at line
+            -- ~2630 (pre-iter-12 layout) keeps its byte-equivalent
+            -- semantics — it reads only fields surfaced via
+            -- SolveOutputs.
+            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
             case solveOutcome of
               SolveDepError _ ->
                   System.Exit.exitWith (System.Exit.ExitFailure 1)
@@ -2484,141 +2639,9 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     exhaustErr           = _so_exhaustErr          solveOut
                     depSolved            = _so_depSolved           solveOut
                     depRegionTysByModule = _so_depRegionTysByModule solveOut
-                -- Merge inferred dep types into the param + return tables
-                -- keyed by module-prefixed Go names. Annotation-derived
-                -- entries already in the tables win over inferred ones.
-                -- T4b: only record inferred sigs for UNANNOTATED bindings;
-                -- annotated functions use their declared types verbatim,
-                -- and if HM happens to infer spurious TVars for them we'd
-                -- mistakenly emit `[any, any]` instantiations at call sites.
-                let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
-                        Just (Can.TypedDef{}) -> True
-                        _                     -> False
-                    -- Field-set → alias-name registry covering the entry
-                    -- module + every dep module (prefixed form) so HM-inferred
-                    -- record returns resolve to their `_R` struct name here too.
-                    earlyAllFieldIdx = Map.union
-                        (Rec.buildRegistry (Can._aliases canMod))
-                        (Rec.buildDepFieldIndex
-                            [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
-                            | (mn, depMod) <- validDeps
-                            ])
-                    -- HM-inferred sigs for dep module unannotated functions.
-                    -- TVars become Go type params for polymorphic functions.
-                    fullSigs = Map.unions
-                        [ Map.fromList
-                            -- v0.13 Layer 3 fix: dep-emitted Go names go
-                            -- through `goSafeName` (so a Sky function
-                            -- named `map` lands as `Sky_Core_X_map_`).
-                            -- The sig-table key MUST use the same
-                            -- mangled form or call-site coercion can't
-                            -- look it up.  Pre-fix, cross-module calls
-                            -- to Sky-source Result.map got no coercion
-                            -- and `go build` rejected the call site.
-                            -- v0.13 Stage 1 — INCLUDE annotated functions
-                            -- too. Previously skipped because HM-inferred
-                            -- TVars for annotated functions could be
-                            -- spurious; for annotated functions we use the
-                            -- ANNOTATION TYPE (reconstructed from pats +
-                            -- retType) rather than the HM-solved type
-                            -- because HM may not preserve the full TLambda
-                            -- structure when the annotation grounds the
-                            -- type (e.g. `node` ends up solved as just
-                            -- `Html msg` losing the 3 input arrows).
-                            -- Using the annotation directly yields
-                            -- TVar-preserving sigs like
-                            -- `func(string) T1` that early
-                            -- `collectFuncTypesWith` would have erased to
-                            -- `func(string) any`. Critical for closing the
-                            -- `rt.Coerce[func(string) any](Msg_Ctor)`
-                            -- adapter class.
-                            [ ( prefix ++ "_" ++ goSafeName n
-                              , splitInferredSigWithRegScoped (Just modName)
-                                    earlyAllRecAliases earlyAllFieldIdx
-                                    (countParamsFor n depMod) sigTy )
-                            | (n, ty) <- Map.toList depTypes
-                            , let sigTy = case annotationTypeFor n depMod of
-                                    Just annTy -> annTy
-                                    Nothing -> ty
-                            ]
-                        | (modName, depTypes) <- depSolved
-                        , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                        , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
-                        ]
-                let
-                    depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
-                    depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
-                    depInferredSigs   = fullSigs
-                    -- v0.13 Phase A5+: per-function SkyName→GoName mapping
-                    -- for the SAME dep functions.  Drives the call-site
-                    -- coercion path so `CallInstance.quantifiers`
-                    -- (annotation Forall names) project to the Go-generic
-                    -- names that actually appear in the dep's emitted
-                    -- signature.
-                    -- Critical: align Sky-TVar names with what the
-                    -- solver's CForeign captures.  Externals are stored
-                    -- via `generaliseToAnnotation` which renames solver-
-                    -- internal names (`_arg_47`) to user-friendly ones
-                    -- (`a, b, c`); the CForeign's instantiation then
-                    -- uses those user-friendly names as `quants`.  If
-                    -- we computed `inferredSigSkyToGo` on the un-
-                    -- renamed type, the SkyNames would be the solver-
-                    -- internal forms and the lookup in `coerceCallArgsAt`
-                    -- would always miss.  Rename first.
-                    renameTypeForExternal t =
-                        case generaliseToAnnotation t of
-                            T.Forall _ renamed -> renamed
-                    depSkyToGoTVars = Map.unions
-                        [ Map.fromList
-                            [ ( prefix ++ "_" ++ goSafeName n
-                              , inferredSigSkyToGoScoped (Just modName)
-                                    earlyAllRecAliases earlyAllFieldIdx
-                                    (countParamsFor n depMod)
-                                    (renameTypeForExternal ty) )
-                            | (n, ty) <- Map.toList depTypes
-                            , not (hasAnnotation n depMod)
-                            ]
-                        | (modName, depTypes) <- depSolved
-                        , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                        , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
-                        ]
-                putStrLn $ "   HM infer (deps): "
-                    ++ show (Map.size depInferredParams) ++ " functions typed"
-                -- Merge each dep module's solvedTypes into the global
-                -- _cg_solvedTypes so dep-body codegen sees per-function
-                -- locals (params, let-binders, case-binders) for typed-
-                -- kernel routing. v0.12.x Gap 3 close-out: without this,
-                -- `togglePostUpvote post` looks up `post` in the entry
-                -- module's solvedTypes and finds nothing, falling back
-                -- to any-routing.
-                --
-                -- Name collisions: if multiple deps have a same-named
-                -- local, Map.union takes the first; the typed-routing
-                -- check `if elemGo == "any" then Nothing` then gracefully
-                -- falls back when the wrong type causes a mismatch. Safe.
-                -- (Per-dep types are merged via the caller's
-                -- `typesWithDeps` pass-through; see line ~722. The
-                -- modifyIORef here only registers per-function sig data
-                -- that subsequent codegen passes consult.)
-                modifyIORef globalCgEnv $ \e -> e
-                    -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
-                    -- AFTER typecheck and preserve TVar names (`func(string)
-                    -- T1`). The pre-typecheck `collectFuncTypesWith`
-                    -- entries use `safeReturnTypeBootstrap` which ERASES TVars
-                    -- to `any` (`func(string) any`). Union order matters:
-                    -- the typed (post-HM) entries must WIN over the early
-                    -- erased entries so call-site σ-recovery can pin
-                    -- TVars from typed args. `Map.union` keeps the LEFT
-                    -- side, so put depInferredParams first.
-                    { Rec._cg_funcParamTypes =
-                        Map.union depInferredParams (Rec._cg_funcParamTypes e)
-                    , Rec._cg_funcRetType =
-                        Map.union depInferredRets (Rec._cg_funcRetType e)
-                    , Rec._cg_funcInferredSigs =
-                        Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
-                    , Rec._cg_funcSkyToGoTVars =
-                        Map.union (Rec._cg_funcSkyToGoTVars e) depSkyToGoTVars
-                    }
+                    depInferredParams    = _so_depInferredParams   solveOut
+                    depInferredRets      = _so_depInferredRets     solveOut
+                    depInferredSigs      = _so_depInferredSigs     solveOut
                 -- Bail BEFORE codegen if HM rejected the program. Previously
                 -- "-- Generating Go" printed unconditionally, which made the
                 -- "TYPE ERROR" buried two lines up easy to miss + suggested
