@@ -3900,6 +3900,17 @@ generateDeclsForDepScoped _modName canMod modPrefix =
     -- arg is preserved for callers but is no longer load-bearing
     -- inside the renderer chain; remove the arg in a follow-up
     -- cleanup once external imports are audited.
+    --
+    -- v0.17 Wave 3 (#660) attempt 2: tried installing merged
+    -- Solve.SolvedTypes scoped to dep render via scopeStateRef
+    -- write/restore.  Regressed 4 examples — lazy GoExpr thunks
+    -- shared across dep + entry get memoised under the scoped ctx
+    -- and entry consumers then see specialized [Error, int] vs.
+    -- their polymorphic [Error, T1] sig.  Reverted; see memory
+    -- v017_wave3_scope_install_too_aggressive for the deeper
+    -- explanation.  The architectural close requires lazy-thunk
+    -- isolation (NOINLINE-per-decl + sharing-busting wrapper) —
+    -- multi-session work.
     generateDeclsForDep canMod modPrefix
 
 
