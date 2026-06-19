@@ -4782,6 +4782,124 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
             [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
 
 
+-- | v0.17 iter 22a (task #654) — pure builder for the post-C10
+-- codegen environment.
+--
+-- Lifts the C10 dep-update block (formerly at lines 4830-4962
+-- inside the 'imports' lazy thunk of 'generateGoMulti') into a
+-- standalone pure function.  The two 'readIORef globalCgEnv'
+-- reads collapse into a single 'prevEnv' parameter — callers
+-- snapshot once at the IORef and pass the value in.
+--
+-- This extraction is BYTE-EQUIVALENT: same merged tables, same
+-- 'Rec.with*' setter ordering, same 'collectFuncTypesWith'
+-- invocation, same 'betterParamTypes' / 'betterRetType'
+-- arbitration semantics.
+--
+-- Sub-iter 22a goal: prove mechanical extractability.  The IORef
+-- stays alive (writeIORef at line 4963).  Iter 22b extracts the
+-- goSigMap C10 update similarly; iter 22c moves both into
+-- solvePhase; iter 22d+22e defuse the IORefs.
+buildFinalCgEnv
+    :: Rec.CodegenEnv
+        -- ^ prevEnv: snapshot of globalCgEnv at C10 entry
+    -> Solve.SolvedTypes
+    -> Can.Module
+        -- ^ entry module canonical AST
+    -> Set.Set String
+        -- ^ depRecAliases
+    -> Set.Set String
+        -- ^ depUnionNames
+    -> Set.Set String
+        -- ^ depEnumNames
+    -> Map.Map String Int
+        -- ^ depArities
+    -> Map.Map String [String]
+        -- ^ depParamTypes
+    -> Map.Map String String
+        -- ^ depRetTypes
+    -> Map.Map String String
+        -- ^ depUltRetTypes
+    -> Map.Map String [String]
+        -- ^ extraInferredParamTypes
+    -> Map.Map String String
+        -- ^ extraInferredRetTypes
+    -> Map.Map String ([String], [String], String)
+        -- ^ extraInferredSigs
+    -> [(String, Map.Map String Can.Alias)]
+        -- ^ depAliasPairs
+    -> Rec.CodegenEnv
+buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
+                depUnionNames depEnumNames depArities
+                depParamTypes depRetTypes depUltRetTypes
+                extraInferredParamTypes extraInferredRetTypes
+                extraInferredSigs depAliasPairs =
+    let earlyRecAliases = Set.union depRecAliases
+            (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
+                       (Rec._cg_recordAliases prevEnv))
+        earlyFieldIdx = Map.unions
+            [ Rec.buildRegistry (Can._aliases canMod)
+            , Rec.buildDepFieldIndex depAliasPairs
+            , Rec._cg_fieldIndex prevEnv
+            ]
+        solvedEnv = Solve._stEnv solvedTypes
+        sigTypeFor n =
+            case Map.lookup n (declsByName canMod) of
+                Just (Can.TypedDef _ _ typedPats _ retTy) ->
+                    Just (foldr T.TLambda retTy (map snd typedPats))
+                _ -> Map.lookup n solvedEnv
+        entryInferredSigs = Map.fromList
+            [ (goSafeName n, splitInferredSigWithRegScoped Nothing earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
+            | (n, _) <- Map.toList solvedEnv
+            , Just ty <- [sigTypeFor n]
+            ]
+        entryInferredParams = Map.map (\(_, ps, _) -> ps) entryInferredSigs
+        entryInferredRets   = Map.map (\(_, _, r) -> r) entryInferredSigs
+        renameTypeForExternal' t =
+            case generaliseToAnnotation t of
+                T.Forall _ renamed -> renamed
+        entrySkyToGoTVars = Map.fromList
+            [ ( goSafeName n
+              , inferredSigSkyToGoScoped Nothing
+                    earlyRecAliases earlyFieldIdx
+                    (countParamsFor n canMod)
+                    (renameTypeForExternal' ty) )
+            | (n, _) <- Map.toList solvedEnv
+            , Just ty <- [sigTypeFor n]
+            ]
+        allRecAliases = Set.union depRecAliases
+            (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
+                       (Rec._cg_recordAliases prevEnv))
+        (entryParamTys, entryRetTys, entryUltRetTys) =
+            collectFuncTypesWith allRecAliases "" canMod
+        allParamTys = Map.unionWith betterParamTypes
+            (Map.unionWith betterParamTypes
+                entryInferredParams extraInferredParamTypes)
+            (Map.unionWith betterParamTypes
+                entryParamTys depParamTypes)
+        allRetTys   = Map.unionWith betterRetType
+            (Map.unionWith betterRetType
+                entryInferredRets extraInferredRetTypes)
+            (Map.unionWith betterRetType
+                entryRetTys depRetTypes)
+        allUltRetTys = Map.union entryUltRetTys depUltRetTypes
+    in Rec.withCallSiteInstances
+              (Rec._cg_callSiteInstances prevEnv)
+          $ Rec.withFuncSkyToGoTVars
+              (Map.union entrySkyToGoTVars
+                  (Rec._cg_funcSkyToGoTVars prevEnv))
+          $ Rec.withInferredSigs
+              (Map.union extraInferredSigs entryInferredSigs)
+          $ Rec.withFuncUltimateRetTypes allUltRetTys
+          $ Rec.withFuncTypes allParamTys allRetTys
+          $ Rec.withDepArities depArities
+          $ Rec.withRecordAliases depRecAliases
+          $ Rec.withUnionNames depUnionNames
+          $ Rec.withEnumNames depEnumNames
+          $ Rec.withDepFieldIndex depAliasPairs
+          $ Rec.buildCodegenEnv solvedTypes canMod
+
+
 -- | Generate Go with merged dependency declarations
 generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> String
 -- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
@@ -4827,139 +4945,19 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- coercion and Go rejects any→concrete.
             -- Build alias set early so splitInferredSigWith can resolve
             -- cross-module record aliases in HM-inferred types.
-            prevEnvEarly <- readIORef globalCgEnv
-            let earlyRecAliases = Set.union depRecAliases
-                    (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
-                               (Rec._cg_recordAliases prevEnvEarly))
-                -- Build the full field-set → alias-name registry early
-                -- so `splitInferredSigWithReg` can resolve TRecord nodes
-                -- to their `_R` Go struct names in emitted signatures.
-                earlyFieldIdx = Map.unions
-                    [ Rec.buildRegistry (Can._aliases canMod)
-                    , Rec.buildDepFieldIndex depAliasPairs
-                    , Rec._cg_fieldIndex prevEnvEarly
-                    ]
-            -- Entry-module sigs visible to call-site codegen. For each
-            -- top-level function we pick the same type the declaration
-            -- will emit:
-            --   TypedDef: the annotation (`a -> Foo` — may carry user
-            --             TVars that become Go generics)
-            --   Def:      the HM-solved type
-            -- Using the solved type for TypedDef would confuse call sites
-            -- when the solved type's TVars differ from the annotation's
-            -- (e.g. `init : a -> …` where the body narrows `a` to a
-            -- concrete Dict — call sites would omit the `[any]`
-            -- instantiation that the declaration still needs).
-            -- v0.15.x P37a: `solvedTypes` is the new `SolvedTypes`
-            -- record; the lookup / iteration here works against the
-            -- env-map projection.  Extract once for readability.
-            let solvedEnv = Solve._stEnv solvedTypes
-                sigTypeFor n =
-                    case Map.lookup n (declsByName canMod) of
-                        Just (Can.TypedDef _ _ typedPats _ retTy) ->
-                            Just (foldr T.TLambda retTy (map snd typedPats))
-                        _ -> Map.lookup n solvedEnv
-                entryInferredSigs = Map.fromList
-                    [ (goSafeName n, splitInferredSigWithRegScoped Nothing earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
-                    | (n, _) <- Map.toList solvedEnv
-                    , Just ty <- [sigTypeFor n]
-                    ]
-                entryInferredParams = Map.map (\(_, ps, _) -> ps) entryInferredSigs
-                entryInferredRets   = Map.map (\(_, _, r) -> r) entryInferredSigs
-                -- v0.13 Phase A5+: same Sky-TVar → Go-TVar mapping for
-                -- entry-module functions.  See depSkyToGoTVars above.
-                -- See depSkyToGoTVars comment — apply the same
-                -- generalisation-style rename so SkyNames match the
-                -- annotation Forall names the solver captures.  Entry-
-                -- module same-module call sites also go through this
-                -- path because cross-module dep callers see the entry
-                -- module via depExternals (and entry-module recursive
-                -- calls capture against the local CLet binding's
-                -- generalised annotation too).
-                renameTypeForExternal' t =
-                    case generaliseToAnnotation t of
-                        T.Forall _ renamed -> renamed
-                entrySkyToGoTVars = Map.fromList
-                    [ ( goSafeName n
-                      , inferredSigSkyToGoScoped Nothing
-                            earlyRecAliases earlyFieldIdx
-                            (countParamsFor n canMod)
-                            (renameTypeForExternal' ty) )
-                    | (n, _) <- Map.toList solvedEnv
-                    , Just ty <- [sigTypeFor n]
-                    ]
-            -- Gather the FULL record-alias set (entry + dep modules,
-            -- prefixed and unprefixed forms) so collectFuncTypesWith's
-            -- safeReturnTypeBootstrap resolves `Piece` → `Chess_Piece_Piece_R`
-            -- instead of degrading to `any`. Without this, annotated
-            -- entry functions taking record types get `any` params.
+            -- v0.17 iter 22a (task #654) — C10 cgEnv build extracted
+            -- to 'buildFinalCgEnv' pure function.  Single 'readIORef
+            -- globalCgEnv' snapshot replaces the two prior reads
+            -- (the previous code read at 'prevEnvEarly' + 'prevEnv'
+            -- — same value at that point in the do-block).  The
+            -- 'globalCgEnv' IORef stays alive; iter 22d defuses it.
             prevEnv <- readIORef globalCgEnv
-            let allRecAliases = Set.union depRecAliases
-                    (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
-                               (Rec._cg_recordAliases prevEnv))
-                (entryParamTys, entryRetTys, entryUltRetTys) =
-                    collectFuncTypesWith allRecAliases "" canMod
-                -- v0.13 Stage 1 — merge per-key, picking the
-                -- BETTER of the inferred (HM-derived) and the
-                -- early-collected (decl-derived) entries:
-                --
-                -- * The HM-inferred entries preserve TVar names in
-                --   COMPOUND types (`func(string) T1`, `[]T1`,
-                --   `rt.SkyMaybe[T1]`) — critical for σ-recovery
-                --   at HOF call sites with typed args.
-                -- * The early-collected entries have concrete types
-                --   for auto-record-ctors (`Item : int -> string
-                --   -> []string -> Item_R`) — HM may solve these as
-                --   bare-polymorphic (`T1 -> T2 -> T3 -> Item_R`)
-                --   which loses the concrete field types and
-                --   prevents call-site coercion.
-                --
-                -- `betterParamTypes` picks per-call between the two
-                -- maps: when the early entry has more concrete
-                -- info (fewer bare TVars), prefer it; otherwise
-                -- use the inferred entry.
-                allParamTys = Map.unionWith betterParamTypes
-                    (Map.unionWith betterParamTypes
-                        entryInferredParams extraInferredParamTypes)
-                    (Map.unionWith betterParamTypes
-                        entryParamTys depParamTypes)
-                allRetTys   = Map.unionWith betterRetType
-                    (Map.unionWith betterRetType
-                        entryInferredRets extraInferredRetTypes)
-                    (Map.unionWith betterRetType
-                        entryRetTys depRetTypes)
-                -- v0.13 Stage 2 — ultimate return types (after all
-                -- args applied). ONLY merge entries computed with
-                -- `ultimateReturnType` (recursive TLambda strip).
-                -- Do NOT include `entryInferredRets` / `extraInferredRetTypes`
-                -- here — those have after-one-strip semantics and
-                -- would corrupt the typed-partial-app wrapper output
-                -- (caller would get `func(T1) func(any) func(any) X`
-                -- instead of `func(T1) X`). Consumers fall back to
-                -- "any" for unannotated functions, which produces
-                -- `func(T1) any` — strictly safer than the wrong
-                -- multi-level shape.
-                allUltRetTys = Map.union entryUltRetTys depUltRetTypes
-                -- v0.13 Phase A5: preserve the call-site instance
-                -- registry from prevEnv (installed by continueCompile
-                -- after solveWithInstances).  The rest of the cgEnv
-                -- chain rebuilds from scratch via buildCodegenEnv;
-                -- the CSI map needs explicit threading.
-                cgEnv = Rec.withCallSiteInstances
-                          (Rec._cg_callSiteInstances prevEnv)
-                      $ Rec.withFuncSkyToGoTVars
-                          (Map.union entrySkyToGoTVars
-                              (Rec._cg_funcSkyToGoTVars prevEnv))
-                      $ Rec.withInferredSigs
-                          (Map.union extraInferredSigs entryInferredSigs)
-                      $ Rec.withFuncUltimateRetTypes allUltRetTys
-                      $ Rec.withFuncTypes allParamTys allRetTys
-                      $ Rec.withDepArities depArities
-                      $ Rec.withRecordAliases depRecAliases
-                      $ Rec.withUnionNames depUnionNames
-                      $ Rec.withEnumNames depEnumNames
-                      $ Rec.withDepFieldIndex depAliasPairs
-                      $ Rec.buildCodegenEnv solvedTypes canMod
+            let cgEnv = buildFinalCgEnv prevEnv solvedTypes canMod
+                            depRecAliases depUnionNames depEnumNames
+                            depArities depParamTypes depRetTypes
+                            depUltRetTypes extraInferredParamTypes
+                            extraInferredRetTypes extraInferredSigs
+                            depAliasPairs
             writeIORef globalCgEnv cgEnv
             -- v0.17 iter 19 (task #654) — install C10 cgEnv unionNames
             -- onto scopeStateRef (refreshes the seed from line ~2719
