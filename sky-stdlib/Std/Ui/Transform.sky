@@ -1,3 +1,13 @@
+-- | Std.Ui.Transform — typed `transform:` property helpers (v0.15.57+).
+--
+-- Used by `Std.Ui.Animation` keyframes and `Std.Ui.Transition`
+-- steps.  `translateX / translateY / translate / scale / scaleXY /
+-- rotate / skewX / skewY / opacity` build typed `Prop` values.
+-- All `transform`-shaped helpers join into ONE `transform:`
+-- shorthand per keyframe; `opacity` emits standalone.  Use the
+-- shorthand-join contract to avoid stomping prior keyframes —
+-- multiple `translate*` calls in a single keyframe compose, not
+-- override.
 module Std.Ui.Transform exposing
     ( translateX
     , translateY

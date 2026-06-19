@@ -1,3 +1,12 @@
+-- | Std.Ui.Input — typed form controls for `Std.Ui`.
+--
+-- `button / text / multiline / email / username / search /
+-- currentPassword / newPassword / checkbox / radio / radioRow /
+-- slider` build typed `Element msg` form widgets with labels and
+-- typed event slots.  Password fields obey the v0.15 best-practice
+-- pattern — pair with `Ui.form` + `onSubmit DoSignIn` rather than
+-- per-keystroke `onInput`, so the secret never lands in Model and
+-- the browser password manager doesn't re-prompt on every render.
 module Std.Ui.Input exposing
     ( button
     , text

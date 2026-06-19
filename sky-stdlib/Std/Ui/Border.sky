@@ -1,3 +1,11 @@
+-- | Std.Ui.Border — typed border-* + shadow attribute helpers for `Std.Ui`.
+--
+-- `color / width / widthEach / rounded / solid / dashed / dotted /
+-- shadow / glow / innerShadow` build typed `Attribute msg` values
+-- the layout renderer translates into inline `style="border-..."`
+-- CSS.  Pseudo-class variants (`hoverColor`, `focusColor`,
+-- `activeColor`, `hoverWidth`, `hoverRounded`) emit sky-id-scoped
+-- `<style>` blocks so transitions work without JavaScript.
 module Std.Ui.Border exposing
     ( color
     , width

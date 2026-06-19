@@ -1,3 +1,12 @@
+-- | Std.Ui.Transition — typed CSS transitions for `Std.Ui` (v0.15.57+).
+--
+-- `Transition.attribute [property "background-color", duration 200,
+-- easing easeOut]` builds the CSS transition shorthand from typed
+-- `Step`s; pair with `Background.hoverColor` so the browser animates
+-- the change between base + `:hover` states.  Auto-wrapped in
+-- `@media (prefers-reduced-motion: no-preference)` by default for
+-- a11y; opt out via `attributeUnsafe` ONLY when motion is
+-- semantically required (loading spinner, progress indicator).
 module Std.Ui.Transition exposing
     ( Step
     , Easing
