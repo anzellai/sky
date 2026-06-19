@@ -49,6 +49,8 @@ module Sky.Build.LowerCtx
     , lookupCurrentDepModule
     , withKernelAlias
     , lookupKernelAlias
+    , withAliases
+    , withFieldIdx
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -402,3 +404,29 @@ lookupKernelAlias
     -> Maybe (String, String)
 lookupKernelAlias ctx home name =
     Map.lookup (home, name) (_lc_kernelAlias ctx)
+
+
+-- | v0.17 iter 18 (task #654) — install the merged record-alias
+-- map.  Replaces 'globalAllAliases' IORef write at codegen entry.
+-- continueCompile calls this once on 'scopeStateRef' after
+-- 'seedEarlyCgEnv' returns the map; subsequent transitional
+-- 'ctxFromIORef ()' bridges (used by @lookupAliasDecl@) see the
+-- populated map without a separate IORef hop.
+withAliases
+    :: Map.Map String Can.Alias
+    -> LowerCtx
+    -> LowerCtx
+withAliases aliases ctx =
+    ctx { _lc_aliases = aliases }
+
+
+-- | v0.17 iter 18 (task #654) — install the merged record-field
+-- index.  Replaces 'globalAllFieldIdx' IORef write at codegen
+-- entry.  Same write-once-via-scopeStateRef contract as
+-- 'withAliases'; read by @tvarsInEmitted@ via 'ctxFromIORef ()'.
+withFieldIdx
+    :: Rec.RecordRegistry
+    -> LowerCtx
+    -> LowerCtx
+withFieldIdx fieldIdx ctx =
+    ctx { _lc_fieldIdx = fieldIdx }

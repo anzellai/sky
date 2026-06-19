@@ -254,18 +254,23 @@ readIORefNoCse !ref = unsafePerformIO (readIORef ref)
 -- CONSTRUCTION; reading the env's own lazy thunk at that moment
 -- produces a `<<loop>>` black-hole.  This IORef is written before
 -- any sig emission, so reads from inside emission are always safe.
-{-# NOINLINE globalAllAliases #-}
-globalAllAliases :: IORef (Map.Map String Can.Alias)
-globalAllAliases = unsafePerformIO $ newIORef Map.empty
+-- v0.17 iter 18 (task #654) — 'globalAllAliases' IORef removed.
+-- The merged record-alias map now flows from 'seedEarlyCgEnv'
+-- as a return value, is destructured in 'continueCompile' and
+-- installed onto 'scopeStateRef' via 'LC.withAliases'.
+-- 'lookupAliasDecl' reads it via the 'ctxFromIORef ()' bridge.
 
 
 -- | v0.15 Stage E — early-populated field-index registry.  Same
 -- shape as `globalCgEnv._cg_fieldIndex` but readable from
 -- `tvarsInEmitted` without triggering env build (avoiding the
 -- `<<loop>>` black-hole).  Populated alongside `globalAllAliases`.
-{-# NOINLINE globalAllFieldIdx #-}
-globalAllFieldIdx :: IORef Rec.RecordRegistry
-globalAllFieldIdx = unsafePerformIO $ newIORef Map.empty
+-- v0.17 iter 18 (task #654) — 'globalAllFieldIdx' IORef removed.
+-- The merged record-field-index registry now flows from
+-- 'seedEarlyCgEnv' as a return value, is destructured in
+-- 'continueCompile' and installed onto 'scopeStateRef' via
+-- 'LC.withFieldIdx'.  'tvarsInEmitted' reads it via the
+-- 'ctxFromIORef ()' bridge.
 
 
 -- | v0.15 Stage E — synthetic TVar naming.  Same (aliasName,
@@ -277,10 +282,21 @@ syntheticAliasVar aliasName varName =
 
 
 -- | v0.15 Stage E — alias lookup with module-prefix fallback.
+--
+-- v0.17 iter 18 (task #654) — read path migrated from the
+-- dedicated 'globalAllAliases' IORef (now deleted) to the
+-- consolidated 'scopeStateRef' bridge.  'continueCompile'
+-- installs the merged alias map onto 'scopeStateRef' right after
+-- 'seedEarlyCgEnv' returns it, so all reads on this path now
+-- route through one IORef instead of two.  Use
+-- 'readIORefNoCse' (which defeats CSE via 'BangPatterns' on the
+-- IORef arg + NOINLINE) so multiple call sites of
+-- 'lookupAliasDecl' don't share a stale snapshot.
+{-# NOINLINE lookupAliasDecl #-}
 lookupAliasDecl :: String -> Maybe Can.Alias
-lookupAliasDecl aliasName = unsafePerformIO $ do
-    aliasMap <- readIORef globalAllAliases
-    return $ case Map.lookup aliasName aliasMap of
+lookupAliasDecl aliasName =
+    let aliasMap = LC._lc_aliases (readIORefNoCse scopeStateRef)
+    in case Map.lookup aliasName aliasMap of
         Just a -> Just a
         Nothing ->
             let suffix = reverse (takeWhile (/= '_') (reverse aliasName))
@@ -1251,8 +1267,10 @@ resetCompileState = do
     -- IORef is gone.  csiByCallee now flows as
     -- SolveOutputs._so_csiByCallee.
     writeIORef globalGoSigMap Map.empty
-    writeIORef globalAllAliases Map.empty
-    writeIORef globalAllFieldIdx Map.empty
+    -- v0.17 iter 18 (task #654) — globalAllAliases + globalAllFieldIdx
+    -- resets removed; both IORefs are gone.  Maps flow as
+    -- 'seedEarlyCgEnv' return values + 'scopeStateRef' install in
+    -- 'continueCompile'.
     -- v0.17 iter 13 (task #654) — globalReachableSet reset removed; IORef
     -- is gone.  ReachableSet now flows as SolveOutputs._so_reached.
     -- v0.17 iter 16 (task #654) — globalReachableProgram reset removed;
@@ -2250,24 +2268,30 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
 
 -- | v0.17 PR-α Stage 3a — early cgEnv seed phase.  Extracted from
 -- continueCompile (was lines 1258-1318 of the monolithic
--- function).  Populates 'globalAllAliases' + 'globalAllFieldIdx'
--- IORefs and primes 'globalCgEnv's typed-func-table fields
+-- function).  Primes 'globalCgEnv's typed-func-table fields
 -- BEFORE dep-decl emission, so cross-module call-site codegen
 -- can resolve typed param types.
 --
--- Returns 'earlyAllRecAliases' — the rec-alias set the downstream
--- 'depRecAliases'/'depTriples' computations need (in continueCompile
--- between Stage 3a and the eventual Stage 3b solver extraction).
+-- Returns @(allAliasesMap, allFieldIdx, earlyAllRecAliases)@ —
+-- the maps the lowerer (formerly via 'globalAllAliases' /
+-- 'globalAllFieldIdx' IORefs) and the dep-sig derivation
+-- ('earlyAllRecAliases') consume downstream.
 --
--- The 3 IORef writes stay alive (they are the channels the lowerer
--- reads from); the returned 'Set' enables future Stage-3b-onwards
--- substages to thread the value explicitly without re-deriving.
+-- v0.17 iter 18 (task #654) — the two registry IORefs are gone.
+-- 'continueCompile' takes the two maps and installs them on
+-- 'scopeStateRef' via 'LC.withAliases' + 'LC.withFieldIdx' so the
+-- transitional 'ctxFromIORef ()' bridges (used by
+-- 'lookupAliasDecl' + 'tvarsInEmitted') see the populated maps
+-- without a dedicated IORef hop.
 seedEarlyCgEnv
     :: Can.Module
     -> [(String, Can.Module)]
-    -> IO (Set.Set String)
+    -> IO ( Map.Map String Can.Alias
+          , Rec.RecordRegistry
+          , Set.Set String
+          )
 seedEarlyCgEnv canMod validDeps = do
-    -- v0.15 Stage E — populate the all-alias map EARLY (before
+    -- v0.15 Stage E — compute the all-alias map EARLY (before
     -- any sig emission) so the parametric-alias generic-args
     -- renderer can recover alias type-args from row-poly HM
     -- inferred records.  Both raw + prefixed alias names are
@@ -2281,7 +2305,6 @@ seedEarlyCgEnv canMod validDeps = do
                , let prefix = map (\c -> if c == '.' then '_' else c) mn
                ]
              ++ [ Can._aliases dm | (_, dm) <- validDeps ])
-    writeIORef globalAllAliases allAliasesMap
     -- v0.15 Stage E — same for the field-index registry.  Used by
     -- 'tvarsInEmitted' to detect parametric-alias-shaped records
     -- WITHOUT triggering the cgEnv lazy thunk's `<<loop>>` black-hole
@@ -2293,7 +2316,6 @@ seedEarlyCgEnv canMod validDeps = do
                 | (mn, dm) <- validDeps
                 , let prefix = map (\c -> if c == '.' then '_' else c) mn
                 ])
-    writeIORef globalAllFieldIdx allFieldIdx
     -- T2/T6: prime the global codegen env's function-type tables
     -- BEFORE dep-decl emission, so call-site codegen in dep bodies
     -- (Can.Call → coerceCallArgs) can see typed param types for
@@ -2328,7 +2350,7 @@ seedEarlyCgEnv canMod validDeps = do
         , Rec._cg_funcUltimateRetType =
             Map.union earlyEntryUltRet earlyDepUltRetTypes
         }
-    return earlyAllRecAliases
+    return (allAliasesMap, allFieldIdx, earlyAllRecAliases)
 
 
 -- | v0.17 PR-α Stage 3b — pure dep-signature derivation.
@@ -2646,11 +2668,21 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
          CanonEntryError      -> return (Left "Canonicalise error")
          CanonOk canMod validDeps -> do
             -- v0.17 PR-α Stage 3a — early cgEnv seed extracted to
-            -- 'seedEarlyCgEnv'.  Populates globalAllAliases +
-            -- globalAllFieldIdx + primes globalCgEnv's func-type
-            -- tables; returns earlyAllRecAliases used by
-            -- depRecAliases/depTriples downstream.
-            earlyAllRecAliases <- seedEarlyCgEnv canMod validDeps
+            -- 'seedEarlyCgEnv'.  Primes globalCgEnv's func-type
+            -- tables and returns the all-aliases map, field-index
+            -- registry, and earlyAllRecAliases.
+            -- v0.17 iter 18 (task #654) — the two registry IORefs
+            -- (globalAllAliases + globalAllFieldIdx) are gone.
+            -- 'seedEarlyCgEnv' now returns the maps as pure values;
+            -- we install them on 'scopeStateRef' so transitional
+            -- 'ctxFromIORef ()' bridges in 'lookupAliasDecl' +
+            -- 'tvarsInEmitted' see the populated maps.
+            (allAliasesMap, allFieldIdx, earlyAllRecAliases) <-
+                seedEarlyCgEnv canMod validDeps
+            modifyIORef' scopeStateRef
+                ( LC.withAliases allAliasesMap
+                . LC.withFieldIdx allFieldIdx
+                )
             -- v0.13 Stage 1 (task #189) — depDecls computation moved
             -- LATER in the pipeline (just before generateGoMulti) so
             -- the dep-emit-time `getCgEnv` sees `funcSkyToGoTVars`
@@ -9282,16 +9314,21 @@ tvarsInEmitted ty = case ty of
     T.TAlias _ _ pairs (T.Hoisted inner) -> concatMap tvarsInEmitted (inner : map snd pairs)
     -- v0.15 Stage E — capture TVars in record-field types AND
     -- surface synthetic TVars from parametric-alias generic args
-    -- (handles the partial-use / subset-record case).  Reads
-    -- `globalAllFieldIdx` (populated EARLY, safe to read from sig
-    -- emission), NOT `getCgEnv` (which causes `<<loop>>` because
-    -- this function runs DURING env construction).
+    -- (handles the partial-use / subset-record case).  Reads the
+    -- merged field-index registry (populated EARLY by
+    -- 'seedEarlyCgEnv', installed onto 'scopeStateRef' so the
+    -- 'ctxFromIORef ()' bridge surfaces it here), NOT 'getCgEnv'
+    -- (which causes `<<loop>>` because this function runs
+    -- DURING env construction).
+    -- v0.17 iter 18 (task #654) — read migrated from dedicated
+    -- 'globalAllFieldIdx' IORef (now deleted) to the
+    -- consolidated 'scopeStateRef' bridge.
     T.TRecord fields _ ->
         let fieldTVars = concatMap
                 (\(T.FieldType _ ft) -> tvarsInEmitted ft)
                 (Map.elems fields)
             fieldNames = Map.keys fields
-            fieldIdx = readIORefNoCse globalAllFieldIdx
+            fieldIdx = LC._lc_fieldIdx (readIORefNoCse scopeStateRef)
             aliasMatch = Rec.lookupRecordAlias fieldIdx fieldNames
             syntheticForRec = case aliasMatch of
                 Just aliasName ->
