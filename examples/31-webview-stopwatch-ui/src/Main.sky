@@ -67,7 +67,7 @@ subscriptions model =
 -- ═══════════════════════════════════════════════════════════════════
 -- View — same Std.Ui tree as 22-tui-stopwatch-ui's
 -- ═══════════════════════════════════════════════════════════════════
-view : Model -> any
+view : Model -> Html
 view model =
     Ui.layout
         [Background.color (Ui.rgb 24 28 48), Font.color (Ui.rgb 220 220 230)]

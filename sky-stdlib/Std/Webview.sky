@@ -62,10 +62,17 @@ withSize w h cfg =
 -- field. The `view` returns a `Std.Ui.Element msg` tree — same as
 -- Sky.Live / Sky.Tui — so the same view function renders unchanged
 -- under the desktop backend.
+--
+-- `Html` is the canonical post-`Ui.layout` shape: every view function
+-- wraps its `Element` tree in `Ui.layout [] (...)` before returning,
+-- and the resulting `Html` value flows through the renderer.  The
+-- typed slot rejects raw `Element` (must layout first) and rejects
+-- string / int / record returns that previously passed silently
+-- against the `any` widening.
 type alias AppCfg model msg =
     { init : () -> ( model, Cmd msg )
     , update : msg -> model -> ( model, Cmd msg )
-    , view : model -> any
+    , view : model -> Html
     , subscriptions : model -> Sub msg
     , window : WindowCfg
     }
