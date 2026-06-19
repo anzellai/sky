@@ -47,6 +47,8 @@ module Sky.Build.LowerCtx
     , withEnclosingTypeParams
     , withCurrentDepModule
     , lookupCurrentDepModule
+    , withKernelAlias
+    , lookupKernelAlias
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -168,6 +170,17 @@ data LowerCtx = LowerCtx
         -- + read inline from the LC value at sites that already
         -- accept a 'LowerCtx'.  Same write-once-at-solver-done
         -- semantics as '_lc_reachableSet'.
+    , _lc_kernelAlias :: !(Map.Map (ModuleName.Canonical, String) (String, String))
+        -- ^ v0.17 iter 17 (task #654) — kernel-alias registry
+        -- (snapshot of @globalKernelAlias@).  Maps a Sky-source
+        -- (home, name) pair to the matching (kernelMod, kernelName)
+        -- so codegen rewrites @Can.VarTopLevel home name@ to
+        -- @Can.VarKernel kMod kFn@ when the source binding is a
+        -- @Ffi.kernel "K_n"@ alias.  Written once after solvePhase
+        -- (via @LC.withKernelAlias@ on 'scopeStateRef') so the
+        -- transitional @ctxFromIORef ()@ bridges see it on the
+        -- next read.  Replaces the @lookupKernelAlias@ IORef hop
+        -- inside @exprToGo@'s @Can.VarTopLevel@ + @Can.Call@ arms.
     }
 
 
@@ -189,6 +202,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_currentDepModule = Nothing
     , _lc_reachableSet = Set.empty
     , _lc_reachableProgram = Set.empty
+    , _lc_kernelAlias = Map.empty
     }
 
 
@@ -229,6 +243,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = L
     , _lc_currentDepModule = Nothing
     , _lc_reachableSet = reached
     , _lc_reachableProgram = reachedProg
+    , _lc_kernelAlias = Map.empty
     }
 
 
@@ -356,3 +371,34 @@ withCurrentDepModule modHint ctx =
 -- only — no consumer migrated to call this yet.
 lookupCurrentDepModule :: LowerCtx -> Maybe String
 lookupCurrentDepModule ctx = _lc_currentDepModule ctx
+
+
+-- | v0.17 iter 17 (task #654) — replace 'globalKernelAlias' IORef
+-- with a 'LowerCtx'-threaded map.  Caller (continueCompile) sets
+-- this once on 'scopeStateRef' immediately after the solve-phase
+-- destructures @kernelAliasMap@ from 'SolveOutputs'; subsequent
+-- transitional 'ctxFromIORef ()' bridges in
+-- 'Sky.Build.Compile' read the populated map without a separate
+-- IORef hop.  Direct 'LowerCtx' callers (e.g. @exprToGo@) read
+-- via 'lookupKernelAlias' below.
+withKernelAlias
+    :: Map.Map (ModuleName.Canonical, String) (String, String)
+    -> LowerCtx
+    -> LowerCtx
+withKernelAlias aliases ctx =
+    ctx { _lc_kernelAlias = aliases }
+
+
+-- | v0.17 iter 17 (task #654) — pure kernel-alias lookup against
+-- the threaded 'LowerCtx'.  Replaces the @lookupKernelAlias :: ...
+-- -> Maybe (String, String)@ IORef-reading helper formerly at
+-- 'Sky.Build.Compile.lookupKernelAlias'.  Returns @Nothing@ when
+-- the (home, name) pair is not a Sky-source @Ffi.kernel "K_n"@
+-- alias — codegen continues with the original Sky-source binding.
+lookupKernelAlias
+    :: LowerCtx
+    -> ModuleName.Canonical
+    -> String
+    -> Maybe (String, String)
+lookupKernelAlias ctx home name =
+    Map.lookup (home, name) (_lc_kernelAlias ctx)

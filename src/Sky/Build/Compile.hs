@@ -338,9 +338,14 @@ aliasGenericArgs aliasName actualFields =
 -- the kernel-direct route already enjoys.
 --
 -- See `docs/V1_TYPED_CODEGEN_FINISH.md` Stage 4 for the rationale.
-{-# NOINLINE globalKernelAlias #-}
-globalKernelAlias :: IORef (Map.Map (ModuleName.Canonical, String) (String, String))
-globalKernelAlias = unsafePerformIO $ newIORef Map.empty
+-- v0.17 iter 17 (task #654) — 'globalKernelAlias' IORef removed.
+-- Kernel-alias registry now flows as 'SolveOutputs._so_kernelAliasMap'
+-- → 'continueCompile' destructure → 'modifyIORef' scopeStateRef
+-- (LC.withKernelAlias ...)' so the consolidated 'scopeStateRef'
+-- bridge surfaces it to 'rewriteAliasHead' (via 'ctxFromIORef ()')
+-- and 'lookupKernelAlias'.  Direct 'LowerCtx' callers
+-- ('exprToGo's 'VarTopLevel' arm) read pure off the threaded ctx
+-- via 'LC.lookupKernelAlias ctx home name'.
 
 
 -- v0.17 IORef defusing #5 — @globalEmittedSpecs@ deleted.  The
@@ -1237,7 +1242,11 @@ resetCompileState = do
     -- dead: only readers were comments + the eliminated scaffolding
     -- block at Compile.hs:4673).  globalAllFieldIdx still alive
     -- (line 8994 reads it inside `tvarsInEmitted`).
-    writeIORef globalKernelAlias Map.empty
+    -- v0.17 iter 17 (task #654) — globalKernelAlias reset removed;
+    -- IORef is gone.  Kernel-alias map now flows as
+    -- SolveOutputs._so_kernelAliasMap and is installed onto
+    -- scopeStateRef in continueCompile after the solveOutcome
+    -- destructure.
     -- v0.17 iter 14 (task #654) — globalCsiByCallee reset removed;
     -- IORef is gone.  csiByCallee now flows as
     -- SolveOutputs._so_csiByCallee.
@@ -1502,6 +1511,16 @@ data SolveOutputs = SolveOutputs
         -- disabled ('dceDisabled' = True) the value is Set.empty;
         -- the empty-set reader fallback at 'generateDeclsForDep'
         -- preserves keep-everything semantics.
+    , _so_kernelAliasMap      :: !(Map.Map (ModuleName.Canonical, String) (String, String))
+        -- ^ v0.17 iter 17 (task #654) — kernel-alias registry
+        -- computed by 'buildKernelAliasMap' inside solvePhase.
+        -- Maps a Sky-source @(home, name)@ to the matching
+        -- @(kernelMod, kernelName)@ when the binding is an
+        -- @Ffi.kernel "K_n"@ alias.  Consumed by 'exprToGo' (via
+        -- 'LC._lc_kernelAlias') + 'authBoundaryDiagnostics' to
+        -- rewrite the head to @Can.VarKernel@.  Previously bridged
+        -- via @globalKernelAlias@ IORef; this field defuses that
+        -- IORef entirely.
     }
 
 
@@ -1842,7 +1861,11 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- surface 'reachableProgram' so it flows into
                     -- SolveOutputs._so_reachableProg (defuses
                     -- 'globalReachableProgram' IORef).
-                    (types, reached, csiByCallee, reachableProgram) <- case solveResult of
+                    -- v0.17 iter 17 (task #654) — extend tuple to also
+                    -- surface 'kernelAliasMap' so it flows into
+                    -- SolveOutputs._so_kernelAliasMap (defuses
+                    -- 'globalKernelAlias' IORef).
+                    (types, reached, csiByCallee, reachableProgram, kernelAliasMap) <- case solveResult of
                         Solve.SolveOk t -> do
                             putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                             -- v0.13 Phase A3: log the captured instance table.
@@ -1895,9 +1918,12 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                             -- to 'buildKernelAliasMap'; pure derivation, IORef
                             -- write kept here so the existing reader contract
                             -- (lines ~9297, 11138) is preserved.
+                            -- v0.17 iter 17 (task #654) — IORef write
+                            -- removed; 'kernelAliasMap' is now a
+                            -- pure 'let' surfaced via
+                            -- 'SolveOutputs._so_kernelAliasMap'.
                             let kernelAliasMap =
                                     buildKernelAliasMap entrySrcMod canMod validDeps
-                            writeIORef globalKernelAlias kernelAliasMap
                             -- v0.13 F: whole-program Sky DCE.  Walk every
                             -- module's call graph from `(entryMod, "main")`
                             -- across module boundaries, tracking VarTopLevel
@@ -2012,7 +2038,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                         putStrLn $ "     " ++ Mono.mangleInstance
                                             (Solve.CallInstance q ts [])) (Set.toList reached)
                                 _ -> return ()
-                            return (t, reached, csiByCallee, reachableProgram)
+                            return (t, reached, csiByCallee, reachableProgram, kernelAliasMap)
                         Solve.SolveError err -> do
                             -- v0.13 Layer 1: route position-prefixed type
                             -- errors through the structured Diagnostic
@@ -2030,7 +2056,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                     let diag = Solve.solveErrorToDiagnostic entryPath err
                                     rendered <- Render.renderCli diag
                                     putStrLn rendered
-                            return (Solve.emptySolvedTypes, Set.empty, Map.empty, Set.empty)
+                            return (Solve.emptySolvedTypes, Set.empty, Map.empty, Set.empty, Map.empty)
                     -- P3: exhaustiveness — walk the entry + every dep's canonical
                     -- tree for non-exhaustive case expressions. A miss is a
                     -- compile-time error with source context; the `panic("non-
@@ -2218,6 +2244,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , _so_reached              = reached
                         , _so_csiByCallee          = csiByCallee
                         , _so_reachableProg        = reachableProgram
+                        , _so_kernelAliasMap       = kernelAliasMap
                         }
 
 
@@ -2716,6 +2743,22 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- 'generateDeclsForDep' (replaces 'readIORefNoCse
                     -- globalReachableProgram').
                     reachableProgram     = _so_reachableProg       solveOut
+                    -- v0.17 iter 17 (task #654) — 'kernelAliasMap' threaded
+                    -- from SolveOutputs.  Written to 'scopeStateRef'
+                    -- below so transitional 'ctxFromIORef ()' bridges
+                    -- (used by 'rewriteAliasHead') see the populated
+                    -- map; direct 'LowerCtx' callers (e.g. 'exprToGo'
+                    -- 'VarTopLevel' arm) read via
+                    -- 'LC.lookupKernelAlias ctx ...'.
+                    kernelAliasMap       = _so_kernelAliasMap      solveOut
+                -- v0.17 iter 17 (task #654) — install kernelAliasMap on
+                -- the consolidated 'scopeStateRef' bridge so the
+                -- legacy 'rewriteAliasHead' read path
+                -- (lookupKernelAlias → ctxFromIORef → scopeStateRef)
+                -- sees the populated map.  The direct 'LowerCtx'
+                -- callers (exprToGo's 'VarTopLevel' arm) read it
+                -- straight off 'ctx' via 'LC.lookupKernelAlias'.
+                modifyIORef' scopeStateRef (LC.withKernelAlias kernelAliasMap)
                 -- Bail BEFORE codegen if HM rejected the program. Previously
                 -- "-- Generating Go" printed unconditionally, which made the
                 -- "TYPE ERROR" buried two lines up easy to miss + suggested
@@ -9926,11 +9969,21 @@ parseTargetArgs s =
 -- kernel-alias registry.  Returns the matching (kernelMod, kernelName)
 -- pair so codegen can route the call through the typed kernel dispatch
 -- instead of treating the Sky-source binding as a regular user function.
+--
+-- v0.17 iter 17 (task #654) — read path migrated from the dedicated
+-- 'globalKernelAlias' IORef (now deleted) to the consolidated
+-- 'scopeStateRef' bridge.  'continueCompile' installs the
+-- 'kernelAliasMap' onto 'scopeStateRef' immediately after the
+-- solve-phase destructures it from 'SolveOutputs', so all reads on
+-- this path now route through one IORef instead of two.  Direct
+-- 'LowerCtx' callers (e.g. 'exprToGo' 'VarTopLevel' arm) read off
+-- the threaded ctx via 'LC.lookupKernelAlias ctx home name' — the
+-- only impure read inside the GoExpr renderer was at that site
+-- and is now pure.
 {-# NOINLINE lookupKernelAlias #-}
 lookupKernelAlias :: ModuleName.Canonical -> String -> Maybe (String, String)
-lookupKernelAlias home name = unsafePerformIO $ do
-    aliases <- readIORef globalKernelAlias
-    return $ Map.lookup (home, name) aliases
+lookupKernelAlias home name =
+    LC.lookupKernelAlias (ctxFromIORef ()) home name
 
 
 -- | v0.14.x Stage 4: if `func` is a `Can.VarTopLevel` that resolves to
@@ -9978,7 +10031,11 @@ exprToGo ctx (A.At _ expr) = case expr of
         -- v0.14.x Stage 4: Sky-source binding aliased to a kernel via
         -- `name = Ffi.kernel "KernelName"` — emit the kernel binding
         -- directly so the typed-codegen path takes over.
-        | Just (kMod, kFn) <- lookupKernelAlias home name ->
+        -- v0.17 iter 17 (task #654) — direct pure read off the
+        -- threaded 'ctx'.  Removes the last impure
+        -- 'globalKernelAlias' read inside the GoExpr renderer
+        -- (criterion B).
+        | Just (kMod, kFn) <- LC.lookupKernelAlias ctx home name ->
             kernelToGo kMod kFn
 
     Can.VarTopLevel home name ->
