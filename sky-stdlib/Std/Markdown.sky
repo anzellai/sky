@@ -1,3 +1,17 @@
+-- | Std.Markdown — render markdown source to Std.Ui Element trees (Layer 3 Sky source).
+--
+-- Direct render-to-Element (no HTML string round-trip) so styling
+-- inherits the surrounding theme (Font.color, Background.color,
+-- typography).  Safe to feed UNTRUSTED markdown — the parser never
+-- emits raw HTML, scripts, or event handlers, everything routes
+-- through typed Std.Ui constructors.  No bluemonday-equivalent
+-- sanitiser needed.
+--
+-- Supported subset is "chat-grade": headers, paragraphs, fenced
+-- code blocks, bullet / ordered lists, horizontal rules, bold,
+-- italic, inline code, links, trailing-double-space → `<br>`.
+-- Deliberately not supported in v1: tables, blockquotes, images,
+-- footnotes, raw HTML, math, mermaid.
 module Std.Markdown exposing (render, renderInline)
 
 -- Std.Markdown — render markdown source to Std.Ui Element trees.

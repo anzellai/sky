@@ -1,3 +1,15 @@
+-- | Std.Time — IANA-zone helpers complementing kernel `Time` (Layer 3 Sky source).
+--
+-- Adds calendar arithmetic that kernel `Sky.Core.Time` doesn't —
+-- `addMonths` / `addYears` (month-end CLAMPED so Feb 30 → Feb 28/29),
+-- `dayOfWeek` (ISO Mon=1..Sun=7), `weekOfYear` (ISO 8601),
+-- `startOfDay` / `startOfWeek` / `startOfMonth` / `startOfYear`,
+-- diff helpers in days / hours / minutes / seconds.
+--
+-- Every fallible IANA-zone lookup ships with an infallible `*Utc`
+-- companion (v0.15.48+) — `dayOfWeekUtc` / `startOfDayUtc` /
+-- `yearUtc` etc. return `Int -> Int` so server-internal callers
+-- don't thread `Result.withDefault 0` for the UTC happy path.
 module Std.Time exposing
     ( inZone, formatInZone
     , addMonths, addYears, addDays, addHours, addMinutes, addSeconds

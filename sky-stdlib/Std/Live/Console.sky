@@ -1,3 +1,18 @@
+-- | Std.Live.Console — types exposed for the optional `consoleAuth`
+-- field on `Live.app` cfg (v0.16.0+).
+--
+-- The `consoleAuth` callback is row-polymorphic, optional, and has
+-- shape `Request -> Task Error (Maybe Identity)`.  When the framework
+-- gates `/_sky/console` in `app`-mode (env `SKY_CONSOLE_AUTH=app`),
+-- it invokes the callback per request, BEFORE mounting console
+-- routes.  `Nothing` → 403 + structured `console.auth.denied` audit
+-- log.  `Just identity` → request continues; the identity rides on
+-- the same `__Host-sky_console` session cookie + is attached to
+-- subsequent telemetry for audit.
+--
+-- Use this when the app already has an SSO / multi-tenant session
+-- middleware: thread it into `consoleAuth` and the embedded console
+-- inherits the same auth surface — no second token to provision.
 module Std.Live.Console exposing
     ( Identity
     , defaultIdentity

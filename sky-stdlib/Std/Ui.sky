@@ -1,3 +1,18 @@
+-- | Std.Ui — typed, no-CSS layout DSL for Sky.Live / Sky.Tui / Sky.Webview.
+--
+-- Build UIs from typed primitives (`el / row / column / wrappedRow
+-- / grid / paragraph / textColumn / text / button / input / form /
+-- link / image`) and typed attributes (Background / Border / Font /
+-- Region / Input sub-modules).  Renders to inline-styled HTML on
+-- the server side; the same view function works unchanged across
+-- web (Sky.Live), terminal (Sky.Tui), and desktop (Sky.Webview)
+-- backends.
+--
+-- **No CSS files**, no template language, no client framework.
+-- HTML-escaping is automatic; `data-sky-eval` is forbidden.  Forms
+-- with sensitive inputs (passwords, API keys) MUST use `Ui.form`
+-- with `onSubmit DoSignIn`, not `onInput` per keystroke — see the
+-- password-pattern docs in the Sky.Live overview.
 module Std.Ui exposing (..)
 
 -- Std.Ui — typed, no-CSS layout DSL for Sky.Live.

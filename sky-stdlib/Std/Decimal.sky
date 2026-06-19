@@ -1,3 +1,14 @@
+-- | Std.Decimal — arbitrary-precision decimal arithmetic (Layer 3 Sky source).
+--
+-- Backed by `shopspring/decimal` in the runtime; safe for money,
+-- accounting, and any domain where binary floating-point rounding
+-- would corrupt totals.  Banker's rounding by default; percent /
+-- ratio helpers for fee calculations.  All arithmetic is exact
+-- within the decimal type — no implicit precision loss across
+-- chains of `mul` / `div` / `add` / `sub`.
+--
+-- For currency-typed amounts, prefer `Std.Money` (built on Decimal)
+-- so the ISO-4217 currency code rides alongside the magnitude.
 module Std.Decimal exposing
     ( Decimal
     , fromString, fromInt, fromFloat, fromMinor
