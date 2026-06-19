@@ -1,3 +1,4 @@
+-- | Std.Ui.Keyed — keyed children for stable diffing across reorders in `Std.Ui`.
 module Std.Ui.Keyed exposing (el, row, column)
 
 -- Std.Ui.Keyed — keyed children for stable diffing across reorders.

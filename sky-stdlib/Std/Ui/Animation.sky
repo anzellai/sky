@@ -1,3 +1,4 @@
+-- | Std.Ui.Animation — typed CSS keyframe animations for `Std.Ui` (v0.15.57+).
 module Std.Ui.Animation exposing
     ( Iterations
     , FillMode

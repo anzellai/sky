@@ -1,3 +1,4 @@
+-- | Std.Ui.Lazy — memoised Element trees for `Std.Ui`.
 module Std.Ui.Lazy exposing (lazy, lazy2, lazy3, lazy4, lazy5)
 
 -- Std.Ui.Lazy — memoised Element trees.

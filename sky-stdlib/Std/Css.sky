@@ -1,3 +1,4 @@
+-- | Std.Css — the typed stylesheet DSL (Layer 3 Sky source).
 module Std.Css exposing (..)
 
 -- | Std.Css — the typed stylesheet DSL.

@@ -1,3 +1,4 @@
+-- | Std.Ui.Region — semantic landmarks + accessibility helpers.
 module Std.Ui.Region exposing (mainContent, navigation, footer, aside, heading, label, announce, announceUrgently)
 
 -- Std.Ui.Region — semantic landmarks + accessibility helpers.

@@ -1,3 +1,4 @@
+-- | Std.Ui.Events — re-exports of event helpers (onClick / onSubmit / onInput) for `Std.Ui`.
 module Std.Ui.Events exposing (onClick, onSubmit, onInput)
 
 -- Std.Ui.Events — re-exports of the event helpers that live on
