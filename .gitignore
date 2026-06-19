@@ -21,6 +21,9 @@ firebaseadminsdk*.json
 
 # AI agent config
 .claude/
+# Exception: AUTONOMOUS_GOAL.md is tracked so live autonomous mandates
+# survive clones / new sessions per CLAUDE.md non-negotiable #0.
+!.claude/AUTONOMOUS_GOAL.md
 
 # Databases
 *.db

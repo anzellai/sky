@@ -150,6 +150,214 @@ WebGL2 spike (1).
 
 ## Non-negotiables
 
+### 0. Goal fidelity in autonomous loops — INVIOLABLE
+
+When the user gives an autonomous mandate (`/loop AUTONOMOUS until
+<goal>`, `/loop AUTONOMOUS <goal>`, or any equivalent multi-iteration
+directive), the goal as the user worded it is the ONLY authority on
+"done".
+
+This rule applies to ALL autonomous mandates — current and future,
+v0.17 / v0.18 / every compiler-cycle close, every product mandate,
+every session resumed after compaction. It is **structural**: it
+survives compaction, new sessions, and any redefinition I might
+attempt under pressure.
+
+#### The four hard rules
+
+1. **The user's goal is captured VERBATIM** at mandate start and
+   stored at `.claude/AUTONOMOUS_GOAL.md` in the project repo (so it
+   survives clones, compactions, and new sessions). Subsequent
+   iterations READ this file at entry and quote the goal back BEFORE
+   doing anything else. If the file doesn't exist and an autonomous
+   mandate is live, I reconstruct it from the user's most recent
+   goal-setting message — using their words, not mine.
+
+2. **I cannot declare "done".** Only an independent adversarial
+   **Judge agent** spawned with a fresh context, given the verbatim
+   goal, and verifying the ACTUAL claim (not a narrower lens I
+   picked) can return "100% achieved". I MUST NOT scope, soften, or
+   interpret the goal to fit what I shipped. Any "but/except/
+   however/caveat/modulo/essentially/mostly" in the Judge's report
+   → NOT done.
+
+3. **Drift detection at every iteration.** Before each
+   implementation step, I cross-check the planned step against the
+   verbatim goal. If the step addresses a redefined / narrower /
+   unrelated scope, I reset to the goal. Phrases that signal drift
+   and are FORBIDDEN in any "complete" framing:
+   - "criterion B OR clause", "load-bearing-but-pure", "documented
+     as X" (when the goal said "deleted" / "removed" / "no impurity")
+   - "shipped for the scope of [my chosen subtask]"
+   - "iter N criteria all green" (when "iter N criteria" are MY
+     definition, not the user's verbatim goal)
+   - "deferred to Stage 6+", "spec backlog", "technical debt",
+     "pre-existing", "out of scope for this iter"
+   - "session boundary", "clean handoff"
+
+4. **The only stop condition is a genuine implementation blocker.**
+   I halt ONLY when I cannot proceed without user input (external
+   auth wall, irreversible action requiring sign-off, ambiguous
+   user-decision required). I describe the blocker concretely,
+   await user direction, then CONTINUE the loop with their decision
+   — I do NOT treat the blocker as "done".
+
+#### The continuous-Judge loop protocol
+
+```
+iter_entry:
+  1. Read .claude/AUTONOMOUS_GOAL.md (create from user's words if
+     missing AND mandate is live)
+  2. Quote the goal verbatim in a 1-line restate (drift gate)
+  3. Spawn Judge agent (fresh context, see template below) — pass
+     the verbatim goal + current branch SHA + read access to repo
+
+  IF Judge says "100% ACHIEVED + VERIFIED":
+    → PushNotification user with final outcome
+    → Stop. Do NOT spawn another iteration.
+
+  IF Judge says "NOT 100%":
+    → Architect agent plans the closure of Judge's top gaps
+    → Adversarial grillers attack the plan (>=2 in parallel)
+    → Refine plan if grillers flag blocking concerns
+    → Executor agents implement (parallel where independent)
+    → SINGLE milestone verification at end of batch
+    → Re-spawn Judge for re-verdict
+
+  IF implementation blocker:
+    → Document the blocker
+    → PushNotification user describing what direction is needed
+    → Wait for user response
+    → On response: incorporate direction, resume the loop
+```
+
+#### Judge agent prompt template
+
+> You are an INDEPENDENT adversarial Judge verifying whether the
+> user-set goal has been 100% achieved on the Sky compiler at
+> `/Users/anzel/works/playground/sky`, branch `<branch>` @ `<SHA>`.
+>
+> USER'S VERBATIM GOAL (read it from
+> `.claude/AUTONOMOUS_GOAL.md`):
+> ```
+> <verbatim_goal_block>
+> ```
+>
+> VERIFY the LITERAL claim, not a narrower interpretation.
+> Examples of disqualifying findings:
+>   * Goal says "100% fully typed e2e" → ANY `rt.Coerce` in
+>     well-typed user code disqualifies. ANY `any` in emitted Go
+>     for a fully-HM-typed expression disqualifies.
+>   * Goal says "no runtime panics" → ANY panic class with a
+>     known unfixed reproduction disqualifies.
+>   * Goal says "if it compiles it works" → ANY Sky program that
+>     passes `sky check` but fails `go build` OR panics at
+>     runtime under well-typed semantics disqualifies.
+>   * Goal says "rock solid + future-proof" → ANY architectural
+>     band-aid, ANY "deferred to later" item, ANY known pending
+>     compiler task in the umbrella scope disqualifies.
+>
+> Map every disqualifying finding to a concrete file:line +
+> reproduction. List in priority order.
+>
+> Final verdict — EXACTLY one of:
+>   * "VERDICT: 100% ACHIEVED + VERIFIED — <one-line proof>"
+>   * "VERDICT: NOT ACHIEVED — <N> gaps; highest priority: <gap>"
+>
+> Forbidden in PASS verdict: "but", "except", "however",
+> "caveat", "mostly", "essentially", "for the scope of", "modulo".
+
+### 0.1 Remote-push discipline — minimize CI noise
+
+Local commits are checkpoints. Pushing to remote triggers CI for
+every push. Constant per-commit pushes burn CI minutes, fail-spam
+the branch status, and obscure real progress.
+
+#### Rules
+
+1. **Local commits are free; pushes are expensive.** Commit
+   liberally to checkpoint progress on the feature branch. Only
+   push to `origin` at meaningful milestones.
+
+2. **A "meaningful milestone" is one of**:
+   - A Judge agent verified phase boundary (e.g. "T1 leak class
+     architecturally closed + verified")
+   - An umbrella task closed (#383, #595, #644, #660, etc.)
+   - A user-requested checkpoint (e.g. user said "push the
+     current state")
+   - A genuine blocker preventing further local work where the
+     user needs to see what's pushed
+
+3. **A new commit is NOT a milestone.** Neither is "all 3
+   sequential gates green" if those gates verify only my narrow
+   scope. Neither is "iter N shipped".
+
+4. **Squash before push when sensible.** Many checkpoint commits
+   at one milestone → squash to one well-described commit at push
+   time. Preserve a tag/branch locally if I want to keep history.
+
+5. **The user can override.** If they say "push now", push.
+
+Forbidden patterns:
+  * Pushing per /loop iteration just because gates went green.
+  * Pushing a docstring fix as its own commit + push.
+  * "I want CI to validate this" → that's what local gates are for.
+
+### 0.2 Test-cadence discipline — no needless full-suite + wakeup cycles
+
+The slow-progress pattern: edit → full cabal test → schedule
+25-30 min wakeup → repeat. **This pattern is FORBIDDEN.**
+
+#### Rules
+
+1. **During implementation work, use the narrowest gate that
+   proves the change is correct.** Targeted spec match (`--match
+   "FooBar"`), single-example build, incremental build. Run these
+   in seconds, not minutes.
+
+2. **Full cabal test suite + full example sweep + verify scripts
+   run ONLY at milestone boundaries.** A milestone is the same
+   definition as 0.1 above. Not "I made a change". Not "I want to
+   be safe".
+
+3. **ScheduleWakeup is a SAFETY NET, not a pacing mechanism.** Its
+   purpose is recovering from a genuinely stuck workflow / external
+   event we cannot directly observe. It is NEVER used to "wait for
+   cabal-test to finish" — `timeout N cabal-test` with `Bash`
+   returns when done; no wakeup needed.
+
+4. **Architecture + planning happen UP FRONT.** I do not edit
+   code, run tests, edit again, run tests again — that's the
+   debugging anti-pattern. I plan the full closure path with an
+   architecture agent first, the executor agent(s) implement it
+   coherently, THEN tests verify.
+
+5. **Workflows over loop-of-edits.** When orchestrating multi-step
+   work, use the `Workflow` tool (deterministic JS script that
+   fans out agents). The Workflow runs to completion in one
+   invocation. No ScheduleWakeup gaps between steps.
+
+6. **Long-running test runs in the background.** When a full test
+   suite IS warranted at a milestone, use `Bash run_in_background:
+   true` so I am NOT blocked waiting. I do not ScheduleWakeup; the
+   notification arrives when the test completes.
+
+Forbidden patterns:
+  * "Iter N shipped → run full suite → wake up in 30min for iter
+    N+1" (a) iter N isn't a milestone, (b) full suite isn't
+    justified, (c) wakeup wastes 30min.
+  * "Wait for cabal-test for 25min via ScheduleWakeup" — use
+    `run_in_background` instead.
+  * Re-running the example sweep more than once per milestone.
+
+Concrete cadence:
+  * **Per change**: `timeout 60 dist-newstyle/.../sky-tests --match
+    "<NarrowSpec>"`
+  * **Per phase boundary (multiple changes)**: rebuild + a couple
+    of representative specs
+  * **Per milestone**: full cabal-test + example-sweep + verify-cli,
+    in background, notified when complete
+
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
 A runaway `sky` / `cabal` / `ghc` / `haskell-language-server` process
