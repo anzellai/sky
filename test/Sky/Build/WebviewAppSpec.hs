@@ -80,8 +80,7 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \import Std.Webview as Webview\n\
         \import Std.Cmd as Cmd\n\
         \import Std.Sub as Sub\n\
-        \import Std.Ui as Ui\n\
-        \import Std.Ui exposing (Element)\n\n\n\
+        \import Std.Ui as Ui\n\n\n\
         \type alias Model = { count : Int }\n\n\
         \type Msg = Inc | Dec | NoOp\n\n\
         \init : () -> ( Model, Cmd Msg )\n\
@@ -94,9 +93,9 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \        NoOp -> ( model, Cmd.none )\n\n\
         \subscriptions : Model -> Sub Msg\n\
         \subscriptions _ = Sub.none\n\n\
-        \view : Model -> Element Msg\n\
+        \view : Model -> Html\n\
         \view model =\n\
-        \    Ui.column [] [ Ui.text (String.fromInt model.count) ]\n\n\
+        \    Ui.layout [] (Ui.column [] [ Ui.text (String.fromInt model.count) ])\n\n\
         \main =\n\
         \    Webview.app\n\
         \        { init = init\n\
@@ -117,8 +116,7 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \import Std.Webview as Webview\n\
         \import Std.Cmd as Cmd\n\
         \import Std.Sub as Sub\n\
-        \import Std.Ui as Ui\n\
-        \import Std.Ui exposing (Element)\n\n\n\
+        \import Std.Ui as Ui\n\n\n\
         \type alias Model = { count : Int }\n\
         \type Msg = NoOp\n\n\
         \init : () -> ( Model, Cmd Msg )\n\
@@ -127,8 +125,8 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \update _ model = ( model, Cmd.none )\n\n\
         \subscriptions : Model -> Sub Msg\n\
         \subscriptions _ = Sub.none\n\n\
-        \view : Model -> Element Msg\n\
-        \view model = Ui.text (String.fromInt model.count)\n\n\
+        \view : Model -> Html\n\
+        \view model = Ui.layout [] (Ui.text (String.fromInt model.count))\n\n\
         \main =\n\
         \    Webview.app\n\
         \        { init = init\n\
