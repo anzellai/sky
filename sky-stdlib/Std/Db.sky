@@ -31,6 +31,8 @@ module Std.Db exposing
     , getInt
     , getBool
     , Migration
+    , defaultMigration
+    , withSql
     , migrate
     -- v0.16.26 — typed SQL value binding (#582)
     , SqlValue(..)
@@ -236,6 +238,24 @@ type alias Migration =
     { name : String
     , sql : String
     }
+
+
+-- | `defaultMigration "0001_users"` — Migration named with empty SQL.
+-- Pair with `withSql` to populate the SQL body.  Builder chain stays
+-- source-compat when v0.17+ adds optional fields like `description`.
+defaultMigration : String -> Migration
+defaultMigration migrationName =
+    { name = migrationName
+    , sql = ""
+    }
+
+
+-- | `withSql sqlBody m` — replace the migration's SQL body.
+withSql : String -> Migration -> Migration
+withSql sqlBody m =
+    { m | sql = sqlBody }
+
+
 -- | Apply pending schema migrations, in list order.
 --
 -- Each migration whose `name` is not yet recorded runs in its own
