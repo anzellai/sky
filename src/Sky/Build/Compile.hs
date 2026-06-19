@@ -87,9 +87,14 @@ globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Solve.emptySolvedTypes 
 -- thunk that would re-enter the in-flight cgEnv update and
 -- black-hole (<<loop>>). Written eagerly via `writeIORef` at the
 -- same moments cgEnv's `_cg_unionNames` is updated.
-{-# NOINLINE globalUnionNames #-}
-globalUnionNames :: IORef (Set.Set String)
-globalUnionNames = unsafePerformIO $ newIORef Set.empty
+--
+-- v0.17 iter 19 (task #654) — IORef removed.  The union-names
+-- registry now flows via the consolidated 'scopeStateRef'
+-- bridge: 3 cascade writes (C9 entry seed at ~line 2719, C10
+-- dep update at ~4950, generateGo entry-emit at ~5243) each
+-- call 'modifyIORef' scopeStateRef (LC.withUnionNames ...)';
+-- the 3 renderer reads use
+-- 'LC._lc_unionNames (readIORefNoCse scopeStateRef)'.
 
 
 -- | v0.16.0 binary-size hardening: tracks whether the user program
@@ -1245,7 +1250,11 @@ resetCompileState = do
                         Set.empty Set.empty Set.empty Set.empty
                         Map.empty Map.empty Map.empty Map.empty
                         Map.empty Map.empty Map.empty)
-    writeIORef globalUnionNames Set.empty
+    -- v0.17 iter 19 (task #654) — globalUnionNames reset removed;
+    -- IORef is gone.  The union-names set now flows via
+    -- 'scopeStateRef' (already reset to 'emptyLowerCtx' below)
+    -- and is refreshed via 'modifyIORef' scopeStateRef
+    -- (LC.withUnionNames ...)' at each cascade write point.
     writeIORef scopeStateRef
         (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
     -- Reset HM-solver row-extension fresh-var counter so each
@@ -2716,7 +2725,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- Now the IORef carries every dep's prefixed union name BEFORE
             -- any HM-time sig rendering.  Closes the 16-skychess pre-
             -- existing failure as a v0.17 acceptance gate.
-            writeIORef globalUnionNames $! depUnionNames
+            -- v0.17 iter 19 (task #654) — installs onto 'scopeStateRef'
+            -- so the renderer's 'readIORefNoCse scopeStateRef'
+            -- bridge sees the seeded depUnionNames before any
+            -- HM-time sig rendering.  Same byte-equivalent
+            -- contract as the pre-iter-19 writeIORef.
+            modifyIORef' scopeStateRef (LC.withUnionNames depUnionNames)
             putStrLn "-- Type Checking"
             -- Run HM on each dep module so unannotated functions get
             -- inferred types for the typed-codegen tables.
@@ -4947,7 +4961,12 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
                       $ Rec.withDepFieldIndex depAliasPairs
                       $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
-            writeIORef globalUnionNames $! Rec._cg_unionNames cgEnv
+            -- v0.17 iter 19 (task #654) — install C10 cgEnv unionNames
+            -- onto scopeStateRef (refreshes the seed from line ~2719
+            -- with the cgEnv's merged set after dep-module imports
+            -- finish populating it).
+            modifyIORef' scopeStateRef
+                (LC.withUnionNames (Rec._cg_unionNames cgEnv))
             -- v0.17 C10: GoSig dep-module typeParams population.  C9
             -- captured entry-module-only state; after dep-module
             -- _cg_funcSkyToGoTVars merges in at line 3788-3790, the
@@ -5240,7 +5259,11 @@ generateGo consoleNeeded canMod srcMod config solvedTypes =
         imports = unsafePerformIO $ do
             let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
-            writeIORef globalUnionNames $! Rec._cg_unionNames cgEnv
+            -- v0.17 iter 19 (task #654) — install entry-emit
+            -- unionNames onto scopeStateRef (mirrors continueCompile's
+            -- cgEnv path; generateGo is the standalone entry).
+            modifyIORef' scopeStateRef
+                (LC.withUnionNames (Rec._cg_unionNames cgEnv))
             return $ collectGoImports consoleNeeded canMod srcMod
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
@@ -7603,7 +7626,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
             unionRecoveryFull
               | not (null modStr) = Nothing
               | otherwise =
-                  let allUnions = readIORefNoCse globalUnionNames
+                  let allUnions = LC._lc_unionNames (readIORefNoCse scopeStateRef)
                   in case [ u | u <- Set.toList allUnions
                               , '_' `elem` u
                               , reverse (takeWhile (/= '_') (reverse u)) == name
@@ -8804,7 +8827,7 @@ typeStrWithAliasesRegBoundedScopedViaPipeline depModHint recAliases fieldIdx tva
         -- the bootstrap path.
         ctx = baseCtx
             { GoType.mcRecordAliases = recAliases
-            , GoType.mcUnionNames    = readIORefNoCse globalUnionNames
+            , GoType.mcUnionNames    = LC._lc_unionNames (readIORefNoCse scopeStateRef)
             , GoType.mcFieldIndex    = fieldIdx
             , GoType.mcTVarSubst     = tvarMap
             , GoType.mcTVarsToAny    = True
@@ -9080,7 +9103,7 @@ typeStrWithAliasesRegBoundedScopedLegacy depModHint recAliases fieldIdx tvarMap 
             unionRecovery
               | not (null modStr) = Nothing
               | otherwise =
-                  let allUnions = readIORefNoCse globalUnionNames
+                  let allUnions = LC._lc_unionNames (readIORefNoCse scopeStateRef)
                   in if Set.null allUnions
                        then Nothing
                        else if Set.member name allUnions

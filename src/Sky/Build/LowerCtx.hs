@@ -51,6 +51,7 @@ module Sky.Build.LowerCtx
     , lookupKernelAlias
     , withAliases
     , withFieldIdx
+    , withUnionNames
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -430,3 +431,20 @@ withFieldIdx
     -> LowerCtx
 withFieldIdx fieldIdx ctx =
     ctx { _lc_fieldIdx = fieldIdx }
+
+
+-- | v0.17 iter 19 (task #654) — install the merged union-names
+-- registry.  Replaces 'globalUnionNames' IORef writes.  Unlike
+-- 'withAliases'/'withFieldIdx' (single-write at codegen entry),
+-- this is called at THREE cascade points in 'continueCompile':
+-- C9 entry-mod seed (writes 'depUnionNames'), C10 dep-mod update
+-- (writes 'cgEnv._cg_unionNames' after dep-imports finish), and
+-- the post-sig-emit refresh.  Each replaces a 'writeIORef
+-- globalUnionNames $!' call.  Read by the renderer chains via
+-- 'readIORefNoCse scopeStateRef' + '_lc_unionNames' projection.
+withUnionNames
+    :: Set.Set String
+    -> LowerCtx
+    -> LowerCtx
+withUnionNames unions ctx =
+    ctx { _lc_unionNames = unions }
