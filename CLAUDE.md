@@ -835,8 +835,8 @@ future-proofing.
 | Tier | Functions | Status |
 |---|---|---|
 | O(1) pure Sky | `head`, `tail`, `cons`, `isEmpty`, `Maybe.withDefault`, `Maybe.map`/`andThen`/`isJust`/`isNothing`/`map2-5`/`andMap`, `Result.withDefault`/`map`/`andThen`/`mapError`/`map2-5`/`andMap` | Stack-safe always |
-| Tail-recursive (auto-TCO) | `foldl`, `find`, `any`, `all`, `member`, `drop`, `reverseHelp`, `indexedMapHelp`, `length`, `range`, `zip`, `indexedMap` | Compiles to `for { ... continue }`; constant stack. v0.17 added `length`/`range`/`zip`/`indexedMap` via CPS / accumulator rewrites. |
-| CPS-shipped (v0.17) | `map`, `filter`, `foldr`, `concat`, `take`, `append`, `Maybe.combine`, `Result.combine` | Rewritten to CPS / accumulator form; constant stack via tail-recursive helper. **12/13 list ops on constant Go stack — `concatMap` remains non-tail (see Limitation #8).** |
+| Tail-recursive (auto-TCO) | `foldl`, `find`, `any`, `all`, `member`, `drop`, `reverseHelp`, `indexedMapHelp`, `length`, `range`, `zip`, `concatMap`, `indexedMap` | Compiles to `for { ... continue }`; constant stack. v0.17 added `length`/`range`/`zip`/`concatMap`/`indexedMap` (CPS / accumulator rewrites — Limitation #8 closed). |
+| CPS-shipped (v0.17) | `map`, `filter`, `foldr`, `concat`, `take`, `append`, `Maybe.combine`, `Result.combine` | Rewritten to CPS / accumulator form; constant stack via tail-recursive helper. Together with the auto-TCO tier, all 13/13 list ops in scope run on constant Go stack. |
 
 **TCO mechanism.** The lowerer detects tail-position self-calls in
 `Can.Case` / `Can.If` / `Can.Let` bodies via
@@ -2104,22 +2104,10 @@ verified against HEAD.
    (`Pure.uuidV4 ()`, `Pure.timeNow ()`, etc.). Existing names +
    shapes unchanged. Pure.* lowers to the canonical kernel with
    typed `SkyTask[Error, T]` shape.
-8. **Non-tail-recursive list operations are O(N) on Go stack
-   for the `concatMap` residual.** `map`, `filter`, `foldr`,
-   `concat`, `take`, `append`, `length`, `range`, `zip`,
-   `indexedMap`, `Maybe.combine`, `Result.combine` are
-   CPS-rewritten in v0.17 — 12 of 13 list ops on constant Go
-   stack. `concatMap` at `sky-stdlib/Sky/Core/List.sky:164`
-   still recurses non-tail (`append (fn x) (concatMap fn rest)`)
-   because the natural delegation
-   `concatMap fn list = concat (map fn list)` triggers HM
-   cross-module over-unification on the polymorphic `map`
-   instances; the working direct-accumulator alternative still
-   needs to land. Tail-recursive operations (`foldl`, `find`,
-   `any`, `all`, `member`, `drop`, `reverseHelp`) remain
-   auto-TCO'd to constant stack. For very large lists (200k+
-   elements) reaching `concatMap` prefer a manual
-   accumulator pattern via `foldl`.
+8. ~~**Recursive list ops grew the Go stack O(N).**~~
+   — CLOSED in v0.17 (Limitation #8, 13/13 list ops on constant
+   Go stack).  See `### Closed in v0.17 (kept here for grep)`
+   below for the per-op commit log and spec gates.
 9. ~~**Zero-arg `Css.*` keyword constants require `()`**~~ —
    CLOSED in v0.17 PR-26.  `Css.zero` / `Css.auto` / `Css.none`
    / `Css.transparent` / `Css.currentColor` / `Css.systemFont`
@@ -2139,10 +2127,13 @@ verified against HEAD.
     on the current line.  No workaround needed.
 ### Closed in v0.17 (kept here for grep)
 
-- **Limitation #8 partial close — 12 of 13 list ops CPS-rewritten.**
-  All but `concatMap` now compile to constant Go stack via CPS /
-  accumulator rewrites (paired with the auto-TCO tail-call
-  optimiser in `Sky.Build.TailCallOpt`). Per-op log:
+- ~~**Recursive list ops grew the Go stack O(N).**~~
+  — CLOSED in v0.17 (Limitation #8, 13/13 list ops on constant
+  Go stack). All thirteen previously-recursive operations across
+  `Sky.Core.List` / `Sky.Core.Maybe` / `Sky.Core.Result` now
+  compile to constant Go stack via CPS / accumulator rewrites
+  (paired with the auto-TCO tail-call optimiser in
+  `Sky.Build.TailCallOpt`). Per-op closure log:
   * `List.map` — CPS rewrite, `8e5dbd4f`
   * `List.filter` — CPS rewrite, `a0b63e4e` (FilterSpec)
   * `List.foldr` — delegation rewrite, `5b4bc25b` (FoldrSpec)
@@ -2157,10 +2148,20 @@ verified against HEAD.
   * `List.range` — CPS rewrite, `5be2702d` (RangeSpec)
   * `List.zip` — CPS rewrite, `538daed6` (ZipSpec)
   * `List.indexedMap` — CPS rewrite, `8ac38af0` (IndexedMapSpec)
-  * `List.concatMap` — **STILL OPEN** (HM over-unification on
-    delegation; see Limitation #8 above).
+  * `List.concatMap` — direct-accumulator rewrite, iter 27
+    (ConcatMapSpec — `concatMap fn list =
+    reverseHelp (concatMapHelp fn list []) []` with
+    `concatMapHelp fn list acc` walking left-to-right and
+    reverse-prepending each `fn x` chunk onto `acc`; the natural
+    delegation `concat (map fn list)` triggers HM cross-module
+    over-unification on polymorphic `map` instances, so the
+    direct accumulator is the correct fix).
   Per-op specs live under `test/Sky/Build/CpsStackConstantBound/`
-  and assert the rewritten body emits the auto-TCO marker pattern.
+  and assert the rewritten body emits the auto-TCO marker pattern
+  (no recursive Go-stack growth). For huge inputs (1M+ elements)
+  the primitives now stay O(1) on Go stack — the historical
+  "200k+ elements → stack overflow" workaround note is no longer
+  needed. Closes Limitation #8 in full.
 
 ### Closed in v0.16 (kept here for grep)
 

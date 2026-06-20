@@ -161,14 +161,42 @@ foldr fn acc list =
     foldl (\x a -> fn x a) acc (reverseHelp list [])
 
 
+-- | `concatMap fn list` — map each element to a list and flatten.
+--
+-- v0.17 step-12 (Limitation #8): CPS / accumulator rewrite.
+-- Pre-v0.17 shape was `append (fn x) (concatMap fn rest)` — the
+-- `append (fn x) (...)` runs AFTER the recursive call returns, so
+-- the emitted Go ran in O(N) stack; a 1M-element input blew Go's
+-- `maxstacksize`.  Post-rewrite, `concatMapHelp fn list acc` walks
+-- the input tail-recursively, prepending each `fn x` chunk in
+-- REVERSE order onto `acc` via `reverseHelp (fn x) acc`, then the
+-- outer `reverseHelp acc []` flips the final accumulator once at
+-- the base for the left-to-right output.  The helper is
+-- tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to a
+-- `for { ... continue }` loop.
+--
+-- The natural delegation `concatMap fn list = concat (map fn list)`
+-- triggers HM cross-module over-unification on the polymorphic
+-- `map` instances (round-9 investigation), so we use the direct
+-- accumulator pattern instead.
 concatMap fn list =
+    reverseHelp (concatMapHelp fn list []) []
+
+
+-- | `concatMapHelp fn list acc` — tail-recursive worker for
+-- `concatMap`.  The EXPLICIT signature is load-bearing — without it
+-- the HM solver could infer `acc : List any` and the typed-lowerer
+-- would fall back to `rt.AsList[any]`, defeating both the
+-- Coerce-retreat AND the constant-stack contract.
+concatMapHelp : (a -> List b) -> List a -> List b -> List b
+concatMapHelp fn list acc =
     case list of
 
         [] ->
-            []
+            acc
 
         x :: rest ->
-            append (fn x) (concatMap fn rest)
+            concatMapHelp fn rest (reverseHelp (fn x) acc)
 
 
 -- | `indexedMap fn list` — apply `fn` to each (index, element) pair.

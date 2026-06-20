@@ -68,6 +68,7 @@ import qualified Sky.Build.CpsStackConstantBound.LengthSpec
 import qualified Sky.Build.CpsStackConstantBound.RangeSpec
 import qualified Sky.Build.CpsStackConstantBound.ZipSpec
 import qualified Sky.Build.CpsStackConstantBound.IndexedMapSpec
+import qualified Sky.Build.CpsStackConstantBound.ConcatMapSpec
 import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
 import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
@@ -554,6 +555,22 @@ allSpecs fastMode = do
     -- body when accumulating a typed record).
     describeT "Sky.Build.CpsStackConstantBound.IndexedMap"
         Sky.Build.CpsStackConstantBound.IndexedMapSpec.spec
+    -- v0.17 step-12 / Limitation #8 CPS rewrite: List.concatMap.
+    -- Delegating-binding shape — public `concatMap` is a thin shim
+    -- that calls `reverseHelp (concatMapHelp fn list []) []`;
+    -- concatMapHelp walks the input left-to-right, prepending each
+    -- `fn x` chunk in REVERSE order via `reverseHelp (fn x) acc`,
+    -- then the outer `reverseHelp acc []` flips the final
+    -- accumulator once at the base.  Pre-rewrite shape
+    -- `append (fn x) (concatMap fn rest)` blew Go's maxstacksize on
+    -- large inputs (append runs AFTER the recursive call returns —
+    -- non-tail position).  The natural delegation
+    -- `concatMap fn list = concat (map fn list)` triggers HM
+    -- cross-module over-unification on the polymorphic `map`
+    -- instances (round-9 investigation), so the direct accumulator
+    -- pattern is the correct fix.  Gates 4 examples.
+    describeT "Sky.Build.CpsStackConstantBound.ConcatMap"
+        Sky.Build.CpsStackConstantBound.ConcatMapSpec.spec
     -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
     -- Delegating-binding shape (sibling of List.foldr) — public
     -- `combine` is a thin shim that calls `combineHelp results
