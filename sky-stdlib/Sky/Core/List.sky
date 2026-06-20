@@ -41,68 +41,112 @@ module Sky.Core.List exposing
     )
 
 
+-- | `map fn list` — apply fn to each element.
+--
+-- v0.17 step-8 (Limitation #8 starter): CPS / accumulator rewrite.
+-- Forwards `mapHelp` accumulates `fn x :: acc` (reversed) tail-
+-- recursively, then `reverseHelp` flips the result. Both helpers
+-- are tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to
+-- a `for { ... continue }` loop, so a 1M-element input runs in
+-- constant Go stack instead of the old O(N) non-TCO recursion.
 map fn list =
+    mapHelp fn list []
+
+
+mapHelp fn list acc =
     case list of
-        [] -> []
-        (x :: rest) -> fn x :: map fn rest
+
+        [] ->
+            reverseHelp acc []
+
+        x :: rest ->
+            mapHelp fn rest (fn x :: acc)
 
 
 filter pred list =
     case list of
-        [] -> []
-        (x :: rest) ->
+
+        [] ->
+            []
+
+        x :: rest ->
             if pred x then
                 x :: filter pred rest
+
             else
                 filter pred rest
 
 
 any pred list =
     case list of
-        [] -> False
-        (x :: rest) ->
+
+        [] ->
+            False
+
+        x :: rest ->
             if pred x then
                 True
+
             else
                 any pred rest
 
 
 all pred list =
     case list of
-        [] -> True
-        (x :: rest) ->
+
+        [] ->
+            True
+
+        x :: rest ->
             if pred x then
                 all pred rest
+
             else
                 False
 
 
 find pred list =
     case list of
-        [] -> Nothing
-        (x :: rest) ->
+
+        [] ->
+            Nothing
+
+        x :: rest ->
             if pred x then
                 Just x
+
             else
                 find pred rest
 
 
 foldl fn acc list =
     case list of
-        [] -> acc
-        (x :: rest) -> foldl fn (fn x acc) rest
+
+        [] ->
+            acc
+
+        x :: rest ->
+            foldl fn (fn x acc) rest
 
 
 foldr fn acc list =
     case list of
-        [] -> acc
-        (x :: rest) -> fn x (foldr fn acc rest)
+
+        [] ->
+            acc
+
+        x :: rest ->
+            fn x (foldr fn acc rest)
 
 
 concatMap fn list =
     case list of
-        [] -> []
-        (x :: rest) -> append (fn x) (concatMap fn rest)
+
+        [] ->
+            []
+
+        x :: rest ->
+            append (fn x) (concatMap fn rest)
 
 
 indexedMap fn list =
@@ -111,32 +155,52 @@ indexedMap fn list =
 
 indexedMapHelp fn i list =
     case list of
-        [] -> []
-        (x :: rest) -> fn i x :: indexedMapHelp fn (i + 1) rest
+
+        [] ->
+            []
+
+        x :: rest ->
+            fn i x :: indexedMapHelp fn (i + 1) rest
 
 
 isEmpty list =
     case list of
-        [] -> True
-        _ -> False
+
+        [] ->
+            True
+
+        _ ->
+            False
 
 
 length list =
     case list of
-        [] -> 0
-        (_ :: rest) -> 1 + length rest
+
+        [] ->
+            0
+
+        _ :: rest ->
+            1 + length rest
 
 
 head list =
     case list of
-        [] -> Nothing
-        (x :: _) -> Just x
+
+        [] ->
+            Nothing
+
+        x :: _ ->
+            Just x
 
 
 tail list =
     case list of
-        [] -> Nothing
-        (_ :: rest) -> Just rest
+
+        [] ->
+            Nothing
+
+        _ :: rest ->
+            Just rest
 
 
 cons x list =
@@ -149,46 +213,72 @@ reverse list =
 
 reverseHelp list acc =
     case list of
-        [] -> acc
-        (x :: rest) -> reverseHelp rest (x :: acc)
+
+        [] ->
+            acc
+
+        x :: rest ->
+            reverseHelp rest (x :: acc)
 
 
 take n list =
     if n <= 0 then
         []
+
     else
         case list of
-            [] -> []
-            (x :: rest) -> x :: take (n - 1) rest
+
+            [] ->
+                []
+
+            x :: rest ->
+                x :: take (n - 1) rest
 
 
 drop n list =
     if n <= 0 then
         list
+
     else
         case list of
-            [] -> []
-            (_ :: rest) -> drop (n - 1) rest
+
+            [] ->
+                []
+
+            _ :: rest ->
+                drop (n - 1) rest
 
 
 append xs ys =
     case xs of
-        [] -> ys
-        (x :: rest) -> x :: append rest ys
+
+        [] ->
+            ys
+
+        x :: rest ->
+            x :: append rest ys
 
 
 concat lists =
     case lists of
-        [] -> []
-        (xs :: rest) -> append xs (concat rest)
+
+        [] ->
+            []
+
+        xs :: rest ->
+            append xs (concat rest)
 
 
 member x list =
     case list of
-        [] -> False
-        (y :: rest) ->
+
+        [] ->
+            False
+
+        y :: rest ->
             if x == y then
                 True
+
             else
                 member x rest
 
@@ -196,14 +286,22 @@ member x list =
 range lo hi =
     if lo > hi then
         []
+
     else
         lo :: range (lo + 1) hi
 
 
 zip xs ys =
     case xs of
-        [] -> []
-        (x :: xRest) ->
+
+        [] ->
+            []
+
+        x :: xRest ->
             case ys of
-                [] -> []
-                (y :: yRest) -> (x, y) :: zip xRest yRest
+
+                [] ->
+                    []
+
+                y :: yRest ->
+                    ( x, y ) :: zip xRest yRest
