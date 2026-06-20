@@ -12150,12 +12150,17 @@ isCallerVisibleGoType t =
 -- matches, reflect-based numeric widening, and (post-skyshop-fix)
 -- slice coercion (`[]any` → `[]ConcreteT`) so an empty list `[]`
 -- in Sky can flow into a Go function expecting `[]option.ClientOption`.
+--
+-- v0.17 step-4 (attack-#2 amendment A5): threads @Just arg@ into
+-- 'coerceVia' so the kind-aligned HM-substitution path can fire
+-- when the source's solved type structurally matches the target
+-- Go slot shape.
 coerceFfiArg :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
 coerceFfiArg ctx goType arg =
     let goArg = exprToGo ctx arg
     in if isPrimLiteralArg arg
         then goArg
-        else coerceVia ctx goType goArg
+        else coerceVia ctx (Just arg) goType goArg
 
 
 -- | Call-site coercion that consults the `rt.FfiT_<Name>_P<N>` alias
@@ -12163,14 +12168,95 @@ coerceFfiArg ctx goType arg =
 -- emits those aliases alongside every typed wrapper whose params or
 -- return reference an FFI-file-local type, so main.go can cast
 -- through them without needing the underlying Go package import.
+--
+-- v0.17 step-4 (attack-#2 amendment A5): threads @Just arg@ into
+-- both 'coerceVia' branches.
 coerceFfiArgViaAlias :: LC.LowerCtx -> String -> Int -> String -> Can.Expr -> GoIr.GoExpr
 coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
     | isPrimLiteralArg arg   = exprToGo ctx arg
     | isCallerVisibleGoType goType =
-        coerceVia ctx goType (exprToGo ctx arg)
+        coerceVia ctx (Just arg) goType (exprToGo ctx arg)
     | otherwise =
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in coerceVia ctx aliasName (exprToGo ctx arg)
+        in coerceVia ctx (Just arg) aliasName (exprToGo ctx arg)
+
+
+-- | v0.17 step-4 (attack-#2 amendment A5) — TYPE-AWARE substitution
+-- hint for 'resolveOrErase'.  Each constructor encodes the OUTER
+-- structural shape we expect the source's HM-solved type to have so
+-- the substitution into the Go target slot only fires when the kinds
+-- structurally align.  Mismatched kinds fall through to the legacy
+-- 'eraseScopedCtx' behaviour — no behaviour regression.
+--
+-- The hint corresponds 1:1 to the post-strip target Go shape:
+--
+--   * 'ListElemHint'   — target is @[]T@; source must be @List a@; we
+--     substitute @a@ for @T@.
+--   * 'MapValueHint'   — target is @map[string]V@; source must be a
+--     @Dict k v@; we substitute @v@ for @V@.
+--   * 'CoerceTHint'    — target is a bare @T@; source must HM-resolve
+--     to a non-polymorphic concrete type; we substitute it directly.
+data GoKindHint
+    = ListElemHint
+    | MapValueHint
+    | CoerceTHint
+    deriving (Eq, Show)
+
+
+-- | v0.17 step-4 (attack-#2 central architectural amendment) —
+-- choose between concrete HM-substitution and the legacy
+-- 'eraseScopedCtx' fallback, gated by the kind hint.
+--
+-- When the source's HM-solved type structurally matches the kind
+-- hint AND its substitutable type arg is fully concrete (no
+-- @TVar@ leaves), we render that arg via 'solvedTypeToGo' and use
+-- it verbatim.  Otherwise we fall through to 'eraseScopedCtx'
+-- exactly as before.  Skipping kind-mismatched routes preserves
+-- byte-identical legacy behaviour for every shape the hint
+-- doesn't cover.
+resolveOrErase
+    :: LC.LowerCtx
+    -> Maybe Can.Expr
+    -> GoKindHint
+    -> String          -- ^ fallback Go type string (already T-var-erased target)
+    -> String
+resolveOrErase ctx mSrc kindHint fallback =
+    case mSrc of
+        Just src
+            | Just solvedT <- Solve.lookupSolvedRegionScoped
+                                  (A.toRegion src)
+                                  (LC._lc_solved ctx)
+            , Just substArg <- pickSubstArg kindHint solvedT
+            , not (hasTVarT substArg)
+                -> solvedTypeToGo substArg
+        _   -> eraseScopedCtx ctx fallback
+  where
+    -- Pick the single type arg the kind hint wants us to substitute
+    -- into the target slot.  Returns 'Nothing' when the source's
+    -- outer constructor doesn't structurally match the hint — the
+    -- caller then falls through to the legacy erase path.
+    pickSubstArg :: GoKindHint -> T.Type -> Maybe T.Type
+    pickSubstArg ListElemHint (T.TType _ "List" [elemT]) = Just elemT
+    pickSubstArg MapValueHint (T.TType _ "Dict" [_k, valT]) = Just valT
+    pickSubstArg CoerceTHint  t@(T.TType _ _ _) = Just t
+    pickSubstArg CoerceTHint  t@(T.TAlias _ _ _ _) = Just t
+    pickSubstArg CoerceTHint  t@(T.TRecord _ _) = Just t
+    pickSubstArg CoerceTHint  t@(T.TTuple _ _ _) = Just t
+    pickSubstArg _            _ = Nothing
+
+    -- Recursive TVar scan — mirrors 'resolveWrapParams''s @hasTVar@
+    -- so an unresolved leaf anywhere in the substituted arg falls
+    -- back to erase semantics rather than emitting a literal @T1@
+    -- into the Go target string.
+    hasTVarT :: T.Type -> Bool
+    hasTVarT (T.TVar _) = True
+    hasTVarT (T.TType _ _ args) = any hasTVarT args
+    hasTVarT (T.TLambda from to) = hasTVarT from || hasTVarT to
+    hasTVarT (T.TRecord fields _) =
+        any (\(T.FieldType _ ft) -> hasTVarT ft) (Map.elems fields)
+    hasTVarT (T.TTuple a b cs) = hasTVarT a || hasTVarT b || any hasTVarT cs
+    hasTVarT (T.TAlias _ _ args _) = any (hasTVarT . snd) args
+    hasTVarT T.TUnit = False
 
 
 -- | Emit `rt.Coerce[T](expr)` (or the named shortcut for prim
@@ -12185,8 +12271,19 @@ coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
 -- shape — including a polymorphic Nothing[any]() or empty
 -- []any{} — so the strict rt.Coerce panic can't fire on a
 -- structurally-compatible source.
-coerceVia :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
-coerceVia ctx goType goArg = case goType of
+--
+-- v0.17 step-4 (attack-#2 amendment A5): takes optional @mSrc@ so
+-- the three erase sites can fire TYPE-AWARE substitution against
+-- the source's HM-solved type via 'resolveOrErase'.  Slice / map /
+-- bare-Coerce targets emit a concrete Go arg when the kind aligns
+-- with the source's solved kind AND the substitutable arg is fully
+-- pinned (no TVar leaves).  Kind-mismatched + Nothing + TVar-still-
+-- present cases keep the legacy 'eraseScopedCtx' behaviour — no
+-- behaviour regression to the iter-20 anon-record class (attack-#1
+-- amendment A9 strict-eval guarantee preserved by the 'pickSubstArg'
+-- pure case).
+coerceVia :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceVia ctx mSrc goType goArg = case goType of
     "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
     "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
@@ -12197,12 +12294,12 @@ coerceVia ctx goType goArg = case goType of
             Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [goArg]
             Nothing -> case stripSlice goType of
                 Just elemGo -> GoIr.GoCall (GoIr.GoIdent
-                    ("rt.AsListT[" ++ eraseScopedCtx ctx elemGo ++ "]")) [goArg]
+                    ("rt.AsListT[" ++ resolveOrErase ctx mSrc ListElemHint elemGo ++ "]")) [goArg]
                 Nothing -> case stripStringMap goType of
                     Just valGo -> GoIr.GoCall (GoIr.GoIdent
-                        ("rt.AsMapT[" ++ eraseScopedCtx ctx valGo ++ "]")) [goArg]
+                        ("rt.AsMapT[" ++ resolveOrErase ctx mSrc MapValueHint valGo ++ "]")) [goArg]
                     Nothing -> GoIr.GoCall (GoIr.GoIdent
-                        ("rt.Coerce[" ++ eraseScopedCtx ctx goType ++ "]")) [goArg]
+                        ("rt.Coerce[" ++ resolveOrErase ctx mSrc CoerceTHint goType ++ "]")) [goArg]
 
 
 -- | Can we emit a direct Go call for this callee expression?
