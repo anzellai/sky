@@ -789,8 +789,8 @@ eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ct
 -- (e.g. @Task Error Db@ for @Db.open "sqlite" "..."@), we can render
 -- the concrete Go types @Sky_Core_Error_Error, *rt.SkyDb@ and use
 -- them as the wrap params. This closes the T1-leak class at
--- substitution time without relying on the late-stage Go-source
--- band-aid (@eraseUndeclaredTVarsInGoSource@).
+-- substitution time (v0.17 step-6: the late-stage Go-source band-aid
+-- has been deleted; this helper is now the canonical close).
 --
 -- Falls back to 'eraseScopedCtx' when the source region's solved type
 -- doesn't match the expected kind, or when @mSrc@ is absent, or when
@@ -822,140 +822,6 @@ resolveWrapParams ctx mSrc kind fallback =
     hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
     hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
     hasTVar T.TUnit = False
-
-
--- | task #660 — defensive late-stage Go-source rewrite.
---
--- Walks each top-level `func NAME[TPS] ...{ body }` and erases any
--- `T<N>` reference inside the body that ISN'T declared in TPS,
--- replacing with `any`.  Catches T1/T2 leaks from emission paths the
--- σ-recovery missed (Sky-source HOFs routed through `VarLocal` where
--- `_cg_funcInferredSigs` lookup misses, etc.).  Safe because Go's
--- `any` is the universal interface — an out-of-scope TVar would have
--- failed `go build` anyway, so widening to `any` strictly improves
--- soundness (rt.AsListT[any] / rt.Coerce[any] are no-op widenings).
---
--- Only rewrites within `[T<digit>]` and `[T<digit>,...]` brackets —
--- conservative pattern that won't touch unrelated identifiers.
-eraseUndeclaredTVarsInGoSource :: String -> String
-eraseUndeclaredTVarsInGoSource src = goSplit src
-  where
-    -- Split at top-level `func ` boundaries; for each chunk, parse
-    -- the typeParams (if any) and rewrite the body.
-    goSplit [] = []
-    goSplit s =
-        case findNextFunc s of
-            Nothing -> s
-            Just (preamble, funcChunk, rest) ->
-                preamble ++ rewriteFunc funcChunk ++ goSplit rest
-
-    -- Locate the next top-level `func ...{` and return the preamble,
-    -- the func chunk (header + body to matching close brace), and the
-    -- rest of the source.
-    findNextFunc s =
-        case List.stripPrefix "func " s of
-            Just _  ->
-                let (chunk, rest) = splitFunc s
-                in Just ("", chunk, rest)
-            Nothing -> findFuncIn s ""
-
-    findFuncIn [] _ = Nothing
-    findFuncIn s@('\n':'f':'u':'n':'c':' ':_) acc =
-        let (chunk, rest) = splitFunc (drop 1 s)
-        in Just (reverse acc ++ "\n", chunk, rest)
-    findFuncIn (c:cs) acc = findFuncIn cs (c:acc)
-
-    -- Walk from start of `func ` until we hit the body's opening `{`,
-    -- then balance braces to find the closing `}` at top level.
-    splitFunc s =
-        let (header, afterOpen) = splitAtOpenBrace s
-            (body, rest)        = balanceBraces afterOpen 1
-        in (header ++ "{" ++ body ++ "}", drop 1 rest)
-
-    -- Find the body's `{` — skip `{` inside brackets (`struct{}` in
-    -- a return type, parametric `[...]`, generic constraints) by
-    -- tracking depth of `[` / `(` / `{` inside the type expression.
-    -- The body's `{` is the first one at top level after the header.
-    splitAtOpenBrace = goSplitAt 0 0
-    goSplitAt _ _ [] = ([], [])
-    -- Inline `{}` (empty struct in return type) — skip both chars.
-    goSplitAt b p ('{':'}':rest) =
-        let (h, r) = goSplitAt b p rest in ('{':'}':h, r)
-    goSplitAt b p ('{':rest)
-        | b == 0 && p == 0 = ("", rest)
-        | otherwise =
-            let (h, r) = goSplitAt b p rest in ('{':h, r)
-    goSplitAt b p ('}':rest) =
-        let (h, r) = goSplitAt b p rest in ('}':h, r)
-    goSplitAt b p ('[':rest) =
-        let (h, r) = goSplitAt (b + 1) p rest in ('[':h, r)
-    goSplitAt b p (']':rest) =
-        let (h, r) = goSplitAt (b - 1) p rest in (']':h, r)
-    goSplitAt b p ('(':rest) =
-        let (h, r) = goSplitAt b (p + 1) rest in ('(':h, r)
-    goSplitAt b p (')':rest) =
-        let (h, r) = goSplitAt b (p - 1) rest in (')':h, r)
-    goSplitAt b p (c:cs) =
-        let (h, r) = goSplitAt b p cs in (c:h, r)
-
-    balanceBraces [] _ = ([], [])
-    balanceBraces ('}':rest) 1 = ("", '}':rest)
-    balanceBraces ('}':rest) n =
-        let (body, after) = balanceBraces rest (n - 1)
-        in ('}':body, after)
-    balanceBraces ('{':rest) n =
-        let (body, after) = balanceBraces rest (n + 1)
-        in ('{':body, after)
-    balanceBraces (c:rest) n =
-        let (body, after) = balanceBraces rest n
-        in (c:body, after)
-
-    rewriteFunc chunk =
-        let (header, body) = splitAtOpenBrace chunk
-            declared       = extractTypeParams header
-        in header ++ "{" ++ eraseTVarsInBody declared (init body) ++ "}"
-
-    -- Extract TVar names from `[T1 any, T2 any, ...]` in header.
-    extractTypeParams hdr =
-        case dropWhile (/= '[') hdr of
-            ('[':rest) ->
-                let (inside, _) = break (== ']') rest
-                    toks = words (map (\c -> if c == ',' then ' ' else c) inside)
-                    isTV ('T':ds) = not (null ds) && all (\c -> c >= '0' && c <= '9') ds
-                    isTV _ = False
-                in Set.toList (Set.fromList (filter isTV toks))
-            _ -> []
-
-    -- Rewrite all `T<digit>` occurrences inside `[...]` brackets that
-    -- aren't in `declared`.  Replace with `any`.  Walk char-by-char
-    -- to be conservative about non-bracket contexts.
-    eraseTVarsInBody declared body =
-        let declSet = Set.fromList declared
-        in walkBody declSet body
-
-    -- Word-boundary aware TVar rewriting.  Scans the body for any
-    -- `T<digit>` token (preceded by a non-identifier char) and
-    -- replaces it with `any` if not in `declared`.  Handles both
-    -- `[T1, T2]` brackets AND `func(_lp_p T1) bool` lambda-param
-    -- positions.
-    walkBody decls body = walkBody' decls ' ' body
-
-    walkBody' _ _ [] = []
-    walkBody' decls prev ('T':rest)
-        -- prev /= '.' guards qualified names like `rt.T2` (runtime
-        -- type alias) where T2 is NOT a TVar but part of a qualified
-        -- type reference.  TVar refs only appear after delimiters
-        -- like `[`, `,`, `(`, ` `, `\n`.
-        | prev /= '.'
-        , not (isIdentChar prev)
-        , (digits, tail') <- span Char.isDigit rest
-        , not (null digits)
-        , null tail' || not (isIdentChar (head tail'))
-        , not (Set.member ('T':digits) decls)
-        = "any" ++ walkBody' decls 'y' tail'
-    walkBody' decls _ (c:rest) = c : walkBody' decls c rest
-
-    isIdentChar c = Char.isAlphaNum c || c == '_'
 
 
 -- | Read the global codegen env (for use in pure codegen functions).
@@ -3128,30 +2994,17 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                       else do
                         createDirectoryIfMissing True outDir
                         let mainGoPath = outDir </> "main.go"
-                        -- task #660 — defensive late-stage pass: walk
-                        -- each top-level `func NAME[TPS]...{ ... }` and
-                        -- erase any TVar reference (T1/T2/...) inside the
-                        -- body that ISN'T declared in TPS, replacing with
-                        -- `any`.  This catches T1 leaks from emission paths
-                        -- the σ-recovery missed (Sky-source HOFs via
-                        -- VarLocal where _cg_funcInferredSigs lookup
-                        -- misses, etc.). Safe because Go's `any` is the
-                        -- universal interface; an out-of-scope TVar would
-                        -- have failed go build anyway.
-                        -- v0.17 Wave 3 (#660): band-aid ON as a defensive
-                        -- floor while the architectural close ships.  The
-                        -- band-aid widens any T<N> ref undeclared in the
-                        -- enclosing func's TPS to `any`, which is sound
-                        -- under Go (interface universal) but reads as a
-                        -- type-erasure in the emitted Go.  The proper close
-                        -- is to thread the merged `Solve.SolvedTypes` into
-                        -- the dep-emission lowerCtx so `resolveWrapParams`'
-                        -- `lookupSolvedRegionScoped` returns the HM-solved
-                        -- concrete type — see memory v017_wave3_emission_paths
-                        -- for the diagnosis. resolveWrapParams now consults
-                        -- the per-module scoped region map but currently
-                        -- finds empty SolvedTypes in dep emission.
-                        let goCode' = eraseUndeclaredTVarsInGoSource goCode
+                        -- v0.17 step-6 (#660): the late-stage Go-source
+                        -- band-aid has been DELETED.  All T1/T2 leak paths
+                        -- are now closed at emission time via
+                        -- @resolveWrapParams@'s structural HM-solved type
+                        -- lookup (Wave 3) and the dep-emission SolvedTypes
+                        -- wiring.  Regression gate:
+                        -- @test/Sky/Build/NoT1LeakInEmittedGoSpec.hs@ walks
+                        -- the example sweep + iter-20 fixture and asserts
+                        -- zero unbound T<N> / Anon_R_* tokens leak into
+                        -- emitted main.go.
+                        let goCode' = goCode
                         writeFile mainGoPath goCode'
                         putStrLn $ "   Wrote " ++ mainGoPath
                         -- v0.13 Layer 2: codegen-stage validator runs after
@@ -12945,9 +12798,11 @@ coerceArg ctx mSrc e ty
             _ ->
                 -- Emit raw rt.Coerce[ty] — keeps generic outer fns
                 -- (#521) correct (T1 preserved for monomorphisation
-                -- to substitute), and the LATE-STAGE go-source pass
-                -- (eraseUndeclaredTVarsInGoSource) erases unwanted
-                -- T<n> for non-generic outer fns at write time.
+                -- to substitute).  v0.17 step-6: the late-stage
+                -- Go-source erase pass is gone; any out-of-scope
+                -- T<n> reaching this code path is a bug — see
+                -- resolveWrapParams + dep-emission SolvedTypes
+                -- wiring for the architectural close.
                 GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ ty ++ "]")) [e]
     -- v0.15.3 — parametric record alias instantiation.  The callee
     -- almost always emits as a Go-generic function whose param

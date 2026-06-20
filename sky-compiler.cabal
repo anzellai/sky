@@ -375,6 +375,7 @@ test-suite sky-tests
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.Pr17bDepSymmetrySpec
+      Sky.Build.NoT1LeakInEmittedGoSpec
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.RecordCtorEmptyListSpec
       Sky.Build.RuntimeFingerprintSpec

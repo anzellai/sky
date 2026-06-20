@@ -94,6 +94,7 @@ import qualified Sky.Build.FfiTypeParserSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.Pr17bDepSymmetrySpec
+import qualified Sky.Build.NoT1LeakInEmittedGoSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
@@ -570,6 +571,13 @@ allSpecs fastMode = do
     -- no unbound T-var sneaks into a non-generic dep decl's body.
     describeT "Sky.Build.Pr17bDepSymmetry"
         Sky.Build.Pr17bDepSymmetrySpec.spec
+    -- v0.17 step-6 (#660): regression gate proving the late-stage
+    -- Go-source band-aid (`eraseUndeclaredTVarsInGoSource`) is safe
+    -- to delete.  Walks `examples/*/sky-out/main.go` (when present)
+    -- + builds the iter-20 fixture, asserts no T<N> or Anon_R_*
+    -- leak reaches emitted Go.
+    describeT "Sky.Build.NoT1LeakInEmittedGoSpec"
+        Sky.Build.NoT1LeakInEmittedGoSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describeT "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
     -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
