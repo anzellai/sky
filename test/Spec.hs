@@ -8,6 +8,7 @@ import SkyTiming (describeT)
 import qualified Sky.Build.CompileSpec
 import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
+import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -191,6 +192,12 @@ allSpecs fastMode = do
     -- v0.15.5 PR 2/6 — regression gate for the retired per-scope
     -- IORef pair (mechanical string match on Compile.hs).
     describeT "Sky.Build.IORefBoundary"   Sky.Build.IORefBoundarySpec.spec
+    -- v0.17 PR-α step-5 (task #654) — regression gate for the
+    -- deleted 'globalGoSigMap' IORef.  Five sub-properties: no
+    -- def, no live reads, no live writes, no live modifies, and
+    -- sentinel '_globalGoSigMap_SHOULD_NOT_EXIST' present.
+    describeT "Sky.Build.LowerPhaseGoSigMapDeleted"
+        Sky.Build.LowerPhaseGoSigMapDeletedSpec.spec
     -- v0.17 criterion #2 — `eraseUndeclaredTVarsInGoSource` Go-source
     -- band-aid MUST stay deleted from src/. Forward-regression gate
     -- — mechanical walk of every .hs file under src/, fails if the

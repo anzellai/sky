@@ -419,6 +419,7 @@ test-suite sky-tests
       Sky.Build.HeapBoundedHmSpec
       Sky.Build.RepoRootGuardSpec
       Sky.Build.IORefBoundarySpec
+      Sky.Build.LowerPhaseGoSigMapDeletedSpec
       Sky.Build.EraseBandAidAbsentSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec

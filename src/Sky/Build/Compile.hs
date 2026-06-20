@@ -503,51 +503,35 @@ emptyGoSig = GoSig
     }
 
 
--- | Global GoSig registry — keyed by Sky-dotted qualified name.
--- Population: C9 entry-module path only; C10/C11 widen.
+-- | v0.17 PR-α step-5 (task #654) — 'globalGoSigMap' IORef DELETED.
 --
--- == v0.17 task #654 close — load-bearing-but-pure invariant ==
+-- The map now flows as a pure value via:
+--   1. 'solvePhase' builds it (C9) and surfaces it on
+--      'SolveOutputs._so_goSigMap'.
+--   2. 'continueCompile' destructures + passes to
+--      'generateGoMulti' as the 'goSigMap' parameter.
+--   3. 'generateGoMulti's 'finalGoSigMap' computes the C10
+--      typeParams refresh purely (reading 'globalCgEnv' once
+--      after 'importsForced' sequences the cgEnv write).
+--   4. 'specDecls' reads the let-bound 'finalGoSigMap' directly.
 --
--- Same architectural contract as 'globalCgEnv' above (read that
--- comment first).  Specifically:
+-- The SKY_GOSIG_DIFF probe (formerly read from the IORef inside
+-- 'solvePhase' immediately after writing) now reads the local
+-- 'goSigMap' var, since the write+read race was always degenerate
+-- on the same value.
 --
---   1. PURE COMPUTATION.  The C10 typeParams update is
---      'buildFinalGoSigMap' (iter 22b, line ~4790), a pure
---      'Map String GoSig -> Map String [(String,String)] ->
---      Map String GoSig' function.
---
---   2. MONOTONIC WRITE ORDERING.  All writes live in
---      'continueCompile' (C1 reset at line ~1278), 'solvePhase'
---      (C9 entry-write at line ~2001 + SKY_GOSIG_DIFF probe at
---      line ~2040), and 'generateGoMulti's 'imports' lazy thunk
---      (C10 dep-merge at line ~5142).  ★ NEVER add a
---      'writeIORef' / 'modifyIORef' for 'globalGoSigMap' AFTER
---      'generateGoMulti's @importsForced \`seq\`@ barrier at
---      line ~5180.  Note: the standalone 'generateGo'
---      single-module entry (line ~5400) deliberately does NOT
---      update 'globalGoSigMap' — the single-module path has no
---      downstream spec-decl reader that needs post-C10 typeParams
---      merging.  If a single-module spec-emission consumer is
---      ever added, mirror 'generateGoMulti's C10 update there
---      with its own per-function barrier.
---
---   3. RENDERER PURITY.  No reads in
---      'src/Sky/Generate/Go/Builder.hs'.
---
---   4. FROZEN READS.  The two post-imports readers (line ~5181
---      for spec-decl build, line ~11960 in 'instanceMangledName')
---      both see the post-C10 final value.  The opt-in
---      SKY_GOSIG_DIFF probe at line ~2040 reads C9-state only,
---      by design — it runs before C10 fires.
---
--- Per criterion B's "OR" clause, this IORef is documented as
--- load-bearing-but-pure rather than deleted.  Iter 22b's pure
--- builder closed the computational impurity; the IORef write
--- remains as a single well-defined side effect with monotonic
--- ordering enforced by 'importsForced'.
-{-# NOINLINE globalGoSigMap #-}
-globalGoSigMap :: IORef (Map.Map String GoSig)
-globalGoSigMap = unsafePerformIO $ newIORef Map.empty
+-- See sentinel below: re-introducing the IORef is a regression.
+
+-- | Compile-time sentinel — the name preserves grep discoverability
+-- when someone searches for the old 'globalGoSigMap' identifier.
+-- Reading this value at runtime would crash; it exists only so
+-- diff readers + greppers find the deletion rationale and don't
+-- re-introduce the global.
+_globalGoSigMap_SHOULD_NOT_EXIST :: Int
+_globalGoSigMap_SHOULD_NOT_EXIST =
+    error "globalGoSigMap was deleted in v0.17 PR-α (task #654 step 5) \
+          \— re-introducing it is a regression. The map now flows as \
+          \SolveOutputs._so_goSigMap → generateGoMulti param."
 
 -- | v0.15.5 PR 2 — consolidated lowering-scope state IORef.
 --
@@ -1274,7 +1258,9 @@ resetCompileState = do
     -- v0.17 iter 14 (task #654) — globalCsiByCallee reset removed;
     -- IORef is gone.  csiByCallee now flows as
     -- SolveOutputs._so_csiByCallee.
-    writeIORef globalGoSigMap Map.empty
+    -- v0.17 PR-α step-5 (task #654) — globalGoSigMap reset removed;
+    -- IORef is gone.  GoSig map now flows as
+    -- SolveOutputs._so_goSigMap → generateGoMulti param.
     -- v0.17 iter 18 (task #654) — globalAllAliases + globalAllFieldIdx
     -- resets removed; both IORefs are gone.  Maps flow as
     -- 'seedEarlyCgEnv' return values + 'scopeStateRef' install in
@@ -1547,6 +1533,17 @@ data SolveOutputs = SolveOutputs
         -- rewrite the head to @Can.VarKernel@.  Previously bridged
         -- via @globalKernelAlias@ IORef; this field defuses that
         -- IORef entirely.
+    , _so_goSigMap            :: !(Map.Map String GoSig)
+        -- ^ v0.17 PR-α step-5 (task #654) — entry-module GoSig map
+        -- built by 'buildGoSigMap' inside solvePhase.  Aggregates
+        -- annotMap + csiByCallee + the env's '_cg_funcSkyToGoTVars'
+        -- into ONE record-per-binding.  Consumed by
+        -- 'generateGoMulti' which refreshes the typeParams field
+        -- after the final cgEnv is built (C10 update via
+        -- 'buildFinalGoSigMap'), then read by 'specDecls' to drive
+        -- σ-projection for per-instance specialisations.
+        -- Previously bridged via @globalGoSigMap@ IORef; this
+        -- field defuses that IORef entirely.
     }
 
 
@@ -1891,7 +1888,11 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- surface 'kernelAliasMap' so it flows into
                     -- SolveOutputs._so_kernelAliasMap (defuses
                     -- 'globalKernelAlias' IORef).
-                    (types, reached, csiByCallee, reachableProgram, kernelAliasMap) <- case solveResult of
+                    -- v0.17 PR-α step-5 (task #654) — extend tuple to
+                    -- also surface 'goSigMap' so it flows into
+                    -- SolveOutputs._so_goSigMap (defuses
+                    -- 'globalGoSigMap' IORef).
+                    (types, reached, csiByCallee, reachableProgram, kernelAliasMap, goSigMap) <- case solveResult of
                         Solve.SolveOk t -> do
                             putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                             -- v0.13 Phase A3: log the captured instance table.
@@ -1997,7 +1998,10 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                             envForGoSig <- readIORef globalCgEnv
                             let goSigMap = buildGoSigMap annotMap csiByCallee
                                     (Rec._cg_funcSkyToGoTVars envForGoSig)
-                            writeIORef globalGoSigMap goSigMap
+                            -- v0.17 PR-α step-5 (task #654) — IORef
+                            -- write removed.  'goSigMap' is now
+                            -- surfaced via SolveOutputs._so_goSigMap
+                            -- → generateGoMulti param.
                             -- v0.13 Phase A4: eagerly compute the set of
                             -- specialised mangled names that WOULD be
                             -- emitted, so call-site codegen (which runs
@@ -2036,7 +2040,13 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                             diffMode <- System.Environment.lookupEnv "SKY_GOSIG_DIFF"
                             case diffMode of
                                 Just "1" -> do
-                                    goSigForDiff <- readIORef globalGoSigMap
+                                    -- v0.17 PR-α step-5 (task #654) —
+                                    -- read from the local 'goSigMap'
+                                    -- var.  Pre-deletion this block
+                                    -- read 'globalGoSigMap' immediately
+                                    -- after writing — same value, no
+                                    -- observable semantic change.
+                                    let goSigForDiff = goSigMap
                                     let mismatches =
                                             [ skyName
                                             | (skyName, sig) <- Map.toList goSigForDiff
@@ -2064,7 +2074,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                         putStrLn $ "     " ++ Mono.mangleInstance
                                             (Solve.CallInstance q ts [])) (Set.toList reached)
                                 _ -> return ()
-                            return (t, reached, csiByCallee, reachableProgram, kernelAliasMap)
+                            return (t, reached, csiByCallee, reachableProgram, kernelAliasMap, goSigMap)
                         Solve.SolveError err -> do
                             -- v0.13 Layer 1: route position-prefixed type
                             -- errors through the structured Diagnostic
@@ -2082,7 +2092,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                                     let diag = Solve.solveErrorToDiagnostic entryPath err
                                     rendered <- Render.renderCli diag
                                     putStrLn rendered
-                            return (Solve.emptySolvedTypes, Set.empty, Map.empty, Set.empty, Map.empty)
+                            return (Solve.emptySolvedTypes, Set.empty, Map.empty, Set.empty, Map.empty, Map.empty)
                     -- P3: exhaustiveness — walk the entry + every dep's canonical
                     -- tree for non-exhaustive case expressions. A miss is a
                     -- compile-time error with source context; the `panic("non-
@@ -2271,6 +2281,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , _so_csiByCallee          = csiByCallee
                         , _so_reachableProg        = reachableProgram
                         , _so_kernelAliasMap       = kernelAliasMap
+                        , _so_goSigMap             = goSigMap
                         }
 
 
@@ -2796,6 +2807,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- 'VarTopLevel' arm) read via
                     -- 'LC.lookupKernelAlias ctx ...'.
                     kernelAliasMap       = _so_kernelAliasMap      solveOut
+                    -- v0.17 PR-α step-5 (task #654) — 'goSigMap' threaded
+                    -- from SolveOutputs to 'generateGoMulti' (replaces
+                    -- 'readIORef globalGoSigMap').
+                    goSigMapFromSolve    = _so_goSigMap            solveOut
                 -- v0.17 iter 17 (task #654) — install kernelAliasMap on
                 -- the consolidated 'scopeStateRef' bridge so the
                 -- legacy 'rewriteAliasHead' read path
@@ -2950,7 +2965,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                               (Solve.withPerModuleEnv perModuleEnv
                                 (Solve.withPerModuleRegions perModuleRegions
                                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee
+                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
                         -- v0.13 Layer 2: collect Sky-name → source-region
                         -- for every top-level declaration so the post-emit
                         -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -4959,11 +4974,15 @@ buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> String
+generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> Map.Map String GoSig -> String
 -- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
 -- 'globalReachableSet' IORef.  Consumed by the 'specDecls' block
 -- (~line 4967) to drive per-instance specialised Go function emission.
-generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee =
+-- v0.17 PR-α step-5 (task #654) — final 'goSigMapFromSolve' parameter
+-- promoted from 'globalGoSigMap' IORef.  Drives the post-C10
+-- 'finalGoSigMap' purely; consumed by 'specDecls' (σ-projection) +
+-- 'imports' (C10 typeParams refresh via 'buildFinalGoSigMap').
+generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve =
     let
         imports = unsafePerformIO $ do
             -- v0.17 step-1 gap-3 close — the redundant reset of
@@ -5054,20 +5073,31 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- full map is in cgEnv.  Re-update _gs_typeParams for
             -- every Sky-named binding the merged map now knows about.
             -- Preserves the annotation/quantifier fields from C9.
-            -- v0.17 iter 22b (task #654) — C10 goSigMap update
-            -- extracted to the pure builder 'buildFinalGoSigMap'.
-            -- Single 'readIORef globalGoSigMap' snapshot at call
-            -- site; pure function does the typeParams adjust;
-            -- single 'writeIORef' commits.
-            do
-                existingGoSig <- readIORef globalGoSigMap
-                let updatedGoSig = buildFinalGoSigMap existingGoSig
-                        (Rec._cg_funcSkyToGoTVars cgEnv)
-                writeIORef globalGoSigMap updatedGoSig
+            -- v0.17 PR-α step-5 (task #654) — C10 goSigMap update
+            -- moved OUT of the imports IO block.  The pure
+            -- 'buildFinalGoSigMap' now runs at the top-level
+            -- 'finalGoSigMap' let binding below, which reads
+            -- 'globalCgEnv' once after 'importsForced' has
+            -- written it.  'globalGoSigMap' IORef DELETED — map
+            -- flows as 'generateGoMulti's 'goSigMapFromSolve'
+            -- argument.
             return $ collectGoImports consoleNeeded canMod srcMod
         -- Force `imports` before anything else so the env is set up
         -- before depDecls / decls are evaluated (they read getCgEnv).
         importsForced = imports `seq` imports
+        -- v0.17 PR-α step-5 (task #654) — C10 goSigMap refresh
+        -- as a pure top-level binding.  Reads 'globalCgEnv' once
+        -- AFTER 'importsForced' has written the final cgEnv with
+        -- dep-merged '_cg_funcSkyToGoTVars'.  The pure
+        -- 'buildFinalGoSigMap' refreshes '_gs_typeParams' on the
+        -- entry-module GoSig map from solvePhase
+        -- ('goSigMapFromSolve' param).  'specDecls' reads this
+        -- bound value directly — no IORef hop.
+        finalGoSigMap = unsafePerformIO $ do
+            importsForced `seq` return ()
+            cgEnvFinal <- readIORef globalCgEnv
+            return $ buildFinalGoSigMap goSigMapFromSolve
+                        (Rec._cg_funcSkyToGoTVars cgEnvFinal)
         -- v0.16 PR 1 — snapshot the lowering-time IORef state into a
         -- pure `LowerCtx` value.  `imports` has already populated
         -- `globalCgEnv` + `globalUnionNames`; `globalAllAliases`,
@@ -5203,7 +5233,11 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- v0.17 C12 (this site): GoSig-primary read for the
             -- spec-decl σ-projection.  Mirrors the partial flip at
             -- Compile.hs:1456-1490 with the same fallback semantics.
-            goSigMapForBuild <- readIORef globalGoSigMap
+            -- v0.17 PR-α step-5 (task #654) — read from the
+            -- top-level let-bound 'finalGoSigMap' (computed
+            -- purely after 'importsForced' sequences the C10
+            -- cgEnv write).  'globalGoSigMap' IORef DELETED.
+            let goSigMapForBuild = finalGoSigMap
             let
                 -- Index every emitted GoFuncDecl (entry + deps) by
                 -- the Go-side name so the specialiser can find the
