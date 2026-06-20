@@ -184,11 +184,15 @@ concatMap fn list =
 
 
 -- | `concatMapHelp fn list acc` — tail-recursive worker for
--- `concatMap`.  The EXPLICIT signature is load-bearing — without it
--- the HM solver could infer `acc : List any` and the typed-lowerer
--- would fall back to `rt.AsList[any]`, defeating both the
--- Coerce-retreat AND the constant-stack contract.
-concatMapHelp : (a -> List b) -> List a -> List b -> List b
+-- `concatMap`.  Iter 28 dropped the explicit signature after the
+-- adversarial verification at 9f8a22da caught a regression in
+-- `Std.Ui.Chart.lineOne` (`sky-out/.sky-stdlib/Std/Ui/Chart.sky:390`)
+-- where the explicit `(a -> List b) -> List a -> List b -> List b`
+-- shape over-constrained HM cross-module unification on
+-- `List.concatMap (lineOne cfg xR yR) seriesList`.  The inferred
+-- shape (HM walking the body) is sound + lets the polymorphic call
+-- sites unify cleanly.  Constant-stack contract is unaffected —
+-- the body is still tail-recursive and auto-TCO'd.
 concatMapHelp fn list acc =
     case list of
 
