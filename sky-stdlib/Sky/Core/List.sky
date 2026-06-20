@@ -248,6 +248,7 @@ reverse list =
     reverseHelp list []
 
 
+reverseHelp : List a -> List a -> List a
 reverseHelp list acc =
     case list of
 
@@ -434,17 +435,49 @@ rangeHelp lo hi acc =
         rangeHelp (lo + 1) hi (lo :: acc)
 
 
+-- | `zip xs ys` — pair-wise zip of two lists.  Truncates to the
+-- shorter list's length.
+--
+-- v0.17 step-11 (Limitation #8): CPS / accumulator rewrite.
+-- The legacy `( x, y ) :: zip xRest yRest` shape recurses in the
+-- non-tail position (the cons happens AFTER the recursive call
+-- returns), so a 1M-element zip blew Go's `maxstacksize`.  The
+-- rewrite delegates to `zipHelp xs ys acc` which conses each
+-- `( x, y )` pair onto `acc` in REVERSE order, then
+-- `reverseHelp acc []` flips the accumulator once at the base for
+-- the final left-to-right output.  `zipHelp` is tail-recursive
+-- and auto-TCO'd by `Sky.Build.TailCallOpt` to a
+-- `for { ... continue }` loop, so a 1M-element zip runs in
+-- constant Go stack.
+--
+-- Mirrors the existing `append`@310 + `concat`@348 +
+-- `range`@420 CPS shape (build-reversed-onto-acc +
+-- reverseHelp-flip-at-end).
+--
+-- The EXPLICIT signature on `zipHelp` is load-bearing: the
+-- tuple-typed accumulator (`List (a, b)`) would otherwise be
+-- inferred as `List any` by the HM solver — tuples in CPS
+-- accumulator position have not been exercised by the prior
+-- 8 ops in this umbrella, so without the annotation the
+-- typed-lowerer falls back to `rt.AsList[any]` and the cons
+-- payload re-narrows at runtime, pushing the rt.Coerce ratchet
+-- UP and defeating the constant-stack contract.
 zip xs ys =
+    zipHelp xs ys []
+
+
+zipHelp : List a -> List b -> List ( a, b ) -> List ( a, b )
+zipHelp xs ys acc =
     case xs of
 
         [] ->
-            []
+            reverseHelp acc []
 
         x :: xRest ->
             case ys of
 
                 [] ->
-                    []
+                    reverseHelp acc []
 
                 y :: yRest ->
-                    ( x, y ) :: zip xRest yRest
+                    zipHelp xRest yRest (( x, y ) :: acc)

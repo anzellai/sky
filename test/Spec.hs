@@ -66,6 +66,7 @@ import qualified Sky.Build.CpsStackConstantBound.TakeSpec
 import qualified Sky.Build.CpsStackConstantBound.AppendSpec
 import qualified Sky.Build.CpsStackConstantBound.LengthSpec
 import qualified Sky.Build.CpsStackConstantBound.RangeSpec
+import qualified Sky.Build.CpsStackConstantBound.ZipSpec
 import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
 import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
@@ -512,6 +513,24 @@ allSpecs fastMode = do
     -- (range 1 10000 → length 10000).
     describeT "Sky.Build.CpsStackConstantBound.Range"
         Sky.Build.CpsStackConstantBound.RangeSpec.spec
+    -- v0.17 step-11 / Limitation #8 CPS rewrite: List.zip.
+    -- Delegating-binding shape (sibling of List.range / List.append
+    -- / List.foldr) — public `zip` is a thin shim that calls
+    -- `zipHelp xs ys []`; zipHelp cons'es each (x, y) pair onto
+    -- acc in REVERSE order, then `reverseHelp acc []` flips the
+    -- accumulator once at the base for the final left-to-right
+    -- output.  Pre-rewrite shape `(x, y) :: zip xRest yRest` blew
+    -- Go's maxstacksize on 1M-element zips (cons runs AFTER the
+    -- recursive call returns — non-tail position).  CRITICAL: the
+    -- explicit signature on zipHelp's tuple-typed accumulator
+    -- (`List (a, b)`) is load-bearing for typed-codegen — without
+    -- it the HM solver infers `List any` and the typed-lowerer
+    -- routes through `rt.AsList[any]`, defeating the rt.Coerce
+    -- retreat.  Gates 5 examples: 4 standard CPS gates + a
+    -- tuple-typed accumulator gate verifying `rt.T2[` emission
+    -- inside zipHelp body.
+    describeT "Sky.Build.CpsStackConstantBound.Zip"
+        Sky.Build.CpsStackConstantBound.ZipSpec.spec
     -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
     -- Delegating-binding shape (sibling of List.foldr) — public
     -- `combine` is a thin shim that calls `combineHelp results
