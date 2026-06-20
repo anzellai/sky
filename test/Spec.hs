@@ -8,6 +8,7 @@ import SkyTiming (describeT)
 import qualified Sky.Build.CompileSpec
 import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
+import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -190,6 +191,13 @@ allSpecs fastMode = do
     -- v0.15.5 PR 2/6 — regression gate for the retired per-scope
     -- IORef pair (mechanical string match on Compile.hs).
     describeT "Sky.Build.IORefBoundary"   Sky.Build.IORefBoundarySpec.spec
+    -- v0.17 criterion #2 — `eraseUndeclaredTVarsInGoSource` Go-source
+    -- band-aid MUST stay deleted from src/. Forward-regression gate
+    -- — mechanical walk of every .hs file under src/, fails if the
+    -- legacy name reappears. Pairs with the live GoTypeAdt +
+    -- GoTypeRoundTrip parity specs below to close v0.17 criteria
+    -- #2 + #5 as MANDATORY cabal-test items.
+    describeT "Sky.Build.EraseBandAidAbsent" Sky.Build.EraseBandAidAbsentSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).
