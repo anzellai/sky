@@ -346,6 +346,7 @@ test-suite sky-tests
       Sky.Build.CpsStackConstantBound.LengthSpec
       Sky.Build.CpsStackConstantBound.RangeSpec
       Sky.Build.CpsStackConstantBound.ZipSpec
+      Sky.Build.CpsStackConstantBound.IndexedMapSpec
       Sky.Build.CpsStackConstantBound.ResultCombineSpec
       Sky.Build.CpsStackConstantBound.MaybeCombineSpec
       Sky.Build.FfiKernelAliasSpec

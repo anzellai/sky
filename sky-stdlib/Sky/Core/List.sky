@@ -171,18 +171,46 @@ concatMap fn list =
             append (fn x) (concatMap fn rest)
 
 
+-- | `indexedMap fn list` — apply `fn` to each (index, element) pair.
+--
+-- v0.17 step-13 (Limitation #8): CPS / accumulator rewrite.
+-- The legacy `fn i x :: indexedMapHelp fn (i + 1) rest` shape recursed in the
+-- non-tail position (the cons happens AFTER the recursive call returns),
+-- so the emitted Go ran in O(N) stack — a 1M-element input blew Go's
+-- `maxstacksize` (default 1 GiB). The rewrite delegates to
+-- `indexedMapHelp fn i list acc` which conses `fn i x :: acc` onto the
+-- accumulator in REVERSE order, then `reverseHelp acc []` flips the
+-- accumulator once at the base for the final left-to-right output.
+-- `indexedMapHelp` is tail-recursive and auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
+-- 1M-element input runs in constant Go stack.
+--
+-- PUBLIC SHAPE PRESERVED: `indexedMapHelp`'s symbol name is preserved
+-- (it appears in console_app/main.go via the bundled-console
+-- generated code at lines referencing `Sky_Core_List_indexedMapHelp`).
+-- Only the BODY changes — from non-tail-cons to
+-- accumulator-then-reverse — so cross-module callers continue to
+-- resolve the same symbol with no surface-level disruption.
 indexedMap fn list =
-    indexedMapHelp fn 0 list
+    indexedMapHelp fn 0 list []
 
 
-indexedMapHelp fn i list =
+-- | `indexedMapHelp fn i list acc` — tail-recursive worker for
+-- `indexedMap`. Conses `fn i x :: acc` for each element in reverse
+-- order then `reverseHelp` flips the accumulator once at the base
+-- for the final left-to-right output. The EXPLICIT signature is
+-- load-bearing — without it the HM solver could infer `acc : List any`
+-- and the typed-lowerer would fall back to `rt.AsList[any]`, defeating
+-- both the Coerce-retreat AND the constant-stack contract.
+indexedMapHelp : (Int -> a -> b) -> Int -> List a -> List b -> List b
+indexedMapHelp fn i list acc =
     case list of
 
         [] ->
-            []
+            reverseHelp acc []
 
         x :: rest ->
-            fn i x :: indexedMapHelp fn (i + 1) rest
+            indexedMapHelp fn (i + 1) rest (fn i x :: acc)
 
 
 isEmpty list =

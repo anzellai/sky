@@ -67,6 +67,7 @@ import qualified Sky.Build.CpsStackConstantBound.AppendSpec
 import qualified Sky.Build.CpsStackConstantBound.LengthSpec
 import qualified Sky.Build.CpsStackConstantBound.RangeSpec
 import qualified Sky.Build.CpsStackConstantBound.ZipSpec
+import qualified Sky.Build.CpsStackConstantBound.IndexedMapSpec
 import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
 import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
@@ -531,6 +532,28 @@ allSpecs fastMode = do
     -- inside zipHelp body.
     describeT "Sky.Build.CpsStackConstantBound.Zip"
         Sky.Build.CpsStackConstantBound.ZipSpec.spec
+    -- v0.17 step-13 / Limitation #8 CPS rewrite: List.indexedMap.
+    -- Delegating-binding shape (sibling of List.zip / List.range
+    -- / List.append) — public `indexedMap` is a thin shim that
+    -- calls `indexedMapHelp fn 0 list []`; indexedMapHelp conses
+    -- each `fn i x` result onto acc in REVERSE order, then
+    -- `reverseHelp acc []` flips the accumulator once at the base
+    -- for the final left-to-right output.  Pre-rewrite shape
+    -- `fn i x :: indexedMapHelp fn (i + 1) rest` blew Go's
+    -- maxstacksize on 1M-element inputs (cons runs AFTER the
+    -- recursive call returns — non-tail position).  CRITICAL:
+    -- the indexedMapHelp PUBLIC SYMBOL NAME is preserved
+    -- (NOT renamed to indexedMapAcc) because the bundled
+    -- console_app references Sky_Core_List_indexedMapHelp.  Only
+    -- the body changes — from non-tail-cons to
+    -- accumulator-then-reverse — and an explicit signature is
+    -- added for typed-codegen soundness.  Gates 5 examples: 4
+    -- standard CPS gates + a typed-record-returning callback
+    -- accumulator gate (the edge case the prior 8 ops haven't
+    -- exercised; verifies ZERO rt.Coerce in the indexedMapHelp
+    -- body when accumulating a typed record).
+    describeT "Sky.Build.CpsStackConstantBound.IndexedMap"
+        Sky.Build.CpsStackConstantBound.IndexedMapSpec.spec
     -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
     -- Delegating-binding shape (sibling of List.foldr) — public
     -- `combine` is a thin shim that calls `combineHelp results

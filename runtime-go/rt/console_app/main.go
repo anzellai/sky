@@ -183,27 +183,35 @@ func Sky_Core_List_concatMap[T1 any, T2 any](fn func(T1) []T2, list []T1) []T2 {
 }
 
 func Sky_Core_List_indexedMap[T1 any, T2 any](fn func(int) func(T1) T2, list []T1) []T2 {
-	return rt.AsListT[T2](Sky_Core_List_indexedMapHelp(fn, 0, rt.AsListT[T1](list)))
+	return rt.AsListT[T2](Sky_Core_List_indexedMapHelp(fn, 0, rt.AsListT[T1](list), rt.AsListT[T2]([]any{})))
 }
 
-func Sky_Core_List_indexedMapHelp[T1 any, T2 any](fn func(int) func(T1) T2, i int, list []T1) []T2 {
-	// PROOF: FFI: primitive narrowing (typed slot)
-	return func() []T2 {
-		__subject := list
-		_ = __subject
-		if len(rt.AsList(__subject)) == 0 {
-			return rt.AsListT[T2]([]any{})
+func Sky_Core_List_indexedMapHelp[T1 any, T2 any](fn func(int) func(T1) T2, i int, list []T1, acc []T2) []T2 {
+	for {
+		__tco_subject := list
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
+			return rt.AsListT[T2](Sky_Core_List_reverseHelp(rt.AsListT[T1](acc), rt.AsListT[T1]([]any{})))
 		}
-		if len(rt.AsList(__subject)) >= 1 {
-			x := rt.AsList(__subject)[0]
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			x := rt.AsList(__tco_subject)[0]
 			_ = x
-			rest := any(rt.AsList(__subject)[1:])
+			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			return rt.AsListT[T2](rt.List_cons(rt.SkyCall(fn, i, x), Sky_Core_List_indexedMapHelp(fn, rt.CoerceInt(rt.Add(i, 1)), rt.AsListT[T1](rest))))
+			__tco_t0 := fn
+			__tco_t1 := rt.Add(i, 1)
+			__tco_t2 := rest
+			__tco_t3 := rt.List_cons(rt.SkyCall(fn, i, x), acc)
+			fn = __tco_t0
+			// PROOF: FFI: primitive narrowing (typed slot)
+			i = rt.CoerceInt(__tco_t1)
+			list = rt.AsListT[T1](__tco_t2)
+			acc = rt.AsListT[T2](__tco_t3)
+			continue
 		}
-		_ = rt.Unreachable("case/__subject")
-		return nil
-	}()
+		rt.Unreachable("tco/case")
+	}
+
 }
 
 func Sky_Core_List_isEmpty[T1 any](list []T1) bool {
