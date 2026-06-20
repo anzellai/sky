@@ -4877,14 +4877,18 @@ func Math_abs(n any) any {
 	}
 	return x
 }
+// Math.min / Math.max are polymorphic (`a -> a -> a`, "any comparable type" —
+// Sky.Core.Math). Compare via skyLessThan, NOT AsInt: AsInt truncates Floats to
+// Int (so `Math.min` over `[0.4 … 1.3]` collapsed the range to 0..1, mis-scaling
+// every Std.Ui.Chart sparkline/heatmap) and is meaningless for Strings.
 func Math_min(a any, b any) any {
-	if AsInt(a) < AsInt(b) {
+	if skyLessThan(a, b) {
 		return a
 	}
 	return b
 }
 func Math_max(a any, b any) any {
-	if AsInt(a) > AsInt(b) {
+	if skyLessThan(b, a) {
 		return a
 	}
 	return b
