@@ -48,6 +48,7 @@ import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiAspectGridSpec
 import qualified Sky.Build.UiShowcaseRtCoerceClosedProofSpec
+import qualified Sky.Build.RtCoerceBudgetSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
@@ -395,6 +396,15 @@ allSpecs fastMode = do
     -- comment.  Closed proof, not a soft floor — zero unproven
     -- sites permitted.
     describeT "Sky.Build.UiShowcaseRtCoerceClosedProofSpec" Sky.Build.UiShowcaseRtCoerceClosedProofSpec.spec
+    -- v0.17 step-5 (#644) — rt.Coerce* per-cluster ratchet-down gate.
+    -- Counts the same rt.Coerce* emission-site clusters by category
+    -- (rt.Coerce[ / rt.CoerceInt / rt.CoerceString / rt.CoerceBool /
+    -- rt.CoerceFloat / rt.TaskCoerceT / rt.ResultCoerce /
+    -- rt.MaybeCoerce / rt.AsListT) against a hardcoded baseline that
+    -- can only ratchet DOWN.  Sibling of the closed-proof gate above:
+    -- this one is the quantitative budget, that one is the qualitative
+    -- "every site carries a proof comment" check.
+    describeT "Sky.Build.RtCoerceBudget" Sky.Build.RtCoerceBudgetSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix
