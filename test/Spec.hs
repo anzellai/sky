@@ -65,6 +65,7 @@ import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
 import qualified Sky.Build.CpsStackConstantBound.TakeSpec
 import qualified Sky.Build.CpsStackConstantBound.AppendSpec
 import qualified Sky.Build.CpsStackConstantBound.LengthSpec
+import qualified Sky.Build.CpsStackConstantBound.RangeSpec
 import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
 import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
@@ -498,6 +499,19 @@ allSpecs fastMode = do
     -- on 1M-element inputs.  Gates 4 examples.
     describeT "Sky.Build.CpsStackConstantBound.Length"
         Sky.Build.CpsStackConstantBound.LengthSpec.spec
+    -- v0.17 step-10 / Limitation #8 CPS rewrite: List.range.
+    -- Delegating-binding shape (sibling of List.append / List.foldr)
+    -- — public `range` is a thin shim that calls `rangeHelp lo hi
+    -- []`; rangeHelp cons'es each value onto acc in REVERSE order,
+    -- then `reverseHelp acc []` flips the accumulator once at the
+    -- base for the final ascending left-to-right output.  Pre-
+    -- rewrite shape `lo :: range (lo + 1) hi` blew Go's
+    -- maxstacksize on 1M-element ranges (cons runs AFTER the
+    -- recursive call returns — non-tail position).  Gates 4
+    -- examples including a 10k-element runtime fixture
+    -- (range 1 10000 → length 10000).
+    describeT "Sky.Build.CpsStackConstantBound.Range"
+        Sky.Build.CpsStackConstantBound.RangeSpec.spec
     -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
     -- Delegating-binding shape (sibling of List.foldr) — public
     -- `combine` is a thin shim that calls `combineHelp results

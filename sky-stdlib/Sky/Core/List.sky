@@ -401,12 +401,37 @@ member x list =
                 member x rest
 
 
+-- | `range lo hi` — produce `[lo, lo + 1, ..., hi]` (inclusive).
+--
+-- v0.17 step-10 (Limitation #8): CPS / accumulator rewrite.
+-- The legacy `lo :: range (lo + 1) hi` shape recurses in the
+-- non-tail position (the cons happens AFTER the recursive call
+-- returns), so a 1M-element range blew Go's `maxstacksize`.
+-- The rewrite delegates to `rangeHelp lo hi acc` which conses
+-- each value onto `acc` in REVERSE order (largest first), then
+-- `reverseHelp acc []` flips the accumulator once at the base
+-- for the final ascending left-to-right output.  `rangeHelp` is
+-- tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to a
+-- `for { ... continue }` loop, so a 1M-element range runs in
+-- constant Go stack.
+--
+-- Mirrors the existing `append`@310 + `concat`@348 CPS shape
+-- (build-reversed-onto-acc + reverseHelp-flip-at-end).
 range lo hi =
+    rangeHelp lo hi []
+
+
+-- | `rangeHelp lo hi acc` — tail-recursive worker for `range`.
+-- Cons each value `lo..hi` onto `acc` in reverse order, then
+-- `reverseHelp` flips the accumulator once at the base for the
+-- final left-to-right output.  Private helper for `range`.
+rangeHelp : Int -> Int -> List Int -> List Int
+rangeHelp lo hi acc =
     if lo > hi then
-        []
+        reverseHelp acc []
 
     else
-        lo :: range (lo + 1) hi
+        rangeHelp (lo + 1) hi (lo :: acc)
 
 
 zip xs ys =
