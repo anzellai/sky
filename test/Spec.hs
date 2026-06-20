@@ -60,6 +60,7 @@ import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
 import qualified Sky.Build.CpsStackConstantBound.FilterSpec
+import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -448,6 +449,14 @@ allSpecs fastMode = do
     -- predicate, expected length 500000).
     describeT "Sky.Build.CpsStackConstantBound.Filter"
         Sky.Build.CpsStackConstantBound.FilterSpec.spec
+    -- v0.17 step-2 of CPS rewrite umbrella: foldr (delegating
+    -- binding — pre-reverses then folds-left). Gates 6 examples
+    -- including assertConstantStack1M at the 1M-target runtime
+    -- gate AND three handcrafted non-commutative non-associative
+    -- fixtures to prove fold direction is preserved (a backwards
+    -- fold would silently pass an `(+)`-only test).
+    describeT "Sky.Build.CpsStackConstantBound.Foldr"
+        Sky.Build.CpsStackConstantBound.FoldrSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec

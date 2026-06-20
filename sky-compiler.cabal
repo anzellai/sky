@@ -339,6 +339,7 @@ test-suite sky-tests
       Sky.Build.CpsStackConstantBound.Shared
       Sky.Build.CpsStackConstantBound.MapBaselineSpec
       Sky.Build.CpsStackConstantBound.FilterSpec
+      Sky.Build.CpsStackConstantBound.FoldrSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.HttpTypesSpec
       Sky.Build.CryptoAeadSpec

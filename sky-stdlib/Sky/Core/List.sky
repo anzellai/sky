@@ -145,14 +145,20 @@ foldl fn acc list =
             foldl fn (fn x acc) rest
 
 
+-- CPS rewrite (v0.17 step-2 of the Limitation #8 close).  The
+-- legacy `foldr fn x (foldr fn acc rest)` shape recursed in the
+-- non-tail position, so the emitted Go ran in O(N) stack — a
+-- 1M-element input blew Go's `maxstacksize` (default 1 GiB).
+--
+-- The rewrite delegates to the already-tail-recursive `foldl`
+-- over the pre-reversed list.  Note: this is a DELEGATING
+-- binding — the public `foldr` itself contains no `for { }` loop
+-- because the auto-TCO loop lives in `foldl`'s emitted Go body.
+-- The `\x a -> fn x a` lambda is structurally identical to `fn`
+-- but pinned at the application site so the typed lowerer sees a
+-- fresh callback shape per instantiation.
 foldr fn acc list =
-    case list of
-
-        [] ->
-            acc
-
-        x :: rest ->
-            fn x (foldr fn acc rest)
+    foldl (\x a -> fn x a) acc (reverseHelp list [])
 
 
 concatMap fn list =
