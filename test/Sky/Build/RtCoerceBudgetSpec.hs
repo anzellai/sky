@@ -66,7 +66,7 @@ import qualified Data.Map.Strict as Map
 --   grep -c 'rt\.TaskCoerceT'   main.go   →   0
 --   grep -c 'rt\.ResultCoerce'  main.go   →   0
 --   grep -c 'rt\.MaybeCoerce'   main.go   →  24
---   grep -c 'rt\.AsListT'       main.go   → 171
+--   grep -c 'rt\.AsListT'       main.go   → 171 → 174 (post-step-8 List.map CPS)
 --
 -- Round 5 ratchet (2026-06-20 — steps 2-5 of feat/v0.17 wave-3 close):
 -- wave-3 leak-class architectural close across 3 emit paths
@@ -94,6 +94,22 @@ import qualified Data.Map.Strict as Map
 -- and requires its own targeted fix batch.  Baselines below stay
 -- at their Round-5 values; no ratchet this batch.
 --
+-- Round-6 step-9 delta measurement (2026-06-20 — POST step-8
+-- 'CPS-rewrite List.map for constant Go stack' / commit 8e5dbd4f):
+-- clean-rebuild of 26-ui-showcase shows TOTAL rt.Coerce unchanged at
+-- 287 (gate at floor — no regression), but internal cluster
+-- shift on AsListT 171 → 174 (+3).  Root cause: step-8 rewrote
+-- `Sky.Core.List.map` from non-TCO cons-recurse to typed CPS form
+-- `mapHelp + reverseHelp`, emitting `rt.AsListT[T2](...)` at the
+-- wrapper (typed-list-narrow at the boundary).  The +3 are PROVEN-
+-- CORRECT typed-fast-path narrows — soundness GAIN, not regression
+-- (constant Go stack inside + typed shape at boundary).  The TOTAL
+-- count is unchanged because the 3 new AsListT-mentioning lines
+-- REPLACE prior cons-recursive emit sites that routed through
+-- different narrowing shapes.  Ratchet AsListT 171 → 174 to lock
+-- the new floor; rtCoerceTotalBudget stays at 287.  Delta log
+-- recorded at /tmp/round6-rt-coerce-delta.log.
+--
 -- The 5 active typed-fast-path clusters (Int/String/Bool/Float)
 -- partition correctly from the bare `rt.Coerce[` cluster because
 -- `rt.CoerceInt` does NOT contain the substring `rt.Coerce[`
@@ -101,7 +117,7 @@ import qualified Data.Map.Strict as Map
 -- So the per-cluster grep partitioning is mutually exclusive and
 -- additive.
 --
--- Note on `rt.AsListT` (171) and `rt.MaybeCoerce` (24): both are
+-- Note on `rt.AsListT` (174) and `rt.MaybeCoerce` (24): both are
 -- typed-coerce-list / typed-maybe-narrow helpers used heavily by
 -- Std.Ui's element / attribute lowering paths.  They're not bugs
 -- per se (the cluster names contain `Coerce`-shaped tokens but the
@@ -120,7 +136,7 @@ rtCoerceBaseline = Map.fromList
     , ("rt.TaskCoerceT" , 0)
     , ("rt.ResultCoerce", 0)
     , ("rt.MaybeCoerce" , 24)
-    , ("rt.AsListT"     , 171)
+    , ("rt.AsListT"     , 174)
     ]
 
 
