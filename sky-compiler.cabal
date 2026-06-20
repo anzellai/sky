@@ -397,6 +397,9 @@ test-suite sky-tests
       Sky.Build.SkyshopCompilesSpec
       Sky.Build.AnonLambdaSpec
       Sky.Build.CrossModuleLambdaCollisionC_Spec
+      Sky.Build.DepSolvedTypesWiringSpec
+      Sky.Build.DepCurrentModuleHintSpec
+      Sky.Build.DepNarrowEnvSpec
       Sky.Build.AnonRecordSpec
       Sky.Build.AuthUntypedBoundarySpec
       Sky.Build.Issue52Spec

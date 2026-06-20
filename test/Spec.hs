@@ -117,6 +117,9 @@ import qualified Sky.Build.SnapshotCallerCtxSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.CrossModuleLambdaCollisionC_Spec
+import qualified Sky.Build.DepSolvedTypesWiringSpec
+import qualified Sky.Build.DepCurrentModuleHintSpec
+import qualified Sky.Build.DepNarrowEnvSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.AuthUntypedBoundarySpec
 import qualified Sky.Build.Issue52Spec
@@ -725,6 +728,18 @@ allSpecs fastMode = do
     describeT "Sky.Build.AnonLambda"         Sky.Build.AnonLambdaSpec.spec
     -- v0.15.6 #365 — cross-module local lambda collision.
     describeT "Sky.Build.CrossModuleLambdaCollisionC" Sky.Build.CrossModuleLambdaCollisionC_Spec.spec
+    -- v0.17 Wave 3 / step-1 — dep-emission SolvedTypes wiring +
+    -- per-dep _stCurrentModule hint + narrowed dep ctx env.  Three
+    -- regression specs land together with the impl.  See memory
+    -- notes v017_wave3_solved_types_dep_emission and
+    -- v017_wave3_scope_install_too_aggressive for the
+    -- architectural diagnosis.
+    describeT "Sky.Build.DepSolvedTypesWiring"
+                                            Sky.Build.DepSolvedTypesWiringSpec.spec
+    describeT "Sky.Build.DepCurrentModuleHint"
+                                            Sky.Build.DepCurrentModuleHintSpec.spec
+    describeT "Sky.Build.DepNarrowEnv"
+                                            Sky.Build.DepNarrowEnvSpec.spec
     -- v0.13 E regression: synthAnonRecordName registers shapes
     -- into globalAnonRecords; generateAnonRecordDecls emits
     -- `type Anon_R_<hash> = struct{...}` so the typed Go name
