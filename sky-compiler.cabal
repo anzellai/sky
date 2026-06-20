@@ -251,6 +251,7 @@ test-suite sky-tests
   build-depends:
       base >= 4.14 && < 5
     , hspec >= 2.9
+    , QuickCheck >= 2.14
     , process >= 1.6
     , directory >= 1.3
     , filepath >= 1.4
@@ -349,6 +350,8 @@ test-suite sky-tests
       Sky.Build.DictSourceSpec
       Sky.Build.DbDecoderSpec
       Sky.Build.WebSocketSpec
+      Sky.Build.WellTypedFuzzerGen
+      Sky.Build.WellTypedFuzzerSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec

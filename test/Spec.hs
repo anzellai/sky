@@ -72,6 +72,7 @@ import qualified Sky.Build.JsonPipelinePanic372Spec
 import qualified Sky.Build.DictSourceSpec
 import qualified Sky.Build.DbDecoderSpec
 import qualified Sky.Build.WebSocketSpec
+import qualified Sky.Build.WellTypedFuzzerSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -484,6 +485,10 @@ allSpecs fastMode = do
     -- v0.15.46 — Sky.Core.WebSocket + Sky.Http.Server.WebSocket
     -- kernel routing + Sky-side type-checking.
     describeT "Sky.Build.WebSocket" Sky.Build.WebSocketSpec.spec
+    -- v0.17 step-6 — Well-typed Sky program fuzzer (subprocess-isolated).
+    -- Default tier: 100 iters dev gate. Milestone tier: SKY_FUZZ_FULL=1
+    -- → 10,000 iters per gap-4 of v0.17 close umbrella (#644).
+    describeT "Sky.Build.WellTypedFuzzer" Sky.Build.WellTypedFuzzerSpec.spec
     describeT "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describeT "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec
