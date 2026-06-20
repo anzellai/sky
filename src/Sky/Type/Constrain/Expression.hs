@@ -209,6 +209,137 @@ constrain counter env (A.At region expr) expected = case expr of
         return $ T.CLocal region name expected
 
     Can.VarTopLevel home name -> do
+        -- ═══════════════════════════════════════════════════════
+        -- STRICT-HM ARITY GATE — surface 2 of 3 (cross-module
+        -- externals + same-module annotated TypedDefs)
+        -- ═══════════════════════════════════════════════════════
+        --
+        -- Design contract (shared with VarKernel + constrainCall —
+        -- search "STRICT-HM ARITY GATE" for the other two surfaces):
+        --
+        -- (1) THREE surfaces must gate to fully close Limitation #7
+        --     (calling a `: T` binding with `()` is silently
+        --     accepted, then codegen mis-applies and emits a
+        --     wrong-arity Go call):
+        --
+        --       * Can.VarKernel     — kernel-bound via
+        --                             lookupKernelType / ffiKernelTypeRef
+        --       * Can.VarTopLevel   — THIS arm:
+        --                             cross-module externals
+        --                             OR same-module annotated TypedDefs
+        --       * Can.VarLocal      — Env-bound bindings (let / lambda
+        --                             params / pattern destructure)
+        --
+        -- (2) Declared-arity computation MUST HeadAlias-unfold the
+        --     annotation BEFORE peeling TLambda chain.  Without
+        --     unfold, an aliased function shape like
+        --
+        --         type alias Handler = Request -> Task Error Response
+        --         myHandler : Handler
+        --
+        --     reads as nominal TType "Handler" — arity 0 — and the
+        --     gate would WRONGLY reject `myHandler req`.  Reuse the
+        --     existing 'unfoldHeadAlias' in
+        --     'Sky.Canonicalise.Module' (re-exported through a small
+        --     `Can.Type -> Can.Type` helper so we don't pull a
+        --     Canonicalise → Type layering cycle).  Once unfolded,
+        --     peel TLambda chain (cf.
+        --     'Sky.Build.Compile.splitFuncType' at line 6618 + the
+        --     'arrowArity' pattern at Compile.hs:6192) to count the
+        --     declared arity.  At the T.Type level (post-
+        --     Instantiate.fromAnnotation), the same peel uses
+        --     T.TLambda — see 'collectFuncParams' at Compile.hs:6082.
+        --
+        -- (3) Wildcard-`any` predicate — match the existing
+        --     polymorphism gate below (line ~224):
+        --
+        --         T.Forall freeVars _ | any (/= "any") freeVars
+        --
+        --     Real polymorphic bindings (Forall containing at least
+        --     ONE non-`any` var) MUST stay on the current CForeign
+        --     per-call-site re-instantiation path so the v0.15.1
+        --     same-module polymorphic re-instantiation behaviour
+        --     keeps working AND the head-alias Handler shape (#123)
+        --     keeps working.  Wildcard-only sigs and non-polymorphic
+        --     sigs are the gate's target — for those, declared arity
+        --     is FIXED by the annotation and a supplied-arity mismatch
+        --     is a soundness violation.
+        --
+        -- (4) Gate fires in TWO positions:
+        --
+        --     (a) constrainCall caller side — when the function head
+        --         resolves to an annotated binding with declared
+        --         arity D and the call supplies arity S where D ≠ S
+        --         in the leading-TUnit-vs-empty direction:
+        --
+        --           * D=0 (annotation `f : T`) called with S=1 unit-
+        --             arg `f ()` — Limitation #7's canonical shape.
+        --           * D=1 unit-arg (annotation `f : () -> T`) called
+        --             with S=0 args (`f` bare).
+        --
+        --         A simple unit-leading mismatch.  The gate REJECTS
+        --         with a clear E2xxx-style diagnostic ("`f` is
+        --         declared `: T` — drop the `()`" / "drop the bare
+        --         and write `f ()`").
+        --
+        --     (b) VAR-arm value-slot face — when a bare reference
+        --         to a `() -> T` declared binding flows into a slot
+        --         that expects non-arrow T.  This is the
+        --         partial-application-as-value mistake (`route =
+        --         someTask` where `someTask : () -> Task Error a`
+        --         and the route expects `Task Error a`).  Today
+        --         this surfaces as a Go-side mismatch much later.
+        --         Strict-HM rejects at the Var arm by checking the
+        --         'Expected T.Type' against the unfolded declared
+        --         shape.
+        --
+        -- (5) Codegen-side audit — leave it alone:
+        --
+        --     'Sky.Build.Compile.hs' has TWO `arity == 0` branches:
+        --
+        --       * line ~5629 (`generateCtorFunc`) — ADT
+        --         constructors like `Nothing` / `Empty` emit as a
+        --         value-shape Go decl (`var X = StructLit{...}`).
+        --         This is the CORRECT, declared shape for nullary
+        --         ADT ctors and has no relation to function-arity.
+        --         STAYS.
+        --
+        --       * line ~4736 (poly-union ctor emission) — sibling
+        --         path for parametric ADT ctors; same semantics
+        --         (value-shape Go decl when ctor takes no args).
+        --         STAYS.
+        --
+        --     Programs that pass strict-HM never reach codegen
+        --     with a declared-arity vs supplied-arity mismatch,
+        --     so no codegen change is needed once the HM gate is
+        --     in place.  Documenting here so future readers
+        --     understand: HM-only is sufficient; codegen carries
+        --     no defensive coverage for the rejected shape.
+        --
+        -- (6) Migration sequence for future PRs (not done in this
+        --     comment-only step):
+        --
+        --       * PR-A: add the declared-arity helper
+        --         (`declaredArity :: AliasMap -> Can.Type -> Int`)
+        --         to a shared module — likely
+        --         `Sky.Type.AnnotationShape` — and unit-test it.
+        --       * PR-B: thread an AliasMap into the constrain
+        --         pipeline (today Constrain doesn't read aliases
+        --         directly; threading mirrors the existing
+        --         externals + sameModAnnots IORef channel via
+        --         `globalAliasMap :: IORef (Map AliasMap)`).
+        --       * PR-C: install the gate at each of the THREE
+        --         surfaces; add the regression spec
+        --         `Sky.Type.Limitation7CurrentLooseAcceptance`
+        --         that pins the CURRENT loose acceptance, then
+        --         flip the assertion when the gate ships.
+        --       * PR-D: surface the `Sky.Core.Pure` migration hint
+        --         in the diagnostic so AI-written code is steered
+        --         to the v0.15.50 uniform `() -> Task Error a`
+        --         companion surface.
+        --
+        -- ═══════════════════════════════════════════════════════
+        --
         -- Cross-module channel: emit CForeign so the solver
         -- instantiates fresh vars at this call site.  Same-module
         -- references emit CForeign when the target is an ANNOTATED
@@ -267,6 +398,49 @@ constrain counter env (A.At region expr) expected = case expr of
                     return $ T.CLocal region name expected
 
     Can.VarKernel modName funcName -> do
+        -- ═══════════════════════════════════════════════════════
+        -- STRICT-HM ARITY GATE — surface 1 of 3 (kernel-bound)
+        -- ═══════════════════════════════════════════════════════
+        --
+        -- See the full design note above the Can.VarTopLevel arm
+        -- (search "STRICT-HM ARITY GATE — surface 2 of 3" — that
+        -- block carries the (1)-(6) contract this surface
+        -- participates in).  Highlights for the kernel surface:
+        --
+        --   * Kernel annotations come from `lookupKernelType` (hand-
+        --     coded in `Sky.Type.Kernel`) AND `ffiKernelTypeRef`
+        --     (Sky-side type seeded by the FFI registry).  Both
+        --     channels write a 'T.Forall' — the gate's
+        --     declared-arity computation should be uniform across
+        --     them.
+        --
+        --   * Limitation #7 originated AT this surface — calling
+        --     `Uuid.v4` (declared `: String`) with `()` codegen-
+        --     applied the unit thunk and emitted `Uuid_v4()()`
+        --     against a `func() any` Go shape.  Today the v0.17
+        --     PR-23 codegen tightening rejects this Go-side, but
+        --     the HM type-checker still loosely accepts it.
+        --
+        --   * v0.15.50 shipped 'Sky.Core.Pure' as a uniform
+        --     `() -> Task Error a` companion surface
+        --     (Pure.uuidV4 () / Pure.timeNow () / etc.) so AI-
+        --     written code can target a single arity convention
+        --     without renaming existing kernels.  When the gate
+        --     fires here, the diagnostic SHOULD steer users to
+        --     `Sky.Core.Pure` for the bindings that have a Pure.*
+        --     companion (audit `sky-stdlib/Sky/Core/Pure.sky` for
+        --     the canonical list).
+        --
+        --   * Kernel sigs are wildcard-aware (e.g.
+        --     `Db.exec : Db -> String -> List any -> Task Error ()`
+        --     binds wildcard `any` at the param slot).  Per the
+        --     wildcard-`any` predicate in (3), kernel sigs whose
+        --     ONLY free vars are `any` MUST gate (their declared
+        --     arity is fixed); kernel sigs with at least one non-
+        --     `any` free var (e.g. `Maybe.map : (a -> b) -> Maybe
+        --     a -> Maybe b`) are real polymorphic and keep
+        --     CForeign per-call-site instantiation.
+        --
         -- Stdlib kernel sigs (handcoded in lookupKernelType) take
         -- precedence — they're the most carefully audited surface.
         case lookupKernelType modName funcName of
@@ -630,6 +804,67 @@ constrainLambda counter env region params body expected = do
 
 -- ═══════════════════════════════════════════════════════════
 -- CALL
+-- ═══════════════════════════════════════════════════════════
+--
+-- ───────────────────────────────────────────────────────────
+-- STRICT-HM ARITY GATE — surface 3 of 3 (call site)
+-- ───────────────────────────────────────────────────────────
+--
+-- See the full design note above the Can.VarTopLevel arm
+-- (search "STRICT-HM ARITY GATE — surface 2 of 3").  This is
+-- the gate's PRIMARY firing surface: position (4)(a) — when
+-- the function head resolves to an annotated binding and the
+-- call supplies arity ≠ declared arity in the leading-TUnit-
+-- vs-empty direction.
+--
+-- Today this function emits CForeign / CLocal via the Var arm
+-- AND a CApp constraint pinning `foldr T.TLambda resultType
+-- argTypes` against `funcType`.  HM unifies the synthesised
+-- TLambda chain (one arrow per supplied arg) against the
+-- annotation; the wildcard-`any` arm of the unifier accepts
+-- mismatches that would otherwise be type errors.
+--
+-- The strict-HM gate's call-site responsibility:
+--
+--   (a) Resolve the func head's declared shape — when func is
+--       a 'Can.VarTopLevel' / 'Can.VarKernel' / 'Can.VarLocal'
+--       and an annotation is available, HeadAlias-unfold +
+--       Instantiate.fromAnnotation + peel TLambda chain to
+--       compute declared arity D.
+--
+--   (b) Compute supplied arity S = length args.
+--
+--   (c) Reject when (D, S) is in the Limitation #7 mismatch
+--       set:
+--
+--         * D = 0 (declared `: T`) AND S ≥ 1 with the first
+--           arg being 'Can.Unit'  →  "calling `: T` with `()`"
+--         * D ≥ 1 with leading TLambda TUnit (declared
+--           `: () -> ...`) AND S = 0  →  "bare reference,
+--           drop into call shape `f ()`"
+--
+--   (d) When the func head is a polymorphic Forall containing
+--       at least one non-`any` var, SKIP the gate — real
+--       polymorphism preserves the v0.15.1 same-mod
+--       re-instantiation behaviour AND the head-alias Handler
+--       shape (#123).
+--
+--   (e) When the func head doesn't resolve to an annotation
+--       (lambda head, complex expression head), SKIP the gate
+--       — the existing CApp unification handles those cleanly
+--       (no Limitation #7 risk because there's no declared
+--       shape to violate).
+--
+-- Codegen-side audit: see (5) in the design note above
+-- Can.VarTopLevel.  Programs rejected by this gate never
+-- reach codegen, so the `arity == 0` ADT-ctor emission paths
+-- at Compile.hs:5629 + 4736 are unaffected — they handle the
+-- DIFFERENT case of nullary ADT constructors emitting as
+-- value-shape Go decls.
+--
+-- This step adds the design note only; the gate implementation
+-- lands in subsequent PRs (see (6) migration sequence).
+--
 -- ═══════════════════════════════════════════════════════════
 
 constrainCall :: Counter -> Env -> T.Region -> Can.Expr -> [Can.Expr] -> T.Expected T.Type -> IO T.Constraint
