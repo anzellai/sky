@@ -2064,28 +2064,24 @@ verified against HEAD.
    appear in a real FFI surface, the axiom needs extending to
    walk arg lists pairwise — track via a fresh limitation if it
    surfaces.
-7. **Zero-arg calls follow the binding's declared type, not its
-   FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
-   sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
-   `FyneApp.new ()` are *all* needed because their sigs are
-   `() -> Task Error a` / `() -> any`. Calling a `: String`
-   binding with `()` is now correctly rejected by HM with
-   `Foreign 'Sky.Core.Uuid.v4': String vs a -> b` — the historical
-   codegen mis-application is closed by the v0.17 PR-23 HM
-   tightening.  Stick to the declared shape (or use
-   `Sky.Core.Pure` for a uniform `()`-arrow surface).  Dict / Set
-   / Maybe / Result stay bare for their `empty` / `none` etc.
-   because those have non-function types too.
-
-   **v0.15.50 mitigation — `Sky.Core.Pure`.** New code
-   targeting a uniform `() -> Task Error a` shape can import
-   `Sky.Core.Pure as Pure` and call the additive companions —
-   `Pure.uuidV4 ()` / `Pure.uuidV7 ()` / `Pure.timeNow ()` /
-   `Pure.timeUnixMillis ()` / `Pure.systemArgs ()` /
-   `Pure.systemCwd ()` / `Pure.systemLoadEnv ()` /
-   `Pure.ioReadLine ()` / `Pure.dbConnect ()`. Existing names +
-   shapes unchanged. Pure.* lowers to the canonical kernel with
-   typed `SkyTask[Error, T]` shape (no `any` widening).
+7. ~~Zero-arg call shape soundness gap (FFI-vs-kernel arity
+   acceptance).~~ — CLOSED in v0.17 round 6 (Limitation #7, this
+   batch).  Strict HM gate at
+   `src/Sky/Type/Constrain/Expression.hs` across `Can.VarKernel` +
+   `Can.VarTopLevel` + `Can.VarLocal` arms + `constrainCall`: every
+   `: () -> T` binding requires call-with-`()`; every `: T`
+   binding rejects call-with-`()`; bare value-slot references
+   gated identically.  HeadAlias unfold applied before arity
+   computation (preserves v0.16.4 PR #123 `Handler` shape).
+   Wildcard-`any` soundness gate respected (real polymorphic
+   `Forall` remains flexible).  Regression:
+   `Sky.Type.StrictHmArityGate` (8 cases) +
+   `Sky.Type.Limitation7CurrentLooseAcceptance` (red-then-green
+   6 cases).  The `Pure.*` surface
+   (`sky-stdlib/Sky/Core/Pure.sky`) survives as a stylistic-
+   consistency aid but is no longer load-bearing for soundness.
+   See `### Closed in v0.17 (kept here for grep)` below for the
+   full closure log.
 8. **Non-tail-recursive list operations are O(N) on Go stack.**
    `map`, `filter`, `foldr`, `length`, `concat`, `take`,
    `append`, `range`, `zip`, `concatMap`, `indexedMap`,
@@ -2111,6 +2107,33 @@ verified against HEAD.
     line, off-side-rule indented).  `typeAnnotation` retries with
     `freshLine + checkIndent + "->"` when the arrow doesn't appear
     on the current line.  No workaround needed.
+### Closed in v0.17 (kept here for grep)
+
+- ~~**Zero-arg calls follow the binding's declared type, not its
+  FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
+  sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
+  `FyneApp.new ()` are *all* needed because their sigs are
+  `() -> Task Error a` / `() -> any`. Calling a `: String`
+  binding with `()` was previously silently accepted at codegen,
+  surfacing only as a Go build error or runtime panic.~~ — CLOSED
+  in v0.17 round 6 (Limitation #7, this batch).  Strict HM gate
+  at `src/Sky/Type/Constrain/Expression.hs` across `Can.VarKernel`
+  + `Can.VarTopLevel` + `Can.VarLocal` arms + `constrainCall`:
+  every `: () -> T` binding requires call-with-`()`; every `: T`
+  binding rejects call-with-`()`; bare value-slot references
+  gated identically.  HeadAlias unfold applied before arity
+  computation (preserves v0.16.4 PR #123 `Handler` shape).
+  Wildcard-`any` soundness gate respected (real polymorphic
+  `Forall` remains flexible).  Regression:
+  `Sky.Type.StrictHmArityGate` (8 cases) +
+  `Sky.Type.Limitation7CurrentLooseAcceptance` (red-then-green
+  6 cases).  The `Pure.*` surface
+  (`sky-stdlib/Sky/Core/Pure.sky`) survives as a stylistic-
+  consistency aid but is no longer load-bearing for soundness —
+  the canonical kernel arities are now enforced at the type
+  level, so any zero-arg shape mismatch fails fast with a clear
+  HM diagnostic instead of routing through codegen.
+
 ### Closed in v0.16 (kept here for grep)
 
 - ~~`Std.Db.exec` / `Std.Db.query` reject mixed-type parameter lists
