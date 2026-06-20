@@ -281,14 +281,48 @@ append xs ys =
             x :: append rest ys
 
 
+-- | `concat lists` — flatten a list of lists.
+--
+-- v0.17 step-3 (Limitation #8): CPS / accumulator rewrite.
+-- `concatHelp lists acc` walks the outer list tail-recursively,
+-- using `appendReverseOnto xs acc` to cons each inner list's
+-- elements onto `acc` in REVERSE order.  When the outer list is
+-- exhausted, `reverseHelp acc []` flips the accumulator once for
+-- the final left-to-right result.  Both `concatHelp` and
+-- `appendReverseOnto` are tail-recursive and auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
+-- 1M-element input runs in constant Go stack instead of the old
+-- O(N) non-TCO recursion (the legacy `append xs (concat rest)`
+-- shape recursed in the non-tail position).
+--
+-- NOTE: `concatHelp` uses ONLY the private `appendReverseOnto`,
+-- NOT the public `append` — so `concat` is fully independent of
+-- whatever step-5 does to `append`'s rewrite.
 concat lists =
+    concatHelp lists []
+
+
+concatHelp lists acc =
     case lists of
 
         [] ->
-            []
+            reverseHelp acc []
 
         xs :: rest ->
-            append xs (concat rest)
+            concatHelp rest (appendReverseOnto xs acc)
+
+
+-- | `appendReverseOnto xs acc` — cons each element of `xs` onto
+-- `acc` in reverse order.  Tail-recursive so the emitted Go is a
+-- `for { ... continue }` loop.  Private helper for `concat`.
+appendReverseOnto xs acc =
+    case xs of
+
+        [] ->
+            acc
+
+        x :: rest ->
+            appendReverseOnto rest (x :: acc)
 
 
 member x list =

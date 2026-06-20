@@ -61,6 +61,7 @@ import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
 import qualified Sky.Build.CpsStackConstantBound.FilterSpec
 import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
+import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -457,6 +458,14 @@ allSpecs fastMode = do
     -- fold would silently pass an `(+)`-only test).
     describeT "Sky.Build.CpsStackConstantBound.Foldr"
         Sky.Build.CpsStackConstantBound.FoldrSpec.spec
+    -- v0.17 step-3 of CPS rewrite umbrella: concat (delegating
+    -- binding to TWO private helpers — concatHelp + appendReverseOnto).
+    -- Independent of step-5's `append` rewrite: concat uses ONLY
+    -- the private appendReverseOnto, never the public append.
+    -- Gates 5 examples including assertConstantStack1M at a
+    -- 1k-outer × 2-inner = 2k flat-output runtime fixture.
+    describeT "Sky.Build.CpsStackConstantBound.Concat"
+        Sky.Build.CpsStackConstantBound.ConcatSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
