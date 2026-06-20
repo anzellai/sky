@@ -63,18 +63,34 @@ mapHelp fn list acc =
             mapHelp fn rest (fn x :: acc)
 
 
+-- | `filter pred list` — keep only elements satisfying pred.
+--
+-- v0.17 step-1 (Limitation #8): CPS / accumulator rewrite.
+-- Forwards `filterHelp` accumulates `x :: acc` (reversed) for
+-- elements satisfying pred, then `reverseHelp` flips the result.
+-- Both helpers are tail-recursive and auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
+-- 1M-element input runs in constant Go stack instead of the old
+-- O(N) non-TCO recursion.
 filter pred list =
+    filterHelp pred list []
+
+
+filterHelp pred list acc =
     case list of
 
         [] ->
-            []
+            reverseHelp acc []
 
         x :: rest ->
-            if pred x then
-                x :: filter pred rest
+            filterHelp
+                pred
+                rest
+                (if pred x then
+                    x :: acc
 
-            else
-                filter pred rest
+                else
+                    acc)
 
 
 any pred list =

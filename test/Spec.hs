@@ -59,6 +59,7 @@ import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
+import qualified Sky.Build.CpsStackConstantBound.FilterSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -441,6 +442,12 @@ allSpecs fastMode = do
     -- reuses the same helpers.
     describeT "Sky.Build.CpsStackConstantBound.MapBaseline"
         Sky.Build.CpsStackConstantBound.MapBaselineSpec.spec
+    -- v0.17 step-1 of CPS rewrite umbrella: filter (sibling of
+    -- map). Gates 4 combinators including assertConstantStack1M
+    -- at a 1M-element fixture (List.range 1 1000000, even-number
+    -- predicate, expected length 500000).
+    describeT "Sky.Build.CpsStackConstantBound.Filter"
+        Sky.Build.CpsStackConstantBound.FilterSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
