@@ -78,6 +78,22 @@ import qualified Data.Map.Strict as Map
 -- `rt.CoerceString` -2 + `rt.CoerceBool` -4 (typed-fast-path narrows
 -- that the leak class previously routed through bare-coerce).
 --
+-- Round-6 honest verification (2026-06-20 — step-5 of subsequent
+-- closure batch, post-step-2 'pad bare parametric-alias _R rendering
+-- with [any, ...]' fix): clean-rebuild of 26-ui-showcase against
+-- HEAD measured identical to baseline:
+--   bare-`rt.Coerce[` = 214, CoerceInt = 19, CoerceString = 80,
+--   CoerceBool = 13, CoerceFloat = 22, TaskCoerceT = 0,
+--   ResultCoerce = 0, MaybeCoerce = 24, AsListT = 171, TOTAL = 287.
+-- The step-2 fix targeted the dep-module-empty-SolvedTypes class
+-- (notes-app 3 sites → 0) which is a DIFFERENT cluster from the
+-- ui-showcase residual.  The remaining 287 sites in ui-showcase
+-- belong to the user-ADT typed-payload narrowing + collection-
+-- element σ-substitution + Cmd/Sub generic-narrowing clusters
+-- (per Judge's closure_strategy) — gap-rt-coerce-287 remains OPEN
+-- and requires its own targeted fix batch.  Baselines below stay
+-- at their Round-5 values; no ratchet this batch.
+--
 -- The 5 active typed-fast-path clusters (Int/String/Bool/Float)
 -- partition correctly from the bare `rt.Coerce[` cluster because
 -- `rt.CoerceInt` does NOT contain the substring `rt.Coerce[`
