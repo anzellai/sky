@@ -323,6 +323,8 @@ test-suite sky-tests
       Sky.Build.UiPseudoClassSpec
       Sky.Build.UiTransitionAnimationSpec
       Sky.Build.UiAspectGridSpec
+      Sky.Build.UiShowcaseRtCoerceClosedProofSpec
+      Sky.Build.RtCoerceScanner
       Sky.Build.UiMultilineTextareaSpec
       Sky.Build.InputAttrsSplitSpec
       Sky.Build.ExposingTypeCtorsSpec

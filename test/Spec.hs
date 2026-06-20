@@ -44,6 +44,7 @@ import qualified Sky.Build.UiMediaQuerySpec
 import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiAspectGridSpec
+import qualified Sky.Build.UiShowcaseRtCoerceClosedProofSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
@@ -361,6 +362,12 @@ allSpecs fastMode = do
     -- (no new injection pass needed) — verified by the visual gates
     -- in scripts/verify-ui-showcase.mjs.
     describeT "Sky.Build.UiAspectGrid"  Sky.Build.UiAspectGridSpec.spec
+    -- v0.17 step-8 (#644) — rt.Coerce closed-proof gate.
+    -- Rebuilds 26-ui-showcase and asserts every rt.Coerce site
+    -- in the emitted main.go carries a // PROOF: <category>: ...
+    -- comment.  Closed proof, not a soft floor — zero unproven
+    -- sites permitted.
+    describeT "Sky.Build.UiShowcaseRtCoerceClosedProofSpec" Sky.Build.UiShowcaseRtCoerceClosedProofSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix

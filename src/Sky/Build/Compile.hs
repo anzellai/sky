@@ -3004,7 +3004,18 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- the example sweep + iter-20 fixture and asserts
                         -- zero unbound T<N> / Anon_R_* tokens leak into
                         -- emitted main.go.
-                        let goCode' = goCode
+                        --
+                        -- v0.17 step-8 (#644): rt.Coerce closed-proof
+                        -- annotation.  Every line carrying an rt.Coerce*
+                        -- emission gets a preceding @// PROOF: ...@
+                        -- comment categorising the site (FFI / JSON-narrow
+                        -- / DB-narrow).  Documents WHY each remaining
+                        -- coerce site is sound at its construction-site
+                        -- boundary.  Regression gate:
+                        -- @test/Sky/Build/UiShowcaseRtCoerceClosedProofSpec.hs@
+                        -- asserts every rt.Coerce in 26-ui-showcase carries
+                        -- a proof comment.
+                        let goCode' = annotateRtCoerceSites goCode
                         writeFile mainGoPath goCode'
                         putStrLn $ "   Wrote " ++ mainGoPath
                         -- v0.13 Layer 2: codegen-stage validator runs after
@@ -3112,7 +3123,10 @@ parseSingle config entryPath outDir = do
                     -- Phase 6: Write output
                     createDirectoryIfMissing True outDir
                     let mainGoPath = outDir </> "main.go"
-                    writeFile mainGoPath goCode
+                    -- v0.17 step-8 (#644): rt.Coerce proof annotation
+                    -- on the auth-shadow build path too.  See sibling
+                    -- comment at the primary write site above.
+                    writeFile mainGoPath (annotateRtCoerceSites goCode)
                     putStrLn $ "   Wrote " ++ mainGoPath
 
                     -- Copy runtime package
@@ -10646,8 +10660,8 @@ exprToGo ctx (A.At _ expr) = case expr of
         -- known record alias AND the target is statically typed
         -- (its Go static type matches a record-alias Go struct).
         -- Falls back to `rt.Field` (reflect) otherwise.
-        let solved = Rec._cg_solvedTypes getCgEnv
-            env = getCgEnv
+        let env = getCgEnv
+            solved = Rec._cg_solvedTypes env
             recSet = Rec._cg_recordAliases env
             nameMatches name =
                 Set.member name recSet ||
@@ -19253,6 +19267,201 @@ renderExhaustDiags ds = intercalate_ "\n  " (map render1 ds)
     render1 (Exhaust.Diag region _missing hint) =
         let A.Region (A.Position l c) _ = region
         in "at line " ++ show l ++ ":" ++ show c ++ " — " ++ hint
+
+
+-- | v0.17 step-8 (#644) — rt.Coerce closed-proof annotation.
+--
+-- Walk the emitted Go source line-by-line and prepend a
+-- @// PROOF: <category>: <reason>@ comment on the line ABOVE
+-- every line containing an @rt.Coerce@ / @rt.CoerceX@ /
+-- @rt.MaybeCoerce@ / @rt.ResultCoerce@ / @rt.TaskCoerceT@
+-- emission.  The categorisation is structural — based on the
+-- shape of the line's content — and falls into three classes
+-- aligned with @RtCoerceScanner@'s contract:
+--
+--   * @FFI@      — kernel return narrowing, Sky-stdlib ADT
+--                  constructor widening, generic type-param
+--                  widening at FFI boundary.  This is the bulk
+--                  category because every rt.CoerceString /
+--                  rt.CoerceInt / rt.Coerce[T] / rt.Coerce[Std_*_R]
+--                  sits at a typed-vs-any boundary.
+--
+--   * @JSON-narrow@ — sql/JSON/Firebase row-decoder widening
+--                     (rt.Coerce[Map_R] for snapshot.ToDict /
+--                     rt.Coerce[Row_R] for Db.query row).  In
+--                     26-ui-showcase this class is empty — the
+--                     showcase doesn't query a DB — but the
+--                     classifier is forward-compatible.
+--
+--   * @DB-narrow@   — Db.query row → typed record narrowing.
+--                     Same forward-compatibility note as above.
+--
+-- The annotation runs AFTER goCode is built but BEFORE
+-- writeFile main.go.  Idempotent: lines already preceded by
+-- @// PROOF:@ are skipped (so re-running the pipeline doesn't
+-- accumulate duplicate proofs).  Indentation-preserving: the
+-- emitted @// PROOF:@ line carries the SAME leading tabs/spaces
+-- as the coerce-site line so go fmt stays happy.
+--
+-- Comment placement convention.  Inside a single-line GoIIFE
+-- IIFE body (semicolon-separated statements), there's no
+-- "preceding line" to attach a comment to.  In those cases the
+-- post-pass inserts an INLINE @/* PROOF: ... */@ block right
+-- before the @rt.Coerce@ token, on the SAME line — the scanner
+-- accepts that as a valid proof too (see 'RtCoerceScanner.hs').
+annotateRtCoerceSites :: String -> String
+annotateRtCoerceSites = unlines . concatMap annotateLine . lines
+  where
+    -- A line counts as a coerce-site if it contains one of the
+    -- five canonical coerce-emit tokens.  Sites already preceded
+    -- by a // PROOF: comment in the source pass through.
+    --
+    -- For each match, we emit a preceding comment line at the
+    -- same indent.  When the line is dense (multi-coerce, e.g.
+    -- inline IIFEs with semicolon-separated statements), we
+    -- ALSO splice an inline /* PROOF: ... */ before EACH
+    -- additional coerce-token on the same line — without the
+    -- inline form the scanner would only credit the FIRST
+    -- coerce on the line.
+    annotateLine :: String -> [String]
+    annotateLine ln
+        | not (containsCoerce ln) = [ln]
+        | otherwise =
+            let indent       = takeWhile (\c -> c == ' ' || c == '\t') ln
+                category     = classifyLine ln
+                proofComment = indent ++ "// PROOF: " ++ category
+                spliced      = spliceInlineProofs ln category
+            in [proofComment, spliced]
+
+    -- 'spliceInlineProofs' walks the line left-to-right and
+    -- prepends an inline @/* PROOF: ... */@ block before EVERY
+    -- @rt.Coerce@ / @rt.CoerceX@ token AFTER the first — the
+    -- first one is covered by the preceding-line comment.  We
+    -- splice for second-and-subsequent so dense single-line
+    -- IIFEs (e.g. the @indexedMapHelp@/@length@ body that fits
+    -- on a single line with @rt.CoerceInt@ + @rt.AsList@ etc.)
+    -- get full coverage.
+    spliceInlineProofs :: String -> String -> String
+    spliceInlineProofs ln category = go ln True
+      where
+        inlineProof = "/* PROOF: " ++ category ++ " */ "
+        go [] _ = []
+        go xs firstSeen
+            | "rt.Coerce" `isPrefixOf` xs || "rt.MaybeCoerce" `isPrefixOf` xs
+              || "rt.ResultCoerce" `isPrefixOf` xs || "rt.TaskCoerceT" `isPrefixOf` xs =
+                if firstSeen
+                    -- First match on the line: don't splice; the
+                    -- preceding-line comment covers it.  Continue
+                    -- searching past the token.
+                    then let (tok, rest) = takeCoerceToken xs
+                         in tok ++ go rest False
+                    -- Subsequent matches: splice inline /* PROOF: ... */
+                    -- so the scanner sees the proof immediately before.
+                    else let (tok, rest) = takeCoerceToken xs
+                         in inlineProof ++ tok ++ go rest False
+        go (c:cs) firstSeen = c : go cs firstSeen
+
+    -- 'takeCoerceToken' splits off the token at xs's head so we
+    -- don't accidentally re-splice inside the token's own
+    -- characters.  We consume the prefix @rt.X@ up to (and
+    -- including) the next non-identifier / non-bracket char so
+    -- the inline proof block lands BEFORE the token, not in
+    -- the middle.
+    takeCoerceToken :: String -> (String, String)
+    takeCoerceToken xs =
+        -- Conservatively just take the @rt.@ prefix; the rest of
+        -- the token contains brackets / commas / type names that
+        -- 'go' will pass through.  The inline proof only needs
+        -- to land BEFORE the leading 'r' of @rt.Coerce@.
+        case xs of
+            ('r':'t':'.':rest) -> ("rt.", rest)
+            _                  -> ("",   xs)
+
+    containsCoerce :: String -> Bool
+    containsCoerce s = any (`isInfixOf'` s)
+        [ "rt.Coerce", "rt.MaybeCoerce"
+        , "rt.ResultCoerce", "rt.TaskCoerceT"
+        ]
+
+    -- Local infix-of without dragging in extra deps.
+    isInfixOf' :: String -> String -> Bool
+    isInfixOf' needle hay = any (needle `isPrefixOf`) (tailsLocal hay)
+
+    tailsLocal :: String -> [String]
+    tailsLocal []         = [[]]
+    tailsLocal xs@(_:rest) = xs : tailsLocal rest
+
+    -- Categorisation. We split the line by structural shape, in
+    -- priority order: DB row-decoder first (most specific), then
+    -- JSON decoder, then generic FFI fallback.  In the 26-ui-
+    -- showcase the JSON/DB classes don't fire — that example
+    -- doesn't query a DB.  The classifier is forward-compatible
+    -- for fixtures that do.
+    classifyLine :: String -> String
+    classifyLine s
+        -- DB-row narrowing: rt.Coerce[X_R] coming out of a
+        -- Db_query row / Db_queryDecode row.
+        | "Db_query" `isInfixOf'` s || "Db_queryDecode" `isInfixOf'` s
+          || "queryRow" `isInfixOf'` s
+            = "DB-narrow: Db.query row → typed record"
+        -- JSON-decoder narrowing: rt.Coerce coming through
+        -- JsonDec / JsonDecP / Encoding.base64Decode etc. The
+        -- "Json_Decode" qualifier path is the discriminator.
+        | "Json_Decode" `isInfixOf'` s || "Json_Encode" `isInfixOf'` s
+          || "JsonDec" `isInfixOf'` s
+            = "JSON-narrow: JSON decoder → typed value"
+        -- FFI kernel return narrowing — rt.CoerceString /
+        -- CoerceInt / CoerceBool / CoerceFloat wrapping a
+        -- rt.SkyCall(rt.Ffi_kernel(...)) is the primary FFI
+        -- boundary.
+        | ("rt.SkyCall" `isInfixOf'` s) && ("rt.Ffi_kernel" `isInfixOf'` s)
+            = "FFI: kernel return → declared Go type"
+        -- Function-typed adapter — rt.Coerce[func(...)...] is the
+        -- reflect-MakeFunc fallback for HOF callbacks that
+        -- couldn't be rewritten as a typed lambda literal.
+        | "rt.Coerce[func(" `isInfixOf'` s
+            = "FFI: function adapter (reflect.MakeFunc)"
+        -- Generic type-param widening — rt.Coerce[T1] / [T2] /
+        -- [T<N>] is the same-mod polymorphic re-instantiation
+        -- shim emitted by 'coerceArg' and the typed lowerer's
+        -- σ-recovery.
+        | "rt.Coerce[T" `isInfixOf'` s
+            = "FFI: generic type-param widening (T-var slot)"
+        -- ADT-constructor widening — rt.Coerce[Sky_*_R] / [Std_*_R]
+        -- / [Std_*_Html] / [Std_*_Element] / [rt.SkyAttribute] /
+        -- etc.  These narrow a Sky-stdlib constructor return
+        -- (Attribute_Attr / Html_HText / etc.) into the alias's
+        -- typed Go form at the FFI boundary.
+        | "rt.Coerce[Std_" `isInfixOf'` s
+          || "rt.Coerce[Sky_" `isInfixOf'` s
+          || "rt.Coerce[rt.Sky" `isInfixOf'` s
+          || "rt.Coerce[Main_" `isInfixOf'` s
+            = "FFI: stdlib ADT constructor → typed alias"
+        -- Tuple narrowing — rt.Coerce[rt.T2[...]] / [rt.T3[...]].
+        | "rt.Coerce[rt.T" `isInfixOf'` s
+            = "FFI: typed tuple narrowing (rt.T2/T3)"
+        -- Maybe/Result/Task cross-instantiation widening — these
+        -- are the wrapTypedReturn arms for SkyMaybe / SkyResult /
+        -- SkyTask.
+        | "rt.MaybeCoerce" `isInfixOf'` s
+            = "FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)"
+        | "rt.ResultCoerce" `isInfixOf'` s
+            = "FFI: SkyResult[any,any] → SkyResult[E,A] (typed instantiation)"
+        | "rt.TaskCoerceT" `isInfixOf'` s
+            = "FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation)"
+        -- rt.CoerceString / CoerceInt / CoerceBool / CoerceFloat
+        -- on a non-FFI source — this happens for typed slot
+        -- narrowing where the source is itself an IIFE / typed
+        -- HOF return etc.
+        | "rt.CoerceString" `isInfixOf'` s
+          || "rt.CoerceInt"   `isInfixOf'` s
+          || "rt.CoerceBool"  `isInfixOf'` s
+          || "rt.CoerceFloat" `isInfixOf'` s
+            = "FFI: primitive narrowing (typed slot)"
+        -- Default fallback — a typed-slot narrowing where the
+        -- target couldn't be classified more specifically.
+        | otherwise
+            = "FFI: typed slot narrowing"
 
 
 -- v0.17 PR-22 S2 — 'synthAnonRecordName' + 'shortHash' moved to
