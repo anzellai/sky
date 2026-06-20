@@ -8610,8 +8610,12 @@ typedKernelArgCoerce = Map.fromList
     , (("String", "replace"),    ["AsString", "AsString", "AsString"])
     -- Math
     , (("Math",   "abs"),  ["AsInt"])
-    , (("Math",   "min"),  ["AsInt", "AsInt"])
-    , (("Math",   "max"),  ["AsInt", "AsInt"])
+    -- NOTE: Math.min / Math.max are POLYMORPHIC (`a -> a -> a`) — deliberately
+    -- NOT routed to the Int-typed companion here. `AsInt` would truncate Float
+    -- args (mis-scaling every Std.Ui.Chart sparkline/heatmap) and is meaningless
+    -- for Strings. They lower to the polymorphic `rt.Math_min`/`rt.Math_max`
+    -- (which compare via skyLessThan); the use-site coercion narrows the `any`
+    -- result. `abs` stays (its Sky type is `Int -> Int`, so AsInt is correct).
     , (("Math",   "sqrt"), ["AsFloat"])
     , (("Math",   "pow"),  ["AsFloat", "AsFloat"])
     , (("Math",   "floor"),["AsFloat"])
@@ -8723,7 +8727,9 @@ typedKernelLiterals = Set.fromList
     , ("String", "contains"),   ("String", "startsWith"), ("String", "endsWith")
     , ("String", "append"),     ("String", "fromInt"),    ("String", "fromFloat")
     , ("String", "replace"),    ("String", "slice")
-    , ("Math",   "abs"),        ("Math",   "min"),        ("Math",   "max")
+    -- Math.min / Math.max omitted on purpose: polymorphic (`a -> a -> a`), so the
+    -- Int-typed-literal companion would truncate a Float literal. `abs` is Int-only.
+    , ("Math",   "abs")
     , ("Math",   "sqrt"),       ("Math",   "pow"),        ("Math",   "floor")
     , ("Math",   "ceil"),       ("Math",   "round"),      ("Math",   "sin")
     , ("Math",   "cos"),        ("Math",   "tan"),        ("Math",   "log")
@@ -15745,8 +15751,20 @@ runtimeGoSource = unlines
     , "// ═══════════════════════════════════════════════════════════"
     , ""
     , "func Math_abs(n any) any { x := AsInt(n); if x < 0 { return -x }; return x }"
-    , "func Math_min(a any, b any) any { if AsInt(a) < AsInt(b) { return a }; return b }"
-    , "func Math_max(a any, b any) any { if AsInt(a) > AsInt(b) { return a }; return b }"
+    -- Math.min / Math.max are polymorphic (`a -> a -> a`): compare type-aware, not
+    -- via AsInt (which truncates Floats + is meaningless for Strings). Mirrors the
+    -- embedded runtime's skyLessThan.
+    , "func mathLessAny(a, b any) bool {"
+    , "\tswitch x := a.(type) {"
+    , "\tcase int: if y, ok := b.(int); ok { return x < y }"
+    , "\tcase int64: if y, ok := b.(int64); ok { return x < y }"
+    , "\tcase float64: if y, ok := b.(float64); ok { return x < y }"
+    , "\tcase string: if y, ok := b.(string); ok { return x < y }"
+    , "\t}"
+    , "\treturn fmt.Sprintf(\"%v\", a) < fmt.Sprintf(\"%v\", b)"
+    , "}"
+    , "func Math_min(a any, b any) any { if mathLessAny(a, b) { return a }; return b }"
+    , "func Math_max(a any, b any) any { if mathLessAny(b, a) { return a }; return b }"
     , ""
     , "func Field(record any, field string) any {"
     , "\tv := reflect.ValueOf(record)"
