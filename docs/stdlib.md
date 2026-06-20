@@ -77,11 +77,15 @@ evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 
 `map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
 
-> `foldl` is auto-TCO'd (constant stack) along with `find` /
-> `any` / `all` / `member` / `drop` / `reverse`. The remaining
-> entries recurse O(N) on the Go stack — fine for typical UI
-> lists; for million-entry inputs prefer `foldl` with an
-> accumulator. See [Limitation 12](../CLAUDE.md#active-limitations).
+> v0.17 closed Limitation #8 — all 13 list ops in scope now run
+> on constant Go stack. `foldl` / `find` / `any` / `all` /
+> `member` / `drop` / `reverse` plus `length` / `range` / `zip` /
+> `concatMap` / `indexedMap` are auto-TCO'd (tail-recursive
+> helper compiled to `for { ... continue }`). `map` / `filter` /
+> `foldr` / `concat` / `take` / `append` / `Maybe.combine` /
+> `Result.combine` were CPS-rewritten in v0.17 to delegate
+> through the same constant-stack form. Million-entry lists are
+> safe across the surface.
 
 ### `Dict` — key-value maps
 
