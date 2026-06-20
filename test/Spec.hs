@@ -110,6 +110,7 @@ import qualified Sky.Build.CurriedLambdaStageCSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
 import qualified Sky.Build.AnonRecordEmissionGuaranteeSpec
+import qualified Sky.Build.AnonRecordSubprocessFixtureSpec
 import qualified Sky.Build.LiveApiHandlerShapeSpec
 import qualified Sky.Build.UnannotatedParametricCfgUserHelperSpec
 import qualified Sky.Build.IsPlainIdentSpec
@@ -678,6 +679,15 @@ allSpecs fastMode = do
     -- authoritative reset point.
     describeT "Sky.Build.AnonRecordEmissionGuarantee"
                                             Sky.Build.AnonRecordEmissionGuaranteeSpec.spec
+    -- v0.17 step-2 — anon-record subprocess fixture reproduction.
+    -- Adversary-1 #5: class closure, not fixture closure — TWO
+    -- fixtures cover the leak class (iter-18 cross-module HOF
+    -- with anon-record callback arg, iter-20 dep-module returns
+    -- anon-record).  Adversary-2 #6: subprocess fork reproduces
+    -- the race that in-process compile silently masks.  Initially
+    -- RED on the iter-18 shape; gates step-3.
+    describeT "Sky.Build.AnonRecordSubprocessFixture"
+                                            Sky.Build.AnonRecordSubprocessFixtureSpec.spec
     -- Task #545 — Sky.Live.api now has a strongly-typed kernel sig
     -- (`String -> (Dict String any -> Response) -> Route`).  This
     -- spec exercises both shapes: Dict-shaped passes, Task-shaped

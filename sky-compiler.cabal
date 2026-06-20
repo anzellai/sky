@@ -390,6 +390,7 @@ test-suite sky-tests
       Sky.Build.UnannotatedParametricCfgViewSpec
       Sky.Build.UnannotatedParametricCfgUserHelperSpec
       Sky.Build.AnonRecordEmissionGuaranteeSpec
+      Sky.Build.AnonRecordSubprocessFixtureSpec
       Sky.Build.LiveApiHandlerShapeSpec
       Sky.Build.IsPlainIdentSpec
       Sky.Build.InferExprTypeBinopSpec
