@@ -62,6 +62,7 @@ import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
 import qualified Sky.Build.CpsStackConstantBound.FilterSpec
 import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
 import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
+import qualified Sky.Build.CpsStackConstantBound.TakeSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -466,6 +467,14 @@ allSpecs fastMode = do
     -- 1k-outer × 2-inner = 2k flat-output runtime fixture.
     describeT "Sky.Build.CpsStackConstantBound.Concat"
         Sky.Build.CpsStackConstantBound.ConcatSpec.spec
+    -- v0.17 step-4 / Limitation #8 CPS rewrite: List.take.
+    -- Same CPS-helper shape as map / filter — public `take` is a
+    -- shim that calls `takeHelp n list []`; the auto-TCO loop
+    -- lives inside takeHelp's emitted Go body. Edge gates assert
+    -- take 0 / take negative / take from [] all yield [] (the
+    -- backwards-rewrite smoking gun).
+    describeT "Sky.Build.CpsStackConstantBound.Take"
+        Sky.Build.CpsStackConstantBound.TakeSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec

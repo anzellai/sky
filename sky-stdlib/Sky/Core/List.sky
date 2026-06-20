@@ -243,18 +243,37 @@ reverseHelp list acc =
             reverseHelp rest (x :: acc)
 
 
+-- | `take n list` — first n elements of `list` (or fewer when `list`
+-- is shorter than n).
+--
+-- v0.17 step-4 (Limitation #8): CPS / accumulator rewrite.
+-- `takeHelp n list acc` walks the input tail-recursively, prepending
+-- each kept element onto `acc` (reverse order) until either n drops
+-- to zero or the input is exhausted; both bases then reverse `acc`
+-- via `reverseHelp` for the final left-to-right output.  The
+-- helper is tail-recursive and auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
+-- 1M-element input runs in constant Go stack instead of the old
+-- O(N) non-TCO `x :: take (n - 1) rest` shape.
+--
+-- Edge cases: `take 0` and `take <negative>` return `[]` via the
+-- `n <= 0` base; `take n []` returns `[]` via the empty-list base.
 take n list =
+    takeHelp n list []
+
+
+takeHelp n list acc =
     if n <= 0 then
-        []
+        reverseHelp acc []
 
     else
         case list of
 
             [] ->
-                []
+                reverseHelp acc []
 
             x :: rest ->
-                x :: take (n - 1) rest
+                takeHelp (n - 1) rest (x :: acc)
 
 
 drop n list =
