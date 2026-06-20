@@ -64,6 +64,7 @@ import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
 import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
 import qualified Sky.Build.CpsStackConstantBound.TakeSpec
 import qualified Sky.Build.CpsStackConstantBound.AppendSpec
+import qualified Sky.Build.CpsStackConstantBound.LengthSpec
 import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
 import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
@@ -488,6 +489,15 @@ allSpecs fastMode = do
     -- combined-output runtime fixture.
     describeT "Sky.Build.CpsStackConstantBound.Append"
         Sky.Build.CpsStackConstantBound.AppendSpec.spec
+    -- v0.17 step-9 / Limitation #8 CPS rewrite: List.length.
+    -- CPS-helper binding shape (sibling of List.filter / List.map
+    -- / List.take) — public `length` is a thin shim that calls
+    -- `lengthHelp list 0`; the auto-TCO for-continue loop lives
+    -- inside Sky_Core_List_lengthHelp's emitted Go body.
+    -- Pre-rewrite shape `1 + length rest` blew Go's maxstacksize
+    -- on 1M-element inputs.  Gates 4 examples.
+    describeT "Sky.Build.CpsStackConstantBound.Length"
+        Sky.Build.CpsStackConstantBound.LengthSpec.spec
     -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
     -- Delegating-binding shape (sibling of List.foldr) — public
     -- `combine` is a thin shim that calls `combineHelp results

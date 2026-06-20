@@ -195,14 +195,29 @@ isEmpty list =
             False
 
 
+-- | `length list` — number of elements in the list.
+--
+-- v0.17 step-9 (Limitation #8): CPS / accumulator rewrite.
+-- Delegates to `lengthHelp` which carries the running count in
+-- tail position.  Pre-v0.17 shape was `1 + length rest` — the
+-- `1 +` runs AFTER the recursive call returns, so the emitted
+-- Go ran in O(N) stack; a 1M-element input blew Go's
+-- `maxstacksize`.  Post-rewrite, the count argument is the
+-- accumulator and the recursion is auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop.
 length list =
+    lengthHelp list 0
+
+
+lengthHelp : List a -> Int -> Int
+lengthHelp list n =
     case list of
 
         [] ->
-            0
+            n
 
         _ :: rest ->
-            1 + length rest
+            lengthHelp rest (n + 1)
 
 
 head list =

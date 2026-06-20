@@ -15,50 +15,69 @@ import rt "sky-app/rt"
 var _ = rt.AsInt
 
 // SKY-ORIGIN: src/Main.sky:193:1
-
 func Sky_Core_List_map_[T1 any, T2 any](fn func(T1) T2, list []T1) []T2 {
-	return func() []T2 {
-		__subject := list
-		_ = __subject
-		if len(rt.AsList(__subject)) == 0 {
-			return rt.AsListT[T2]([]any{})
+	return rt.AsListT[T2](Sky_Core_List_mapHelp(fn, rt.AsListT[T1](list), rt.AsListT[T2]([]any{})))
+}
+
+func Sky_Core_List_mapHelp[T1 any, T2 any](fn func(T1) T2, list []T1, acc []T2) []T2 {
+	for {
+		__tco_subject := list
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
+			return rt.AsListT[T2](Sky_Core_List_reverseHelp(rt.AsListT[T1](acc), rt.AsListT[T1]([]any{})))
 		}
-		if len(rt.AsList(__subject)) >= 1 {
-			x := rt.AsList(__subject)[0]
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			x := rt.AsList(__tco_subject)[0]
 			_ = x
-			rest := any(rt.AsList(__subject)[1:])
+			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			return rt.AsListT[T2](rt.List_cons(rt.SkyCall(fn, x), Sky_Core_List_map_(fn, rt.AsListT[T1](rest))))
+			__tco_t0 := fn
+			__tco_t1 := rest
+			__tco_t2 := rt.List_cons(rt.SkyCall(fn, x), acc)
+			fn = __tco_t0
+			list = rt.AsListT[T1](__tco_t1)
+			acc = rt.AsListT[T2](__tco_t2)
+			continue
 		}
-		_ = rt.Unreachable("case/__subject")
-		return nil
-	}()
+		rt.Unreachable("tco/case")
+	}
+
 }
 
 func Sky_Core_List_filter[T1 any](pred func(T1) bool, list []T1) []T1 {
-	return func() []T1 {
-		__subject := list
-		_ = __subject
-		if len(rt.AsList(__subject)) == 0 {
-			return rt.AsListT[T1]([]any{})
+	return rt.AsListT[T1](Sky_Core_List_filterHelp(pred, rt.AsListT[T1](list), rt.AsListT[T1]([]any{})))
+}
+
+func Sky_Core_List_filterHelp[T1 any](pred func(T1) bool, list []T1, acc []T1) []T1 {
+	for {
+		__tco_subject := list
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
+			return rt.AsListT[T1](Sky_Core_List_reverseHelp(rt.AsListT[T1](acc), rt.AsListT[T1]([]any{})))
 		}
-		if len(rt.AsList(__subject)) >= 1 {
-			x := rt.AsList(__subject)[0]
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			x := rt.AsList(__tco_subject)[0]
 			_ = x
-			rest := any(rt.AsList(__subject)[1:])
+			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			return func() []T1 {
+			__tco_t0 := pred
+			__tco_t1 := rest
+			__tco_t2 := func() any {
 				if rt.AsBool(rt.SkyCall(pred, x)) {
-					return rt.AsListT[T1](rt.List_cons(x, Sky_Core_List_filter(pred, rt.AsListT[T1](rest))))
+					return rt.List_cons(x, acc)
 				} else {
-					return rt.AsListT[T1](Sky_Core_List_filter(pred, rt.AsListT[T1](rest)))
+					return acc
 				}
 				return nil
 			}()
+			pred = __tco_t0
+			list = rt.AsListT[T1](__tco_t1)
+			acc = rt.AsListT[T1](__tco_t2)
+			continue
 		}
-		_ = rt.Unreachable("case/__subject")
-		return nil
-	}()
+		rt.Unreachable("tco/case")
+	}
+
 }
 
 func Sky_Core_List_any_[T1 any](pred func(T1) bool, list []T1) bool {
@@ -93,6 +112,7 @@ func Sky_Core_List_find[T1 any](pred func(T1) bool, list []T1) rt.SkyMaybe[T1] {
 		__tco_subject := list
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 			return rt.MaybeCoerce[T1](rt.Nothing[any]())
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -101,6 +121,7 @@ func Sky_Core_List_find[T1 any](pred func(T1) bool, list []T1) rt.SkyMaybe[T1] {
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
 			if rt.AsBool(rt.SkyCall(pred, x)) {
+				// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 				return rt.MaybeCoerce[T1](rt.Just[any](x))
 			} else {
 				__tco_t0 := pred
@@ -120,6 +141,7 @@ func Sky_Core_List_foldl[T1 any, T2 any](fn func(T1) func(T2) T2, acc T2, list [
 		__tco_subject := list
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: generic type-param widening (T-var slot)
 			return rt.Coerce[T2](acc)
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -131,6 +153,7 @@ func Sky_Core_List_foldl[T1 any, T2 any](fn func(T1) func(T2) T2, acc T2, list [
 			__tco_t1 := rt.SkyCall(fn, x, acc)
 			__tco_t2 := rest
 			fn = __tco_t0
+			// PROOF: FFI: generic type-param widening (T-var slot)
 			acc = rt.Coerce[T2](__tco_t1)
 			list = rt.AsListT[T1](__tco_t2)
 			continue
@@ -152,7 +175,7 @@ func Sky_Core_List_concatMap[T1 any, T2 any](fn func(T1) []T2, list []T1) []T2 {
 			_ = x
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.AsListT[T2](Sky_Core_List_append_(rt.AsListAny(rt.SkyCall(fn, x)), rt.AsListAny(Sky_Core_List_concatMap(fn, rt.AsListT[T1](rest)))))
+			return rt.AsListT[T2](Sky_Core_List_append_(rt.AsListT[T1](rt.SkyCall(fn, x)), rt.AsListT[T1](Sky_Core_List_concatMap(fn, rt.AsListT[T1](rest)))))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return nil
@@ -164,6 +187,7 @@ func Sky_Core_List_indexedMap[T1 any, T2 any](fn func(int) func(T1) T2, list []T
 }
 
 func Sky_Core_List_indexedMapHelp[T1 any, T2 any](fn func(int) func(T1) T2, i int, list []T1) []T2 {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() []T2 {
 		__subject := list
 		_ = __subject
@@ -196,24 +220,35 @@ func Sky_Core_List_isEmpty[T1 any](list []T1) bool {
 }
 
 func Sky_Core_List_length[T1 any](list []T1) int {
-	return func() int {
-		__subject := list
-		_ = __subject
-		if len(rt.AsList(__subject)) == 0 {
-			return 0
+	return Sky_Core_List_lengthHelp(rt.AsListT[T1](list), 0)
+}
+
+func Sky_Core_List_lengthHelp[T1 any](list []T1, n int) int {
+	for {
+		__tco_subject := list
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: primitive narrowing (typed slot)
+			return rt.CoerceInt(n)
 		}
-		if len(rt.AsList(__subject)) >= 1 {
-			_ = rt.AsList(__subject)[0]
-			rest := any(rt.AsList(__subject)[1:])
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			_ = rt.AsList(__tco_subject)[0]
+			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			return rt.CoerceInt(rt.Add(1, Sky_Core_List_length(rt.AsListT[T1](rest))))
+			__tco_t0 := rest
+			__tco_t1 := rt.Add(n, 1)
+			list = rt.AsListT[T1](__tco_t0)
+			// PROOF: FFI: primitive narrowing (typed slot)
+			n = rt.CoerceInt(__tco_t1)
+			continue
 		}
-		_ = rt.Unreachable("case/__subject")
-		return 0
-	}()
+		rt.Unreachable("tco/case")
+	}
+
 }
 
 func Sky_Core_List_head[T1 any](list []T1) rt.SkyMaybe[T1] {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() rt.SkyMaybe[T1] {
 		__subject := list
 		_ = __subject
@@ -224,30 +259,61 @@ func Sky_Core_List_head[T1 any](list []T1) rt.SkyMaybe[T1] {
 			x := rt.AsList(__subject)[0]
 			_ = x
 			_ = any(rt.AsList(__subject)[1:])
-			return rt.MaybeCoerce[T1](rt.Just[any](x))
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[T1](rt.Just[any](x))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.SkyMaybe[T1]{}
 	}()
 }
 
+func Sky_Core_List_reverseHelp[T1 any](list []T1, acc []T1) []T1 {
+	for {
+		__tco_subject := list
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
+			return rt.AsListT[T1](acc)
+		}
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			x := rt.AsList(__tco_subject)[0]
+			_ = x
+			rest := any(rt.AsList(__tco_subject)[1:])
+			_ = rest
+			__tco_t0 := rest
+			__tco_t1 := rt.List_cons(x, acc)
+			list = rt.AsListT[T1](__tco_t0)
+			acc = rt.AsListT[T1](__tco_t1)
+			continue
+		}
+		rt.Unreachable("tco/case")
+	}
+
+}
+
 func Sky_Core_List_append_[T1 any](xs []T1, ys []T1) []T1 {
-	return func() []T1 {
-		__subject := xs
-		_ = __subject
-		if len(rt.AsList(__subject)) == 0 {
+	return rt.AsListT[T1](Sky_Core_List_appendHelp(rt.AsListT[T1](Sky_Core_List_reverseHelp(rt.AsListT[T1](xs), rt.AsListT[T1]([]any{}))), rt.AsListT[T1](ys)))
+}
+
+func Sky_Core_List_appendHelp[T1 any](revXs []T1, ys []T1) []T1 {
+	for {
+		__tco_subject := revXs
+		_ = __tco_subject
+		if len(rt.AsList(__tco_subject)) == 0 {
 			return rt.AsListT[T1](ys)
 		}
-		if len(rt.AsList(__subject)) >= 1 {
-			x := rt.AsList(__subject)[0]
+		if len(rt.AsList(__tco_subject)) >= 1 {
+			x := rt.AsList(__tco_subject)[0]
 			_ = x
-			rest := any(rt.AsList(__subject)[1:])
+			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			return rt.AsListT[T1](rt.List_cons(x, Sky_Core_List_append_(rt.AsListT[T1](rest), rt.AsListT[T1](ys))))
+			__tco_t0 := rest
+			__tco_t1 := rt.List_cons(x, ys)
+			revXs = rt.AsListT[T1](__tco_t0)
+			ys = rt.AsListT[T1](__tco_t1)
+			continue
 		}
-		_ = rt.Unreachable("case/__subject")
-		return nil
-	}()
+		rt.Unreachable("tco/case")
+	}
+
 }
 
 func Sky_Core_List_member[T1 any](x T1, list []T1) bool {
@@ -267,6 +333,7 @@ func Sky_Core_List_member[T1 any](x T1, list []T1) bool {
 			} else {
 				__tco_t0 := x
 				__tco_t1 := rest
+				// PROOF: FFI: generic type-param widening (T-var slot)
 				x = rt.Coerce[T1](__tco_t0)
 				list = rt.AsListT[T1](__tco_t1)
 				continue
@@ -277,60 +344,73 @@ func Sky_Core_List_member[T1 any](x T1, list []T1) bool {
 
 }
 
-func Sky_Core_String_fromInt() func(int) string {
-	return rt.Coerce[func(int) string](rt.Ffi_kernel("String_fromInt"))
+func Sky_Core_String_fromInt(_skyEta_p0 int) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_fromInt"), _skyEta_p0))
 }
 
-func Sky_Core_String_fromFloat() func(float64) string {
-	return rt.Coerce[func(float64) string](rt.Ffi_kernel("String_fromFloat"))
+func Sky_Core_String_fromFloat(_skyEta_p0 float64) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_fromFloat"), _skyEta_p0))
 }
 
-func Sky_Core_String_length() func(string) int {
-	return rt.Coerce[func(string) int](rt.Ffi_kernel("String_length"))
+func Sky_Core_String_length(_skyEta_p0 string) int {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceInt(rt.SkyCall(rt.Ffi_kernel("String_length"), _skyEta_p0))
 }
 
-func Sky_Core_String_isEmpty() func(string) bool {
-	return rt.Coerce[func(string) bool](rt.Ffi_kernel("String_isEmpty"))
+func Sky_Core_String_isEmpty(_skyEta_p0 string) bool {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceBool(rt.SkyCall(rt.Ffi_kernel("String_isEmpty"), _skyEta_p0))
 }
 
-func Sky_Core_String_contains() func(string) func(string) bool {
-	return rt.Coerce[func(string) func(string) bool](rt.Ffi_kernel("String_contains"))
+func Sky_Core_String_contains(_skyEta_p0 string, _skyEta_p1 string) bool {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceBool(rt.SkyCall(rt.Ffi_kernel("String_contains"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_String_toFloat() func(string) rt.SkyMaybe[float64] {
-	return rt.Coerce[func(string) rt.SkyMaybe[float64]](rt.Ffi_kernel("String_toFloat"))
+func Sky_Core_String_toFloat(_skyEta_p0 string) rt.SkyMaybe[float64] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.MaybeCoerce[float64](rt.SkyCall(rt.Ffi_kernel("String_toFloat"), _skyEta_p0))
 }
 
-func Sky_Core_String_toUpper() func(string) string {
-	return rt.Coerce[func(string) string](rt.Ffi_kernel("String_toUpper"))
+func Sky_Core_String_toUpper(_skyEta_p0 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_toUpper"), _skyEta_p0))
 }
 
-func Sky_Core_String_toLower() func(string) string {
-	return rt.Coerce[func(string) string](rt.Ffi_kernel("String_toLower"))
+func Sky_Core_String_toLower(_skyEta_p0 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_toLower"), _skyEta_p0))
 }
 
-func Sky_Core_String_trim() func(string) string {
-	return rt.Coerce[func(string) string](rt.Ffi_kernel("String_trim"))
+func Sky_Core_String_trim(_skyEta_p0 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_trim"), _skyEta_p0))
 }
 
-func Sky_Core_String_join() func(string) func([]string) string {
-	return rt.Coerce[func(string) func([]string) string](rt.Ffi_kernel("String_join"))
+func Sky_Core_String_join(_skyEta_p0 string, _skyEta_p1 []string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_join"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_String_split() func(string) func(string) []string {
-	return rt.Coerce[func(string) func(string) []string](rt.Ffi_kernel("String_split"))
+func Sky_Core_String_split(_skyEta_p0 string, _skyEta_p1 string) []string {
+	return rt.AsListT[string](rt.SkyCall(rt.Ffi_kernel("String_split"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_String_slice() func(int) func(int) func(string) string {
-	return rt.Coerce[func(int) func(int) func(string) string](rt.Ffi_kernel("String_slice"))
+func Sky_Core_String_slice(_skyEta_p0 int, _skyEta_p1 int, _skyEta_p2 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("String_slice"), _skyEta_p0, _skyEta_p1, _skyEta_p2))
 }
 
-func Sky_Core_Math_min_() func(any) func(any) any {
-	return rt.Coerce[func(any) func(any) any](rt.Ffi_kernel("Math_min"))
+func Sky_Core_Math_min_[T1 any](_skyEta_p0 T1, _skyEta_p1 T1) T1 {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.Coerce[T1](rt.SkyCall(rt.Ffi_kernel("Math_min"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_Math_max_() func(any) func(any) any {
-	return rt.Coerce[func(any) func(any) any](rt.Ffi_kernel("Math_max"))
+func Sky_Core_Math_max_[T1 any](_skyEta_p0 T1, _skyEta_p1 T1) T1 {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.Coerce[T1](rt.SkyCall(rt.Ffi_kernel("Math_max"), _skyEta_p0, _skyEta_p1))
 }
 
 type Std_Html_Attributes_Attribute = rt.SkyADT
@@ -360,11 +440,11 @@ func Std_Html_Attributes_Event_OnMsg[T1 any](v0 string, v1 T1) Std_Html_Attribut
 	return Std_Html_Attributes_Event{Tag: 0, SkyName: "OnMsg", Fields: []any{v0, v1}}
 }
 
-func Std_Html_Attributes_Event_OnString(v0 string, v1 any) Std_Html_Attributes_Event {
+func Std_Html_Attributes_Event_OnString(v0 string, v1 func(string) any) Std_Html_Attributes_Event {
 	return Std_Html_Attributes_Event{Tag: 1, SkyName: "OnString", Fields: []any{v0, v1}}
 }
 
-func Std_Html_Attributes_Event_OnBool(v0 string, v1 any) Std_Html_Attributes_Event {
+func Std_Html_Attributes_Event_OnBool(v0 string, v1 func(bool) any) Std_Html_Attributes_Event {
 	return Std_Html_Attributes_Event{Tag: 2, SkyName: "OnBool", Fields: []any{v0, v1}}
 }
 
@@ -374,70 +454,87 @@ func Std_Html_Attributes_Event_OnRaw(v0 string, v1 any) Std_Html_Attributes_Even
 
 // SKY-ORIGIN: src/Main.sky:193:1
 func Std_Html_Attributes_class(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("class", v))
 }
 
 func Std_Html_Attributes_id(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("id", v))
 }
 
 func Std_Html_Attributes_type_(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("type", v))
 }
 
 func Std_Html_Attributes_value(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("value", v))
 }
 
 func Std_Html_Attributes_href(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("href", v))
 }
 
 func Std_Html_Attributes_src(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("src", v))
 }
 
 func Std_Html_Attributes_alt(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("alt", v))
 }
 
 func Std_Html_Attributes_name(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("name", v))
 }
 
 func Std_Html_Attributes_placeholder(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("placeholder", v))
 }
 
 func Std_Html_Attributes_title(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("title", v))
 }
 
 func Std_Html_Attributes_for_(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("for", v))
 }
 
 func Std_Html_Attributes_rel(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("rel", v))
 }
 
 func Std_Html_Attributes_target(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("target", v))
 }
 
 func Std_Html_Attributes_method(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("method", v))
 }
 
 func Std_Html_Attributes_action(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("action", v))
 }
 
 func Std_Html_Attributes_style(v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("style", v))
 }
 
 func Std_Html_Attributes_attribute(k string, v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr(k, v))
 }
 
@@ -445,7 +542,7 @@ type Std_Html_Html = rt.SkyADT
 
 type Std_Html_Html_T[T1 any] = rt.SkyADT
 
-func Std_Html_Html_HElement(v0 string, v1 []Std_Html_Attributes_Attribute, v2 []Std_Html_Html) Std_Html_Html {
+func Std_Html_Html_HElement(v0 string, v1 []rt.SkyAttribute, v2 []Std_Html_Html) Std_Html_Html {
 	return Std_Html_Html{Tag: 0, SkyName: "HElement", Fields: []any{v0, v1, v2}}
 }
 
@@ -459,103 +556,128 @@ func Std_Html_Html_HRaw(v0 string) Std_Html_Html {
 
 // SKY-ORIGIN: src/Main.sky:193:1
 func Std_Html_text(s string) Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Html_Html](Std_Html_Html_HText(s))
 }
 
 func Std_Html_node(tag string, attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement(tag, rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement(tag, rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_div(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("div", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("div", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_p(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("p", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("p", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h1(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h1", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h1", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h2(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h2", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h2", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h3(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h3", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h3", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h4(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h4", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h4", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h5(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h5", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h5", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_h6(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h6", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("h6", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_a(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("a", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("a", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_button(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("button", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("button", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_form(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("form", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("form", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_label(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("label", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("label", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_nav(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("nav", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("nav", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_section(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("section", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("section", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_header(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("header", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("header", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_footer(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("footer", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("footer", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_main(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("main", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("main", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_aside(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("aside", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("aside", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_textarea(attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("textarea", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("textarea", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 }
 
 func Std_Html_img(attrs []rt.SkyAttribute) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("img", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html]([]any{})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("img", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html]([]any{})))
 }
 
 func Std_Html_input(attrs []rt.SkyAttribute) Std_Html_Html {
-	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("input", rt.AsListT[Std_Html_Attributes_Attribute](attrs), rt.AsListT[Std_Html_Html]([]any{})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Html_Html](Std_Html_Html_HElement("input", rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html]([]any{})))
 }
 
 func Std_Html_Events_onClick[T1 any](msg T1) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_EventAttr(any(Std_Html_Attributes_Event_OnMsg("click", msg)).(Std_Html_Attributes_Event)))
 }
 
 func Std_Html_Events_onInput[T1 any](handler func(string) T1) rt.SkyAttribute {
-	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_EventAttr(any(Std_Html_Attributes_Event_OnString("input", handler)).(Std_Html_Attributes_Event)))
+	// PROOF: FFI: function adapter (reflect.MakeFunc)
+	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_EventAttr(any(Std_Html_Attributes_Event_OnString("input" /* PROOF: FFI: function adapter (reflect.MakeFunc) */, rt.Coerce[func(string) any](handler))).(Std_Html_Attributes_Event)))
 }
 
 type Std_Ui_AnimationEntry = rt.SkyADT
@@ -793,11 +915,11 @@ func Std_Ui_Element_Text(v0 string) Std_Ui_Element {
 	return Std_Ui_Element{Tag: 1, SkyName: "Text", Fields: []any{v0}}
 }
 
-func Std_Ui_Element_Node(v0 Std_Ui_Description, v1 []Std_Ui_Attribute, v2 []Std_Ui_Element) Std_Ui_Element {
+func Std_Ui_Element_Node(v0 Std_Ui_Description, v1 []rt.SkyAttribute, v2 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_Element{Tag: 2, SkyName: "Node", Fields: []any{v0, v1, v2}}
 }
 
-func Std_Ui_Element_TaggedNode(v0 string, v1 Std_Ui_Description, v2 []Std_Ui_Attribute, v3 []Std_Ui_Element) Std_Ui_Element {
+func Std_Ui_Element_TaggedNode(v0 string, v1 Std_Ui_Description, v2 []rt.SkyAttribute, v3 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_Element{Tag: 3, SkyName: "TaggedNode", Fields: []any{v0, v1, v2, v3}}
 }
 
@@ -883,150 +1005,187 @@ const (
 )
 
 func Std_Ui_none() Std_Ui_Element {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Empty)
 }
 
 func Std_Ui_text(s string) Std_Ui_Element {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Text(s))
 }
 
 func Std_Ui_el(attrs []rt.SkyAttribute, child Std_Ui_Element) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[Std_Ui_Attribute](attrs), rt.AsListT[Std_Ui_Element]([]any{child})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element]([]any{child})))
 }
 
 func Std_Ui_row(attrs []rt.SkyAttribute, children []Std_Ui_Element) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[Std_Ui_Attribute](rt.List_cons(Std_Ui_rowMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[rt.SkyAttribute](rt.List_cons(Std_Ui_rowMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
 }
 
 func Std_Ui_column(attrs []rt.SkyAttribute, children []Std_Ui_Element) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[Std_Ui_Attribute](rt.List_cons(Std_Ui_colMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[rt.SkyAttribute](rt.List_cons(Std_Ui_colMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
 }
 
 func Std_Ui_grid(attrs []rt.SkyAttribute, children []Std_Ui_Element) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[Std_Ui_Attribute](rt.List_cons(Std_Ui_gridMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Node(any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[rt.SkyAttribute](rt.List_cons(Std_Ui_gridMarker(), attrs)), rt.AsListT[Std_Ui_Element](children)))
 }
 
 func Std_Ui_gridColumns(minWidthPx int) rt.SkyAttribute {
-	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrStyle("__gridMin", rt.CoerceString(rt.String_fromIntT(rt.AsInt(minWidthPx)))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrStyle("__gridMin" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromIntT(rt.AsInt(minWidthPx)))))
 }
 
 func Std_Ui_rowMarker() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrStyle("__row", "true"))
 }
 
 func Std_Ui_colMarker() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrStyle("__col", "true"))
 }
 
 func Std_Ui_gridMarker() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrStyle("__grid", "true"))
 }
 
 func Std_Ui_px(n int) Std_Ui_Length {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Length](Std_Ui_Length_Px(n))
 }
 
 func Std_Ui_fill() Std_Ui_Length {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Length](Std_Ui_Length_Fill(1))
 }
 
 func Std_Ui_width(l Std_Ui_Length) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrWidth(any(l).(Std_Ui_Length)))
 }
 
 func Std_Ui_height(l Std_Ui_Length) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrHeight(any(l).(Std_Ui_Length)))
 }
 
 func Std_Ui_padding(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrPadding(n, n, n, n))
 }
 
 func Std_Ui_paddingXY(x int, y int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrPadding(y, x, y, x))
 }
 
 func Std_Ui_paddingEach(r any) rt.SkyAttribute {
-	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrPadding(rt.CoerceInt(rt.Field(r, "Top")), rt.CoerceInt(rt.Field(r, "Right")), rt.CoerceInt(rt.Field(r, "Bottom")), rt.CoerceInt(rt.Field(r, "Left"))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrPadding( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(r, "Top")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Right")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Bottom")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Left"))))
 }
 
 func Std_Ui_spacing(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrSpacing(n))
 }
 
 func Std_Ui_centerX() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrAlignX(any(Std_Ui_HAlign_CenterX).(Std_Ui_HAlign)))
 }
 
 func Std_Ui_alignTop() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrAlignY(any(Std_Ui_VAlign_AlignTop).(Std_Ui_VAlign)))
 }
 
 func Std_Ui_htmlAttribute(k string, v string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrAttribute(k, v))
 }
 
 func Std_Ui_pointer() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrPointer)
 }
 
 func Std_Ui_bgColor(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrBgColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_borderColor(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrBorderColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_borderWidth(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrBorderWidth(n))
 }
 
 func Std_Ui_borderRounded(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrBorderRounded(n))
 }
 
 func Std_Ui_fontColor(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_fontSize(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontSize(n))
 }
 
 func Std_Ui_fontFamily(joined string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontFamily(joined))
 }
 
 func Std_Ui_fontWeight(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontWeight(n))
 }
 
 func Std_Ui_fontItalic() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontItalic)
 }
 
 func Std_Ui_fontLetterSpacing(em float64) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrFontLetterSpacing(em))
 }
 
 func Std_Ui_borderWidthEach(t int, r int, b int, l int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrBorderWidthEach(t, r, b, l))
 }
 
 func Std_Ui_onClick[T1 any](msg T1) rt.SkyAttribute {
-	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrEvent(Std_Html_Events_onClick(rt.Coerce[T1](msg))))
+	// PROOF: FFI: generic type-param widening (T-var slot)
+	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrEvent(Std_Html_Events_onClick( /* PROOF: FFI: generic type-param widening (T-var slot) */ rt.Coerce[T1](msg))))
 }
 
 func Std_Ui_onInput[T1 any](cb func(string) T1) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_Attribute_AttrEvent(Std_Html_Events_onInput(cb)))
 }
 
 func Std_Ui_input(attrs []rt.SkyAttribute) Std_Ui_Element {
-	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_TaggedNode("input", any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[Std_Ui_Attribute](attrs), rt.AsListT[Std_Ui_Element]([]any{})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_TaggedNode("input", any(Std_Ui_Description_NoDescription).(Std_Ui_Description), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element]([]any{})))
 }
 
 func Std_Ui_html[T1 any](node T1) Std_Ui_Element {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Raw(node))
 }
 
@@ -1055,47 +1214,50 @@ func Std_Ui_pseudoClassTag(pc Std_Ui_PseudoClass) string {
 }
 
 func Std_Ui_collectTransitions(attrs []rt.SkyAttribute) rt.T2[string, bool] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[string, bool] {
 		rules := rt.List_filterMapAnyT(any(Std_Ui_pickTransitionShorthand), rt.AsList(attrs))
 		_ = rules
 		return rt.Coerce[rt.T2[string, bool]](func() rt.T2[string, bool] {
 			anyOptOut := Sky_Core_List_any_(Std_Ui_isTransitionOptOut, rt.AsListT[rt.SkyAttribute](attrs))
 			_ = anyOptOut
-			return rt.Coerce[rt.T2[string, bool]](rt.T2[string, bool]{V0: rt.CoerceString(rt.String_join(", ", rules)), V1: rt.CoerceBool(anyOptOut)})
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[string, bool]](rt.T2[string, bool]{V0: /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceString(rt.String_join(", ", rules)), V1: /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceBool(anyOptOut)})
 		}())
 	}()
 }
 
 func Std_Ui_pickTransitionShorthand(a rt.SkyAttribute) rt.SkyMaybe[string] {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() rt.SkyMaybe[string] {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 36 {
-			s := __subject_tAdt.Fields[0]
+			s := rt.AsString(__subject_tAdt.Fields[0])
 			_ = s
-			_ = __subject_tAdt.Fields[1]
+			_ = rt.AsBool(__subject_tAdt.Fields[1])
 			return func() rt.SkyMaybe[string] {
 				if rt.AsBool(rt.Eq(rt.String_lengthT(rt.AsString(s)), 0)) {
 					return rt.MaybeCoerce[string](rt.Nothing[any]())
 				} else {
-					return rt.MaybeCoerce[string](rt.Just[any](s))
+					return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[string](rt.Just[any](s))
 				}
 				return rt.SkyMaybe[string]{}
 			}()
 		}
-		return rt.MaybeCoerce[string](rt.Nothing[any]())
+		return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[string](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[string]{}
 	}()
 }
 
 func Std_Ui_isTransitionOptOut(a rt.SkyAttribute) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 36 {
-			_ = __subject_tAdt.Fields[0]
-			respect := __subject_tAdt.Fields[1]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
+			respect := rt.AsBool(__subject_tAdt.Fields[1])
 			_ = respect
 			return rt.CoerceBool(rt.Basics_notT(rt.AsBool(respect)))
 		}
@@ -1110,49 +1272,52 @@ func Std_Ui_collectAnimations(attrs []rt.SkyAttribute) []Std_Ui_AnimationEntry {
 }
 
 func Std_Ui_pickAnimation(a rt.SkyAttribute) rt.SkyMaybe[Std_Ui_AnimationEntry] {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() rt.SkyMaybe[Std_Ui_AnimationEntry] {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 37 {
-			name := __subject_tAdt.Fields[0]
+			name := rt.AsString(__subject_tAdt.Fields[0])
 			_ = name
-			tail := __subject_tAdt.Fields[1]
+			tail := rt.AsString(__subject_tAdt.Fields[1])
 			_ = tail
-			body := __subject_tAdt.Fields[2]
+			body := rt.AsString(__subject_tAdt.Fields[2])
 			_ = body
-			respect := __subject_tAdt.Fields[3]
+			respect := rt.AsBool(__subject_tAdt.Fields[3])
 			_ = respect
 			return func() rt.SkyMaybe[Std_Ui_AnimationEntry] {
 				if rt.AsBool(rt.Or(rt.Eq(rt.String_lengthT(rt.AsString(name)), 0), rt.Eq(rt.String_lengthT(rt.AsString(body)), 0))) {
 					return rt.MaybeCoerce[Std_Ui_AnimationEntry](rt.Nothing[any]())
 				} else {
-					return rt.MaybeCoerce[Std_Ui_AnimationEntry](rt.Just[any](Std_Ui_AnimationEntry_AnimationEntry(rt.CoerceString(name), rt.CoerceString(tail), rt.CoerceString(body), rt.CoerceBool(respect))))
+					return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[Std_Ui_AnimationEntry](rt.Just[any](Std_Ui_AnimationEntry_AnimationEntry( /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.CoerceString(name) /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */, rt.CoerceString(tail) /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */, rt.CoerceString(body) /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */, rt.CoerceBool(respect))))
 				}
 				return rt.SkyMaybe[Std_Ui_AnimationEntry]{}
 			}()
 		}
-		return rt.MaybeCoerce[Std_Ui_AnimationEntry](rt.Nothing[any]())
+		return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[Std_Ui_AnimationEntry](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[Std_Ui_AnimationEntry]{}
 	}()
 }
 
 func Std_Ui_encodeAnimations(entries []Std_Ui_AnimationEntry) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.CoerceString(rt.String_join("@@", Sky_Core_List_map_(Std_Ui_encodeAnimationEntry, rt.AsListT[Std_Ui_AnimationEntry](entries))))
 }
 
 func Std_Ui_encodeAnimationEntry(entry Std_Ui_AnimationEntry) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject_tAdt := any(entry).(Std_Ui_AnimationEntry)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 0 {
-			name := __subject_tAdt.Fields[0]
+			name := rt.AsString(__subject_tAdt.Fields[0])
 			_ = name
-			tail := __subject_tAdt.Fields[1]
+			tail := rt.AsString(__subject_tAdt.Fields[1])
 			_ = tail
-			body := __subject_tAdt.Fields[2]
+			body := rt.AsString(__subject_tAdt.Fields[2])
 			_ = body
-			respect := __subject_tAdt.Fields[3]
+			respect := rt.AsBool(__subject_tAdt.Fields[3])
 			_ = respect
 			return rt.CoerceString(rt.Concat(name, rt.Concat("||", rt.Concat(tail, rt.Concat("||", rt.Concat(body, rt.Concat("||", func() any {
 				if rt.AsBool(respect) {
@@ -1173,34 +1338,37 @@ func Std_Ui_collectPseudoRules(attrs []rt.SkyAttribute) []rt.T2[string, string] 
 }
 
 func Std_Ui_pseudoRuleEntry(a rt.SkyAttribute) rt.SkyMaybe[rt.T2[string, string]] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyMaybe[rt.T2[string, string]] {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 35 {
-			pc := __subject_tAdt.Fields[0]
+			pc := rt.Coerce[Std_Ui_PseudoClass](__subject_tAdt.Fields[0])
 			_ = pc
-			css := __subject_tAdt.Fields[1]
+			css := rt.AsString(__subject_tAdt.Fields[1])
 			_ = css
 			return func() rt.SkyMaybe[rt.T2[string, string]] {
 				if rt.AsBool(rt.Eq(rt.String_lengthT(rt.AsString(css)), 0)) {
-					return rt.MaybeCoerce[rt.T2[string, string]](rt.Nothing[any]())
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.T2[string, string]](rt.Nothing[any]())
 				} else {
-					return rt.MaybeCoerce[rt.T2[string, string]](rt.Just[any](rt.SkyTuple2{V0: Std_Ui_pseudoClassTag(any(pc).(Std_Ui_PseudoClass)), V1: css}))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.T2[string, string]](rt.Just[any](rt.SkyTuple2{V0: Std_Ui_pseudoClassTag(any(pc).(Std_Ui_PseudoClass)), V1: css}))
 				}
 				return rt.SkyMaybe[rt.T2[string, string]]{}
 			}()
 		}
-		return rt.MaybeCoerce[rt.T2[string, string]](rt.Nothing[any]())
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.T2[string, string]](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[rt.T2[string, string]]{}
 	}()
 }
 
 func Std_Ui_encodePseudoRules(entries []rt.T2[string, string]) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.CoerceString(rt.String_join("||", Sky_Core_List_map_(Std_Ui_encodeOneEntry, rt.AsListT[rt.T2[string, string]](entries))))
 }
 
 func Std_Ui_encodeOneEntry(pair rt.T2[string, string]) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := pair
 		_ = __subject
@@ -1215,37 +1383,40 @@ func Std_Ui_encodeOneEntry(pair rt.T2[string, string]) string {
 }
 
 func Std_Ui_rgb(r int, g int, b int) Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_Color_Rgba(r, g, b, 1.0))
 }
 
 func Std_Ui_layout(rootAttrs []rt.SkyAttribute, root Std_Ui_Element) rt.SkyValue {
-	return rt.Coerce[rt.SkyValue](Std_Ui_layoutWith(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[rt.SkyValue](Std_Ui_layoutWith(any(struct {
 		RootAttrs    any
 		WrapperAttrs any
-	}{RootAttrs: rootAttrs, WrapperAttrs: []any{}}, any(root).(Std_Ui_Element)))
+	}{RootAttrs: rootAttrs, WrapperAttrs: []any{}}).(Anon_R_rootAttrs_wrapperAttrs__5n085ahc), any(root).(Std_Ui_Element)))
 }
 
 func Std_Ui_layoutWith(cfg any, root Std_Ui_Element) rt.SkyValue {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyValue {
 		defaultWrapperStyle := "min-height: 100vh; display: flex; flex-direction: column;"
 		_ = defaultWrapperStyle
 		return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 			wrapperExtraStyle := Std_Ui_buildStyleString(false, any(Std_Ui_LayoutContext_AsColumn).(Std_Ui_LayoutContext), any(Std_Ui_LayoutContext_AsColumn).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](rt.Field(cfg, "WrapperAttrs")))
 			_ = wrapperExtraStyle
-			return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 				wrapperStyle := func() string {
 					if rt.AsBool(rt.String_isEmptyT(rt.AsString(rt.String_trimT(rt.AsString(wrapperExtraStyle))))) {
-						return rt.CoerceString(defaultWrapperStyle)
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(defaultWrapperStyle)
 					} else {
-						return rt.CoerceString(rt.Concat(defaultWrapperStyle, wrapperExtraStyle))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(defaultWrapperStyle, wrapperExtraStyle))
 					}
 					return ""
 				}()
 				_ = wrapperStyle
-				return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 					wrapperHtmlAttrs := Std_Ui_collectHtmlAttrs(rt.AsListT[rt.SkyAttribute](rt.Field(cfg, "WrapperAttrs")))
 					_ = wrapperHtmlAttrs
-					return rt.Coerce[rt.SkyValue](rt.Coerce[rt.SkyValue](Std_Html_div(rt.AsListT[rt.SkyAttribute](rt.List_cons(Std_Html_Attributes_style(rt.CoerceString(wrapperStyle)), wrapperHtmlAttrs)), rt.AsListT[Std_Html_Html]([]any{Std_Html_node("style", rt.AsListT[rt.SkyAttribute]([]any{}), rt.AsListT[Std_Html_Html]([]any{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")})), Std_Ui_renderElement(any(Std_Ui_LayoutContext_AsColumn).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](rt.Field(cfg, "RootAttrs")), any(root).(Std_Ui_Element))}))))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_div(rt.AsListT[rt.SkyAttribute](rt.List_cons(Std_Html_Attributes_style( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(wrapperStyle)), wrapperHtmlAttrs)), rt.AsListT[Std_Html_Html]([]any{Std_Html_node("style", rt.AsListT[rt.SkyAttribute]([]any{}), rt.AsListT[Std_Html_Html]([]any{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")})), Std_Ui_renderElement(any(Std_Ui_LayoutContext_AsColumn).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](rt.Field(cfg, "RootAttrs")), any(root).(Std_Ui_Element))}))))
 				}())
 			}())
 		}())
@@ -1253,6 +1424,7 @@ func Std_Ui_layoutWith(cfg any, root Std_Ui_Element) rt.SkyValue {
 }
 
 func Std_Ui_renderElement(ctx Std_Ui_LayoutContext, extraAttrs []rt.SkyAttribute, elem Std_Ui_Element) rt.SkyValue {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyValue {
 		__subject_tAdt := any(elem).(Std_Ui_Element)
 		_ = __subject_tAdt
@@ -1260,12 +1432,12 @@ func Std_Ui_renderElement(ctx Std_Ui_LayoutContext, extraAttrs []rt.SkyAttribute
 			return rt.Coerce[rt.SkyValue](Std_Html_text(""))
 		}
 		if __subject_tAdt.Tag == 1 {
-			s := __subject_tAdt.Fields[0]
+			s := rt.AsString(__subject_tAdt.Fields[0])
 			_ = s
-			return rt.Coerce[rt.SkyValue](Std_Html_text(rt.CoerceString(s)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(s)))
 		}
 		if __subject_tAdt.Tag == 2 {
-			desc := __subject_tAdt.Fields[0]
+			desc := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[0])
 			_ = desc
 			attrs := __subject_tAdt.Fields[1]
 			_ = attrs
@@ -1274,24 +1446,24 @@ func Std_Ui_renderElement(ctx Std_Ui_LayoutContext, extraAttrs []rt.SkyAttribute
 			return func() rt.SkyValue {
 				chosenTag := Std_Ui_pickSemanticTag("div", rt.AsListT[rt.SkyAttribute](attrs))
 				_ = chosenTag
-				return rt.Coerce[rt.SkyValue](Std_Ui_renderNodeAs(rt.CoerceString(chosenTag), any(ctx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](extraAttrs), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element](children)))
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Ui_renderNodeAs( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(chosenTag), any(ctx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](extraAttrs), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element](children)))
 			}()
 		}
 		if __subject_tAdt.Tag == 3 {
-			tag := __subject_tAdt.Fields[0]
+			tag := rt.AsString(__subject_tAdt.Fields[0])
 			_ = tag
-			desc := __subject_tAdt.Fields[1]
+			desc := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[1])
 			_ = desc
 			attrs := __subject_tAdt.Fields[2]
 			_ = attrs
 			children := __subject_tAdt.Fields[3]
 			_ = children
-			return rt.Coerce[rt.SkyValue](Std_Ui_renderNodeAs(rt.CoerceString(tag), any(ctx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](extraAttrs), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element](children)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Ui_renderNodeAs( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(tag), any(ctx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](extraAttrs), rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Ui_Element](children)))
 		}
 		if __subject_tAdt.Tag == 4 {
 			node := __subject_tAdt.Fields[0]
 			_ = node
-			return rt.Coerce[rt.SkyValue](node)
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](node)
 		}
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return nil
@@ -1303,6 +1475,7 @@ func Std_Ui_pickSemanticTag(defaultTag string, attrs []rt.SkyAttribute) string {
 		__tco_subject := attrs
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: primitive narrowing (typed slot)
 			return rt.CoerceString(defaultTag)
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 && rt.AdtTag(any(rt.AsList(__tco_subject)[0])) == 9 {
@@ -1311,7 +1484,8 @@ func Std_Ui_pickSemanticTag(defaultTag string, attrs []rt.SkyAttribute) string {
 			d := rt.AdtField(any(__sky_h___tco_subject), 0)
 			_ = d
 			_ = any(rt.AsList(__tco_subject)[1:])
-			return rt.CoerceString(Std_Ui_tagForDescription(rt.CoerceString(defaultTag), any(d).(Std_Ui_Description)))
+			// PROOF: FFI: primitive narrowing (typed slot)
+			return Std_Ui_tagForDescription(rt.CoerceString(defaultTag), any(d).(Std_Ui_Description))
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
 			_ = rt.AsList(__tco_subject)[0]
@@ -1319,12 +1493,14 @@ func Std_Ui_pickSemanticTag(defaultTag string, attrs []rt.SkyAttribute) string {
 			_ = rest
 			__tco_t0 := defaultTag
 			__tco_t1 := rest
+			// PROOF: FFI: primitive narrowing (typed slot)
 			defaultTag = rt.CoerceString(__tco_t0)
 			attrs = rt.AsListT[rt.SkyAttribute](__tco_t1)
 			continue
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_tagForDescription(defaultTag string, d Std_Ui_Description) string {
@@ -1347,36 +1523,36 @@ func Std_Ui_tagForDescription(defaultTag string, d Std_Ui_Description) string {
 			return "aside"
 		}
 		if __subject_tAdt.Tag == 5 && any(__subject_tAdt.Fields[0]).(int) == 1 {
-			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
+			__sky_cf_0___subject_tAdt := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = __sky_cf_0___subject_tAdt
 			return "h1"
 		}
 		if __subject_tAdt.Tag == 5 && any(__subject_tAdt.Fields[0]).(int) == 2 {
-			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
+			__sky_cf_0___subject_tAdt := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = __sky_cf_0___subject_tAdt
 			return "h2"
 		}
 		if __subject_tAdt.Tag == 5 && any(__subject_tAdt.Fields[0]).(int) == 3 {
-			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
+			__sky_cf_0___subject_tAdt := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = __sky_cf_0___subject_tAdt
 			return "h3"
 		}
 		if __subject_tAdt.Tag == 5 && any(__subject_tAdt.Fields[0]).(int) == 4 {
-			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
+			__sky_cf_0___subject_tAdt := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = __sky_cf_0___subject_tAdt
 			return "h4"
 		}
 		if __subject_tAdt.Tag == 5 && any(__subject_tAdt.Fields[0]).(int) == 5 {
-			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
+			__sky_cf_0___subject_tAdt := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = __sky_cf_0___subject_tAdt
 			return "h5"
 		}
 		if __subject_tAdt.Tag == 5 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.AsInt(__subject_tAdt.Fields[0])
 			return "h6"
 		}
 		if __subject_tAdt.Tag == 6 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
 			return defaultTag
 		}
 		if __subject_tAdt.Tag == 7 {
@@ -1397,19 +1573,20 @@ func Std_Ui_tagForDescription(defaultTag string, d Std_Ui_Description) string {
 }
 
 func Std_Ui_renderNodeAs(tag string, ctx Std_Ui_LayoutContext, extraAttrs []rt.SkyAttribute, attrs []rt.SkyAttribute, children []Std_Ui_Element) rt.SkyValue {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyValue {
 		allAttrs := rt.Concat(extraAttrs, attrs)
 		_ = allAttrs
 		return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 			renderCtx := Std_Ui_layoutContextFor(rt.AsListT[rt.SkyAttribute](allAttrs))
 			_ = renderCtx
-			return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 				propagatedAttrs := Std_Ui_propagateFillToContainer(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](allAttrs), rt.AsListT[Std_Ui_Element](children))
 				_ = propagatedAttrs
-				return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 					nearbyChildren := Std_Ui_collectNearby(rt.AsListT[rt.SkyAttribute](propagatedAttrs))
 					_ = nearbyChildren
-					return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 						positionPrefix := func() string {
 							if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(nearbyChildren))) {
 								return ""
@@ -1419,32 +1596,32 @@ func Std_Ui_renderNodeAs(tag string, ctx Std_Ui_LayoutContext, extraAttrs []rt.S
 							return ""
 						}()
 						_ = positionPrefix
-						return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 							isReplaced := rt.Or(rt.Eq(tag, "img"), rt.Eq(tag, "input"))
 							_ = isReplaced
-							return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
-								styleStr := rt.Concat(positionPrefix, Std_Ui_buildStyleString(rt.CoerceBool(rt.Basics_notT(rt.AsBool(isReplaced))), any(ctx).(Std_Ui_LayoutContext), any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](propagatedAttrs)))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+								styleStr := rt.Concat(positionPrefix, Std_Ui_buildStyleString( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Basics_notT(rt.AsBool(isReplaced))), any(ctx).(Std_Ui_LayoutContext), any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](propagatedAttrs)))
 								_ = styleStr
-								return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 									htmlAttrs := Std_Ui_collectHtmlAttrs(rt.AsListT[rt.SkyAttribute](propagatedAttrs))
 									_ = htmlAttrs
-									return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 										pseudoEntries := Std_Ui_collectPseudoRules(rt.AsListT[rt.SkyAttribute](propagatedAttrs))
 										_ = pseudoEntries
-										return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+										return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 											pseudoAttrs := func() []rt.SkyAttribute {
 												if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(pseudoEntries))) {
 													return []rt.SkyAttribute{}
 												} else {
-													return []rt.SkyAttribute{Std_Html_Attributes_attribute("data-sky-pc-rules", rt.CoerceString(Std_Ui_encodePseudoRules(rt.AsListT[rt.T2[string, string]](pseudoEntries))))}
+													return []rt.SkyAttribute{Std_Html_Attributes_attribute("data-sky-pc-rules" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Std_Ui_encodePseudoRules(rt.AsListT[rt.T2[string, string]](pseudoEntries))))}
 												}
 												return nil
 											}()
 											_ = pseudoAttrs
-											return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+											return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 												transitionPair := Std_Ui_collectTransitions(rt.AsListT[rt.SkyAttribute](propagatedAttrs))
 												_ = transitionPair
-												return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+												return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 													transitionAttrs := func() []rt.SkyAttribute {
 														__subject := transitionPair
 														_ = __subject
@@ -1458,7 +1635,7 @@ func Std_Ui_renderNodeAs(tag string, ctx Std_Ui_LayoutContext, extraAttrs []rt.S
 														_ = joined
 														optOut := rt.AsTuple2(__subject).V1
 														_ = optOut
-														return rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("data-sky-tr-rules", rt.CoerceString(joined)), Std_Html_Attributes_attribute("data-sky-tr-respect", rt.CoerceString(func() any {
+														return rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("data-sky-tr-rules" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(joined)), Std_Html_Attributes_attribute("data-sky-tr-respect" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(func() any {
 															if rt.AsBool(optOut) {
 																return "0"
 															} else {
@@ -1470,34 +1647,34 @@ func Std_Ui_renderNodeAs(tag string, ctx Std_Ui_LayoutContext, extraAttrs []rt.S
 														return nil
 													}()
 													_ = transitionAttrs
-													return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+													return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 														animationEntries := Std_Ui_collectAnimations(rt.AsListT[rt.SkyAttribute](propagatedAttrs))
 														_ = animationEntries
-														return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+														return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 															animationAttrs := func() []rt.SkyAttribute {
 																if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(animationEntries))) {
 																	return []rt.SkyAttribute{}
 																} else {
-																	return []rt.SkyAttribute{Std_Html_Attributes_attribute("data-sky-anim-rules", rt.CoerceString(Std_Ui_encodeAnimations(rt.AsListT[Std_Ui_AnimationEntry](animationEntries))))}
+																	return []rt.SkyAttribute{Std_Html_Attributes_attribute("data-sky-anim-rules" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Std_Ui_encodeAnimations(rt.AsListT[Std_Ui_AnimationEntry](animationEntries))))}
 																}
 																return nil
 															}()
 															_ = animationAttrs
-															return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+															return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 																renderedMain := Sky_Core_List_map_(func(__pp0 Std_Ui_Element) any {
 																	return Std_Ui_renderElement(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute]([]any{}), any(__pp0).(Std_Ui_Element))
 																}, rt.AsListT[Std_Ui_Element](children))
 																_ = renderedMain
-																return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+																return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 																	renderedNearby := Sky_Core_List_map_(Std_Ui_renderNearby, rt.AsListT[rt.SkyTuple2](nearbyChildren))
 																	_ = renderedNearby
-																	return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+																	return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 																		renderedChildren := rt.Concat(renderedMain, renderedNearby)
 																		_ = renderedChildren
-																		return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
-																			attrList := rt.List_cons(Std_Html_Attributes_style(rt.CoerceString(styleStr)), rt.Concat(pseudoAttrs, rt.Concat(transitionAttrs, rt.Concat(animationAttrs, htmlAttrs))))
+																		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](func() rt.SkyValue {
+																			attrList := rt.List_cons(Std_Html_Attributes_style( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(styleStr)), rt.Concat(pseudoAttrs, rt.Concat(transitionAttrs, rt.Concat(animationAttrs, htmlAttrs))))
 																			_ = attrList
-																			return rt.Coerce[rt.SkyValue](rt.Coerce[rt.SkyValue](Std_Ui_dispatchTag(rt.CoerceString(tag), rt.AsListT[rt.SkyAttribute](attrList), rt.AsListT[Std_Html_Html](renderedChildren))))
+																			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Ui_dispatchTag( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(tag), rt.AsListT[rt.SkyAttribute](attrList), rt.AsListT[Std_Html_Html](renderedChildren))))
 																		}())
 																	}())
 																}())
@@ -1571,12 +1748,13 @@ func Std_Ui_propagateFillToContainer(renderCtx Std_Ui_LayoutContext, attrs []rt.
 }
 
 func Std_Ui_anyChildMainAxisFill(renderCtx Std_Ui_LayoutContext, kids []Std_Ui_Element) bool {
-	return rt.CoerceBool(Sky_Core_List_any_(func(__pp0 Std_Ui_Element) bool {
+	return Sky_Core_List_any_(func(__pp0 Std_Ui_Element) bool {
 		return Std_Ui_elementHasMainAxisFill(any(renderCtx).(Std_Ui_LayoutContext), any(__pp0).(Std_Ui_Element))
-	}, rt.AsListT[Std_Ui_Element](kids)))
+	}, rt.AsListT[Std_Ui_Element](kids))
 }
 
 func Std_Ui_elementHasMainAxisFill(renderCtx Std_Ui_LayoutContext, elem Std_Ui_Element) bool {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() bool {
 		__subject_tAdt := any(elem).(Std_Ui_Element)
 		_ = __subject_tAdt
@@ -1584,23 +1762,23 @@ func Std_Ui_elementHasMainAxisFill(renderCtx Std_Ui_LayoutContext, elem Std_Ui_E
 			return false
 		}
 		if __subject_tAdt.Tag == 1 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
 			return false
 		}
 		if __subject_tAdt.Tag == 2 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[0])
 			attrs := __subject_tAdt.Fields[1]
 			_ = attrs
 			_ = __subject_tAdt.Fields[2]
-			return rt.CoerceBool(Std_Ui_attrsHaveMainAxisFill(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](attrs)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(Std_Ui_attrsHaveMainAxisFill(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if __subject_tAdt.Tag == 3 {
-			_ = __subject_tAdt.Fields[0]
-			_ = __subject_tAdt.Fields[1]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
+			_ = /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[1])
 			attrs := __subject_tAdt.Fields[2]
 			_ = attrs
 			_ = __subject_tAdt.Fields[3]
-			return rt.CoerceBool(Std_Ui_attrsHaveMainAxisFill(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](attrs)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(Std_Ui_attrsHaveMainAxisFill(any(renderCtx).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if __subject_tAdt.Tag == 4 {
 			_ = __subject_tAdt.Fields[0]
@@ -1612,6 +1790,7 @@ func Std_Ui_elementHasMainAxisFill(renderCtx Std_Ui_LayoutContext, elem Std_Ui_E
 }
 
 func Std_Ui_attrsHaveMainAxisFill(renderCtx Std_Ui_LayoutContext, attrs []rt.SkyAttribute) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() bool {
 		__subject := renderCtx
 		_ = __subject
@@ -1619,13 +1798,13 @@ func Std_Ui_attrsHaveMainAxisFill(renderCtx Std_Ui_LayoutContext, attrs []rt.Sky
 			return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isWidthFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if rt.EnumTagIs(__subject, 1) {
-			return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if rt.EnumTagIs(__subject, 2) {
-			return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if rt.EnumTagIs(__subject, 4) {
-			return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightFillAttr, rt.AsListT[rt.SkyAttribute](attrs)))
 		}
 		if rt.EnumTagIs(__subject, 3) {
 			return false
@@ -1636,13 +1815,14 @@ func Std_Ui_attrsHaveMainAxisFill(renderCtx Std_Ui_LayoutContext, attrs []rt.Sky
 }
 
 func Std_Ui_isHeightFillAttr(a rt.SkyAttribute) bool {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 2 {
-			lng := __subject_tAdt.Fields[0]
+			lng := rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			_ = lng
-			return rt.CoerceBool(Std_Ui_isFillLength(any(lng).(Std_Ui_Length)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(Std_Ui_isFillLength(any(lng).(Std_Ui_Length)))
 		}
 		return false
 		_ = rt.Unreachable("case/__subject_tAdt")
@@ -1651,13 +1831,14 @@ func Std_Ui_isHeightFillAttr(a rt.SkyAttribute) bool {
 }
 
 func Std_Ui_isWidthFillAttr(a rt.SkyAttribute) bool {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 1 {
-			lng := __subject_tAdt.Fields[0]
+			lng := rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			_ = lng
-			return rt.CoerceBool(Std_Ui_isFillLength(any(lng).(Std_Ui_Length)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(Std_Ui_isFillLength(any(lng).(Std_Ui_Length)))
 		}
 		return false
 		_ = rt.Unreachable("case/__subject_tAdt")
@@ -1672,6 +1853,7 @@ func Std_Ui_isFillLength(lng Std_Ui_Length) bool {
 		if __tco_subject.Tag == 2 {
 			n := rt.AdtField(any(__tco_subject), 0)
 			_ = n
+			// PROOF: FFI: primitive narrowing (typed slot)
 			return rt.CoerceBool(rt.Gt(n, 0))
 		}
 		if __tco_subject.Tag == 3 {
@@ -1693,22 +1875,24 @@ func Std_Ui_isFillLength(lng Std_Ui_Length) bool {
 		return false
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_hasExplicitWidth(attrs []rt.SkyAttribute) bool {
-	return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isWidthAttr, rt.AsListT[rt.SkyAttribute](attrs)))
+	return Sky_Core_List_any_(Std_Ui_isWidthAttr, rt.AsListT[rt.SkyAttribute](attrs))
 }
 
 func Std_Ui_hasExplicitHeight(attrs []rt.SkyAttribute) bool {
-	return rt.CoerceBool(Sky_Core_List_any_(Std_Ui_isHeightAttr, rt.AsListT[rt.SkyAttribute](attrs)))
+	return Sky_Core_List_any_(Std_Ui_isHeightAttr, rt.AsListT[rt.SkyAttribute](attrs))
 }
 
 func Std_Ui_isWidthAttr(a rt.SkyAttribute) bool {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 1 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			return true
 		}
 		return false
@@ -1718,11 +1902,12 @@ func Std_Ui_isWidthAttr(a rt.SkyAttribute) bool {
 }
 
 func Std_Ui_isHeightAttr(a rt.SkyAttribute) bool {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 2 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			return true
 		}
 		return false
@@ -1736,17 +1921,18 @@ func Std_Ui_collectNearby(attrs []rt.SkyAttribute) []rt.SkyTuple2 {
 }
 
 func Std_Ui_toNearbyPair(a rt.SkyAttribute) rt.SkyMaybe[rt.SkyTuple2] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyMaybe[rt.SkyTuple2] {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 5 {
-			loc := __subject_tAdt.Fields[0]
+			loc := rt.Coerce[Std_Ui_Location](__subject_tAdt.Fields[0])
 			_ = loc
 			el := __subject_tAdt.Fields[1]
 			_ = el
-			return rt.MaybeCoerce[rt.SkyTuple2](rt.Just[any](rt.SkyTuple2{V0: loc, V1: el}))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyTuple2](rt.Just[any](rt.SkyTuple2{V0: loc, V1: el}))
 		}
-		return rt.MaybeCoerce[rt.SkyTuple2](rt.Nothing[any]())
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyTuple2](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[rt.SkyTuple2]{}
 	}()
@@ -1757,13 +1943,14 @@ func Std_Ui_renderNearby(_p0 rt.SkyTuple2) rt.SkyValue {
 	_ = loc
 	el := rt.AsTuple2(_p0).V1
 	_ = el
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyValue {
 		positionStyle := rt.Concat("position: absolute; display: flex; ", Std_Ui_locationCss(any(loc).(Std_Ui_Location)))
 		_ = positionStyle
 		return rt.Coerce[rt.SkyValue](func() rt.SkyValue {
 			rendered := Std_Ui_renderElement(any(Std_Ui_LayoutContext_AsEl).(Std_Ui_LayoutContext), rt.AsListT[rt.SkyAttribute]([]any{}), any(el).(Std_Ui_Element))
 			_ = rendered
-			return rt.Coerce[rt.SkyValue](rt.Coerce[rt.SkyValue](Std_Html_div(rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_style(rt.CoerceString(positionStyle))}), rt.AsListT[Std_Html_Html]([]any{rendered}))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_div(rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_style( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(positionStyle))}), rt.AsListT[Std_Html_Html]([]any{rendered}))))
 		}())
 	}()
 }
@@ -1796,74 +1983,75 @@ func Std_Ui_locationCss(loc Std_Ui_Location) string {
 }
 
 func Std_Ui_dispatchTag(tag string, attrs []rt.SkyAttribute, children []Std_Html_Html) Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Html_Html {
 		if rt.AsBool(tag == "a") {
 			return rt.Coerce[Std_Html_Html](Std_Html_a(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 		} else {
 			if rt.AsBool(tag == "p") {
-				return rt.Coerce[Std_Html_Html](Std_Html_p(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_p(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 			} else {
 				if rt.AsBool(tag == "h1") {
-					return rt.Coerce[Std_Html_Html](Std_Html_h1(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h1(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 				} else {
 					if rt.AsBool(tag == "h2") {
-						return rt.Coerce[Std_Html_Html](Std_Html_h2(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h2(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 					} else {
 						if rt.AsBool(tag == "h3") {
-							return rt.Coerce[Std_Html_Html](Std_Html_h3(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h3(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 						} else {
 							if rt.AsBool(tag == "h4") {
-								return rt.Coerce[Std_Html_Html](Std_Html_h4(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h4(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 							} else {
 								if rt.AsBool(tag == "h5") {
-									return rt.Coerce[Std_Html_Html](Std_Html_h5(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h5(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 								} else {
 									if rt.AsBool(tag == "h6") {
-										return rt.Coerce[Std_Html_Html](Std_Html_h6(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+										return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_h6(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 									} else {
 										if rt.AsBool(tag == "button") {
-											return rt.Coerce[Std_Html_Html](Std_Html_button(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+											return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_button(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 										} else {
 											if rt.AsBool(tag == "form") {
-												return rt.Coerce[Std_Html_Html](Std_Html_form(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+												return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_form(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 											} else {
 												if rt.AsBool(tag == "label") {
-													return rt.Coerce[Std_Html_Html](Std_Html_label(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+													return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_label(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 												} else {
 													if rt.AsBool(tag == "section") {
-														return rt.Coerce[Std_Html_Html](Std_Html_section(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+														return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_section(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 													} else {
 														if rt.AsBool(tag == "nav") {
-															return rt.Coerce[Std_Html_Html](Std_Html_nav(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+															return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_nav(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 														} else {
 															if rt.AsBool(tag == "footer") {
-																return rt.Coerce[Std_Html_Html](Std_Html_footer(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_footer(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 															} else {
 																if rt.AsBool(tag == "header") {
-																	return rt.Coerce[Std_Html_Html](Std_Html_header(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																	return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_header(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																} else {
 																	if rt.AsBool(tag == "main") {
-																		return rt.Coerce[Std_Html_Html](Std_Html_main(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_main(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																	} else {
 																		if rt.AsBool(tag == "aside") {
-																			return rt.Coerce[Std_Html_Html](Std_Html_aside(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_aside(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																		} else {
 																			if rt.AsBool(tag == "img") {
 																				return func() Std_Html_Html {
 																					_ = rt.AnyTaskRun(children)
-																					return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_img(rt.AsListT[rt.SkyAttribute](attrs))))
+																					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_img(rt.AsListT[rt.SkyAttribute](attrs))))
 																				}()
 																			} else {
 																				if rt.AsBool(tag == "input") {
 																					return func() Std_Html_Html {
 																						_ = rt.AnyTaskRun(children)
-																						return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_input(rt.AsListT[rt.SkyAttribute](attrs))))
+																						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_input(rt.AsListT[rt.SkyAttribute](attrs))))
 																					}()
 																				} else {
 																					if rt.AsBool(tag == "textarea") {
-																						return rt.Coerce[Std_Html_Html](Std_Html_textarea(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_textarea(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																					} else {
-																						return rt.Coerce[Std_Html_Html](Std_Html_div(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
+																						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_div(rt.AsListT[rt.SkyAttribute](attrs), rt.AsListT[Std_Html_Html](children)))
 																					}
 																				}
 																			}
@@ -1889,107 +2077,111 @@ func Std_Ui_dispatchTag(tag string, attrs []rt.SkyAttribute, children []Std_Html
 }
 
 func Std_Ui_collectHtmlAttrs(attrs []rt.SkyAttribute) []any {
+	// PROOF: FFI: typed slot narrowing
 	return rt.Coerce[[]any](rt.List_filterMapAnyT(any(Std_Ui_toAttrAttribute), rt.AsList(attrs)))
 }
 
 func Std_Ui_toAttrAttribute(a rt.SkyAttribute) rt.SkyMaybe[rt.SkyValue] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyMaybe[rt.SkyValue] {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 12 {
-			k := __subject_tAdt.Fields[0]
+			k := rt.AsString(__subject_tAdt.Fields[0])
 			_ = k
-			v := __subject_tAdt.Fields[1]
+			v := rt.AsString(__subject_tAdt.Fields[1])
 			_ = v
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr(rt.CoerceString(k), rt.CoerceString(v))))
+			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(k) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(v))))
 		}
 		if __subject_tAdt.Tag == 10 {
-			c := __subject_tAdt.Fields[0]
+			c := rt.AsString(__subject_tAdt.Fields[0])
 			_ = c
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Html_Attributes_class(rt.CoerceString(c))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Html_Attributes_class( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(c))))
 		}
 		if __subject_tAdt.Tag == 11 {
 			ev := __subject_tAdt.Fields[0]
 			_ = ev
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](ev))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyValue](rt.Just[any](ev))
 		}
 		if __subject_tAdt.Tag == 9 {
-			d := __subject_tAdt.Fields[0]
+			d := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[0])
 			_ = d
-			return rt.MaybeCoerce[rt.SkyValue](Std_Ui_ariaForDescription(any(d).(Std_Ui_Description)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyValue](Std_Ui_ariaForDescription(any(d).(Std_Ui_Description)))
 		}
-		return rt.MaybeCoerce[rt.SkyValue](rt.Nothing[any]())
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.SkyValue](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[rt.SkyValue]{}
 	}()
 }
 
 func Std_Ui_ariaForDescription(d Std_Ui_Description) rt.SkyMaybe[rt.SkyValue] {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() rt.SkyMaybe[rt.SkyValue] {
 		__subject_tAdt := any(d).(Std_Ui_Description)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 6 {
-			s := __subject_tAdt.Fields[0]
+			s := rt.AsString(__subject_tAdt.Fields[0])
 			_ = s
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-label", rt.CoerceString(s))))
+			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-label" /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */, rt.CoerceString(s))))
 		}
 		if __subject_tAdt.Tag == 7 {
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-live", "polite")))
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-live", "polite")))
 		}
 		if __subject_tAdt.Tag == 8 {
-			return rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-live", "assertive")))
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[rt.SkyValue](rt.Just[any](Std_Ui_kernelAttr("aria-live", "assertive")))
 		}
-		return rt.MaybeCoerce[rt.SkyValue](rt.Nothing[any]())
+		return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[rt.SkyValue](rt.Nothing[any]())
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return rt.SkyMaybe[rt.SkyValue]{}
 	}()
 }
 
 func Std_Ui_kernelAttr(key string, value string) rt.SkyValue {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyValue {
 		if rt.AsBool(key == "href") {
 			return rt.Coerce[rt.SkyValue](Std_Html_Attributes_href(value))
 		} else {
 			if rt.AsBool(key == "src") {
-				return rt.Coerce[rt.SkyValue](Std_Html_Attributes_src(value))
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_src(value))
 			} else {
 				if rt.AsBool(key == "alt") {
-					return rt.Coerce[rt.SkyValue](Std_Html_Attributes_alt(value))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_alt(value))
 				} else {
 					if rt.AsBool(key == "name") {
-						return rt.Coerce[rt.SkyValue](Std_Html_Attributes_name(value))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_name(value))
 					} else {
 						if rt.AsBool(key == "value") {
-							return rt.Coerce[rt.SkyValue](Std_Html_Attributes_value(value))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_value(value))
 						} else {
 							if rt.AsBool(key == "id") {
-								return rt.Coerce[rt.SkyValue](Std_Html_Attributes_id(value))
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_id(value))
 							} else {
 								if rt.AsBool(key == "type") {
-									return rt.Coerce[rt.SkyValue](Std_Html_Attributes_type_(value))
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_type_(value))
 								} else {
 									if rt.AsBool(key == "placeholder") {
-										return rt.Coerce[rt.SkyValue](Std_Html_Attributes_placeholder(value))
+										return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_placeholder(value))
 									} else {
 										if rt.AsBool(key == "title") {
-											return rt.Coerce[rt.SkyValue](Std_Html_Attributes_title(value))
+											return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_title(value))
 										} else {
 											if rt.AsBool(key == "for") {
-												return rt.Coerce[rt.SkyValue](Std_Html_Attributes_for_(value))
+												return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_for_(value))
 											} else {
 												if rt.AsBool(key == "rel") {
-													return rt.Coerce[rt.SkyValue](Std_Html_Attributes_rel(value))
+													return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_rel(value))
 												} else {
 													if rt.AsBool(key == "target") {
-														return rt.Coerce[rt.SkyValue](Std_Html_Attributes_target(value))
+														return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_target(value))
 													} else {
 														if rt.AsBool(key == "method") {
-															return rt.Coerce[rt.SkyValue](Std_Html_Attributes_method(value))
+															return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_method(value))
 														} else {
 															if rt.AsBool(key == "action") {
-																return rt.Coerce[rt.SkyValue](Std_Html_Attributes_action(value))
+																return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_action(value))
 															} else {
-																return rt.Coerce[rt.SkyValue](Std_Html_Attributes_attribute(key, value))
+																return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyValue](Std_Html_Attributes_attribute(key, value))
 															}
 														}
 													}
@@ -2009,20 +2201,21 @@ func Std_Ui_kernelAttr(key string, value string) rt.SkyValue {
 }
 
 func Std_Ui_layoutContextFor(attrs []rt.SkyAttribute) Std_Ui_LayoutContext {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_LayoutContext {
 		if rt.AsBool(Std_Ui_hasMarker("__row", rt.AsListT[rt.SkyAttribute](attrs))) {
 			return rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsRow)
 		} else {
 			if rt.AsBool(Std_Ui_hasMarker("__col", rt.AsListT[rt.SkyAttribute](attrs))) {
-				return rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsColumn)
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsColumn)
 			} else {
 				if rt.AsBool(Std_Ui_hasMarker("__paragraph", rt.AsListT[rt.SkyAttribute](attrs))) {
-					return rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsParagraph)
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsParagraph)
 				} else {
 					if rt.AsBool(Std_Ui_hasMarker("__textcolumn", rt.AsListT[rt.SkyAttribute](attrs))) {
-						return rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsTextColumn)
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsTextColumn)
 					} else {
-						return rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsEl)
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_LayoutContext](Std_Ui_LayoutContext_AsEl)
 					}
 				}
 			}
@@ -2032,17 +2225,18 @@ func Std_Ui_layoutContextFor(attrs []rt.SkyAttribute) Std_Ui_LayoutContext {
 }
 
 func Std_Ui_hasMarker(name string, attrs []rt.SkyAttribute) bool {
-	return rt.CoerceBool(Sky_Core_List_any_(func(a any) bool { return rt.CoerceBool(Std_Ui_isMarker(name, any(a).(rt.SkyAttribute))) }, rt.AsListAny(attrs)))
+	return Sky_Core_List_any_(func(a any) bool { return Std_Ui_isMarker(name, any(a).(rt.SkyAttribute)) }, rt.AsListAny(attrs))
 }
 
 func Std_Ui_isMarker(name string, a rt.SkyAttribute) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() bool {
 		__subject_tAdt := any(a).(Std_Ui_Attribute)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 8 {
-			k := __subject_tAdt.Fields[0]
+			k := rt.AsString(__subject_tAdt.Fields[0])
 			_ = k
-			_ = __subject_tAdt.Fields[1]
+			_ = rt.AsString(__subject_tAdt.Fields[1])
 			return rt.CoerceBool(rt.Eq(k, name))
 		}
 		return false
@@ -2052,6 +2246,7 @@ func Std_Ui_isMarker(name string, a rt.SkyAttribute) bool {
 }
 
 func Std_Ui_buildStyleString(emitDisplay bool, parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutContext, attrs []rt.SkyAttribute) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		gridOn := Std_Ui_hasMarker("__grid", rt.AsListT[rt.SkyAttribute](attrs))
 		_ = gridOn
@@ -2061,15 +2256,15 @@ func Std_Ui_buildStyleString(emitDisplay bool, parentCtx Std_Ui_LayoutContext, m
 					return ""
 				} else {
 					if rt.AsBool(gridOn) {
-						return rt.CoerceString(rt.Concat("display: grid;", Std_Ui_findGridTemplate(rt.AsListT[rt.SkyAttribute](attrs))))
+						return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("display: grid;", Std_Ui_findGridTemplate(rt.AsListT[rt.SkyAttribute](attrs))))
 					} else {
-						return rt.CoerceString(Std_Ui_displayFor(any(myCtx).(Std_Ui_LayoutContext)))
+						return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(Std_Ui_displayFor(any(myCtx).(Std_Ui_LayoutContext)))
 					}
 				}
 				return ""
 			}()
 			_ = baseDisplay
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				wrapPart := func() string {
 					if rt.AsBool(rt.And(rt.Basics_notT(rt.AsBool(gridOn)), Std_Ui_hasMarker("__wrap", rt.AsListT[rt.SkyAttribute](attrs)))) {
 						return " flex-wrap: wrap;"
@@ -2079,14 +2274,14 @@ func Std_Ui_buildStyleString(emitDisplay bool, parentCtx Std_Ui_LayoutContext, m
 					return ""
 				}()
 				_ = wrapPart
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					attrParts := Sky_Core_List_foldl(func(__pp0 rt.SkyAttribute) func(string) string {
 						return func(__pp1 string) string {
-							return Std_Ui_collectStyle(any(parentCtx).(Std_Ui_LayoutContext), any(myCtx).(Std_Ui_LayoutContext), any(__pp0).(rt.SkyAttribute), rt.CoerceString(__pp1))
+							return Std_Ui_collectStyle(any(parentCtx).(Std_Ui_LayoutContext), any(myCtx).(Std_Ui_LayoutContext), any(__pp0).(rt.SkyAttribute) /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceString(__pp1))
 						}
 					}, "", rt.AsListT[rt.SkyAttribute](attrs))
 					_ = attrParts
-					return rt.CoerceString(func() string {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 						borderStyleDefault := func() string {
 							if rt.AsBool(rt.And(rt.String_containsT("border-width", rt.AsString(attrParts)), rt.Basics_notT(rt.AsBool(rt.String_containsT("border-style", rt.AsString(attrParts)))))) {
 								return " border-style: solid;"
@@ -2096,7 +2291,7 @@ func Std_Ui_buildStyleString(emitDisplay bool, parentCtx Std_Ui_LayoutContext, m
 							return ""
 						}()
 						_ = borderStyleDefault
-						return rt.CoerceString(rt.CoerceString(rt.Concat(baseDisplay, rt.Concat(wrapPart, rt.Concat(attrParts, borderStyleDefault)))))
+						return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(baseDisplay, rt.Concat(wrapPart, rt.Concat(attrParts, borderStyleDefault)))))
 					}())
 				}())
 			}())
@@ -2124,6 +2319,7 @@ func Std_Ui_findGridMin(attrs []rt.SkyAttribute) string {
 				v := rt.AdtField(any(__tco_subject), 1)
 				_ = v
 				if rt.AsBool(rt.Eq(k, "__gridMin")) {
+					// PROOF: FFI: primitive narrowing (typed slot)
 					return rt.CoerceString(v)
 				} else {
 					__tco_t0 := rest
@@ -2138,43 +2334,45 @@ func Std_Ui_findGridMin(attrs []rt.SkyAttribute) string {
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_findGridTemplate(attrs []rt.SkyAttribute) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		raw := Std_Ui_findGridTracksRaw(rt.AsListT[rt.SkyAttribute](attrs))
 		_ = raw
 		return rt.CoerceString(func() string {
 			if rt.AsBool(rt.Eq(raw, "")) {
-				return rt.CoerceString(rt.Concat(" grid-template-columns: repeat(auto-fill, minmax(", rt.Concat(Std_Ui_findGridMin(rt.AsListT[rt.SkyAttribute](attrs)), "px, 1fr));")))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(" grid-template-columns: repeat(auto-fill, minmax(", rt.Concat(Std_Ui_findGridMin(rt.AsListT[rt.SkyAttribute](attrs)), "px, 1fr));")))
 			} else {
 				return func() string {
-					cols := Std_Ui_takeBeforePipe(rt.CoerceString(raw))
+					cols := Std_Ui_takeBeforePipe( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(raw))
 					_ = cols
-					return rt.CoerceString(func() string {
-						rows := Std_Ui_takeAfterPipe(rt.CoerceString(raw))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
+						rows := Std_Ui_takeAfterPipe( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(raw))
 						_ = rows
-						return rt.CoerceString(func() string {
+						return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 							colsCss := func() string {
 								if rt.AsBool(rt.Eq(cols, "")) {
 									return ""
 								} else {
-									return rt.CoerceString(rt.Concat(" grid-template-columns: ", rt.Concat(cols, ";")))
+									return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(" grid-template-columns: ", rt.Concat(cols, ";")))
 								}
 								return ""
 							}()
 							_ = colsCss
-							return rt.CoerceString(func() string {
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 								rowsCss := func() string {
 									if rt.AsBool(rt.Eq(rows, "")) {
 										return ""
 									} else {
-										return rt.CoerceString(rt.Concat(" grid-template-rows: ", rt.Concat(rows, ";")))
+										return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(" grid-template-rows: ", rt.Concat(rows, ";")))
 									}
 									return ""
 								}()
 								_ = rowsCss
-								return rt.CoerceString(rt.CoerceString(rt.Concat(colsCss, rowsCss)))
+								return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(colsCss, rowsCss)))
 							}())
 						}())
 					}())
@@ -2205,6 +2403,7 @@ func Std_Ui_findGridTracksRaw(attrs []rt.SkyAttribute) string {
 				v := rt.AdtField(any(__tco_subject), 1)
 				_ = v
 				if rt.AsBool(rt.Eq(k, "__gridTracks")) {
+					// PROOF: FFI: primitive narrowing (typed slot)
 					return rt.CoerceString(v)
 				} else {
 					__tco_t0 := rest
@@ -2219,9 +2418,11 @@ func Std_Ui_findGridTracksRaw(attrs []rt.SkyAttribute) string {
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_takeBeforePipe(s string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := rt.String_splitT("|", rt.AsString(s))
 		_ = __subject
@@ -2240,6 +2441,7 @@ func Std_Ui_takeBeforePipe(s string) string {
 }
 
 func Std_Ui_takeAfterPipe(s string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := rt.String_splitT("|", rt.AsString(s))
 		_ = __subject
@@ -2258,6 +2460,7 @@ func Std_Ui_takeAfterPipe(s string) string {
 }
 
 func Std_Ui_joinWithPipe(parts []string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := parts
 		_ = __subject
@@ -2276,7 +2479,7 @@ func Std_Ui_joinWithPipe(parts []string) string {
 			_ = x
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.CoerceString(rt.Concat(x, rt.Concat("|", Std_Ui_joinWithPipe(rt.AsListT[string](rest)))))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(x, rt.Concat("|", Std_Ui_joinWithPipe(rt.AsListT[string](rest)))))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return ""
@@ -2308,6 +2511,7 @@ func Std_Ui_displayFor(ctx Std_Ui_LayoutContext) string {
 }
 
 func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutContext, attr rt.SkyAttribute, acc string) string {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() string {
 		__subject_tAdt := any(attr).(Std_Ui_Attribute)
 		_ = __subject_tAdt
@@ -2315,45 +2519,45 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 			return acc
 		}
 		if __subject_tAdt.Tag == 1 {
-			lng := __subject_tAdt.Fields[0]
+			lng := rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			_ = lng
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" ", Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(lng).(Std_Ui_Length)))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" ", Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(lng).(Std_Ui_Length)))))
 		}
 		if __subject_tAdt.Tag == 2 {
-			lng := __subject_tAdt.Fields[0]
+			lng := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[0])
 			_ = lng
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" ", Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(lng).(Std_Ui_Length)))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" ", Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(lng).(Std_Ui_Length)))))
 		}
 		if __subject_tAdt.Tag == 6 {
-			t := __subject_tAdt.Fields[0]
+			t := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = t
-			r := __subject_tAdt.Fields[1]
+			r := rt.AsInt(__subject_tAdt.Fields[1])
 			_ = r
-			b := __subject_tAdt.Fields[2]
+			b := rt.AsInt(__subject_tAdt.Fields[2])
 			_ = b
-			l := __subject_tAdt.Fields[3]
+			l := rt.AsInt(__subject_tAdt.Fields[3])
 			_ = l
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" padding: ", rt.Concat(rt.String_fromIntT(rt.AsInt(t)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(r)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(b)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(l)), "px;"))))))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" padding: ", rt.Concat(rt.String_fromIntT(rt.AsInt(t)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(r)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(b)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(l)), "px;"))))))))))
 		}
 		if __subject_tAdt.Tag == 7 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" gap: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" gap: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 3 {
-			h := __subject_tAdt.Fields[0]
+			h := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_HAlign](__subject_tAdt.Fields[0])
 			_ = h
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(Std_Ui_alignXCss(any(myCtx).(Std_Ui_LayoutContext), any(h).(Std_Ui_HAlign)), rt.Concat(" ", Std_Ui_alignSelfX(any(parentCtx).(Std_Ui_LayoutContext), any(h).(Std_Ui_HAlign)))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(Std_Ui_alignXCss(any(myCtx).(Std_Ui_LayoutContext), any(h).(Std_Ui_HAlign)), rt.Concat(" ", Std_Ui_alignSelfX(any(parentCtx).(Std_Ui_LayoutContext), any(h).(Std_Ui_HAlign)))))))
 		}
 		if __subject_tAdt.Tag == 4 {
-			v := __subject_tAdt.Fields[0]
+			v := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_VAlign](__subject_tAdt.Fields[0])
 			_ = v
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(Std_Ui_alignYCss(any(myCtx).(Std_Ui_LayoutContext), any(v).(Std_Ui_VAlign)), rt.Concat(" ", Std_Ui_alignSelfY(any(parentCtx).(Std_Ui_LayoutContext), any(v).(Std_Ui_VAlign)))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(Std_Ui_alignYCss(any(myCtx).(Std_Ui_LayoutContext), any(v).(Std_Ui_VAlign)), rt.Concat(" ", Std_Ui_alignSelfY(any(parentCtx).(Std_Ui_LayoutContext), any(v).(Std_Ui_VAlign)))))))
 		}
 		if __subject_tAdt.Tag == 8 {
-			k := __subject_tAdt.Fields[0]
+			k := rt.AsString(__subject_tAdt.Fields[0])
 			_ = k
-			v := __subject_tAdt.Fields[1]
+			v := rt.AsString(__subject_tAdt.Fields[1])
 			_ = v
 			return func() string {
 				if rt.AsBool(rt.Eq(k, "__row")) {
@@ -2380,7 +2584,7 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 											if rt.AsBool(rt.Eq(k, "__gridTracks")) {
 												return acc
 											} else {
-												return rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(k, rt.Concat(": ", rt.Concat(v, ";"))))))
+												return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" ", rt.Concat(k, rt.Concat(": ", rt.Concat(v, ";"))))))
 											}
 										}
 									}
@@ -2393,15 +2597,15 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 			}()
 		}
 		if __subject_tAdt.Tag == 9 {
-			_ = __subject_tAdt.Fields[0]
+			_ = /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Description](__subject_tAdt.Fields[0])
 			return acc
 		}
 		if __subject_tAdt.Tag == 10 {
-			_ = __subject_tAdt.Fields[0]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
 			return acc
 		}
 		if __subject_tAdt.Tag == 5 {
-			_ = __subject_tAdt.Fields[0]
+			_ = /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Location](__subject_tAdt.Fields[0])
 			_ = __subject_tAdt.Fields[1]
 			return acc
 		}
@@ -2410,29 +2614,29 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 			return acc
 		}
 		if __subject_tAdt.Tag == 12 {
-			_ = __subject_tAdt.Fields[0]
-			_ = __subject_tAdt.Fields[1]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
+			_ = rt.AsString(__subject_tAdt.Fields[1])
 			return acc
 		}
 		if __subject_tAdt.Tag == 13 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" font-size: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" font-size: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 14 {
-			c := __subject_tAdt.Fields[0]
+			c := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](__subject_tAdt.Fields[0])
 			_ = c
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
 		}
 		if __subject_tAdt.Tag == 15 {
-			joined := __subject_tAdt.Fields[0]
+			joined := rt.AsString(__subject_tAdt.Fields[0])
 			_ = joined
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" font-family: ", rt.Concat(joined, ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" font-family: ", rt.Concat(joined, ";"))))
 		}
 		if __subject_tAdt.Tag == 16 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" font-weight: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" font-weight: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), ";"))))
 		}
 		if __subject_tAdt.Tag == 17 {
 			return acc + " font-style: italic;"
@@ -2441,122 +2645,122 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 			return acc + " text-decoration: underline;"
 		}
 		if __subject_tAdt.Tag == 19 {
-			value := __subject_tAdt.Fields[0]
+			value := rt.AsString(__subject_tAdt.Fields[0])
 			_ = value
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" text-decoration: ", rt.Concat(value, ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" text-decoration: ", rt.Concat(value, ";"))))
 		}
 		if __subject_tAdt.Tag == 22 {
-			value := __subject_tAdt.Fields[0]
+			value := rt.AsString(__subject_tAdt.Fields[0])
 			_ = value
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" text-align: ", rt.Concat(value, ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" text-align: ", rt.Concat(value, ";"))))
 		}
 		if __subject_tAdt.Tag == 20 {
-			em := __subject_tAdt.Fields[0]
+			em := rt.AsFloat(__subject_tAdt.Fields[0])
 			_ = em
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" letter-spacing: ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(em)), "em;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" letter-spacing: ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(em)), "em;"))))
 		}
 		if __subject_tAdt.Tag == 21 {
-			em := __subject_tAdt.Fields[0]
+			em := rt.AsFloat(__subject_tAdt.Fields[0])
 			_ = em
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" word-spacing: ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(em)), "em;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" word-spacing: ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(em)), "em;"))))
 		}
 		if __subject_tAdt.Tag == 23 {
-			c := __subject_tAdt.Fields[0]
+			c := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](__subject_tAdt.Fields[0])
 			_ = c
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" background-color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" background-color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
 		}
 		if __subject_tAdt.Tag == 24 {
-			url := __subject_tAdt.Fields[0]
+			url := rt.AsString(__subject_tAdt.Fields[0])
 			_ = url
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" background-image: url('", rt.Concat(url, "');"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" background-image: url('", rt.Concat(url, "');"))))
 		}
 		if __subject_tAdt.Tag == 25 {
-			css := __subject_tAdt.Fields[0]
+			css := rt.AsString(__subject_tAdt.Fields[0])
 			_ = css
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" background-image: ", rt.Concat(css, ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" background-image: ", rt.Concat(css, ";"))))
 		}
 		if __subject_tAdt.Tag == 26 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" border-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" border-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 27 {
-			t := __subject_tAdt.Fields[0]
+			t := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = t
-			r := __subject_tAdt.Fields[1]
+			r := rt.AsInt(__subject_tAdt.Fields[1])
 			_ = r
-			b := __subject_tAdt.Fields[2]
+			b := rt.AsInt(__subject_tAdt.Fields[2])
 			_ = b
-			l := __subject_tAdt.Fields[3]
+			l := rt.AsInt(__subject_tAdt.Fields[3])
 			_ = l
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" border-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(t)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(r)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(b)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(l)), "px;"))))))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" border-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(t)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(r)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(b)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(l)), "px;"))))))))))
 		}
 		if __subject_tAdt.Tag == 28 {
-			c := __subject_tAdt.Fields[0]
+			c := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](__subject_tAdt.Fields[0])
 			_ = c
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" border-color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" border-color: ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))
 		}
 		if __subject_tAdt.Tag == 29 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" border-radius: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" border-radius: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 30 {
-			s := __subject_tAdt.Fields[0]
+			s := rt.AsString(__subject_tAdt.Fields[0])
 			_ = s
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" border-style: ", rt.Concat(s, ";"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" border-style: ", rt.Concat(s, ";"))))
 		}
 		if __subject_tAdt.Tag == 31 {
-			ox := __subject_tAdt.Fields[0]
+			ox := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = ox
-			oy := __subject_tAdt.Fields[1]
+			oy := rt.AsInt(__subject_tAdt.Fields[1])
 			_ = oy
-			blur := __subject_tAdt.Fields[2]
+			blur := rt.AsInt(__subject_tAdt.Fields[2])
 			_ = blur
-			spread := __subject_tAdt.Fields[3]
+			spread := rt.AsInt(__subject_tAdt.Fields[3])
 			_ = spread
-			c := __subject_tAdt.Fields[4]
+			c := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](__subject_tAdt.Fields[4])
 			_ = c
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" box-shadow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(ox)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(oy)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(blur)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(spread)), rt.Concat("px ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))))))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" box-shadow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(ox)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(oy)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(blur)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(spread)), rt.Concat("px ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))))))))))
 		}
 		if __subject_tAdt.Tag == 32 {
-			ox := __subject_tAdt.Fields[0]
+			ox := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = ox
-			oy := __subject_tAdt.Fields[1]
+			oy := rt.AsInt(__subject_tAdt.Fields[1])
 			_ = oy
-			blur := __subject_tAdt.Fields[2]
+			blur := rt.AsInt(__subject_tAdt.Fields[2])
 			_ = blur
-			spread := __subject_tAdt.Fields[3]
+			spread := rt.AsInt(__subject_tAdt.Fields[3])
 			_ = spread
-			c := __subject_tAdt.Fields[4]
+			c := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](__subject_tAdt.Fields[4])
 			_ = c
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" box-shadow: inset ", rt.Concat(rt.String_fromIntT(rt.AsInt(ox)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(oy)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(blur)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(spread)), rt.Concat("px ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))))))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" box-shadow: inset ", rt.Concat(rt.String_fromIntT(rt.AsInt(ox)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(oy)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(blur)), rt.Concat("px ", rt.Concat(rt.String_fromIntT(rt.AsInt(spread)), rt.Concat("px ", rt.Concat(Std_Ui_colorCss(any(c).(Std_Ui_Color)), ";"))))))))))))
 		}
 		if __subject_tAdt.Tag == 33 {
 			return acc + " cursor: pointer;"
 		}
 		if __subject_tAdt.Tag == 34 {
-			x := __subject_tAdt.Fields[0]
+			x := rt.AsString(__subject_tAdt.Fields[0])
 			_ = x
-			y := __subject_tAdt.Fields[1]
+			y := rt.AsString(__subject_tAdt.Fields[1])
 			_ = y
-			return rt.CoerceString(rt.Concat(acc, rt.Concat(" overflow-x: ", rt.Concat(x, rt.Concat("; overflow-y: ", rt.Concat(y, ";"))))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(acc, rt.Concat(" overflow-x: ", rt.Concat(x, rt.Concat("; overflow-y: ", rt.Concat(y, ";"))))))
 		}
 		if __subject_tAdt.Tag == 35 {
-			_ = __subject_tAdt.Fields[0]
-			_ = __subject_tAdt.Fields[1]
+			_ = /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_PseudoClass](__subject_tAdt.Fields[0])
+			_ = rt.AsString(__subject_tAdt.Fields[1])
 			return acc
 		}
 		if __subject_tAdt.Tag == 36 {
-			_ = __subject_tAdt.Fields[0]
-			_ = __subject_tAdt.Fields[1]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
+			_ = rt.AsBool(__subject_tAdt.Fields[1])
 			return acc
 		}
 		if __subject_tAdt.Tag == 37 {
-			_ = __subject_tAdt.Fields[0]
-			_ = __subject_tAdt.Fields[1]
-			_ = __subject_tAdt.Fields[2]
-			_ = __subject_tAdt.Fields[3]
+			_ = rt.AsString(__subject_tAdt.Fields[0])
+			_ = rt.AsString(__subject_tAdt.Fields[1])
+			_ = rt.AsString(__subject_tAdt.Fields[2])
+			_ = rt.AsBool(__subject_tAdt.Fields[3])
 			return acc
 		}
 		_ = rt.Unreachable("case/__subject_tAdt")
@@ -2565,17 +2769,18 @@ func Std_Ui_collectStyle(parentCtx Std_Ui_LayoutContext, myCtx Std_Ui_LayoutCont
 }
 
 func Std_Ui_colorCss(c Std_Ui_Color) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject_tAdt := any(c).(Std_Ui_Color)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 0 {
-			r := __subject_tAdt.Fields[0]
+			r := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = r
-			g := __subject_tAdt.Fields[1]
+			g := rt.AsInt(__subject_tAdt.Fields[1])
 			_ = g
-			b := __subject_tAdt.Fields[2]
+			b := rt.AsInt(__subject_tAdt.Fields[2])
 			_ = b
-			a := __subject_tAdt.Fields[3]
+			a := rt.AsFloat(__subject_tAdt.Fields[3])
 			_ = a
 			return rt.CoerceString(rt.Concat("rgba(", rt.Concat(rt.String_fromIntT(rt.AsInt(r)), rt.Concat(", ", rt.Concat(rt.String_fromIntT(rt.AsInt(g)), rt.Concat(", ", rt.Concat(rt.String_fromIntT(rt.AsInt(b)), rt.Concat(", ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(a)), ")")))))))))
 		}
@@ -2585,11 +2790,12 @@ func Std_Ui_colorCss(c Std_Ui_Color) string {
 }
 
 func Std_Ui_widthCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) string {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() string {
 		__subject_tAdt := any(lng).(Std_Ui_Length)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 0 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
 			return rt.CoerceString(rt.Concat("width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;")))
 		}
@@ -2597,33 +2803,33 @@ func Std_Ui_widthCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) string
 			return "width: max-content;"
 		}
 		if __subject_tAdt.Tag == 2 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(Std_Ui_widthFillFor(any(parentCtx).(Std_Ui_LayoutContext), rt.CoerceInt(n)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(Std_Ui_widthFillFor(any(parentCtx).(Std_Ui_LayoutContext) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(n)))
 		}
 		if __subject_tAdt.Tag == 3 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			inner := __subject_tAdt.Fields[1]
+			inner := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[1])
 			_ = inner
-			return rt.CoerceString(rt.Concat(Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" min-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" min-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 4 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			inner := __subject_tAdt.Fields[1]
+			inner := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[1])
 			_ = inner
-			return rt.CoerceString(rt.Concat(Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" max-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(Std_Ui_widthCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" max-width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 5 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat("width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vh;")))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vh;")))
 		}
 		if __subject_tAdt.Tag == 6 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat("width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vw;")))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("width: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vw;")))
 		}
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return ""
@@ -2631,6 +2837,7 @@ func Std_Ui_widthCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) string
 }
 
 func Std_Ui_widthFillFor(parentCtx Std_Ui_LayoutContext, n int) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := parentCtx
 		_ = __subject
@@ -2655,11 +2862,12 @@ func Std_Ui_widthFillFor(parentCtx Std_Ui_LayoutContext, n int) string {
 }
 
 func Std_Ui_heightCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) string {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() string {
 		__subject_tAdt := any(lng).(Std_Ui_Length)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 0 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
 			return rt.CoerceString(rt.Concat("height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;")))
 		}
@@ -2667,33 +2875,33 @@ func Std_Ui_heightCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) strin
 			return "height: max-content;"
 		}
 		if __subject_tAdt.Tag == 2 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(Std_Ui_heightFillFor(any(parentCtx).(Std_Ui_LayoutContext), rt.CoerceInt(n)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(Std_Ui_heightFillFor(any(parentCtx).(Std_Ui_LayoutContext) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(n)))
 		}
 		if __subject_tAdt.Tag == 3 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			inner := __subject_tAdt.Fields[1]
+			inner := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[1])
 			_ = inner
-			return rt.CoerceString(rt.Concat(Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" min-height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" min-height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 4 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			inner := __subject_tAdt.Fields[1]
+			inner := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Length](__subject_tAdt.Fields[1])
 			_ = inner
-			return rt.CoerceString(rt.Concat(Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" max-height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(Std_Ui_heightCssIn(any(parentCtx).(Std_Ui_LayoutContext), any(inner).(Std_Ui_Length)), rt.Concat(" max-height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "px;"))))
 		}
 		if __subject_tAdt.Tag == 5 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat("height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vh;")))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vh;")))
 		}
 		if __subject_tAdt.Tag == 6 {
-			n := __subject_tAdt.Fields[0]
+			n := rt.AsInt(__subject_tAdt.Fields[0])
 			_ = n
-			return rt.CoerceString(rt.Concat("height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vw;")))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("height: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "vw;")))
 		}
 		_ = rt.Unreachable("case/__subject_tAdt")
 		return ""
@@ -2701,6 +2909,7 @@ func Std_Ui_heightCssIn(parentCtx Std_Ui_LayoutContext, lng Std_Ui_Length) strin
 }
 
 func Std_Ui_heightFillFor(parentCtx Std_Ui_LayoutContext, n int) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := parentCtx
 		_ = __subject
@@ -2711,13 +2920,13 @@ func Std_Ui_heightFillFor(parentCtx Std_Ui_LayoutContext, n int) string {
 			return rt.CoerceString(rt.Concat("flex-grow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "; min-height: 0;")))
 		}
 		if rt.EnumTagIs(__subject, 2) {
-			return rt.CoerceString(rt.Concat("flex-grow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "; min-height: 0;")))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("flex-grow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "; min-height: 0;")))
 		}
 		if rt.EnumTagIs(__subject, 3) {
 			return "height: 100%;"
 		}
 		if rt.EnumTagIs(__subject, 4) {
-			return rt.CoerceString(rt.Concat("flex-grow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "; min-height: 0;")))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("flex-grow: ", rt.Concat(rt.String_fromIntT(rt.AsInt(n)), "; min-height: 0;")))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return ""
@@ -2889,38 +3098,47 @@ func Std_Ui_alignSelfY(parentCtx Std_Ui_LayoutContext, v Std_Ui_VAlign) string {
 }
 
 func Std_Ui_Background_color(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_bgColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_Border_color(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_borderColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_Border_width(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_borderWidth(n))
 }
 
 func Std_Ui_Border_widthEach(r any) rt.SkyAttribute {
-	return rt.Coerce[rt.SkyAttribute](Std_Ui_borderWidthEach(rt.CoerceInt(rt.Field(r, "Top")), rt.CoerceInt(rt.Field(r, "Right")), rt.CoerceInt(rt.Field(r, "Bottom")), rt.CoerceInt(rt.Field(r, "Left"))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[rt.SkyAttribute](Std_Ui_borderWidthEach( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(r, "Top")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Right")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Bottom")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(r, "Left"))))
 }
 
 func Std_Ui_Border_rounded(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_borderRounded(n))
 }
 
 func Std_Ui_Font_color(c Std_Ui_Color) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_fontColor(any(c).(Std_Ui_Color)))
 }
 
 func Std_Ui_Font_size(n int) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_fontSize(n))
 }
 
 func Std_Ui_Font_family(joined string) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_fontFamily(joined))
 }
 
 func Std_Ui_Font_bold() rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_fontWeight(700))
 }
 
@@ -2929,11 +3147,13 @@ func Std_Ui_Font_italic() rt.SkyAttribute {
 }
 
 func Std_Ui_Font_letterSpacing(em float64) rt.SkyAttribute {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyAttribute](Std_Ui_fontLetterSpacing(em))
 }
 
-func Sky_Core_Dict_get() func(any) func(map[string]any) rt.SkyMaybe[any] {
-	return rt.Coerce[func(any) func(map[string]any) rt.SkyMaybe[any]](rt.Ffi_kernel("Dict_get"))
+func Sky_Core_Dict_get[T1 any, T2 any](_skyEta_p0 T1, _skyEta_p1 map[string]T2) rt.SkyMaybe[T2] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.MaybeCoerce[T2](rt.SkyCall(rt.Ffi_kernel("Dict_get"), _skyEta_p0, _skyEta_p1))
 }
 
 type State_Msg = rt.SkyADT
@@ -3237,6 +3457,7 @@ func State_tabLabel(tab State_Tab) string {
 }
 
 func State_rangeMillis(r State_Range) int {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() int {
 		__subject := r
 		_ = __subject
@@ -3244,13 +3465,13 @@ func State_rangeMillis(r State_Range) int {
 			return rt.CoerceInt(rt.Mul(15*60, 1000))
 		}
 		if rt.EnumTagIs(__subject, 1) {
-			return rt.CoerceInt(rt.Mul(60*60, 1000))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Mul(60*60, 1000))
 		}
 		if rt.EnumTagIs(__subject, 2) {
-			return rt.CoerceInt(rt.Mul(rt.Mul(24*60, 60), 1000))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Mul(rt.Mul(24*60, 60), 1000))
 		}
 		if rt.EnumTagIs(__subject, 3) {
-			return rt.CoerceInt(rt.Mul(rt.Mul(rt.Mul(7*24, 60), 60), 1000))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Mul(rt.Mul(rt.Mul(7*24, 60), 60), 1000))
 		}
 		if rt.EnumTagIs(__subject, 4) {
 			return 0
@@ -3325,50 +3546,62 @@ func State_mockLogs() []State_LogEntry_R {
 }
 
 func ErrorsTab_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func ErrorsTab_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func ErrorsTab_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func ErrorsTab_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func ErrorsTab_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func ErrorsTab_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func ErrorsTab_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func ErrorsTab_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func ErrorsTab_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func ErrorsTab_err() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
 func ErrorsTab_viewErrorsTab(model State_Model_R) []Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return []Std_Ui_Element_T[State_Msg]{ErrorsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), ErrorsTab_errorsPanel(rt.AsListT[State_ErrorRow_R](rt.Field(model, "Errors")))}
 }
 
 func ErrorsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		label := func() string {
 			if rt.AsBool(selected == "") {
@@ -3379,11 +3612,12 @@ func ErrorsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
 			return ""
 		}()
 		_ = label
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), ErrorsTab_allServicesChip(rt.CoerceBool(rt.Eq(selected, "")))})))
+		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), ErrorsTab_allServicesChip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(selected, "")))})))
 	}()
 }
 
 func ErrorsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(isActive) {
@@ -3410,6 +3644,7 @@ func ErrorsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
 }
 
 func ErrorsTab_errorsPanel(rows []State_ErrorRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](ErrorsTab_panel("Top errors by frequency", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(rows))) {
 			return []any{ErrorsTab_emptyState("No errors for this service — nice work.")}
@@ -3421,155 +3656,185 @@ func ErrorsTab_errorsPanel(rows []State_ErrorRow_R) Std_Ui_Element_T[State_Msg] 
 }
 
 func ErrorsTab_errorRowView(r State_ErrorRow_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(ErrorsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_color(ErrorsTab_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.Concat("×", rt.String_fromIntT(rt.AsInt(r.Count)))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(ErrorsTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(r.Message))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(ErrorsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_color(ErrorsTab_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("×", rt.String_fromIntT(rt.AsInt(r.Count)))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(ErrorsTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(r.Message))).(Std_Ui_Element))})))
 }
 
 func ErrorsTab_panel(title string, children []Std_Ui_Element_T[State_Msg]) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
 }
 
 func ErrorsTab_emptyState(message string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_italic()}), any(Std_Ui_text(message)).(Std_Ui_Element)))
 }
 
 func HubStore_hubStore(dbPath string) State_Store_R {
+	// PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation)
 	return State_Store_R{ListServices: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []string] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []string](rt.Hub_listServices(dbPath))
 	}, ReadErrors: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readErrors(dbPath))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readErrors(dbPath))
 	}, ReadFilteredErrors: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readFilteredErrors(dbPath, svc))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readFilteredErrors(dbPath, svc))
 	}, ReadFilteredLogs: func(_lp_svc string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
 		svc := _lp_svc
 		_ = svc
 		return func(_lp_filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
 			filter := _lp_filter
 			_ = filter
-			return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readFilteredLogs(dbPath, svc, filter))
+			return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readFilteredLogs(dbPath, svc, filter))
 		}
 	}, ReadFilteredMetrics: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readFilteredMetrics(dbPath, svc))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readFilteredMetrics(dbPath, svc))
 	}, ReadFilteredTraces: func(svc string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readFilteredTraces(dbPath, svc))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readFilteredTraces(dbPath, svc))
 	}, ReadLogs: func(filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readLogs(dbPath, filter))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readLogs(dbPath, filter))
 	}, ReadMetrics: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readMetrics(dbPath))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readMetrics(dbPath))
 	}, ReadOverview: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Hub_readOverview(dbPath))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Hub_readOverview(dbPath))
 	}, ReadServiceStats: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.Hub_readServiceStats(dbPath))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.Hub_readServiceStats(dbPath))
 	}, ReadTraces: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readTraces(dbPath))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readTraces(dbPath))
 	}}
 }
 
-func HubStore_hubReadOverview() func(string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]](rt.Ffi_kernel("Hub_readOverview"))
+func HubStore_hubReadOverview(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.SkyCall(rt.Ffi_kernel("Hub_readOverview"), _skyEta_p0))
 }
 
-func HubStore_hubReadLogs() func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-	return rt.Coerce[func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]](rt.Ffi_kernel("Hub_readLogs"))
+func HubStore_hubReadLogs(_skyEta_p0 string, _skyEta_p1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(rt.Ffi_kernel("Hub_readLogs"), _skyEta_p0, _skyEta_p1))
 }
 
-func HubStore_hubReadMetrics() func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]](rt.Ffi_kernel("Hub_readMetrics"))
+func HubStore_hubReadMetrics(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readMetrics"), _skyEta_p0))
 }
 
-func HubStore_hubReadTraces() func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]](rt.Ffi_kernel("Hub_readTraces"))
+func HubStore_hubReadTraces(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readTraces"), _skyEta_p0))
 }
 
-func HubStore_hubReadErrors() func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]](rt.Ffi_kernel("Hub_readErrors"))
+func HubStore_hubReadErrors(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readErrors"), _skyEta_p0))
 }
 
-func HubStore_hubListServices() func(string) rt.SkyTask[Sky_Core_Error_Error, []string] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []string]](rt.Ffi_kernel("Hub_listServices"))
+func HubStore_hubListServices(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, []string] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []string](rt.SkyCall(rt.Ffi_kernel("Hub_listServices"), _skyEta_p0))
 }
 
-func HubStore_hubReadServiceStats() func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]](rt.Ffi_kernel("Hub_readServiceStats"))
+func HubStore_hubReadServiceStats(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.SkyCall(rt.Ffi_kernel("Hub_readServiceStats"), _skyEta_p0))
 }
 
-func HubStore_hubReadFilteredLogs() func(string) func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-	return rt.Coerce[func(string) func(string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]](rt.Ffi_kernel("Hub_readFilteredLogs"))
+func HubStore_hubReadFilteredLogs(_skyEta_p0 string, _skyEta_p1 string, _skyEta_p2 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(rt.Ffi_kernel("Hub_readFilteredLogs"), _skyEta_p0, _skyEta_p1, _skyEta_p2))
 }
 
-func HubStore_hubReadFilteredMetrics() func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-	return rt.Coerce[func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]](rt.Ffi_kernel("Hub_readFilteredMetrics"))
+func HubStore_hubReadFilteredMetrics(_skyEta_p0 string, _skyEta_p1 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readFilteredMetrics"), _skyEta_p0, _skyEta_p1))
 }
 
-func HubStore_hubReadFilteredTraces() func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-	return rt.Coerce[func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]](rt.Ffi_kernel("Hub_readFilteredTraces"))
+func HubStore_hubReadFilteredTraces(_skyEta_p0 string, _skyEta_p1 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readFilteredTraces"), _skyEta_p0, _skyEta_p1))
 }
 
-func HubStore_hubReadFilteredErrors() func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-	return rt.Coerce[func(string) func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]](rt.Ffi_kernel("Hub_readFilteredErrors"))
+func HubStore_hubReadFilteredErrors(_skyEta_p0 string, _skyEta_p1 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(rt.Ffi_kernel("Hub_readFilteredErrors"), _skyEta_p0, _skyEta_p1))
 }
 
-func HubStore_hubCurrentIdentity() func(string) rt.SkyTask[Sky_Core_Error_Error, State_Identity_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, State_Identity_R]](rt.Ffi_kernel("Hub_currentIdentity"))
+func HubStore_hubCurrentIdentity(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, State_Identity_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, State_Identity_R](rt.SkyCall(rt.Ffi_kernel("Hub_currentIdentity"), _skyEta_p0))
 }
 
 func LogsTab_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func LogsTab_bgSurface() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(28, 32, 39))
 }
 
 func LogsTab_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func LogsTab_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func LogsTab_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func LogsTab_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func LogsTab_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func LogsTab_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func LogsTab_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func LogsTab_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func LogsTab_warn() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 178, 77))
 }
 
 func LogsTab_err() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
 func LogsTab_viewLogsTab(model State_Model_R, preFilteredLogs []State_LogEntry_R) []Std_Ui_Element_T[State_Msg] {
-	return []Std_Ui_Element_T[State_Msg]{LogsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), LogsTab_filterPanel(rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter"))), LogsTab_logsPanel(rt.AsListT[State_LogEntry_R](preFilteredLogs))}
+	// PROOF: FFI: primitive narrowing (typed slot)
+	return []Std_Ui_Element_T[State_Msg]{LogsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), LogsTab_filterPanel( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter"))), LogsTab_logsPanel(rt.AsListT[State_LogEntry_R](preFilteredLogs))}
 }
 
 func LogsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		label := func() string {
 			if rt.AsBool(selected == "") {
@@ -3580,11 +3845,12 @@ func LogsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
 			return ""
 		}()
 		_ = label
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), LogsTab_allServicesChip(rt.CoerceBool(rt.Eq(selected, "")))})))
+		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), LogsTab_allServicesChip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(selected, "")))})))
 	}()
 }
 
 func LogsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(isActive) {
@@ -3611,17 +3877,19 @@ func LogsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
 }
 
 func LogsTab_filterPanel(f State_LogFilter_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Search message / route / subapp…"), Std_Ui_htmlAttribute("value", rt.CoerceString(f.Query)), Std_Ui_onInput(State_Msg_LogFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(LogsTab_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), LogsTab_levelToggle("debug", rt.CoerceBool(f.ShowDebug)), LogsTab_levelToggle("info", rt.CoerceBool(f.ShowInfo)), LogsTab_levelToggle("warn", rt.CoerceBool(f.ShowWarn)), LogsTab_levelToggle("error", rt.CoerceBool(f.ShowError)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterClear)), Std_Ui_Font_color(LogsTab_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})), func() any {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Search message / route / subapp…"), Std_Ui_htmlAttribute("value" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(f.Query)), Std_Ui_onInput(State_Msg_LogFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(LogsTab_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), LogsTab_levelToggle("debug" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowDebug)), LogsTab_levelToggle("info" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowInfo)), LogsTab_levelToggle("warn" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowWarn)), LogsTab_levelToggle("error" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowError)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterClear)), Std_Ui_Font_color(LogsTab_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})), func() any {
 		if rt.AsBool(f.Session == "") {
 			return Std_Ui_text("")
 		} else {
-			return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textMuted())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_text("Filtering by session: "), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_color(LogsTab_accent())}), any(Std_Ui_text(rt.CoerceString(f.Session))).(Std_Ui_Element))}))
+			return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textMuted())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_text("Filtering by session: "), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_color(LogsTab_accent())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(f.Session))).(Std_Ui_Element))}))
 		}
 		return nil
 	}()})))
 }
 
 func LogsTab_levelToggle(lvl string, on bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(on) {
@@ -3635,19 +3903,20 @@ func LogsTab_levelToggle(lvl string, on bool) Std_Ui_Element_T[State_Msg] {
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			fg := func() Std_Ui_Color {
 				if rt.AsBool(on) {
-					return rt.Coerce[Std_Ui_Color](LogsTab_levelColor(rt.CoerceString(lvl)))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](LogsTab_levelColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(lvl)))
 				} else {
 					return LogsTab_textMuted()
 				}
 				return Std_Ui_Color{}
 			}()
 			_ = fg
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterToggleLevel(rt.CoerceString(lvl)))), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(lvl))))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterToggleLevel( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(lvl)))), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(lvl))))).(Std_Ui_Element))
 		}())
 	}()
 }
 
 func LogsTab_logsPanel(entries []State_LogEntry_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](LogsTab_panel("Recent log entries", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(entries))) {
 			return []any{LogsTab_emptyState("No log entries for this service yet — the SSE tail will fill this in.")}
@@ -3659,37 +3928,41 @@ func LogsTab_logsPanel(entries []State_LogEntry_R) Std_Ui_Element_T[State_Msg] {
 }
 
 func LogsTab_logRow(e State_LogEntry_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(LogsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(LogsTab_compactTime(rt.CoerceString(e.Time))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(50)).(Std_Ui_Length)), Std_Ui_Font_color(any(LogsTab_levelColor(rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(e.Level))))).(Std_Ui_Element)), LogsTab_subappBadge(rt.CoerceString(e.Subapp)), LogsTab_sessionBadge(rt.CoerceString(e.SessionId)), LogsTab_traceBadge(rt.CoerceString(e.ReqId)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_color(any(LogsTab_levelTextColor(rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_size(13)}), any(Std_Ui_text(rt.CoerceString(e.Message))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(LogsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(LogsTab_compactTime( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Time))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(50)).(Std_Ui_Length)), Std_Ui_Font_color(any(LogsTab_levelColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(e.Level))))).(Std_Ui_Element)), LogsTab_subappBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Subapp)), LogsTab_sessionBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.SessionId)), LogsTab_traceBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.ReqId)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_color(any(LogsTab_levelTextColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_size(13)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Message))).(Std_Ui_Element))})))
 }
 
 func LogsTab_sessionBadge(sid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(sid == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
 		} else {
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterPickSession(sid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}), any(Std_Ui_text(rt.CoerceString(rt.String_left(8, sid)))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterPickSession(sid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_left(8, sid)))).(Std_Ui_Element))
 		}
 		return nil
 	}())
 }
 
 func LogsTab_traceBadge(tid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(tid == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
 		} else {
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_PivotToTrace(tid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}), any(Std_Ui_text(rt.CoerceString(rt.Concat("trace ", rt.String_left(8, tid))))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_PivotToTrace(tid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("trace ", rt.String_left(8, tid))))).(Std_Ui_Element))
 		}
 		return nil
 	}())
 }
 
 func LogsTab_subappBadge(sub string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(sub == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(70)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
@@ -3701,6 +3974,7 @@ func LogsTab_subappBadge(sub string) Std_Ui_Element_T[State_Msg] {
 }
 
 func LogsTab_compactTime(ts string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := rt.String_splitT("T", rt.AsString(ts))
 		_ = __subject
@@ -3749,24 +4023,27 @@ func LogsTab_levelTextColor(level string) Std_Ui_Color {
 }
 
 func LogsTab_panel(title string, children []Std_Ui_Element_T[State_Msg]) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
 }
 
 func LogsTab_emptyState(message string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_italic()}), any(Std_Ui_text(message)).(Std_Ui_Element)))
 }
 
 func Sky_Core_Maybe_withDefault[T1 any](def T1, m rt.SkyMaybe[T1]) T1 {
+	// PROOF: FFI: generic type-param widening (T-var slot)
 	return func() T1 {
 		__subject := rt.MaybeCoerce[any](m)
 		_ = __subject
 		if __subject.Tag == 0 {
 			x := rt.MaybeJust(any(__subject))
 			_ = x
-			return rt.Coerce[T1](x)
+			return /* PROOF: FFI: generic type-param widening (T-var slot) */ rt.Coerce[T1](x)
 		}
 		if __subject.Tag == 1 {
-			return rt.Coerce[T1](def)
+			return /* PROOF: FFI: generic type-param widening (T-var slot) */ rt.Coerce[T1](def)
 		}
 		_ = rt.Unreachable("case/__subject")
 		return *new(T1)
@@ -3855,8 +4132,9 @@ func Sky_Core_Error_TypeInfo(p0 string, p1 string) Sky_Core_Error_TypeInfo_R {
 	return Sky_Core_Error_TypeInfo_R{Expected: p0, Actual: p1}
 }
 
-func Sky_Core_System_getenvOr() func(string) func(string) string {
-	return rt.Coerce[func(string) func(string) string](rt.Ffi_kernel("System_getenvOr"))
+func Sky_Core_System_getenvOr(_skyEta_p0 string, _skyEta_p1 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("System_getenvOr"), _skyEta_p0, _skyEta_p1))
 }
 
 type Sky_Core_Http_HttpRequest_R struct {
@@ -3889,56 +4167,69 @@ func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Cor
 	return Sky_Core_Http_HttpResponse_R{Status: p0, Body: p1, Headers: p2}
 }
 
-func Sky_Core_Http_get() func(string) rt.SkyTask[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R] {
-	return rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R]](rt.Ffi_kernel("Http_get"))
+func Sky_Core_Http_get(_skyEta_p0 string) rt.SkyTask[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.SkyCall(rt.Ffi_kernel("Http_get"), _skyEta_p0))
 }
 
 func Sky_Core_Json_Decode_string_() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.Ffi_kernel("JsonDec_string"))
 }
 
 func Sky_Core_Json_Decode_int_() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.Ffi_kernel("JsonDec_int"))
 }
 
 func Sky_Core_Json_Decode_float() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.Ffi_kernel("JsonDec_float"))
 }
 
 func Sky_Core_Json_Decode_bool_() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.Ffi_kernel("JsonDec_bool"))
 }
 
-func Sky_Core_Json_Decode_decodeString() func(rt.SkyDecoder) func(string) rt.SkyResult[Sky_Core_Error_Error, any] {
-	return rt.Coerce[func(rt.SkyDecoder) func(string) rt.SkyResult[Sky_Core_Error_Error, any]](rt.Ffi_kernel("JsonDec_decodeString"))
+func Sky_Core_Json_Decode_decodeString(_skyEta_p0 rt.SkyDecoder, _skyEta_p1 string) rt.SkyResult[Sky_Core_Error_Error, any] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.ResultCoerce[Sky_Core_Error_Error, any](rt.SkyCall(rt.Ffi_kernel("JsonDec_decodeString"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_Json_Decode_at() func([]string) func(rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func([]string) func(rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDec_at"))
+func Sky_Core_Json_Decode_at(_skyEta_p0 []string, _skyEta_p1 rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDec_at"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_Json_Decode_list() func(rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func(rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDec_list"))
+func Sky_Core_Json_Decode_list(_skyEta_p0 rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDec_list"), _skyEta_p0))
 }
 
-func Sky_Core_Json_Decode_map_() func(func(any) any) func(rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func(func(any) any) func(rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDec_map"))
+func Sky_Core_Json_Decode_map_[T1 any, T2 any](_skyEta_p0 func(T1) T2, _skyEta_p1 rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDec_map"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_Json_Decode_succeed() func(any) rt.SkyDecoder {
-	return rt.Coerce[func(any) rt.SkyDecoder](rt.Ffi_kernel("JsonDec_succeed"))
+func Sky_Core_Json_Decode_succeed[T1 any](_skyEta_p0 T1) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDec_succeed"), _skyEta_p0))
 }
 
-func Sky_Core_Json_Decode_oneOf() func([]rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func([]rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDec_oneOf"))
+func Sky_Core_Json_Decode_oneOf(_skyEta_p0 []rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDec_oneOf"), _skyEta_p0))
 }
 
-func Sky_Core_Json_Decode_Pipeline_optional() func(string) func(rt.SkyDecoder) func(any) func(rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func(string) func(rt.SkyDecoder) func(any) func(rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDecP_optional"))
+func Sky_Core_Json_Decode_Pipeline_optional[T1 any](_skyEta_p0 string, _skyEta_p1 rt.SkyDecoder, _skyEta_p2 T1, _skyEta_p3 rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDecP_optional"), _skyEta_p0, _skyEta_p1, _skyEta_p2, _skyEta_p3))
 }
 
-func Sky_Core_Json_Decode_Pipeline_custom() func(rt.SkyDecoder) func(rt.SkyDecoder) rt.SkyDecoder {
-	return rt.Coerce[func(rt.SkyDecoder) func(rt.SkyDecoder) rt.SkyDecoder](rt.Ffi_kernel("JsonDecP_custom"))
+func Sky_Core_Json_Decode_Pipeline_custom(_skyEta_p0 rt.SkyDecoder, _skyEta_p1 rt.SkyDecoder) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
+	return rt.Coerce[rt.SkyDecoder](rt.SkyCall(rt.Ffi_kernel("JsonDecP_custom"), _skyEta_p0, _skyEta_p1))
 }
 
 type Sky_Core_Task_ShouldRetry = rt.SkyADT
@@ -3947,7 +4238,7 @@ type Sky_Core_Task_ShouldRetry_T[T1 any] = rt.SkyADT
 
 var Sky_Core_Task_ShouldRetry_RetryAlways Sky_Core_Task_ShouldRetry = Sky_Core_Task_ShouldRetry{Tag: 0, SkyName: "RetryAlways"}
 
-func Sky_Core_Task_ShouldRetry_RetryWhen(v0 any) Sky_Core_Task_ShouldRetry {
+func Sky_Core_Task_ShouldRetry_RetryWhen(v0 func(any) bool) Sky_Core_Task_ShouldRetry {
 	return Sky_Core_Task_ShouldRetry{Tag: 1, SkyName: "RetryWhen", Fields: []any{v0}}
 }
 
@@ -3967,44 +4258,54 @@ func Sky_Core_Task_RetryPolicy[T1 any](p0 int, p1 int, p2 bool, p3 int, p4 Sky_C
 	return Sky_Core_Task_RetryPolicy_R[T1]{MaxAttempts: p0, BaseMs: p1, Jitter: p2, Kind: p3, ShouldRetry: p4}
 }
 
-func Sky_Core_Task_succeed() func(any) rt.SkyTask[Sky_Core_Error_Error, any] {
-	return rt.Coerce[func(any) rt.SkyTask[Sky_Core_Error_Error, any]](rt.Ffi_kernel("Task_succeed"))
+func Sky_Core_Task_succeed[T1 any](_skyEta_p0 T1) rt.SkyTask[Sky_Core_Error_Error, T1] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, T1](rt.SkyCall(rt.Ffi_kernel("Task_succeed"), _skyEta_p0))
 }
 
-func Sky_Core_Task_andThenResult() func(func(any) rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue]) func(rt.SkyTask[Sky_Core_Error_Error, any]) rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue] {
-	return rt.Coerce[func(func(any) rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue]) func(rt.SkyTask[Sky_Core_Error_Error, any]) rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue]](rt.Ffi_kernel("Task_andThenResult"))
+func Sky_Core_Task_andThenResult[T1 any](_skyEta_p0 func(T1) rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue], _skyEta_p1 rt.SkyTask[Sky_Core_Error_Error, T1]) rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, rt.SkyValue](rt.SkyCall(rt.Ffi_kernel("Task_andThenResult"), _skyEta_p0, _skyEta_p1))
 }
 
-func Sky_Core_Time_unixMillis() func(struct{}) rt.SkyTask[Sky_Core_Error_Error, int] {
-	return rt.Coerce[func(struct{}) rt.SkyTask[Sky_Core_Error_Error, int]](rt.Ffi_kernel("Time_unixMillis"))
+func Sky_Core_Time_unixMillis(_skyEta_p0 struct{}) rt.SkyTask[Sky_Core_Error_Error, int] {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.SkyCall(rt.Ffi_kernel("Time_unixMillis"), _skyEta_p0))
 }
 
-func Sky_Core_Time_formatISO8601() func(int) string {
-	return rt.Coerce[func(int) string](rt.Ffi_kernel("Time_formatISO8601"))
+func Sky_Core_Time_formatISO8601(_skyEta_p0 int) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("Time_formatISO8601"), _skyEta_p0))
 }
 
-func Sky_Core_Encoding_urlEncode() func(string) string {
-	return rt.Coerce[func(string) string](rt.Ffi_kernel("Encoding_urlEncode"))
+func Sky_Core_Encoding_urlEncode(_skyEta_p0 string) string {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.CoerceString(rt.SkyCall(rt.Ffi_kernel("Encoding_urlEncode"), _skyEta_p0))
 }
 
 func Std_Cmd_none() rt.SkyCmd {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyCmd](rt.Ffi_kernel("Cmd_none"))
 }
 
-func Std_Cmd_batch() func([]rt.SkyCmd) rt.SkyCmd {
-	return rt.Coerce[func([]rt.SkyCmd) rt.SkyCmd](rt.Ffi_kernel("Cmd_batch"))
+func Std_Cmd_batch(_skyEta_p0 []rt.SkyCmd) rt.SkyCmd {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.Coerce[rt.SkyCmd](rt.SkyCall(rt.Ffi_kernel("Cmd_batch"), _skyEta_p0))
 }
 
-func Std_Cmd_perform() func(rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue]) func(func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue]) any) rt.SkyCmd {
-	return rt.Coerce[func(rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue]) func(func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue]) any) rt.SkyCmd](rt.Ffi_kernel("Cmd_perform"))
+func Std_Cmd_perform[T1 any](_skyEta_p0 rt.SkyTask[Sky_Core_Error_Error, rt.SkyValue], _skyEta_p1 func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyValue]) T1) rt.SkyCmd {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.Coerce[rt.SkyCmd](rt.SkyCall(rt.Ffi_kernel("Cmd_perform"), _skyEta_p0, _skyEta_p1))
 }
 
 func Std_Sub_none() rt.SkySub {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkySub](rt.Ffi_kernel("Sub_none"))
 }
 
-func Std_Sub_every() func(int) func(any) rt.SkySub {
-	return rt.Coerce[func(int) func(any) rt.SkySub](rt.Ffi_kernel("Sub_every"))
+func Std_Sub_every[T1 any](_skyEta_p0 int, _skyEta_p1 T1) rt.SkySub {
+	// PROOF: FFI: kernel return → declared Go type
+	return rt.Coerce[rt.SkySub](rt.SkyCall(rt.Ffi_kernel("Sub_every"), _skyEta_p0, _skyEta_p1))
 }
 
 type Std_Ui_Chart_Cfg_R struct {
@@ -4039,34 +4340,42 @@ func Std_Ui_Chart_Series(p0 []rt.T2[float64, float64], p1 rt.SkyMaybe[string], p
 }
 
 func Std_Ui_Chart_defaultCfg() Std_Ui_Chart_Cfg_R {
-	return Std_Ui_Chart_Cfg_R{Color: rt.Coerce[Std_Ui_Color](Std_Ui_rgb(64, 128, 224)), GridLines: true, Height: 200, Title: rt.MaybeCoerce[string](rt.Nothing[any]()), Width: 480, YRange: rt.MaybeCoerce[rt.T2[float64, float64]](rt.Nothing[any]())}
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return Std_Ui_Chart_Cfg_R{Color: rt.Coerce[Std_Ui_Color](Std_Ui_rgb(64, 128, 224)), GridLines: true, Height: 200, Title: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[string](rt.Nothing[any]()), Width: 480, YRange: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.T2[float64, float64]](rt.Nothing[any]())}
 }
 
 func Std_Ui_Chart_withWidth(w int, cfg Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Cfg_R](rt.RecordUpdate(cfg, map[string]any{"Width": w}))
 }
 
 func Std_Ui_Chart_withHeight(h int, cfg Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Cfg_R](rt.RecordUpdate(cfg, map[string]any{"Height": h}))
 }
 
 func Std_Ui_Chart_withColor(c Std_Ui_Color, cfg Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Cfg_R](rt.RecordUpdate(cfg, map[string]any{"Color": c}))
 }
 
 func Std_Ui_Chart_withGridLines(b bool, cfg Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Cfg_R](rt.RecordUpdate(cfg, map[string]any{"GridLines": b}))
 }
 
 func Std_Ui_Chart_series(pts []rt.T2[float64, float64]) Std_Ui_Chart_Series_R {
-	return Std_Ui_Chart_Series_R{Color: rt.MaybeCoerce[Std_Ui_Color](rt.Nothing[any]()), Label: rt.MaybeCoerce[string](rt.Nothing[any]()), Points: rt.AsListT[rt.T2[float64, float64]](pts)}
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
+	return Std_Ui_Chart_Series_R{Color: rt.MaybeCoerce[Std_Ui_Color](rt.Nothing[any]()), Label: /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[string](rt.Nothing[any]()), Points: rt.AsListT[rt.T2[float64, float64]](pts)}
 }
 
 func Std_Ui_Chart_withSeriesColor(c Std_Ui_Color, s Std_Ui_Chart_Series_R) Std_Ui_Chart_Series_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Series_R](rt.RecordUpdate(s, map[string]any{"Color": rt.Just[any](c)}))
 }
 
 func Std_Ui_Chart_withSeriesLabel(l string, s Std_Ui_Chart_Series_R) Std_Ui_Chart_Series_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Chart_Series_R](rt.RecordUpdate(s, map[string]any{"Label": rt.Just[any](l)}))
 }
 
@@ -4080,6 +4389,7 @@ func Std_Ui_Chart_plotInset() any {
 }
 
 func Std_Ui_Chart_xRange(pts []rt.T2[float64, float64]) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject := pts
 		_ = __subject
@@ -4094,7 +4404,7 @@ func Std_Ui_Chart_xRange(pts []rt.T2[float64, float64]) rt.T2[float64, float64] 
 			_ = rt.AsTuple2(__sky_h___subject).V1
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_xRangeHelp(rt.CoerceFloat(px), rt.CoerceFloat(px), rt.AsListT[rt.T2[float64, float64]](rest)))
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_xRangeHelp( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(px) /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */, rt.CoerceFloat(px), rt.AsListT[rt.T2[float64, float64]](rest)))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.T2[float64, float64]{}
@@ -4106,6 +4416,7 @@ func Std_Ui_Chart_xRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 		__tco_subject := pts
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return rt.Coerce[rt.T2[float64, float64]](rt.SkyTuple2{V0: lo, V1: hi})
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -4119,16 +4430,20 @@ func Std_Ui_Chart_xRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(x))
 			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(x))
 			__tco_t2 := rest
+			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)
+			// PROOF: FFI: primitive narrowing (typed slot)
 			hi = rt.CoerceFloat(__tco_t1)
 			pts = rt.AsListT[rt.T2[float64, float64]](__tco_t2)
 			continue
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_Chart_yRange(pts []rt.T2[float64, float64]) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject := pts
 		_ = __subject
@@ -4143,7 +4458,7 @@ func Std_Ui_Chart_yRange(pts []rt.T2[float64, float64]) rt.T2[float64, float64] 
 			_ = py
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeHelp(rt.CoerceFloat(py), rt.CoerceFloat(py), rt.AsListT[rt.T2[float64, float64]](rest)))
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeHelp( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(py) /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */, rt.CoerceFloat(py), rt.AsListT[rt.T2[float64, float64]](rest)))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.T2[float64, float64]{}
@@ -4155,6 +4470,7 @@ func Std_Ui_Chart_yRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 		__tco_subject := pts
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return rt.Coerce[rt.T2[float64, float64]](rt.SkyTuple2{V0: lo, V1: hi})
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -4168,16 +4484,20 @@ func Std_Ui_Chart_yRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(y))
 			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(y))
 			__tco_t2 := rest
+			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)
+			// PROOF: FFI: primitive narrowing (typed slot)
 			hi = rt.CoerceFloat(__tco_t1)
 			pts = rt.AsListT[rt.T2[float64, float64]](__tco_t2)
 			continue
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_Chart_xRangeAll(seriesList []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject := seriesList
 		_ = __subject
@@ -4189,7 +4509,7 @@ func Std_Ui_Chart_xRangeAll(seriesList []Std_Ui_Chart_Series_R) rt.T2[float64, f
 			_ = s
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_xRangeAllHelp(any(Std_Ui_Chart_xRange(rt.AsListT[rt.T2[float64, float64]](rt.Field(s, "Points")))).(rt.T2[float64, float64]), rt.AsListT[Std_Ui_Chart_Series_R](rest)))
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_xRangeAllHelp(rt.AsTuple2T[float64, float64](Std_Ui_Chart_xRange(rt.AsListT[rt.T2[float64, float64]](rt.Field(s, "Points")))), rt.AsListT[Std_Ui_Chart_Series_R](rest)))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.T2[float64, float64]{}
@@ -4201,6 +4521,7 @@ func Std_Ui_Chart_xRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 		__tco_subject := seriesList
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return rt.Coerce[rt.T2[float64, float64]](acc)
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -4208,6 +4529,7 @@ func Std_Ui_Chart_xRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 			_ = s
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return func() rt.T2[float64, float64] {
 				__destruct__ := acc
 				_ = __destruct__
@@ -4222,15 +4544,17 @@ func Std_Ui_Chart_xRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 					_ = blo
 					bhi := rt.AsTuple2(__destruct__).V1
 					_ = bhi
-					return Std_Ui_Chart_xRangeAllHelp(any(rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}).(rt.T2[float64, float64]), rt.AsListT[Std_Ui_Chart_Series_R](rest))
+					return Std_Ui_Chart_xRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
 				}())
 			}()
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_Chart_yRangeAll(seriesList []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject := seriesList
 		_ = __subject
@@ -4242,7 +4566,7 @@ func Std_Ui_Chart_yRangeAll(seriesList []Std_Ui_Chart_Series_R) rt.T2[float64, f
 			_ = s
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeAllHelp(any(Std_Ui_Chart_yRange(rt.AsListT[rt.T2[float64, float64]](rt.Field(s, "Points")))).(rt.T2[float64, float64]), rt.AsListT[Std_Ui_Chart_Series_R](rest)))
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeAllHelp(rt.AsTuple2T[float64, float64](Std_Ui_Chart_yRange(rt.AsListT[rt.T2[float64, float64]](rt.Field(s, "Points")))), rt.AsListT[Std_Ui_Chart_Series_R](rest)))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.T2[float64, float64]{}
@@ -4254,6 +4578,7 @@ func Std_Ui_Chart_yRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 		__tco_subject := seriesList
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return rt.Coerce[rt.T2[float64, float64]](acc)
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -4261,6 +4586,7 @@ func Std_Ui_Chart_yRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 			_ = s
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return func() rt.T2[float64, float64] {
 				__destruct__ := acc
 				_ = __destruct__
@@ -4275,25 +4601,27 @@ func Std_Ui_Chart_yRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 					_ = blo
 					bhi := rt.AsTuple2(__destruct__).V1
 					_ = bhi
-					return Std_Ui_Chart_yRangeAllHelp(any(rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}).(rt.T2[float64, float64]), rt.AsListT[Std_Ui_Chart_Series_R](rest))
+					return Std_Ui_Chart_yRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
 				}())
 			}()
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Std_Ui_Chart_seriesColor(cfg Std_Ui_Chart_Cfg_R, s Std_Ui_Chart_Series_R) Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Color {
 		__subject_tFfi := rt.MaybeCoerce[Std_Ui_Color](s.Color)
 		_ = __subject_tFfi
 		if __subject_tFfi.Tag == 0 {
 			c := any(__subject_tFfi.JustValue)
 			_ = c
-			return rt.Coerce[Std_Ui_Color](c)
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](c)
 		}
 		if __subject_tFfi.Tag == 1 {
-			return rt.Coerce[Std_Ui_Color](cfg.Color)
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](cfg.Color)
 		}
 		_ = rt.Unreachable("case/__subject_tFfi")
 		return Std_Ui_Color{}
@@ -4301,13 +4629,14 @@ func Std_Ui_Chart_seriesColor(cfg Std_Ui_Chart_Cfg_R, s Std_Ui_Chart_Series_R) S
 }
 
 func Std_Ui_Chart_effectiveYRange(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject_tFfi := rt.MaybeCoerce[rt.T2[float64, float64]](cfg.YRange)
 		_ = __subject_tFfi
 		if __subject_tFfi.Tag == 0 {
 			r := any(__subject_tFfi.JustValue)
 			_ = r
-			return rt.Coerce[rt.T2[float64, float64]](r)
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](r)
 		}
 		if __subject_tFfi.Tag == 1 {
 			return func() rt.T2[float64, float64] {
@@ -4317,7 +4646,7 @@ func Std_Ui_Chart_effectiveYRange(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Ch
 				_ = lo
 				hi := rt.AsTuple2(__destruct__).V1
 				_ = hi
-				return rt.Coerce[rt.T2[float64, float64]](func() any {
+				return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() any {
 					lo2 := rt.Math_minT(rt.AsInt(lo), 0.0)
 					_ = lo2
 					return func() any {
@@ -4345,6 +4674,7 @@ func Std_Ui_Chart_effectiveYRange(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Ch
 }
 
 func Std_Ui_Chart_projectPoint(w int, h int, xR rt.T2[float64, float64], yR rt.T2[float64, float64], pt rt.T2[float64, float64]) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__destruct__ := pt
 		_ = __destruct__
@@ -4359,64 +4689,64 @@ func Std_Ui_Chart_projectPoint(w int, h int, xR rt.T2[float64, float64], yR rt.T
 			_ = xMin
 			xMax := rt.AsTuple2(__destruct__).V1
 			_ = xMax
-			return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 				__destruct__ := yR
 				_ = __destruct__
 				yMin := rt.AsTuple2(__destruct__).V0
 				_ = yMin
 				yMax := rt.AsTuple2(__destruct__).V1
 				_ = yMax
-				return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+				return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 					xSpan := rt.Sub(xMax, xMin)
 					_ = xSpan
-					return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+					return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 						ySpan := rt.Sub(yMax, yMin)
 						_ = ySpan
-						return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+						return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 							plotW := rt.Sub(rt.Sub(w, rt.Field(Std_Ui_Chart_plotInset(), "Left")), rt.Field(Std_Ui_Chart_plotInset(), "Right"))
 							_ = plotW
-							return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+							return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 								plotH := rt.Sub(rt.Sub(h, rt.Field(Std_Ui_Chart_plotInset(), "Top")), rt.Field(Std_Ui_Chart_plotInset(), "Bottom"))
 								_ = plotH
-								return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
-									plotWf := Std_Ui_Chart_intToFloat(rt.CoerceInt(plotW))
+								return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+									plotWf := Std_Ui_Chart_intToFloat( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceInt(plotW))
 									_ = plotWf
-									return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
-										plotHf := Std_Ui_Chart_intToFloat(rt.CoerceInt(plotH))
+									return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+										plotHf := Std_Ui_Chart_intToFloat( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceInt(plotH))
 										_ = plotHf
-										return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
-											leftF := Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Left")))
+										return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+											leftF := Std_Ui_Chart_intToFloat( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Left")))
 											_ = leftF
-											return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
-												topF := Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Top")))
+											return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+												topF := Std_Ui_Chart_intToFloat( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Top")))
 												_ = topF
-												return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+												return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 													nx := func() float64 {
 														if rt.AsBool(rt.Eq(xSpan, 0.0)) {
 															return 0.5
 														} else {
-															return rt.CoerceFloat(rt.Div(rt.Sub(x, xMin), xSpan))
+															return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(rt.Div(rt.Sub(x, xMin), xSpan))
 														}
 														return 0.0
 													}()
 													_ = nx
-													return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+													return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 														ny := func() float64 {
 															if rt.AsBool(rt.Eq(ySpan, 0.0)) {
 																return 0.5
 															} else {
-																return rt.CoerceFloat(rt.Div(rt.Sub(y, yMin), ySpan))
+																return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(rt.Div(rt.Sub(y, yMin), ySpan))
 															}
 															return 0.0
 														}()
 														_ = ny
-														return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+														return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 															px := rt.Add(leftF, rt.Mul(nx, plotWf))
 															_ = px
-															return rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
+															return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() rt.T2[float64, float64] {
 																py := rt.Add(topF, rt.Mul(rt.Sub(1.0, ny), plotHf))
 																_ = py
-																return rt.Coerce[rt.T2[float64, float64]](rt.T2[float64, float64]{V0: rt.CoerceFloat(px), V1: rt.CoerceFloat(py)})
+																return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](rt.T2[float64, float64]{V0: /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(px), V1: /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(py)})
 															}())
 														}())
 													}())
@@ -4435,13 +4765,14 @@ func Std_Ui_Chart_projectPoint(w int, h int, xR rt.T2[float64, float64], yR rt.T
 }
 
 func Std_Ui_Chart_intToFloat(n int) float64 {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() float64 {
 		__subject_tFfi := rt.MaybeCoerce[float64](rt.String_toFloat(rt.String_fromIntT(rt.AsInt(n))))
 		_ = __subject_tFfi
 		if __subject_tFfi.Tag == 0 {
 			f := any(__subject_tFfi.JustValue)
 			_ = f
-			return rt.CoerceFloat(f)
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.CoerceFloat(f)
 		}
 		if __subject_tFfi.Tag == 1 {
 			return 0.0
@@ -4452,20 +4783,22 @@ func Std_Ui_Chart_intToFloat(n int) float64 {
 }
 
 func Std_Ui_Chart_svgRootAttrs(cfg Std_Ui_Chart_Cfg_R) []rt.SkyAttribute {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return []rt.SkyAttribute{Std_Html_Attributes_attribute("viewBox", rt.CoerceString(rt.Concat("0 0 ", rt.Concat(rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Width"))), rt.Concat(" ", rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Height")))))))), Std_Html_Attributes_attribute("xmlns", "http://www.w3.org/2000/svg"), Std_Html_Attributes_attribute("role", "img"), Std_Html_Attributes_attribute("preserveAspectRatio", "xMidYMid meet"), Std_Html_Attributes_style("max-width: 100%; height: auto; display: block; font-family: system-ui, -apple-system, Segoe UI, sans-serif;")}
 }
 
 func Std_Ui_Chart_titleNode(cfg Std_Ui_Chart_Cfg_R) rt.SkyMaybe[Std_Html_Html] {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() rt.SkyMaybe[Std_Html_Html] {
 		__subject_tFfi := rt.MaybeCoerce[string](cfg.Title)
 		_ = __subject_tFfi
 		if __subject_tFfi.Tag == 1 {
-			return rt.MaybeCoerce[Std_Html_Html](rt.Nothing[any]())
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[Std_Html_Html](rt.Nothing[any]())
 		}
 		if __subject_tFfi.Tag == 0 {
 			t := any(__subject_tFfi.JustValue)
 			_ = t
-			return rt.MaybeCoerce[Std_Html_Html](rt.Just[any](Std_Html_node("text", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x", rt.CoerceString(rt.String_fromIntT(rt.AsInt(cfg.Width/2)))), Std_Html_Attributes_attribute("y", "14"), Std_Html_Attributes_attribute("text-anchor", "middle"), Std_Html_Attributes_attribute("fill", "#1a1a2e"), Std_Html_Attributes_attribute("font-size", "12"), Std_Html_Attributes_attribute("font-weight", "600")}), rt.AsListT[Std_Html_Html]([]any{Std_Html_text(rt.CoerceString(t))}))))
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.MaybeCoerce[Std_Html_Html](rt.Just[any](Std_Html_node("text", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x" /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */, rt.CoerceString(rt.String_fromIntT(rt.AsInt(cfg.Width/2)))), Std_Html_Attributes_attribute("y", "14"), Std_Html_Attributes_attribute("text-anchor", "middle"), Std_Html_Attributes_attribute("fill", "#1a1a2e"), Std_Html_Attributes_attribute("font-size", "12"), Std_Html_Attributes_attribute("font-weight", "600")}), rt.AsListT[Std_Html_Html]([]any{Std_Html_text( /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.CoerceString(t))}))))
 		}
 		_ = rt.Unreachable("case/__subject_tFfi")
 		return rt.SkyMaybe[Std_Html_Html]{}
@@ -4473,6 +4806,7 @@ func Std_Ui_Chart_titleNode(cfg Std_Ui_Chart_Cfg_R) rt.SkyMaybe[Std_Html_Html] {
 }
 
 func Std_Ui_Chart_gridLines(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() []Std_Html_Html {
 		if rt.AsBool(cfg.GridLines) {
 			return func() []Std_Html_Html {
@@ -4491,7 +4825,7 @@ func Std_Ui_Chart_gridLines(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 								ys := []any{0, 1, 2, 3, 4}
 								_ = ys
 								return rt.AsListT[Std_Html_Html](rt.AsListT[Std_Html_Html](Sky_Core_List_map_(func(i any) any {
-									return Std_Ui_Chart_gridLine(rt.CoerceString(x1), rt.CoerceString(x2), rt.CoerceInt(rt.Field(cfg, "Height")), rt.CoerceInt(plotH), rt.CoerceInt(i))
+									return Std_Ui_Chart_gridLine(rt.CoerceString(x1) /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceString(x2) /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceInt(rt.Field(cfg, "Height")) /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceInt(plotH) /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceInt(i))
 								}, rt.AsListAny(ys))))
 							}())
 						}())
@@ -4506,19 +4840,20 @@ func Std_Ui_Chart_gridLines(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 }
 
 func Std_Ui_Chart_gridLine(x1 string, x2 string, _ int, plotH int, idx int) Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Html_Html {
 		plotHf := Std_Ui_Chart_intToFloat(plotH)
 		_ = plotHf
 		return rt.Coerce[Std_Html_Html](func() Std_Html_Html {
-			idxf := Std_Ui_Chart_intToFloat(rt.CoerceInt(idx))
+			idxf := Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(idx))
 			_ = idxf
-			return rt.Coerce[Std_Html_Html](func() Std_Html_Html {
-				yPx := rt.Add(Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Top"))), rt.Mul(rt.Div(idxf, 4.0), plotHf))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](func() Std_Html_Html {
+				yPx := rt.Add(Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(Std_Ui_Chart_plotInset(), "Top"))), rt.Mul(rt.Div(idxf, 4.0), plotHf))
 				_ = yPx
-				return rt.Coerce[Std_Html_Html](func() Std_Html_Html {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](func() Std_Html_Html {
 					yStr := rt.String_fromFloatT(rt.AsFloat(yPx))
 					_ = yStr
-					return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1", rt.CoerceString(x1)), Std_Html_Attributes_attribute("y1", rt.CoerceString(yStr)), Std_Html_Attributes_attribute("x2", rt.CoerceString(x2)), Std_Html_Attributes_attribute("y2", rt.CoerceString(yStr)), Std_Html_Attributes_attribute("stroke", "#e6e8ec"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{}))))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(x1)), Std_Html_Attributes_attribute("y1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(yStr)), Std_Html_Attributes_attribute("x2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(x2)), Std_Html_Attributes_attribute("y2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(yStr)), Std_Html_Attributes_attribute("stroke", "#e6e8ec"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{}))))
 				}())
 			}())
 		}())
@@ -4526,6 +4861,7 @@ func Std_Ui_Chart_gridLine(x1 string, x2 string, _ int, plotH int, idx int) Std_
 }
 
 func Std_Ui_Chart_buildPathD(coords []rt.T2[float64, float64]) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := coords
 		_ = __subject
@@ -4541,7 +4877,9 @@ func Std_Ui_Chart_buildPathD(coords []rt.T2[float64, float64]) string {
 			_ = y0
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.CoerceString(rt.Concat("M ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(x0)), rt.Concat(",", rt.Concat(rt.String_fromFloatT(rt.AsFloat(y0)), Sky_Core_List_foldl(rt.Coerce[func(any) func(string) string](Std_Ui_Chart_appendLineSeg), "", rt.AsListAny(rest)))))))
+			return rt.CoerceString(rt.Concat("M ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(x0)), rt.Concat(",", rt.Concat(rt.String_fromFloatT(rt.AsFloat(y0)), Sky_Core_List_foldl(func(__c0 rt.T2[float64, float64]) func(string) string {
+				return func(__c1 string) string { return Std_Ui_Chart_appendLineSeg(__c0, __c1) }
+			}, "", rt.AsListT[rt.T2[float64, float64]](rest)))))))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return ""
@@ -4549,6 +4887,7 @@ func Std_Ui_Chart_buildPathD(coords []rt.T2[float64, float64]) string {
 }
 
 func Std_Ui_Chart_appendLineSeg(pt rt.T2[float64, float64], acc string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__destruct__ := pt
 		_ = __destruct__
@@ -4556,11 +4895,12 @@ func Std_Ui_Chart_appendLineSeg(pt rt.T2[float64, float64], acc string) string {
 		_ = x
 		y := rt.AsTuple2(__destruct__).V1
 		_ = y
-		return rt.CoerceString(rt.CoerceString(rt.Concat(acc, rt.Concat(" L ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(x)), rt.Concat(",", rt.String_fromFloatT(rt.AsFloat(y))))))))
+		return rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(acc, rt.Concat(" L ", rt.Concat(rt.String_fromFloatT(rt.AsFloat(x)), rt.Concat(",", rt.String_fromFloatT(rt.AsFloat(y))))))))
 	}()
 }
 
 func Std_Ui_Chart_labelTitle(lbl rt.SkyMaybe[string]) []Std_Html_Html {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() []Std_Html_Html {
 		__subject_tFfi := lbl
 		_ = __subject_tFfi
@@ -4595,24 +4935,25 @@ func Std_Ui_Chart_maybeCons(m rt.SkyMaybe[Std_Html_Html], rest []Std_Html_Html) 
 }
 
 func Std_Ui_Chart_line(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Chart_Series_R) Std_Ui_Element {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element {
 		xR := Std_Ui_Chart_xRangeAll(rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
 		_ = xR
 		return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-			yR := Std_Ui_Chart_effectiveYRange(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
+			yR := Std_Ui_Chart_effectiveYRange( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
 			_ = yR
-			return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 				seriesPaths := Sky_Core_List_concatMap(func(__pp0 Std_Ui_Chart_Series_R) []Std_Html_Html {
-					return Std_Ui_Chart_lineOne(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), any(xR).(rt.T2[float64, float64]), any(yR).(rt.T2[float64, float64]), rt.Coerce[Std_Ui_Chart_Series_R](__pp0))
+					return Std_Ui_Chart_lineOne( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsTuple2T[float64, float64](xR), rt.AsTuple2T[float64, float64](yR) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Series_R](__pp0))
 				}, rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
 				_ = seriesPaths
-				return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-					baseChildren := rt.Concat(Std_Ui_Chart_gridLines(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg)), rt.Concat(Std_Ui_Chart_axesNodes(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg)), seriesPaths))
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+					baseChildren := rt.Concat(Std_Ui_Chart_gridLines( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg)), rt.Concat(Std_Ui_Chart_axesNodes( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg)), seriesPaths))
 					_ = baseChildren
-					return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-						children := Std_Ui_Chart_maybeCons(rt.MaybeCoerce[Std_Html_Html](Std_Ui_Chart_titleNode(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg))), rt.AsListT[Std_Html_Html](baseChildren))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+						children := Std_Ui_Chart_maybeCons( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[Std_Html_Html](Std_Ui_Chart_titleNode( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg))), rt.AsListT[Std_Html_Html](baseChildren))
 						_ = children
-						return rt.Coerce[Std_Ui_Element](rt.Coerce[Std_Ui_Element](Std_Ui_html(any(Std_Html_node("svg", rt.AsListT[rt.SkyAttribute](Std_Ui_Chart_svgRootAttrs(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg))), rt.AsListT[Std_Html_Html](children))))))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](Std_Ui_html(any(Std_Html_node("svg", rt.AsListT[rt.SkyAttribute](Std_Ui_Chart_svgRootAttrs( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg))), rt.AsListT[Std_Html_Html](children))))))
 					}())
 				}())
 			}())
@@ -4621,19 +4962,20 @@ func Std_Ui_Chart_line(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Chart_Series_
 }
 
 func Std_Ui_Chart_lineOne(cfg Std_Ui_Chart_Cfg_R, xR rt.T2[float64, float64], yR rt.T2[float64, float64], s Std_Ui_Chart_Series_R) []Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() []Std_Html_Html {
-		col := Std_Ui_colorCss(any(Std_Ui_Chart_seriesColor(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.Coerce[Std_Ui_Chart_Series_R](s))).(Std_Ui_Color))
+		col := Std_Ui_colorCss(any(Std_Ui_Chart_seriesColor(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Series_R](s))).(Std_Ui_Color))
 		_ = col
 		return rt.AsListT[Std_Html_Html](func() []Std_Html_Html {
 			projected := Sky_Core_List_map_(func(__pp0 rt.T2[float64, float64]) rt.T2[float64, float64] {
-				return Std_Ui_Chart_projectPoint(rt.CoerceInt(rt.Field(cfg, "Width")), rt.CoerceInt(rt.Field(cfg, "Height")), any(xR).(rt.T2[float64, float64]), any(yR).(rt.T2[float64, float64]), any(__pp0).(rt.T2[float64, float64]))
+				return Std_Ui_Chart_projectPoint( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(cfg, "Width")) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Field(cfg, "Height")), rt.AsTuple2T[float64, float64](xR), rt.AsTuple2T[float64, float64](yR), rt.AsTuple2T[float64, float64](__pp0))
 			}, rt.AsListT[rt.T2[float64, float64]](rt.Field(s, "Points")))
 			_ = projected
 			return rt.AsListT[Std_Html_Html](func() []Std_Html_Html {
 				pathD := Std_Ui_Chart_buildPathD(rt.AsListT[rt.T2[float64, float64]](projected))
 				_ = pathD
 				return rt.AsListT[Std_Html_Html](func() []Std_Html_Html {
-					pathNode := Std_Html_node("path", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("d", rt.CoerceString(pathD)), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke", rt.CoerceString(col)), Std_Html_Attributes_attribute("stroke-width", "2"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}), rt.AsListT[Std_Html_Html](Std_Ui_Chart_labelTitle(rt.MaybeCoerce[string](rt.Field(s, "Label")))))
+					pathNode := Std_Html_node("path", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("d" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(pathD)), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(col)), Std_Html_Attributes_attribute("stroke-width", "2"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}), rt.AsListT[Std_Html_Html](Std_Ui_Chart_labelTitle( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[string](rt.Field(s, "Label")))))
 					_ = pathNode
 					return rt.AsListT[Std_Html_Html](func() []Std_Html_Html {
 						__subject := projected
@@ -4644,7 +4986,7 @@ func Std_Ui_Chart_lineOne(cfg Std_Ui_Chart_Cfg_R, xR rt.T2[float64, float64], yR
 						if len(rt.AsList(__subject)) == 1 {
 							single := rt.AsList(__subject)[0]
 							_ = single
-							return rt.AsListT[Std_Html_Html]([]any{Std_Ui_Chart_singlePointCircle(rt.CoerceString(col), any(single).(rt.T2[float64, float64]), rt.AsListT[Std_Html_Html](Std_Ui_Chart_labelTitle(rt.MaybeCoerce[string](rt.Field(s, "Label")))))})
+							return rt.AsListT[Std_Html_Html]([]any{Std_Ui_Chart_singlePointCircle( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(col), rt.AsTuple2T[float64, float64](single), rt.AsListT[Std_Html_Html](Std_Ui_Chart_labelTitle( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[string](rt.Field(s, "Label")))))})
 						}
 						return rt.AsListT[Std_Html_Html]([]any{pathNode})
 						_ = rt.Unreachable("case/__subject")
@@ -4657,6 +4999,7 @@ func Std_Ui_Chart_lineOne(cfg Std_Ui_Chart_Cfg_R, xR rt.T2[float64, float64], yR
 }
 
 func Std_Ui_Chart_singlePointCircle(col string, pt rt.T2[float64, float64], extras []Std_Html_Html) Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Html_Html {
 		__destruct__ := pt
 		_ = __destruct__
@@ -4664,11 +5007,12 @@ func Std_Ui_Chart_singlePointCircle(col string, pt rt.T2[float64, float64], extr
 		_ = x
 		y := rt.AsTuple2(__destruct__).V1
 		_ = y
-		return rt.Coerce[Std_Html_Html](rt.Coerce[Std_Html_Html](Std_Html_node("circle", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("cx", rt.CoerceString(rt.String_fromFloatT(rt.AsFloat(x)))), Std_Html_Attributes_attribute("cy", rt.CoerceString(rt.String_fromFloatT(rt.AsFloat(y)))), Std_Html_Attributes_attribute("r", "3"), Std_Html_Attributes_attribute("fill", rt.CoerceString(col))}), rt.AsListT[Std_Html_Html](extras))))
+		return rt.Coerce[Std_Html_Html]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Html_Html](Std_Html_node("circle", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("cx" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromFloatT(rt.AsFloat(x)))), Std_Html_Attributes_attribute("cy" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromFloatT(rt.AsFloat(y)))), Std_Html_Attributes_attribute("r", "3"), Std_Html_Attributes_attribute("fill" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(col))}), rt.AsListT[Std_Html_Html](extras))))
 	}()
 }
 
 func Std_Ui_Chart_axesNodes(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() []Std_Html_Html {
 		plotW := rt.Sub(rt.Sub(cfg.Width, rt.Field(Std_Ui_Chart_plotInset(), "Left")), rt.Field(Std_Ui_Chart_plotInset(), "Right"))
 		_ = plotW
@@ -4687,7 +5031,7 @@ func Std_Ui_Chart_axesNodes(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 						return rt.AsListT[Std_Html_Html](func() []Std_Html_Html {
 							bottomStr := rt.String_fromIntT(rt.AsInt(rt.Add(rt.Field(Std_Ui_Chart_plotInset(), "Top"), plotH)))
 							_ = bottomStr
-							return rt.AsListT[Std_Html_Html]([]Std_Html_Html{rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1", rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y1", rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("x2", rt.CoerceString(rightStr)), Std_Html_Attributes_attribute("y2", rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{}))), rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1", rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y1", rt.CoerceString(topStr)), Std_Html_Attributes_attribute("x2", rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y2", rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{})))})
+							return rt.AsListT[Std_Html_Html]([]Std_Html_Html{rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("x2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rightStr)), Std_Html_Attributes_attribute("y2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{}))) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Html_Html](Std_Html_node("line", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("x1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y1" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(topStr)), Std_Html_Attributes_attribute("x2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(leftStr)), Std_Html_Attributes_attribute("y2" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(bottomStr)), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}), rt.AsListT[Std_Html_Html]([]any{})))})
 						}())
 					}())
 				}())
@@ -4697,26 +5041,27 @@ func Std_Ui_Chart_axesNodes(cfg Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 }
 
 func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Element {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element {
 		n := Sky_Core_List_length(rt.AsListAny(values))
 		_ = n
 		return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 			col := Std_Ui_colorCss(any(rt.Field(cfg, "Color")).(Std_Ui_Color))
 			_ = col
-			return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-				wf := Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Field(cfg, "Width")))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+				wf := Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(cfg, "Width")))
 				_ = wf
-				return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-					hf := Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Field(cfg, "Height")))
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+					hf := Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Field(cfg, "Height")))
 					_ = hf
-					return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 						ys := func() rt.T2[float64, float64] {
-							__subject_tFfi := rt.MaybeCoerce[rt.T2[float64, float64]](rt.Field(cfg, "YRange"))
+							__subject_tFfi := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[rt.T2[float64, float64]](rt.Field(cfg, "YRange"))
 							_ = __subject_tFfi
 							if __subject_tFfi.Tag == 0 {
 								r := any(__subject_tFfi.JustValue)
 								_ = r
-								return rt.Coerce[rt.T2[float64, float64]](r)
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.T2[float64, float64]](r)
 							}
 							if __subject_tFfi.Tag == 1 {
 								return func() rt.T2[float64, float64] {
@@ -4726,7 +5071,7 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 									_ = lo
 									hi := rt.AsTuple2(__destruct__).V1
 									_ = hi
-									return rt.Coerce[rt.T2[float64, float64]](func() any {
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.T2[float64, float64]](func() any {
 										pad := rt.Mul(rt.Sub(hi, lo), 0.1)
 										_ = pad
 										return func() any {
@@ -4744,20 +5089,20 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 							return rt.T2[float64, float64]{}
 						}()
 						_ = ys
-						return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 							__destruct__ := ys
 							_ = __destruct__
 							yMin := rt.AsTuple2(__destruct__).V0
 							_ = yMin
 							yMax := rt.AsTuple2(__destruct__).V1
 							_ = yMax
-							return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 								ySpan := rt.Sub(yMax, yMin)
 								_ = ySpan
-								return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-									nF := Std_Ui_Chart_intToFloat(rt.CoerceInt(rt.Math_maxT(1, rt.AsInt(rt.Sub(n, 1)))))
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+									nF := Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Math_maxT(1, rt.AsInt(rt.Sub(n, 1)))))
 									_ = nF
-									return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 										projected := Sky_Core_List_indexedMap(func(_lp_i int) func(any) any {
 											i := _lp_i
 											_ = i
@@ -4773,7 +5118,7 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 																if rt.AsBool(rt.Eq(ySpan, 0.0)) {
 																	return 0.5
 																} else {
-																	return rt.CoerceFloat(rt.Div(rt.Sub(v, yMin), ySpan))
+																	return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(rt.Div(rt.Sub(v, yMin), ySpan))
 																}
 																return 0.0
 															}()
@@ -4785,10 +5130,10 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 											}
 										}, rt.AsListAny(values))
 										_ = projected
-										return rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
+										return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 											pathD := Std_Ui_Chart_buildPathD(rt.AsListT[rt.T2[float64, float64]](projected))
 											_ = pathD
-											return rt.Coerce[Std_Ui_Element](rt.Coerce[Std_Ui_Element](Std_Ui_html(any(Std_Html_node("svg", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("viewBox", rt.CoerceString(rt.Concat("0 0 ", rt.Concat(rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Width"))), rt.Concat(" ", rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Height")))))))), Std_Html_Attributes_attribute("xmlns", "http://www.w3.org/2000/svg"), Std_Html_Attributes_attribute("role", "img"), Std_Html_Attributes_attribute("preserveAspectRatio", "none"), Std_Html_Attributes_style("display: block; width: 100%; height: 100%;")}), rt.AsListT[Std_Html_Html]([]any{Std_Html_node("path", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("d", rt.CoerceString(pathD)), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke", rt.CoerceString(col)), Std_Html_Attributes_attribute("stroke-width", "1.5"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}), rt.AsListT[Std_Html_Html]([]any{}))}))))))
+											return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element]( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](Std_Ui_html(any(Std_Html_node("svg", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("viewBox" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.Concat("0 0 ", rt.Concat(rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Width"))), rt.Concat(" ", rt.String_fromIntT(rt.AsInt(rt.Field(cfg, "Height")))))))), Std_Html_Attributes_attribute("xmlns", "http://www.w3.org/2000/svg"), Std_Html_Attributes_attribute("role", "img"), Std_Html_Attributes_attribute("preserveAspectRatio", "none"), Std_Html_Attributes_style("display: block; width: 100%; height: 100%;")}), rt.AsListT[Std_Html_Html]([]any{Std_Html_node("path", rt.AsListT[rt.SkyAttribute]([]any{Std_Html_Attributes_attribute("d" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(pathD)), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(col)), Std_Html_Attributes_attribute("stroke-width", "1.5"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}), rt.AsListT[Std_Html_Html]([]any{}))}))))))
 										}())
 									}())
 								}())
@@ -4802,6 +5147,7 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 }
 
 func Std_Ui_Chart_yRangeOfFloats(vals []float64) rt.T2[float64, float64] {
+	// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 	return func() rt.T2[float64, float64] {
 		__subject := vals
 		_ = __subject
@@ -4813,7 +5159,7 @@ func Std_Ui_Chart_yRangeOfFloats(vals []float64) rt.T2[float64, float64] {
 			_ = v
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeOfFloatsHelp(rt.CoerceFloat(v), rt.CoerceFloat(v), rt.AsListT[float64](rest)))
+			return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](Std_Ui_Chart_yRangeOfFloatsHelp( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(v) /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */, rt.CoerceFloat(v), rt.AsListT[float64](rest)))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return rt.T2[float64, float64]{}
@@ -4825,6 +5171,7 @@ func Std_Ui_Chart_yRangeOfFloatsHelp(lo float64, hi float64, vals []float64) rt.
 		__tco_subject := vals
 		_ = __tco_subject
 		if len(rt.AsList(__tco_subject)) == 0 {
+			// PROOF: FFI: typed tuple narrowing (rt.T2/T3)
 			return rt.Coerce[rt.T2[float64, float64]](rt.SkyTuple2{V0: lo, V1: hi})
 		}
 		if len(rt.AsList(__tco_subject)) >= 1 {
@@ -4835,68 +5182,85 @@ func Std_Ui_Chart_yRangeOfFloatsHelp(lo float64, hi float64, vals []float64) rt.
 			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(v))
 			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(v))
 			__tco_t2 := rest
+			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)
+			// PROOF: FFI: primitive narrowing (typed slot)
 			hi = rt.CoerceFloat(__tco_t1)
 			vals = rt.AsListT[float64](__tco_t2)
 			continue
 		}
 		rt.Unreachable("tco/case")
 	}
+
 }
 
 func Overview_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func Overview_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func Overview_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func Overview_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func Overview_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func Overview_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func Overview_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func Overview_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func Overview_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func Overview_pillOk() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(88, 199, 116))
 }
 
 func Overview_pillWarn() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 178, 77))
 }
 
 func Overview_pillErr() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
 func Overview_viewOverview(model State_Model_R) []Std_Ui_Element_T[State_Msg] {
-	return []Std_Ui_Element_T[State_Msg]{Overview_selectorHeader(rt.Coerce[State_Model_R](model)), Overview_twoPaneLayout(rt.Coerce[State_Model_R](model))}
+	// PROOF: FFI: typed slot narrowing
+	return []Std_Ui_Element_T[State_Msg]{Overview_selectorHeader(rt.Coerce[State_Model_R](model)), Overview_twoPaneLayout( /* PROOF: FFI: typed slot narrowing */ rt.Coerce[State_Model_R](model))}
 }
 
 func Overview_selectorHeader(model State_Model_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		scoped := func() string {
 			if rt.AsBool(model.SelectedService == "") {
@@ -4907,11 +5271,12 @@ func Overview_selectorHeader(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 			return ""
 		}()
 		_ = scoped
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text(rt.CoerceString(scoped))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), Overview_allServicesChip(rt.CoerceBool(rt.Eq(rt.Field(model, "SelectedService"), "")))})))
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(scoped))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), Overview_allServicesChip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(rt.Field(model, "SelectedService"), "")))})))
 	}()
 }
 
 func Overview_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(isActive) {
@@ -4938,16 +5303,18 @@ func Overview_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
 }
 
 func Overview_twoPaneLayout(model State_Model_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(16), Std_Ui_alignTop()}), rt.AsListT[Std_Ui_Element]([]any{Overview_serviceCardScroller(rt.Coerce[State_Model_R](model)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Overview_rightPane(rt.Coerce[State_Model_R](model))).(Std_Ui_Element))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(16), Std_Ui_alignTop()}), rt.AsListT[Std_Ui_Element]([]any{Overview_serviceCardScroller( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Overview_rightPane( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))).(Std_Ui_Element))})))
 }
 
 func Overview_serviceCardScroller(model State_Model_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(320)).(Std_Ui_Length)), Std_Ui_spacing(8), Std_Ui_alignTop()}), rt.AsListT[Std_Ui_Element](func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(model.ServiceStats))) {
 			return []any{Overview_emptyCard()}
 		} else {
 			return Sky_Core_List_map_(func(__pp0 State_ServiceStat_R) Std_Ui_Element {
-				return Overview_serviceCard(rt.CoerceString(model.SelectedService), rt.Coerce[State_ServiceStat_R](__pp0))
+				return Overview_serviceCard( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(model.SelectedService) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_ServiceStat_R](__pp0))
 			}, rt.AsListT[State_ServiceStat_R](model.ServiceStats))
 		}
 		return nil
@@ -4955,10 +5322,12 @@ func Overview_serviceCardScroller(model State_Model_R) Std_Ui_Element_T[State_Ms
 }
 
 func Overview_emptyCard() Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("NO SERVICES YET")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary())}), any(Std_Ui_text("Push telemetry to the hub via OTLP HTTP or the Sky exporter.")).(Std_Ui_Element))})))
 }
 
 func Overview_serviceCard(selected string, stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		isSelected := selected == stat.Name
 		_ = isSelected
@@ -4972,23 +5341,25 @@ func Overview_serviceCard(selected string, stat State_ServiceStat_R) Std_Ui_Elem
 				return Std_Ui_Color{}
 			}()
 			_ = borderColor
-			return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(any(borderColor).(Std_Ui_Color)), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectService(rt.CoerceString(rt.Field(stat, "Name")))))}), rt.AsListT[Std_Ui_Element]([]any{Overview_cardHeader(rt.Coerce[State_ServiceStat_R](stat)), Overview_cardMetricsRow(rt.Coerce[State_ServiceStat_R](stat)), Overview_cardSparklines(rt.Coerce[State_ServiceStat_R](stat))}))
+			return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(any(borderColor).(Std_Ui_Color)), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectService( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(stat, "Name")))))}), rt.AsListT[Std_Ui_Element]([]any{Overview_cardHeader( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_ServiceStat_R](stat)), Overview_cardMetricsRow( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_ServiceStat_R](stat)), Overview_cardSparklines( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_ServiceStat_R](stat))}))
 		}())
 	}()
 }
 
 func Overview_cardHeader(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text(rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill(rt.CoerceString(stat.Status))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Status))})))
 }
 
 func Overview_statusPill(status string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		color := Overview_statusColor(status)
 		_ = color
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			label := rt.String_toUpperT(rt.AsString(status))
 			_ = label
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(color).(Std_Ui_Color)), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_color(Overview_bgPage()), Std_Ui_Font_size(10), Std_Ui_Font_bold()}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(color).(Std_Ui_Color)), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_color(Overview_bgPage()), Std_Ui_Font_size(10), Std_Ui_Font_bold()}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element))
 		}())
 	}()
 }
@@ -5013,26 +5384,30 @@ func Overview_statusColor(status string) Std_Ui_Color {
 }
 
 func Overview_cardMetricsRow(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(14)}), rt.AsListT[Std_Ui_Element]([]any{Overview_statBlock("REQS/S", rt.CoerceString(Overview_formatFloat(rt.CoerceFloat(stat.ReqsPerSec)))), Overview_statBlock("P95 MS", rt.CoerceString(Overview_formatFloat(rt.CoerceFloat(stat.P95Ms)))), Overview_statBlock("ERR %", rt.CoerceString(Overview_formatPercent(rt.CoerceFloat(stat.ErrorRate))))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(14)}), rt.AsListT[Std_Ui_Element]([]any{Overview_statBlock("REQS/S" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.ReqsPerSec)))), Overview_statBlock("P95 MS" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.P95Ms)))), Overview_statBlock("ERR %" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatPercent( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.ErrorRate))))})))
 }
 
 func Overview_statBlock(label string, value string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(2), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(9), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text(label)).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(value)).(Std_Ui_Element))})))
 }
 
 func Overview_cardSparklines(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(9), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("REQ/S")).(Std_Ui_Element)), Overview_sparkOrPlaceholder(rt.AsListT[float64](stat.SparkRps), Overview_accent())})), Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(9), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("P95")).(Std_Ui_Element)), Overview_sparkOrPlaceholder(rt.AsListT[float64](stat.SparkP95), Overview_pillWarn())}))})))
 }
 
 func Overview_sparkOrPlaceholder(values []float64, color Std_Ui_Color) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
-		cfg := Std_Ui_Chart_withGridLines(false, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withColor(any(color).(Std_Ui_Color), rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withHeight(28, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withWidth(120, Std_Ui_Chart_defaultCfg())))))))
+		cfg := Std_Ui_Chart_withGridLines(false, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withColor(any(color).(Std_Ui_Color) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withHeight(28 /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withWidth(120, Std_Ui_Chart_defaultCfg())))))))
 		_ = cfg
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(values))) {
 				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 6), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_size(10)}), any(Std_Ui_text("no data")).(Std_Ui_Element))
 			} else {
-				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_padding(2)}), any(Std_Ui_Chart_sparkline(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[float64](values))).(Std_Ui_Element))
+				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_padding(2)}), any(Std_Ui_Chart_sparkline( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[float64](values))).(Std_Ui_Element))
 			}
 			return nil
 		}())
@@ -5040,33 +5415,37 @@ func Overview_sparkOrPlaceholder(values []float64, color Std_Ui_Color) Std_Ui_El
 }
 
 func Overview_rightPane(model State_Model_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(model.SelectedService == "") {
 			return Overview_aggregatePane(rt.AsListT[State_ServiceStat_R](model.ServiceStats))
 		} else {
-			return Overview_focusedPane(rt.Coerce[State_Model_R](model))
+			return Overview_focusedPane( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))
 		}
 		return nil
 	}())
 }
 
 func Overview_aggregatePane(stats []State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}), rt.AsListT[Std_Ui_Element]([]any{Overview_aggregateChartPanel("Requests / second (per service)", rt.AsListT[Std_Ui_Chart_Series_R](Overview_aggregateRpsSeries(rt.AsListT[State_ServiceStat_R](stats)))), Overview_aggregateChartPanel("p95 latency (ms, per service)", rt.AsListT[Std_Ui_Chart_Series_R](Overview_aggregateP95Series(rt.AsListT[State_ServiceStat_R](stats)))), Overview_errorRatePanel(rt.AsListT[State_ServiceStat_R](stats))})))
 }
 
 func Overview_aggregateChartPanel(title string, seriesList []Std_Ui_Chart_Series_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_bold(), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), Overview_chartOrEmpty(rt.AsListT[Std_Ui_Chart_Series_R](seriesList))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_bold(), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), Overview_chartOrEmpty(rt.AsListT[Std_Ui_Chart_Series_R](seriesList))})))
 }
 
 func Overview_chartOrEmpty(seriesList []Std_Ui_Chart_Series_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(seriesList))) {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(16), Std_Ui_centerX(), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_italic(), Std_Ui_Font_size(12)}), any(Std_Ui_text("Waiting for samples…")).(Std_Ui_Element))
 		} else {
 			return func() any {
-				cfg := Std_Ui_Chart_withColor(Overview_accent(), rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withHeight(160, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withWidth(600, Std_Ui_Chart_defaultCfg())))))
+				cfg := Std_Ui_Chart_withColor(Overview_accent() /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withHeight(160 /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Cfg_R](Std_Ui_Chart_withWidth(600, Std_Ui_Chart_defaultCfg())))))
 				_ = cfg
-				return Std_Ui_Chart_line(rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
+				return Std_Ui_Chart_line( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Chart_Cfg_R](cfg), rt.AsListT[Std_Ui_Chart_Series_R](seriesList))
 			}()
 		}
 		return nil
@@ -5074,41 +5453,47 @@ func Overview_chartOrEmpty(seriesList []Std_Ui_Chart_Series_R) Std_Ui_Element_T[
 }
 
 func Overview_aggregateRpsSeries(stats []State_ServiceStat_R) []Std_Ui_Chart_Series_R {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.AsListT[Std_Ui_Chart_Series_R](Sky_Core_List_filter(func(s any) bool {
 		return rt.CoerceBool(rt.Basics_notT(rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(rt.Field(s, "Points"))))))
 	}, rt.AsListAny(Sky_Core_List_map_(func(stat any) any {
-		return Overview_seriesFromValues(rt.CoerceString(rt.Field(stat, "Name")), rt.AsListT[float64](rt.Field(stat, "SparkRps")))
+		return Overview_seriesFromValues( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Field(stat, "Name")), rt.AsListT[float64](rt.Field(stat, "SparkRps")))
 	}, rt.AsListAny(stats)))))
 }
 
 func Overview_aggregateP95Series(stats []State_ServiceStat_R) []Std_Ui_Chart_Series_R {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.AsListT[Std_Ui_Chart_Series_R](Sky_Core_List_filter(func(s any) bool {
 		return rt.CoerceBool(rt.Basics_notT(rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(rt.Field(s, "Points"))))))
 	}, rt.AsListAny(Sky_Core_List_map_(func(stat any) any {
-		return Overview_seriesFromValues(rt.CoerceString(rt.Field(stat, "Name")), rt.AsListT[float64](rt.Field(stat, "SparkP95")))
+		return Overview_seriesFromValues( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Field(stat, "Name")), rt.AsListT[float64](rt.Field(stat, "SparkP95")))
 	}, rt.AsListAny(stats)))))
 }
 
 func Overview_seriesFromValues(label string, values []float64) Std_Ui_Chart_Series_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Chart_Series_R {
-		points := Sky_Core_List_indexedMap(rt.Coerce[func(int) func(any) any](Overview_pairIndex), rt.AsListAny(values))
+		points := Sky_Core_List_indexedMap(func(__c0 int) func(float64) rt.T2[float64, float64] {
+			return func(__c1 float64) rt.T2[float64, float64] { return Overview_pairIndex(__c0, __c1) }
+		}, rt.AsListT[float64](values))
 		_ = points
-		return rt.Coerce[Std_Ui_Chart_Series_R](rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_withSeriesLabel(rt.CoerceString(label), rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_series(rt.AsListT[rt.T2[float64, float64]](points))))))
+		return rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_withSeriesLabel( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_series(rt.AsListT[rt.T2[float64, float64]](points)))))
 	}()
 }
 
 func Overview_pairIndex(i int, v float64) rt.T2[float64, float64] {
-	return rt.T2[float64, float64]{V0: rt.CoerceFloat(Overview_intToFloat(i)), V1: v}
+	return rt.T2[float64, float64]{V0: Overview_intToFloat(i), V1: v}
 }
 
 func Overview_intToFloat(n int) float64 {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() float64 {
 		__subject_tFfi := rt.MaybeCoerce[float64](rt.String_toFloat(rt.String_fromIntT(rt.AsInt(n))))
 		_ = __subject_tFfi
 		if __subject_tFfi.Tag == 0 {
 			f := any(__subject_tFfi.JustValue)
 			_ = f
-			return rt.CoerceFloat(f)
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.CoerceFloat(f)
 		}
 		if __subject_tFfi.Tag == 1 {
 			return 0.0
@@ -5119,6 +5504,7 @@ func Overview_intToFloat(n int) float64 {
 }
 
 func Overview_errorRatePanel(stats []State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_bold(), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("ERROR RATE (5xx) BY SERVICE")).(Std_Ui_Element)), func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(stats))) {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(16), Std_Ui_centerX(), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_italic(), Std_Ui_Font_size(12)}), any(Std_Ui_text("Waiting for samples…")).(Std_Ui_Element))
@@ -5130,28 +5516,30 @@ func Overview_errorRatePanel(stats []State_ServiceStat_R) Std_Ui_Element_T[State
 }
 
 func Overview_errorRateRow(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 4), Std_Ui_spacing(10), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 4), Std_Ui_spacing(10), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(Overview_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill(rt.CoerceString(stat.Status)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(Overview_formatPercent(rt.CoerceFloat(stat.ErrorRate))))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(Overview_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Status)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(Overview_formatPercent( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.ErrorRate))))).(Std_Ui_Element))})))
 }
 
 func Overview_focusedPane(model State_Model_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		maybeStat := Overview_findStat(rt.CoerceString(model.SelectedService), rt.AsListT[State_ServiceStat_R](model.ServiceStats))
 		_ = maybeStat
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
-			__subject := rt.MaybeCoerce[any](maybeStat)
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
+			__subject := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[any](maybeStat)
 			_ = __subject
 			if __subject.Tag == 1 {
-				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_italic()}), any(Std_Ui_text(rt.CoerceString(rt.Concat("Service \"", rt.Concat(rt.Field(model, "SelectedService"), "\" has no recent samples yet — "+"click All services to return to aggregate."))))).(Std_Ui_Element))}))
+				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_italic()}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("Service \"", rt.Concat(rt.Field(model, "SelectedService"), "\" has no recent samples yet — "+"click All services to return to aggregate."))))).(Std_Ui_Element))}))
 			}
 			if __subject.Tag == 0 {
 				stat := rt.MaybeJust(any(__subject))
 				_ = stat
-				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}), rt.AsListT[Std_Ui_Element]([]any{Overview_focusedHeader(rt.Coerce[State_ServiceStat_R](stat)), Overview_focusedCharts(rt.Coerce[State_ServiceStat_R](stat)), Overview_focusedHint()}))
+				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}), rt.AsListT[Std_Ui_Element]([]any{Overview_focusedHeader( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_ServiceStat_R](stat)), Overview_focusedCharts( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_ServiceStat_R](stat)), Overview_focusedHint()}))
 			}
 			_ = rt.Unreachable("case/__subject")
 			return nil
@@ -5160,57 +5548,67 @@ func Overview_focusedPane(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 }
 
 func Overview_focusedHeader(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text(rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill(rt.CoerceString(stat.Status))})), Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(20)}), rt.AsListT[Std_Ui_Element]([]any{Overview_statBlock("REQS/S", rt.CoerceString(Overview_formatFloat(rt.CoerceFloat(stat.ReqsPerSec)))), Overview_statBlock("P95 MS", rt.CoerceString(Overview_formatFloat(rt.CoerceFloat(stat.P95Ms)))), Overview_statBlock("ERR %", rt.CoerceString(Overview_formatPercent(rt.CoerceFloat(stat.ErrorRate))))}))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Name))).(Std_Ui_Element)), Overview_statusPill( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Status))})), Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(20)}), rt.AsListT[Std_Ui_Element]([]any{Overview_statBlock("REQS/S" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.ReqsPerSec)))), Overview_statBlock("P95 MS" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.P95Ms)))), Overview_statBlock("ERR %" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(Overview_formatPercent( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(stat.ErrorRate))))}))})))
 }
 
 func Overview_focusedCharts(stat State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}), rt.AsListT[Std_Ui_Element]([]any{Overview_aggregateChartPanel("Requests / second", rt.AsListT[Std_Ui_Chart_Series_R](Overview_singleSeries(rt.CoerceString(stat.Name), rt.AsListT[float64](stat.SparkRps), Overview_accent()))), Overview_aggregateChartPanel("p95 latency (ms)", rt.AsListT[Std_Ui_Chart_Series_R](Overview_singleSeries(rt.CoerceString(stat.Name), rt.AsListT[float64](stat.SparkP95), Overview_pillWarn())))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}), rt.AsListT[Std_Ui_Element]([]any{Overview_aggregateChartPanel("Requests / second", rt.AsListT[Std_Ui_Chart_Series_R](Overview_singleSeries( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Name), rt.AsListT[float64](stat.SparkRps), Overview_accent()))), Overview_aggregateChartPanel("p95 latency (ms)", rt.AsListT[Std_Ui_Chart_Series_R](Overview_singleSeries( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(stat.Name), rt.AsListT[float64](stat.SparkP95), Overview_pillWarn())))})))
 }
 
 func Overview_singleSeries(label string, values []float64, color Std_Ui_Color) []Std_Ui_Chart_Series_R {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() []Std_Ui_Chart_Series_R {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(values))) {
 			return []Std_Ui_Chart_Series_R{}
 		} else {
-			return []Std_Ui_Chart_Series_R{rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_withSeriesColor(any(color).(Std_Ui_Color), rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_withSeriesLabel(rt.CoerceString(label), rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_series(rt.AsListT[rt.T2[float64, float64]](Sky_Core_List_indexedMap(rt.Coerce[func(int) func(any) any](Overview_pairIndex), rt.AsListAny(values)))))))))}
+			return []Std_Ui_Chart_Series_R{Std_Ui_Chart_withSeriesColor(any(color).(Std_Ui_Color), rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_withSeriesLabel( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[Std_Ui_Chart_Series_R](Std_Ui_Chart_series(rt.AsListT[rt.T2[float64, float64]](Sky_Core_List_indexedMap(func(__c0 int) func(float64) rt.T2[float64, float64] {
+				return func(__c1 float64) rt.T2[float64, float64] { return Overview_pairIndex(__c0, __c1) }
+			}, rt.AsListT[float64](values))))))))}
 		}
 		return nil
 	}()
 }
 
 func Overview_focusedHint() Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_padding(10), Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary())}), any(Std_Ui_text("Drill into Logs / Traces / Errors tabs above — they'll "+"auto-filter to the selected service once B6 ships.")).(Std_Ui_Element)))
 }
 
 func Overview_findStat(name string, stats []State_ServiceStat_R) rt.SkyMaybe[State_ServiceStat_R] {
-	return rt.MaybeCoerce[State_ServiceStat_R](Sky_Core_List_find(func(s any) bool { return rt.CoerceBool(rt.Eq(rt.Field(s, "Name"), name)) }, rt.AsListAny(stats)))
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
+	return rt.MaybeCoerce[State_ServiceStat_R](Sky_Core_List_find(func(s any) bool {
+		return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.CoerceBool(rt.Eq(rt.Field(s, "Name"), name))
+	}, rt.AsListAny(stats)))
 }
 
 func Overview_formatFloat(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 100.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracS := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracS
-					return rt.CoerceString(func() string {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 						if rt.AsBool(rt.Eq(frac, 0)) {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
 						} else {
-							return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
 						}
 						return ""
 					}())
@@ -5221,26 +5619,27 @@ func Overview_formatFloat(f float64) string {
 }
 
 func Overview_formatPercent(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 10000.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracStr := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracStr
-					return rt.CoerceString(rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", rt.Concat(fracStr, "%")))))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", rt.Concat(fracStr, "%")))))
 				}())
 			}())
 		}())
@@ -5248,46 +5647,57 @@ func Overview_formatPercent(f float64) string {
 }
 
 func MetricsTab_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func MetricsTab_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func MetricsTab_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func MetricsTab_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func MetricsTab_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func MetricsTab_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func MetricsTab_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func MetricsTab_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func MetricsTab_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func MetricsTab_viewMetricsTab(model State_Model_R) []Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return []Std_Ui_Element_T[State_Msg]{MetricsTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), MetricsTab_metricsPanel(rt.AsListT[State_MetricRow_R](rt.Field(model, "Metrics")))}
 }
 
 func MetricsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		label := func() string {
 			if rt.AsBool(selected == "") {
@@ -5298,11 +5708,12 @@ func MetricsTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
 			return ""
 		}()
 		_ = label
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), MetricsTab_allServicesChip(rt.CoerceBool(rt.Eq(selected, "")))})))
+		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), MetricsTab_allServicesChip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(selected, "")))})))
 	}()
 }
 
 func MetricsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(isActive) {
@@ -5329,6 +5740,7 @@ func MetricsTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
 }
 
 func MetricsTab_metricsPanel(rows []State_MetricRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](MetricsTab_panel("Metrics snapshot", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(rows))) {
 			return []any{MetricsTab_emptyState("No metrics for this service yet — exporters typically push every 2 s.")}
@@ -5340,52 +5752,54 @@ func MetricsTab_metricsPanel(rows []State_MetricRow_R) Std_Ui_Element_T[State_Ms
 }
 
 func MetricsTab_metricRowView(r State_MetricRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		valueStr := func() string {
 			__subject := r.Typ
 			_ = __subject
 			if __subject == "histogram" {
-				return rt.CoerceString(rt.Concat("n=", rt.Concat(MetricsTab_formatFloat(rt.CoerceFloat(r.Count)), rt.Concat(" avg=", MetricsTab_formatAvg(rt.CoerceFloat(r.Sum), rt.CoerceFloat(r.Count))))))
+				return rt.CoerceString(rt.Concat("n=", rt.Concat(MetricsTab_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Count)), rt.Concat(" avg=", MetricsTab_formatAvg( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Sum) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceFloat(r.Count))))))
 			}
-			return rt.CoerceString(MetricsTab_formatFloat(rt.CoerceFloat(r.Value)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(MetricsTab_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Value)))
 			_ = rt.Unreachable("case/__subject")
 			return ""
 		}()
 		_ = valueStr
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 			Bottom any
 			Left   any
 			Right  any
 			Top    any
-		}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(MetricsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_size(10), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(rt.Field(r, "Typ")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(260)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(MetricsTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(rt.Field(r, "Name")))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted())}), any(Std_Ui_text(rt.CoerceString(rt.Field(r, "Labels")))).(Std_Ui_Element)), MetricsTab_codeBadge(rt.CoerceString(valueStr))})))
+		}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(MetricsTab_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_size(10), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(rt.Field(r, "Typ")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(260)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(MetricsTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "Name")))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "Labels")))).(Std_Ui_Element)), MetricsTab_codeBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(valueStr))})))
 	}()
 }
 
 func MetricsTab_formatFloat(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 100.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracS := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracS
-					return rt.CoerceString(func() string {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 						if rt.AsBool(rt.Eq(frac, 0)) {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
 						} else {
-							return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
 						}
 						return ""
 					}())
@@ -5396,6 +5810,7 @@ func MetricsTab_formatFloat(f float64) string {
 }
 
 func MetricsTab_formatAvg(sum float64, count float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		if rt.AsBool(count == 0.0) {
 			return "—"
@@ -5407,62 +5822,77 @@ func MetricsTab_formatAvg(sum float64, count float64) string {
 }
 
 func MetricsTab_panel(title string, children []Std_Ui_Element_T[State_Msg]) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
 }
 
 func MetricsTab_codeBadge(value string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(MetricsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(MetricsTab_textPrimary())}), any(Std_Ui_text(value)).(Std_Ui_Element)))
 }
 
 func MetricsTab_emptyState(message string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_italic()}), any(Std_Ui_text(message)).(Std_Ui_Element)))
 }
 
 func TracesTab_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func TracesTab_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func TracesTab_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func TracesTab_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func TracesTab_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func TracesTab_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func TracesTab_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func TracesTab_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func TracesTab_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func TracesTab_err() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
 func TracesTab_viewTracesTab(model State_Model_R, preFilteredTraces []State_TraceRow_R) []Std_Ui_Element_T[State_Msg] {
-	return []Std_Ui_Element_T[State_Msg]{TracesTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), TracesTab_tracesFilterPanel(rt.CoerceString(rt.Field(model, "TraceQuery"))), TracesTab_tracesPanel(rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](preFilteredTraces))}
+	// PROOF: FFI: primitive narrowing (typed slot)
+	return []Std_Ui_Element_T[State_Msg]{TracesTab_scopeBanner(rt.CoerceString(rt.Field(model, "SelectedService"))), TracesTab_tracesFilterPanel( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Field(model, "TraceQuery"))), TracesTab_tracesPanel( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](preFilteredTraces))}
 }
 
 func TracesTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		label := func() string {
 			if rt.AsBool(selected == "") {
@@ -5473,11 +5903,12 @@ func TracesTab_scopeBanner(selected string) Std_Ui_Element_T[State_Msg] {
 			return ""
 		}()
 		_ = label
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textPrimary())}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), TracesTab_allServicesChip(rt.CoerceBool(rt.Eq(selected, "")))})))
+		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text("SCOPE")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill())}), any(Std_Ui_text("")).(Std_Ui_Element)), TracesTab_allServicesChip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(selected, "")))})))
 	}()
 }
 
 func TracesTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(isActive) {
@@ -5504,23 +5935,25 @@ func TracesTab_allServicesChip(isActive bool) Std_Ui_Element_T[State_Msg] {
 }
 
 func TracesTab_tracesFilterPanel(query string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter traces by span name or trace id…"), Std_Ui_htmlAttribute("value", query), Std_Ui_onInput(State_Msg_TraceFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(TracesTab_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_TraceFilterQuery(""))), Std_Ui_Font_color(TracesTab_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})))
 }
 
 func TracesTab_tracesPanel(query string, rows []State_TraceRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: function adapter (reflect.MakeFunc)
 	return func() Std_Ui_Element_T[State_Msg] {
 		lq := rt.String_toLowerT(rt.AsString(rt.String_trimT(rt.AsString(query))))
 		_ = lq
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			matches := func(r State_TraceRow_R) bool {
-				return rt.CoerceBool(rt.Or(rt.String_containsT(rt.AsString(lq), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(r, "Name"))))), rt.String_containsT(rt.AsString(lq), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(r, "TraceId")))))))
+				return /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.CoerceBool(rt.Or(rt.String_containsT(rt.AsString(lq), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(r, "Name"))))), rt.String_containsT(rt.AsString(lq), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(r, "TraceId")))))))
 			}
 			_ = matches
 			return func() any {
 				keepTrace := func(tid string) bool {
-					return rt.CoerceBool(Sky_Core_List_any_(func(r any) bool {
-						return rt.CoerceBool(rt.And(rt.Eq(rt.Field(r, "TraceId"), tid), matches(rt.Coerce[State_TraceRow_R](r))))
-					}, rt.AsListAny(rows)))
+					return Sky_Core_List_any_(func(r any) bool {
+						return /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.CoerceBool(rt.And(rt.Eq(rt.Field(r, "TraceId"), tid), matches( /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.Coerce[State_TraceRow_R](r))))
+					}, rt.AsListAny(rows))
 				}
 				_ = keepTrace
 				return func() any {
@@ -5528,7 +5961,7 @@ func TracesTab_tracesPanel(query string, rows []State_TraceRow_R) Std_Ui_Element
 						if rt.AsBool(rt.Eq(lq, "")) {
 							return rt.AsListT[string](TracesTab_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))
 						} else {
-							return rt.AsListT[string](Sky_Core_List_filter(rt.Coerce[func(any) bool](keepTrace), rt.AsListAny(TracesTab_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))))
+							return rt.AsListT[string](Sky_Core_List_filter( /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.Coerce[func(any) bool](keepTrace), rt.AsListAny(TracesTab_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))))
 						}
 						return nil
 					}()
@@ -5541,7 +5974,7 @@ func TracesTab_tracesPanel(query string, rows []State_TraceRow_R) Std_Ui_Element
 								return []any{TracesTab_emptyState("No traces match the filter.")}
 							} else {
 								return Sky_Core_List_map_(func(__pp0 string) Std_Ui_Element {
-									return TracesTab_traceGroupView(rt.AsListT[State_TraceRow_R](rows), rt.CoerceString(__pp0))
+									return TracesTab_traceGroupView(rt.AsListT[State_TraceRow_R](rows) /* PROOF: FFI: function adapter (reflect.MakeFunc) */, rt.CoerceString(__pp0))
 								}, rt.AsListT[string](visibleIds))
 							}
 						}
@@ -5554,6 +5987,7 @@ func TracesTab_tracesPanel(query string, rows []State_TraceRow_R) Std_Ui_Element
 }
 
 func TracesTab_distinctTraceIds(rows []State_TraceRow_R) []string {
+	// PROOF: FFI: typed slot narrowing
 	return rt.AsListT[string](Sky_Core_List_foldl(func(r any) func([]any) []any {
 		return func(_lp_acc []any) []any {
 			acc := _lp_acc
@@ -5562,7 +5996,7 @@ func TracesTab_distinctTraceIds(rows []State_TraceRow_R) []string {
 				if rt.AsBool(rt.Or(rt.Eq(rt.Field(r, "TraceId"), ""), Sky_Core_List_member(any(rt.Field(r, "TraceId")), rt.AsListAny(acc)))) {
 					return rt.Coerce[[]any](acc)
 				} else {
-					return rt.Coerce[[]any](rt.Concat(acc, []any{rt.Field(r, "TraceId")}))
+					return /* PROOF: FFI: typed slot narrowing */ rt.Coerce[[]any](rt.Concat(acc, []any{rt.Field(r, "TraceId")}))
 				}
 				return nil
 			}()
@@ -5571,6 +6005,7 @@ func TracesTab_distinctTraceIds(rows []State_TraceRow_R) []string {
 }
 
 func TracesTab_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() int {
 		if rt.AsBool(rt.Or(fuel <= 0, parentId == "")) {
 			return 0
@@ -5581,7 +6016,7 @@ func TracesTab_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int
 				if __subject_tFfi.Tag == 0 {
 					parent := any(__subject_tFfi.JustValue)
 					_ = parent
-					return rt.CoerceInt(rt.Add(1, TracesTab_spanDepth(rt.AsListT[State_TraceRow_R](rows), fuel-1, rt.CoerceString(rt.Field(parent, "ParentId")))))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Add(1, TracesTab_spanDepth(rt.AsListT[State_TraceRow_R](rows), fuel-1 /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceString(rt.Field(parent, "ParentId")))))
 				}
 				if __subject_tFfi.Tag == 1 {
 					return 0
@@ -5595,27 +6030,30 @@ func TracesTab_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int
 }
 
 func TracesTab_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		spans := Sky_Core_List_filter(func(r any) bool { return rt.CoerceBool(rt.Eq(rt.Field(r, "TraceId"), tid)) }, rt.AsListAny(allRows))
 		_ = spans
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			shortId := func() string {
 				if rt.AsBool(rt.Gte(rt.String_lengthT(rt.AsString(tid)), 8)) {
-					return rt.CoerceString(rt.String_sliceT(0, 8, rt.AsString(tid)))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_sliceT(0, 8, rt.AsString(tid)))
 				} else {
-					return rt.CoerceString(tid)
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(tid)
 				}
 				return ""
 			}()
 			_ = shortId
 			return func() any {
 				rootName := func() string {
-					__subject_tFfi := Sky_Core_List_find(func(r any) bool { return rt.CoerceBool(rt.Eq(rt.Field(r, "ParentId"), "")) }, rt.AsListAny(spans))
+					__subject_tFfi := Sky_Core_List_find(func(r any) bool {
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(rt.Field(r, "ParentId"), ""))
+					}, rt.AsListAny(spans))
 					_ = __subject_tFfi
 					if __subject_tFfi.Tag == 0 {
 						root := any(__subject_tFfi.JustValue)
 						_ = root
-						return rt.CoerceString(rt.Field(root, "Name"))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(root, "Name"))
 					}
 					if __subject_tFfi.Tag == 1 {
 						return func() string {
@@ -5624,7 +6062,7 @@ func TracesTab_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Ele
 							if __subject_tFfi.Tag == 0 {
 								s := any(__subject_tFfi.JustValue)
 								_ = s
-								return rt.CoerceString(rt.Field(s, "Name"))
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(s, "Name"))
 							}
 							if __subject_tFfi.Tag == 1 {
 								return "(trace)"
@@ -5637,13 +6075,13 @@ func TracesTab_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Ele
 					return ""
 				}()
 				_ = rootName
-				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(2), Std_Ui_Border_widthEach(struct {
+				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(2), Std_Ui_Border_widthEach(any(struct {
 					Bottom any
 					Left   any
 					Right  any
 					Top    any
-				}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}), any(Std_Ui_text(rt.CoerceString(rt.Concat("trace ", shortId)))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}), any(Std_Ui_text(rt.CoerceString(rt.Concat(rootName, rt.Concat(" · ", rt.Concat(rt.String_fromIntT(rt.AsInt(Sky_Core_List_length(rt.AsListAny(spans)))), " spans")))))).(Std_Ui_Element))})), Sky_Core_List_map_(func(__pp0 State_TraceRow_R) Std_Ui_Element {
-					return TracesTab_spanRowView(rt.AsListT[State_TraceRow_R](allRows), rt.Coerce[State_TraceRow_R](__pp0))
+				}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(TracesTab_borderSoft())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("trace ", shortId)))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(rootName, rt.Concat(" · ", rt.Concat(rt.String_fromIntT(rt.AsInt(Sky_Core_List_length(rt.AsListAny(spans)))), " spans")))))).(Std_Ui_Element))})), Sky_Core_List_map_(func(__pp0 State_TraceRow_R) Std_Ui_Element {
+					return TracesTab_spanRowView(rt.AsListT[State_TraceRow_R](allRows) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_TraceRow_R](__pp0))
 				}, rt.AsListT[State_TraceRow_R](spans)))))
 			}()
 		}())
@@ -5651,48 +6089,50 @@ func TracesTab_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Ele
 }
 
 func TracesTab_spanRowView(allRows []State_TraceRow_R, r State_TraceRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		statusErr := r.Status == "error"
 		_ = statusErr
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
-			depth := TracesTab_spanDepth(rt.AsListT[State_TraceRow_R](allRows), 32, rt.CoerceString(rt.Field(r, "ParentId")))
+			depth := TracesTab_spanDepth(rt.AsListT[State_TraceRow_R](allRows), 32 /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.Field(r, "ParentId")))
 			_ = depth
 			return func() any {
 				indent := rt.Mul(depth, 18)
 				_ = indent
-				return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingEach(struct {
+				return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingEach(any(struct {
 					Bottom any
 					Left   any
 					Right  any
 					Top    any
-				}{Bottom: 3, Left: indent, Right: 0, Top: 3}), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(76)).(Std_Ui_Length)), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11)}), any(Std_Ui_text(rt.CoerceString(TracesTab_compactTime(rt.CoerceString(rt.Field(r, "StartTime")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(40)).(Std_Ui_Length)), Std_Ui_Font_color(any(func() any {
+				}{Bottom: 3, Left: indent, Right: 0, Top: 3}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(76)).(Std_Ui_Length)), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(TracesTab_compactTime( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "StartTime")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(40)).(Std_Ui_Length)), Std_Ui_Font_color(any(func() any {
 					if rt.AsBool(statusErr) {
 						return TracesTab_err()
 					} else {
 						return TracesTab_textMuted()
 					}
 					return nil
-				}()).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(10)}), any(Std_Ui_text(rt.CoerceString(func() any {
+				}()).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(10)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(func() any {
 					if rt.AsBool(statusErr) {
 						return "ERR"
 					} else {
 						return "OK"
 					}
 					return nil
-				}()))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(TracesTab_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.Concat(func() any {
+				}()))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(TracesTab_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(func() any {
 					if rt.AsBool(rt.Gt(depth, 0)) {
 						return "└ "
 					} else {
 						return ""
 					}
 					return nil
-				}(), rt.Field(r, "Name"))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(TracesTab_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.Concat(TracesTab_formatFloat(rt.CoerceFloat(rt.Field(r, "DurationMs"))), "ms")))).(Std_Ui_Element))}))
+				}(), rt.Field(r, "Name"))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(TracesTab_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(TracesTab_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(rt.Field(r, "DurationMs"))), "ms")))).(Std_Ui_Element))}))
 			}()
 		}())
 	}()
 }
 
 func TracesTab_compactTime(ts string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := rt.String_splitT("T", rt.AsString(ts))
 		_ = __subject
@@ -5709,30 +6149,31 @@ func TracesTab_compactTime(ts string) string {
 }
 
 func TracesTab_formatFloat(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 100.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracS := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracS
-					return rt.CoerceString(func() string {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 						if rt.AsBool(rt.Eq(frac, 0)) {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
 						} else {
-							return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
 						}
 						return ""
 					}())
@@ -5743,75 +6184,92 @@ func TracesTab_formatFloat(f float64) string {
 }
 
 func TracesTab_panel(title string, children []Std_Ui_Element_T[State_Msg]) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
 }
 
 func TracesTab_emptyState(message string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_italic()}), any(Std_Ui_text(message)).(Std_Ui_Element)))
 }
 
 func View_bgPage() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func View_bgSurface() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(28, 32, 39))
 }
 
 func View_bgRaised() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(20, 23, 28))
 }
 
 func View_bgCode() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(44, 50, 60))
 }
 
 func View_border_() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(53, 59, 70))
 }
 
 func View_borderSoft() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(42, 47, 56))
 }
 
 func View_textPrimary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(240, 243, 247))
 }
 
 func View_textSecondary() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(197, 203, 212))
 }
 
 func View_textMuted() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(141, 150, 163))
 }
 
 func View_accent() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(126, 182, 255))
 }
 
 func View_warn() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 178, 77))
 }
 
 func View_err() Std_Ui_Color {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(255, 117, 117))
 }
 
 func View_view(model State_Model_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}), rt.AsListT[Std_Ui_Element]([]any{View_header(rt.Coerce[State_Model_R](model)), View_tabStrip(any(model.Tab).(State_Tab)), View_globalFilterStrip(rt.Coerce[State_Model_R](model)), View_content(rt.Coerce[State_Model_R](model)), View_urlSync(rt.Coerce[State_Model_R](model))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}), rt.AsListT[Std_Ui_Element]([]any{View_header( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model)), View_tabStrip(any(model.Tab).(State_Tab)), View_globalFilterStrip( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model)), View_content( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model)), View_urlSync( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))})))
 }
 
 func View_header(model State_Model_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 12), Std_Ui_spacing(20), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 12), Std_Ui_spacing(20), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold()}), any(Std_Ui_text("Sky Console")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(View_headerMeta(rt.Coerce[State_Overview_R](model.Overview))))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold()}), any(Std_Ui_text("Sky Console")).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(View_headerMeta( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Overview_R](model.Overview))))).(Std_Ui_Element))})))
 }
 
 func View_headerMeta(o State_Overview_R) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		mode := func() string {
 			if rt.AsBool(o.ProductionMode) {
@@ -5822,19 +6280,20 @@ func View_headerMeta(o State_Overview_R) string {
 			return ""
 		}()
 		_ = mode
-		return rt.CoerceString(rt.CoerceString(rt.Concat("Sky ", rt.Concat(rt.Field(o, "SkyVersion"), rt.Concat(" · ", rt.Concat(mode, rt.Concat(" · uptime ", View_formatUptime(rt.CoerceInt(rt.Field(o, "UptimeSeconds"))))))))))
+		return rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("Sky ", rt.Concat(rt.Field(o, "SkyVersion"), rt.Concat(" · ", rt.Concat(mode, rt.Concat(" · uptime ", View_formatUptime( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Field(o, "UptimeSeconds"))))))))))
 	}()
 }
 
 func View_formatUptime(s int) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		if rt.AsBool(s < 60) {
 			return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(s)), "s"))
 		} else {
 			if rt.AsBool(s < 3600) {
-				return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(s/60)), "m"))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(s/60)), "m"))
 			} else {
-				return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(s/3600)), "h"))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(s/3600)), "h"))
 			}
 		}
 		return ""
@@ -5842,41 +6301,48 @@ func View_formatUptime(s int) string {
 }
 
 func View_tabStrip(active State_Tab) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 0), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 0), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element](Sky_Core_List_map_(func(__pp0 State_Tab) Std_Ui_Element {
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element](Sky_Core_List_map_(func(__pp0 State_Tab) Std_Ui_Element {
 		return View_tabButton(any(active).(State_Tab), any(__pp0).(State_Tab))
 	}, rt.AsListT[State_Tab]([]any{State_Tab_OverviewTab, State_Tab_MetricsTab, State_Tab_LogsTab, State_Tab_TracesTab, State_Tab_ErrorsTab})))))
 }
 
 func View_globalFilterStrip(model State_Model_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 8), Std_Ui_spacing(6), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
+	// PROOF: DB-narrow: Db.query row → typed record
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 8), Std_Ui_spacing(6), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element]([]any{View_rangeRow(any(model.Range).(State_Range)), func() any {
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_border_())}), rt.AsListT[Std_Ui_Element]([]any{View_rangeRow(any(model.Range).(State_Range)), func() any {
 		if rt.AsBool(model.HubDbPath != "") {
-			return View_serviceRow(rt.CoerceString(model.SelectedService), rt.AsListT[State_ServiceStat_R](model.ServiceStats))
+			return View_serviceRow( /* PROOF: DB-narrow: Db.query row → typed record */ rt.CoerceString(model.SelectedService), rt.AsListT[State_ServiceStat_R](model.ServiceStats))
 		} else {
 			return Std_Ui_none()
 		}
 		return nil
-	}(), View_queryRow(rt.CoerceString(model.GlobalQuery))})))
+	}(), View_queryRow( /* PROOF: DB-narrow: Db.query row → typed record */ rt.CoerceString(model.GlobalQuery))})))
 }
 
 func View_rangeRow(current State_Range) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length))}), any(Std_Ui_text("Range")).(Std_Ui_Element)), View_rangeChip(any(current).(State_Range), any(State_Range_Last15m).(State_Range)), View_rangeChip(any(current).(State_Range), any(State_Range_Last1h).(State_Range)), View_rangeChip(any(current).(State_Range), any(State_Range_Last24h).(State_Range)), View_rangeChip(any(current).(State_Range), any(State_Range_Last7d).(State_Range)), View_rangeChip(any(current).(State_Range), any(State_Range_RangeAll).(State_Range))})))
 }
 
 func View_serviceRow(selected string, stats []State_ServiceStat_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6)}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length))}), any(Std_Ui_text("Service")).(Std_Ui_Element)), rt.List_cons(View_serviceChip(selected, ""), Sky_Core_List_map_(func(s any) any { return View_serviceChip(selected, rt.CoerceString(rt.Field(s, "Name"))) }, rt.AsListAny(stats)))))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6)}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length))}), any(Std_Ui_text("Service")).(Std_Ui_Element)), rt.List_cons(View_serviceChip(selected, ""), Sky_Core_List_map_(func(s any) any {
+		return View_serviceChip(selected /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.Field(s, "Name")))
+	}, rt.AsListAny(stats)))))))
 }
 
 func View_serviceChip(selected string, name string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		label := func() string {
 			if rt.AsBool(name == "") {
@@ -5903,14 +6369,14 @@ func View_serviceChip(selected string, name string) Std_Ui_Element_T[State_Msg] 
 				return func() any {
 					fg := func() Std_Ui_Color {
 						if rt.AsBool(isActive) {
-							return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(0, 0, 0))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](Std_Ui_rgb(0, 0, 0))
 						} else {
 							return View_textSecondary()
 						}
 						return Std_Ui_Color{}
 					}()
 					_ = fg
-					return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectService(rt.CoerceString(name))))}), any(Std_Ui_text(rt.CoerceString(label))).(Std_Ui_Element))
+					return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectService( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(name))))}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(label))).(Std_Ui_Element))
 				}()
 			}()
 		}())
@@ -5918,6 +6384,7 @@ func View_serviceChip(selected string, name string) Std_Ui_Element_T[State_Msg] 
 }
 
 func View_rangeChip(current State_Range, r State_Range) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		isActive := rt.Eq(current, r)
 		_ = isActive
@@ -5934,28 +6401,31 @@ func View_rangeChip(current State_Range, r State_Range) Std_Ui_Element_T[State_M
 			return func() any {
 				fg := func() Std_Ui_Color {
 					if rt.AsBool(isActive) {
-						return rt.Coerce[Std_Ui_Color](Std_Ui_rgb(0, 0, 0))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](Std_Ui_rgb(0, 0, 0))
 					} else {
 						return View_textSecondary()
 					}
 					return Std_Ui_Color{}
 				}()
 				_ = fg
-				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectRange(any(r).(State_Range))))}), any(Std_Ui_text(rt.CoerceString(State_rangeLabel(any(r).(State_Range))))).(Std_Ui_Element))
+				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectRange(any(r).(State_Range))))}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(State_rangeLabel(any(r).(State_Range))))).(Std_Ui_Element))
 			}()
 		}())
 	}()
 }
 
 func View_queryRow(current string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length))}), any(Std_Ui_text("Search")).(Std_Ui_Element)), Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter logs + traces by message, route, name, id…"), Std_Ui_htmlAttribute("value", current), Std_Ui_onInput(State_Msg_GlobalQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(11)}))})))
 }
 
 func View_urlSync(model State_Model_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("data-sky-query", rt.CoerceString(View_encodeFilters(rt.Coerce[State_Model_R](model)))), Std_Ui_width(any(Std_Ui_px(0)).(Std_Ui_Length)), Std_Ui_height(any(Std_Ui_px(0)).(Std_Ui_Length))}), Std_Ui_none()))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("data-sky-query" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(View_encodeFilters( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model)))), Std_Ui_width(any(Std_Ui_px(0)).(Std_Ui_Length)), Std_Ui_height(any(Std_Ui_px(0)).(Std_Ui_Length))}), Std_Ui_none()))
 }
 
 func View_encodeFilters(model State_Model_R) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		rangePart := func() string {
 			if rt.AsBool(rt.Eq(rt.Field(model, "Range"), State_Range_Last24h)) {
@@ -5966,33 +6436,36 @@ func View_encodeFilters(model State_Model_R) string {
 			return ""
 		}()
 		_ = rangePart
-		return rt.CoerceString(func() string {
+		return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 			qPart := func() string {
 				if rt.AsBool(rt.Eq(rt.Field(model, "GlobalQuery"), "")) {
 					return ""
 				} else {
-					return rt.CoerceString(rt.Concat("q=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "GlobalQuery")))))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("q=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "GlobalQuery")))))
 				}
 				return ""
 			}()
 			_ = qPart
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				svcPart := func() string {
 					if rt.AsBool(rt.Eq(rt.Field(model, "SelectedService"), "")) {
 						return ""
 					} else {
-						return rt.CoerceString(rt.Concat("service=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "SelectedService")))))
+						return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("service=", rt.Encoding_urlEncodeT(rt.AsString(rt.Field(model, "SelectedService")))))
 					}
 					return ""
 				}()
 				_ = svcPart
-				return rt.CoerceString(rt.CoerceString(View_joinQueryParts(rt.AsListT[string](Sky_Core_List_filter(func(p any) bool { return rt.CoerceBool(rt.NotEq(p, "")) }, []any{rangePart, qPart, svcPart})))))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(View_joinQueryParts(rt.AsListT[string](Sky_Core_List_filter(func(p any) bool {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(rt.NotEq(p, ""))
+				}, []any{rangePart, qPart, svcPart}))))
 			}())
 		}())
 	}()
 }
 
 func View_joinQueryParts(parts []string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := parts
 		_ = __subject
@@ -6009,7 +6482,7 @@ func View_joinQueryParts(parts []string) string {
 			_ = p
 			rest := any(rt.AsList(__subject)[1:])
 			_ = rest
-			return rt.CoerceString(rt.Concat(p, rt.Concat("&", View_joinQueryParts(rt.AsListT[string](rest)))))
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(p, rt.Concat("&", View_joinQueryParts(rt.AsListT[string](rest)))))
 		}
 		_ = rt.Unreachable("case/__subject")
 		return ""
@@ -6017,14 +6490,17 @@ func View_joinQueryParts(parts []string) string {
 }
 
 func View_matchLogText(q string, l State_LogEntry_R) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.CoerceBool(rt.Or(rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(l, "Message"))))), rt.Or(rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(l, "Route"))))), rt.Or(rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(l, "ReqId"))))), rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(l, "SessionId")))))))))
 }
 
 func View_matchTraceText(q string, t State_TraceRow_R) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.CoerceBool(rt.Or(rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(t.Name)))), rt.String_containsT(rt.AsString(q), rt.AsString(rt.String_toLowerT(rt.AsString(t.TraceId))))))
 }
 
 func View_rangeThresholdIso(r State_Range, nowMs int) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := r
 		_ = __subject
@@ -6045,6 +6521,7 @@ func View_rangeThresholdIso(r State_Range, nowMs int) string {
 }
 
 func View_tabButton(active State_Tab, tab State_Tab) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		isActive := rt.Eq(active, tab)
 		_ = isActive
@@ -6068,22 +6545,23 @@ func View_tabButton(active State_Tab, tab State_Tab) Std_Ui_Element_T[State_Msg]
 					return Std_Ui_Color{}
 				}()
 				_ = textColor
-				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(14, 10), Std_Ui_Font_size(13), Std_Ui_Font_color(any(textColor).(Std_Ui_Color)), Std_Ui_Border_widthEach(struct {
+				return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(14, 10), Std_Ui_Font_size(13), Std_Ui_Font_color(any(textColor).(Std_Ui_Color)), Std_Ui_Border_widthEach(any(struct {
 					Bottom any
 					Left   any
 					Right  any
 					Top    any
-				}{Bottom: 2, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(any(underlineColor).(Std_Ui_Color)), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectTab(any(tab).(State_Tab))))}), any(Std_Ui_text(rt.CoerceString(State_tabLabel(any(tab).(State_Tab))))).(Std_Ui_Element))
+				}{Bottom: 2, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(any(underlineColor).(Std_Ui_Color)), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_SelectTab(any(tab).(State_Tab))))}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(State_tabLabel(any(tab).(State_Tab))))).(Std_Ui_Element))
 			}()
 		}())
 	}()
 }
 
 func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		threshold := View_rangeThresholdIso(any(model.Range).(State_Range), rt.CoerceInt(model.NowMs))
 		_ = threshold
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			q := rt.String_toLowerT(rt.AsString(rt.String_trimT(rt.AsString(rt.Field(model, "GlobalQuery")))))
 			_ = q
 			return func() any {
@@ -6091,7 +6569,9 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 					if rt.AsBool(rt.Eq(threshold, "")) {
 						return rt.AsListT[State_LogEntry_R](rt.Field(model, "Logs"))
 					} else {
-						return rt.AsListT[State_LogEntry_R](Sky_Core_List_filter(func(l any) bool { return rt.CoerceBool(rt.Gte(rt.Field(l, "Time"), threshold)) }, rt.AsListAny(rt.Field(model, "Logs"))))
+						return rt.AsListT[State_LogEntry_R](Sky_Core_List_filter(func(l any) bool {
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Gte(rt.Field(l, "Time"), threshold))
+						}, rt.AsListAny(rt.Field(model, "Logs"))))
 					}
 					return nil
 				}()
@@ -6101,7 +6581,9 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 						if rt.AsBool(rt.Eq(threshold, "")) {
 							return rt.AsListT[State_TraceRow_R](rt.Field(model, "Traces"))
 						} else {
-							return rt.AsListT[State_TraceRow_R](Sky_Core_List_filter(func(t any) bool { return rt.CoerceBool(rt.Gte(rt.Field(t, "StartTime"), threshold)) }, rt.AsListAny(rt.Field(model, "Traces"))))
+							return rt.AsListT[State_TraceRow_R](Sky_Core_List_filter(func(t any) bool {
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Gte(rt.Field(t, "StartTime"), threshold))
+							}, rt.AsListAny(rt.Field(model, "Traces"))))
 						}
 						return nil
 					}()
@@ -6112,7 +6594,7 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								return rt.AsListT[State_LogEntry_R](logsAfterRange)
 							} else {
 								return rt.AsListT[State_LogEntry_R](Sky_Core_List_filter(func(__pp0 State_LogEntry_R) bool {
-									return View_matchLogText(rt.CoerceString(q), rt.Coerce[State_LogEntry_R](__pp0))
+									return View_matchLogText( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(q) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogEntry_R](__pp0))
 								}, rt.AsListT[State_LogEntry_R](logsAfterRange)))
 							}
 							return nil
@@ -6124,7 +6606,7 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 									return rt.AsListT[State_TraceRow_R](tracesAfterRange)
 								} else {
 									return rt.AsListT[State_TraceRow_R](Sky_Core_List_filter(func(__pp0 State_TraceRow_R) bool {
-										return View_matchTraceText(rt.CoerceString(q), rt.Coerce[State_TraceRow_R](__pp0))
+										return View_matchTraceText( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(q) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_TraceRow_R](__pp0))
 									}, rt.AsListT[State_TraceRow_R](tracesAfterRange)))
 								}
 								return nil
@@ -6136,9 +6618,9 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								if rt.EnumTagIs(__subject, 0) {
 									return func() any {
 										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
-											return Overview_viewOverview(rt.Coerce[State_Model_R](model))
+											return Overview_viewOverview( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))
 										} else {
-											return View_overviewView(rt.Coerce[State_Overview_R](rt.Field(model, "Overview")))
+											return View_overviewView( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Overview_R](rt.Field(model, "Overview")))
 										}
 										return nil
 									}()
@@ -6146,7 +6628,7 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								if rt.EnumTagIs(__subject, 1) {
 									return func() any {
 										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
-											return MetricsTab_viewMetricsTab(rt.Coerce[State_Model_R](model))
+											return MetricsTab_viewMetricsTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))
 										} else {
 											return View_metricsView(rt.AsListT[State_MetricRow_R](rt.Field(model, "Metrics")))
 										}
@@ -6156,9 +6638,9 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								if rt.EnumTagIs(__subject, 2) {
 									return func() any {
 										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
-											return LogsTab_viewLogsTab(rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
+											return LogsTab_viewLogsTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
 										} else {
-											return View_logsView(rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
+											return View_logsView( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), rt.AsListT[State_LogEntry_R](logsFinal))
 										}
 										return nil
 									}()
@@ -6166,9 +6648,9 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								if rt.EnumTagIs(__subject, 3) {
 									return func() any {
 										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
-											return TracesTab_viewTracesTab(rt.Coerce[State_Model_R](model), rt.AsListT[State_TraceRow_R](tracesFinal))
+											return TracesTab_viewTracesTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), rt.AsListT[State_TraceRow_R](tracesFinal))
 										} else {
-											return View_tracesView(rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](tracesFinal))
+											return View_tracesView( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(model, "TraceQuery")), rt.AsListT[State_TraceRow_R](tracesFinal))
 										}
 										return nil
 									}()
@@ -6176,7 +6658,7 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 								if rt.EnumTagIs(__subject, 4) {
 									return func() any {
 										if rt.AsBool(rt.NotEq(rt.Field(model, "HubDbPath"), "")) {
-											return ErrorsTab_viewErrorsTab(rt.Coerce[State_Model_R](model))
+											return ErrorsTab_viewErrorsTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))
 										} else {
 											return View_errorsView(rt.AsListT[State_ErrorRow_R](rt.Field(model, "Errors")))
 										}
@@ -6195,19 +6677,23 @@ func View_content(model State_Model_R) Std_Ui_Element_T[State_Msg] {
 }
 
 func View_overviewView(o State_Overview_R) []Std_Ui_Element_T[State_Msg] {
-	return []Std_Ui_Element_T[State_Msg]{View_kpiRow(rt.Coerce[State_Overview_R](o)), View_systemPanel(rt.Coerce[State_Overview_R](o))}
+	// PROOF: FFI: typed slot narrowing
+	return []Std_Ui_Element_T[State_Msg]{View_kpiRow(rt.Coerce[State_Overview_R](o)), View_systemPanel( /* PROOF: FFI: typed slot narrowing */ rt.Coerce[State_Overview_R](o))}
 }
 
 func View_kpiRow(o State_Overview_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_grid(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_gridColumns(220), Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{View_kpiCard("Requests total", rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.RequestsTotal)))), View_kpiCard("5xx error rate", rt.CoerceString(View_formatPercent(rt.CoerceFloat(o.ErrorRate5xx)))), View_kpiCard("Log buffer", rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.BufferLogUsed)))), View_kpiCard("Trace buffer", rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.BufferTraceUsed))))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_grid(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_gridColumns(220), Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{View_kpiCard("Requests total" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.RequestsTotal)))), View_kpiCard("5xx error rate" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(View_formatPercent( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(o.ErrorRate5xx)))), View_kpiCard("Log buffer" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.BufferLogUsed)))), View_kpiCard("Trace buffer" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.String_fromIntT(rt.AsInt(o.BufferTraceUsed))))})))
 }
 
 func View_kpiCard(label string, valueText string) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(4)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(label))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(24), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text(valueText)).(Std_Ui_Element))})))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(4)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(label))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(24), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text(valueText)).(Std_Ui_Element))})))
 }
 
 func View_systemPanel(o State_Overview_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](View_panel("System", rt.AsListT[Std_Ui_Element_T[State_Msg]]([]any{View_infoRow("Sky version", rt.CoerceString(o.SkyVersion)), View_infoRow("Commit", rt.CoerceString(o.Commit)), View_infoRow("Built at", rt.CoerceString(o.BuiltAt)), View_infoRow("Uptime", rt.CoerceString(View_formatUptime(rt.CoerceInt(o.UptimeSeconds)))), View_infoRow("Production mode", rt.CoerceString(func() any {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](View_panel("System", rt.AsListT[Std_Ui_Element_T[State_Msg]]([]any{View_infoRow("Sky version" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(o.SkyVersion)), View_infoRow("Commit" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(o.Commit)), View_infoRow("Built at" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(o.BuiltAt)), View_infoRow("Uptime" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(View_formatUptime( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(o.UptimeSeconds)))), View_infoRow("Production mode" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(func() any {
 		if rt.AsBool(o.ProductionMode) {
 			return "yes"
 		} else {
@@ -6218,21 +6704,23 @@ func View_systemPanel(o State_Overview_R) Std_Ui_Element_T[State_Msg] {
 }
 
 func View_infoRow(label string, value string) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(label))))).(Std_Ui_Element)), View_codeBadge(value)})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(label))))).(Std_Ui_Element)), View_codeBadge(value)})))
 }
 
 func View_logsView(model State_Model_R, preFilteredLogs []State_LogEntry_R) []Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: typed slot narrowing
 	return func() []Std_Ui_Element_T[State_Msg] {
 		filtered := Sky_Core_List_filter(func(__pp0 State_LogEntry_R) bool {
-			return View_matchFilter(rt.Coerce[State_LogFilter_R](model.LogFilter), rt.Coerce[State_LogEntry_R](__pp0))
+			return View_matchFilter(rt.Coerce[State_LogFilter_R](model.LogFilter) /* PROOF: FFI: typed slot narrowing */, rt.Coerce[State_LogEntry_R](__pp0))
 		}, rt.AsListT[State_LogEntry_R](preFilteredLogs))
 		_ = filtered
-		return rt.AsListT[Std_Ui_Element_T[State_Msg]]([]Std_Ui_Element_T[State_Msg]{View_logsFilterPanel(rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter"))), View_panel("Recent log entries", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
+		return rt.AsListT[Std_Ui_Element_T[State_Msg]]([]Std_Ui_Element_T[State_Msg]{View_logsFilterPanel( /* PROOF: FFI: typed slot narrowing */ rt.Coerce[State_LogFilter_R](rt.Field(model, "LogFilter"))), View_panel("Recent log entries", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
 			if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(filtered))) {
 				return []any{View_emptyState("No log entries match the current filter.")}
 			} else {
@@ -6244,6 +6732,7 @@ func View_logsView(model State_Model_R, preFilteredLogs []State_LogEntry_R) []St
 }
 
 func View_matchFilter(f State_LogFilter_R, e State_LogEntry_R) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() bool {
 		levelOk := func() bool {
 			__subject := e.Level
@@ -6252,43 +6741,45 @@ func View_matchFilter(f State_LogFilter_R, e State_LogEntry_R) bool {
 				return rt.CoerceBool(f.ShowDebug)
 			}
 			if __subject == "info" {
-				return rt.CoerceBool(f.ShowInfo)
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(f.ShowInfo)
 			}
 			if __subject == "warn" {
-				return rt.CoerceBool(f.ShowWarn)
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(f.ShowWarn)
 			}
 			if __subject == "error" {
-				return rt.CoerceBool(f.ShowError)
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(f.ShowError)
 			}
 			return true
 			_ = rt.Unreachable("case/__subject")
 			return false
 		}()
 		_ = levelOk
-		return rt.CoerceBool(func() bool {
+		return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(func() bool {
 			sessionOk := rt.Or(rt.Eq(rt.Field(f, "Session"), ""), rt.Eq(rt.Field(f, "Session"), rt.Field(e, "SessionId")))
 			_ = sessionOk
-			return rt.CoerceBool(func() bool {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(func() bool {
 				queryOk := rt.Or(rt.Eq(rt.Field(f, "Query"), ""), rt.String_containsT(rt.AsString(rt.String_toLowerT(rt.AsString(rt.Field(f, "Query")))), rt.AsString(rt.String_toLowerT(rt.AsString(rt.Concat(rt.Field(e, "Message"), rt.Concat(" ", rt.Concat(rt.Field(e, "Route"), rt.Concat(" ", rt.Field(e, "Subapp"))))))))))
 				_ = queryOk
-				return rt.CoerceBool(rt.CoerceBool(rt.And(levelOk, rt.And(sessionOk, queryOk))))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceBool(rt.And(levelOk, rt.And(sessionOk, queryOk))))
 			}())
 		}())
 	}()
 }
 
 func View_logsFilterPanel(f State_LogFilter_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Search message / route / subapp…"), Std_Ui_htmlAttribute("value", rt.CoerceString(f.Query)), Std_Ui_onInput(State_Msg_LogFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), View_levelToggle("debug", rt.CoerceBool(f.ShowDebug)), View_levelToggle("info", rt.CoerceBool(f.ShowInfo)), View_levelToggle("warn", rt.CoerceBool(f.ShowWarn)), View_levelToggle("error", rt.CoerceBool(f.ShowError)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterClear)), Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})), func() any {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Search message / route / subapp…"), Std_Ui_htmlAttribute("value" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(f.Query)), Std_Ui_onInput(State_Msg_LogFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), View_levelToggle("debug" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowDebug)), View_levelToggle("info" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowInfo)), View_levelToggle("warn" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowWarn)), View_levelToggle("error" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceBool(f.ShowError)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterClear)), Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})), func() any {
 		if rt.AsBool(f.Session == "") {
 			return Std_Ui_text("")
 		} else {
-			return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_text("Filtering by session: "), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_color(View_accent())}), any(Std_Ui_text(rt.CoerceString(f.Session))).(Std_Ui_Element))}))
+			return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(6), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_text("Filtering by session: "), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_color(View_accent())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(f.Session))).(Std_Ui_Element))}))
 		}
 		return nil
 	}()})))
 }
 
 func View_levelToggle(lvl string, on bool) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		bg := func() Std_Ui_Color {
 			if rt.AsBool(on) {
@@ -6302,50 +6793,54 @@ func View_levelToggle(lvl string, on bool) Std_Ui_Element_T[State_Msg] {
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			fg := func() Std_Ui_Color {
 				if rt.AsBool(on) {
-					return rt.Coerce[Std_Ui_Color](View_levelColor(rt.CoerceString(lvl)))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Color](View_levelColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(lvl)))
 				} else {
 					return View_textMuted()
 				}
 				return Std_Ui_Color{}
 			}()
 			_ = fg
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterToggleLevel(rt.CoerceString(lvl)))), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(lvl))))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(any(bg).(Std_Ui_Color)), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterToggleLevel( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(lvl)))), Std_Ui_Font_color(any(fg).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(lvl))))).(Std_Ui_Element))
 		}())
 	}()
 }
 
 func View_logRow(e State_LogEntry_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(View_compactTime(rt.CoerceString(e.Time))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(50)).(Std_Ui_Length)), Std_Ui_Font_color(any(View_levelColor(rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(e.Level))))).(Std_Ui_Element)), View_subappBadge(rt.CoerceString(e.Subapp)), View_sessionBadge(rt.CoerceString(e.SessionId)), View_traceBadge(rt.CoerceString(e.ReqId)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_color(any(View_levelTextColor(rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_size(13)}), any(Std_Ui_text(rt.CoerceString(e.Message))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(View_compactTime( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Time))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(50)).(Std_Ui_Length)), Std_Ui_Font_color(any(View_levelColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(e.Level))))).(Std_Ui_Element)), View_subappBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Subapp)), View_sessionBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.SessionId)), View_traceBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.ReqId)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_color(any(View_levelTextColor( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Level))).(Std_Ui_Color)), Std_Ui_Font_size(13)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(e.Message))).(Std_Ui_Element))})))
 }
 
 func View_sessionBadge(sid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(sid == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
 		} else {
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterPickSession(sid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}), any(Std_Ui_text(rt.CoerceString(rt.String_left(8, sid)))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(80)).(Std_Ui_Length)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_LogFilterPickSession(sid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_left(8, sid)))).(Std_Ui_Element))
 		}
 		return nil
 	}())
 }
 
 func View_traceBadge(tid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(tid == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
 		} else {
-			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_PivotToTrace(tid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}), any(Std_Ui_text(rt.CoerceString(rt.Concat("trace ", rt.String_left(8, tid))))).(Std_Ui_Element))
+			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(92)).(Std_Ui_Length)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_PivotToTrace(tid))), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("trace ", rt.String_left(8, tid))))).(Std_Ui_Element))
 		}
 		return nil
 	}())
 }
 
 func View_subappBadge(sub string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 		if rt.AsBool(sub == "") {
 			return Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(70)).(Std_Ui_Length))}), any(Std_Ui_text("")).(Std_Ui_Element))
@@ -6357,6 +6852,7 @@ func View_subappBadge(sub string) Std_Ui_Element_T[State_Msg] {
 }
 
 func View_compactTime(ts string) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		__subject := rt.String_splitT("T", rt.AsString(ts))
 		_ = __subject
@@ -6416,52 +6912,54 @@ func View_metricsView(rows []State_MetricRow_R) []Std_Ui_Element_T[State_Msg] {
 }
 
 func View_metricRowView(r State_MetricRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		valueStr := func() string {
 			__subject := r.Typ
 			_ = __subject
 			if __subject == "histogram" {
-				return rt.CoerceString(rt.Concat("n=", rt.Concat(View_formatFloat(rt.CoerceFloat(r.Count)), rt.Concat(" avg=", View_formatAvg(rt.CoerceFloat(r.Sum), rt.CoerceFloat(r.Count))))))
+				return rt.CoerceString(rt.Concat("n=", rt.Concat(View_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Count)), rt.Concat(" avg=", View_formatAvg( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Sum) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceFloat(r.Count))))))
 			}
-			return rt.CoerceString(View_formatFloat(rt.CoerceFloat(r.Value)))
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(View_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(r.Value)))
 			_ = rt.Unreachable("case/__subject")
 			return ""
 		}()
 		_ = valueStr
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 			Bottom any
 			Left   any
 			Right  any
 			Top    any
-		}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_size(10), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(rt.Field(r, "Typ")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(260)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text(rt.CoerceString(rt.Field(r, "Name")))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted())}), any(Std_Ui_text(rt.CoerceString(rt.Field(r, "Labels")))).(Std_Ui_Element)), View_codeBadge(rt.CoerceString(valueStr))})))
+		}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_size(10), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(rt.Field(r, "Typ")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(260)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "Name")))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(180)).(Std_Ui_Length)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "Labels")))).(Std_Ui_Element)), View_codeBadge( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(valueStr))})))
 	}()
 }
 
 func View_formatFloat(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 100.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracS := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracS
-					return rt.CoerceString(func() string {
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 						if rt.AsBool(rt.Eq(frac, 0)) {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(whole)))
 						} else {
-							return rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", fracS)))
 						}
 						return ""
 					}())
@@ -6472,6 +6970,7 @@ func View_formatFloat(f float64) string {
 }
 
 func View_formatAvg(sum float64, count float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		if rt.AsBool(count == 0.0) {
 			return "—"
@@ -6483,6 +6982,7 @@ func View_formatAvg(sum float64, count float64) string {
 }
 
 func View_tracesView(query string, rows []State_TraceRow_R) []Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: function adapter (reflect.MakeFunc)
 	return func() []Std_Ui_Element_T[State_Msg] {
 		lq := rt.String_toLowerT(rt.AsString(rt.String_trimT(rt.AsString(query))))
 		_ = lq
@@ -6493,9 +6993,9 @@ func View_tracesView(query string, rows []State_TraceRow_R) []Std_Ui_Element_T[S
 			_ = matches
 			return rt.AsListT[Std_Ui_Element_T[State_Msg]](func() []Std_Ui_Element_T[State_Msg] {
 				keepTrace := func(tid string) bool {
-					return rt.CoerceBool(Sky_Core_List_any_(func(r any) bool {
-						return rt.CoerceBool(rt.And(rt.Eq(rt.Field(r, "TraceId"), tid), matches(rt.Coerce[State_TraceRow_R](r))))
-					}, rt.AsListAny(rows)))
+					return Sky_Core_List_any_(func(r any) bool {
+						return /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.CoerceBool(rt.And(rt.Eq(rt.Field(r, "TraceId"), tid), matches( /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.Coerce[State_TraceRow_R](r))))
+					}, rt.AsListAny(rows))
 				}
 				_ = keepTrace
 				return rt.AsListT[Std_Ui_Element_T[State_Msg]](func() []Std_Ui_Element_T[State_Msg] {
@@ -6503,12 +7003,12 @@ func View_tracesView(query string, rows []State_TraceRow_R) []Std_Ui_Element_T[S
 						if rt.AsBool(rt.Eq(lq, "")) {
 							return rt.AsListT[string](View_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))
 						} else {
-							return rt.AsListT[string](Sky_Core_List_filter(rt.Coerce[func(any) bool](keepTrace), rt.AsListAny(View_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))))
+							return rt.AsListT[string](Sky_Core_List_filter( /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.Coerce[func(any) bool](keepTrace), rt.AsListAny(View_distinctTraceIds(rt.AsListT[State_TraceRow_R](rows)))))
 						}
 						return nil
 					}()
 					_ = visibleIds
-					return rt.AsListT[Std_Ui_Element_T[State_Msg]]([]Std_Ui_Element_T[State_Msg]{View_tracesFilterPanel(rt.CoerceString(query)), View_panel("Recent traces", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
+					return rt.AsListT[Std_Ui_Element_T[State_Msg]]([]Std_Ui_Element_T[State_Msg]{View_tracesFilterPanel( /* PROOF: FFI: function adapter (reflect.MakeFunc) */ rt.CoerceString(query)), View_panel("Recent traces", rt.AsListT[Std_Ui_Element_T[State_Msg]](func() any {
 						if rt.AsBool(Sky_Core_List_isEmpty(rt.AsListAny(rows))) {
 							return []any{View_emptyState("No traces captured yet.")}
 						} else {
@@ -6516,7 +7016,7 @@ func View_tracesView(query string, rows []State_TraceRow_R) []Std_Ui_Element_T[S
 								return []any{View_emptyState("No traces match the filter.")}
 							} else {
 								return Sky_Core_List_map_(func(__pp0 string) Std_Ui_Element {
-									return View_traceGroupView(rt.AsListT[State_TraceRow_R](rows), rt.CoerceString(__pp0))
+									return View_traceGroupView(rt.AsListT[State_TraceRow_R](rows) /* PROOF: FFI: function adapter (reflect.MakeFunc) */, rt.CoerceString(__pp0))
 								}, rt.AsListT[string](visibleIds))
 							}
 						}
@@ -6529,10 +7029,12 @@ func View_tracesView(query string, rows []State_TraceRow_R) []Std_Ui_Element_T[S
 }
 
 func View_tracesFilterPanel(query string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_input(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter traces by span name or trace id…"), Std_Ui_htmlAttribute("value", query), Std_Ui_onInput(State_Msg_TraceFilterQuery), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")})), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(any(State_Msg_TraceFilterQuery(""))), Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11)}), any(Std_Ui_text("clear")).(Std_Ui_Element))})))
 }
 
 func View_distinctTraceIds(rows []State_TraceRow_R) []string {
+	// PROOF: FFI: typed slot narrowing
 	return rt.AsListT[string](Sky_Core_List_foldl(func(r any) func([]any) []any {
 		return func(_lp_acc []any) []any {
 			acc := _lp_acc
@@ -6541,7 +7043,7 @@ func View_distinctTraceIds(rows []State_TraceRow_R) []string {
 				if rt.AsBool(rt.Or(rt.Eq(rt.Field(r, "TraceId"), ""), Sky_Core_List_member(any(rt.Field(r, "TraceId")), rt.AsListAny(acc)))) {
 					return rt.Coerce[[]any](acc)
 				} else {
-					return rt.Coerce[[]any](rt.Concat(acc, []any{rt.Field(r, "TraceId")}))
+					return /* PROOF: FFI: typed slot narrowing */ rt.Coerce[[]any](rt.Concat(acc, []any{rt.Field(r, "TraceId")}))
 				}
 				return nil
 			}()
@@ -6550,6 +7052,7 @@ func View_distinctTraceIds(rows []State_TraceRow_R) []string {
 }
 
 func View_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() int {
 		if rt.AsBool(rt.Or(fuel <= 0, parentId == "")) {
 			return 0
@@ -6560,7 +7063,7 @@ func View_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int {
 				if __subject_tFfi.Tag == 0 {
 					parent := any(__subject_tFfi.JustValue)
 					_ = parent
-					return rt.CoerceInt(rt.Add(1, View_spanDepth(rt.AsListT[State_TraceRow_R](rows), fuel-1, rt.CoerceString(rt.Field(parent, "ParentId")))))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceInt(rt.Add(1, View_spanDepth(rt.AsListT[State_TraceRow_R](rows), fuel-1 /* PROOF: FFI: primitive narrowing (typed slot) */, rt.CoerceString(rt.Field(parent, "ParentId")))))
 				}
 				if __subject_tFfi.Tag == 1 {
 					return 0
@@ -6574,27 +7077,30 @@ func View_spanDepth(rows []State_TraceRow_R, fuel int, parentId string) int {
 }
 
 func View_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		spans := Sky_Core_List_filter(func(r any) bool { return rt.CoerceBool(rt.Eq(rt.Field(r, "TraceId"), tid)) }, rt.AsListAny(allRows))
 		_ = spans
-		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
+		return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
 			shortId := func() string {
 				if rt.AsBool(rt.Gte(rt.String_lengthT(rt.AsString(tid)), 8)) {
-					return rt.CoerceString(rt.String_sliceT(0, 8, rt.AsString(tid)))
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_sliceT(0, 8, rt.AsString(tid)))
 				} else {
-					return rt.CoerceString(tid)
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(tid)
 				}
 				return ""
 			}()
 			_ = shortId
 			return func() any {
 				rootName := func() string {
-					__subject_tFfi := Sky_Core_List_find(func(r any) bool { return rt.CoerceBool(rt.Eq(rt.Field(r, "ParentId"), "")) }, rt.AsListAny(spans))
+					__subject_tFfi := Sky_Core_List_find(func(r any) bool {
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceBool(rt.Eq(rt.Field(r, "ParentId"), ""))
+					}, rt.AsListAny(spans))
 					_ = __subject_tFfi
 					if __subject_tFfi.Tag == 0 {
 						root := any(__subject_tFfi.JustValue)
 						_ = root
-						return rt.CoerceString(rt.Field(root, "Name"))
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(root, "Name"))
 					}
 					if __subject_tFfi.Tag == 1 {
 						return func() string {
@@ -6603,7 +7109,7 @@ func View_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Element_
 							if __subject_tFfi.Tag == 0 {
 								s := any(__subject_tFfi.JustValue)
 								_ = s
-								return rt.CoerceString(rt.Field(s, "Name"))
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(s, "Name"))
 							}
 							if __subject_tFfi.Tag == 1 {
 								return "(trace)"
@@ -6616,13 +7122,13 @@ func View_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Element_
 					return ""
 				}()
 				_ = rootName
-				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(2), Std_Ui_Border_widthEach(struct {
+				return Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 8), Std_Ui_spacing(2), Std_Ui_Border_widthEach(any(struct {
 					Bottom any
 					Left   any
 					Right  any
 					Top    any
-				}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}), any(Std_Ui_text(rt.CoerceString(rt.Concat("trace ", shortId)))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}), any(Std_Ui_text(rt.CoerceString(rt.Concat(rootName, rt.Concat(" · ", rt.Concat(rt.String_fromIntT(rt.AsInt(Sky_Core_List_length(rt.AsListAny(spans)))), " spans")))))).(Std_Ui_Element))})), Sky_Core_List_map_(func(__pp0 State_TraceRow_R) Std_Ui_Element {
-					return View_spanRowView(rt.AsListT[State_TraceRow_R](allRows), rt.Coerce[State_TraceRow_R](__pp0))
+				}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("trace ", shortId)))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(rootName, rt.Concat(" · ", rt.Concat(rt.String_fromIntT(rt.AsInt(Sky_Core_List_length(rt.AsListAny(spans)))), " spans")))))).(Std_Ui_Element))})), Sky_Core_List_map_(func(__pp0 State_TraceRow_R) Std_Ui_Element {
+					return View_spanRowView(rt.AsListT[State_TraceRow_R](allRows) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_TraceRow_R](__pp0))
 				}, rt.AsListT[State_TraceRow_R](spans)))))
 			}()
 		}())
@@ -6630,42 +7136,43 @@ func View_traceGroupView(allRows []State_TraceRow_R, tid string) Std_Ui_Element_
 }
 
 func View_spanRowView(allRows []State_TraceRow_R, r State_TraceRow_R) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() Std_Ui_Element_T[State_Msg] {
 		statusErr := r.Status == "error"
 		_ = statusErr
 		return rt.Coerce[Std_Ui_Element_T[State_Msg]](func() any {
-			depth := View_spanDepth(rt.AsListT[State_TraceRow_R](allRows), 32, rt.CoerceString(rt.Field(r, "ParentId")))
+			depth := View_spanDepth(rt.AsListT[State_TraceRow_R](allRows), 32 /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceString(rt.Field(r, "ParentId")))
 			_ = depth
 			return func() any {
 				indent := rt.Mul(depth, 18)
 				_ = indent
-				return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingEach(struct {
+				return Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingEach(any(struct {
 					Bottom any
 					Left   any
 					Right  any
 					Top    any
-				}{Bottom: 3, Left: indent, Right: 0, Top: 3}), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(76)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11)}), any(Std_Ui_text(rt.CoerceString(View_compactTime(rt.CoerceString(rt.Field(r, "StartTime")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(40)).(Std_Ui_Length)), Std_Ui_Font_color(any(func() any {
+				}{Bottom: 3, Left: indent, Right: 0, Top: 3}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_spacing(10)}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(76)).(Std_Ui_Length)), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(View_compactTime( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Field(r, "StartTime")))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(40)).(Std_Ui_Length)), Std_Ui_Font_color(any(func() any {
 					if rt.AsBool(statusErr) {
 						return View_err()
 					} else {
 						return View_textMuted()
 					}
 					return nil
-				}()).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(10)}), any(Std_Ui_text(rt.CoerceString(func() any {
+				}()).(Std_Ui_Color)), Std_Ui_Font_bold(), Std_Ui_Font_size(10)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(func() any {
 					if rt.AsBool(statusErr) {
 						return "ERR"
 					} else {
 						return "OK"
 					}
 					return nil
-				}()))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.Concat(func() any {
+				}()))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(func() any {
 					if rt.AsBool(rt.Gt(depth, 0)) {
 						return "└ "
 					} else {
 						return ""
 					}
 					return nil
-				}(), rt.Field(r, "Name"))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text(rt.CoerceString(rt.Concat(View_formatFloat(rt.CoerceFloat(rt.Field(r, "DurationMs"))), "ms")))).(Std_Ui_Element))}))
+				}(), rt.Field(r, "Name"))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat(View_formatFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceFloat(rt.Field(r, "DurationMs"))), "ms")))).(Std_Ui_Element))}))
 			}()
 		}())
 	}()
@@ -6683,47 +7190,52 @@ func View_errorsView(rows []State_ErrorRow_R) []Std_Ui_Element_T[State_Msg] {
 }
 
 func View_errorRowView(r State_ErrorRow_R) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_row(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(any(struct {
 		Bottom any
 		Left   any
 		Right  any
 		Top    any
-	}{Bottom: 1, Left: 0, Right: 0, Top: 0}), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_color(View_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text(rt.CoerceString(rt.Concat("×", rt.String_fromIntT(rt.AsInt(r.Count)))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text(rt.CoerceString(r.Message))).(Std_Ui_Element))})))
+	}{Bottom: 1, Left: 0, Right: 0, Top: 0}).(Anon_R_bottom_left_right_top__237rntgq)), Std_Ui_Border_color(View_borderSoft())}), rt.AsListT[Std_Ui_Element]([]any{Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_width(any(Std_Ui_px(60)).(Std_Ui_Length)), Std_Ui_Font_color(View_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.Concat("×", rt.String_fromIntT(rt.AsInt(r.Count)))))).(Std_Ui_Element)), Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(13), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(r.Message))).(Std_Ui_Element))})))
 }
 
 func View_panel(title string, children []Std_Ui_Element_T[State_Msg]) Std_Ui_Element_T[State_Msg] {
-	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text(rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_column(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}), rt.AsListT[Std_Ui_Element](rt.List_cons(Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(5.0e-2), Std_Ui_paddingXY(0, 4)}), any(Std_Ui_text( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(rt.String_toUpperT(rt.AsString(title))))).(Std_Ui_Element)), children))))
 }
 
 func View_codeBadge(value string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(View_textPrimary())}), any(Std_Ui_text(value)).(Std_Ui_Element)))
 }
 
 func View_emptyState(message string) Std_Ui_Element_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[Std_Ui_Element_T[State_Msg]](Std_Ui_el(rt.AsListT[rt.SkyAttribute]([]any{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_italic()}), any(Std_Ui_text(message)).(Std_Ui_Element)))
 }
 
 func View_formatPercent(f float64) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		scaled := rt.Math_roundT(rt.AsFloat(f * 10000.0))
 		_ = scaled
 		return rt.CoerceString(func() string {
 			whole := rt.IntDiv(scaled, 100)
 			_ = whole
-			return rt.CoerceString(func() string {
+			return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 				frac := rt.Basics_modByT(100, rt.AsInt(scaled))
 				_ = frac
-				return rt.CoerceString(func() string {
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(func() string {
 					fracStr := func() string {
 						if rt.AsBool(rt.Lt(frac, 10)) {
-							return rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("0", rt.String_fromIntT(rt.AsInt(frac))))
 						} else {
-							return rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
+							return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.String_fromIntT(rt.AsInt(frac)))
 						}
 						return ""
 					}()
 					_ = fracStr
-					return rt.CoerceString(rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", rt.Concat(fracStr, "%")))))
+					return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString( /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat(rt.String_fromIntT(rt.AsInt(whole)), rt.Concat(".", rt.Concat(fracStr, "%")))))
 				}())
 			}())
 		}())
@@ -6732,123 +7244,136 @@ func View_formatPercent(f float64) string {
 
 // SKY-ORIGIN: src/Main.sky:41:1
 func overviewDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("productionMode", any(rt.JsonDec_bool()).(rt.SkyDecoder), false, any(rt.JsonDecP_optional("bufferTraceUsed", intFromFloat(), 0, any(rt.JsonDecP_optional("bufferLogUsed", intFromFloat(), 0, any(rt.JsonDecP_optional("errorRate5xx", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("requestsTotal", intFromFloat(), 0, any(rt.JsonDecP_optional("uptimeSeconds", intFromFloat(), 0, any(rt.JsonDecP_optional("builtAt", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("commit", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("skyVersion", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDec_succeed(State_Overview)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:60:1
 func intFromFloat() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_map(func(f any) any { return rt.Math_roundT(rt.AsFloat(f)) }, any(rt.JsonDec_float()).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:65:1
 func logsDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(logEntryDecoder()))
 }
 
 // SKY-ORIGIN: src/Main.sky:74:1
 func logEntryDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("LatencyMS", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("Status", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("Route", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_custom(fieldFromFields("user_label"), rt.JsonDecP_custom(fieldFromFields("session_id"), rt.JsonDecP_optional("ReqID", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Subapp", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Message", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("Level", any(rt.JsonDec_string()).(rt.SkyDecoder), "info", any(rt.JsonDecP_optional("TS", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDec_succeed(State_LogEntry)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:94:1
 func fieldFromFields(name string) rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_oneOf([]any{rt.JsonDec_at([]any{"Fields", name}, rt.JsonDec_string()), rt.JsonDec_succeed("")}))
 }
 
 // SKY-ORIGIN: src/Main.sky:104:1
 func metricsDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(metricRowDecoder()))
 }
 
 // SKY-ORIGIN: src/Main.sky:109:1
 func metricRowDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("count", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("sum", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("value", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("labels", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("type", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("name", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDec_succeed(State_MetricRow)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:125:1
 func tracesDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(traceRowDecoder()))
 }
 
 // SKY-ORIGIN: src/Main.sky:130:1
 func traceRowDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("status", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("durationMs", any(rt.JsonDec_float()).(rt.SkyDecoder), 0.0, any(rt.JsonDecP_optional("startTime", any(rt.JsonDec_string()).(rt.SkyDecoder), "—", any(rt.JsonDecP_optional("kind", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("name", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("parentId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("spanId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("traceId", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDec_succeed(State_TraceRow)).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:143:1
 func errorsDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDec_list(errorRowDecoder()))
 }
 
 // SKY-ORIGIN: src/Main.sky:148:1
 func errorRowDecoder() rt.SkyDecoder {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.Coerce[rt.SkyDecoder](rt.JsonDecP_optional("message", any(rt.JsonDec_string()).(rt.SkyDecoder), "", any(rt.JsonDecP_optional("count", any(rt.JsonDec_int()).(rt.SkyDecoder), 0, any(rt.JsonDec_succeed(State_ErrorRow)).(rt.SkyDecoder))).(rt.SkyDecoder)))
 }
 
 // SKY-ORIGIN: src/Main.sky:163:1
 func httpStore(parent string) State_Store_R {
+	// PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation)
 	return State_Store_R{ListServices: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []string] {
 		return rt.TaskCoerceT[Sky_Core_Error_Error, []string](rt.AnyTaskSucceed([]any{""}))
 	}, ReadErrors: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](fetchErrors(rt.CoerceString(parent)))
+		return fetchErrors( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadFilteredErrors: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](fetchErrors(rt.CoerceString(parent)))
+		return fetchErrors( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadFilteredLogs: func(_lp__svc string) func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
 		_svc := _lp__svc
 		_ = _svc
 		return func(_lp_filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
 			filter := _lp_filter
 			_ = filter
-			return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](fetchLogs(parent, rt.Coerce[State_LogFilter_R](filter)))
+			return fetchLogs(parent /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */, rt.Coerce[State_LogFilter_R](filter))
 		}
 	}, ReadFilteredMetrics: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](fetchMetrics(rt.CoerceString(parent)))
+		return fetchMetrics( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadFilteredTraces: func(_svc string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](fetchTraces(rt.CoerceString(parent)))
+		return fetchTraces( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadLogs: func(filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](fetchLogs(rt.CoerceString(parent), rt.Coerce[State_LogFilter_R](filter)))
+		return fetchLogs( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent) /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */, rt.Coerce[State_LogFilter_R](filter))
 	}, ReadMetrics: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](fetchMetrics(rt.CoerceString(parent)))
+		return fetchMetrics( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadOverview: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](fetchOverview(rt.CoerceString(parent)))
+		return fetchOverview( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}, ReadServiceStats: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.AnyTaskSucceed([]any{}))
+		return /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.AnyTaskSucceed([]any{}))
 	}, ReadTraces: func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](fetchTraces(rt.CoerceString(parent)))
+		return fetchTraces( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.CoerceString(parent))
 	}}
 }
 
 func init_[T1 any](_req T1) rt.SkyTuple2 {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyTuple2 {
 		parent := rt.System_getenvOr("SKY_PARENT_URL", "")
 		_ = parent
 		return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 			hubDbPath := rt.System_getenvOr("SKY_CONSOLE_HUB_DB", "")
 			_ = hubDbPath
-			return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+			return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 				initialRange := State_Range_Last24h
 				_ = initialRange
-				return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 					initialQuery := ""
 					_ = initialQuery
-					return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+					return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 						initialService := ""
 						_ = initialService
-						return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 							chosenStore := func() State_Store_R {
 								if rt.AsBool(rt.NotEq(hubDbPath, "")) {
-									return rt.Coerce[State_Store_R](HubStore_hubStore(rt.CoerceString(hubDbPath)))
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Store_R](HubStore_hubStore( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(hubDbPath)))
 								} else {
-									return rt.Coerce[State_Store_R](httpStore(rt.CoerceString(parent)))
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Store_R](httpStore( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(parent)))
 								}
 								return State_Store_R{}
 							}()
 							_ = chosenStore
-							return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
 								isStandalone := rt.And(rt.Eq(parent, ""), rt.Eq(hubDbPath, ""))
 								_ = isStandalone
-								return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-									startModel := State_Model_R{Errors: []State_ErrorRow_R{}, GlobalQuery: rt.CoerceString(initialQuery), HubDbPath: rt.CoerceString(hubDbPath), Identity: rt.MaybeCoerce[State_Identity_R](rt.Nothing[any]()), LastError: "", LogFilter: State_emptyLogFilter(), Logs: func() []State_LogEntry_R {
+								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+									startModel := State_Model_R{Errors: []State_ErrorRow_R{}, GlobalQuery: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(initialQuery), HubDbPath: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(hubDbPath), Identity: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.MaybeCoerce[State_Identity_R](rt.Nothing[any]()), LastError: "", LogFilter: State_emptyLogFilter(), Logs: func() []State_LogEntry_R {
 										if rt.AsBool(isStandalone) {
 											return State_mockLogs()
 										} else {
@@ -6862,19 +7387,19 @@ func init_[T1 any](_req T1) rt.SkyTuple2 {
 											return State_emptyOverview()
 										}
 										return State_Overview_R{}
-									}(), ParentUrl: rt.CoerceString(parent), Range: rt.Coerce[State_Range](initialRange), SelectedService: rt.CoerceString(initialService), ServiceStats: []State_ServiceStat_R{}, Store: rt.Coerce[State_Store_R](chosenStore), Tab: rt.Coerce[State_Tab](State_Tab_OverviewTab), TenantPrefix: "", TraceQuery: "", Traces: []State_TraceRow_R{}}
+									}(), ParentUrl: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(parent), Range: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Range](initialRange), SelectedService: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceString(initialService), ServiceStats: []State_ServiceStat_R{}, Store: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Store_R](chosenStore), Tab: /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Tab](State_Tab_OverviewTab), TenantPrefix: "", TraceQuery: "", Traces: []State_TraceRow_R{}}
 									_ = startModel
-									return rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
-										identityCmd := func() rt.SkyCmd {
+									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() rt.SkyTuple2 {
+										identityCmd := func() any {
 											if rt.AsBool(rt.NotEq(hubDbPath, "")) {
-												return rt.Coerce[rt.SkyCmd](rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, State_Identity_R](rt.Hub_currentIdentity(hubDbPath)), State_Msg_GotIdentity))
+												return rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Identity_R](rt.Hub_currentIdentity(hubDbPath)), State_Msg_GotIdentity)
 											} else {
-												return rt.Coerce[rt.SkyCmd](rt.Cmd_none())
+												return rt.Cmd_none()
 											}
-											return rt.SkyCmd{}
+											return nil
 										}()
 										_ = identityCmd
-										return rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: startModel, V1: rt.Cmd_batch([]any{fetchForTab(rt.Coerce[State_Model_R](startModel), any(rt.Field(startModel, "Tab")).(State_Tab), rt.Coerce[State_LogFilter_R](rt.Field(startModel, "LogFilter"))), identityCmd, rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})})
+										return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: startModel, V1: rt.Cmd_batch([]any{fetchForTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](startModel), any(rt.Field(startModel, "Tab")).(State_Tab) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](rt.Field(startModel, "LogFilter"))), identityCmd, rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})})
 									}())
 								}())
 							}())
@@ -6888,16 +7413,17 @@ func init_[T1 any](_req T1) rt.SkyTuple2 {
 
 // SKY-ORIGIN: src/Main.sky:301:1
 func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return func() rt.SkyTuple2 {
 		__subject_tAdt := any(msg).(State_Msg)
 		_ = __subject_tAdt
 		if __subject_tAdt.Tag == 0 {
-			tab := __subject_tAdt.Fields[0]
+			tab := rt.Coerce[State_Tab](__subject_tAdt.Fields[0])
 			_ = tab
-			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Tab": tab}), V1: fetchForTab(rt.Coerce[State_Model_R](model), any(tab).(State_Tab), rt.Coerce[State_LogFilter_R](model.LogFilter))}
+			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Tab": tab}), V1: fetchForTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), any(tab).(State_Tab) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](model.LogFilter))}
 		}
 		if __subject_tAdt.Tag == 1 {
-			return rt.SkyTuple2{V0: model, V1: rt.Cmd_batch([]any{fetchForTab(rt.Coerce[State_Model_R](model), any(model.Tab).(State_Tab), rt.Coerce[State_LogFilter_R](model.LogFilter)), rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})}
+			return rt.SkyTuple2{V0: model, V1: rt.Cmd_batch([]any{fetchForTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), any(model.Tab).(State_Tab) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](model.LogFilter)), rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(struct{}{})), State_Msg_GotNowMs)})}
 		}
 		if __subject_tAdt.Tag == 2 && rt.ResultTag(any(__subject_tAdt.Fields[0])) == 0 {
 			__sky_cf_0___subject_tAdt := __subject_tAdt.Fields[0]
@@ -6970,82 +7496,82 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LastError": rt.Basics_errorToStringT(any(e))}), V1: rt.Cmd_none()}
 		}
 		if __subject_tAdt.Tag == 7 {
-			q := __subject_tAdt.Fields[0]
+			q := rt.AsString(__subject_tAdt.Fields[0])
 			_ = q
 			return func() rt.SkyTuple2 {
 				f := model.LogFilter
 				_ = f
-				return rt.Coerce[rt.SkyTuple2](func() any {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() any {
 					f2 := rt.RecordUpdate(f, map[string]any{"Query": q})
 					_ = f2
-					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2}), V1: fetchLogsOnly(rt.Coerce[State_Model_R](model), rt.Coerce[State_LogFilter_R](f2))}
+					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2}), V1: fetchLogsOnly( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](f2))}
 				}())
 			}()
 		}
 		if __subject_tAdt.Tag == 8 {
-			lvl := __subject_tAdt.Fields[0]
+			lvl := rt.AsString(__subject_tAdt.Fields[0])
 			_ = lvl
 			return func() rt.SkyTuple2 {
 				f := model.LogFilter
 				_ = f
-				return rt.Coerce[rt.SkyTuple2](func() any {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() any {
 					f2 := func() State_LogFilter_R {
 						__subject := lvl
 						_ = __subject
 						if __subject == "debug" {
-							return rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowDebug": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowDebug")))}))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowDebug": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowDebug")))}))
 						}
 						if __subject == "info" {
-							return rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowInfo": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowInfo")))}))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowInfo": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowInfo")))}))
 						}
 						if __subject == "warn" {
-							return rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowWarn": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowWarn")))}))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowWarn": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowWarn")))}))
 						}
 						if __subject == "error" {
-							return rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowError": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowError")))}))
+							return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_LogFilter_R](rt.RecordUpdate(f, map[string]any{"ShowError": rt.Basics_notT(rt.AsBool(rt.Field(f, "ShowError")))}))
 						}
-						return rt.Coerce[State_LogFilter_R](f)
+						return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_LogFilter_R](f)
 						_ = rt.Unreachable("case/__subject")
 						return State_LogFilter_R{}
 					}()
 					_ = f2
-					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2}), V1: fetchLogsOnly(rt.Coerce[State_Model_R](model), rt.Coerce[State_LogFilter_R](f2))}
+					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2}), V1: fetchLogsOnly( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](f2))}
 				}())
 			}()
 		}
 		if __subject_tAdt.Tag == 9 {
-			sid := __subject_tAdt.Fields[0]
+			sid := rt.AsString(__subject_tAdt.Fields[0])
 			_ = sid
 			return func() rt.SkyTuple2 {
 				f := model.LogFilter
 				_ = f
-				return rt.Coerce[rt.SkyTuple2](func() any {
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](func() any {
 					f2 := rt.RecordUpdate(f, map[string]any{"Session": sid})
 					_ = f2
-					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2, "Tab": State_Tab_LogsTab}), V1: fetchLogsOnly(rt.Coerce[State_Model_R](model), rt.Coerce[State_LogFilter_R](f2))}
+					return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": f2, "Tab": State_Tab_LogsTab}), V1: fetchLogsOnly( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](f2))}
 				}())
 			}()
 		}
 		if __subject_tAdt.Tag == 10 {
-			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": State_emptyLogFilter()}), V1: fetchLogsOnly(rt.Coerce[State_Model_R](model), State_emptyLogFilter())}
+			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"LogFilter": State_emptyLogFilter()}), V1: fetchLogsOnly( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), State_emptyLogFilter())}
 		}
 		if __subject_tAdt.Tag == 11 {
-			q := __subject_tAdt.Fields[0]
+			q := rt.AsString(__subject_tAdt.Fields[0])
 			_ = q
 			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"TraceQuery": q}), V1: rt.Cmd_none()}
 		}
 		if __subject_tAdt.Tag == 12 {
-			tid := __subject_tAdt.Fields[0]
+			tid := rt.AsString(__subject_tAdt.Fields[0])
 			_ = tid
-			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Tab": State_Tab_TracesTab, "TraceQuery": tid}), V1: rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadTraces, struct{}{})), State_Msg_GotTraces)}
+			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Tab": State_Tab_TracesTab, "TraceQuery": tid}), V1: rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadTraces, struct{}{})), State_Msg_GotTraces)}
 		}
 		if __subject_tAdt.Tag == 13 {
-			name := __subject_tAdt.Fields[0]
+			name := rt.AsString(__subject_tAdt.Fields[0])
 			_ = name
 			return func() rt.SkyTuple2 {
 				newModel := rt.RecordUpdate(model, map[string]any{"SelectedService": name})
 				_ = newModel
-				return rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: newModel, V1: fetchForTab(rt.Coerce[State_Model_R](newModel), any(rt.Field(newModel, "Tab")).(State_Tab), rt.Coerce[State_LogFilter_R](rt.Field(newModel, "LogFilter")))})
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: newModel, V1: fetchForTab( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](newModel), any(rt.Field(newModel, "Tab")).(State_Tab) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](rt.Field(newModel, "LogFilter")))})
 			}()
 		}
 		if __subject_tAdt.Tag == 14 && rt.ResultTag(any(__subject_tAdt.Fields[0])) == 0 {
@@ -7068,9 +7594,9 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 			identity := rt.ResultOk(any(__sky_cf_0___subject_tAdt))
 			_ = identity
 			return func() rt.SkyTuple2 {
-				tenant := Sky_Core_Maybe_withDefault__String("", rt.MaybeCoerce[string](rt.Dict_getT[string](rt.AsString("tenant"), rt.AsMapT[string](rt.Field(identity, "Claims")))))
+				tenant := Sky_Core_Maybe_withDefault("" /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.MaybeCoerce[string](rt.Dict_getT[string](rt.AsString("tenant"), rt.AsMapT[string](rt.Field(identity, "Claims")))))
 				_ = tenant
-				return rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Identity": rt.Just[any](identity), "TenantPrefix": tenant}), V1: rt.Cmd_none()})
+				return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[rt.SkyTuple2](rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Identity": rt.Just[any](identity), "TenantPrefix": tenant}), V1: rt.Cmd_none()})
 			}()
 		}
 		if __subject_tAdt.Tag == 15 && rt.ResultTag(any(__subject_tAdt.Fields[0])) == 1 {
@@ -7080,7 +7606,7 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 			return rt.SkyTuple2{V0: model, V1: rt.Cmd_none()}
 		}
 		if __subject_tAdt.Tag == 16 {
-			r := __subject_tAdt.Fields[0]
+			r := /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Range](__subject_tAdt.Fields[0])
 			_ = r
 			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"Range": r}), V1: rt.Cmd_none()}
 		}
@@ -7098,7 +7624,7 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 			return rt.SkyTuple2{V0: model, V1: rt.Cmd_none()}
 		}
 		if __subject_tAdt.Tag == 18 {
-			q := __subject_tAdt.Fields[0]
+			q := rt.AsString(__subject_tAdt.Fields[0])
 			_ = q
 			return rt.SkyTuple2{V0: rt.RecordUpdate(model, map[string]any{"GlobalQuery": q}), V1: rt.Cmd_none()}
 		}
@@ -7109,13 +7635,14 @@ func update(msg State_Msg, model State_Model_R) rt.SkyTuple2 {
 
 // SKY-ORIGIN: src/Main.sky:477:1
 func fetchLogsOnly(model State_Model_R, filter State_LogFilter_R) rt.SkyCmd_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyCmd_T[State_Msg]](func() any {
-		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
+		if rt.AsBool(hasStoreSource( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))) {
 			return func() any {
 				if rt.AsBool(model.HubDbPath != "") {
-					return rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadFilteredLogs, model.SelectedService, filter)), State_Msg_GotLogs)
+					return rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadFilteredLogs, model.SelectedService, filter)), State_Msg_GotLogs)
 				} else {
-					return rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadLogs, filter)), State_Msg_GotLogs)
+					return rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadLogs, filter)), State_Msg_GotLogs)
 				}
 				return nil
 			}()
@@ -7128,14 +7655,16 @@ func fetchLogsOnly(model State_Model_R, filter State_LogFilter_R) rt.SkyCmd_T[St
 
 // SKY-ORIGIN: src/Main.sky:500:1
 func hasStoreSource(model State_Model_R) bool {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return rt.CoerceBool(rt.Or(model.ParentUrl != "", model.HubDbPath != ""))
 }
 
 // SKY-ORIGIN: src/Main.sky:517:1
 func fetchForTab(model State_Model_R, tab State_Tab, filter State_LogFilter_R) rt.SkyCmd_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkyCmd_T[State_Msg]](func() any {
-		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
-			return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.SkyCall(model.Store.ReadOverview, struct{}{})), State_Msg_GotOverview), tabFetches(rt.Coerce[State_Model_R](model), any(tab).(State_Tab), rt.Coerce[State_LogFilter_R](filter))))
+		if rt.AsBool(hasStoreSource( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))) {
+			return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.SkyCall(model.Store.ReadOverview, struct{}{})), State_Msg_GotOverview), tabFetches( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model), any(tab).(State_Tab) /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.Coerce[State_LogFilter_R](filter))))
 		} else {
 			return rt.Cmd_none()
 		}
@@ -7145,6 +7674,7 @@ func fetchForTab(model State_Model_R, tab State_Tab, filter State_LogFilter_R) r
 
 // SKY-ORIGIN: src/Main.sky:527:1
 func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []rt.SkyCmd_T[State_Msg] {
+	// PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation)
 	return func() []rt.SkyCmd_T[State_Msg] {
 		if rt.AsBool(model.HubDbPath != "") {
 			return func() []rt.SkyCmd_T[State_Msg] {
@@ -7154,16 +7684,16 @@ func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []
 					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.SkyCall(model.Store.ReadServiceStats, struct{}{})), State_Msg_GotServiceStats)})
 				}
 				if rt.EnumTagIs(__subject, 2) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadFilteredLogs, model.SelectedService, filter)), State_Msg_GotLogs)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadFilteredLogs, model.SelectedService, filter)), State_Msg_GotLogs)})
 				}
 				if rt.EnumTagIs(__subject, 1) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(model.Store.ReadFilteredMetrics, model.SelectedService)), State_Msg_GotMetrics)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(model.Store.ReadFilteredMetrics, model.SelectedService)), State_Msg_GotMetrics)})
 				}
 				if rt.EnumTagIs(__subject, 3) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadFilteredTraces, model.SelectedService)), State_Msg_GotTraces)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadFilteredTraces, model.SelectedService)), State_Msg_GotTraces)})
 				}
 				if rt.EnumTagIs(__subject, 4) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(model.Store.ReadFilteredErrors, model.SelectedService)), State_Msg_GotErrors)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(model.Store.ReadFilteredErrors, model.SelectedService)), State_Msg_GotErrors)})
 				}
 				_ = rt.Unreachable("case/__subject")
 				return nil
@@ -7173,19 +7703,19 @@ func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []
 				__subject := tab
 				_ = __subject
 				if rt.EnumTagIs(__subject, 0) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.SkyCall(model.Store.ReadServiceStats, struct{}{})), State_Msg_GotServiceStats)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.SkyCall(model.Store.ReadServiceStats, struct{}{})), State_Msg_GotServiceStats)})
 				}
 				if rt.EnumTagIs(__subject, 2) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadLogs, filter)), State_Msg_GotLogs)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.SkyCall(model.Store.ReadLogs, filter)), State_Msg_GotLogs)})
 				}
 				if rt.EnumTagIs(__subject, 1) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(model.Store.ReadMetrics, struct{}{})), State_Msg_GotMetrics)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.SkyCall(model.Store.ReadMetrics, struct{}{})), State_Msg_GotMetrics)})
 				}
 				if rt.EnumTagIs(__subject, 3) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadTraces, struct{}{})), State_Msg_GotTraces)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.SkyCall(model.Store.ReadTraces, struct{}{})), State_Msg_GotTraces)})
 				}
 				if rt.EnumTagIs(__subject, 4) {
-					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform(rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(model.Store.ReadErrors, struct{}{})), State_Msg_GotErrors)})
+					return rt.AsListT[rt.SkyCmd_T[State_Msg]]([]any{rt.Cmd_perform( /* PROOF: FFI: SkyTask[any,any] → SkyTask[E,A] (typed instantiation) */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.SkyCall(model.Store.ReadErrors, struct{}{})), State_Msg_GotErrors)})
 				}
 				_ = rt.Unreachable("case/__subject")
 				return nil
@@ -7197,20 +7727,23 @@ func tabFetches(model State_Model_R, tab State_Tab, filter State_LogFilter_R) []
 
 // SKY-ORIGIN: src/Main.sky:587:1
 func fetchOverview(parent string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
-		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(overviewDecoder(), rt.Field(resp, "Body")))
-	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/overview"))))
+		return /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.ResultCoerce[any, any](rt.JsonDec_decodeString(overviewDecoder(), rt.Field(resp, "Body")))
+	} /* PROOF: JSON-narrow: JSON decoder → typed value */, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/overview"))))
 }
 
 // SKY-ORIGIN: src/Main.sky:593:1
 func fetchLogs(parent string, filter State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
-		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(logsDecoder(), rt.Field(resp, "Body")))
-	}, rt.TaskCoerceT[any, any](rt.Http_get(rt.Concat(parent, rt.Concat("/_sky/console/api/logs?limit=200", buildLogQuery(rt.Coerce[State_LogFilter_R](filter))))))))
+		return /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.ResultCoerce[any, any](rt.JsonDec_decodeString(logsDecoder(), rt.Field(resp, "Body")))
+	} /* PROOF: JSON-narrow: JSON decoder → typed value */, rt.TaskCoerceT[any, any](rt.Http_get(rt.Concat(parent, rt.Concat("/_sky/console/api/logs?limit=200", buildLogQuery( /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.Coerce[State_LogFilter_R](filter))))))))
 }
 
 // SKY-ORIGIN: src/Main.sky:602:1
 func buildLogQuery(f State_LogFilter_R) string {
+	// PROOF: FFI: primitive narrowing (typed slot)
 	return func() string {
 		levels := rt.Concat(func() any {
 			if rt.AsBool(f.ShowDebug) {
@@ -7246,7 +7779,7 @@ func buildLogQuery(f State_LogFilter_R) string {
 			if rt.AsBool(rt.Eq(rt.List_lengthT[string](rt.AsListT[string](levels)), 4)) {
 				return ""
 			} else {
-				return rt.CoerceString(rt.Concat("&level=", rt.String_join(",", levels)))
+				return /* PROOF: FFI: primitive narrowing (typed slot) */ rt.CoerceString(rt.Concat("&level=", rt.String_join(",", levels)))
 			}
 			return ""
 		}())
@@ -7255,30 +7788,34 @@ func buildLogQuery(f State_LogFilter_R) string {
 
 // SKY-ORIGIN: src/Main.sky:619:1
 func fetchMetrics(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
-		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(metricsDecoder(), rt.Field(resp, "Body")))
-	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/metrics-summary"))))
+		return /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.ResultCoerce[any, any](rt.JsonDec_decodeString(metricsDecoder(), rt.Field(resp, "Body")))
+	} /* PROOF: JSON-narrow: JSON decoder → typed value */, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/metrics-summary"))))
 }
 
 // SKY-ORIGIN: src/Main.sky:625:1
 func fetchTraces(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
-		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(tracesDecoder(), rt.Field(resp, "Body")))
-	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/traces?limit=100"))))
+		return /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.ResultCoerce[any, any](rt.JsonDec_decodeString(tracesDecoder(), rt.Field(resp, "Body")))
+	} /* PROOF: JSON-narrow: JSON decoder → typed value */, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/traces?limit=100"))))
 }
 
 // SKY-ORIGIN: src/Main.sky:631:1
 func fetchErrors(parent string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	// PROOF: JSON-narrow: JSON decoder → typed value
 	return rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Task_andThenResult(func(resp any) rt.SkyResult[any, any] {
-		return rt.ResultCoerce[any, any](rt.JsonDec_decodeString(errorsDecoder(), rt.Field(resp, "Body")))
-	}, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/errors"))))
+		return /* PROOF: JSON-narrow: JSON decoder → typed value */ rt.ResultCoerce[any, any](rt.JsonDec_decodeString(errorsDecoder(), rt.Field(resp, "Body")))
+	} /* PROOF: JSON-narrow: JSON decoder → typed value */, rt.TaskCoerceT[any, any](rt.Http_get(parent+"/_sky/console/api/errors"))))
 }
 
 // SKY-ORIGIN: src/Main.sky:637:1
 func subscriptions(model State_Model_R) rt.SkySub_T[State_Msg] {
+	// PROOF: FFI: stdlib ADT constructor → typed alias
 	return rt.Coerce[rt.SkySub_T[State_Msg]](func() any {
-		if rt.AsBool(hasStoreSource(rt.Coerce[State_Model_R](model))) {
-			return rt.Sub_every(rt.CoerceInt(tickIntervalMs(any(model.Tab).(State_Tab))), State_Msg_Tick)
+		if rt.AsBool(hasStoreSource( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))) {
+			return rt.Sub_every( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(tickIntervalMs(any(model.Tab).(State_Tab))), State_Msg_Tick)
 		} else {
 			return rt.Sub_none()
 		}
@@ -7305,20 +7842,72 @@ func tickIntervalMs(tab State_Tab) int {
 
 // SKY-ORIGIN: src/Main.sky:677:1
 func viewWrapped(model State_Model_R) rt.SkyValue {
-	return rt.Coerce[rt.SkyValue](Std_Ui_layout(rt.AsListT[rt.SkyAttribute]([]any{}), any(View_view(rt.Coerce[State_Model_R](model))).(Std_Ui_Element)))
+	// PROOF: FFI: stdlib ADT constructor → typed alias
+	return rt.Coerce[rt.SkyValue](Std_Ui_layout(rt.AsListT[rt.SkyAttribute]([]any{}), any(View_view( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[State_Model_R](model))).(Std_Ui_Element)))
+}
+
+type Anon_R_baseMs_jitter_kind_maxAttempts_shouldRetry__gsumkitj = struct {
+	MaxAttempts int
+	BaseMs      int
+	Jitter      bool
+	Kind        int
+	ShouldRetry Sky_Core_Task_ShouldRetry
+}
+
+type Anon_R_bottom_left_right_top__237rntgq = struct {
+	Left   int
+	Right  int
+	Top    int
+	Bottom int
+}
+
+type Anon_R_bufferLogUsed_bufferTraceUsed_builtAt_commit_errorRate5xx_productionMode_requestsTotal_skyVersion_uptimeSeconds__5ljo3bfj = struct {
+	SkyVersion      string
+	Commit          string
+	BuiltAt         string
+	UptimeSeconds   int
+	RequestsTotal   int
+	ErrorRate5xx    float64
+	BufferLogUsed   int
+	BufferTraceUsed int
+	ProductionMode  bool
+}
+
+type Anon_R_color_gridLines_height_title_width_yRange__54vqoqlq = struct {
+	Width     int
+	Height    int
+	Color     Std_Ui_Color
+	Title     rt.SkyMaybe[string]
+	YRange    rt.SkyMaybe[rt.T2[float64, float64]]
+	GridLines bool
+}
+
+type Anon_R_query_session_showDebug_showError_showInfo_showWarn__42e5vnsn = struct {
+	Query     string
+	Session   string
+	ShowDebug bool
+	ShowInfo  bool
+	ShowWarn  bool
+	ShowError bool
+}
+
+type Anon_R_rootAttrs_wrapperAttrs__5n085ahc = struct {
+	WrapperAttrs []rt.SkyAttribute
+	RootAttrs    []rt.SkyAttribute
 }
 
 func Sky_Core_Maybe_withDefault__String(def string, m rt.SkyMaybe[string]) string {
+	// PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation)
 	return func() string {
 		__subject := rt.MaybeCoerce[any](m)
 		_ = __subject
 		if __subject.Tag == 0 {
 			x := rt.MaybeJust(any(__subject))
 			_ = x
-			return rt.Coerce[string](x)
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.Coerce[string](x)
 		}
 		if __subject.Tag == 1 {
-			return rt.Coerce[string](def)
+			return /* PROOF: FFI: SkyMaybe[any] → SkyMaybe[T] (typed instantiation) */ rt.Coerce[string](def)
 		}
 		_ = rt.Unreachable("case/__subject")
 		return *new(string)
