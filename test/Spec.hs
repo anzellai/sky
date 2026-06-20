@@ -58,6 +58,7 @@ import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
+import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -427,6 +428,19 @@ allSpecs fastMode = do
     describeT "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
     describeT "Sky.Build.RtFieldAdtBug342" Sky.Build.RtFieldAdtBug342Spec.spec
     describeT "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
+    -- v0.17 step-0b: CPS stack-constant-bound umbrella spec
+    -- infrastructure (Limitation #8 close). MapBaselineSpec
+    -- re-encodes step-8's (commit 8e5dbd4f) assertions as a
+    -- cabal-test regression gate using the four Shared.hs
+    -- combinators (assertHelperEmitted /
+    -- assertNoKernelFallback / assertForContinueInHelper /
+    -- assertConstantStack1M). Each subsequent CPS rewrite
+    -- (filter / foldr / length / concat / take / append /
+    -- range / zip / concatMap / indexedMap / Maybe.combine /
+    -- Result.combine) ships its own <Op>Spec.hs sibling that
+    -- reuses the same helpers.
+    describeT "Sky.Build.CpsStackConstantBound.MapBaseline"
+        Sky.Build.CpsStackConstantBound.MapBaselineSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
