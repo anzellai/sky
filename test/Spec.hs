@@ -10,6 +10,7 @@ import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
 import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
+import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -206,6 +207,15 @@ allSpecs fastMode = do
     -- GoTypeRoundTrip parity specs below to close v0.17 criteria
     -- #2 + #5 as MANDATORY cabal-test items.
     describeT "Sky.Build.EraseBandAidAbsent" Sky.Build.EraseBandAidAbsentSpec.spec
+    -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
+    -- 'globalAnonRecords' IORef writer audit. Pairs with the
+    -- documentation block above 'generateAnonRecordDecls' in
+    -- Sky.Build.Compile that enumerates the legitimate writers.
+    -- Trips if a future PR introduces a new write site without
+    -- updating the audit; protects the emission-time read at
+    -- generateAnonRecordDecls from silent shape loss
+    -- (the failure mode is 'go build' -> "undefined: Anon_R_…").
+    describeT "Sky.Build.AnonRecordWriterAudit" Sky.Build.AnonRecordWriterAuditSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).

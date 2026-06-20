@@ -5588,7 +5588,52 @@ generateUnionTypes canMod =
         T.TUnit         -> False
 
 
--- | v0.13 E: emit one Go struct decl per registered anon-record
+-- v0.17 IORef writer audit — @globalAnonRecords@.
+--
+-- This IORef is the process-wide registry of anonymous-record
+-- shapes (canonical definition in
+-- 'Sky.Generate.Go.AnonRecords').  The audit gate guarantees the
+-- only paths that MUTATE the registry are accounted for, and ALL
+-- of them fire BEFORE the emission-time read at
+-- 'generateAnonRecordDecls' (this function, ~5615).  Any future
+-- writer must (a) appear in this list and (b) prove it fires
+-- before the read — otherwise the typed renderer can emit an
+-- @Anon_R_…@ token without a matching @type Anon_R_… struct@
+-- decl and @go build@ fails with "undefined: Anon_R_…".
+--
+-- Documented writers (verified by
+-- 'Sky.Build.AnonRecordWriterAuditSpec'):
+--
+-- 1. @resetCompileState@ @ "Sky.Build.Compile" :1273 —
+--    @writeIORef globalAnonRecords Map.empty@.  Empties the
+--    registry at the start of each compile.  Fires before any
+--    typed-codegen pass, so subsequent registrations land in a
+--    clean map.
+--
+-- 2. @synthAnonRecordName@ @ "Sky.Generate.Go.AnonRecords" :76 —
+--    @atomicModifyIORef' globalAnonRecords …@.  Registers a
+--    shape the first time the renderer asks for its synthesised
+--    name.  Fires during typed-codegen, BEFORE the final
+--    @generateAnonRecordDecls@ pass that snapshots the registry
+--    for emission.
+--
+-- 3. @resetAnonRecords@ @ "Sky.Generate.Go.AnonRecords" :88 —
+--    @atomicWriteIORef globalAnonRecords Map.empty@.  Exported
+--    helper for cleanly resetting the registry between
+--    in-process compile passes.  Currently unused at runtime
+--    (the Compile.hs reset path covers the bootstrap case);
+--    retained as the public API for harness-style callers.
+--
+-- INVARIANT:
+--   NO emission-time path may write @globalAnonRecords@ after
+--   @readIORef globalAnonRecords@ at :5615 below has fired.
+--   The audit spec ('Sky.Build.AnonRecordWriterAuditSpec')
+--   greps @src/@ for @\b(?:atomic)?(?:Modify|Write)IORef'? +globalAnonRecords@
+--   call sites and rejects any count other than the three
+--   above.  A new writer requires updating this comment AND
+--   proving the new write fires before the force-point.
+--
+-- v0.13 E: emit one Go struct decl per registered anon-record
 -- shape so the renderer's `Anon_R_<hash>` names actually resolve.
 --
 -- Pre-E `sanitiseTypedDeep` rewrote every `Anon_R_*` token in
