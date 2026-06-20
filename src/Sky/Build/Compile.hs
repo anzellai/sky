@@ -7413,7 +7413,20 @@ wrapTypedReturn ctx mSrc retType body
     -- v0.13 typed lowerer: skip the coercion when `body` is already
     -- provably the target type — no redundant `rt.CoerceInt(int)` /
     -- `rt.Coerce[T](T)` wrap.
-    | goExprGoType ctx Nothing body == Just retType = body
+    --
+    -- v0.17 step-2 (attack-#1 critical concern #1 / amendment A1):
+    -- thread `mSrc` into the fast-path so `goExprGoType` can consult
+    -- HM via Solve.lookupSolvedRegion for accurate static-type
+    -- recovery on the structural fallback (currently Nothing-blind
+    -- callers like `wrapTypedReturn (Just origExpr) …` at
+    -- Compile.hs:16742 lost the source signal at this fast-path
+    -- gate even though they passed it through `mSrc`).
+    -- `goExprGoType` is structurally-safe with `mSrc` — the
+    -- fallback gate only fires for `GoCall (GoIdent name) _` where
+    -- `name` is a Sky-emitted user function whose declared Go
+    -- return matches the HM type exactly.  Other shapes still fall
+    -- through to `Nothing`.
+    | goExprGoType ctx mSrc body == Just retType = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
             (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParams ctx mSrc "Result" params ++ "]"))
