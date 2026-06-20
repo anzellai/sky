@@ -2087,22 +2087,36 @@ verified against HEAD.
    binding with `()` is currently silently accepted at codegen,
    surfacing only as a Go build error or runtime panic.
 
-   **v0.17 status — IN PROGRESS.** Regression spec
-   `Sky.Type.StrictHmArityGateSpec` ships **4 live POSITIVE
-   assertions** (h-a HeadAlias unfold / p-a Pure.* canonical /
-   wp-a real polymorphism / wa-a wildcard-only soundness) +
-   **4 NEGATIVE arms still `pendingWith`** (k-a / k-b / u-a /
-   u-b). The 4 positives lock the shapes that MUST keep
-   compiling once the gate lands — so any future closure
-   attempt that mis-classifies them fails fast. The 4 negative
-   arms remain pending until the strict-HM closure wiring lands
-   in `src/Sky/Type/Constrain/Expression.hs` (`Can.VarKernel` +
-   `Can.VarTopLevel` + `Can.VarLocal` arms + `constrainCall` +
-   `globalCallHeadFlag` for value-slot reference) — see the
-   design note at lines 810-867 of that file. The companion
-   `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` (6 red-then-
-   green cases) tracks the current loose-acceptance shapes that
-   will FLIP on gate landing.
+   **v0.17 status — IN PROGRESS — PR-A scaffolding shipped.**
+   The multi-PR close path is now under way:
+
+   * **PR-A — SHIPPED** (`Sky.Type.Type.Constraint` extended with
+     `CArityMismatch !Region !String !Int !Int` + matching arms
+     in `Sky.Type.Solve.solveHelpBody` + `countConstraints`).
+     Diagnostic code `E2007` reserved at
+     `Sky.Reporting.Diagnostic.typeE_ArityMismatch`. Solver
+     short-circuits on first error (matches existing CEqual
+     pattern). Regression spec
+     `Sky.Type.ArityMismatchScaffoldSpec` (6 gates) proves the
+     constructor is reachable end-to-end without depending on
+     any caller. **No behaviour change** — no caller wires the
+     gate yet.
+   * **PR-B, PR-C, PR-D — PENDING.** Add `declaredArity` pure
+     helper + verify externals safety (PR-B); wire gate at
+     `constrainCall` for k-a + u-a (PR-C); value-slot case for
+     k-b + u-b (PR-D). See full plan at
+     `docs/v0.17-roadmap/strict-hm-arity-gate-design.md`.
+
+   Regression spec `Sky.Type.StrictHmArityGateSpec` ships
+   **4 live POSITIVE assertions** (h-a HeadAlias unfold /
+   p-a Pure.* canonical / wp-a real polymorphism / wa-a
+   wildcard-only soundness) + **4 NEGATIVE arms still
+   `pendingWith`** (k-a / k-b / u-a / u-b). The 4 positives lock
+   the shapes that MUST keep compiling once the gate lands.
+   The 4 negative arms flip live as PR-C + PR-D land. The
+   companion `Sky.Type.Limitation7CurrentLooseAcceptanceSpec`
+   (6 red-then-green cases) tracks the current loose-acceptance
+   shapes that will FLIP on gate landing.
 
    **v0.15.50 mitigation — `Sky.Core.Pure`.** New code targeting
    a uniform `() -> Task Error a` shape can import

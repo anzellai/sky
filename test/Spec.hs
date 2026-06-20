@@ -37,6 +37,7 @@ import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Type.StrictHmArityGateSpec
+import qualified Sky.Type.ArityMismatchScaffoldSpec
 import qualified Sky.Type.Limitation7CurrentLooseAcceptanceSpec
 import qualified Sky.Build.GoTypeAdtSpec
 import qualified Sky.Build.GoTypeRoundTripSpec
@@ -720,6 +721,20 @@ allSpecs fastMode = do
     -- pendings to live assertions (CompileErr / CompileOk).
     describeT "Sky.Type.StrictHmArityGate"
                                          Sky.Type.StrictHmArityGateSpec.spec
+    -- v0.17 PR-A scaffolding regression: CArityMismatch constructor
+    -- + solveHelpBody arm + countConstraints arm are wired
+    -- end-to-end at the solver layer.  No callers wire the gate
+    -- yet (PR-B-D follow per
+    -- docs/v0.17-roadmap/strict-hm-arity-gate-design.md); this
+    -- spec proves the constructor is reachable + the diagnostic
+    -- carries the binding name + declared/supplied arities + the
+    -- [E2007] code prefix.  Load-bearing because the cabal file
+    -- enables `-Wno-incomplete-patterns` — without this spec, a
+    -- missing arm in either solver consumer becomes a runtime
+    -- `Non-exhaustive patterns` exception under PR-B-D's
+    -- caller wiring.
+    describeT "Sky.Type.ArityMismatchScaffold"
+                                         Sky.Type.ArityMismatchScaffoldSpec.spec
     -- v0.17 Limitation #7 closure / step-1 — "red-then-green"
     -- reproduction gate.  Six fixtures: four NEGATIVE cases
     -- (loose-shape applications currently accepted by Sky lowering —

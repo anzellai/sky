@@ -675,6 +675,7 @@ countConstraints = go
         T.CLocal _ _ _           -> 1
         T.CForeign _ _ _ _       -> 1
         T.CPattern _ _ _ _       -> 1
+        T.CArityMismatch _ _ _ _ -> 1
         T.CAnd cs                -> 1 + sum (map go cs)
         T.CLet { T._headerCon = h, T._bodyCon = b } ->
             1 + go h + go b
@@ -1184,6 +1185,21 @@ solveHelpBody state constraint = case constraint of
 
     T.CAnd constraints ->
         solveAll state constraints
+
+    T.CArityMismatch region name declared supplied -> do
+        -- v0.17 strict-HM gate (Limitation #7 close path) — PR-A
+        -- scaffolding arm.  No caller wires this up yet (PR-B-D
+        -- add gate emission at constrainCall + Can.VarKernel /
+        -- Can.VarTopLevel arms).  Returns Just msg to match the
+        -- short-circuit pattern of CEqual; later constraints stop
+        -- once the first error is reached (per existing solver
+        -- contract).  Stub message — polished diagnostic + Pure.*
+        -- migration hint land in PR-C.
+        let msg = posPrefix region
+                ++ "[E2007] Arity mismatch — `" ++ name
+                ++ "` declared as " ++ show declared
+                ++ "-arg, called with " ++ show supplied ++ " args."
+        return (Just msg, state)
 
     T.CEqual region _category actualType expected -> do
         actualVar <- typeToVar state actualType
