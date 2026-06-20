@@ -210,8 +210,17 @@ spec = do
         -- Task Error Response`) must continue to compile.  The
         -- gate must NOT mis-classify the alias-head shape as an
         -- arity mismatch.
+        --
+        -- Iter 27 (2026-06-20): the gate's NEGATIVE arms (k-a / k-b /
+        -- u-a / u-b) remain pendingWith because the strict-HM
+        -- closure shape is multi-PR work and needs per-commit
+        -- adversarial grilling per feedback_v017_per_commit_grill.
+        -- Flipping the POSITIVES live LOCKS the four shapes that
+        -- must NEVER regress once the gate lands — so any future
+        -- closure attempt that breaks HeadAlias / Pure.* /
+        -- real-polymorphism / wildcard-only fails fast here.
         it "h-a: HeadAlias positive — myHandler : Handler compiles" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -226,46 +235,54 @@ spec = do
                     , "main ="
                     , "    println \"ok\""
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileErr e -> expectationFailure
-            --           ("HeadAlias positive must compile: " ++ e)
-            --       CompileOk _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure
+                    ("HeadAlias positive must compile: " ++ e)
+                CompileOk _ -> return ()
 
         -- p-a: Pure.* positive — guards user-directive canonical
         -- mitigation surface (CLAUDE.md §Limitation #7 +
         -- v0.15.50 / task #395).  `Pure.uuidV4 ()` is the uniform
         -- `() -> Task Error T` surface that EXISTS to be called
-        -- with `()`; step-4's gate must exempt it.
+        -- with `()`; the closure shape's gate must exempt it.
         it "p-a: Pure.* positive — Pure.uuidV4 () compiles" $ do
-            let _src = unlines
+            -- The pre-flip stub fixture used `Task.perform task cb`
+            -- (2 args) which is the Cmd.perform shape, not Task.perform's
+            -- 1-arg `Task e a -> Result e a` shape.  The post-flip
+            -- fixture stores `Pure.uuidV4 ()` directly as a
+            -- `Task Error String` value (the load-bearing assertion
+            -- for the canonical-surface guard) — what matters is the
+            -- () call typechecks, not how it's subsequently consumed.
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
                     , "import Sky.Core.Pure as Pure"
-                    , "import Sky.Core.Task as Task"
+                    , ""
+                    , "uuidTask : Task Error String"
+                    , "uuidTask ="
+                    , "    Pure.uuidV4 ()"
                     , ""
                     , "main ="
-                    , "    Task.perform (Pure.uuidV4 ()) (\\_ -> println \"ok\")"
+                    , "    let _ = uuidTask"
+                    , "    in"
+                    , "        println \"ok\""
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileErr e -> expectationFailure
-            --           ("Pure.* canonical surface must compile: " ++ e)
-            --       CompileOk _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure
+                    ("Pure.* canonical surface must compile: " ++ e)
+                CompileOk _ -> return ()
 
         -- wp-a: Wildcard-any-with-real-poly positive.  `foo : a ->
         -- a` is REAL polymorphism (the free var `a` is non-`any`)
         -- — the gate must keep this flexible across instantiation.
-        -- Step-4's gate must check `any (/= "any") freeVars` (per
-        -- the wildcard-any soundness rule in CLAUDE.md), NOT
-        -- `not (null freeVars)`.
+        -- The closure shape's gate must check `any (/= "any")
+        -- freeVars` (per the wildcard-any soundness rule in
+        -- CLAUDE.md), NOT `not (null freeVars)`.
         it "wp-a: wildcard-any positive — Forall with non-`any` var stays polymorphic" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -276,13 +293,11 @@ spec = do
                     , "main ="
                     , "    println (foo \"hi\")"
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileErr e -> expectationFailure
-            --           ("real polymorphism must stay flexible: " ++ e)
-            --       CompileOk _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure
+                    ("real polymorphism must stay flexible: " ++ e)
+                CompileOk _ -> return ()
 
         -- wa-a: Wildcard-any-only positive (preserved).  `view :
         -- Model -> any` where every free var is `any` is
@@ -295,7 +310,7 @@ spec = do
         -- corresponding unsound shape is already locked by
         -- Sky.Type.AnyWildcardSpec.
         it "wa-a: wildcard-any-only positive — `view : Model -> any` sound shape compiles" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -310,23 +325,10 @@ spec = do
                     , "    in"
                     , "        println \"ok\""
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileErr e -> expectationFailure
-            --           ("wildcard-only Forall sound shape must compile: " ++ e)
-            --       CompileOk _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure
+                    ("wildcard-only Forall sound shape must compile: " ++ e)
+                CompileOk _ -> return ()
 
 
--- | Suppress unused-import warnings while every case is pending.
--- Step-4 will flip the cases to use these imports live, at which
--- point this stub becomes dead code and can be removed in the
--- same flip commit.
-_unusedImportsKeepAlive :: IO ()
-_unusedImportsKeepAlive = do
-    let _ = compileInProcess
-        _go r = case r of
-            CompileOk _ -> ()
-            CompileErr _ -> ()
-    return ()
