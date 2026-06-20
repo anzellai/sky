@@ -63,6 +63,50 @@ A Judge verdict of "100% ACHIEVED" requires ALL of:
   user response.
 - User explicitly revokes the mandate.
 
+## User directives logged (resume context — persists across sessions)
+
+### 2026-06-20 — getCgEnv migration blocker (commit c8ce19e2)
+
+Workflow round 4 surfaced surviving `globalCgEnv` + `getCgEnv` CAF
+(69 refs, 53 IORef refs, 128 `_cg_*` accessors) as genuine
+implementation blocker per CLAUDE.md §0 rule 4. Full close requires
+emitPhase extraction = PR-α Stage 3 (#659, in_progress) + PR-α
+Stage 4 (capstone, ~4-6 sessions).
+
+**User decision: Option A** — Land PR-α Stage 3 + Stage 4 as their
+own dedicated batch AFTER the current #644 verification cycle
+completes. NOT folded into current batch (would explode scope).
+
+Implementation path:
+1. Complete current #644 anon-record close batch (rounds 1-4
+   progress to ship to user-visible state).
+2. NEW dedicated PR-α Stage 3+4 batch — multi-session, per-commit
+   grilled review per feedback_v017_per_commit_grill.
+3. Stage 4 emitPhase extraction closes ALL surviving getCgEnv reads.
+4. After Stage 4 lands → re-spawn Judge → expect 100% ACHIEVED on
+   criterion #3.
+
+This user-direction is DURABLE. Future workflows / sessions reading
+this file should follow Option A unless the user explicitly overrides.
+
+## Round 1-4 progress snapshot (2026-06-20)
+
+Real architectural progress shipped on `feat/v0.17-fully-typed-codegen`:
+  * `04d6f707` — band-aid `eraseUndeclaredTVarsInGoSource` DELETED
+  * `06ede8b2` — EraseBandAidAbsent regression gate (criterion #2)
+  * `cde54107` — gap-3 (Anon_R_* under SKY_GOSIG_DIFF) FIXED
+  * `6fd2f4ea` — `globalGoSigMap` IORef DELETED (#654 step-5)
+  * `7f168a13` — rt.Coerce closed-proof annotation framework
+  * `af6899b3` — rt.Coerce* per-cluster ratchet-down gate
+  * `52fd4aa6` — AnonRecordWriterAuditSpec
+  * `041ff5fa` — strict-eval end-of-module Anon_R_ safety net
+  * `c8ce19e2` — getCgEnv migration filed as blocker (this directive)
+  * `320b6719` — anon-record subprocess fixture reproduction spec
+
+Closes criteria #2 + #4 + partial #3. Remaining: #1 (rt.Coerce →0),
+#3 (globalCgEnv via Option A), #5 (GoTypeAdt parity tests),
+#6 (limitations #7/#8), #7 (Cycle 6 #383), #8 (fuzzer), #10 (Judge).
+
 ## What CANNOT close this
 
 - "My narrow lens 3-agent verification passed" — that's not the
