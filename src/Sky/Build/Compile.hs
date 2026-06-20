@@ -5318,11 +5318,47 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             , GoIr._pkg_imports = imports
             , GoIr._pkg_decls = rtPin ++ errorAliasStub ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ anonRecordDecls ++ specDecls ++ mainDecl
             }
+        -- v0.17 step-3 (task #659) — strict-eval end-of-module
+        -- anonymous-record decl safety net.  Adversary-1 #4 +
+        -- adversary-2 #2: after the full Go source is rendered,
+        -- scan it for every @Anon_R_<hash>@ token referenced as a
+        -- type identifier.  For each token that does NOT have a
+        -- matching @type Anon_R_<hash> = struct{...}@ decl in the
+        -- rendered output, recover the struct shape from its
+        -- accompanying cast site
+        -- (@struct{ Fields }{Init}.(Anon_R_<hash>)@) and append the
+        -- missing @type Anon_R_<hash> = struct{ Fields }@ decl
+        -- immediately before @func main()@.
+        --
+        -- Why this exists: the lazy 'globalAnonRecords' IORef
+        -- registration path (synthAnonRecordName at renderer time)
+        -- has hash-divergence races in cross-module HOF scenarios
+        -- (iter-18 fixture) where the cast site computes
+        -- 'synthAnonRecordName' with @[]any@ field types while the
+        -- enclosing register pass computed @[]rt.SkyAttribute@.
+        -- The two paths produce DIFFERENT hashes, so only one
+        -- shape gets a backing @type@ decl while the OTHER hash
+        -- ends up as the cast token — @go build@ then rejects with
+        -- @undefined: Anon_R_…@.
+        --
+        -- The safety net synthesises a decl matching the cast's
+        -- LITERAL struct shape — the Go compiler then accepts the
+        -- cast (the rendered struct type matches the synthesised
+        -- alias byte-for-byte).  Coverage is correct by
+        -- construction: every cast site carries its own struct
+        -- shape, so the recovery is shape-faithful.
+        --
+        -- Pre step-3: iter-18 of
+        -- 'Sky.Build.AnonRecordSubprocessFixture' fails with
+        -- "undefined: Anon_R_rootAttrs_wrapperAttrs__…".
+        -- Post step-3: iter-18 + iter-20 both green.
+        rawGoCode = GoBuilder.renderPackage pkg
+        finalGoCode = patchMissingAnonRecordDecls rawGoCode
     -- Force `lowerCtx` so the IORef snapshot actually runs (v0.16
     -- PR 1).  The value has no callers in this PR — PRs 2-6 migrate
     -- `exprToGo` etc. to consume it — but exercising the snapshot
     -- here verifies the scaffolding works in every release build.
-    in lowerCtx `seq` GoBuilder.renderPackage pkg
+    in lowerCtx `seq` finalGoCode
 
 
 -- | Emit a Go if-not-already-set runtime default for a sky.toml-derived
@@ -5378,7 +5414,10 @@ generateGo consoleNeeded canMod srcMod config solvedTypes =
             , GoIr._pkg_imports = imports
             , GoIr._pkg_decls = unionDecls ++ aliasDecls ++ decls ++ anonRecordDecls ++ mainDecl
             }
-    in GoBuilder.renderPackage pkg
+    -- v0.17 step-3 (task #659) — strict-eval end-of-module
+    -- anonymous-record decl safety net.  See 'generateGoMulti'
+    -- for the full rationale.  Single-module path: same gate.
+    in patchMissingAnonRecordDecls (GoBuilder.renderPackage pkg)
 
 
 -- | Collect Go imports needed
@@ -5680,6 +5719,211 @@ generateAnonRecordDecls = do
                     else "{ " ++ intercalate_ "; " fieldStrs ++ " }"
         in [ GoIr.GoDeclRaw $
                 "type " ++ name ++ " = struct " ++ structBody ]
+
+
+-- | v0.17 step-3 (task #659) — strict-eval end-of-module anonymous-record
+-- decl safety net.  Post-render scan + recovery.
+--
+-- ADVERSARIAL FRAMING (adversary-1 #4 + adversary-2 #2):
+-- The lazy 'globalAnonRecords' IORef registration path
+-- ('synthAnonRecordName' at renderer time) has hash-divergence races
+-- in cross-module HOF scenarios.  Two paths may register the SAME
+-- shape with DIFFERENT hashes (one with @[]any@ fields, the other
+-- with @[]rt.SkyAttribute@) because the hash is computed from the
+-- 'Show' of the field types.  The cast token at the use-site
+-- references one hash; the @type Anon_R_…@ decl uses the other.
+-- @go build@ then rejects with "undefined: Anon_R_…".
+--
+-- ROOT-CAUSE FIX: instead of trying to keep both registration sites
+-- in lockstep (an architectural impossibility under Haskell laziness
+-- + IORef + multi-thread emission), accept that the CAST SITE is the
+-- source of truth.  Every cast site is rendered as
+-- @struct{ Fields }{Init}.(Anon_R_<hash>)@.  The struct shape AT the
+-- cast site is exactly what 'go build' needs the @type Anon_R_<hash>@
+-- to alias.  So: scan the rendered Go for missing Anon_R_ decls, and
+-- for each missing token, recover the struct shape from its cast
+-- site and synthesise the @type Anon_R_<hash> = struct{ Fields }@.
+--
+-- Coverage is correct by construction: every cast site carries its
+-- own struct shape; the recovery is shape-faithful per cast.  This
+-- means iter-18 and any future shape variant of the same leak class
+-- close automatically without architectural recovery work.
+--
+-- Insertion point: immediately before @func main()@.  That's the
+-- canonical pos for late-bound auxiliary decls (after every other
+-- decl has rendered, before the entry point).  If @func main()@ is
+-- absent (single-module library compile) the decls go at end of file.
+patchMissingAnonRecordDecls :: String -> String
+patchMissingAnonRecordDecls src =
+    let referenced = collectAnonRefs src
+        declared   = collectAnonDecls src
+        missing    = filter (`notElem` declared) referenced
+    in case missing of
+        [] -> src
+        ms ->
+            let recovered =
+                    [ d
+                    | name <- ms
+                    , Just shape <- [findCastShape name src]
+                    , let d = "type " ++ name ++ " = struct" ++ shape
+                    ]
+                block = intercalate_ "\n" recovered
+            in if null recovered
+                   then src
+                   else insertBeforeMain block src
+  where
+    -- Insert a block of newline-separated decls immediately before
+    -- "func main()".  Adds a leading + trailing newline for readability.
+    insertBeforeMain block s =
+        let needle = "func main()"
+        in case breakOn needle s of
+            (before, after) | not (null after) ->
+                before ++ block ++ "\n\n" ++ after
+            _ -> s ++ "\n\n" ++ block ++ "\n"
+
+    -- breakOn p s = (prefix, p ++ suffix) — first occurrence
+    breakOn _ "" = ("", "")
+    breakOn p s@(c:cs)
+        | p `List.isPrefixOf` s = ("", s)
+        | otherwise =
+            let (before, after) = breakOn p cs
+            in (c:before, after)
+
+
+-- | Extract every @Anon_R_<token>@ identifier referenced in the
+-- rendered Go source.  A token is the maximal run of
+-- @[A-Za-z0-9_]@ following the @Anon_R_@ prefix.
+collectAnonRefs :: String -> [String]
+collectAnonRefs = uniqueSorted . go
+  where
+    go "" = []
+    go s
+        | "Anon_R_" `List.isPrefixOf` s =
+            let tok = takeWhile isAnonTokChar s
+                rest = dropWhile isAnonTokChar s
+            in tok : go rest
+        | otherwise = go (drop 1 s)
+
+
+-- | Extract every @Anon_R_<token>@ name that has a matching
+-- @type Anon_R_<token> = struct{...}@ declaration in the rendered Go.
+collectAnonDecls :: String -> [String]
+collectAnonDecls src = uniqueSorted
+    [ takeWhile isAnonTokChar after
+    | l <- lines src
+    , let stripped = dropWhile (== ' ') (dropWhile (== '\t') l)
+    , "type Anon_R_" `List.isPrefixOf` stripped
+    , let after = drop (length ("type " :: String)) stripped
+    ]
+
+
+-- | For a given missing @Anon_R_<hash>@ name, find a cast site
+-- @struct{ Fields }{Init}.(Anon_R_<hash>)@ in the rendered source
+-- and return the @{ Fields }@ struct body (with surrounding
+-- braces).  Returns 'Nothing' if no cast site found.
+--
+-- Algorithm: scan forward for the marker @".(NAME)"@.  When we find
+-- it, walk forward through @src@ from index 0 looking for the
+-- LAST @"struct{"@ that ENDS at a position before the marker.  Then
+-- forward-match balanced braces from the @{@ to find the matching
+-- @}@ — that's the SIG.  Skip the next @{ ... }@ (the INIT) and
+-- verify we land at the @.(NAME)@ marker we started from.
+findCastShape :: String -> String -> Maybe String
+findCastShape name src =
+    let marker = ".(" ++ name ++ ")"
+        -- All positions where ".(NAME)" occurs in src.
+        markerPoss = findAllPositions marker src
+    in case markerPoss of
+        [] -> Nothing
+        (pos:_) -> extractSigForCast pos src
+  where
+    -- Find every starting index of 'pat' in 'haystack'.
+    findAllPositions pat haystack = go 0 haystack
+      where
+        go _ "" = []
+        go i s
+            | pat `List.isPrefixOf` s = i : go (i + 1) (drop 1 s)
+            | otherwise               = go (i + 1) (drop 1 s)
+
+    -- Given the marker position in src, find the matching
+    -- "struct{ SIG }{ INIT }." that precedes it.
+    extractSigForCast markerPos s =
+        let -- All "struct{" starts before the marker.
+            structPoss =
+                [ i
+                | i <- [0 .. markerPos - 7]  -- need room for "struct{"
+                , "struct{" `List.isPrefixOf` drop i s
+                ]
+            -- Try each in REVERSE order (last-first), so the most
+            -- recent "struct{" before the marker is tried first.
+            tryStruct sp =
+                let sigStart = sp + length ("struct" :: String)
+                    -- sigStart points at the opening '{' of the SIG.
+                in case matchBalancedForward s sigStart '{' '}' of
+                    Nothing -> Nothing
+                    Just sigEnd ->
+                        -- sigEnd points at the matching '}'.  The
+                        -- INIT block follows.  Skip ws, expect '{'.
+                        let afterSig = sigEnd + 1
+                            initStart = skipWsForward s afterSig
+                        in if initStart >= length s ||
+                              s !! initStart /= '{'
+                            then Nothing
+                            else case matchBalancedForward s initStart '{' '}' of
+                                Nothing -> Nothing
+                                Just initEnd ->
+                                    -- After INIT close, we may have an optional
+                                    -- @any(...)@ wrapper that closes with @)@
+                                    -- BEFORE the @.(NAME)@.  Skip ws, optional
+                                    -- @)@, then expect @.(NAME)@ at markerPos.
+                                    let afterInit = initEnd + 1
+                                        afterClose = if afterInit < length s
+                                                       && s !! afterInit == ')'
+                                                       then afterInit + 1
+                                                       else afterInit
+                                    in if afterClose == markerPos
+                                       then Just (substring s sigStart (sigEnd + 1))
+                                       else Nothing
+        in firstJust (map tryStruct (reverse structPoss))
+
+    firstJust [] = Nothing
+    firstJust (Nothing:rest) = firstJust rest
+    firstJust (Just x:_) = Just x
+
+    substring s startIdx endIdx =
+        take (endIdx - startIdx) (drop startIdx s)
+
+    skipWsForward s i
+        | i >= length s = i
+        | s !! i `elem` (" \t\n" :: String) = skipWsForward s (i + 1)
+        | otherwise = i
+
+    -- Walk forward from index 'i' (which points at 'open') and
+    -- return the index of the matching 'close'.  Returns Nothing
+    -- if unbalanced.  Initial brace at index i is counted as +1.
+    matchBalancedForward s i open close = walk (i + 1) (1 :: Int)
+      where
+        walk !j !depth
+            | j >= length s = Nothing
+            | otherwise = case s !! j of
+                c | c == open  -> walk (j + 1) (depth + 1)
+                  | c == close ->
+                        if depth == 1
+                            then Just j
+                            else walk (j + 1) (depth - 1)
+                  | otherwise  -> walk (j + 1) depth
+
+
+-- Helper for ident-token chars (Go identifier rules).  Local helper
+-- name above shadowed by accident — provide a properly-named one.
+isAnonTokChar :: Char -> Bool
+isAnonTokChar c = c == '_' || (c >= 'a' && c <= 'z')
+                            || (c >= 'A' && c <= 'Z')
+                            || (c >= '0' && c <= '9')
+
+
+uniqueSorted :: Ord a => [a] -> [a]
+uniqueSorted = Set.toAscList . Set.fromList
 
 
 -- | Generate Go type declarations for record type aliases.
