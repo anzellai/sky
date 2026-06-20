@@ -290,14 +290,42 @@ drop n list =
                 drop (n - 1) rest
 
 
+-- | `append xs ys` — concatenate two lists.
+--
+-- v0.17 step-5 (Limitation #8): CPS / accumulator rewrite.
+-- The legacy `x :: append rest ys` shape recurses in the
+-- non-tail position (the cons happens after the recursive
+-- call returns), so a 1M-element input blew Go's
+-- `maxstacksize`.  The rewrite first reverses `xs` onto an
+-- empty accumulator via `reverseHelp` (already tail-recursive,
+-- already auto-TCO'd), then `appendHelp` walks the reversed
+-- prefix cons'ing each element onto `ys`.  Both phases are
+-- tail-recursive so `Sky.Build.TailCallOpt` lowers each to a
+-- `for { ... continue }` loop.
+--
+-- Output order is preserved: `reverseHelp [a, b, c] []` gives
+-- `[c, b, a]`, then cons'ing those onto `ys = [d, e]`
+-- in turn yields `[a, b, c, d, e]` — the head ends up at the
+-- front of the result.
 append xs ys =
-    case xs of
+    appendHelp (reverseHelp xs []) ys
+
+
+-- | `appendHelp revXs ys` — cons each element of `revXs` onto
+-- `ys`.  Tail-recursive so the emitted Go is a
+-- `for { ... continue }` loop.  Private helper for `append`.
+--
+-- INVARIANT: `revXs` is the REVERSED prefix; cons'ing each
+-- head onto `ys` in turn reconstructs the original
+-- left-to-right order.
+appendHelp revXs ys =
+    case revXs of
 
         [] ->
             ys
 
         x :: rest ->
-            x :: append rest ys
+            appendHelp rest (x :: ys)
 
 
 -- | `concat lists` — flatten a list of lists.
