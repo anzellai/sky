@@ -63,6 +63,9 @@ import qualified Sky.Build.CpsStackConstantBound.FilterSpec
 import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
 import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
 import qualified Sky.Build.CpsStackConstantBound.TakeSpec
+import qualified Sky.Build.CpsStackConstantBound.AppendSpec
+import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
+import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -475,6 +478,41 @@ allSpecs fastMode = do
     -- backwards-rewrite smoking gun).
     describeT "Sky.Build.CpsStackConstantBound.Take"
         Sky.Build.CpsStackConstantBound.TakeSpec.spec
+    -- v0.17 step-5 / Limitation #8 CPS rewrite: List.append.
+    -- Delegating-binding shape calling TWO helpers in sequence:
+    -- reverseHelp (already-existing) flips the prefix, then
+    -- appendHelp cons-walks the reversed prefix onto ys.
+    -- Independent of step-3's concat rewrite: concat uses ONLY
+    -- the private appendReverseOnto, never the public append.
+    -- Gates 4 examples including assertConstantStack1M at a 10k
+    -- combined-output runtime fixture.
+    describeT "Sky.Build.CpsStackConstantBound.Append"
+        Sky.Build.CpsStackConstantBound.AppendSpec.spec
+    -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
+    -- Delegating-binding shape (sibling of List.foldr) — public
+    -- `combine` is a thin shim that calls `combineHelp results
+    -- []`; the auto-TCO for-continue loop lives inside
+    -- Sky_Core_Result_combineHelp's emitted Go body.  Reuses an
+    -- inlined private `reverseHelp` (avoids Result -> List ->
+    -- Result import cycle; same duplication smell that
+    -- Sky.Core.Maybe.combine documents).  Gates 4 examples
+    -- including the Err short-circuit at midpoint 5000.
+    describeT "Sky.Build.CpsStackConstantBound.ResultCombine"
+        Sky.Build.CpsStackConstantBound.ResultCombineSpec.spec
+    -- v0.17 step-6 / Limitation #8 CPS rewrite: Maybe.combine.
+    -- Delegating-binding shape (sibling of List.foldr +
+    -- Result.combine) — public `combine` is a thin shim that
+    -- calls `combineHelp maybes []`; the auto-TCO for-continue
+    -- loop lives inside Sky_Core_Maybe_combineHelp's emitted Go
+    -- body.  Reuses an inlined private `reverseHelp` (avoids
+    -- Maybe -> List -> Maybe import cycle; same duplication smell
+    -- documented in the module header — future extraction to
+    -- Sky.Core.Internal noted as out-of-batch scope).  Gates 5
+    -- examples: helper-emitted, public shim emitted, for-continue
+    -- inside helper, all-Just constant-stack run, Nothing
+    -- short-circuit at midpoint 5000.
+    describeT "Sky.Build.CpsStackConstantBound.MaybeCombine"
+        Sky.Build.CpsStackConstantBound.MaybeCombineSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec

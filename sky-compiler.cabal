@@ -342,6 +342,9 @@ test-suite sky-tests
       Sky.Build.CpsStackConstantBound.FoldrSpec
       Sky.Build.CpsStackConstantBound.ConcatSpec
       Sky.Build.CpsStackConstantBound.TakeSpec
+      Sky.Build.CpsStackConstantBound.AppendSpec
+      Sky.Build.CpsStackConstantBound.ResultCombineSpec
+      Sky.Build.CpsStackConstantBound.MaybeCombineSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.HttpTypesSpec
       Sky.Build.CryptoAeadSpec
