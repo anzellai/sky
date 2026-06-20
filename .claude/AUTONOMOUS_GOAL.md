@@ -65,6 +65,48 @@ A Judge verdict of "100% ACHIEVED" requires ALL of:
 
 ## User directives logged (resume context — persists across sessions)
 
+### 2026-06-20 — Limitations #7 + #8 closure shape (round 5 blockers)
+
+After round 5 surfaced Limitations #7 and #8 as genuine implementation
+blockers requiring user direction, user picked:
+
+**Limitation #7 (zero-arg call shape): Strict HM closure (FFI arity-0
+returns 1-tuple).**
+- Tighten HM so every `() -> T` binding requires call-with-`()` AND
+  every `T` binding rejects call-with-`()`.
+- Compiler error if mixed.
+- Breaks user code that relies on the current loose shape; this is
+  accepted as the cost of soundness.
+- Tracks with task #623 (FFI arity-0 shape canonicalization) — that
+  task is marked completed but the user-facing behavior gap remains.
+- Implementation surface: `Sky.Type.Unify` + `Sky.Type.Constrain.Expression`
+  call-arity check + `Sky.Build.Compile` codegen for arity-0 bindings.
+- Test: regression spec covers (a) `f ()` against `f : T` fails,
+  (b) `g` against `g : () -> T` fails, (c) Pure.* canonical surface
+  still works.
+
+**Limitation #8 (non-TCO O(N) Go stack): CPS transform on the 13 ops.**
+- Rewrite `map` / `filter` / `foldr` / `length` / `concat` / `take` /
+  `append` / `range` / `zip` / `concatMap` / `indexedMap` /
+  `Maybe.combine` / `Result.combine` in CPS so every recursion compiles
+  to constant Go stack.
+- Multi-session implementation: each function needs accumulator
+  pattern + Sky.Test verification of result + stack-size empirical
+  check (large-input fixture).
+- Implementation surface: `sky-stdlib/Sky/Core/List.sky`,
+  `Sky.Core.Maybe.sky`, `Sky.Core.Result.sky`. Auto-TCO infra
+  (`Sky.Build.TailCallOpt`) likely needs zero changes — these are
+  Sky-source rewrites.
+- Test: 1M-element fixture per rewritten op asserts constant stack
+  (no Go stack overflow).
+
+Both directives are DURABLE. Future workflows/sessions follow these
+shapes unless user explicitly overrides.
+
+Implementation order: Round 6 workflow targets #7 (single
+architectural change, single batch). Round 7+ targets #8 (one
+function rewrite per increment, per-commit grilled).
+
 ### 2026-06-20 — getCgEnv migration blocker (commit c8ce19e2)
 
 Workflow round 4 surfaced surviving `globalCgEnv` + `getCgEnv` CAF
