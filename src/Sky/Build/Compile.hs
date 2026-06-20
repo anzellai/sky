@@ -779,6 +779,21 @@ eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ct
 -- Falls back to 'eraseScopedCtx' when the source region's solved type
 -- doesn't match the expected kind, or when @mSrc@ is absent, or when
 -- the solved type still contains TVars (HM didn't fully pin them).
+-- v0.17 step-3 (attack-#1 amendment A2): SKY_WRAP_DEBUG=1 enables a
+-- diagnostic trace at /tmp/wrap-debug.log when 'resolveWrapParams'
+-- is called with mSrc=Just but Solve.lookupSolvedRegionScoped
+-- returns Nothing (or a non-matching kind) — i.e. the source
+-- signal is there but HM didn't pin the wrap kind, so we still
+-- fall back to eraseScopedCtx and may emit a T<N>-containing
+-- wrap-params string.  Auditing this log shows which Sky source
+-- regions are still leaking through the substitution time fix.
+{-# NOINLINE wrapDebugEnabled #-}
+wrapDebugEnabled :: Bool
+wrapDebugEnabled = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_WRAP_DEBUG"
+    return (v == Just "1")
+
+
 resolveWrapParams
     :: LC.LowerCtx
     -> Maybe Can.Expr  -- ^ source expression
@@ -795,7 +810,13 @@ resolveWrapParams ctx mSrc kind fallback =
                     | k == kind
                     , all (not . hasTVar) args ->
                         List.intercalate ", " (map solvedTypeToGo args)
-                _ -> eraseScopedCtx ctx fallback
+                -- v0.17 step-3 (attack-#1 amendment A2): when mSrc is
+                -- Just but the region lookup returned Nothing OR a
+                -- non-matching kind, log a diagnostic for stale-
+                -- snapshot risk audit at construction time.  Off by
+                -- default (no tracing overhead).  Enable with
+                -- `SKY_WRAP_DEBUG=1` env var.
+                _ -> wrapDebug region $ eraseScopedCtx ctx fallback
         Nothing -> eraseScopedCtx ctx fallback
   where
     hasTVar :: T.Type -> Bool
@@ -806,6 +827,25 @@ resolveWrapParams ctx mSrc kind fallback =
     hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
     hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
     hasTVar T.TUnit = False
+
+    wrapDebug :: A.Region -> String -> String
+    wrapDebug region result =
+        if wrapDebugEnabled
+            then unsafePerformIO $ do
+                let modHint = fromMaybe (ModuleName.toString
+                                            (LC._lc_module ctx))
+                                (LC._lc_currentDepModule ctx)
+                    line = "[wrap-debug] kind=" ++ kind
+                        ++ " region=" ++ show region
+                        ++ " module=" ++ modHint
+                        ++ " fallback=" ++ fallback
+                        ++ "\n"
+                E.handle (\e -> do
+                    _ <- return (e :: E.SomeException)
+                    return ()) $
+                    appendFile "/tmp/wrap-debug.log" line
+                return result
+            else result
 
 
 -- | Read the global codegen env (for use in pure codegen functions).
@@ -4519,7 +4559,13 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- can still see a `GoBlock` and convert it to a typed
               -- `func() <depRetType>` IIFE.  Idempotent on an
               -- already-typed `GoTypedBlock` (no redundant re-wrap).
-              typedBody = typeIIFE depBodyCtx depRetType (lowerDepBody body)
+              -- v0.17 step-3 (attack-#1 amendment A4): thread `Just body`
+              -- as source so the inner wrapTypedReturn fallbacks (for
+              -- e.g. parametric Task / Result / Maybe return shapes)
+              -- consult HM via Solve.lookupSolvedRegionScoped at the
+              -- function body's region and substitute concrete type
+              -- args.  Closes T1 leak at construction time.
+              typedBody = typeIIFE depBodyCtx (Just body) depRetType (lowerDepBody body)
               -- v0.13 Stage 1 (task #189) — register func-typed
               -- params in the Go-string registry too, so the
               -- recursive call-site `goExprGoType` resolves
@@ -6313,7 +6359,11 @@ generateDef home def0 solvedTypes =
             -- can still see a `GoBlock` and convert it to a typed
             -- `func() <goRetType>` IIFE.  Idempotent on an already-
             -- typed `GoTypedBlock` (no redundant re-wrap).
-            typedBody = typeIIFE entryBodyCtx goRetType (lowerFnBody body)
+            -- v0.17 step-3 (attack-#1 amendment A4): thread `Just body`
+            -- as source so wrap-param fallbacks consult HM via
+            -- Solve.lookupSolvedRegionScoped at the function body's
+            -- region.
+            typedBody = typeIIFE entryBodyCtx (Just body) goRetType (lowerFnBody body)
             bodyExpr0 = if Map.null paramTypeBindings
                 then typedBody
                 else withScopedLambdaTypes paramTypeBindings typedBody
@@ -7001,8 +7051,18 @@ isTypedGoElement gt = case gt of
 --
 -- When NOT safe, falls back to `wrapTypedReturn retType body` — the
 -- existing behaviour (outer `rt.CoerceX(func() any {...}())`).
-typeIIFE :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
-typeIIFE ctx retType body
+-- v0.17 step-3 (attack-#1 amendment A4): `typeIIFE` takes an
+-- optional source `Can.Expr` and threads it into the nested
+-- `coerceReturnExprT` / `coerceBlockReturnsT` walks and the final
+-- `wrapTypedReturn` fallbacks.  `mSrc` is the Sky expression whose
+-- emitted GoExpr is being wrapped — `resolveWrapParams` consults
+-- HM via `Solve.lookupSolvedRegionScoped` at that region to
+-- substitute concrete type args into the wrap params.  Without the
+-- source signal, every emitted `rt.TaskCoerceT[T1, T2]` /
+-- `rt.ResultCoerce[T1, T2]` leaks unresolved TVars to `go build`
+-- — the iter-20 / notes-app T1 leak class.
+typeIIFE :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+typeIIFE ctx mSrc retType body
     | retType == "any" = body
     | otherwise = case body of
         -- Idempotent: a body already typed to `retType` (e.g. it
@@ -7015,35 +7075,43 @@ typeIIFE ctx retType body
                     GoIr.GoRaw "nil" -> case goZeroValue retType of
                         Just zv -> GoIr.GoRaw zv
                         Nothing -> result  -- can't zero — bail below
-                    _ -> coerceReturnExprT ctx retType result
+                    _ -> coerceReturnExprT ctx mSrc retType result
                 canType = case result of
                     GoIr.GoRaw "nil" -> isJust (goZeroValue retType)
                     _                -> True
             in if canType
                  then GoIr.GoTypedBlock retType
-                        (coerceBlockReturnsT ctx retType stmts) result'
-                 else wrapTypedReturn ctx Nothing retType body
-        _ -> wrapTypedReturn ctx Nothing retType body
+                        (coerceBlockReturnsT ctx mSrc retType stmts) result'
+                 else wrapTypedReturn ctx mSrc retType body
+        _ -> wrapTypedReturn ctx mSrc retType body
 
 
 -- | Walk IIFE-level statements coercing every `return` value to
 -- `retType`.  Descends into `GoIf` / `GoSwitch` / `GoTypeSwitch`
 -- branches (still the same IIFE's control flow) but NOT into
 -- `GoFuncLit` (a nested closure has its own return type).
-coerceBlockReturnsT :: LC.LowerCtx -> String -> [GoIr.GoStmt] -> [GoIr.GoStmt]
-coerceBlockReturnsT ctx retType = map go
+--
+-- v0.17 step-3: takes `mSrc` and threads it through.  Sub-block
+-- returns are still the same source expression at the HM-region
+-- level (the if/switch branches lower a single Sky Can.Expr — the
+-- branch arms share the parent's region for wrap-param resolution
+-- purposes; each arm's leaf coerceReturnExprT will pass mSrc to
+-- wrapTypedReturn, which then consults Solve.lookupSolvedRegionScoped
+-- at the source-expression's region).
+coerceBlockReturnsT :: LC.LowerCtx -> Maybe Can.Expr -> String -> [GoIr.GoStmt] -> [GoIr.GoStmt]
+coerceBlockReturnsT ctx mSrc retType = map go
   where
     go stmt = case stmt of
-        GoIr.GoReturn e          -> GoIr.GoReturn (coerceReturnExprT ctx retType e)
-        GoIr.GoIf c thn els      -> GoIr.GoIf c (coerceBlockReturnsT ctx retType thn)
-                                                (coerceBlockReturnsT ctx retType els)
+        GoIr.GoReturn e          -> GoIr.GoReturn (coerceReturnExprT ctx mSrc retType e)
+        GoIr.GoIf c thn els      -> GoIr.GoIf c (coerceBlockReturnsT ctx mSrc retType thn)
+                                                (coerceBlockReturnsT ctx mSrc retType els)
         GoIr.GoSwitch e brs      -> GoIr.GoSwitch e
-                                      [ (v, coerceBlockReturnsT ctx retType b)
+                                      [ (v, coerceBlockReturnsT ctx mSrc retType b)
                                       | (v, b) <- brs ]
         GoIr.GoTypeSwitch n e brs -> GoIr.GoTypeSwitch n e
-                                      [ (t, coerceBlockReturnsT ctx retType b)
+                                      [ (t, coerceBlockReturnsT ctx mSrc retType b)
                                       | (t, b) <- brs ]
-        GoIr.GoBlock_ ss         -> GoIr.GoBlock_ (coerceBlockReturnsT ctx retType ss)
+        GoIr.GoBlock_ ss         -> GoIr.GoBlock_ (coerceBlockReturnsT ctx mSrc retType ss)
         _                        -> stmt
 
 
@@ -7055,13 +7123,17 @@ coerceBlockReturnsT ctx retType = map go
 -- explicitly `return nil`s, which is the dead-code arm — Go accepts
 -- `return nil` only for nilable types, so for non-nilable retTypes
 -- we substitute the zero value.
-coerceReturnExprT :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
-coerceReturnExprT ctx retType e = case e of
-    GoIr.GoBlock _ _ -> typeIIFE ctx retType e
+--
+-- v0.17 step-3: takes `mSrc` and threads it through to the
+-- wrapTypedReturn fallback so `resolveWrapParams` can consult HM
+-- for the substituted wrap params.
+coerceReturnExprT :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceReturnExprT ctx mSrc retType e = case e of
+    GoIr.GoBlock _ _ -> typeIIFE ctx mSrc retType e
     GoIr.GoRaw "nil" -> case goZeroValue retType of
         Just zv -> GoIr.GoRaw zv
         Nothing -> e
-    _ -> wrapTypedReturn ctx Nothing retType e
+    _ -> wrapTypedReturn ctx mSrc retType e
 
 
 -- | v0.13 typed lowerer: best-effort STATIC Go type of a GoExpr.
@@ -10221,7 +10293,11 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
             -- recurses into `GoBlock` (so a nested IIFE that slipped
             -- through still gets typed) and is a no-op when the Go
             -- type is already concrete + matching.
-            coerceReturnExprT ctx goRendering (exprToGo ctx e)
+            -- v0.17 step-3 (attack-#1 amendment A4): thread `Just e` as
+            -- source so the wrapTypedReturn fallback can consult HM via
+            -- Solve.lookupSolvedRegionScoped at e's region for accurate
+            -- wrap-param substitution.
+            coerceReturnExprT ctx (Just e) goRendering (exprToGo ctx e)
 
 
 -- | v0.15 Stage C helper — emit a `Can.Lambda` as a single typed
@@ -14504,7 +14580,14 @@ ifToGo ctx mExpectedGo branches elseExpr =
             [GoIr.GoIf (toBoolExpr (exprToGo ctx cond)) [GoIr.GoReturn (lowerBody body)] (buildIf rest)]
         raw = GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "nil")
     in case mExpectedGo of
-        Just gt -> typeIIFE ctx gt raw
+        -- v0.17 step-3 residual leak point: ifToGo doesn't carry the
+        -- parent `Can.Expr` (the whole if-expression), so wrap-param
+        -- HM substitution can't fire here.  Closing this would widen
+        -- ifToGo's signature to take a `Maybe Can.Expr` and thread
+        -- `Just <if-expr>` from its single caller at line ~10070.
+        -- A future audit can close this; the call shape is mechanically
+        -- the same as the dep/entry body sites already threaded above.
+        Just gt -> typeIIFE ctx Nothing gt raw
         Nothing -> raw
 
 
@@ -14635,7 +14718,13 @@ letToGo _outerCtx mExpectedGo def body =
             else withScopedLambdaTypes bindingExtras (lowerBody body)
         raw = GoIr.GoBlock defStmts bodyGo
     in case mExpectedGo of
-        Just gt -> typeIIFE bodyCtx gt raw
+        -- v0.17 step-3 residual leak point: letToGo doesn't carry the
+        -- parent `Can.Expr` (the whole let-in expression).  We DO have
+        -- `body` (the let-body Can.Expr) in scope — its solved region
+        -- type is the same as the let-in's overall type (the let-in
+        -- region maps to its body's region in HM).  Thread `Just body`
+        -- so resolveWrapParams can substitute concrete wrap params.
+        Just gt -> typeIIFE bodyCtx (Just body) gt raw
         Nothing -> raw
 
 
@@ -15295,7 +15384,12 @@ caseToGo ctx mExpectedGo subject branches =
                 (subjectDecl : subjectDiscard : branchStmts ++ [unreachableStmt])
                 (GoIr.GoRaw "nil")  -- unreachable, branches return
     in case mExpectedGo of
-        Just gt -> typeIIFE ctx gt raw
+        -- v0.17 step-3 residual leak point: caseToGo doesn't carry the
+        -- parent `Can.Expr` (the whole case-of expression).  Closing
+        -- this would widen caseToGo's signature to take a
+        -- `Maybe Can.Expr` and thread `Just <case-expr>` from its
+        -- caller at line ~10074.  Future audit close.
+        Just gt -> typeIIFE ctx Nothing gt raw
         Nothing -> raw
 
 
@@ -15449,7 +15543,11 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
         -- `coerceReturnExprT` so a base case like `[] -> []`
         -- coerces `[]any{}` to the function's typed return
         -- (`[]T1`, `rt.SkyMaybe[T1]`, …).
-        _ -> [GoIr.GoReturn (coerceReturnExprT ctx goRetType (exprToGo ctx (A.At A.one e)))]
+        -- v0.17 step-3 (attack-#1 amendment A4): thread the constructed
+        -- leaf Can.Expr as source so wrap-param HM substitution can
+        -- fire on the leaf return.
+        _ -> let leafExpr = A.At A.one e
+             in [GoIr.GoReturn (coerceReturnExprT ctx (Just leafExpr) goRetType (exprToGo ctx leafExpr))]
 
     -- Emit param-reassign + continue for a tail self-call.
     -- Tmps capture the OLD param values before reassignment so a
