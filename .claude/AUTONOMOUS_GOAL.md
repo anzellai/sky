@@ -369,3 +369,52 @@ step-2's `padBareParametricAliasArity` fix verified deterministic
 widening. Round-6 closure batch (steps 2-7) now empirically
 documented as a coherent leak-class fix shipping with the same
 output stability invariant as round-5.
+
+---
+
+## Iteration 26 outcome (2026-06-20) — 3-agent adversarial verdict: NOT ACHIEVED
+
+All 3 independent adversarial agents (compiler-architecture lens / CLI-UX lens /
+codegen-soundness lens) returned **NOT ACHIEVED** with no escape-clause language.
+Independent convergence on the same gaps:
+
+### Convergent findings
+
+* **GAP-A** — `sky-stdlib/Sky/Core/List.sky:164-171` `concatMap` still uses
+  non-tail `append (fn x) (concatMap fn rest)`. CLAUDE.md commit `181243e4`
+  prematurely claimed Limitation #8 "13/13 closed". Honesty restored at iter
+  26 close. Tracked in task #664.
+* **GAP-B** — `test/Sky/Type/StrictHmArityGateSpec.hs` is 8/8 `pendingWith
+  flipMarker`. CLAUDE.md commit `0887bdb4` prematurely claimed Limitation #7
+  closed. Honesty restored at iter 26 close. Tracked in task #664.
+* **GAP-C** — `examples/26-ui-showcase/sky-out/main.go` emits 288 `rt.Coerce`
+  calls. Criterion #1 of this file requires 0. Adjacent: `globalCgEnv` IORef
+  alive at Compile.hs:143-145 with 3 live writeIORef sites (1271, 5109, 5445)
+  — Option A locked, needs PR-α Stage 3+4. Tracked in task #664.
+
+### Iter 26 close actions (banking, not implementation)
+
+1. CLAUDE.md Limitation #7 reframed back to active limitation (IN PROGRESS,
+   8/8 pendingWith stubs, missing wiring identified).
+2. CLAUDE.md Limitation #8 reframed back to active limitation (12/13 done,
+   concatMap residual). False "Closed in v0.17" entry for #8 cleaned up.
+3. Task #664 filed for iter 27 work.
+4. Iter 27 scheduled.
+
+### Iter 27 plan
+
+Tackle in order (smallest first):
+1. **GAP-A (concatMap CPS)** — apply the direct-accumulator pattern (executor
+   verified at round 9: `reverseHelp (concatMapHelp fn list []) []`). Add
+   `test/Sky/Build/CpsStackConstantBound/ConcatMapSpec.hs`. Build + targeted
+   spec. Commit. Honest CLAUDE.md update: 13/13.
+2. **GAP-B (Limitation #7 wiring)** — implement the strict-HM gate in
+   `src/Sky/Type/Constrain/Expression.hs` per the round-7 executor's surface
+   map. Flip all 8 `pendingWith` to live assertions. Cabal-test the
+   StrictHmArityGateSpec narrow. Honest CLAUDE.md update.
+3. **GAP-C (rt.Coerce + globalCgEnv)** — multi-session work; not iter 27
+   scope. Bank as iter 28+ workstream once iter 27 ships GAP-A+GAP-B.
+
+Iter 27 success gate: `concatMap` CPS-rewritten and StrictHmArityGateSpec
+8/8 PASSING (not pending). Re-spawn 3-agent adversarial verification with
+fresh contexts. Continue per /loop AUTONOMOUS protocol.

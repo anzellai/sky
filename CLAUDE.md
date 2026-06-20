@@ -835,8 +835,8 @@ future-proofing.
 | Tier | Functions | Status |
 |---|---|---|
 | O(1) pure Sky | `head`, `tail`, `cons`, `isEmpty`, `Maybe.withDefault`, `Maybe.map`/`andThen`/`isJust`/`isNothing`/`map2-5`/`andMap`, `Result.withDefault`/`map`/`andThen`/`mapError`/`map2-5`/`andMap` | Stack-safe always |
-| Tail-recursive (auto-TCO) | `foldl`, `find`, `any`, `all`, `member`, `drop`, `reverseHelp`, `indexedMapHelp`, `length`, `range`, `zip`, `concatMap`, `indexedMap` | Compiles to `for { ... continue }`; constant stack. v0.17 added `length`/`range`/`zip`/`concatMap`/`indexedMap` (CPS / accumulator rewrites — Limitation #8 closed). |
-| CPS-shipped (v0.17) | `map`, `filter`, `foldr`, `concat`, `take`, `append`, `Maybe.combine`, `Result.combine` | Rewritten to CPS / accumulator form; constant stack via tail-recursive helper. Together with the auto-TCO tier, all 13/13 list ops in scope run on constant Go stack. |
+| Tail-recursive (auto-TCO) | `foldl`, `find`, `any`, `all`, `member`, `drop`, `reverseHelp`, `indexedMapHelp`, `length`, `range`, `zip`, `indexedMap` | Compiles to `for { ... continue }`; constant stack. v0.17 added `length`/`range`/`zip`/`indexedMap` via CPS / accumulator rewrites. |
+| CPS-shipped (v0.17) | `map`, `filter`, `foldr`, `concat`, `take`, `append`, `Maybe.combine`, `Result.combine` | Rewritten to CPS / accumulator form; constant stack via tail-recursive helper. **12/13 list ops on constant Go stack — `concatMap` remains non-tail (see Limitation #8).** |
 
 **TCO mechanism.** The lowerer detects tail-position self-calls in
 `Can.Case` / `Can.If` / `Can.Let` bodies via
@@ -2079,28 +2079,47 @@ verified against HEAD.
    appear in a real FFI surface, the axiom needs extending to
    walk arg lists pairwise — track via a fresh limitation if it
    surfaces.
-7. ~~Zero-arg call shape soundness gap (FFI-vs-kernel arity
-   acceptance).~~ — CLOSED in v0.17 round 6 (Limitation #7, this
-   batch).  Strict HM gate at
-   `src/Sky/Type/Constrain/Expression.hs` across `Can.VarKernel` +
-   `Can.VarTopLevel` + `Can.VarLocal` arms + `constrainCall`: every
-   `: () -> T` binding requires call-with-`()`; every `: T`
-   binding rejects call-with-`()`; bare value-slot references
-   gated identically.  HeadAlias unfold applied before arity
-   computation (preserves v0.16.4 PR #123 `Handler` shape).
-   Wildcard-`any` soundness gate respected (real polymorphic
-   `Forall` remains flexible).  Regression:
-   `Sky.Type.StrictHmArityGate` (8 cases) +
-   `Sky.Type.Limitation7CurrentLooseAcceptance` (red-then-green
-   6 cases).  The `Pure.*` surface
-   (`sky-stdlib/Sky/Core/Pure.sky`) survives as a stylistic-
-   consistency aid but is no longer load-bearing for soundness.
-   See `### Closed in v0.17 (kept here for grep)` below for the
-   full closure log.
-8. ~~**Recursive list ops grew the Go stack O(N).**~~
-   — CLOSED in v0.17 (Limitation #8, 13/13 list ops on constant
-   Go stack).  See `### Closed in v0.17 (kept here for grep)`
-   below for the per-op commit log and spec gates.
+7. **Zero-arg calls follow the binding's declared type, not its
+   FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
+   sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
+   `FyneApp.new ()` are *all* needed because their sigs are
+   `() -> Task Error a` / `() -> any`. Calling a `: String`
+   binding with `()` is currently silently accepted at codegen,
+   surfacing only as a Go build error or runtime panic.
+
+   **v0.17 status — IN PROGRESS.** Regression specs
+   `Sky.Type.StrictHmArityGateSpec` (8 cases) +
+   `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` (6 red-then-
+   green cases) ship as **8/8 `pendingWith` stubs** — the gate
+   spec is in place but the wiring in `src/Sky/Type/Constrain/
+   Expression.hs` (`Can.VarKernel` + `Can.VarTopLevel` +
+   `Can.VarLocal` arms + `constrainCall` + `globalCallHeadFlag`
+   for value-slot reference) is NOT yet shipped. Flip the
+   `pendingWith flipMarker` lines to live assertions once the
+   strict-HM closure shape lands.
+
+   **v0.15.50 mitigation — `Sky.Core.Pure`.** New code targeting
+   a uniform `() -> Task Error a` shape can import
+   `Sky.Core.Pure as Pure` and call the additive companions
+   (`Pure.uuidV4 ()`, `Pure.timeNow ()`, etc.). Existing names +
+   shapes unchanged. Pure.* lowers to the canonical kernel with
+   typed `SkyTask[Error, T]` shape.
+8. **Non-tail-recursive list operations are O(N) on Go stack
+   for the `concatMap` residual.** `map`, `filter`, `foldr`,
+   `concat`, `take`, `append`, `length`, `range`, `zip`,
+   `indexedMap`, `Maybe.combine`, `Result.combine` are
+   CPS-rewritten in v0.17 — 12 of 13 list ops on constant Go
+   stack. `concatMap` at `sky-stdlib/Sky/Core/List.sky:164`
+   still recurses non-tail (`append (fn x) (concatMap fn rest)`)
+   because the natural delegation
+   `concatMap fn list = concat (map fn list)` triggers HM
+   cross-module over-unification on the polymorphic `map`
+   instances; the working direct-accumulator alternative still
+   needs to land. Tail-recursive operations (`foldl`, `find`,
+   `any`, `all`, `member`, `drop`, `reverseHelp`) remain
+   auto-TCO'd to constant stack. For very large lists (200k+
+   elements) reaching `concatMap` prefer a manual
+   accumulator pattern via `foldl`.
 9. ~~**Zero-arg `Css.*` keyword constants require `()`**~~ —
    CLOSED in v0.17 PR-26.  `Css.zero` / `Css.auto` / `Css.none`
    / `Css.transparent` / `Css.currentColor` / `Css.systemFont`
@@ -2120,13 +2139,10 @@ verified against HEAD.
     on the current line.  No workaround needed.
 ### Closed in v0.17 (kept here for grep)
 
-- ~~**Recursive list ops grew the Go stack O(N).**~~
-  — CLOSED in v0.17 (Limitation #8, 13/13 list ops on constant
-  Go stack).  All thirteen previously-recursive operations across
-  `Sky.Core.List` / `Sky.Core.Maybe` / `Sky.Core.Result` now
-  compile to constant Go stack via CPS / accumulator rewrites
-  (paired with the auto-TCO tail-call optimiser in
-  `Sky.Build.TailCallOpt`).  Per-op closure log:
+- **Limitation #8 partial close — 12 of 13 list ops CPS-rewritten.**
+  All but `concatMap` now compile to constant Go stack via CPS /
+  accumulator rewrites (paired with the auto-TCO tail-call
+  optimiser in `Sky.Build.TailCallOpt`). Per-op log:
   * `List.map` — CPS rewrite, `8e5dbd4f`
   * `List.filter` — CPS rewrite, `a0b63e4e` (FilterSpec)
   * `List.foldr` — delegation rewrite, `5b4bc25b` (FoldrSpec)
@@ -2140,44 +2156,11 @@ verified against HEAD.
   * `List.length` — CPS rewrite, `c274ecaf` (LengthSpec)
   * `List.range` — CPS rewrite, `5be2702d` (RangeSpec)
   * `List.zip` — CPS rewrite, `538daed6` (ZipSpec)
-  * `List.concatMap` — CPS rewrite, ConcatMapSpec
   * `List.indexedMap` — CPS rewrite, `8ac38af0` (IndexedMapSpec)
-  Each per-op spec lives under
-  `test/Sky/Build/CpsStackConstantBound/` and asserts the
-  rewritten body emits the auto-TCO marker pattern (no recursive
-  Go-stack growth).  For huge inputs (1M+ elements) the
-  primitives now stay O(1) on Go stack — the historical
-  "200k+ elements → stack overflow" workaround note is no longer
-  needed.  Closes Limitation #8 in full.  Criterion #6 of the
-  v0.17 umbrella (stack-bounded primitives) is ADVANCED by this
-  closure but not yet declared 100% — Limitation #7's strict-HM
-  tightening interacts with criteria 1/2/3 user sign-off and
-  remains the Judge's gate for the umbrella.
-
-- ~~**Zero-arg calls follow the binding's declared type, not its
-  FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
-  sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
-  `FyneApp.new ()` are *all* needed because their sigs are
-  `() -> Task Error a` / `() -> any`. Calling a `: String`
-  binding with `()` was previously silently accepted at codegen,
-  surfacing only as a Go build error or runtime panic.~~ — CLOSED
-  in v0.17 round 6 (Limitation #7, this batch).  Strict HM gate
-  at `src/Sky/Type/Constrain/Expression.hs` across `Can.VarKernel`
-  + `Can.VarTopLevel` + `Can.VarLocal` arms + `constrainCall`:
-  every `: () -> T` binding requires call-with-`()`; every `: T`
-  binding rejects call-with-`()`; bare value-slot references
-  gated identically.  HeadAlias unfold applied before arity
-  computation (preserves v0.16.4 PR #123 `Handler` shape).
-  Wildcard-`any` soundness gate respected (real polymorphic
-  `Forall` remains flexible).  Regression:
-  `Sky.Type.StrictHmArityGate` (8 cases) +
-  `Sky.Type.Limitation7CurrentLooseAcceptance` (red-then-green
-  6 cases).  The `Pure.*` surface
-  (`sky-stdlib/Sky/Core/Pure.sky`) survives as a stylistic-
-  consistency aid but is no longer load-bearing for soundness —
-  the canonical kernel arities are now enforced at the type
-  level, so any zero-arg shape mismatch fails fast with a clear
-  HM diagnostic instead of routing through codegen.
+  * `List.concatMap` — **STILL OPEN** (HM over-unification on
+    delegation; see Limitation #8 above).
+  Per-op specs live under `test/Sky/Build/CpsStackConstantBound/`
+  and assert the rewritten body emits the auto-TCO marker pattern.
 
 ### Closed in v0.16 (kept here for grep)
 
