@@ -101,6 +101,7 @@ import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.Pr17bDepSymmetrySpec
 import qualified Sky.Build.NoT1LeakInEmittedGoSpec
+import qualified Sky.Build.NoT1LeakInNotesAppSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
@@ -627,6 +628,12 @@ allSpecs fastMode = do
     -- leak reaches emitted Go.
     describeT "Sky.Build.NoT1LeakInEmittedGoSpec"
         Sky.Build.NoT1LeakInEmittedGoSpec.spec
+    -- v0.17 Wave 3 step-3: existence-based regression gate for the
+    -- T1/T2/T3 dep-emission leak shape from notes-app
+    -- (Lib.Db.exec/query wrappers).  3 it-blocks (Task/Result/Maybe
+    -- coercer families); tightens monotonically.
+    describeT "Sky.Build.NoT1LeakInNotesApp"
+        Sky.Build.NoT1LeakInNotesAppSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describeT "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
     -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
