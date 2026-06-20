@@ -177,6 +177,7 @@ registry = Map.fromList
     , (("List", "reverse"),       KernelInfo "rt.List_reverseAny" 1 False)
     , (("List", "sort"),          KernelInfo "rt.List_sort" 1 False)
     , (("List", "sortBy"),        KernelInfo "rt.List_sortBy" 2 False)
+    , (("List", "sortWith"),      KernelInfo "rt.List_sortWith" 2 False)
     , (("List", "member"),        KernelInfo "rt.List_member" 2 False)
     , (("List", "any"),           KernelInfo "rt.List_any" 2 False)
     , (("List", "all"),           KernelInfo "rt.List_all" 2 False)

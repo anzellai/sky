@@ -7430,6 +7430,21 @@ func List_sortBy(keyFn any, list any) any {
 	return result
 }
 
+// List_sortWith(cmp, xs) — stable sort by a custom comparator (Elm's
+// List.sortWith). `cmp a b : Int` returns < 0 when a precedes b, > 0 when it
+// follows, 0 when equal — the same contract as the kernel's type signature
+// (`(a -> a -> Int) -> List a -> List a`) in Sky.Type.Constrain.Expression.
+// SliceStable preserves input order for equal keys (matches List_sortBy).
+func List_sortWith(cmp any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		return AsInt(SkyCall(cmp, result[i], result[j])) < 0
+	})
+	return result
+}
+
 // skyLessThan — generic ordering used by List_sortBy. Treats numeric types
 // specially; falls back to lexicographic string compare for everything else.
 func skyLessThan(a, b any) bool {
