@@ -19094,11 +19094,87 @@ solvedTypeToGoViaPipelineFlat ty =
     -- types → `Sky_Core_Task_ShouldRetry[any]` against
     -- non-generic declaration → Go build rejects with "is not a
     -- generic type".
-    let ctx = (GoType.buildMappingContext
-                  GoType.defaultRenderEnv getCgEnv)
+    --
+    -- v0.17 step-2 (root-cause fix for DepSolvedTypesWiringSpec):
+    -- the structural pipeline's 'mapRecordType' returns a bare
+    -- @Foo_R@ (no type-arg list) when an anonymous Sky 'T.TRecord'
+    -- matches a field-set in a registered alias.  When that alias
+    -- is PARAMETRIC (Sky-side @type alias Cfg msg = { ... }@,
+    -- Go-side @type Cfg_R[T any] struct{...}@), Go rejects the
+    -- bare @Cfg_R@ identifier in a type position with
+    -- @cannot use generic type Cfg_R[T any] without instantiation@.
+    -- The matched record literal lowering DOES emit the typed
+    -- form @Cfg_R[any]{...}@ (it routes through the field-index
+    -- separately and adds the arity-padded TVar args at value
+    -- site), so the type-position vs value-position rendering
+    -- diverge — and the @rt.Coerce[Foo_R](Foo_R[any]{...})@ wrap
+    -- the let-binding's typed-IIFE emits fails to compile.
+    --
+    -- Close: post-process the rendered output.  When the bare
+    -- output is a known alias name + @_R@ AND the alias has Sky
+    -- type-params, append @[any, ...]@ with one @any@ per param.
+    -- Idempotent on already-suffixed outputs (the gate fires only
+    -- when the rendered string has no trailing @[…]@).  Touches
+    -- only the rendered String, so the structural pipeline stays
+    -- byte-identical for every non-parametric case.
+    let cgEnv = getCgEnv
+        ctx = (GoType.buildMappingContext
+                  GoType.defaultRenderEnv cgEnv)
                   { GoType.mcTVarsToAny = True }
-    in GoType.renderGoType GoType.defaultRenderEnv
-            (GoType.mapSkyTypeToGo ctx ty)
+        rendered = GoType.renderGoType GoType.defaultRenderEnv
+                        (GoType.mapSkyTypeToGo ctx ty)
+    in padBareParametricAliasArity cgEnv rendered
+
+
+-- | v0.17 step-2 (DepSolvedTypesWiringSpec root-cause helper).
+--
+-- Post-process @solvedTypeToGoViaPipelineFlat@'s rendered output:
+-- when the string is a bare @<AliasName>_R@ (no trailing @[…]@)
+-- AND @<AliasName>@ is a registered alias whose Sky declaration
+-- carries one or more type parameters, append @[any, any, ...]@
+-- with one @any@ per declared param so the result is a fully-
+-- instantiated Go type expression.
+--
+-- Why this is sound at this site:
+--
+--   * @mapRecordType@ returns @GoNamed (aliasName ++ "_R") []@
+--     when an anonymous @T.TRecord@ matches a registered alias's
+--     field set.  The downstream consumers (record-literal
+--     lowering, let-binding type coercion) treat the rendered
+--     string as a *concrete Go type identifier*.  Go's generic
+--     instantiation rules reject the bare name; the value-side
+--     emission already pads with @[any, ...]@ for parametric
+--     aliases — this restores the symmetric type-position form.
+--
+--   * Non-parametric aliases (Sky-side @type alias Page = { … }@)
+--     keep the bare @Page_R@ form because the alias decl has zero
+--     type params; the suffix is empty and the input falls through
+--     unchanged.
+--
+--   * Already-suffixed outputs (the @T.TAlias@ arm at
+--     @mapAliasType@ already emits @Foo_R[any]@ for parametric
+--     aliases) skip the pad because @hasGoArgBracket@ short-
+--     circuits on the trailing @]@.
+padBareParametricAliasArity :: Rec.CodegenEnv -> String -> String
+padBareParametricAliasArity cgEnv rendered
+    | hasGoArgBracket rendered = rendered
+    | Just aliasName <- stripSuffix "_R" rendered
+    , Just (Can.Alias tvars _) <- Map.lookup aliasName (Rec._cg_aliases cgEnv)
+    , let n = length tvars
+    , n > 0
+    = rendered ++ "[" ++ List.intercalate ", " (replicate n "any") ++ "]"
+    | otherwise = rendered
+  where
+    -- True when the rendered string already ends with a `[...]`
+    -- (parametric instantiation already present).
+    hasGoArgBracket s
+        | null s        = False
+        | last s == ']' = True
+        | otherwise     = False
+
+    stripSuffix suf s
+        | suf `List.isSuffixOf` s = Just (take (length s - length suf) s)
+        | otherwise               = Nothing
 
 
 
