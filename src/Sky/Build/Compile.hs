@@ -10450,7 +10450,13 @@ lowerRecordLiteralTo targetTy fields =
             -- snapshot) through coerceToFieldType so the erase-scope
             -- decision matches the ctx the inner lowerExprExpectGo
             -- already drives.
-            in coerceToFieldType fieldCtx fieldGoTy
+            -- v0.17 step-5: thread @Just fe@ so the
+            -- @CoerceSkyTask@ arm can substitute via
+            -- @resolveWrapParams@ when the field's Sky type is
+            -- @Task E A@ — closes the SkyTask leg of the documented
+            -- 4-site T-var-leak class at the typed parametric-alias
+            -- record-literal emission path.
+            in coerceToFieldTypeMSrc fieldCtx (Just fe) fieldGoTy
                    (lowerExprExpectGo fieldCtx fieldGoTy fe)
     in GoIr.GoStructLit targetTy
         [ (capitalise_ fn, lowerField fn fe)
@@ -11237,7 +11243,13 @@ exprToGo ctx (A.At _ expr) = case expr of
                                 Map.findWithDefault "any" fname fieldTypeMap
                         -- v0.17 PR-17b S4 batch 3: ctx threaded from
                         -- enclosing exprToGoExpectGo (RecordUpdate arm).
-                        in coerceToFieldType ctx
+                        -- v0.17 step-5: thread @Just fexpr@ so the
+                        -- @CoerceSkyTask@ arm can substitute via
+                        -- @resolveWrapParams@ when the field's Sky
+                        -- type is @Task E A@ — closes the SkyTask
+                        -- leg of the documented 4-site T-var-leak
+                        -- class at the RecordUpdate emission path.
+                        in coerceToFieldTypeMSrc ctx (Just fexpr)
                                 fieldGoTy
                                 (exprToGoExpectGo ctx fieldGoTy fexpr)
                     initStmt = GoIr.GoShortDecl "_u" baseGoExpr
@@ -11300,7 +11312,13 @@ exprToGo ctx (A.At _ expr) = case expr of
                         let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
                         -- v0.17 PR-17b S4 batch 3: ctx threaded from
                         -- enclosing exprToGoExpectGo (Record arm).
-                        in coerceToFieldType ctx
+                        -- v0.17 step-5: thread @Just fe@ so the
+                        -- @CoerceSkyTask@ arm can substitute via
+                        -- @resolveWrapParams@ when the field's Sky
+                        -- type is @Task E A@ — closes the SkyTask
+                        -- leg of the documented 4-site T-var-leak
+                        -- class at the Record literal emission path.
+                        in coerceToFieldTypeMSrc ctx (Just fe)
                                 fieldGoTy
                                 (exprToGoExpectGo ctx fieldGoTy fe)
                 in GoIr.GoStructLit structName
@@ -11580,8 +11598,55 @@ trimWhitespace = f . f where f = reverse . dropWhile (== ' ')
 -- their own LowerCtx; sites that don't yet have one in scope pass
 -- 'ctxFromIORef ()' as a transitional bridge (preserves legacy
 -- byte-identical behavior until upstream stages migrate them).
+--
+-- v0.17 step-5 (attack-#2 critical concern #3) — the CoerceSkyTask
+-- arm at line ~11627 previously emitted
+-- @rt.TaskCoerceT[eraseScopedCtx ctx inner]@ which would happily
+-- preserve enclosing T-vars from the function's type-parameter set
+-- (e.g. @rt.TaskCoerceT[T1, any]@) even when the underlying call's
+-- HM-solved Task params were concrete (e.g. @[Error, struct{}]@).
+-- Closes the THIRD documented leak site in the documented 4-site
+-- leak class (sibling of @wrapTypedReturn@'s 7511 and @coerceArg@'s
+-- 13549 arms which already substitute via @resolveWrapParams@).
+--
+-- The shim @coerceToFieldType ctx tt e = coerceToFieldTypeMSrc ctx
+-- Nothing tt e@ keeps every caller byte-identical (the SkyTask arm
+-- with @mSrc = Nothing@ falls through to the legacy
+-- @eraseScopedCtx@ path via @resolveWrapParams@'s @Nothing@ branch
+-- at @Compile.hs:820@).  Callers that DO have a @Can.Expr@ in
+-- scope (Record / RecordUpdate field initialisers via @fexpr@)
+-- thread it through @coerceToFieldTypeMSrc ctx (Just fexpr) tt
+-- (...)@ so the SkyTask substitution gate fires.
 coerceToFieldType :: LC.LowerCtx -> String -> GoIr.GoExpr -> GoIr.GoExpr
-coerceToFieldType ctx targetTy e
+coerceToFieldType ctx = coerceToFieldTypeMSrc ctx Nothing
+
+
+-- | mSrc-aware variant of 'coerceToFieldType'.  Lets callers thread
+-- the source @Can.Expr@ so the @CoerceSkyTask@ arm can substitute
+-- the source's HM-solved Task params via 'resolveWrapParams' (kind-
+-- gated, fully-pinned-args gated) instead of falling back to
+-- 'eraseScopedCtx' which preserves enclosing T-vars and emits e.g.
+-- @rt.TaskCoerceT[T1, any]@ from inside a polymorphic wrapper
+-- function.
+--
+-- Other arms (SkyResult / SkyMaybe / List / Map / Tuple / Coerce*)
+-- still route through 'eraseScopedCtx' for now; their leak class
+-- is empirically not yet observed in the sweep, and the substitution
+-- helpers @resolveWrapParams@ / @resolveOrErase@ apply to specific
+-- kinds.  Extending to those arms is left for follow-up steps once
+-- a leak is observed in the wild.
+--
+-- NOTE: examples/08-notes-app's @Lib_Db_exec@ / @Lib_Db_query@
+-- wrappers STILL emit @rt.TaskCoerceT[T1, any]@ after this fix —
+-- the leak there is NOT from 'coerceToFieldType' (this arm).  The
+-- wrap-debug log (@SKY_WRAP_DEBUG=1@) shows the leak's
+-- @resolveWrapParams@ fallback is @[Sky_Core_Error_Error, T1]@,
+-- not @[T1, any]@ — so the @[T1, any]@ leak originates from a
+-- DIFFERENT code path (likely a Sky-emitted IR step that bypasses
+-- the existing kind-gated substitution helpers).  The site needs
+-- a separate audit + step.
+coerceToFieldTypeMSrc :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceToFieldTypeMSrc ctx mSrc targetTy e
     | targetTy == "any" || null targetTy = e
     -- v0.15 Stage D — elide the wrap when the expression's IR
     -- already has the target's Go type.  After Stages C/E,
@@ -11623,8 +11688,20 @@ coerceToFieldType ctx targetTy e
                 GoIr.GoCall (GoIr.GoIdent
                     ("rt.MaybeCoerce[" ++ eraseScoped inner ++ "]")) [e]
             CoerceSkyTask inner ->
+                -- v0.17 step-5 (attack-#2 critical concern #3) —
+                -- substitute via @resolveWrapParams@ on the source's
+                -- HM-solved Task params (kind-gated, fully-pinned
+                -- gated).  When @mSrc@ is @Nothing@ or the source's
+                -- region didn't HM-resolve to a fully-pinned
+                -- @Task E A@, fall through to legacy
+                -- @eraseScopedCtx ctx inner@ via @resolveWrapParams@'s
+                -- @Nothing@ branch (preserves byte-identical legacy
+                -- behaviour for every site that hasn't threaded
+                -- @mSrc@ yet).
                 GoIr.GoCall (GoIr.GoIdent
-                    ("rt.TaskCoerceT[" ++ eraseScopedCtx ctx inner ++ "]")) [e]
+                    ("rt.TaskCoerceT["
+                        ++ resolveWrapParams ctx mSrc "Task" inner
+                        ++ "]")) [e]
             CoerceListAny      -> GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
             CoerceMapStringAny -> GoIr.GoCall (GoIr.GoIdent "rt.AsMapAny") [e]
             CoerceListT elt ->
