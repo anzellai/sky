@@ -36,6 +36,8 @@ import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
+import qualified Sky.Type.StrictHmArityGateSpec
+import qualified Sky.Type.Limitation7CurrentLooseAcceptanceSpec
 import qualified Sky.Build.GoTypeAdtSpec
 import qualified Sky.Build.GoTypeRoundTripSpec
 import qualified Sky.Build.MappingContextSpec
@@ -542,6 +544,29 @@ allSpecs fastMode = do
     -- panicked at runtime; Ui.fill 1 likewise).
     describeT "Sky.Type.RecordFieldExactness"
                                          Sky.Type.RecordFieldExactnessSpec.spec
+    -- v0.17 closure plan / step-3 — strict HM arity gate POST-FIX
+    -- regression contract. 8 fixtures (k-a / k-b / u-a / u-b
+    -- negative; h-a / p-a / wp-a / wa-a positive) all ship pending
+    -- here; step-4 implements the gate in Sky.Type and flips the
+    -- pendings to live assertions (CompileErr / CompileOk).
+    describeT "Sky.Type.StrictHmArityGate"
+                                         Sky.Type.StrictHmArityGateSpec.spec
+    -- v0.17 Limitation #7 closure / step-1 — "red-then-green"
+    -- reproduction gate.  Six fixtures: four NEGATIVE cases
+    -- (loose-shape applications currently accepted by Sky lowering —
+    -- (k-a) `Uuid.v4 ()` against `: Task Error String`; (k-b) bare
+    -- `Time.now` against `: () -> Task Error Int`; (u-a) user
+    -- TypedDef `: String` called with `()`; (u-b) user TypedDef
+    -- `: () -> String` used as a `String` value) plus two POSITIVE
+    -- controls that MUST stay compiling clean throughout (HeadAlias
+    -- `myHandler : Handler` per PR #123 / Limitation #5; Pure.*
+    -- `Pure.uuidV4 ()` per v0.15.50 Pure.* mitigation).  Step-4 of
+    -- the closure plan inverts the four negative cases to assert
+    -- CompileErr with diagnostic-text checks — the positive controls
+    -- stay PASS as the discriminator that the gate tightens ONLY
+    -- the loose shape.
+    describeT "Sky.Type.Limitation7CurrentLooseAcceptance"
+                                         Sky.Type.Limitation7CurrentLooseAcceptanceSpec.spec
     describeT "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     -- Sky function names that match Go reserved words must sanitise
     -- at the CALL site too, not only at the definition site (see

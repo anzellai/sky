@@ -316,6 +316,8 @@ test-suite sky-tests
       Sky.Type.UiOnSubmitTypedRecordSpec
       Sky.Type.UfCycleGuardSpec
       Sky.Type.RecordFieldExactnessSpec
+      Sky.Type.StrictHmArityGateSpec
+      Sky.Type.Limitation7CurrentLooseAcceptanceSpec
       Sky.Build.GoTypeAdtSpec
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiFillCssSpec
