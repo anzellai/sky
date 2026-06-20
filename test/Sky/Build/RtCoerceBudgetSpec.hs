@@ -58,15 +58,25 @@ import qualified Data.Map.Strict as Map
 -- @ post-step-3 HEAD via clean-slate `sky build src/Main.sky` against
 -- examples/26-ui-showcase using:
 --
---   grep -c 'rt\.Coerce\['      main.go   → 238
---   grep -c 'rt\.CoerceInt'     main.go   →  19
---   grep -c 'rt\.CoerceString'  main.go   →  82
---   grep -c 'rt\.CoerceBool'    main.go   →  17
---   grep -c 'rt\.CoerceFloat'   main.go   →  22
+--   grep -c 'rt\.Coerce\['      main.go   → 238  →  214 (post-steps-2-5)
+--   grep -c 'rt\.CoerceInt'     main.go   →  19  →   19
+--   grep -c 'rt\.CoerceString'  main.go   →  82  →   80 (post-steps-2-5)
+--   grep -c 'rt\.CoerceBool'    main.go   →  17  →   13 (post-steps-2-5)
+--   grep -c 'rt\.CoerceFloat'   main.go   →  22  →   22
 --   grep -c 'rt\.TaskCoerceT'   main.go   →   0
 --   grep -c 'rt\.ResultCoerce'  main.go   →   0
 --   grep -c 'rt\.MaybeCoerce'   main.go   →  24
 --   grep -c 'rt\.AsListT'       main.go   → 171
+--
+-- Round 5 ratchet (2026-06-20 — steps 2-5 of feat/v0.17 wave-3 close):
+-- wave-3 leak-class architectural close across 3 emit paths
+-- (wrapTypedReturn, typeIIFE, coerceReturnExprT) + coerceVia kind-
+-- aligned mSrc substitution + coerceToFieldType SkyTask arm threading
+-- collectively closed 30 sites on the showcase (317 → 287 total).
+-- Breakdown: bare-`rt.Coerce[` -24 (most of the leak class — typed-
+-- expected-arrow paths now generic-unify rather than narrow);
+-- `rt.CoerceString` -2 + `rt.CoerceBool` -4 (typed-fast-path narrows
+-- that the leak class previously routed through bare-coerce).
 --
 -- The 5 active typed-fast-path clusters (Int/String/Bool/Float)
 -- partition correctly from the bare `rt.Coerce[` cluster because
@@ -86,10 +96,10 @@ import qualified Data.Map.Strict as Map
 -- the same "narrowing" semantic the ratchet is targeting.
 rtCoerceBaseline :: Map String Int
 rtCoerceBaseline = Map.fromList
-    [ ("rt.Coerce["     , 238)
+    [ ("rt.Coerce["     , 214)
     , ("rt.CoerceInt"   , 19)
-    , ("rt.CoerceString", 82)
-    , ("rt.CoerceBool"  , 17)
+    , ("rt.CoerceString", 80)
+    , ("rt.CoerceBool"  , 13)
     , ("rt.CoerceFloat" , 22)
     , ("rt.TaskCoerceT" , 0)
     , ("rt.ResultCoerce", 0)
@@ -107,8 +117,12 @@ rtCoerceBaseline = Map.fromList
 -- path matches it too), so this is the headline number a
 -- maintainer reports as "rt.Coerce sites in the showcase".
 -- Measured 2026-06-20 post-step-3: 317.
+-- Ratcheted 2026-06-20 post-steps-2-5 (wave-3 leak-class close
+-- across wrapTypedReturn + typeIIFE + coerceReturnExprT + coerceVia
+-- kind-aligned mSrc substitution + coerceToFieldType SkyTask arm):
+-- 317 → 287 (-30 sites, strict monotone-down).
 rtCoerceTotalBudget :: Int
-rtCoerceTotalBudget = 317
+rtCoerceTotalBudget = 287
 
 
 -- | Resolve the example's main.go path. Cabal-test runs with the

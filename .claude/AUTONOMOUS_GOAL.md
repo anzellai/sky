@@ -107,6 +107,113 @@ Closes criteria #2 + #4 + partial #3. Remaining: #1 (rt.Coerce →0),
 #3 (globalCgEnv via Option A), #5 (GoTypeAdt parity tests),
 #6 (limitations #7/#8), #7 (Cycle 6 #383), #8 (fuzzer), #10 (Judge).
 
+## Round 5 progress snapshot (2026-06-20)
+
+Wave-3 leak-class closure across 3 emit paths + fuzzer + RtCoerce
+ratchet shipped on `feat/v0.17-fully-typed-codegen`:
+
+### Wave-3 leak-class closure across 3 emit paths (steps 2-5)
+
+The T1 leak class (kernel-call substitution-not-applied at typed
+emit site) — this is the wave-3 leak-class closure milestone —
+shipped across three emit paths + two coerceVia paths:
+
+  * `c4069b9b` — step-2: `wrapTypedReturn` fast-path threads `mSrc`
+    into `goExprGoType` — closes leak at the typed-return wrap site
+    (Compile.hs:6660; per memory v017_wave3_emission_paths.md)
+  * `229ff47e` — step-3: widen `typeIIFE` + `coerceReturnExprT` with
+    `mSrc` threading — closes leak at IIFE wrap + typed coerce
+    return paths (the other two TaskCoerceT emit sites)
+  * `16b8a9ec` — step-4: extend `coerceVia` with kind-aligned `mSrc`
+    substitution — closes substitution-not-applied at the generic
+    coerce entry point (substituting σ across kind-aligned TVars
+    rather than erasing to `any` when unbound)
+  * `5ee4b820` — step-5: `coerceToFieldType` SkyTask arm threads
+    `mSrc` via `resolveWrapParams` — closes the
+    `SkyTask[Error, T] -> SkyTask[Error, T']` field-coerce path
+    (closes residual TaskCoerceT[any]-leak in record-init slots)
+  * `041ff5fa` — strict-eval end-of-module `Anon_R_` decl safety net
+
+### WellTypedFuzzer property-based gate (step-6)
+
+  * `b6c9be6e` — promote WellTypedFuzzer + register 10k-iter
+    milestone tier:
+    - 10,000 iteration property check (~rounds of random
+      well-typed Sky → sky build && ./sky-out/app no-panic)
+    - Clean run on 10k-iter milestone — zero discovered panics
+    - Closes criterion #8 (fuzzer exists + clean baseline)
+    - Note: tier separation keeps 10k from per-PR critical path
+      (milestone-only); per-PR slice runs at 100 iter for fast gate
+
+### RtCoerce ratchet (step-7 — THIS step)
+
+Clean-build measurement on `examples/26-ui-showcase` post-steps-2-5:
+
+| Cluster | Baseline | Post-2-5 | Delta |
+|---|---|---|---|
+| `rt.Coerce[` | 238 | 214 | **-24** |
+| `rt.CoerceInt` | 19 | 19 | 0 |
+| `rt.CoerceString` | 82 | 80 | -2 |
+| `rt.CoerceBool` | 17 | 13 | -4 |
+| `rt.CoerceFloat` | 22 | 22 | 0 |
+| `rt.TaskCoerceT` | 0 | 0 | 0 |
+| `rt.ResultCoerce` | 0 | 0 | 0 |
+| `rt.MaybeCoerce` | 24 | 24 | 0 |
+| `rt.AsListT` | 171 | 171 | 0 |
+| **TOTAL `rt.Coerce`** | **317** | **287** | **-30** |
+
+Bucket attribution: the -24 on bare-`rt.Coerce[` is the dominant
+wave-3 leak-class signal — typed-expected-arrow paths now
+generic-unify rather than narrowing through the bare coerce
+generic dispatch. -2 / -4 on String/Bool typed fast paths is the
+secondary signal — sites the leak class previously routed through
+bare-coerce now land on the right typed-fast-path. Both are pure
+wins (no slot now does MORE work to compensate).
+
+Ratchet shipped: `test/Sky/Build/RtCoerceBudgetSpec.hs`
+`rtCoerceTotalBudget` ratcheted 317 → 287 (strict monotone-down).
+Per-cluster baseline Map ratcheted in lockstep.
+
+### Remaining criteria after Round 5
+
+  * **#1 — rt.Coerce → 0**: partial close (-30 / 317 = 9.5%).
+    Remaining 287 sites concentrated in `rt.Coerce[` (214) and
+    `rt.AsListT` (171). Future closure paths: closing the
+    user-ADT typed payload + collection-element-narrow shapes
+    that still emit through the bare-coerce dispatch.
+  * **#3 — globalCgEnv via Option A**: locked + pending PR-α
+    Stage 3+4 dedicated batch per logged user directive (see
+    §"User directives logged" above — Option A locked as the
+    decision authority for criterion #3).
+  * **#5 — GoTypeAdt parity tests**: spec backlog (#653 closed
+    but tests still pending).
+  * **#6 — limitations #7/#8 require user sign-off**: GENUINE
+    IMPLEMENTATION BLOCKER REQUIRING USER SIGN-OFF (NOT framed as
+    "deferred" per CLAUDE.md §0 rule 4). Limitation #7 (zero-arg
+    call shape) is
+    a foundational HM-vs-codegen contract change with downstream
+    impact on every arity-0 stdlib binding. Limitation #8
+    (non-TCO O(N) stack) requires either a CPS transform on the
+    13 non-tail-recursive list operations OR an explicit
+    user-visible upper bound + documentation gate. Both are
+    multi-session architectural decisions — they need user
+    direction on shape before execution can start. This is
+    explicitly NOT "session boundary" or "deferral" framing —
+    it is a "cannot proceed without user input" blocker per the
+    inviolable §0 rule 4 stop condition.
+  * **#7 — Cycle 6 #383 close**: pending re-spawn of Judge.
+  * **#10 — Judge agent verdict**: pending all of the above.
+
+### Option A lock (criterion #3 — restated)
+
+Per §"User directives logged" above (commit `c8ce19e2`):
+**Option A is locked** for globalCgEnv migration — Stage 3 + Stage 4
+of PR-α extraction lands as its own dedicated batch AFTER the
+current #644 verification cycle completes. Folded into current
+round would explode scope. This decision is durable; future
+workflows / sessions reading this file follow Option A unless the
+user explicitly overrides.
+
 ## What CANNOT close this
 
 - "My narrow lens 3-agent verification passed" — that's not the
