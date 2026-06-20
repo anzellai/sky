@@ -121,6 +121,19 @@ shellQuote :: String -> String
 shellQuote s = "'" ++ concatMap esc s ++ "'"
   where esc '\'' = "'\\''"; esc c = [c]
 
+-- | Run a command in an explicit working dir with an ARGUMENT VECTOR (no shell),
+-- mirroring callProcess's "throw on non-zero exit" semantics. Used instead of
+-- @callProcess "sh" ["-c", "cd <dir> && <cmd> " ++ value]@ so a caller-supplied
+-- package / dependency name can never be interpreted by a shell.
+callProcessIn :: FilePath -> FilePath -> [String] -> IO ()
+callProcessIn dir cmd args = do
+    (_, _, _, ph) <- System.Process.createProcess
+        (System.Process.proc cmd args) { System.Process.cwd = Just dir }
+    ec <- System.Process.waitForProcess ph
+    case ec of
+        ExitSuccess   -> return ()
+        ExitFailure n -> ioError (userError (cmd ++ " (in " ++ dir ++ ") exited " ++ show n))
+
 
 -- | Build + runtime-probe each example. Classification mirrors the
 -- original scripts/example-sweep.sh: server / gui / cli. Failure
@@ -442,21 +455,19 @@ runScenarioRequest :: Int -> ScenarioRequest -> IO [String]
 runScenarioRequest port req = do
     let url = "http://localhost:" ++ show port ++ srPath req
         method = srMethod req
-        bodyArg = case srBody req of
-            Just b  -> "--data " ++ shellQuote b
-            Nothing -> ""
         -- Write response body to a per-request temp file so
         -- subsequent reads can't be clobbered by a background
         -- process. /tmp is fine — we're bounded to the verify run.
         respFile = "/tmp/sky-verify-resp-"
                    ++ filter (\c -> c /= '/' && c /= ' ') (method ++ srPath req)
-        cmd = unwords
-            [ "curl -s -o", shellQuote respFile, "-w '%{http_code}' --max-time 5"
-            , "-X", method
-            , bodyArg
-            , shellQuote url
-            ]
-    (_, codeOut, _) <- System.Process.readProcessWithExitCode "sh" ["-c", cmd] ""
+        bodyArgs = case srBody req of
+            Just b  -> ["--data", b]
+            Nothing -> []
+        -- Argument vector — no shell, so method / url / body are never
+        -- shell-parsed (a scenario field can't inject a command).
+        curlArgs = [ "-s", "-o", respFile, "-w", "%{http_code}", "--max-time", "5"
+                   , "-X", method ] ++ bodyArgs ++ [url]
+    (_, codeOut, _) <- System.Process.readProcessWithExitCode "curl" curlArgs ""
     let code = takeWhile (/= '\n') (dropWhile (== ' ') codeOut)
     body <- readFile respFile
     let statusReasons = case srExpectStatus req of
@@ -743,11 +754,14 @@ regenMissingBindings deps = do
             -- Batch `go get` for all missing deps in a single
             -- invocation. Go's module resolver is faster than running
             -- it N times because the dep graph is computed once.
-            let pkgList = unwords (map fst missing)
-            callProcess "sh"
-                [ "-c"
-                , "cd sky-out && go get " ++ pkgList ++ " 2>&1 | grep -v '^go:' >&2 || true"
-                ]
+            -- best-effort `go get` (the old `|| true`): run the deps as argv,
+            -- ignore a non-zero exit. (Drops the cosmetic `grep -v '^go:'`
+            -- stderr noise-filter; download lines print verbatim now.)
+            do (_, _, _, ph) <- System.Process.createProcess
+                   (System.Process.proc "go" ("get" : map fst missing))
+                       { System.Process.cwd = Just "sky-out" }
+               _ <- System.Process.waitForProcess ph
+               return ()
             -- Chunked multi-inspector strategy:
             --   * Split missing deps into K chunks (K = parallelism cap).
             --   * Run K inspector subprocesses in parallel, each in
@@ -1606,7 +1620,7 @@ runCommand cmd = case cmd of
                     else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
             else return ()
         -- Fetch the package
-        callProcess "sh" ["-c", "cd sky-out && go get " ++ pkg]
+        callProcessIn "sky-out" "go" ["get", pkg]
         -- Generate bindings via the Go inspector
         do
                 putStrLn $ "Inspecting " ++ pkg ++ "..."
@@ -1636,7 +1650,8 @@ runCommand cmd = case cmd of
         hasGoMod <- doesFileExist "sky-out/go.mod"
         if hasGoMod
             then do
-                callProcess "sh" ["-c", "cd sky-out && go mod edit -droprequire " ++ pkg ++ " && go mod tidy"]
+                callProcessIn "sky-out" "go" ["mod", "edit", "-droprequire", pkg]
+                callProcessIn "sky-out" "go" ["mod", "tidy"]
                 putStrLn $ "Removed " ++ pkg
             else putStrLn "No sky-out/go.mod found. Run sky build first."
         return (Right ())
