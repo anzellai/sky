@@ -107,6 +107,7 @@ import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CurriedLambdaStageCSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
+import qualified Sky.Build.AnonRecordEmissionGuaranteeSpec
 import qualified Sky.Build.LiveApiHandlerShapeSpec
 import qualified Sky.Build.UnannotatedParametricCfgUserHelperSpec
 import qualified Sky.Build.IsPlainIdentSpec
@@ -652,6 +653,16 @@ allSpecs fastMode = do
     -- path in src/Sky/Build/Compile.hs.
     describeT "Sky.Build.UnannotatedParametricCfgView"
                                             Sky.Build.UnannotatedParametricCfgViewSpec.spec
+    -- v0.17 step-1 gap-3 — anon-record emission survives the
+    -- SKY_GOSIG_DIFF differential gate.  Pre-fix, the in-thunk
+    -- 'atomicWriteIORef globalAnonRecords Map.empty' could fire
+    -- AFTER decl-render registrations under a lazy ordering that
+    -- only manifested when the GOSIG diff probe forced specific
+    -- chains.  Closed by removing the redundant in-thunk reset —
+    -- 'resetCompileState' at continueCompile entry is the single
+    -- authoritative reset point.
+    describeT "Sky.Build.AnonRecordEmissionGuarantee"
+                                            Sky.Build.AnonRecordEmissionGuaranteeSpec.spec
     -- Task #545 — Sky.Live.api now has a strongly-typed kernel sig
     -- (`String -> (Dict String any -> Response) -> Route`).  This
     -- spec exercises both shapes: Dict-shaped passes, Task-shaped

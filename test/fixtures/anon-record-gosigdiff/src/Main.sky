@@ -1,0 +1,78 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Live as Live
+import Std.Live exposing (route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Widget
+
+
+type Msg
+    = SubmitClicked Widget.Form
+    | CheckClicked
+    | DismissCheck
+
+
+type Page = HomePage
+
+
+type alias Model =
+    { counter : Int }
+
+
+init _ =
+    ( { counter = 0 }, Cmd.none )
+
+
+update msg model =
+    case msg of
+        SubmitClicked _ ->
+            ( { model | counter = model.counter + 1 }, Cmd.none )
+
+        CheckClicked ->
+            ( { model | counter = model.counter + 10 }, Cmd.none )
+
+        DismissCheck ->
+            ( model, Cmd.none )
+
+
+-- Cross-module call site that triggers gap-3.  The cfg record is
+-- an anonymous record shape that flows through Widget.view's
+-- unannotated parametric signature; codegen registers
+-- Anon_R_rootAttrs_wrapperAttrs__<hash> via synthAnonRecordName
+-- and the runtime cast at the layoutWith use-site references the
+-- same name.  If 'imports' resets the registry AFTER decls
+-- register, the type decl gets dropped and 'go build' rejects
+-- with "undefined: Anon_R_…".
+view model =
+    Ui.layout
+        []
+        (Widget.view
+            { filename = "Demo.sky"
+            , content = "model.counter = " ++ String.fromInt model.counter
+            , onSubmit = SubmitClicked
+            , onCheck = CheckClicked
+            , checkOutput = ""
+            , onDismissCheck = DismissCheck
+            , busy = False
+            })
+
+
+subscriptions _ =
+    Sub.none
+
+
+main =
+    Live.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" HomePage ]
+        , notFound = HomePage
+        }

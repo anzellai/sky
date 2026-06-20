@@ -4966,16 +4966,41 @@ generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.S
 generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee =
     let
         imports = unsafePerformIO $ do
-            -- v0.17 PR-α-7 — clear globalAnonRecords at codegen entry so
-            -- in-process re-builds (cabal-test running many tests in
-            -- the same GHC process) don't see stale anon-record shapes
-            -- from a previous build's renderer.  The CAF holds the
-            -- IORef across module-load boundaries; without this
-            -- write-reset, generateAnonRecordDecls' module-end read
-            -- would inherit any shapes the prior build registered.
-            -- Race-safe via atomicWriteIORef (the writer side in
-            -- synthAnonRecordName already uses atomicModifyIORef').
-            atomicWriteIORef globalAnonRecords Map.empty
+            -- v0.17 step-1 gap-3 close — the redundant reset of
+            -- 'globalAnonRecords' that used to live here has been
+            -- HOISTED to 'resetCompileState' (Compile.hs:1287)
+            -- which runs at 'continueCompile' entry, BEFORE the
+            -- 'generateGoMulti' thunk is ever constructed.
+            --
+            -- Why the move: under @SKY_GOSIG_DIFF=1@ the probe block
+            -- in 'solvePhase' forces evaluation chains that
+            -- (indirectly, via Haskell laziness) can cause the
+            -- 'decls' list to render BEFORE the 'imports' thunk
+            -- fires.  Decl rendering calls 'synthAnonRecordName'
+            -- which registers shapes via 'atomicModifyIORef'.  If
+            -- 'imports' then runs LATER and atomically wipes the
+            -- registry, the just-registered shapes vanish — and
+            -- 'generateAnonRecordDecls' (read at module-end via
+            -- 'anonRecordDecls') sees an empty registry.  Result:
+            -- the cast token at the use-site references
+            -- @Anon_R_…@ but no @type Anon_R_… = struct{...}@
+            -- declaration is emitted, so @go build@ rejects with
+            -- "undefined: Anon_R_…".
+            --
+            -- Reproduced verbatim on /tmp/sky-iter18-debug under
+            -- SKY_GOSIG_DIFF=1 with cast token
+            -- 'Anon_R_rootAttrs_wrapperAttrs__5n085ahc'.  By
+            -- removing the lazy-thunk-bound reset, the only writer
+            -- of an emptying snapshot to 'globalAnonRecords' is
+            -- 'resetCompileState' — which runs strictly before
+            -- ANY 'synthAnonRecordName' registration can occur.
+            -- Registrations therefore survive to module-end read,
+            -- regardless of decl/imports thunk-force ordering.
+            --
+            -- The 'resetCompileState' write is still race-safe via
+            -- 'atomicModifyIORef' (registrations) + 'writeIORef'
+            -- (reset at compile entry, BEFORE any registration site
+            -- can fire).  Locked by Sky.Build.AnonRecordEmissionGuarantee.
             -- v0.17 PR-19 — init over-generic diagnostic (warn-only).
             -- When the entry module declares `init` and HM produces
             -- unbound TVars in the return tuple's Model slot, warn the

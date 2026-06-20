@@ -389,6 +389,7 @@ test-suite sky-tests
       Sky.Build.CoerceArgParametricSpec
       Sky.Build.UnannotatedParametricCfgViewSpec
       Sky.Build.UnannotatedParametricCfgUserHelperSpec
+      Sky.Build.AnonRecordEmissionGuaranteeSpec
       Sky.Build.LiveApiHandlerShapeSpec
       Sky.Build.IsPlainIdentSpec
       Sky.Build.InferExprTypeBinopSpec
