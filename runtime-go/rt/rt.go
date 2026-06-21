@@ -1978,6 +1978,9 @@ func AdtTag(v any) int {
 	if v == nil {
 		return -1
 	}
+	if sv, ok := v.(SkyVariant); ok {
+		return sv.SkyVariantTag()
+	}
 	if a, ok := v.(SkyADT); ok {
 		return a.Tag
 	}
@@ -1996,6 +1999,17 @@ func AdtTag(v any) int {
 // any-typed (came from rt.ResultOk / rt.ResultErr / rt.MaybeJust).
 func AdtField(v any, idx int) any {
 	if v == nil {
+		return nil
+	}
+	if _, ok := v.(SkyVariant); ok {
+		// Variant structs have NAMED typed fields in declaration order
+		// (V0, V1, ...). Reflect.Field(idx) returns the idx-th field.
+		// No SkyName / Tag / Fields wrapper — variant payload IS the
+		// struct's fields directly.
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Struct && idx >= 0 && idx < rv.NumField() {
+			return rv.Field(idx).Interface()
+		}
 		return nil
 	}
 	if a, ok := v.(SkyADT); ok {
@@ -3707,6 +3721,37 @@ func Ffi_kernel(name any) any {
 }
 
 // SkyADT: runtime type for ADT case-match dispatch.
+// ═══════════════════════════════════════════════════════════
+// SkyVariant — sealed-interface ADT marker (v0.17 close)
+// ═══════════════════════════════════════════════════════════
+//
+// v0.17 architectural close: Sky ADTs migrate from the universal
+// `type X = rt.SkyADT` alias (`Fields []any` shape) to per-variant
+// concrete Go structs satisfying a sealed interface — closes the
+// rt.Coerce surface on Element / Attribute / Html / user-defined
+// ADTs by making producer + consumer types match natively via Go
+// structural subtyping.
+//
+// Each codegen-emitted variant struct implements SkyVariant:
+//
+//	type Mod_X_Foo_V struct { V0 int; V1 string }
+//	func (Mod_X_Foo_V) SkyVariantTag() int     { return 0 }
+//	func (Mod_X_Foo_V) SkyVariantName() string { return "Foo" }
+//
+// rt-side dispatch helpers (AdtTag / AdtField / EnumTagIs) check
+// SkyVariant FIRST, then legacy SkyADT, then reflect — so variant-
+// emitted code paths are typed end-to-end while existing rt-side
+// builders (Sky.Core.Error / wire-decoded __sky_send / FFI shims)
+// keep working unchanged until they migrate in later phases.
+//
+// Methods are EXPORTED (capital S) because codegen emits them
+// from the user's main package — interface methods with unexported
+// names are unimplementable from outside the rt package.
+type SkyVariant interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+}
+
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
 // can be pattern-matched via integer Tag comparison.
 // SkyADT is the canonical runtime shape for every Sky-side ADT. Field
@@ -3782,6 +3827,9 @@ type skyErrorAdt = SkyADT
 // branches so both representations flow cleanly through user
 // pattern matches.
 func EnumTagIs(subject any, tag int) bool {
+	if sv, ok := subject.(SkyVariant); ok {
+		return sv.SkyVariantTag() == tag
+	}
 	if adt, ok := subject.(SkyADT); ok {
 		return adt.Tag == tag
 	}

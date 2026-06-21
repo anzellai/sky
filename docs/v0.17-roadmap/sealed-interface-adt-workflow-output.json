@@ -1,0 +1,616 @@
+{
+  "summary": "Plan sealed-interface ADT emission for criterion-1 100% typed close",
+  "agentCount": 8,
+  "logs": [],
+  "result": {
+    "compileResearch": {
+      "currentShape": "Sky ADT emission has two forms today:\n\n**Monomorphic (Non-parametric) ADTs** — e.g. `type Color = Red | Green | RGB Int Int Int`\nEmitted at /Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs:5792-5822 (entry module) and 4849-4935 (dep module):\n- Type alias: `type Color = rt.SkyADT` (line 5802, 4888)\n- Constructor functions: `func Color_Red(v0 int, v1 int, v2 int) Color { return Color{Tag: 2, SkyName: \"RGB\", Fields: []any{v0, v1, v2}} }`\n  (lines 5825-5840 entry, 4913-4928 dep). Constructor param types use `safeReturnTypeFull` (line 4950 via ctorArgGoTypeDep).\n- Init registration: `func init() { rt.RegisterAdtTag(\"RGB\", 2); ... }` (lines 5817-5821, 4931-4935)\n\n**Parametric (Polymorphic) ADTs** — e.g. `type Element msg = Empty | Text String | Node ...`\nEmitted at lines 4849-4935 (dep module, \"C4: poly ADT\"), lines 5792-5822 (entry module, \"C13 entry-module path\"):\n- Non-generic type alias (legacy consumption): `type Std_Ui_Element = rt.SkyADT` (line 4888, 5802)\n- Typed sibling alias (opt-in consumption): `type Std_Ui_Element_T[T1 any] = rt.SkyADT` (lines 4899-4901, 5812-5815)\n  This allows future commits to emit typed call sites via `qualType_T[Msg]` form.\n- Constructor functions with type params: \n  ```go\n  func Std_Ui_Element_Text(v0 string) Std_Ui_Element {\n    return Std_Ui_Element{Tag: 1, SkyName: \"Text\", Fields: []any{v0}}\n  }\n  ```\n  N-ary ctors route args through `ctorArgGoTypeDep` (line 4918) which routes bare TVar refs (e.g. `msg` in `Event msg`) \n  to Go type-var names (`T1`/`T2`/...) via `substituteTVarsToGo` (lines 4937-4950), keeping non-TVar args untyped via `safeReturnTypeFull`.\n\nBoth forms use `rt.SkyADT` at the type level (non-generic), storing constructor args in `Fields []any`. This forces runtime coercion at use sites because:\n1. Construction is generic-free — all fields wrapped as `[]any`\n2. Consumption (pattern match) asserts the subject to `rt.SkyADT` (line 15642, 16714) and reflectively reads fields\n\n**Pattern-match subject coercion** (lines 15606-15642):\nFor a case-on-ADT, the subject is coerced via:\n- `rt.SkyADT` assertion (line 15642): `GoIr.GoTypeAssert (anyWrapped e) typeName` where typeName is the alias (e.g. \"Std_Ui_Element\")\n- Subject is bound to `__subject_tAdt` (line 15738) to mark it as \"statically-typed ADT struct\"\n- Then `bindCtorArg` (line 16695) reads fields via `__subject_tAdt.Fields[idx]` (lines 16744-16746), still `any`-typed\n\n**Constructor argument binding** (lines 16695-16882):\nFor a matched ctor arg with type T:\n- `bindCtorArg` extracts `.Fields[idx]` from the subject (line 16744-16755)\n- If the pattern's expected type is e.g. `List Int`, wraps the field with `rt.AsListT[int]` (line 16795)\n- If the pattern's expected type is a user ADT (e.g. `Tree`), wraps with `rt.Coerce[Mod_Tree]` (line 16857)\n- If the pattern's expected type is a record alias, wraps with `rt.Coerce[Mod_Alias_R]` (line 16841)\n- Otherwise leaves as bare `any` (line 16858)\n\n**rt.Coerce insertion sites** at use — from examples/26-ui-showcase/sky-out/main.go lines 401-484:\nWhen an ADT-constructor function returns a stdlib-aliased type like `rt.SkyAttribute`, it must coerce:\n```go\nfunc Std_Html_Attributes_class(v string) rt.SkyAttribute {\n  // PROOF: FFI: stdlib ADT constructor → typed alias\n  return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr(\"class\", v))\n}\n```\nThe ctor `Std_Html_Attributes_Attribute_Attr` returns `Std_Html_Attributes_Attribute` (line 365, unqualified), \nbut the wrapper must return `rt.SkyAttribute` (a stdlib-provided alias for `any`), so rt.Coerce is inserted.",
+      "gapAnalysis": "rt.Coerce is FORCED because:\n\n**1. Type-level schema loss** — ADT types are declared as non-generic aliases to rt.SkyADT:\n   - All ADT constructors store args in `Fields []any` (line 4926)\n   - Pattern-match subjects are asserted to `rt.SkyADT` (line 15642)\n   - All field reads come back as `any` (line 16744-16755)\n   - This breaks type information at compile-time, requiring runtime type-assertion/reconstruction\n\n**2. Cross-module type aliasing** — stdlib types like `rt.SkyAttribute` are type aliases for `any`:\n   - User ADT constructor returns the user's qualified type (e.g., `Std_Html_Attributes_Attribute`)\n   - But the wrapper function must return `rt.SkyAttribute` (nominal type in stdlib)\n   - Go's type system sees these as distinct (even though both alias `any`), forcing explicit `rt.Coerce` narrowing\n   - See lines 401-403: `Std_Html_Attributes_Attribute_Attr` returns `Std_Html_Attributes_Attribute`, \n     the wrapper must coerce to `rt.SkyAttribute`\n\n**3. Parametric ADT instantiation mismatch** — polymorphic ADTs emit non-generic aliases:\n   - `Element msg` declares `type Std_Ui_Element = rt.SkyADT` (never instantiated with [Msg])\n   - Constructor functions are monomorphic: return type is bare `Std_Ui_Element`, not `Std_Ui_Element_T[Msg]`\n   - Call sites expecting `Std_Ui_Element_T[Msg]` must coerce from bare `Std_Ui_Element`\n   - See line 947 in examples: `return rt.Coerce[Std_Ui_Element](Std_Ui_Element_Empty)`\n\n**4. Runtime field access requires generic narrowing** — pattern-match field extraction:\n   - `bindCtorArg` reads `.Fields[idx]` which is `any` (line 16744-16746)\n   - When the pattern type is known (e.g., `List Int`), the consumer MUST wrap with typed coercer\n   - See lines 16793-16821: `payloadCoercer` wraps with `rt.AsListT[int]`, `rt.MaybeCoerce[int]`, etc.\n   - This is because `any` assignment to a typed local breaks Go's type checker unless wrapped through `rt.Coerce*` functions\n\n**Root cause architectural flaw**: ADTs today conflate TYPE SHAPE (what fields are, their types) with RUNTIME REPRESENTATION (all fields as `[]any`). \nThe non-generic alias `type X = rt.SkyADT` commits to erasing all type information at the Go level, so:\n- Every constructor must return `rt.SkyADT`-compatible values (all fields wrapped as any)\n- Every consumer must reconstruct types via rt.Coerce, rt.AsListT, etc. reflective operations\n- There's NO way to statically verify that a pattern-match destructure gets the right type — it's all runtime runtime.",
+      "callSites": [
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 4849,
+          "description": "generateUnionForDep — main ADT declaration + constructor emission for dep modules (monomorphic + polymorphic)"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 4888,
+          "description": "Non-generic type alias emission: type qualType = rt.SkyADT"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 4898,
+          "description": "Polymorphic ADT dual-alias pattern: emit optional _T[...] typed sibling"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 4913,
+          "description": "N-ary constructor function emission with type params via ctorTypeParamsFor"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 4937,
+          "description": "ctorArgGoTypeDep — route TVar args through substituteTVarsToGo, others via safeReturnTypeFull"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 5792,
+          "description": "Entry-module union generation — same shape as generateUnionForDep but line 5802/5816"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 5825,
+          "description": "generateCtorFunc (entry module) — constructor function codegen"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 15529,
+          "description": "caseToGo — pattern-match expression lowering, subject coercion entry point"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 15606,
+          "description": "coerceSubject — wraps case subject with rt.SkyADT type assertion or ResultCoerce/MaybeCoerce"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 15780,
+          "description": "detectSubjectType — infers rt.SkyADT or rt.SkyResult[any,any] or rt.SkyMaybe[any] from patterns"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 16550,
+          "description": "patternBindings — recursive pattern destructuring, dispatches to bindCtorArg for PCtor"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 16695,
+          "description": "bindCtorArg — extract ctor arg from pattern, wrap with rt.AsListT/rt.MaybeCoerce/rt.Coerce if needed"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 16772,
+          "description": "payloadCoercer matching — selects rt.AsInt/rt.AsListT[int]/rt.Coerce[Tree] based on pattern type"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 6867,
+          "description": "coerceExprFor — emits inline coercion string (rt.Coerce, rt.ResultCoerce, rt.MaybeCoerce) for return-type wrappers"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 7327,
+          "description": "coerceReturnExprT — wraps function return expr to match declared Go return type, uses coerceExprFor"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/src/Sky/Build/Compile.hs",
+          "line": 9740,
+          "description": "coerceArg — call-site argument coercion, inserts rt.Coerce[T] for type mismatches"
+        }
+      ],
+      "constraints": [
+        "Gob serialization — rt.RegisterGobType must be called on all exported record-alias structs (line 5007) so Sky.Live Cmd/Sub dispatch can marshal/unmarshal opaque message types. ADTs aren't directly registered but are aliased to rt.SkyADT which gob knows.",
+        "Message dispatch via reflect.MakeFunc — Sky.Live message handler instantiation uses reflect.MakeFunc to adapt bound handlers (Task-shaped) to the generic msg dispatch interface. The msg itself flows through as rt.SkyADT (any), and handler extraction via rt.Field happens reflectively (no static type checking possible).",
+        "Html.map runtime walker — Std.Ui.html Element recursion needs to inspect/rebuild Element trees at runtime. Elements come back from user functions as rt.SkyADT (any-typed), so the walker calls rt.Field + rt.AdtField to read tag + fields reflectively.",
+        "RegisterAdtTag invariant — each ADT constructor must register its (ctorName, tag_index) via rt.RegisterAdtTag (lines 4931-4935, 5817-5821). Runtime uses this to identify ctors when marshaling ADTs. Tag indices are compile-time-assigned but the registry is populated at runtime.",
+        "msgDisplayName — Sky.Live debugging shows human-readable message names. For ADT-constructed messages, this reads SkyName field via rt.Field(anyMsg, \"SkyName\") reflectively (no static schema available). Reflects message type when created as Msg_Ctor(...) but loses info when wrapped in any.",
+        "Type-parameter erasure policy — ctorArgGoTypeDep (line 4944-4950) ONLY substitutes bare TVar args (e.g. `a` in `Just a`), not nested generic containers (e.g. `Event msg` becomes `Event` via safeReturnTypeFull). This prevents 'substituteTVarsToGo' and 'safeReturnTypeFull' type mismatches (line 4861-4863).",
+        "Polymorphic alias dual emission — when an ADT has type params, BOTH `type X = rt.SkyADT` AND `type X_T[T1 any] = rt.SkyADT` are emitted (lines 4898-4902, 5812-5815). This allows opt-in typed call sites but preserves backward compat with existing bare ctor references.",
+        "Typed-FFI subject marking — pattern-match subjects from typed-FFI calls get `__subject_tFfi` suffix (line 15720) so bindCtorArg recognizes them and skips the reflect unwrap step for `.OkValue`/`.JustValue` access (line 16730-16737). Non-_tFfi subjects route through rt.ResultOk/rt.MaybeJust helpers.",
+        "Custom ADT subject marking — pattern-match subjects for non-Result/Maybe user ADTs get `__subject_tAdt` suffix (line 15738) so bindCtorArg knows the subject is already asserted to the ADT struct type and can read `.Fields[idx]` directly (line 16744-16746) without rt.AdtField reflect helper.",
+        "Payload coercion gates — bindCtorArg (lines 16793-16821) applies typed coercers (rt.AsInt, rt.AsListT[int], rt.Coerce[Tree]) ONLY when subject is `__subject_tAdt` (line 16860). Other subjects (non-typed-ADT, nested destructure temps) skip this layer because they're already wrapped with any() or read through reflect helpers."
+      ]
+    },
+    "runtimeResearch": {
+      "currentShape": "rt.SkyADT is a flat struct with three public fields at /Users/anzel/works/playground/sky/runtime-go/rt/rt.go:3717-3721:\n  - Tag: int (discriminant/variant tag)\n  - SkyName: string (human-readable constructor name, e.g., \"Increment\", \"Io\")\n  - Fields: []any (payload slice, accessed by index in pattern-binding; empty for nullary constructors)\n\nThis represents ALL Sky-level ADTs at runtime in canonical form. Codegen aliases Sky type names to rt.SkyADT (e.g., `type Msg_Increment = rt.SkyADT`). Pattern matching via codegen does Tag-based case dispatch on integers, then accesses Fields[i] via AdtField/AdtTag helpers. The shape works across all ADT families: user-defined (e.g., Msg), stdlib Maybe/Result, and kernel-built errors (e.g., Sky.Core.Error.Error).",
+      "gapAnalysis": "The Fields: []any contract forces rt.Coerce to be load-bearing at every ADT boundary. When Sky codegen emits typed variants (e.g., Msg_Increment as a sealed struct variant rather than SkyADT), the runtime cannot consume Fields[i] via type-unsafe array indexing — it must instead access named struct fields. This requires:\n1. Codegen to emit variant structs instead of SkyADT aliases\n2. A sealed interface (type ADT interface{}) + per-variant types to maintain Go's type safety\n3. Runtime ADT walkers (deepEq, isSkyADT, gobRegisterAll, AdtField, Coerce) to reflexively handle both old SkyADT shape AND new variant-struct shape during a transition period, then drop legacy support\n\nThe current rt.Coerce shape with []any Field indexing requires unsafe type assertions and panic recovery on field-access mismatch. If variants carry typed payloads, Coerce can validate at compile-time via the Go type system.",
+      "callSites": [
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 1977,
+          "description": "AdtTag: reads Tag from SkyADT via type assertion or reflect.FieldByName fallback"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 1997,
+          "description": "AdtField: extracts Fields[idx] from SkyADT; fallback handles reflect-based struct access"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 2533,
+          "description": "isSkyADT walker: detects SkyADT-shaped structs (Tag int + one of JustValue/OkValue/ErrValue) used by deepEq"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 2553,
+          "description": "skyADTActiveFields: computes active payload fields for a given Tag; used in deepEq to avoid comparing inactive variant payloads"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 2637,
+          "description": "deepEq struct case: special-cased short-circuit for isSkyADT to prevent false inequality between Nothing variants of different instantiations"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 2784,
+          "description": "EnumTagIs: pattern-match dispatch for zero-arg ADTs; compares int constants against SkyADT.Tag with fallback for Can.Enum optimisation"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 3730,
+          "description": "RegisterGobType: calls gobRegisterAll to walk ADT graph for gob serialization"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/live_store.go",
+          "line": 53,
+          "description": "gobRegisterAll: depth-bounded walk via reflect.Value/reflect.Type; registers all concrete struct types encountered in model tree (including SkyADT instances)"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/live_store.go",
+          "line": 127,
+          "description": "walkGob: initiates value-walker for gob registration; traverses Struct/Slice/Map recursively"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/live_store.go",
+          "line": 63,
+          "description": "GobRegisterTypeGraph: walks TYPE definition tree (not value) to catch SkyMaybe[User_R] even when init model has Nothing"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 132,
+          "description": "adaptFuncValueWithCapture: uses reflect.MakeFunc to wrap Sky functions in Go closure wrappers; dispatches via SkyCall on invocation"
+        },
+        {
+          "file": "/Users/anzel/works/playground/sky/runtime-go/rt/rt.go",
+          "line": 4865,
+          "description": "Field: accesses record/ADT field by name; reflects into struct fields or map lookup"
+        }
+      ],
+      "constraints": [
+        "Webview CGO constraint: /Users/anzel/works/playground/sky/runtime-go/rt/webview.go:60 //go:build cgo && darwin — only rt-side user-ADT constructors on darwin require CGO; tests stub on !cgo. Sealed interface ADTs do not add CGO requirement.",
+        "Go stdlib compatibility: reflect.MakeFunc is available since Go 1.5 (runtime-supported). No version gate required for variant-struct shape.",
+        "External Go FFI assumptions: Codegen hands Sky ADTs to user Go kernels as any-typed values. Kernels may type-assert to rt.SkyADT or to local structs with Tag/Fields layout. Transitioning to sealed interface + variants breaks old kernel code unless codegen emits a shim type-alias (SkyADT remains as legacy alias = interface{}).",
+        "gob serialization protocol: gob encodes field names and types. Switching SkyADT.Fields []any to typed variant struct fields preserves serialization contract IF the variant structs are gob-registered. Current gobRegisterAll walks values and registers types — will auto-discover new variant types without code change.",
+        "Session persistence round-trip: Sky.Live persists sessions via gob encode/decode. Model state may contain SkyADT values. If codegen emits new variant-struct shape, old persisted sessions carry SkyADT serialized form; decode must accept both shapes. Dual-mode walker in gobRegisterAll + Coerce required during transition.",
+        "Msg dispatch in Sky.Live: reflect.MakeFunc closures do NOT depend on SkyADT shape — they wrap user update/view functions. Event handlers dispatch via tag-based registry lookup (adtTagRegistry); swapping from SkyADT to variants only affects the registry value's type, not dispatch logic.",
+        "reflect.Call at ADT boundaries: safeSkyCall wraps reflect-based function invocation (Sky functions are curried, Go functions are uncurried). Codegen adapts via reflect.MakeFunc. Variants do NOT change this — the reflection boundary remains, but type information is richer."
+      ]
+    },
+    "compilePlan": {
+      "emissionStrategy": "## NEW ADT EMISSION — Sealed-interface + Variant Structs\n\nThe runtime gains a marker method `_sky_adt_<TypeName>()` so Go's structural subtyping makes a sealed interface per ADT. Every variant is its own concrete struct with typed fields (no `Fields []any`). A constructor function literally returns the variant struct; Go auto-widens to the interface at use sites — no rt.Coerce.\n\n### (a) Monomorphic ADT: `type Color = Red | Green | RGB Int Int Int`\n\n```go\n// ── Sealed interface (the \"ADT type\") ────────────────────────────\ntype Main_Color interface {\n    _sky_adt_Main_Color()\n    SkyName() string                       // for msgDisplayName + gob\n}\n\n// ── Per-variant concrete structs ─────────────────────────────────\ntype Main_Color_Red_V   struct{}\ntype Main_Color_Green_V struct{}\ntype Main_Color_RGB_V   struct{ V0, V1, V2 int }\n\nfunc (Main_Color_Red_V)   _sky_adt_Main_Color() {}\nfunc (Main_Color_Green_V) _sky_adt_Main_Color() {}\nfunc (Main_Color_RGB_V)   _sky_adt_Main_Color() {}\n\nfunc (Main_Color_Red_V)   SkyName() string { return \"Red\" }\nfunc (Main_Color_Green_V) SkyName() string { return \"Green\" }\nfunc (Main_Color_RGB_V)   SkyName() string { return \"RGB\" }\n\n// ── Constructors return concrete; widen automatically ────────────\nvar Main_Color_Red   Main_Color = Main_Color_Red_V{}\nvar Main_Color_Green Main_Color = Main_Color_Green_V{}\nfunc Main_Color_RGB(v0, v1, v2 int) Main_Color {\n    return Main_Color_RGB_V{V0: v0, V1: v1, V2: v2}\n}\n\n// ── Gob + runtime tag registry (init) ────────────────────────────\nfunc init() {\n    rt.RegisterAdtVariant(\"Main_Color\", \"Red\",   0, Main_Color_Red_V{})\n    rt.RegisterAdtVariant(\"Main_Color\", \"Green\", 1, Main_Color_Green_V{})\n    rt.RegisterAdtVariant(\"Main_Color\", \"RGB\",   2, Main_Color_RGB_V{})\n    gob.Register(Main_Color_Red_V{})\n    gob.Register(Main_Color_Green_V{})\n    gob.Register(Main_Color_RGB_V{})\n}\n```\n\n### (b) Parametric phantom-msg ADT: `type Element msg = Empty | Text String | Container (List Attr) (List (Element msg))`\n\n`msg` is phantom at use (Sky.Ui's Element). Emit a **non-generic** sealed interface plus variants whose payloads don't reference `msg` (because msg doesn't appear in field types here — only in event-attribute payloads which carry their own typed slot). Where msg DOES flow (Container's nested Element list), the typed list element type is the interface itself (`Std_Ui_Element`), so recursion works without Go generics.\n\n```go\ntype Std_Ui_Element interface {\n    _sky_adt_Std_Ui_Element()\n    SkyName() string\n}\n\ntype Std_Ui_Element_Empty_V     struct{}\ntype Std_Ui_Element_Text_V      struct{ V0 string }\ntype Std_Ui_Element_Container_V struct {\n    V0 []Std_Ui_Attribute       // attribute list\n    V1 []Std_Ui_Element          // nested children — recursive on the interface\n}\n\nfunc (Std_Ui_Element_Empty_V)     _sky_adt_Std_Ui_Element() {}\nfunc (Std_Ui_Element_Text_V)      _sky_adt_Std_Ui_Element() {}\nfunc (Std_Ui_Element_Container_V) _sky_adt_Std_Ui_Element() {}\n// + SkyName() impls + gob.Register + RegisterAdtVariant.\n\nvar Std_Ui_Element_Empty Std_Ui_Element = Std_Ui_Element_Empty_V{}\nfunc Std_Ui_Element_Text(v0 string) Std_Ui_Element { return Std_Ui_Element_Text_V{V0: v0} }\nfunc Std_Ui_Element_Container(v0 []Std_Ui_Attribute, v1 []Std_Ui_Element) Std_Ui_Element {\n    return Std_Ui_Element_Container_V{V0: v0, V1: v1}\n}\n```\n\nWhere msg ACTUALLY flows (event-attribute payloads — `onClick : msg -> Attribute msg`), Attribute itself goes the Go-generic route (case c shape) so the msg type round-trips.\n\n### (c) Parametric real-flow ADT: `type Maybe a = Just a | Nothing`\n\nWhen the type parameter appears in a constructor field, emit a Go-generic sealed interface + generic variant struct.\n\n```go\ntype Sky_Core_Maybe_Maybe[T any] interface {\n    _sky_adt_Sky_Core_Maybe_Maybe(T)        // marker takes T to bind the type param\n    SkyName() string\n}\n\ntype Sky_Core_Maybe_Maybe_Just_V[T any]    struct{ V0 T }\ntype Sky_Core_Maybe_Maybe_Nothing_V[T any] struct{}\n\nfunc (Sky_Core_Maybe_Maybe_Just_V[T])    _sky_adt_Sky_Core_Maybe_Maybe(T) {}\nfunc (Sky_Core_Maybe_Maybe_Nothing_V[T]) _sky_adt_Sky_Core_Maybe_Maybe(T) {}\nfunc (Sky_Core_Maybe_Maybe_Just_V[T])    SkyName() string { return \"Just\" }\nfunc (Sky_Core_Maybe_Maybe_Nothing_V[T]) SkyName() string { return \"Nothing\" }\n\nfunc Sky_Core_Maybe_Maybe_Just[T any](v0 T) Sky_Core_Maybe_Maybe[T] {\n    return Sky_Core_Maybe_Maybe_Just_V[T]{V0: v0}\n}\nfunc Sky_Core_Maybe_Maybe_Nothing[T any]() Sky_Core_Maybe_Maybe[T] {\n    return Sky_Core_Maybe_Maybe_Nothing_V[T]{}\n}\n```\n\nCoexistence with current `rt.SkyMaybe[T]`: during Phase 2 the codegen aliases `type Sky_Core_Maybe_Maybe[T any] = rt.SkyMaybe[T]` at the interface level so existing `rt.MaybeCoerce[int]` consumers still link. Phase 2 then ports `rt.SkyMaybe` to the new sealed-interface shape (the struct layout stays — gob compatibility — only the entry-point becomes an interface).",
+      "patternMatchStrategy": "## case-of LOWERS TO Go TYPE SWITCH (no Fields[]any)\n\nFor `case e of Empty -> bodyA | Text s -> bodyB s | Container as cs -> bodyC as cs`:\n\n```go\nfunc() any {                                      // typeIIFE wrap (unchanged shape)\n    __subject := eGoExpr                          // statically Std_Ui_Element interface\n    _ = __subject\n    switch __sky_v := __subject.(type) {\n    case Std_Ui_Element_Empty_V:\n        _ = __sky_v\n        return bodyAGo                            // exprToGo body\n    case Std_Ui_Element_Text_V:\n        s := __sky_v.V0                           // s : string (statically typed!)\n        _ = s\n        return bodyBGo                            // body sees s : string, no rt.AsString\n    case Std_Ui_Element_Container_V:\n        as := __sky_v.V0                          // as : []Std_Ui_Attribute\n        cs := __sky_v.V1                          // cs : []Std_Ui_Element\n        _ = as\n        _ = cs\n        return bodyCGo                            // body sees typed slices, no rt.AsListT\n    default:\n        _ = rt.Unreachable(\"case/Std_Ui_Element\")\n        return nil\n    }\n}()\n```\n\n### Why this kills rt.Coerce at use sites\n\n- Field access is `__sky_v.V0` — already concrete Go type from the variant struct's declared field. No `.Fields[idx].(int)`, no `rt.AsInt`, no `rt.Coerce[Tree]`.\n- The default arm becomes the unreachable sink; no per-branch tag-int compare.\n- Nested patterns destructure on the typed binding (`__sky_v.V0` is the right Go type so a nested `case as[0] of ...` already starts typed).\n- Exhaustiveness — Sky already proves it at HM; the Go default is a soundness floor only.\n\n### Subject-coercion site rewrites (Compile.hs)\n\n- `caseToGo` (line 15529): replace `coerceSubject typeName e` and `detectSubjectType` logic. New path produces a `GoTypeSwitch` IR node (new constructor in `Sky/Generate/Go/Ir.hs`).\n- `caseBranchToStmts` (line 15807) becomes `caseBranchToTypeSwitchCase` returning a `(typedVariantName, [bindings] ++ bodyStmts)` tuple.\n- `bindCtorArg` (line 16695): collapses to direct field selector — `GoSelector __sky_v (\"V\" ++ show idx)`. The `payloadCoercer` block (lines 16772–16858, including all `rt.AsListT`/`rt.MaybeCoerce`/`rt.Coerce[<goName>]` wraps) is **deleted** — the typed variant struct already carries the right Go type per field.\n- Result/Maybe special cases (`isTypedFfiCall`, `__subject_tFfi`, lines 15654–15735) collapse into the same type-switch path: `case Sky_Core_Result_Result_Ok_V[E, A]:` reads `.V0` typed directly. `coerceExprFor`'s ResultCoerce/MaybeCoerce branches (line 6876) drop because the interface auto-widens.\n- Enum optimisation (`Can.Enum` lines 4879–4884 and `EnumTagIs` at rt.go:3784) stays as-is — enum types remain Go int constants; the marker-interface sealed-ADT path applies only to data-carrying ADTs.",
+      "runtimeChanges": "## rt.go SCOPE OF CHANGE\n\n### What stays\n- `SkyADT` struct (`rt.go:3717`) stays during Phase 1 — runtime helpers (`makeError`, `errorKindAdt`, `skyMaybeNothing`, etc.) keep using it for the rt-built ADT values that flow through FFI/Cmd/Sub channels. Phase 2 migrates Maybe/Result/Task variants; later phase migrates Error.\n- `SkyMaybe[T]` / `SkyResult[E, A]` / `T2[A, B]` struct layouts stay (gob payload-compatible). They gain a marker method to satisfy the new sealed interface.\n- `EnumTagIs` (`rt.go:3784`) — Can.Enum optimisation unchanged.\n\n### New runtime surface\n```go\n// New: replaces RegisterAdtTag. variant is the zero-value of the variant struct.\nfunc RegisterAdtVariant(typeName, ctorName string, tag int, variant any) { ... }\n```\n\n`adtTagRegistry` widens to `map[string]map[string]adtVariantInfo` (per-type ctor → tag + reflect.Type) so `msgDisplayName` and Html.map walker can introspect.\n\n### SkyADT walker (Html.map / Cmd.map / Sub.map / __sky_send)\n\n`Html.map` today reads `rt.Field(v, \"Fields\")` reflectively. Replacement:\n\n```go\n// rt.SkyAdtVariant returns (typeName, ctorName, fields []any).\n// Fast path: typed sealed interface — uses MethodByName(\"SkyName\") + reflect on\n// struct fields. Slow path: legacy SkyADT — reads .Fields directly.\nfunc SkyAdtVariant(v any) (string, string, []any) {\n    if a, ok := v.(SkyADT); ok {                 // legacy\n        return a.SkyName, a.SkyName, a.Fields\n    }\n    // New: type implements _sky_adt_<T>() marker, expose via SkyName().\n    rv := reflect.ValueOf(v)\n    if m := rv.MethodByName(\"SkyName\"); m.IsValid() {\n        ctor := m.Call(nil)[0].String()\n        // typeName from method-set: reflect.Type.Name() of the marker method's receiver type\n        typeName := adtMarkerTypeOf(rv.Type())\n        n := rv.NumField()\n        fs := make([]any, n)\n        for i := 0; i < n; i++ { fs[i] = rv.Field(i).Interface() }\n        return typeName, ctor, fs\n    }\n    return \"\", \"\", nil\n}\n```\n\n`Html.map` walker rewrites every ctor by typeName/ctorName lookup (registry from `RegisterAdtVariant`) and reflectively constructs the rebuilt variant. Performance: same as today (reflect-bound; this is the cold path for the Html re-tree walk).\n\n`msgDisplayName` becomes: if the value satisfies `interface{ SkyName() string }` → call it; else fall back to `SkyADT.SkyName`; else \"anonymous\". Closes the `makeFuncStub` regression from task #532.\n\n### Gob handling\n\nGob requires each concrete struct registered exactly once. The codegen-emitted `init()` block calls `gob.Register(<Variant>_V{})` per variant. Sessions stored in sqlite/redis/postgres serialize `Cmd Msg` / `Model` cleanly because every msg is a concrete variant struct.\n\nCross-version compatibility risk: existing redis/postgres-stored sessions encoded as `rt.SkyADT{Tag, SkyName, Fields[]any}`. Mitigation: Phase 0 adds `gobDecodeHook` registered alongside `gob.Register` that maps the legacy SkyADT decode to the new variant struct via the registry (typeName + tag → variant zero, fields → field-by-field reflect set). Default cfg sets `ttl=30m`, so prod redeploys naturally roll the schema; the hook covers the in-flight window.\n\n### reflect.MakeFunc dispatch (Sky.Live message handler)\n\nUnchanged — the dispatcher boxes a typed variant in `any` for transport. The receiving end reads it back via `any` parameter and type-asserts to the sealed interface (the type-switch in `update`'s generated body already does this in the new shape). No new MakeFunc complexity.\n\n### Files touched\n- `runtime-go/rt/rt.go`: +120 LOC (RegisterAdtVariant, SkyAdtVariant, adtMarkerTypeOf, gobDecodeHook). Modifications to: `RegisterAdtTag` (kept as a legacy alias delegating to `RegisterAdtVariant`), `AdtField` (legacy path — kept), `EnumTagIs` (unchanged).\n- `runtime-go/rt/html_walker.go` (if separate; else section of rt.go): rewrite `Html.map` to use `SkyAdtVariant`.\n- `runtime-go/rt/msg_display.go` (section): use `SkyName()` method preferentially.",
+      "migrationPhases": [
+        {
+          "phase": "P0 — IR + runtime scaffolding",
+          "scope": "Add GoIr constructors: GoTypeSwitch, GoMarkerInterface, GoVariantStruct, GoMarkerMethod. Add LowerCtx field _lc_useSealedInterface (bool, opt-in per module). rt.go: add RegisterAdtVariant + SkyAdtVariant + adtMarkerTypeOf + gobDecodeHook. Wire RegisterAdtTag → RegisterAdtVariant alias so existing emission stays green. No codegen behaviour change.",
+          "estLOC": 280,
+          "verifyCmd": "timeout 1800 scripts/cabal-test.sh && scripts/example-sweep.sh"
+        },
+        {
+          "phase": "P1 — Element/Attribute/Html (~220 sites)",
+          "scope": "Compile.hs: gate generateUnionForDep + entry-union emission (lines 4849, 5792) on a per-type opt-in list initially containing Std_Ui_Element, Std_Ui_Attribute, Std_Html_Html, Std_Html_Attributes_Attribute, Std_Html_Events_Event. When opted in: emit sealed-interface + per-variant struct + typed-field constructors. Rewrite caseToGo (line 15529) and bindCtorArg (line 16695) to dispatch via new IR when the subject's static type is a sealed interface (peek LowerCtx); legacy path covers everything else. Delete payloadCoercer block (lines 16772-16858) for opted-in types. examples/26-ui-showcase + skydeploy is the load-bearing gate (220 known sites).",
+          "estLOC": 620,
+          "verifyCmd": "timeout 1800 scripts/cabal-test.sh && cd examples/26-ui-showcase && rm -rf sky-out .skycache .skydeps && sky build src/Main.sky && scripts/verify-all-web.sh"
+        },
+        {
+          "phase": "P2 — Maybe/Result/Task/Cmd/Sub (Go-generic variants)",
+          "scope": "Extend opt-in list to Sky_Core_Maybe_Maybe, Sky_Core_Result_Result, Sky_Core_Task_Task, Std_Cmd_Cmd, Std_Sub_Sub. Emission uses generic-struct variants per case (c) shape. rt.SkyMaybe / rt.SkyResult retire as standalone types — become aliases to the new generic sealed interfaces (gob layout unchanged). All MaybeCoerce/ResultCoerce/TaskCoerceT call sites collapse to identity at codegen (Go interface auto-widens). Delete coerceExprFor's ResultCoerce/MaybeCoerce arms (line 6876-6879). Touchpoint count ~470 across runtime + emitted code.",
+          "estLOC": 480,
+          "verifyCmd": "timeout 1800 scripts/cabal-test.sh && scripts/example-sweep.sh && timeout 600 scripts/verify-cli.sh"
+        },
+        {
+          "phase": "P3 — User-defined ADTs (default-on)",
+          "scope": "Flip default of _lc_useSealedInterface to True for all ADTs. Remove the opt-in list. Validate cross-module ADT references emit interface-typed (qualType resolves to the dep module's sealed interface). Validate that runtime SkyAdtVariant fallback handles any remaining SkyADT-shaped values from FFI/kernel code. Delete legacy SkyADT-targeted code paths in caseToGo / bindCtorArg / detectSubjectType / coerceSubject — these become pure dispatch to type-switch IR.",
+          "estLOC": 380,
+          "verifyCmd": "timeout 1800 scripts/cabal-test.sh && scripts/example-sweep.sh && grep -r 'rt.Coerce\\[' examples/*/sky-out/main.go | wc -l   # expect 0 (criterion 1)"
+        },
+        {
+          "phase": "P4 — rt.RecordUpdate + tuple slot threading",
+          "scope": "Gap C-1: replace rt.RecordUpdate reflect-driven path with codegen-emitted `&{ existing | F1: v1, F2: v2 }` struct literal when the underlying type is statically known (typed dep alias / typed entry alias). Gap C-2: thread expected tuple element types through caseToGo subject for typed T2/T3 destructure (already partially done in payloadCoercer; promote to first-class slot). Delete rt.AsTuple2T/AsTuple3T at typed-ADT cases (they remain for opaque-any sources). After P4: rt.Coerce surface area on the runtime is reflection-mediated FFI boundary only.",
+          "estLOC": 340,
+          "verifyCmd": "timeout 1800 scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-all-web.sh && cd examples/26-ui-showcase && grep -c 'rt.Coerce\\|rt.AsListT\\|rt.MaybeCoerce' sky-out/main.go   # expect 0"
+        }
+      ],
+      "riskAreas": [
+        "Gob backward compatibility for persisted sessions — rt.SkyADT-shaped values exist in redis/postgres/sqlite stores. Mitigation: P0 ships gobDecodeHook that converts (typeName, tag, fields) → new variant struct via reflect on the registry. Set Sky.Live default TTL stays 30m so existing sessions naturally cycle; ops who tuned ttl=24h get a one-version flag SKY_LIVE_LEGACY_ADT_GOB=1.",
+        "reflect.MakeFunc handler dispatch — Sky.Live's update is bound through reflect.MakeFunc at rt.go:133. Today's path boxes msg as any, then read via rt.Field/rt.AdtField. New variant structs box identically (any wraps the variant struct); receiver-side type switch in generated update body unboxes typed. Risk: any reflect-by-Tag lookup outside the codegen-emitted update body. Audit: grep rt.AdtField / rt.Field callers. Mitigation: P0 keeps both helpers live; P3 audit narrows their surface.",
+        "Html.map walker performance — today reads rt.SkyADT.Fields directly without reflect (single struct field access). New path uses reflect.NumField+Field on the typed variant struct. Mitigation: walker is cold-path (only fires when Sky.Html.map is explicitly called, rare). Add micro-bench at runtime-go/rt/html_walker_test.go gating <2x regression.",
+        "msgDisplayName / pub-sub topic resolution — relies on SkyName field. Mitigation: every variant emits SkyName() string method; rt code checks method first, falls back to legacy SkyADT.SkyName field. Closes regression class from task #532 (makeFuncStub).",
+        "Cross-module ADT type identity — when ModA declares `type X = A | B` and ModB does `case x of A -> ...`, ModB needs to import ModA's interface AND variant structs. Today: type alias `type ModA_X = rt.SkyADT` lets ModB reference ModA_X without seeing variant structs; codegen emits ctor-name string for tag compare. New: ModB imports ModA's interface (`ModA_X`) AND each variant struct (`ModA_X_A_V`, `ModA_X_B_V`) for the type switch. Mitigation: generateUnionForDep already module-prefixes everything; the variant struct names are deterministic by typeName+ctorName, so the same naming scheme propagates. Validation in P1 via examples/26-ui-showcase + skydeploy's cross-module Html.map calls.",
+        "Go generic ADT variant constructor inference — variant struct Just_V[T] requires T to be inferred at construction. Mitigation: emitted constructor explicitly carries [T any] type-param-list and `[T]` instantiation at the call site, replicating the existing CForeign per-call-site alpha-rename path (Compile.hs's same-module-polymorphic re-instantiation). Already validated by v0.15 type-directed lowering on parametric record aliases.",
+        "FFI boundary still produces rt.SkyADT — Std.Auth, Std.Crypto, etc. construct error ADTs via rt.NewError. These flow as rt.SkyADT through Sky-emitted code. Mitigation: FFI-side rt.NewError stays SkyADT through P0–P3; P3 codegen detects FFI-source values via the existing __subject_tFfi marker and routes through the SkyAdtVariant fallback (still type-safe — SkyAdtVariant unwraps to typed fields). P4 migrates rt.NewError to emit the new variant struct directly, closing the last leak.",
+        "sky doc / LSP — both currently read ADT shape from Can.Union. No change needed; they consume the source-level AST, not the emitted Go. Audit confirms no rt.SkyADT-dependent path in sky/Sky/Doc/* or sky/Sky/Lsp/*.",
+        "sky test runtime — uses rt.Coerce on test expectations via Sky.Test.equal[T1]. Type-switch lowering preserves the typed binding (`s : string` not `s : any`) so T1 unifies correctly at the call site without rt.Coerce. Regression spec: tests/Live/CounterTest.sky (already gated)."
+      ]
+    },
+    "runtimePlan": {
+      "emissionStrategy": "CODEGEN-SIDE NEW SHAPE:\n  // Sealed iface (parameterised on type-vars when ADT is polymorphic).\n  type Std_Ui_Element[Msg any] interface{ isStd_Ui_Element_(Msg) }\n\n  // Per-variant concrete struct. Tag REMAINS as an unexported const for\n  // tag-int comparisons (preserves auto-TCO / case-of lowering perf).\n  type Std_Ui_Element_Node_V[Msg any] struct {\n      NodeName string\n      Attrs    []Std_Ui_Attr[Msg]\n      Children []Std_Ui_Element[Msg]\n  }\n  func (Std_Ui_Element_Node_V[Msg]) isStd_Ui_Element_(Msg) {}\n\n  // Constructor: variant-typed return, NOT SkyADT.\n  func Std_Ui_Element_Node[Msg any](n string, a []Std_Ui_Attr[Msg], c []Std_Ui_Element[Msg]) Std_Ui_Element[Msg] {\n      return Std_Ui_Element_Node_V[Msg]{n, a, c}\n  }\n\nRT-SIDE REFERENCE STRATEGY:\n  1. rt.SkyADT REMAINS in rt.go as the legacy alias type — kept indefinitely as a backward-compat shape for: (a) external user-supplied Go FFI kernels that still type-assert to rt.SkyADT, (b) Sky.Core.Error builders (`makeError`, `errorKindAdt`) until they migrate, (c) `__sky_send`-injected events via `adtTagRegistry`.\n  2. Introduce rt.SkyVariant marker interface: `type SkyVariant interface{ skyVariantTag() int; skyVariantName() string }`. Each emitted variant struct implements this via codegen-emitted methods (`func (Std_Ui_Element_Node_V[M]) skyVariantTag() int { return 0 }` etc.).\n  3. rt-side dispatch helpers (AdtTag, AdtField, isSkyADT, deepEq, Coerce, EnumTagIs) get a unified \"any → (tag, fields-by-index OR fields-by-name)\" prologue that type-switches in priority order: `case SkyADT` (legacy), `case SkyVariant` (new), `default reflect fallback`.\n  4. Pattern-match emission in Compile.hs switches from `rt.AdtTag(subj)` + `rt.AdtField(subj, i)` to Go type switches: `switch v := subj.(type) { case Std_Ui_Element_Node_V[Msg]: ... use v.NodeName, v.Children ... }`. The Tag-int compare path stays for the Can.Enum (all-nullary) optimisation since type-switches on N variants compile to identical jump tables.\n  5. Generic monomorphisation: codegen MUST emit type args at every constructor call + every case-of subject ascription site. The PR-17b LowerCtx already knows these (Issue #521 path). Sealed iface variant structs are parameterised on the same TVars the alias was — no new inference work.",
+      "patternMatchStrategy": "CURRENT (SkyADT tag-int dispatch):\n  switch rt.AdtTag(msg) {\n  case 0: // Increment\n      _ = rt.AdtField(msg, 0).(int)\n      ...\n  case 1: // Decrement\n      ...\n  }\n\nNEW (typed Go type switch):\n  switch v := msg.(type) {\n  case Msg_Increment_V:\n      // v has no fields (nullary)\n      newCount := count + 1\n  case Msg_AddN_V:\n      // v.N is typed `int`, NOT any.\n      newCount := count + v.N\n  case Msg_SetLabel_V:\n      // v.Label is typed `string`.\n      newLabel := v.Label\n  default:\n      panic(rt.Unreachable(\"Msg pattern non-exhaustive\"))\n  }\n\nCONCRETE WALKER — Html.map equivalent (the canonical recursive ADT walker):\n  // OLD shape (SkyADT-driven, with reflective field access):\n  func Std_Html_map(fn any, html any) any {\n      a := html.(SkyADT)\n      switch a.Tag {\n      case 0: // Element\n          name := a.Fields[0].(string)\n          attrs := AsList(a.Fields[1])\n          children := AsList(a.Fields[2])\n          mappedAttrs := List_map(attrFn(fn), attrs)\n          mappedChildren := List_map(SkyCall_partial(Std_Html_map, fn), children)\n          return SkyADT{Tag: 0, SkyName: \"Element\", Fields: []any{name, mappedAttrs, mappedChildren}}\n      case 1: // Text\n          return a // text doesn't carry msg\n      ...\n      }\n  }\n\n  // NEW shape (sealed iface, typed payloads, NO reflection):\n  func Std_Html_map[A, B any](fn func(A) B, h Std_Html_Html[A]) Std_Html_Html[B] {\n      switch v := h.(type) {\n      case Std_Html_Element_V[A]:\n          mappedAttrs := make([]Std_Html_Attribute[B], len(v.Attrs))\n          for i, a := range v.Attrs { mappedAttrs[i] = Std_Html_Attribute_map(fn, a) }\n          mappedChildren := make([]Std_Html_Html[B], len(v.Children))\n          for i, c := range v.Children { mappedChildren[i] = Std_Html_map(fn, c) }\n          return Std_Html_Element_V[B]{Name: v.Name, Attrs: mappedAttrs, Children: mappedChildren}\n      case Std_Html_Text_V[A]:\n          return Std_Html_Text_V[B]{Content: v.Content}\n      case Std_Html_Lazy_V[A]:\n          return Std_Html_Lazy_V[B]{Thunk: func() Std_Html_Html[B] { return Std_Html_map(fn, v.Thunk()) }}\n      default:\n          panic(Unreachable(\"Std_Html_map: unknown variant\"))\n      }\n  }\n\nEXHAUSTIVENESS: Go vets `switch v := x.(type)` against the closed interface set (since the marker method is unexported, no out-of-package implementor is possible). Sky's existing exhaustiveness checker continues to fire at canonicalisation; the Go-side type switch is now a SECOND gate — defence in depth.\n\nPERF: type-switches on N variants compile to a single jump table (same as int Tag compare). Net wins: zero reflect on payload access, zero `.(T)` assertion on Fields[i], zero Coerce calls on payload extraction.",
+      "runtimeChanges": "FUNCTIONS REQUIRING RETYPE (rt.go + live_store.go):\n\n1. AdtTag (rt.go:1977-1992) — 16 LOC. Current: type-asserts SkyADT then reflect-fallback on FieldByName(\"Tag\"). New: prepend `if sv, ok := v.(SkyVariant); ok { return sv.skyVariantTag() }`. Legacy SkyADT branch retained. Reflect path stays as last resort. +5 LOC.\n\n2. AdtField (rt.go:1997-2015) — 19 LOC. Current: reads Fields[idx] from SkyADT, reflect-fallback on FieldByName(\"Fields\"). New: variant types do NOT expose `Fields []any` — they have named typed struct fields. Add `if sv, ok := v.(SkyVariant); ok { return reflect.ValueOf(v).Field(idx).Interface() }` walking declaration-order fields. Skip the unexported marker-method receiver. +15 LOC. NOTE: this path is for legacy callers (handler dispatch via reflect) — typed call sites bypass AdtField entirely via direct field access on the type-switched value.\n\n3. isSkyADT (rt.go:2533-2547) — 15 LOC. Current: looks for `Tag int` + JustValue/OkValue/ErrValue. New: extend to also return true for `SkyVariant` interface or values where t.Kind() == reflect.Struct AND t.Name() ends in `_V`. +10 LOC.\n\n4. skyADTActiveFields (rt.go:2553-2571) — 19 LOC. Current: hardcoded per-shape (Maybe/Result). New: for variants, ALL declared struct fields are active (no inactive payloads — that's the whole point of sealed variants). Branch on `if !hasJust && !hasOk && hasSkyVariantShape { return allFieldNames(v.Type()) }`. +12 LOC.\n\n5. deepEq struct case (rt.go:2627-2680) — 55 LOC. Current: short-circuits on isSkyADT Tag-compare then walks active fields. New: type-switch via `SkyVariant` check FIRST — variants are gob-comparable directly since payloads are typed. Falls back to existing SkyADT shape for legacy. Removes need for skyADTActiveFields entirely on variant path. +20 LOC.\n\n6. EnumTagIs (rt.go:2784) — Current: int-constant + SkyADT.Tag tolerant compare. New: add SkyVariant tag-read path. +8 LOC.\n\n7. Coerce / CoerceT (rt.go ~line 3200 range) — Current: reflect-based map→struct narrowing + .(T) assertion. New: for ADT targets, prepend SkyVariant assertion against the parameterised iface. Reduces reflect surface dramatically. +30 LOC.\n\n8. gobRegisterAll + walkGob + walkGobType + isSkyWrapperType (live_store.go:53-110) — 60 LOC. Current: walks values, registers concrete struct types. New: variant `_V` suffix types auto-discovered by existing walker — NO logic change required. ONLY isSkyWrapperType extended to recognise `_V` suffix for type-graph walk. +10 LOC.\n\n9. RegisterGobType (rt.go:3729) — no change. The any→reflect walker handles new variant struct types transparently.\n\n10. adaptFuncValueWithCapture / SkyCall (rt.go:132+) — no change. SkyVariant values flow through reflect.MakeFunc unchanged; the iface dispatch happens INSIDE the typed callee, not at the call boundary.\n\n11. Field (rt.go:4865) — Current: reflect FieldByName on struct, map lookup fallback. New: NO change. Variant structs have named exported fields → FieldByName works identically.\n\n12. Sky.Core.Error builders (rt.go:3746-3800 range, ~150 LOC) — RETAIN SkyADT shape for the first phase. Migrate to variants in a follow-up. Codegen treats both shapes uniformly via the SkyVariant priority on the dispatch helpers above.\n\nTOTAL: ~210 LOC net change in rt.go + ~10 LOC in live_store.go. Most changes are SHORT (5-15 LOC additions). Crucial: rt.SkyADT stays — no breaking change to external FFI consumers.",
+      "migrationPhases": [
+        {
+          "phase": "P1: Runtime infrastructure — sealed-variant ADT marker iface + dispatch helper extensions",
+          "scope": "Add SkyVariant interface to rt.go. Extend AdtTag / AdtField / isSkyADT / skyADTActiveFields / deepEq / EnumTagIs / Coerce to type-switch SkyVariant first, SkyADT second, reflect fallback last. Extend isSkyWrapperType for `_V` suffix. ZERO codegen change. Existing compiler output continues using SkyADT shape end-to-end. Cabal test + example sweep must remain green.",
+          "estLOC": 220,
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh"
+        },
+        {
+          "phase": "P2: Codegen toggle (SKY_VARIANT_ADT env flag) + Std.Ui.Element pilot",
+          "scope": "Add a per-module emission flag in Sky.Build.Compile that emits Std.Ui.Element as sealed-iface + per-variant struct (the load-bearing UI ADT). Flag-OFF emits legacy SkyADT alias. Migrate the Std_Ui_Element codegen path. Pattern-match emission for case-of subjects of type Std_Ui_Element switches to Go type-switch. Rest of the codebase continues on SkyADT.",
+          "estLOC": 450,
+          "verifyCmd": "SKY_VARIANT_ADT=1 cd examples/26-ui-showcase && rm -rf sky-out .skycache && sky build src/Main.sky && ./sky-out/app -test"
+        },
+        {
+          "phase": "P3: Verify pilot, expand to Sky.Core.Maybe + Sky.Core.Result + Sky.Core.Error",
+          "scope": "Confirm P2 pilot green across example sweep + runtime-verify. Expand sealed-iface emission to Maybe/Result (their typed structs replace SkyMaybe[T]/SkyResult[E,A]). Migrate Error builders in rt.go to variant structs. SkyADT alias retained for unmigrated user ADTs. Update Db.Decode.nullable path for variant Maybe.",
+          "estLOC": 600,
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-cli.sh && scripts/verify-all-web.sh"
+        },
+        {
+          "phase": "P4: Default-on flag flip + all user ADTs migrated",
+          "scope": "Flip SKY_VARIANT_ADT default ON. Codegen for every user-defined ADT (type Msg = ... | ...) emits sealed iface + variants. All call sites use type switches. Pattern-match dispatch via Go type switch is now the primary path. SkyADT remains as a legacy compat alias for external FFI but no Sky-emitted code references it.",
+          "estLOC": 350,
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-cli.sh && scripts/verify-all-web.sh && cd examples/13-skyshop && rm -rf sky-out .skycache && sky build src/Main.sky"
+        },
+        {
+          "phase": "P5: Cleanup — remove AdtField reflect fallback, retire skyADTActiveFields special-cases",
+          "scope": "Once P4 is stable across 2+ releases, retire the SkyADT-shape reflect-fallback paths in AdtField / isSkyADT / skyADTActiveFields / deepEq. rt.SkyADT alias remains for external FFI compat (it's a type alias, costs zero). gob session-store backward-compat shim retained for one release cycle (sessions persisted under SkyADT shape decode cleanly into variant shape via the dual-decoder path), then dropped.",
+          "estLOC": 150,
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-cli.sh && scripts/verify-all-web.sh"
+        }
+      ],
+      "riskAreas": [
+        "GOB SESSION ROUND-TRIP: existing Sky.Live sessions persisted as SkyADT{Tag,SkyName,Fields:[]any} fail to decode into new sealed-variant types because gob keys on type identity. Mitigation: P4 ships a dual-decoder shim — on decode failure of variant type, attempt SkyADT decode and field-by-field convert into variant struct. Audit ALL examples/*-with-sqlite-session-store before P4 flip. SKY_LIVE_STORE=sqlite + a model containing user ADTs is the canary; restart-after-tag must restore state.",
+        "EXTERNAL GO FFI (Stripe SDK / Fyne / firebase / google.golang.org/api): some external Go libraries do NOT consume Sky ADTs (they're pure Go domain types), so SkyADT contract is irrelevant. The risk surface is user-written Go FFI files that pattern-match on rt.SkyADT directly via `value.(rt.SkyADT)`. examples/13-skyshop's 76k FFI symbols are introspector-generated and don't reference SkyADT — verify via grep. User-written FFI shims for Stripe webhook events (if any) need the legacy SkyADT alias to keep working — retain indefinitely.",
+        "RegisterGobType + GobRegisterTypeGraph: walkGobType keys on isSkyWrapperType (string-prefix match on `SkyMaybe[` / `SkyResult[` / etc.). New variant types follow the convention `<Module>_<Ctor>_V[T1, T2, ...]`. Update isSkyWrapperType to match `_V[` suffix OR register them via the unified-struct branch (which already catches every PkgPath()-named struct). Verify via gob round-trip test in runtime-go/rt/live_store_test.go.",
+        "msgDisplayName reflection (Sky.Live wire protocol): SSE patches carry msg constructors as `SkyName` string for client-side dispatch. With variants, the constructor's name is the Go TYPE name (`Msg_Increment_V`), not a stored `SkyName` field. The wire-protocol JSON-encoder must use reflect.TypeOf(msg).Name() and strip the `_V` suffix. Or — codegen-emit a `func (Msg_Increment_V) skyVariantName() string { return \"Increment\" }` method so SkyVariant.skyVariantName() returns the bare constructor name. Recommend the latter — zero reflect cost on the hot path.",
+        "Can.Enum optimisation regression risk: all-nullary ADTs (e.g. `type Status = Active | Inactive`) currently lower to `type Status = int` constants. The sealed-iface path adds an interface wrap. Solution: preserve the Can.Enum special case — when EVERY variant is nullary, emit int constants (NOT sealed iface). The check is already in Sky.Generate.Go.Emit; just gate the new path on `not isCanEnum`.",
+        "Polymorphic ADT instantiation explosion: Std_Ui_Element is parameterised on Msg. Every page with a distinct Msg type produces a fresh `Std_Ui_Element_Node_V[PageMsg]` Go type → Go's build cache grows per-instantiation. Mitigation: rely on the existing Go-generic-retreat guidance (sky_go_generic_retreat_guidance.md) — when LowerCtx already knows Msg concretely, emit the monomorphised type. Watch go-build cache size during the example sweep + flag if it exceeds the 5GB threshold sooner than baseline.",
+        "rt.Coerce panic class regression: variant structs are NOT assignment-compatible with SkyADT. If ANY Sky-emitted code still produces a SkyADT-shaped value (e.g., rt-side Error builder) AND a typed consumer expects variant shape, the boundary fails. Mitigation: P2/P3/P4 phasing migrates producers + consumers together per ADT family. Coerce gains a `SkyADT → Variant` adapter path during the transition.",
+        "Sky.Live persistence test fixtures: tests/Sky/Live/SessionRoundTripSpec.hs (if it exists) needs new fixtures covering pre-migration SkyADT-shape persisted sessions decoding into post-migration variant shape. If the spec doesn't exist, ADD one before P3.",
+        "Auto-TCO + tail-recursive Case lowering: TailCallOpt.isTailRecursive emits `[GoForever <stmts>]` with `continue` on tail-call. The type-switch-based pattern match works inside GoForever identically — switches compile to jump tables, `continue` re-enters the loop head. Verify TailCallOpt spec on variant-shaped recursive functions doesn't regress."
+      ]
+    },
+    "grills": [
+      {
+        "blockingIssues": [
+          {
+            "issue": "FATAL: gob backwards-compatibility hook is impossible. The plan promises a `gobDecodeHook` that maps legacy `rt.SkyADT{Tag, SkyName, Fields[]any}` → new variant struct on decode. Go's `encoding/gob` has NO decode-hook API. gob serialises a registered concrete type by NAME. Sessions persisted today as `rt.SkyADT{Tag:1, SkyName:\"Increment\", Fields:[]any{}}` carry the type-name `rt.SkyADT` on the wire. On the new binary, decoding into an `interface{}` field (Model or Cmd value) calls `gob.NewDecoder.Decode` which looks up `rt.SkyADT` in the registered-type table — gets it (still registered for transition) — instantiates `rt.SkyADT{...}` — and tries to assign it to the destination field. Destination field is now typed `Main_Msg` (sealed interface). `SkyADT` does NOT implement `_sky_adt_Main_Msg()`. Assignment fails. The hook can't intercept; gob doesn't expose interception. ALL Sky.Live redis/postgres/sqlite session stores break across the v(N)→v(N+1) cutover. `SKY_LIVE_LEGACY_ADT_GOB=1` env knob CANNOT preserve forward compatibility — flipping it on still produces SkyADT values that can't satisfy the new sealed interfaces in the user code's update function. Default ttl=30m mitigation is wrong: every operator with redis-backed sessions OR sqlite session storage and ttl>30m (the production-standard config — sessions outlive deploys for UX continuity) loses every in-flight session on bump. Mitigation: ship gob as a back-compat envelope — emit codegen-level `func init() { gob.Register(LegacyTransitionMain_Msg{}) }` where LegacyTransitionMain_Msg is a Sky-generated struct shape-compatible with SkyADT, plus an explicit `MarshalBinary`/`UnmarshalBinary` on EVERY variant struct that re-routes legacy bytes via a manual decoder. This adds ~50 LOC per ADT (4× variant count) and is omitted from the plan's 280-LOC P0 budget. Without this, P3's default-flip silently corrupts every running Sky.Live deployment at upgrade time.",
+            "severity": "blocking",
+            "mitigation": "Emit MarshalBinary/UnmarshalBinary per variant struct routing legacy `SkyADT`-shaped gob bytes via the existing tag registry. Add a one-version transition flag SKY_LIVE_GOB_LEGACY=1 (default on for one minor release) that DOUBLE-encodes — once as the new variant struct, once as a SkyADT envelope — and lets the new decoder pick either. Schedule the legacy path's removal for v0.18 after operators confirm transition."
+          },
+          {
+            "issue": "FATAL: __sky_send wire-format dispatch path (live.go:4041) literally constructs `SkyADT{Tag, SkyName, Fields}` from JSON request body, then hands it to `app.dispatch` which calls the user's `update` function. Under the proposed plan, the emitted `update` body uses `switch __sky_v := __subject.(type) { case Main_Msg_Increment_V: ... }`. A `SkyADT` value never matches any variant struct case — falls through to `default: rt.Unreachable(\"case/Main_Msg\")` which PANICS. Every Firebase auth callback, every external JS integration, every subscription-timer that fires through __sky_send (the documented direct-send path, used in 12+ examples) crashes on first event after upgrade. The plan's claim 'SkyAdtVariant fallback handles SkyADT-shaped values from FFI/kernel code' applies to the runtime walker only — the user's generated case-of has NO fallback path because the type-switch is the entire dispatch.",
+            "severity": "blocking",
+            "mitigation": "Rewrite the __sky_send path in live.go:3994-4042 to look up the variant struct ZERO VALUE in `adtVariantRegistry` (extended with reflect.Type metadata) and reflectively populate fields from req.Args. The codegen-emitted `RegisterAdtVariant` already carries the zero-value; runtime can use `reflect.New(rt).Elem()` and `Field(i).Set(...)` to construct the variant. Add to P0 scope. P3's default-flip MUST be blocked on this being shipped + cabal-tested with a new spec for live_msg_decode."
+          },
+          {
+            "issue": "FATAL: rt.SkyMaybe / rt.SkyResult / rt.SkyTask becoming sealed interfaces in P2 breaks ~280 internal rt.go consumers that today read `.Tag` / `.JustValue` / `.OkValue` / `.ErrValue` directly. Verified: rt.go lines 69-93 define struct shape; lines 268, 307-311 perform `Ok[any,any](any(r.OkValue))`-style typed reads; db_decoder.go, http_stream.go, task_retry.go, msg_logging.go, decimal_kernel.go, email_kernel.go all call `.Tag` / `.JustValue` directly or via `FieldByName`. The plan says 'struct layout stays — only the entry-point becomes an interface' — but an interface CANNOT have struct fields. You cannot have both `type SkyMaybe[T] interface {...}` AND `(SkyMaybe[T]).Tag` exist simultaneously in Go. The transition requires either renaming the struct (breaking ALL rt internal consumers) or adding accessor methods on the interface that variant structs implement (breaking `.Tag` direct access). Neither is in P2's 480-LOC scope.",
+            "severity": "blocking",
+            "mitigation": "Add an explicit P2-Pre step: introduce `SkyMaybeAccess[T]` accessor interface with methods `IsJust() bool` / `JustValue() T` and migrate every rt.go consumer to the accessor BEFORE the interface flip. ~70 sites in rt.go alone. Promote to P0.5 (between P0 and P1). Without this, P2 is a 1-shot compile-break of the entire runtime package."
+          },
+          {
+            "issue": "rt.RecordUpdate semantic gap between P3 and P4. In P3 (default-on), Model field declared `CurrentPage Main_Page` (sealed interface) receives `rt.RecordUpdate(model, map[string]any{\"CurrentPage\": Main_Page_NewPage_V{...}})`. reflect's `Set` widens variant struct to interface — works. BUT the Model field type emission today routes through `globalRegionTypes` + structural σ; when the user's Sky source says `currentPage : Page`, codegen looks up Page's Go form. With the plan, that form changes from `rt.SkyADT` (today, line 357) to a sealed interface. Cross-module case: ModA defines Page, ModB has `model.currentPage`. ModB must see `Main_Page` interface. If ModA's emission hasn't been opted-in yet (P1/P2 incremental gate) but ModB references it, type identity drifts. The σ pipeline doesn't know about variant-vs-interface duality. Code that today passes `coerceCallArgsAt` clean would silently re-route to legacy SkyADT for opted-out types and to interface for opted-in types — `rt.Coerce[Main_Page]` becomes ambiguous (target is interface, source is SkyADT).",
+            "severity": "major",
+            "mitigation": "Force-include `Main_Page` style user-ADT cross-module references in a global opt-in barrier — either ALL modules in a compile unit opt in or NONE do. The per-type opt-in gate must be deferred to P3's default-flip; P1/P2 should opt in only stdlib types that have zero cross-user-module flow."
+          },
+          {
+            "issue": "Std_Html_Attributes_Attribute is dual-emitted today as both `Attribute = rt.SkyADT` AND `Attribute_T[T1 any] = rt.SkyADT` (showcase main.go:357, 359). The duality exists because some kernel code calls `Attribute_OnMsg[T1]` generically (line 382) and some user code references the non-generic `Attribute`. Plan only addresses ONE emission per type. Need to specify: does the sealed interface accept BOTH `Attribute` and `Attribute_T[T1]` callers? If `Attribute` is non-generic interface (plan's case b for Element), but `OnMsg : T1 -> Event` carries a generic, then `Attribute_T[T1]` would need to be `interface { _sky_adt_Attribute(T1); SkyName() string }` — same name conflict at the method level (Go forbids two methods with same name on same type). The plan doesn't disambiguate.",
+            "severity": "major",
+            "mitigation": "Define the policy explicitly: phantom-msg ADTs emit a non-generic interface AND drop the parallel _T form; the codegen's monomorphiser handles instantiation via per-variant T binding ONLY where the type param appears in payload (Event, OnMsg). Audit + document every cross-form callsite (Compile.hs around generateUnionForDep + entry-union emission). Likely ~80 LOC of canonicaliser changes — missing from any phase budget."
+          },
+          {
+            "issue": "applyMsgArgs (live.go:4054) is the curried-Msg dispatcher used by ALL onInput/onSubmit/onKeyDown wire events. It reads `req.Args` slice (raw json.RawMessage) and applies them ONE-AT-A-TIME to a partially-applied Msg constructor (today `func(any) any`-typed). Under the new plan, Msg constructors return concrete variant structs typed by their declared payload — e.g. `Main_Msg_DoSignIn(v0 AuthCreds) Main_Msg` returns `Main_Msg_DoSignIn_V{V0: AuthCreds{Email, Password}}`. applyMsgArgs's reflect path does `f.Call([]reflect.Value{reflect.ValueOf(arg)})` where arg is decoded from JSON as `map[string]any` not `AuthCreds`. This works TODAY because the call ends in `SkyADT{Fields: []any{map[string]any{...}}}` which the user's `case` decoded structurally via reflect. Under the plan, the Call returns `Main_Msg_DoSignIn_V{V0: AuthCreds{...}}` — but `AuthCreds` field-typed assignment from a `map[string]any` Call arg fails reflect with `assignable to type X from map[string]any`. The wire-side decoder needs to know the TYPED Go shape of each constructor's payload, not just slurp JSON into `any`. Plan claims 'receiver-side type switch in generated update body already does this' — but applyMsgArgs runs BEFORE update, on the CALLER (rt) side, with no codegen-emitted decoder.",
+            "severity": "blocking",
+            "mitigation": "Extend RegisterAdtVariant to also register a per-variant reflect.Type for each field. applyMsgArgs reflects on the variant's payload types and uses `json.Unmarshal` into the typed shape per-argument. Adds ~80 LOC in live.go + variant registry. Missing from P0 budget. P3's default-flip MUST gate on this landing AND on regression specs covering the form-DoSignIn shape (the load-bearing pattern in skydeploy + sky-lang.org)."
+          },
+          {
+            "issue": "Std_Html_Html as sealed interface in P1 breaks rt-runtime's HtmlToVNode path (live.go HtmlToVNode + renderVNode + assignSkyIDs — the universal Sky.Live/Sky.Tui/Sky.Webview renderer). HtmlToVNode today reads `html.(rt.SkyADT).Tag` and `html.(rt.SkyADT).Fields[0]` to discriminate HElement vs HText vs HRaw. The plan says 'legacy SkyADT path covers everything else'. But Std_Html_Html is opted-in in P1 — its values are NO LONGER SkyADT. HtmlToVNode panics with type-assertion error on first Html value rendered. The plan covers Html.map walker rewrite in 'rt runtime surface' but does not mention HtmlToVNode (the load-bearing 2000-LOC renderer). Audit confirms: live.go has DOZENS of `.(SkyADT)` assertions on Html values, none of which the plan touches.",
+            "severity": "blocking",
+            "mitigation": "P1 must include a parallel rewrite of HtmlToVNode / renderVNode / diffTrees / assignSkyIDs to dispatch via the new SkyAdtVariant helper + per-tag type switch. This is ~600-LOC of runtime change, not 'rewrite Html.map'. The 620 estLOC budget for P1 covers compiler-side changes only. Add ~800 LOC of runtime work + a real PR-sized rewrite to the renderer."
+          },
+          {
+            "issue": "Polymorphic recursion (`Maybe (Maybe a)` / `Result e (Result e a)`) emission. Plan's case (c) shape `Sky_Core_Maybe_Maybe_Just_V[T any]{V0 T}` works for `Just 5 : Maybe Int` (T=int). For `Just (Just 5) : Maybe (Maybe Int)`, the constructor must emit `Sky_Core_Maybe_Maybe_Just_V[Sky_Core_Maybe_Maybe[int]]{V0: Sky_Core_Maybe_Maybe_Just_V[int]{V0: 5}}`. Inner T binds to Maybe[int] (the sealed interface). Two issues: (1) the per-call-site monomorphiser already in v0.15.1 (CForeign re-instantiation) must learn the new naming — today it produces `rt.MaybeCoerce[T]` calls expecting struct-shape; (2) `Just` constructor returns `Maybe[T]` interface, so the inner Just's emission gives an INTERFACE, which then becomes the T of the outer Just_V's variant struct. Go generics on interface T params: legal. But reading the inner via the outer's type switch — `case Just_V[T1]:` requires Go's type-switch to pattern-match generic instantiations, which Go does NOT support (Go's type-switch cases must be concrete or unparameterised). `switch x := v.(type) { case Just_V[T1]: ... }` is rejected at compile time. The pattern-match strategy collapses entirely for generic ADTs.",
+            "severity": "blocking",
+            "mitigation": "For polymorphic ADTs (case c), use a sealed interface marker + accessor methods (`IsJust() bool`; `JustValue() any`) rather than type-switch. Pattern match arms read accessors and `rt.Coerce[T]` the result. This regresses the 'no rt.Coerce' goal for parametric ADTs — Maybe / Result / Task all retain rt.Coerce[T] at field-read sites. Either accept the goal slip (parametric ADTs stay as today's typed-struct), OR generate per-instantiation concrete variant structs (`Sky_Core_Maybe_Maybe_Just_V_int{V0 int}` for Maybe Int + `Sky_Core_Maybe_Maybe_Just_V_string{V0 string}` for Maybe String) at the monomorphisation pass — explodes binary size on Stripe-SDK-scale apps."
+          },
+          {
+            "issue": "Cross-module ADT type identity contract. plan says 'variant struct names are deterministic by typeName+ctorName, so the same naming scheme propagates'. But Go enforces package boundaries: ModB declaring `case x of Foo y -> ...` over ModA's `type Page = Foo Int | Bar` requires ModA's variant structs to be EXPORTED from ModA's Go package. The Sky compiler historically emits everything to a single `main` package (`examples/<n>/sky-out/main.go`). The Inspector + emission boundary is per-file-per-dep but the package is global. So `Main_Page_Foo_V` is reachable everywhere — fine for single-package emission. But sky check / sky doc / sky test (the multi-package boundaries) compile dep modules into typed-FFI `.skyi` files and emit dep-module-specific Go packages. Cross-package ADT references require qualified `dep.Main_Page_Foo_V` access — Sky's current emission doesn't qualify per-package. Plan doesn't address.",
+            "severity": "major",
+            "mitigation": "Audit: examples/*/sky-out/main.go IS single-package today (`package main` everywhere). sky check inherits this. So the issue is contained. Document the invariant explicitly: 'sealed-interface ADT emission requires single-package compilation; multi-package emission deferred to v0.18'. Add a hard CI gate that asserts emission is single-package."
+          },
+          {
+            "issue": "RegisterAdtTag (still needed?) — answer: YES, but for an undocumented reason. The runtime LookupAdtTag path is the SECOND of two fallback tiers in __sky_send (live.go:4006-4013): first checks global `adtTagRegistry` (RegisterAdtTag), then app-local `msgTags` cache. The plan keeps RegisterAdtTag as a legacy alias delegating to RegisterAdtVariant. But the legacy alias drops the `variant any` argument — without the zero-value reflect.Type, the new __sky_send path (issue #2 above) cannot construct typed variants for legacy SkyADT-only registrations. Result: any FFI module that was already calling RegisterAdtTag DURING the transition (rt-side builders for Maybe / Result / Error) cannot have new __sky_send-style events constructed against them. Mitigation requires every RegisterAdtTag call to be replaced by RegisterAdtVariant with the variant zero-value — meaning rt internal builders all need migration. Not budgeted.",
+            "severity": "major",
+            "mitigation": "Make RegisterAdtVariant the only registration path; emit a runtime warning when RegisterAdtTag is called (it gets called with no zero-value, so wire-side typed construction degrades to the legacy SkyADT shape). Document explicitly that FFI builders pre-migration emit untyped events and may panic in P3. Audit + migrate all rt-side RegisterAdtTag callers as part of P0."
+          }
+        ],
+        "hiddenCosts": [
+          "P0's 280-LOC budget covers only IR scaffolding + naive runtime registry. It MISSES: per-variant reflect.Type registration, MarshalBinary/UnmarshalBinary on every variant, the __sky_send typed reconstruction path, applyMsgArgs typed reflect path, HtmlToVNode rewrite. Realistic P0 budget: ~1200 LOC.",
+          "P1's 620-LOC budget targets compiler-side opt-in for Element/Attribute/Html, but Html as sealed interface requires rewriting HtmlToVNode / renderVNode / diffTrees / assignSkyIDs (the entire renderer — ~800 LOC of runtime touchpoints). Realistic P1 budget: ~1800 LOC.",
+          "P2's 480-LOC budget for migrating Maybe/Result/Task/Cmd/Sub assumes 'struct layout stays — only entry-point becomes an interface'. That's structurally impossible in Go (interface can't have field accessors). Real migration requires accessor methods on the interface + variant struct implementations + all ~280 rt-internal direct .Tag/.JustValue reads converted to accessors. Realistic P2 budget: ~2400 LOC.",
+          "P3 default-flip silently breaks every persisted session across the version boundary because gob has no decode-hook API. Mitigation requires shipping a per-variant MarshalBinary/UnmarshalBinary AND a parallel legacy-decode envelope for one release. Not budgeted; ~500 LOC.",
+          "P4's rt.RecordUpdate replacement requires the lowerer to detect 'statically known record type' in a path that today uses reflect blindly. The static-type pipeline is the same one being refactored in v0.17 PR-22 S6 (issue #642). Coupling P4 to a half-shipped refactor risks blocking on iter 39+ (currently in_progress per task list). Realistic timing: post-v0.17.0 close, not in-line with v0.17.x architectural close.",
+          "Polymorphic-ADT pattern matching via Go type-switch is structurally impossible (Go forbids generic instantiations in case clauses). The plan's central pattern-match story falls apart for Maybe/Result/Task — either retain rt.Coerce[T] for parametric ADTs (slips the 'no rt.Coerce in user code' goal) OR per-instantiation monomorphic variants (explodes binary size on Stripe-SDK scale). Neither is acknowledged.",
+          "sky test runtime (Sky.Test.equal[T1] reflect-equality) needs to know how to compare two variant structs across module boundaries — today it walks SkyADT.Fields. With the variant-struct shift, it must DeepEqual through unexported variant struct types. Reflect handles this but the test runner's existing equality contracts (NaN handling, Maybe NaN, custom Eq for Sky values) all need re-validation.",
+          "Std.Trace span attributes today serialise SkyADT via msgDisplayName + AdtField. Under the new scheme, the span exporter must call SkyAdtVariant (the proposed walker). For sub-app observability federation (HubExporter PR4), the span shape on the wire stays the same OTLP — but the SOURCE of attr extraction changes shape. Wire-compatibility holds; in-process serialisation cost grows ~3× due to reflect.NumField + reflect.Field per attr.",
+          "Spell-check rebuild risk: sky-stdlib/Std/Html.sky AND sky-stdlib/Sky/Core/Maybe.sky use Layer 3 Sky source today. Bumping their emission shape requires the .skycache invalidation to flush across every example + sky-tools + skydeploy + sky-lang.org build at once. cabal-test.sh GOCACHE isolation does NOT include .skycache. First post-migration build sweep would blow ~30 minutes recompiling everything; agents racing on stale .skycache would silently miscompile.",
+          "examples/13-skyshop (76k Stripe FFI symbols) — the variant-struct approach adds N variant types per Sky ADT, but the Stripe SDK FFI shapes get NO benefit (they remain rt-side opaque types). The plan claims 'closes Stripe SDK scale' via no rt.Coerce — but Stripe types are FFI structs, untouched. The benefit accrues to Sky-source ADTs only. Realistic perf win: maybe 5% binary-size + 10% reflect-cost reduction, not the order-of-magnitude implied."
+        ],
+        "verdict": "fundamental-flaw"
+      },
+      {
+        "verdict": "fundamental-flaw",
+        "blockingIssues": [
+          {
+            "issue": "BREAKS: SSE direct-send wire protocol fundamentally relies on SkyADT.Fields=[]any reconstruction. live.go:4034-4041 builds `SkyADT{Tag: tag, SkyName: req.Msg, Fields: fields}` from raw JSON `req.Args`. With sealed-iface variants, each constructor `Msg_Foo_V` has a TYPED, NAMED struct shape — there is NO generic 'set Fields[i]' path. The runtime would need to (a) look up the variant Go type by SkyName, (b) reflect.New() it, (c) reflect-walk each declaration-order field and Unmarshal raw JSON into it. The plan's `AdtField` retype note hand-waves this — but construction is the dual problem and the plan doesn't acknowledge it at all. live.go:4214 has an identical pattern for popstate/cookie-driven dispatch. This is the wire protocol's primary entry point for external JS integration (Firebase auth, third-party callbacks, __sky_send). A 'register a variant constructor by SkyName' registry is mandatory.",
+            "mitigation": "Codegen must emit per-Ctor reflect-discoverable factory: `func _new_Msg_Foo(fields []any) any { return Msg_Foo_V[...]{F0: fields[0].(T0), F1: fields[1].(T1)} }` registered in init() alongside RegisterAdtTag. Plus a NEW LookupAdtCtor(skyName) → factory. Plus per-field JSON shape decoder because raw JSON args from the wire don't pre-narrow to the typed Go type. THIS IS HUNDREDS OF LOC NOT MENTIONED. Plus typed-record decode (decodeMsgArg at live.go:1736) reuses the existing typed-codegen path — but that's the FIRST-PARAM-ONLY case. Multi-arg curried Msg ctors go through SkyADT.Fields. Estimated true scope: 700+ LOC across runtime + codegen.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: AdtField via reflect-walk-declaration-order is wrong for generic variants. Plan §3 says 'reflect.ValueOf(v).Field(idx).Interface()' to read AdtField on variants. But Std_Ui_Element_Node_V[Msg] has fields {NodeName string; Attrs []Std_Ui_Attr[Msg]; Children []Std_Ui_Element[Msg]} — Field(0) returns 'string' but the LEGACY caller of AdtField is e.g. tracing.go:50, msg_logging.go, EnumTagIs, deepEq — these expect SEMANTIC Sky field indices matching the user's `case X of Foo a b c → ...` pattern decl order. Sky's lowerer ALSO uses declaration order. But the marker-iface method has no field index — Field(0) on a struct with a method-pointer would be fine. HOWEVER: when the codegen emits typed Go field NAMES like `NodeName` (camelcase), reflect Field(0).Name returns 'NodeName'. The plan asserts 'pattern-match emission switches to direct field access on the type-switched value' — but ~10 legacy AdtField call sites in non-pattern-match contexts (deepEq, tracing payload extraction, Sky.Core.Error builder, http_stream.go, websocket.go, msg_logging.go) STILL go through AdtField. They use NUMERIC field indices that the codegen-emitted variant struct's declaration order has to match — but those reflect calls now have to skip the SkyVariant method receiver field… wait, methods are NOT struct fields, so OK. But the deeper issue: a variant struct that embeds RECORD-ALIAS shaped fields (e.g. SkyADT{Fields:[{name:string, msg:Msg, hid:string}]}) becomes a typed field of type Foo_R — Field(0).Interface() now returns Foo_R not a map[string]any — every legacy any-consuming reflect-walker downstream of AdtField sees a different shape. msg_logging.go formats Sky errors via reflect; this changes behaviour.",
+            "mitigation": "Cannot reach 'legacy AdtField path stays semantically identical' without either: (a) emitting both variant struct AND a Fields []any shadow per ctor (defeats the purpose), or (b) auditing each AdtField caller individually. Audit shows ~15 sites. Plan's `+15 LOC` estimate for AdtField alone is ~10x off.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: gob session round-trip across deploys is unsolvable as plan describes. live_store.go uses encoding/gob to persist Sessions (Model + VNode tree) — gob keys on REGISTERED CONCRETE TYPES. Pre-migration: ADT values are `SkyADT{}` registered ONCE. Post-migration: every constructor of every user ADT becomes a DISTINCT GO TYPE (`Counter_Msg_Increment_V`, `Counter_Msg_Decrement_V`, …). Two consequences: (1) Every variant struct must be gob.Register()'d. Plan claims walkGobType auto-discovers via the `t.PkgPath() != ''` branch — but ONLY if the type appears as a STRUCT FIELD or SLICE ELEMENT in the walked Type graph. For ADT VARIANTS, the value's type is the INTERFACE `Std_Ui_Element[Msg]` — gob can ONLY encode interface-boxed values whose CONCRETE type is registered. The interface type itself contains NO information about which concrete variant implementors exist. walkGobType walking a value graph at runtime sees only the variants that EXIST in that particular Model state — if Cmd.publish later produces a `Msg_Foo_V` not present in the init Model, gob encode panics. (2) Sessions persisted under the old SkyADT shape can NEVER decode into variant shape — gob's wire format embeds type identity inline; SkyADT type ID and Msg_Foo_V[Msg] type ID are fundamentally different. Plan's 'dual-decoder shim' fantasy doesn't engage with this: gob's Decoder doesn't expose 'try alt type'; you'd need a pre-decode fork on the raw bytes that reads the type registry stream.",
+            "mitigation": "Codegen must emit `init() { gob.Register(Msg_Foo_V[any]{}); gob.Register(Msg_Bar_V[any]{}); … }` for EVERY variant of EVERY user ADT — including all polymorphic instantiations the lowerer can name. Polymorphic ADT variants have NO finite instantiation set (a Msg ADT used in 2 modules with different type params is 2 distinct Go types). This is impossible to enumerate without monomorphisation discipline NOT present in the current compiler. Session restart-after-deploy compatibility is OUT OF REACH for the plan as written. P4 default-on flag flip will break every production session-persistent app.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: msgDisplayName cannot derive ctor name from Go type name. live.go:481 reads `rv.FieldByName(\"SkyName\")` — present on SkyADT. Plan recommends `skyVariantName()` method on variants. But: msg_logging.go:246-247 reads the same SkyName field. tracing.go:50 looks at FieldByName('Tag'). websocket.go:464 reads FieldByName('Fields'). http_stream.go:678 reads FieldByName('Fields'). email_kernel.go:143/147/154 reads SkyName/Fields/Tag. task_retry.go:149/153/160 reads SkyName/Fields/Tag. db_auth.go:285/321/383/406/458/586 reads Tag/SkyName. These are NOT in the plan's 'functions requiring retype' list — every one is broken when SkyName field is absent. Most importantly, RetryPolicy's `ShouldRetry e` ADT (Sky.Core.Task.retryWith) routes through task_retry.go which DEMANDS SkyADT-shape inspection — that's HM-pure user-visible API. db_auth.go's SqlValue dispatch is the Std.Db v0.16.26 typed-parameter path used by every production Db.exec caller. The plan's risk register doesn't mention either.",
+            "mitigation": "Each of ~12 additional reflect consumers needs migration. Estimated true scope ~+150 LOC missed in the plan. Plus task_retry.go and db_auth.go are LOAD-BEARING for v0.16.26 + Sky.Core.Task — both ship in user code today.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: SqlValue / SqlField / SqlNull ADT have user-constructed-via-FFI test fixtures (db_sqlvalue_test.go, db_insertfields_test.go) constructing literal `SkyADT{Tag:0, SkyName:'X', Fields:[]any{v}}`. These are not external user code — they're rt-internal tests. But the codegen of Std.Db.Sql in Sky source-code lowers via the canonical user-ADT path. So Sky-emitted `SqlString s` becomes `Std_Db_Sql_SqlString_V{V0:s}` and rt-side db_auth.go's switch on `adt.SkyName == \"Money\"` breaks. The Std.Db typed-param ADT is the v0.16.26 contract; this is post-v0.15 production code paths.",
+            "mitigation": "db_auth.go's SqlValue / SqlField dispatch needs full rewrite to typed switch. Same for decimal_kernel.go ('Decimal__Internal' adt), http_stream.go ('StreamId' adt), email_kernel.go (EmailProvider ADT), db_decoder.go (Money / CurrencyRaw adts). Each is a rt-side Go switch on adt.SkyName whose constructors are Sky source. ~6 modules' worth of switch tables need swapping to type-switches with codegen-coordination — but the plan's pilot is Std.Ui.Element ONLY. There is no path where 'pilot' isolation is real: Std.Ui.Element transitively requires Std.Html.Html (Element wraps html). Std.Html.Html transitively appears as Msg payloads. The migration is all-or-nothing.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: Polymorphic ADT generic-instantiation explosion will OOM the host Go build. CLAUDE.md memory `sky_go_generic_retreat_guidance.md` documents this risk EXPLICITLY: 'pair Coerce retreat (v0.16.23+) with Go-generic retreat: emit concrete types where LowerCtx already knows the type, to shrink Go's per-instantiation build cache'. Plan's mitigation is 'rely on the existing Go-generic-retreat guidance' — but that guidance is for MONOMORPHISING WHERE LowerCtx knows the type. Sealed-iface variants must STAY parameterised on `Msg` because the interface is `Std_Ui_Element[Msg]`. Every distinct Msg in a multi-page app instantiates 10-30 variant structs apiece (every Std.Ui ctor × every page Msg). 13-skyshop (Stripe-SDK-scale) plus 26-ui-showcase plus skyforum (8-module form) will multiply the variant cross-product by ~1000x. Hits the 5GB go-build cache threshold IMMEDIATELY (CLAUDE.md §6 already documents 202 GB / 100% disk crashes from less). The plan acknowledges this in risk #6 but mitigation is 'monitor + flag' — not a fix.",
+            "mitigation": "No actionable mitigation. Variants must be parameterised because Std.Ui.Element CARRIES Msg in callback fields. Monomorphising at every call-site defeats the variant-typed payload (eraseTypeParams was the v0.15 + PR-17b leak the plan claims to close). Go generics retreat means typing payloads as `any` — which is what SkyADT does. The plan circles back to its starting point.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: Plan claims 'rt.SkyADT REMAINS as legacy alias indefinitely' but skyErrorAdt = SkyADT type-alias is structurally embedded — rt-side Sky.Core.Error builders emit `SkyADT{Tag: N, SkyName: 'Io'}` (rt.go:3840). User-side Sky.Core.Error catch ARMS will compile to typed switches that no longer accept SkyADT values. So either: (a) Error stays on legacy SkyADT shape (plan §12 retains this for 'first phase') — then every catch ARM in user code requires special-casing to reroute to `EnumTagIs` (works) BUT the typed Error payload extraction `case Error PermissionDenied info -> ...` requires `info : SkyErrorInfo` extraction via AdtField — the typed-switch caller code path bypasses AdtField. Breaking change to error-handling everywhere. (b) Error migrates day-1 — then rt-internal builders all need rewriting in lockstep with codegen. The plan handles NEITHER cleanly.",
+            "mitigation": "Make Error migration P0, not P3. Requires audit + rewrite of 150+ LOC of rt-side Error builders + their user-visible API contract.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "BREAKS: User-written Go FFI shims may construct or pattern-match on `rt.SkyADT` directly. Plan handwaves this as 'retained indefinitely'. But: shop4mum / sendcrafts / skyforum example FFI helper files exist. Worse — the Sky compiler's own typed FFI generator (sky-ffi-gen) emits Go bindings that interact with Sky-typed ADT values. When a Go callback receives a Sky-typed `Result Error a`, the typed-codegen narrow path expects SkyResult[E,A] shape. With sealed-iface migration, even Result becomes sealed-iface (P3 in plan). Every typed-FFI wrapper for an external Go library that takes a `func() Result Error a` callback now breaks because the FFI wrapper was generated against the SkyResult struct shape — not the sealed-iface shape. The plan's `narrowReflectValue` + `narrowSkyContainer` paths in rt.go:954-963 walk SkyResult/SkyMaybe/SkyTuple via FieldByName('Tag'/'OkValue'/'JustValue'/'ErrValue') — all dead under variant migration.",
+            "mitigation": "Plan understates by NOT including SkyResult / SkyMaybe migration in the 'P1' runtime scope. Plan §P3 includes them but the dependency graph is wrong: rt.SkyResult is used inside rt.Coerce / coerceInner / MaybeCoerce / ResultCoerce / narrowSkyContainer — every typed FFI return crosses these. Cannot ship pilot Std.Ui.Element WITHOUT also migrating SkyResult/SkyMaybe because Std.Ui.Element handlers return Cmd Msg which carries SkyResult error tier values.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "MISSING: The plan's 'Can.Enum special case (all-nullary)' preservation mitigates pure-enum ADTs but most production ADTs MIX nullary + payload variants (Msg = Increment | UpdateEmail String | DoSignIn AuthCreds — the canonical Sky.Live shape from CLAUDE.md). Mixed-shape ADTs lower entirely via the new variant path. EnumTagIs (rt.go:3784) handles both representations — but the typed Go side now has TWO sealed-iface types per ADT (one Tag-int, one variant struct)? OR is the sealed iface emitted only when ANY ctor has payload, and Tag-int otherwise. The plan says the latter ('gate the new path on `not isCanEnum`') but doesn't think through: cross-module dispatch where Module A imports Module B's ADT now needs to know if it's Enum-lowered or variant-lowered. This is the kind of cross-module FFI-shape coherence problem v0.17 closes through pkgAlias / GoType, but the plan doesn't surface it.",
+            "mitigation": "Solvable but adds another ~200 LOC of cross-module GoType inference. Increases plan scope.",
+            "severity": "major"
+          },
+          {
+            "issue": "MISSING: plan never asks 'what does Sky.Live's Msg-attribute serialisation do?' The diffNodes Events diff (live.go:1312, msg_logging.go:246) compares msgDisplayName(oldMsg) != msgDisplayName(newMsg). When Msg is now an interface, msg comparisons via Go's `==` panic (interface containing uncomparable values e.g. function ptrs as ctor args). SkyADT is comparable (string + int + uncomparable []any — wait, []any is uncomparable too, so SkyADT itself isn't comparable today; deepEq fallback works). Variant structs WITH unexported method may or may not be comparable depending on payload — Std_Html_Lazy_V holds a `func() Std_Html_Html[B]` which is uncomparable. Code comparing msg values directly (via `_, _ = old.Events[ev]`) will panic.",
+            "mitigation": "Audit every `==` / `!=` / `map[any]…` site that handles Msg or ADT values. Multiple in live.go.",
+            "severity": "major"
+          }
+        ],
+        "hiddenCosts": [
+          "Codegen burden for gob.Register per-variant per-instantiation — not enumerable for polymorphic ADTs at codegen time. The plan's `walkGobType auto-discovery` claim is wrong for unused/lazy ctors.",
+          "True LOC estimate is 3-5x the plan's 210 LOC for rt.go. Sites missed: tracing.go, msg_logging.go, db_auth.go (SqlValue + SqlField + Money + CurrencyRaw dispatch), decimal_kernel.go, http_stream.go, websocket.go, email_kernel.go, task_retry.go, stdlib_extra.go, tui_ui.go. Each has reflect-walk via FieldByName('Tag'/'SkyName'/'Fields'). Realistic rt-side total: ~1500-2000 LOC. Plus codegen: SSE direct-send variant ctor factory registry + per-variant gob.Register init() emission + cross-module variant-vs-enum coherence = another 800-1200 LOC.",
+          "Cabal test will need ~20-30 spec updates because compile-time fixtures in test/Sky/Build/*Spec.hs assert on emitted Go code shape. Plan does not budget cabal-suite delta.",
+          "Browser-cached SSE patches reference msgName strings derived from msgDisplayName. Mid-deploy, a tab open with the OLD client-side cache will __sky_send msg names that DON'T match the NEW server's variant ctor registry. Cloud Run rolling deploys (skydeploy default) will see 4xx 'unknown Msg constructor' for every in-flight session post-deploy. Plan's 'dual-decoder shim' covers gob session round-trip but NOT wire-protocol cross-version compatibility. Production cutover risk.",
+          "Pilot isolation (Std.Ui.Element only) is not isolatable. Std.Ui.Element transitively contains Msg in callbacks (`Msg` parameter). Migrating just Element forces partial migration of every Msg ADT in every app. There is no per-ADT migration toggle — the type-of-Msg parameter has to match.",
+          "P5 'cleanup' phase says SkyADT alias remains 'for external FFI compat'. Type-alias to what? If variants ARE the canonical shape, SkyADT alias has no concrete backing — it'd be `type SkyADT = struct{Tag int; SkyName string; Fields []any}` floating. Any user FFI module type-asserting `value.(rt.SkyADT)` will fail at runtime when the value is a `Foo_V[Bar]` interface implementor. The alias preserves only the SOURCE-LEVEL Go type name, not runtime structural compatibility. Plan misrepresents this.",
+          "v0.17 architectural-close session (in progress, mandate #677) is the same surface — this RFC is being grilled INSIDE that mandate. The Judge in §0 protocol will reject 'sealed iface for one ADT family' as not closing T1 leak class (variant Msg payload IS the T1-leak surface — eraseTypeParams in #644). The fundamental incoherence between this RFC's incremental phasing and the AUTONOMOUS goal-fidelity rule is unaddressed."
+        ]
+      },
+      {
+        "blockingIssues": [
+          {
+            "issue": "examples/13-skyshop (76k FFI symbols, 8 modules with Db.getField) — Heavy FFI-field-access patterns via custom Db.getField wrapper + Dict-based row representation. Migration risk: ADT variant struct codegen must preserve field-access ergonomics; currently uses rt.Field indirection for opaque values.",
+            "mitigation": "Audit Db.getField signature shape. Sealed interfaces likely require explicit field projection functions (getCustomer_id : Customer -> String) rather than rt.Field(x, 'id'). Pre-generate setter/getter stubs for all user-ADT fields flowing through Db layer.",
+            "severity": "major"
+          },
+          {
+            "issue": "examples/19-skyforum (8 modules, custom Page + Post ADTs, heavy Std.Ui.Element composition) — User-defined Page ADT (HomePage|PostPage Int|LoginPage) gates route dispatch; Post/Comment aliases flow into List.map + view functions. Migration: sealed-interface ADT emission must emit pattern-matchable variant structs with accessible payload fields.",
+            "mitigation": "Verify sealed-interface codegen emits full struct type for each variant (e.g., type PostPage_ADT struct { id int }), not just Go interface{} + cast. Validate pattern-match exhaustiveness gates still fire post-migration.",
+            "severity": "major"
+          },
+          {
+            "issue": "examples/26-ui-showcase (every Std.Ui primitive + custom Msg ADT) — Heavy Element tree composition via Std.Ui.layout/column/row + record-update mutation chains. If sealed-interface emit changes Element's internal ADT shape (currently rt.SkyADT), downstream Ui.map / Html.map composition may silently break type-checking.",
+            "mitigation": "Verify Std.Ui.Element remains transparent (no Go-side interface seal). Test Ui.map + Html.map with custom Msg flowing through element tree. Run regression gates on all 8 chart + responsive primitives.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "examples/31-webview-stopwatch-ui (Sky.Webview CGO bridge to native window) — Std.Ui tree serializes to HTML via in-process bridge. If sealed-interface emission changes codegen for Element/Html constructors, runtime reflection-based serialization in native binding may panic on unexpected Go struct shape.",
+            "mitigation": "Regression test: run stopwatch on macOS, verify window opens + tap buttons. Compare Go type of Element struct pre/post migration. Ensure serde tags + json.Marshaler implementations remain intact.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "examples/32-sse-relay (synchronous stream handler via HttpStream.forEachChunk) — Straightforward HTTP task composition, no FFI-field-access. Auto-regen likely sufficient; low risk.",
+            "mitigation": "Verify compile-time: no new type errors on HttpStream handle or forEachChunk callback signature. Run curl --no-buffer validation.",
+            "severity": "minor"
+          },
+          {
+            "issue": "examples/00-standard-libs (120 assertions — stdlib smoke test) — Pure function tests on Task/String/Dict/List/Maybe/Result/Decimal/Money/Time. Tests call stdlib via interface + kernel fns. If sealed-interface migration changes kernel result-shape encoding (Error ADT, Result ADT), assertion paths may silently decode wrong type.",
+            "mitigation": "Run full test suite post-migration. Verify all 120 assertions pass. Focus on ADT-returning kernel calls: Task.retryWith, Error constructors, Result pattern paths.",
+            "severity": "blocking"
+          },
+          {
+            "issue": "examples/30-sse-server-demo (streaming via ServerStream.emit) — Task-based streaming with no custom ADT. Low risk. Compile-time catch if ServerStream result shape breaks.",
+            "mitigation": "Verify types: ServerStream.stream handler signature unchanged. Run server, curl /events, spot-check tick chunks arrive progressively.",
+            "severity": "minor"
+          },
+          {
+            "issue": "examples/33-websocket-echo (Ws.upgrade + callbacks onConnect/onMessage/onClose) — WebSocket ADT likely marshalled at Go boundary. If sealed-interface emit changes struct tag encoding for Ws.WebSocketServer ADT, frame dispatch may fail silently.",
+            "mitigation": "Regression test: websocat -n1 ws://localhost:8033/ws <<<'hello' => verify echo: hello echoed back. Check Go struct json tags on Ws ADT variants.",
+            "severity": "blocking"
+          }
+        ],
+        "hiddenCosts": [
+          "Db.getField wrapper pattern — if sealed-interface forces field accessor codegen, custom wrappers in 13-skyshop + 12-skyvote + 08-notes-app must be regenerated/refactored. ~20 LOC per example.",
+          "rt.Field usage in FFI binding calls — sealed-interface may eliminate rt.Field(..., 'fieldname') path; examples relying on runtime field projection (not compile-time known fields) will need explicit getter stubs.",
+          "Std.Ui.Element serialization — if sealed-interface emits struct{} instead of interface{} for Element, native Webview renderer's json.Marshaler may need tag-based field mapping adjustments (~50 LOC in runtime).",
+          "Pattern-match codegen for user ADTs — sealed-interface likely changes discriminant from string tag to Go interface{} type assertion; compiler must emit type-switches instead of string switches. If pattern-match lowerer not updated, examples fail at runtime.",
+          "32 example recompile + verify cycle — full sweep takes ~10 min wall time; adversarial testing (e.g., crossing sealed/non-sealed ADT boundaries in Sky.Live update loop) adds complexity."
+        ],
+        "verdict": "needs-revision"
+      }
+    ],
+    "synthesis": {
+      "finalPhases": [
+        {
+          "num": 0,
+          "title": "P0-Pre: Runtime accessor migration for SkyMaybe/SkyResult/SkyTask (unblock P2)",
+          "files": [
+            "runtime-go/rt/rt.go",
+            "runtime-go/rt/db_decoder.go",
+            "runtime-go/rt/http_stream.go",
+            "runtime-go/rt/task_retry.go",
+            "runtime-go/rt/msg_logging.go",
+            "runtime-go/rt/decimal_kernel.go",
+            "runtime-go/rt/email_kernel.go",
+            "runtime-go/rt/live_store.go"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh && (cd runtime-go && go test ./rt/...) && scripts/example-sweep.sh",
+          "expectedCoerceClosure": 0,
+          "estSessions": 2
+        },
+        {
+          "num": 1,
+          "title": "P0: SkyVariant marker interface + RegisterAdtVariant + runtime dispatch prologue (legacy SkyADT stays)",
+          "files": [
+            "runtime-go/rt/rt.go",
+            "runtime-go/rt/adt_variant.go",
+            "runtime-go/rt/adt_variant_test.go",
+            "runtime-go/rt/live_store.go",
+            "runtime-go/rt/live.go"
+          ],
+          "verifyCmd": "(cd runtime-go && go test ./rt/... -run 'Adt|Variant|Live') && scripts/cabal-test.sh",
+          "expectedCoerceClosure": 0,
+          "estSessions": 2
+        },
+        {
+          "num": 2,
+          "title": "P0.5: __sky_send + applyMsgArgs reflective variant construction (close wire-dispatch panic class BEFORE any codegen flips)",
+          "files": [
+            "runtime-go/rt/live.go",
+            "runtime-go/rt/live_msg_decode.go",
+            "runtime-go/rt/live_msg_decode_test.go",
+            "runtime-go/rt/live_send_test.go"
+          ],
+          "verifyCmd": "(cd runtime-go && go test ./rt/... -run 'Live|Msg|Send|Dispatch') && cd examples/19-skyforum && rm -rf sky-out .skycache .skydeps && sky build && cd ../.. && scripts/verify-all-web.sh",
+          "expectedCoerceClosure": 0,
+          "estSessions": 2
+        },
+        {
+          "num": 3,
+          "title": "P0.6: Gob back-compat envelope per variant (MarshalBinary/UnmarshalBinary + SKY_LIVE_GOB_LEGACY dual-encode)",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "runtime-go/rt/adt_variant_gob.go",
+            "runtime-go/rt/adt_variant_gob_test.go",
+            "runtime-go/rt/live_store.go"
+          ],
+          "verifyCmd": "(cd runtime-go && go test ./rt/... -run 'Gob|GobLegacy|SkyADTLegacyDecode') && scripts/cabal-test.sh --match 'GobLegacy'",
+          "expectedCoerceClosure": 0,
+          "estSessions": 2
+        },
+        {
+          "num": 4,
+          "title": "P1: Codegen sealed-interface emission for MONOMORPHIC ADTs (entry + dep paths) behind SKY_SEALED_ADT=opt-in gate, plus pattern-match type-switch lowering",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "src/Sky/Build/LowerCtx.hs",
+            "src/Sky/Generate/Go/Printer.hs",
+            "test/Sky/Build/SealedAdtMonoSpec.hs",
+            "test/Sky/Build/SealedAdtPatternMatchSpec.hs"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh --match 'SealedAdt' && SKY_SEALED_ADT=1 cd examples/00-standard-libs && rm -rf sky-out .skycache && sky build && cd ../.. && scripts/example-sweep.sh",
+          "expectedCoerceClosure": 40,
+          "estSessions": 3
+        },
+        {
+          "num": 5,
+          "title": "P2: Phantom-msg parametric ADT emission (case-b: non-generic interface + variants whose payloads don't carry T) — Element/Html/Attribute family",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "src/Sky/Build/LowerCtx.hs",
+            "sky-stdlib/Std/Ui.sky",
+            "sky-stdlib/Std/Html.sky",
+            "test/Sky/Build/SealedAdtPhantomSpec.hs"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh --match 'SealedAdtPhantom' && SKY_SEALED_ADT=1 cd examples/26-ui-showcase && rm -rf sky-out .skycache && sky build && cd ../.. && scripts/verify-all-web.sh",
+          "expectedCoerceClosure": 120,
+          "estSessions": 3
+        },
+        {
+          "num": 6,
+          "title": "P2.5: Full-flow parametric ADT (case-c: Go-generic sealed interface + generic variants) — Maybe/Result/Task migration with rt.SkyMaybe accessor-shim",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "runtime-go/rt/rt.go",
+            "runtime-go/rt/maybe_result_kernel.go",
+            "sky-stdlib/Sky/Core/Maybe.sky",
+            "sky-stdlib/Sky/Core/Result.sky",
+            "sky-stdlib/Sky/Core/Task.sky",
+            "test/Sky/Build/SealedAdtGenericSpec.hs"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh && SKY_SEALED_ADT=1 scripts/example-sweep.sh && scripts/verify-cli.sh && scripts/verify-all-web.sh",
+          "expectedCoerceClosure": 220,
+          "estSessions": 3
+        },
+        {
+          "num": 7,
+          "title": "P3: Cross-module compile-unit barrier (all-or-none opt-in per build), audit Attribute/Attribute_T dual-form, flip default SKY_SEALED_ADT=1",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "src/Sky/Build/Orchestrate.hs",
+            "src/Sky/Canonicalise/Module.hs",
+            "templates/CLAUDE.md",
+            "docs/v0.17-typed-adt/sealed-interface.md"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-all-web.sh && scripts/verify-cli.sh && cd examples/13-skyshop && sky check",
+          "expectedCoerceClosure": 280,
+          "estSessions": 2
+        },
+        {
+          "num": 8,
+          "title": "P4: Remove SKY_SEALED_ADT opt-out, retire legacy SkyADT codegen path (keep runtime SkyADT for FFI back-compat), Error builders migration",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "runtime-go/rt/rt.go",
+            "runtime-go/rt/error_kernel.go",
+            "sky-stdlib/Sky/Core/Error.sky",
+            "test/Sky/Build/LegacySkyADTRetirementSpec.hs"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-all-web.sh && scripts/verify-cli.sh",
+          "expectedCoerceClosure": 300,
+          "estSessions": 2
+        },
+        {
+          "num": 9,
+          "title": "P5: Retire SKY_LIVE_GOB_LEGACY dual-encode (one-minor-release delay after P4 lands)",
+          "files": [
+            "src/Sky/Build/Compile.hs",
+            "runtime-go/rt/adt_variant_gob.go",
+            "runtime-go/rt/live_store.go",
+            "docs/v0.17-typed-adt/migration.md"
+          ],
+          "verifyCmd": "scripts/cabal-test.sh && scripts/example-sweep.sh && scripts/verify-all-web.sh",
+          "expectedCoerceClosure": 300,
+          "estSessions": 1
+        }
+      ],
+      "userDecisionPoints": [],
+      "readyToImplement": true,
+      "topRisks": [
+        "Gob back-compat across the v(N)→v(N+1) cutover: redis/sqlite/postgres session stores carry legacy `rt.SkyADT{Tag,SkyName,Fields[]any}` bytes that won't satisfy the new sealed interface on decode. P0.6 ships per-variant MarshalBinary/UnmarshalBinary + SKY_LIVE_GOB_LEGACY dual-encode envelope; failure to land BEFORE P3's default-flip silently corrupts every running Sky.Live deployment at upgrade time.",
+        "__sky_send + applyMsgArgs wire dispatch (live.go:4041,4054): legacy path constructs `SkyADT{...}` from JSON args and hands it to generated `update`, whose new body is a typed Go type-switch with no SkyADT case → default panic on every Firebase/JS/Sub-timer event after upgrade. P0.5 reflectively populates the variant struct from `adtVariantRegistry`; if regressed, all 12+ __sky_send examples crash on first event.",
+        "rt.SkyMaybe/SkyResult/SkyTask are accessed via direct `.Tag`/`.JustValue`/`.OkValue` at ~280 internal rt.go sites. P2.5 cannot flip the interface entry-point without P0-Pre's accessor-shim migration first; doing them in the wrong order compile-breaks the entire runtime package in one shot.",
+        "Cross-module σ drift during P1/P2 incremental opt-in: ModA defines `Page` as legacy SkyADT, ModB references it expecting the sealed interface — `rt.Coerce[Main_Page]` target ambiguates. P3's compile-unit barrier (all-or-none per build) is the architectural fix; missing it means partial opt-in silently mis-routes cross-module flow.",
+        "Std_Html_Attributes_Attribute dual emission (Attribute + Attribute_T[T1] form coexist today): the sealed-interface model has only one type-identity per ADT. Without canonicaliser disambiguation in P2, generic kernel callers (`Attribute_OnMsg[T1]`) and non-generic user callers can't share the same method set (Go forbids same-name method overload) — risks emission-time name collision in ~80 LOC of canonicaliser changes not budgeted elsewhere."
+      ]
+    }
+  }
+}
