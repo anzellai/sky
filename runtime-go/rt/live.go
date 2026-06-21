@@ -3999,19 +3999,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// directly from the constructor name and arguments instead of
 		// looking up a render-time handler closure.
 		//
-		// Tag resolution: look up the global ADT tag registry (populated
-		// by codegen's init() block), then fall back to the per-app cache
-		// built during previous dispatches.
-		tag := -1
-		if t, ok := LookupAdtTag(req.Msg); ok {
-			tag = t
-		} else {
-			app.msgTagsMu.Lock()
-			if t2, ok2 := app.msgTags[req.Msg]; ok2 {
-				tag = t2
-			}
-			app.msgTagsMu.Unlock()
+		// v0.17 sealed-iface dispatch: BuildAdtFromWire tries the
+		// variant factory registry first (typed payload via
+		// RegisterAdtVariant), then falls back to the legacy SkyADT
+		// path (LookupAdtTag + Fields:[]any).
+		localTag := -1
+		app.msgTagsMu.Lock()
+		if t2, ok2 := app.msgTags[req.Msg]; ok2 {
+			localTag = t2
 		}
+		app.msgTagsMu.Unlock()
+		built, found := BuildAdtFromWire(req.Msg, req.Args, localTag)
 		// Unknown Msg name: refuse to dispatch instead of building a
 		// SkyADT with Tag=-1 and letting the user's `case` fall
 		// through to the exhaustiveness `Unreachable`. Caller gets a
@@ -4020,7 +4018,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// liveness probe sent by the client) are silently accepted as
 		// no-ops so they don't pollute the log; the client only cares
 		// about session-existence (404 vs anything else).
-		if tag < 0 {
+		if !found {
 			sess.mu.Unlock()
 			w.Header().Set("X-Sky-Live", "1")
 			if strings.HasPrefix(req.Msg, "__sky") {
@@ -4031,14 +4029,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown Msg constructor: "+req.Msg, 400)
 			return
 		}
-		var fields []any
-		for _, raw := range req.Args {
-			var v any
-			if err := json.Unmarshal(raw, &v); err == nil {
-				fields = append(fields, v)
-			}
-		}
-		msg = SkyADT{Tag: tag, SkyName: req.Msg, Fields: fields}
+		msg = built
 		ok = true
 	}
 	if !ok {
@@ -4050,7 +4041,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// onSubmit / onKeyDown etc.) apply each incoming arg in order to
 	// produce a concrete Msg ADT value. Falls through to the legacy
 	// single-value form when only `value` was sent.
-	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+	if !IsFinalisedAdt(msg) {
 		msg = applyMsgArgs(msg, req.Args, req.Value)
 	}
 	// Reconcile the client's view of dirty inputs into sess.inputSeqs
@@ -4183,42 +4174,33 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	}
 	msg, ok := sess.handlers[ev.HandlerID]
 	if !ok && ev.Msg != "" && ev.HandlerID == "" {
-		tag := -1
-		if t, found := LookupAdtTag(ev.Msg); found {
-			tag = t
-		} else {
-			app.msgTagsMu.Lock()
-			if t2, ok2 := app.msgTags[ev.Msg]; ok2 {
-				tag = t2
-			}
-			app.msgTagsMu.Unlock()
+		// v0.17 sealed-iface dispatch (mirrors handleEvent above).
+		localTag := -1
+		app.msgTagsMu.Lock()
+		if t2, ok2 := app.msgTags[ev.Msg]; ok2 {
+			localTag = t2
 		}
+		app.msgTagsMu.Unlock()
+		built, found := BuildAdtFromWire(ev.Msg, ev.Args, localTag)
 		// Unknown Msg name — same defence as the single-event path
 		// above. Silently drop (this is the batched/tab-unload path
 		// so there's no response channel to surface the error).
 		// `__sky*` sentinels are silently accepted as no-ops too.
-		if tag < 0 {
+		if !found {
 			sess.mu.Unlock()
 			if !strings.HasPrefix(ev.Msg, "__sky") {
 				fmt.Fprintf(os.Stderr, "[sky.live] unknown Msg constructor %q (batched); dropping event\n", ev.Msg)
 			}
 			return
 		}
-		var fields []any
-		for _, raw := range ev.Args {
-			var v any
-			if err := json.Unmarshal(raw, &v); err == nil {
-				fields = append(fields, v)
-			}
-		}
-		msg = SkyADT{Tag: tag, SkyName: ev.Msg, Fields: fields}
+		msg = built
 		ok = true
 	}
 	if !ok {
 		sess.mu.Unlock()
 		return
 	}
-	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+	if !IsFinalisedAdt(msg) {
 		msg = applyMsgArgs(msg, ev.Args, ev.Value)
 	}
 	// Capture lastShippedBody BEFORE dispatch so we can suppress a
