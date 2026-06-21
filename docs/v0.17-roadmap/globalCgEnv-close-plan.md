@@ -295,3 +295,76 @@ estimate was over — many `getCgEnv` matches were comments).
 S4-c must handle pre-barrier sites with `patchMissingAnonRecordDecls`
 runtime backstop verified intact at L5544-5577.
 
+
+---
+
+## S4-a iter-37 ATTEMPT — REVERTED (2026-06-21)
+
+**Attempt:** migrate 11 Class A reader sites using
+`fromMaybe getCgEnv (LC.lookupCgEnv ctx)`. Pre-grilled PASS by
+adversarial agent.
+
+**Outcome:** 26-ui-showcase floor REGRESSED — rt.Coerce 288→295 (+7),
+rt.AsListT 190→187 (-3). 11 migrations changed emitted Go output.
+
+**Root cause:** lazy-thunk capture of stale `ctx._lc_cgEnv`. When
+`exprToGo` captures `ctx` into a `GoExpr` lazy thunk at expression-
+lowering time, ctx's `_lc_cgEnv` reflects the snapshot at THAT moment.
+Later S2 writers (e.g. C10 at L5329) update `scopeStateRef`'s
+`_lc_cgEnv` but the previously-captured ctx VALUE still holds the
+older env. `LC.lookupCgEnv ctx` then returns `Just (stale env)`
+instead of falling through to `getCgEnv` (which reads CURRENT
+`globalCgEnv` at force time via its NOINLINE CAF).
+
+The older env (pre-dep-merge or pre-C10) lacks the funcSkyToGoTVars
+refinements needed for typed-list paths. So sites that previously
+emitted `rt.AsListT[X]` now emit `rt.Coerce[any]` — hence +7 Coerce
+/-3 AsListT.
+
+**This is the same architectural class as PR-17b (T1 leak).** Reader-
+threading via continuation passing would close it, but that's a much
+larger refactor than the S4 plan assumed.
+
+### S4-a v2 design (next iter)
+
+Add a NOINLINE helper that reads `scopeStateRef` at force time
+instead of using the captured ctx:
+
+```haskell
+{-# NOINLINE getCgEnvFromScope #-}
+getCgEnvFromScope :: Rec.CodegenEnv
+getCgEnvFromScope = unsafePerformIO $ do
+    ctx <- readIORef scopeStateRef
+    case LC.lookupCgEnv ctx of
+        Just env -> return env
+        Nothing  -> readIORef globalCgEnv  -- legacy fallback (S5 deletes)
+```
+
+Then migrate the 11 Class A sites:
+```haskell
+-- BEFORE: let env = getCgEnv
+-- AFTER:  let env = getCgEnvFromScope
+```
+
+This routes reads through `scopeStateRef` (the value-channel bridge)
+at FORCE TIME, so lazy thunks always see the CURRENT cgEnv. Functionally
+equivalent to `getCgEnv` for now (both read latest state), but S5 can
+DELETE `globalCgEnv` + `getCgEnv` once the scopeStateRef route is
+proven complete.
+
+**Trade-off:** `getCgEnvFromScope` is itself an IORef-backed CAF.
+Plan §"Blockers" #5 already flagged: "scopeStateRef as the delivery
+bridge ... is a NOINLINE IORef itself. ... follow-up iter for full
+impurity close is foreseeable."
+
+S5 endpoint: DELETE globalCgEnv + getCgEnv + the load-bearing-but-pure
+docstring. `scopeStateRef` + `getCgEnvFromScope` survive S5 (criterion
+3 names globalCgEnv specifically). A later iter closes scopeStateRef.
+
+### S4 sub-stage revision
+
+* S4-prep (next): introduce `getCgEnvFromScope` helper next to `getCgEnv`. Additive, no behaviour change.
+* S4-a (next+1): migrate 11 Class A sites: `getCgEnv` → `getCgEnvFromScope`. Floor MUST hold.
+* S4-b/c/d: same pattern for remaining classes.
+* S5: DELETE `globalCgEnv` + `getCgEnv` (the original CAF). `getCgEnvFromScope` becomes the sole reader path.
+
