@@ -482,6 +482,14 @@ func msgDisplayName(msg any) string {
 	if msg == nil {
 		return ""
 	}
+	// v0.17 sealed-iface ADT: variant structs have a SkyVariantName()
+	// method instead of a SkyName field. Check the SkyVariant interface
+	// FIRST so codegen-emitted variants resolve cleanly. Falls through
+	// to legacy SkyADT.SkyName + reflect-based FieldByName for rt-side
+	// builders and pre-v0.17 codegen.
+	if sv, ok := msg.(SkyVariant); ok {
+		return sv.SkyVariantName()
+	}
 	rv := reflect.ValueOf(msg)
 	if rv.Kind() == reflect.Struct {
 		if f := rv.FieldByName("SkyName"); f.IsValid() && f.Kind() == reflect.String {
@@ -4374,7 +4382,14 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// direct-send events (__sky_send) can construct correctly-tagged
 	// ADTs at runtime. Normal handler-dispatched events always carry
 	// the codegen-assigned tag; direct-send events arrive with Tag -1.
-	if adt, ok := msg.(SkyADT); ok && adt.Tag >= 0 {
+	// v0.17 sealed-iface ADT: variant structs carry tag + name via
+	// methods, NOT fields — extract via the SkyVariant interface
+	// before falling back to the legacy SkyADT field-read path.
+	if sv, ok := msg.(SkyVariant); ok {
+		app.msgTagsMu.Lock()
+		app.msgTags[sv.SkyVariantName()] = sv.SkyVariantTag()
+		app.msgTagsMu.Unlock()
+	} else if adt, ok := msg.(SkyADT); ok && adt.Tag >= 0 {
 		app.msgTagsMu.Lock()
 		app.msgTags[adt.SkyName] = adt.Tag
 		app.msgTagsMu.Unlock()

@@ -243,6 +243,16 @@ func ExtractMsgName(msg any) string {
 	if lm, ok := msg.(lifecycleMsg); ok {
 		return ExtractMsgName(lm.inner)
 	}
+	// v0.17 sealed-iface ADT: variant structs expose name via the
+	// SkyVariantName() method. Probe the SkyVariant interface FIRST
+	// so codegen-emitted variants resolve cleanly; fall through to
+	// the legacy SkyADT.SkyName field for rt-side builders and
+	// pre-v0.17 codegen.
+	if sv, ok := msg.(SkyVariant); ok {
+		if name := sv.SkyVariantName(); name != "" {
+			return name
+		}
+	}
 	if adt, ok := msg.(SkyADT); ok && adt.SkyName != "" {
 		return adt.SkyName
 	}
