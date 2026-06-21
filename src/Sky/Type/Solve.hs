@@ -497,6 +497,21 @@ data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
     , _varCache :: !(IORef (Map.Map String T.Variable))  -- TVar name → shared UF variable
     , _rank     :: !Int
+    , _ffiImplements :: !(Map.Map String [String])
+      -- ^ v0.17 close P1 step 3 — FFI interface-satisfaction registry,
+      -- threaded into 'Sky.Type.Unify.UnifyState' at every @unify@
+      -- call site below.  Pre-step-3, Unify read this map via
+      -- @unsafePerformIO (readIORef Unify.ffiImplementsRef)@ inside
+      -- 'implementsInterface'; now the value is carried explicitly
+      -- through the solver state for the lifetime of each solve.
+      --
+      -- Defaults to 'Map.empty' from every entry point that doesn't
+      -- accept an explicit impls map (test entry, LSP); the
+      -- @solve*WithImpls@ variants seed the field from
+      -- @LoadedFfiTables._lft_implements@ at the Compile.hs call site.
+      -- Empty → 'isFfiInterfacePair' returns 'False' for every pair
+      -- and the legacy strict-equality nominal-matching path stays in
+      -- force.
     , _locals   :: !(IORef (Map.Map String [T.Variable]))
       -- Audit P2-2: store the FULL list of resolved types per
       -- binding name (one entry per CLet-capture firing). Inner
@@ -784,7 +799,7 @@ solve constraint = do
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -842,7 +857,7 @@ solveWithLocals constraint = do
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)
     localTypes <- Map.traverseWithKey (\_ vars ->
@@ -900,7 +915,7 @@ solveWithInstancesAndRegions constraint = do
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -1204,7 +1219,12 @@ solveHelpBody state constraint = case constraint of
     T.CEqual region _category actualType expected -> do
         actualVar <- typeToVar state actualType
         expectedVar <- expectedToVar state expected
-        ok <- Unify.unify actualVar expectedVar
+        -- v0.17 close P1 step 3 — thread FFI implements registry into
+        -- Unify via the new value-channel 'UnifyState' (was
+        -- @unsafePerformIO (readIORef Unify.ffiImplementsRef)@ inside
+        -- 'Unify.implementsInterface' pre-step-3).
+        let unifyState = Unify.mkUnifyState (_ffiImplements state)
+        ok <- Unify.unify unifyState actualVar expectedVar
         if ok
             then do
                 recordRegionVar state region actualVar
@@ -1241,7 +1261,9 @@ solveHelpBody state constraint = case constraint of
         case Map.lookup name (_env state) of
             Just var -> do
                 expectedVar <- expectedToVar state expected
-                ok <- Unify.unify var expectedVar
+                -- v0.17 close P1 step 3 — see CEqual arm above.
+                let unifyState = Unify.mkUnifyState (_ffiImplements state)
+                ok <- Unify.unify unifyState var expectedVar
                 if ok
                     then do
                         recordRegionVar state region var
@@ -1262,7 +1284,9 @@ solveHelpBody state constraint = case constraint of
     T.CForeign region name annot expected -> do
         (instVar, freshVars, quants) <- instantiateAnnotation state annot
         expectedVar <- expectedToVar state expected
-        ok <- Unify.unify instVar expectedVar
+        -- v0.17 close P1 step 3 — see CEqual arm above.
+        let unifyState = Unify.mkUnifyState (_ffiImplements state)
+        ok <- Unify.unify unifyState instVar expectedVar
         if ok
             then do
                 -- v0.13 Phase A1: capture this polymorphic reference for
