@@ -1465,8 +1465,15 @@ canonPhase
     -> [Graph.ModuleInfo] -- ^ moduleOrder (for dep-error source-path lookup)
     -> Src.Module -- ^ entrySrcMod (canonicalised with the dep fixpoint result)
     -> [(String, Src.Module)] -- ^ depModules (everything except the entry)
+    -> Map.Map String [String]
+    -- ^ ffiKernelFns — FFI kernel-functions map sourced from
+    -- 'LoadedFfiTables._lft_kernelFunctions'.  v0.17 close P1
+    -- step 5: threaded through 'Canonicalise.canonicaliseWithDepsAndFfi'
+    -- so the @Can.VarKernel@ qualified-name resolution reads
+    -- the value channel instead of the legacy
+    -- @readIORef Env.ffiKernelFunctionsRef@.
     -> IO CanonOutcome
-canonPhase entryPath moduleOrder entrySrcMod depModules = do
+canonPhase entryPath moduleOrder entrySrcMod depModules ffiKernelFns = do
     putStrLn "-- Canonicalising"
     let buildDepInfoMap valids = Map.fromList
             [ (modName, Canonicalise.DepInfo
@@ -1483,7 +1490,8 @@ canonPhase entryPath moduleOrder entrySrcMod depModules = do
             | (modName, depMod) <- valids
             ]
         canonPassWith m = Async.forConcurrently depModules $ \(n, srcMod) ->
-            case Canonicalise.canonicaliseWithDeps m srcMod of
+            -- v0.17 close P1 step 5 — FFI-aware variant.
+            case Canonicalise.canonicaliseWithDepsAndFfi m ffiKernelFns srcMod of
                 Right cm -> return (Right (n, cm))
                 Left err -> return (Left (n, err))
         canonFixpoint
@@ -1515,7 +1523,8 @@ canonPhase entryPath moduleOrder entrySrcMod depModules = do
             putStrLn rendered
             return $ CanonDepError ("Canonicalise error in " ++ n)
         [] ->
-            case Canonicalise.canonicaliseWithDeps depInfoMap2 entrySrcMod of
+            -- v0.17 close P1 step 5 — FFI-aware variant for entry module too.
+            case Canonicalise.canonicaliseWithDepsAndFfi depInfoMap2 ffiKernelFns entrySrcMod of
                 Left err -> do
                     -- v0.13 Layer 1: same treatment for the entry module.
                     let diag = Canonicalise.legacyToDiag entryPath err
@@ -2815,7 +2824,11 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
         let entrySrcMod = snd (last parsed)
             -- Dependency modules are all parsed modules except the entry.
             depModules = if length parsed > 1 then init parsed else []
+        -- v0.17 close P1 step 5 — thread FFI kernel functions
+        -- value to 'canonPhase' so canonicaliser-time qualified-name
+        -- resolution reads the value channel.
         canonOutcome <- canonPhase entryPath moduleOrder entrySrcMod depModules
+                                   (_lft_kernelFunctions loadedFfi)
         case canonOutcome of
          CanonDepError marker -> return (Left marker)
          CanonEntryError      -> return (Left "Canonicalise error")
