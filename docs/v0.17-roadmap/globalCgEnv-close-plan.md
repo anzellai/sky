@@ -368,3 +368,41 @@ docstring. `scopeStateRef` + `getCgEnvFromScope` survive S5 (criterion
 * S4-b/c/d: same pattern for remaining classes.
 * S5: DELETE `globalCgEnv` + `getCgEnv` (the original CAF). `getCgEnvFromScope` becomes the sole reader path.
 
+
+---
+
+## S5 iter-42 ATTEMPT — REVERTED (2026-06-21)
+
+**Attempt:** delete `globalCgEnv` IORef + `getCgEnv` CAF +
+forbidden docstring + reader sites + writer-side
+`writeIORef/modifyIORef` lines + swap resetCompileState ordering
++ add `LC.modifyCgEnv` helper.
+
+**Build:** clean. **Outcome:** 26-ui-showcase floor REGRESSED —
+rt.Coerce 288→319 (+31), rt.AsListT 190→187 (-3).
+
+**Hypothesis (needs deeper investigation):**
+  (a) `modifyIORef scopeStateRef (LC.modifyCgEnv f)` vs legacy
+      `modifyIORef globalCgEnv f; readIORef globalCgEnv;
+      modifyIORef scopeStateRef (LC.withCgEnv prevPostMod)` at
+      one of the 3 writer sites isn't byte-identical (the C9
+      site is the most likely culprit — call-site instances
+      mutation could lose data).
+  (b) resetCompileState ordering swap (wipe-then-install vs the
+      prior install-then-wipe pattern) interacts with a downstream
+      reader that expected empty cgEnv at certain phases.
+  (c) `getCgEnvFromScope` CAF memoization + cross-compile
+      staleness flagged by S4-prep grill agent (#492 class) bites.
+
+**Banked at iter 41 state (08918a9b) — floor exact 288/190.**
+
+**S5 v2 plan:** investigate hypotheses with SKY_CGENV_DIFF=1
+instrumentation that DIFFs every scopeStateRef install against
+the legacy IORef state to detect where the divergence happens.
+THEN delete.
+
+Iter 42 has shipped iters 33-41 (44 reader migrations + 6 writer
+shadow installs) — 88% of criterion-3 architectural progress with
+floor exact end-to-end. S5 DELETE is the final 10%, deferred for
+proper investigation rather than guess-fix.
+
