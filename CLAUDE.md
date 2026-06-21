@@ -2087,7 +2087,7 @@ verified against HEAD.
    binding with `()` is currently silently accepted at codegen,
    surfacing only as a Go build error or runtime panic.
 
-   **v0.17 status — IN PROGRESS — PR-A scaffolding shipped.**
+   **v0.17 status — IN PROGRESS — PR-A + PR-B SHIPPED.**
    The multi-PR close path is now under way:
 
    * **PR-A — SHIPPED** (`Sky.Type.Type.Constraint` extended with
@@ -2101,21 +2101,35 @@ verified against HEAD.
      constructor is reachable end-to-end without depending on
      any caller. **No behaviour change** — no caller wires the
      gate yet.
-   * **PR-B, PR-C, PR-D — PENDING.** Add `declaredArity` pure
-     helper + verify externals safety (PR-B); wire gate at
-     `constrainCall` for k-a + u-a (PR-C); value-slot case for
-     k-b + u-b (PR-D). See full plan at
+   * **PR-B — SHIPPED** (iter 30): pure
+     `Sky.Type.Constrain.Expression.declaredArity ::
+     T.Annotation -> Int` helper added + exported; structural
+     walk of TLambda chain only; no fresh UF vars / no solver
+     interaction. Externals trace verified safe per design doc
+     Section "PR-B step 2" — `globalExternals` /
+     `globalSameModAnnots` annotations come from
+     post-canonicalisation `T.Type` that already has head
+     `TAlias` unfolded via `Canonicalise/Module.hs`'s
+     `arrowResultN` / `arrowArgs`. `Sky.Type.DeclaredArityHelperSpec`
+     (9 unit tests) locks the structural shape PR-C/PR-D will
+     consume. `Sky.Type.StrictHmArityGateSpec.h-a-cross`
+     (cross-module HeadAlias positive) locks the externals trace
+     empirically.
+   * **PR-C, PR-D — PENDING.** Wire gate at `constrainCall` for
+     k-a + u-a (PR-C); value-slot case for k-b + u-b (PR-D). See
+     full plan at
      `docs/v0.17-roadmap/strict-hm-arity-gate-design.md`.
 
    Regression spec `Sky.Type.StrictHmArityGateSpec` ships
-   **4 live POSITIVE assertions** (h-a HeadAlias unfold /
-   p-a Pure.* canonical / wp-a real polymorphism / wa-a
-   wildcard-only soundness) + **4 NEGATIVE arms still
-   `pendingWith`** (k-a / k-b / u-a / u-b). The 4 positives lock
-   the shapes that MUST keep compiling once the gate lands.
-   The 4 negative arms flip live as PR-C + PR-D land. The
-   companion `Sky.Type.Limitation7CurrentLooseAcceptanceSpec`
-   (6 red-then-green cases) tracks the current loose-acceptance
+   **5 live POSITIVE assertions** (h-a HeadAlias unfold /
+   p-a Pure.* canonical / wp-a real polymorphism / **h-a-cross
+   cross-module HeadAlias** — NEW in PR-B / wa-a wildcard-only
+   soundness) + **4 NEGATIVE arms still `pendingWith`** (k-a /
+   k-b / u-a / u-b). The 5 positives lock the shapes that MUST
+   keep compiling once the gate lands. The 4 negative arms flip
+   live as PR-C + PR-D land. The companion
+   `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` (6
+   red-then-green cases) tracks the current loose-acceptance
    shapes that will FLIP on gate landing.
 
    **v0.15.50 mitigation — `Sky.Core.Pure`.** New code targeting
