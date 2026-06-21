@@ -5,8 +5,12 @@
 module Sky.Type.Constrain.Expression
     ( constrainModule
     , constrainModuleWithExternals
+    , constrainModuleWithFfi
     , lookupKernelType
-    , Env
+    , Env (..)
+    , emptyEnv
+    , envInsert
+    , envLookup
     , intType
     , floatType
     , stringType
@@ -24,11 +28,76 @@ import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Sky.ModuleName as ModuleName
-import qualified Sky.Canonicalise.Environment as Env
+-- v0.17 close P1 step 4 — 'Env.ffiKernelTypeRef' module-level
+-- IORef no longer consulted from this module.  The value
+-- channel runs through the per-call 'Env' record's
+-- '_envFfiKernelTypes' field, populated by
+-- 'constrainModuleWithFfi'.  The Canonicalise.Environment
+-- module still owns the IORef as a back-compat shim for
+-- callers we haven't migrated yet (P1 step 7 owns deletion).
 
 
--- | Type environment: maps variable names to their type schemes
-type Env = Map.Map String T.Annotation
+-- | Type environment carrying the per-binding type schemes plus
+-- the FFI-kernel signatures harvested at FFI-discovery time.
+--
+-- v0.17 close P1 step 4 — Env was a bare @Map.Map String
+-- T.Annotation@ until this iteration.  Threading a new value
+-- parameter through every @constrain*@ helper would have
+-- ballooned the diff; promoting Env to a record keeps every
+-- existing helper signature identical (still @Env -> …@) AND
+-- gives the @Can.VarKernel@ arm a clean value-channel to read
+-- the FFI-kernel signature table from — replacing a
+-- @readIORef Env.ffiKernelTypeRef@ that previously read the
+-- legacy module-level IORef in 'Sky.Canonicalise.Environment'.
+--
+-- @_envVars@ is consulted everywhere the OLD @Map.lookup name
+-- env@ pattern fired (via 'envLookup' below).  Insert + bulk-
+-- build call sites use 'envInsert' / 'envInsertMany' so the
+-- per-arm bookkeeping reads identically to the OLD code.
+--
+-- @_envFfiKernelTypes@ is consulted at exactly one site
+-- (constrain @ Can.VarKernel) — the legacy IORef shim is kept
+-- alive for the LSP entry point ('constrainModule') which has
+-- no FFI loader; it sees an empty FFI map (behavior-equivalent
+-- to the pre-v0.17 LSP path).  The compiler driver
+-- ('Sky.Build.Compile.solvePhase') threads the value via the
+-- new 'constrainModuleWithFfi' entry point.
+data Env = Env
+    { _envVars            :: !(Map.Map String T.Annotation)
+    , _envFfiKernelTypes  :: !(Map.Map (String, String) T.Annotation)
+    }
+
+
+-- | The empty Env (no bindings, no FFI seed).
+emptyEnv :: Env
+emptyEnv = Env Map.empty Map.empty
+
+
+-- | Insert a binding into Env (keeps the FFI seed unchanged).
+envInsert :: String -> T.Annotation -> Env -> Env
+envInsert k v e = e { _envVars = Map.insert k v (_envVars e) }
+
+
+-- | Bulk-insert bindings (right-to-left like the original @foldr@
+-- over @Map.insert@ patterns).
+envInsertMany :: [(String, T.Annotation)] -> Env -> Env
+envInsertMany kvs e =
+    e { _envVars = foldr (\(n, ann) m -> Map.insert n ann m) (_envVars e) kvs }
+
+
+-- | Lookup a binding in Env (drops to the underlying @_envVars@
+-- map — the FFI seed only fires from the @Can.VarKernel@ arm).
+envLookup :: String -> Env -> Maybe T.Annotation
+envLookup k e = Map.lookup k (_envVars e)
+
+
+-- | Build an Env carrying both an initial binding map AND the
+-- FFI-kernel signature seed.  Used by 'constrainModuleWithFfi'.
+envWithFfi
+    :: Map.Map String T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -> Env
+envWithFfi vars ffi = Env vars ffi
 
 
 -- | Fresh name counter
@@ -57,7 +126,40 @@ constrainModuleWithExternals
     :: Map.Map (String, String) T.Annotation
     -> Can.Module
     -> IO T.Constraint
-constrainModuleWithExternals externals canMod = do
+constrainModuleWithExternals externals canMod =
+    -- v0.17 close P1 step 4 — legacy entry point preserved for
+    -- the LSP path (no FFI loader at single-module mode).  The
+    -- LSP-only path sees an empty FFI seed; that's
+    -- behaviour-equivalent to the pre-v0.17 single-module flow
+    -- where the LSP never populated 'Env.ffiKernelTypeRef' from
+    -- a full FFI scan.  The compiler driver uses
+    -- 'constrainModuleWithFfi' below.
+    constrainModuleWithFfi externals Map.empty canMod
+
+
+-- | v0.17 close P1 step 4 — primary entry point used by the
+-- compiler driver ('Sky.Build.Compile.solvePhase').
+--
+-- Takes the cross-module externals map AND the FFI-kernel
+-- signature map (sourced from
+-- @LoadedFfiTables._lft_kernelTypes@) and threads BOTH through
+-- the per-binding Env.  This replaces the
+-- @readIORef Env.ffiKernelTypeRef@ inside the @Can.VarKernel@
+-- arm with a strict value-channel read of @_envFfiKernelTypes@
+-- — there is no module-level IORef on this path.
+--
+-- The legacy 'Env.ffiKernelTypeRef' module-level IORef stays
+-- alive temporarily as a back-compat shim for callers that
+-- pre-date this entry point.  P1 step 7 owns its deletion.
+constrainModuleWithFfi
+    :: Map.Map (String, String) T.Annotation
+    -- ^ cross-module externals
+    -> Map.Map (String, String) T.Annotation
+    -- ^ FFI-kernel signatures (from
+    --   'LoadedFfiTables._lft_kernelTypes')
+    -> Can.Module
+    -> IO T.Constraint
+constrainModuleWithFfi externals ffiKernelTypes canMod = do
     counter <- newIORef 0
     writeIORef globalExternals externals
     writeIORef globalCurrentModule
@@ -65,7 +167,8 @@ constrainModuleWithExternals externals canMod = do
     -- v0.15.1 — register same-module annotated TypedDef annotations
     -- for fresh-instantiation at sibling call sites.
     writeIORef globalSameModAnnots (collectSameModAnnots canMod)
-    constrainDecls counter Map.empty (Can._decls canMod)
+    constrainDecls counter (envWithFfi Map.empty ffiKernelTypes)
+                   (Can._decls canMod)
 
 
 -- | v0.15.1 — collect annotations from a module's TypedDef
@@ -161,7 +264,7 @@ constrainDecls counter env decls = do
     let allDefs = flattenDecls decls
         unannotated = [d | d@(Can.Def _ _ _) <- allDefs]
     unannInfos <- mapM (defTypeInfoIO counter) unannotated
-    let preEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env unannInfos
+    let preEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- unannInfos] env
         knownTypes = Map.fromList [(n, t) | (n, t, _) <- unannInfos]
         outerHeader = Map.fromList [ (n, (A.one, t)) | (n, t, _) <- unannInfos ]
     innerCon <- walkDecls counter preEnv knownTypes decls
@@ -184,14 +287,14 @@ walkDecls counter env known (Can.Declare def rest) = do
             c <- constrainDefWithKnownType counter env def t
             return (c, n, t)
         _ -> constrainDefWithType counter env def
-    let env' = Map.insert name (T.Forall [] defType) env
+    let env' = envInsert name (T.Forall [] defType) env
     restCon <- walkDecls counter env' known rest
     let header = Map.singleton name (A.one, defType)
     return $ T.CLet [] [] header defCon restCon
 walkDecls counter env known (Can.DeclareRec def defs rest) = do
     let allDefs = def : defs
     defInfos <- mapM (defTypeInfoIO counter) allDefs
-    let recEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env defInfos
+    let recEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- defInfos] env
     defCons <- mapM (\(_, ty, rdef) -> constrainDefWithKnownType counter recEnv rdef ty) defInfos
     restCon <- walkDecls counter recEnv known rest
     return $ T.CAnd (defCons ++ [restCon])
@@ -461,7 +564,19 @@ constrain counter env (A.At region expr) expected = case expr of
                 -- — bare-using a Result-wrapped FFI return is now
                 -- a TYPE ERROR with a hint pointing at
                 -- @case ... of Ok v -> ...@ or @Result.andThen@.
-                ffiTypes <- readIORef Env.ffiKernelTypeRef
+                -- v0.17 close P1 step 4 — strict value-channel
+                -- read of the FFI-kernel signature map from the
+                -- Env record's _envFfiKernelTypes field.  The
+                -- compiler driver seeds this via
+                -- 'constrainModuleWithFfi' (called from
+                -- 'Sky.Build.Compile.solvePhase' with
+                -- @_lft_kernelTypes loadedFfi@); the legacy LSP
+                -- entry point 'constrainModule' /
+                -- 'constrainModuleWithExternals' supplies an
+                -- empty map, behaviour-equivalent to the
+                -- pre-v0.17 single-module LSP path where the
+                -- module-level IORef was never populated.
+                let ffiTypes = _envFfiKernelTypes env
                 case Map.lookup (modName, funcName) ffiTypes of
                     Just annot ->
                         return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
@@ -788,7 +903,7 @@ constrainLambda counter env region params body expected = do
     perParam <- mapM (uncurry (patternBindingsIO counter)) (zip params paramTypes)
     let paramBindings = concatMap fst perParam
         structuralCons = concatMap snd perParam
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+        bodyEnv = envInsertMany paramBindings env
     bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
     -- Wrap body in CLet so param names are scoped. Without this the solver's
     -- runtime _env leaks lambda params (or pattern names) into whatever
@@ -908,7 +1023,7 @@ constrainIf counter env region branches elseExpr expected = do
 constrainLet :: Counter -> Env -> Can.Def -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
 constrainLet counter env def body expected = do
     (defCon, name, defType) <- constrainDefWithType counter env def
-    let bodyEnv = Map.insert name (T.Forall [] defType) env
+    let bodyEnv = envInsert name (T.Forall [] defType) env
     bodyCon <- constrain counter bodyEnv body expected
     -- Wrap with CLet so the bound name has proper lexical scope in the
     -- solver's runtime env — otherwise `let x = ... in ...` leaks `x`
@@ -923,7 +1038,7 @@ constrainLetRec counter env defs body expected = do
     -- `defTypeInfoIO` returns the (alpha-renamed) def whose body is
     -- constrained against the SAME type that went into recEnv.
     defInfos <- mapM (defTypeInfoIO counter) defs
-    let recEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env defInfos
+    let recEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- defInfos] env
     defCons <- mapM (\(_, ty, rdef) -> constrainDefWithKnownType counter recEnv rdef ty) defInfos
     bodyCon <- constrain counter recEnv body expected
     let header = Map.fromList [(n, (A.one, t)) | (n, t, _) <- defInfos]
@@ -936,7 +1051,7 @@ constrainLetDestruct counter env pat valExpr body expected = do
     let valType = T.TVar vName
     valCon <- constrain counter env valExpr (T.NoExpectation valType)
     let bindings = patternBindings (pat, valType)
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
+        bodyEnv = envInsertMany bindings env
     bodyCon <- constrain counter bodyEnv body expected
     let header = Map.fromList
             [ (n, (A.one, t))
@@ -954,7 +1069,7 @@ constrainDefWithType counter env def = case def of
         let paramTypes = map T.TVar paramNames
             resultType = T.TVar resultName
             paramBindings = concatMap patternBindings (zip params paramTypes)
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
             funcType = foldr T.TLambda resultType paramTypes
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
         -- Wrap body in CLet that introduces parameter bindings into solver env
@@ -979,7 +1094,7 @@ constrainDefWithType counter env def = case def of
             typedPats' = [ (pat, renameT ty) | (pat, ty) <- typedPats ]
             retType' = renameT retType
             paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats'
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
             funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType' typedPats'
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType')
         -- Wrap body in CLet so param bindings flow into the solver's
@@ -1011,7 +1126,7 @@ constrainDefWithKnownType counter env def knownType = case def of
     Can.Def (A.At _region _name) params body -> do
         let (paramTypes, resultType) = splitFuncTypeN (length params) knownType
             paramBindings = concatMap patternBindings (zip params paramTypes)
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
         -- Wrap body in CLet so param names are scoped in the solver's
         -- runtime env — without this, sibling defs' param vars leak
@@ -1023,7 +1138,7 @@ constrainDefWithKnownType counter env def knownType = case def of
 
     Can.TypedDef (A.At _region _name) _freeVars typedPats body retType -> do
         let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
         let paramHeader = Map.fromList
                 [ (pname, (A.one, ptype))
@@ -1074,7 +1189,7 @@ constrainBranch counter env region subjectType resultType branchIdx (Can.CaseBra
     -- ADT argTypes fall back to raw `TVar "a"` from the union definition,
     -- and multiple pattern matches end up sharing the same stale "a".
     (bindings, ctorEqs) <- instantiatePattern counter pat subjectType
-    let branchEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
+    let branchEnv = envInsertMany bindings env
     bodyCon <- constrain counter branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
     let patHeader = Map.fromList
             [ (pname, (A.one, ptype))

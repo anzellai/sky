@@ -1698,11 +1698,23 @@ solvePhase
     -- widening in 'Sky.Type.Unify' reads the value-channel instead of
     -- the @Unify.ffiImplementsRef@ IORef.  Empty for projects with no
     -- FFI deps; behaviour-equivalent to the legacy IORef-read.
+    -> Map.Map (String, String) Can.Annotation
+    -- ^ ffiKernelTypes — FFI-kernel signature map sourced from
+    -- 'LoadedFfiTables._lft_kernelTypes'.  v0.17 close P1 step 4:
+    -- threaded through 'Constrain.constrainModuleWithFfi' so the
+    -- @Can.VarKernel@ arm reads the value-channel instead of the
+    -- legacy @readIORef Env.ffiKernelTypeRef@ inside
+    -- 'Sky.Type.Constrain.Expression'.  Empty for projects with
+    -- no FFI deps; behaviour-equivalent to the pre-v0.17 path.
     -> IO SolveOutcome
-solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases implementsMap = do
+solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases implementsMap ffiKernelTypes = do
             -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
-                cs <- Constrain.constrainModule depMod
+                -- v0.17 close P1 step 4 — use FFI-aware variant so
+                -- the dep's Can.VarKernel arm reads the value-
+                -- channel ffiKernelTypes seed (empty externals
+                -- because pass 1 is the warmup).
+                cs <- Constrain.constrainModuleWithFfi Map.empty ffiKernelTypes depMod
                 r  <- Solve.solveImpls implementsMap cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
@@ -1811,7 +1823,10 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- instance capture flows through dep-module callsites
                     -- (used by monomorphisation).
                     mapM (\(modName, depMod) -> do
-                        cs <- Constrain.constrainModuleWithExternals externals depMod
+                        -- v0.17 close P1 step 4 — FFI-aware variant
+                        -- threads the kernel-types map for the
+                        -- @Can.VarKernel@ arm.
+                        cs <- Constrain.constrainModuleWithFfi externals ffiKernelTypes depMod
                         -- v0.15 Stage A/B: dep modules also get
                         -- per-region types.  Merge into the global
                         -- map below, after the fixpoint converges,
@@ -1916,7 +1931,10 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         -- DEBUG bisect: keep only first N entries
                         depExternals = rawExternals
                     _ <- return depDeclaredNames  -- silence unused warning on release path
-                    constraints <- Constrain.constrainModuleWithExternals depExternals canMod
+                    -- v0.17 close P1 step 4 — entry module also
+                    -- gets the FFI-kernel signature map so its
+                    -- @Can.VarKernel@ arm reads the value-channel.
+                    constraints <- Constrain.constrainModuleWithFfi depExternals ffiKernelTypes canMod
                     putStrLn $ "   cross-module externals: " ++ show (Map.size depExternals)
                     -- v0.13 Phase A3: use `solveWithInstances` so we also
                     -- capture the call-site instance table for the
@@ -2910,7 +2928,9 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             -- projects with no FFI deps; behaviour-equivalent to the
             -- legacy IORef-read path (still kept as a backward-compat
             -- shim until P1 step 7).
-            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases (_lft_implements loadedFfi)
+            -- v0.17 close P1 step 4 — also pass kernelTypes via
+            -- the value channel for 'Constrain.constrainModuleWithFfi'.
+            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases (_lft_implements loadedFfi) (_lft_kernelTypes loadedFfi)
             case solveOutcome of
               SolveDepError _ ->
                   System.Exit.exitWith (System.Exit.ExitFailure 1)
