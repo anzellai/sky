@@ -1364,11 +1364,19 @@ data ParseOutcome
 -- would be clobbered.
 resetCompileState :: IO ()
 resetCompileState = do
-    writeIORef globalCgEnv
-        (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
-                        Set.empty Set.empty Set.empty Set.empty
-                        Map.empty Map.empty Map.empty Map.empty
-                        Map.empty Map.empty Map.empty)
+    let initialCgEnv =
+            Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
+                           Set.empty Set.empty Set.empty Set.empty
+                           Map.empty Map.empty Map.empty Map.empty
+                           Map.empty Map.empty Map.empty
+    writeIORef globalCgEnv initialCgEnv
+    -- v0.17 close criterion 3 — globalCgEnv S2 (iter 35): shadow
+    -- install on scopeStateRef in parallel with the legacy IORef
+    -- write.  Both paths produce byte-identical data; S4 will
+    -- migrate the 47 reader sites to consult ctx._lc_cgEnv first,
+    -- and S5 will delete the IORef + CAF + this shadow install
+    -- duplicated path.
+    modifyIORef scopeStateRef (LC.withCgEnv initialCgEnv)
     -- v0.17 iter 19 (task #654) — globalUnionNames reset removed;
     -- IORef is gone.  The union-names set now flows via
     -- 'scopeStateRef' (already reset to 'emptyLowerCtx' below)
@@ -2032,6 +2040,14 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     let csiByRegion = buildCsiByRegion callSiteInstances depCsiByMod
                     modifyIORef globalCgEnv $ \e ->
                         Rec.withCallSiteInstances csiByRegion e
+                    -- v0.17 close criterion 3 — globalCgEnv S2 shadow
+                    -- install.  Re-read the post-mutation cgEnv so the
+                    -- scopeStateRef ctx field matches the IORef state.
+                    -- Preserves the iter-20 Anon_R_* invariant — the
+                    -- C9 CSI update must be visible on the value
+                    -- channel before any post-C9 reader fires.
+                    cgEnvAfterC9 <- readIORef globalCgEnv
+                    modifyIORef scopeStateRef (LC.withCgEnv cgEnvAfterC9)
                     -- v0.17 IORef defusing #7 — globalEntryPath retired.
                     -- entryPath is now used directly by callers without the
                     -- IORef indirection.
@@ -2437,6 +2453,12 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         , Rec._cg_funcSkyToGoTVars =
                             Map.union (Rec._cg_funcSkyToGoTVars e) depSkyToGoTVars
                         }
+                    -- v0.17 close criterion 3 — globalCgEnv S2 shadow
+                    -- install (per-dep sig merge).  Re-read the
+                    -- post-mutation cgEnv so the scopeStateRef ctx
+                    -- field matches.
+                    cgEnvAfterDepSigs <- readIORef globalCgEnv
+                    modifyIORef scopeStateRef (LC.withCgEnv cgEnvAfterDepSigs)
                     return $ SolveOk SolveOutputs
                         { _so_types                = types
                         , _so_entryRegionTys       = entryRegionTys
@@ -2540,6 +2562,11 @@ seedEarlyCgEnv canMod validDeps = do
         , Rec._cg_funcUltimateRetType =
             Map.union earlyEntryUltRet earlyDepUltRetTypes
         }
+    -- v0.17 close criterion 3 — globalCgEnv S2 shadow install
+    -- (seedEarlyCgEnv).  Re-read the post-mutation cgEnv so the
+    -- scopeStateRef ctx field matches.
+    cgEnvAfterSeed <- readIORef globalCgEnv
+    modifyIORef scopeStateRef (LC.withCgEnv cgEnvAfterSeed)
     return (allAliasesMap, allFieldIdx, earlyAllRecAliases)
 
 
@@ -5293,6 +5320,13 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
                             extraInferredRetTypes extraInferredSigs
                             depAliasPairs
             writeIORef globalCgEnv cgEnv
+            -- v0.17 close criterion 3 — globalCgEnv S2 shadow install
+            -- (C10 final).  This is the post-importsForced-`seq`
+            -- write — the cgEnv value here is the authoritative
+            -- post-C10 snapshot.  Install on scopeStateRef so the
+            -- ctx field carries the same final value the legacy
+            -- 'getCgEnv' CAF observes.
+            modifyIORef scopeStateRef (LC.withCgEnv cgEnv)
             -- v0.17 iter 19 (task #654) — install C10 cgEnv unionNames
             -- onto scopeStateRef (refreshes the seed from line ~2719
             -- with the cgEnv's merged set after dep-module imports
@@ -5629,6 +5663,9 @@ generateGo consoleNeeded canMod srcMod config solvedTypes =
         imports = unsafePerformIO $ do
             let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
+            -- v0.17 close criterion 3 — globalCgEnv S2 shadow install
+            -- (generateGo standalone-entry C10).
+            modifyIORef scopeStateRef (LC.withCgEnv cgEnv)
             -- v0.17 iter 19 (task #654) — install entry-emit
             -- unionNames onto scopeStateRef (mirrors continueCompile's
             -- cgEnv path; generateGo is the standalone entry).

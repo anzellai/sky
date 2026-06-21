@@ -54,6 +54,8 @@ module Sky.Build.LowerCtx
     , withUnionNames
     , withFfiTypedWrapperNames
     , withFfiTypedWrapperParams
+    , withCgEnv
+    , lookupCgEnv
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -441,6 +443,28 @@ lookupKernelAlias
     -> Maybe (String, String)
 lookupKernelAlias ctx home name =
     Map.lookup (home, name) (_lc_kernelAlias ctx)
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S2).  Setter
+-- for the LowerCtx-threaded 'Rec.CodegenEnv'.  Writers
+-- (resetCompileState / seedEarlyCgEnv / generateDeclsForDep C10 /
+-- solvePhase C9 / generateGoMulti imports thunk / generateGo
+-- entry C10) install via @modifyIORef scopeStateRef
+-- (LC.withCgEnv newEnv)@ immediately after the corresponding
+-- legacy @writeIORef globalCgEnv@ / @modifyIORef globalCgEnv@.
+-- Shadow path during S2/S3 transitional; readers fall through to
+-- the legacy 'getCgEnv' CAF until S4.
+withCgEnv :: Rec.CodegenEnv -> LowerCtx -> LowerCtx
+withCgEnv newEnv ctx = ctx { _lc_cgEnv = Just newEnv }
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S2).  Pure
+-- lookup of the threaded 'Rec.CodegenEnv'.  Returns 'Nothing' when
+-- the LowerCtx pre-dates the S2 writer install (or in the
+-- 'emptyLowerCtx' / 'buildLowerCtx' bootstrap shapes); S4 readers
+-- fall through to the legacy 'getCgEnv' CAF on 'Nothing'.
+lookupCgEnv :: LowerCtx -> Maybe Rec.CodegenEnv
+lookupCgEnv = _lc_cgEnv
 
 
 -- | v0.17 iter 18 (task #654) — install the merged record-alias
