@@ -2079,79 +2079,16 @@ verified against HEAD.
    appear in a real FFI surface, the axiom needs extending to
    walk arg lists pairwise — track via a fresh limitation if it
    surfaces.
-7. **Zero-arg calls follow the binding's declared type, not its
-   FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
-   sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
-   `FyneApp.new ()` are *all* needed because their sigs are
-   `() -> Task Error a` / `() -> any`. Calling a `: String`
-   binding with `()` is currently silently accepted at codegen,
-   surfacing only as a Go build error or runtime panic.
-
-   **v0.17 status — IN PROGRESS — PR-A + PR-B + PR-C SHIPPED.**
-   The multi-PR close path is now under way:
-
-   * **PR-A — SHIPPED** (`Sky.Type.Type.Constraint` extended with
-     `CArityMismatch !Region !String !Int !Int` + matching arms
-     in `Sky.Type.Solve.solveHelpBody` + `countConstraints`).
-     Diagnostic code `E2007` reserved at
-     `Sky.Reporting.Diagnostic.typeE_ArityMismatch`. Solver
-     short-circuits on first error (matches existing CEqual
-     pattern). Regression spec
-     `Sky.Type.ArityMismatchScaffoldSpec` (6 gates) proves the
-     constructor is reachable end-to-end without depending on
-     any caller. **No behaviour change** — no caller wires the
-     gate yet.
-   * **PR-B — SHIPPED** (iter 30): pure
-     `Sky.Type.Constrain.Expression.declaredArity ::
-     T.Annotation -> Int` helper added + exported; structural
-     walk of TLambda chain only; no fresh UF vars / no solver
-     interaction. Externals trace verified safe per design doc
-     Section "PR-B step 2" — `globalExternals` /
-     `globalSameModAnnots` annotations come from
-     post-canonicalisation `T.Type` that already has head
-     `TAlias` unfolded via `Canonicalise/Module.hs`'s
-     `arrowResultN` / `arrowArgs`. `Sky.Type.DeclaredArityHelperSpec`
-     (9 unit tests) locks the structural shape PR-C/PR-D will
-     consume. `Sky.Type.StrictHmArityGateSpec.h-a-cross`
-     (cross-module HeadAlias positive) locks the externals trace
-     empirically.
-   * **PR-C — SHIPPED** (iter 31): the strict-HM gate is wired
-     at `constrainCall`. New `arityGateCall` / `arityGateForKernel`
-     / `arityGateForTopLevel` helpers compose with PR-A's
-     `CArityMismatch` constructor + PR-B's `declaredArity` to
-     emit the gate constraint at CAnd-index-0 so the targeted
-     [E2007] diagnostic short-circuits the legacy CEqual. The
-     gate fires when the func head resolves to a `Can.VarKernel`
-     or `Can.VarTopLevel` annotated binding with `D == 0`,
-     `S == 1`, and the head arg is `Can.Unit`. Wildcard-`any`
-     filter (`any (/= "any") freeVars`) preserves real
-     polymorphism on the per-call-site CForeign path. k-a + u-a
-     arms in `Sky.Type.StrictHmArityGateSpec` flipped from
-     `pendingWith` to live `CompileErr` assertions. Companion
-     `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` u-a
-     fixture's diagnostic upgraded from generic CEqual
-     "Variable 'foo' type mismatch" to actionable "[E2007] Arity
-     mismatch".
-   * **PR-D — PENDING.** Value-slot case for k-b + u-b at the
-     `Can.VarKernel` / `Can.VarTopLevel` arm using the
-     already-plumbed `expected :: T.Expected T.Type` parameter
-     (D ≥ 1 with declared `: () -> X` flowing into a non-arrow
-     X slot). See full plan at
-     `docs/v0.17-roadmap/strict-hm-arity-gate-design.md`.
-
-   Regression spec `Sky.Type.StrictHmArityGateSpec` ships
-   **5 live POSITIVE assertions** (h-a HeadAlias unfold /
-   p-a Pure.* canonical / wp-a real polymorphism / **h-a-cross
-   cross-module HeadAlias** — NEW in PR-B / wa-a wildcard-only
-   soundness) + **2 NEW live NEGATIVE assertions** (**k-a**
-   `Uuid.v4 ()` + **u-a** `foo : String` called with `()` —
-   shipped in PR-C) + **2 NEGATIVE arms still `pendingWith`**
-   (k-b / u-b — flip live with PR-D). The 5 positives lock the
-   shapes that MUST keep compiling once the gate lands. The 4
-   negative arms flip live as PR-C + PR-D land. The companion
-   `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` (6
-   red-then-green cases) tracks the current loose-acceptance
-   shapes that will FLIP on gate landing.
+7. ~~**Zero-arg calls follow the binding's declared type, not its
+   FFI-vs-kernel origin.**~~ — CLOSED in v0.17 (Limitation #7,
+   PR-A through PR-D).  The strict-HM arity gate now fires at
+   `constrainCall` (k-a + u-a, calling `: T` with `()`) AND at
+   the `Can.VarKernel` / `Can.VarTopLevel` arms (k-b + u-b,
+   bare reference of `: () -> X` in a non-arrow value slot)
+   with the actionable `[E2007]` diagnostic ("declared as D-arg,
+   called with S args").  See
+   `### Closed in v0.17 (kept here for grep)` below for the
+   full PR-A→PR-D commit log + spec gates.
 
    **v0.15.50 mitigation — `Sky.Core.Pure`.** New code targeting
    a uniform `() -> Task Error a` shape can import
@@ -2181,6 +2118,77 @@ verified against HEAD.
     `freshLine + checkIndent + "->"` when the arrow doesn't appear
     on the current line.  No workaround needed.
 ### Closed in v0.17 (kept here for grep)
+
+- ~~**Zero-arg calls follow the binding's declared type, not its
+  FFI-vs-kernel origin.**~~ — CLOSED in v0.17 (Limitation #7,
+  multi-PR plan PR-A through PR-D landed across iter 29-32).  The
+  strict-HM arity gate at `src/Sky/Type/Constrain/Expression.hs`
+  rejects both shape classes empirically:
+  * **k-a / u-a** — calling `: T` with `()` at a Call site.
+    `println (Uuid.v4 ())` (where `Uuid.v4 : Task Error String`,
+    declared 0-arg) rejects with `[E2007] Arity mismatch —
+    \`Sky.Core.Uuid.v4\` declared as 0-arg, called with 1 args.`
+  * **k-b / u-b** — bare reference of `: () -> X` in a non-arrow
+    value slot.  `doNow : Task Error Int; doNow = Time.now`
+    rejects with `[E2007] Arity mismatch — \`Sky.Core.Time.now\`
+    declared as 1-arg, called with 0 args.`
+  Multi-PR commit log (each gate flipped a prior `pendingWith` arm
+  in `Sky.Type.StrictHmArityGateSpec` to live `CompileErr`):
+  * PR-A — `ccf3c010` iter 29: `CArityMismatch` constraint
+    constructor + `Sky.Type.Solve.solveHelpBody` arm +
+    `countConstraints` arm + diagnostic code `E2007`.  Scaffolding
+    only — proves the constructor is reachable end-to-end.
+    Regression spec `Sky.Type.ArityMismatchScaffoldSpec` (6
+    gates).
+  * PR-B — `53d529f4` iter 30: pure
+    `Sky.Type.Constrain.Expression.declaredArity ::
+    T.Annotation -> Int` helper (structural TLambda peel; no
+    fresh UF vars; no solver interaction).  Cross-module
+    externals trace verified safe — `globalExternals` /
+    `globalSameModAnnots` annotations are post-canonicalisation
+    so head-alias unfold (PR #123) has already peeled the
+    TAlias.  Regression specs
+    `Sky.Type.DeclaredArityHelperSpec` (9 unit tests) +
+    `Sky.Type.StrictHmArityGateSpec.h-a-cross` (cross-module
+    HeadAlias positive).
+  * PR-C — `d1394fbc` iter 31: gate wired at `constrainCall`.
+    New `arityGateCall` + `arityGateForKernel` +
+    `arityGateForTopLevel` + `maybeEmitArityMismatch` compose
+    PR-A's constructor with PR-B's helper.  Emit at CAnd index 0
+    so the [E2007] diagnostic short-circuits legacy CEqual.
+    Wildcard-`any` filter (`any (/= "any") freeVars`) preserves
+    real polymorphism on the v0.15.1 CForeign per-call-site
+    re-instantiation path.  k-a + u-a flipped from pendingWith
+    to live.  Companion
+    `Sky.Type.Limitation7CurrentLooseAcceptanceSpec.u-a` diagnostic
+    upgraded from generic "Variable 'foo' type mismatch" to
+    actionable [E2007].
+  * PR-D — `389883cb` iter 32: gate wired at the
+    `Can.VarKernel` / `Can.VarTopLevel` arms.  New
+    `valueSlotGateForKernel` / `valueSlotGateForTopLevel` /
+    `maybeEmitValueSlotMismatch` + `SlotShape` ADT
+    (`Unknown` / `Arrow` / `Value`).  Classification rule:
+    expected payload's structural shape decides — TVar → skip
+    (slot type unresolved); TLambda / TAlias-unfolding-to-TLambda
+    → skip (slot wants a function); TType / TRecord / TTuple /
+    TUnit → fire when D >= 1 (slot wants a value, our declared
+    `: () -> X` is a function).  k-b + u-b flipped from
+    pendingWith to live.
+  Strict-HM gate spec final state: `Sky.Type.StrictHmArityGateSpec`
+  9 examples / 0 failures / **0 pending** — 5 live POSITIVE
+  assertions (h-a HeadAlias unfold / p-a Pure.* canonical / wp-a
+  real polymorphism / h-a-cross cross-module HeadAlias / wa-a
+  wildcard-only soundness) + 4 live NEGATIVE assertions (k-a /
+  k-b / u-a / u-b).  Companion
+  `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` 6/0.
+  Real-world stress gates: `examples/13-skyshop` (76k FFI symbols)
+  + `examples/26-ui-showcase` (rt.Coerce=288 + rt.AsListT=190 at
+  floor) both clean-build with no false positives.
+  Implementation note: the v0.15.50 `Sky.Core.Pure` mitigation
+  surface stays as the canonical Pure.* companion for new code
+  targeting a uniform `() -> Task Error a` shape; it pairs with
+  the strict gate so the actionable diagnostic now points users
+  at the right call shape.
 
 - ~~**Recursive list ops grew the Go stack O(N).**~~
   — CLOSED in v0.17 (Limitation #8, 13/13 list ops on constant
