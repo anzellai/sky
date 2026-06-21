@@ -1890,15 +1890,6 @@ arrowResultN n (Can.TAlias _ _ _ aliasInner) = arrowResultN n (aliasBodyType ali
 arrowResultN _ t = t
 
 
--- | Extract the result type from a function type by stripping every
--- arrow.  Retained as a back-compat helper for any caller that still
--- needs the all-strip semantics; the binding-canonicalisation path now
--- uses `arrowResultN` instead.
-arrowResult :: Can.Type -> Can.Type
-arrowResult (Can.TLambda _ to) = arrowResult to
-arrowResult t = t
-
-
 -- ═══════════════════════════════════════════════════════════
 -- UNIONS & ALIASES
 -- ═══════════════════════════════════════════════════════════
