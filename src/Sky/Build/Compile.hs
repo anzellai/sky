@@ -33,6 +33,10 @@ import Sky.Build.EmbedDirTH (isEmbeddableRuntimeFile, isEmbeddableRuntimeDir)
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
 import qualified Sky.Build.TailCallOpt as TCO
 import qualified Sky.Build.LowerCtx as LC
+import Sky.Build.CompileCtx
+    ( CompileCtx(..), ctxKernelFunctions, ctxKernelModules
+    , ctxKernelTypes, ctxImplements
+    )
 
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -1042,6 +1046,25 @@ loadAndSeedFfiRegistry = do
         }
 
 
+-- | v0.17 close P1 step 6c — build a 'CompileCtx' from the
+-- 'LoadedFfiTables' value returned by 'loadAndSeedFfiRegistry'.
+-- Used at every phase boundary that consumes the FFI surface on
+-- the value channel (currently 'canonPhase' + 'solvePhase').
+-- The two records have identical field shapes; this constructor
+-- exists so the conversion is named + explicit at the boundary.
+loadedFfiToCtx :: LoadedFfiTables -> CompileCtx
+loadedFfiToCtx loadedFfi = CompileCtx
+    { _ctx_kernelModules      = _lft_kernelModules      loadedFfi
+    , _ctx_kernelFunctions    = _lft_kernelFunctions    loadedFfi
+    , _ctx_kernelArity        = _lft_kernelArity        loadedFfi
+    , _ctx_kernelTypes        = _lft_kernelTypes        loadedFfi
+    , _ctx_implements         = _lft_implements         loadedFfi
+    , _ctx_pkgAlias           = _lft_pkgAlias           loadedFfi
+    , _ctx_typedWrapperNames  = _lft_typedWrapperNames  loadedFfi
+    , _ctx_typedWrapperParams = _lft_typedWrapperParams loadedFfi
+    }
+
+
 -- | P7: scan ffi/*.go (and ffi/**/*.go) for `^func Go_X_yT(` definitions
 -- and populate Env.ffiTypedWrapperNamesRef so call-site codegen can
 -- prefer the typed variant. Silently tolerates a missing .skycache/go dir.
@@ -1465,22 +1488,18 @@ canonPhase
     -> [Graph.ModuleInfo] -- ^ moduleOrder (for dep-error source-path lookup)
     -> Src.Module -- ^ entrySrcMod (canonicalised with the dep fixpoint result)
     -> [(String, Src.Module)] -- ^ depModules (everything except the entry)
-    -> Map.Map String [String]
-    -- ^ ffiKernelFns — FFI kernel-functions map sourced from
-    -- 'LoadedFfiTables._lft_kernelFunctions'.  v0.17 close P1
-    -- step 5: threaded through 'Canonicalise.canonicaliseWithDeps'
-    -- so the @Can.VarKernel@ qualified-name resolution reads
-    -- the value channel instead of the legacy
-    -- @readIORef Env.ffiKernelFunctionsRef@.
-    -> Map.Map String String
-    -- ^ ffiKernelMods — FFI kernel-modules map sourced from
-    -- 'LoadedFfiTables._lft_kernelModules'.  v0.17 close P1
-    -- step 6b: threaded through 'Canonicalise.canonicaliseWithDeps'
-    -- so the canonicaliser's kernel-name resolution reads
-    -- the value channel instead of the legacy
-    -- @readIORef Env.ffiKernelModulesRef@.
+    -> CompileCtx
+    -- ^ v0.17 close P1 step 6c — consolidated compile-time context.
+    -- Replaces the ad-hoc 'ffiKernelFns' + 'ffiKernelMods' parameters
+    -- from P1 step 5 + 6b.  The canonicaliser reads
+    -- 'ctxKernelFunctions' and 'ctxKernelModules' off the ctx.
+    -- Forthcoming P1 step 7 + P3 phases will consume additional
+    -- fields ('_ctx_implements', '_ctx_pkgAlias', '_ctx_kernelTypes')
+    -- without revisiting the phase signature.
     -> IO CanonOutcome
-canonPhase entryPath moduleOrder entrySrcMod depModules ffiKernelFns ffiKernelMods = do
+canonPhase entryPath moduleOrder entrySrcMod depModules ctx = do
+    let ffiKernelFns  = ctxKernelFunctions ctx
+        ffiKernelMods = ctxKernelModules ctx
     putStrLn "-- Canonicalising"
     let buildDepInfoMap valids = Map.fromList
             [ (modName, Canonicalise.DepInfo
@@ -1708,24 +1727,19 @@ solvePhase
     -- ^ earlyAllRecAliases — merged record-alias set (entry + deps,
     -- prefixed + bare forms) from 'seedEarlyCgEnv'.  Used by the
     -- HM-inferred dep sig table builders below.
-    -> Map.Map String [String]
-    -- ^ implementsMap — FFI interface-satisfaction registry sourced
-    -- from 'LoadedFfiTables._lft_implements'.  v0.17 close P1 step 3:
-    -- threaded through 'Solve.solveImpls' /
-    -- 'Solve.solveWithInstancesAndRegionsImpls' so the FFI A\<-\>I
-    -- widening in 'Sky.Type.Unify' reads the value-channel instead of
-    -- the @Unify.ffiImplementsRef@ IORef.  Empty for projects with no
-    -- FFI deps; behaviour-equivalent to the legacy IORef-read.
-    -> Map.Map (String, String) Can.Annotation
-    -- ^ ffiKernelTypes — FFI-kernel signature map sourced from
-    -- 'LoadedFfiTables._lft_kernelTypes'.  v0.17 close P1 step 4:
-    -- threaded through 'Constrain.constrainModuleWithFfi' so the
-    -- @Can.VarKernel@ arm reads the value-channel instead of the
-    -- legacy @readIORef Env.ffiKernelTypeRef@ inside
-    -- 'Sky.Type.Constrain.Expression'.  Empty for projects with
-    -- no FFI deps; behaviour-equivalent to the pre-v0.17 path.
+    -> CompileCtx
+    -- ^ v0.17 close P1 step 6c — consolidated compile-time context.
+    -- Replaces the ad-hoc 'implementsMap' (P1 step 3) +
+    -- 'ffiKernelTypes' (P1 step 4) parameters.  The solver reads
+    -- 'ctxImplements' for the FFI A\<-\>I widening surface in
+    -- 'Sky.Type.Unify' and 'ctxKernelTypes' for the
+    -- @Can.VarKernel@ HM annotation in 'Sky.Type.Constrain.Expression'.
+    -- Future phases consume more fields without revisiting the
+    -- phase signature.
     -> IO SolveOutcome
-solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases implementsMap ffiKernelTypes = do
+solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases ctx = do
+            let implementsMap   = ctxImplements    ctx
+                ffiKernelTypes  = ctxKernelTypes   ctx
             -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 -- v0.17 close P1 step 4 — use FFI-aware variant so
@@ -2833,12 +2847,15 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
         let entrySrcMod = snd (last parsed)
             -- Dependency modules are all parsed modules except the entry.
             depModules = if length parsed > 1 then init parsed else []
-        -- v0.17 close P1 step 5 + 6b — thread FFI kernel functions
-        -- AND kernel modules values to 'canonPhase' so canonicaliser-
-        -- time qualified-name resolution reads the value channel.
-        canonOutcome <- canonPhase entryPath moduleOrder entrySrcMod depModules
-                                   (_lft_kernelFunctions loadedFfi)
-                                   (_lft_kernelModules loadedFfi)
+        -- v0.17 close P1 step 6c — consolidate the value-channel
+        -- threading through a single 'CompileCtx' bundle so future
+        -- phases (P3+P4) can consume additional fields without
+        -- revisiting the phase signatures.  Replaces the ad-hoc
+        -- 'ffiKernelFunctions' + 'ffiKernelModules' parameters from
+        -- P1 step 5 + 6b.  The implements + kernelTypes + (etc.)
+        -- fields are read out of the same ctx by 'solvePhase' below.
+        let ctx = loadedFfiToCtx loadedFfi
+        canonOutcome <- canonPhase entryPath moduleOrder entrySrcMod depModules ctx
         case canonOutcome of
          CanonDepError marker -> return (Left marker)
          CanonEntryError      -> return (Left "Canonicalise error")
@@ -2951,9 +2968,10 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             -- projects with no FFI deps; behaviour-equivalent to the
             -- legacy IORef-read path (still kept as a backward-compat
             -- shim until P1 step 7).
-            -- v0.17 close P1 step 4 — also pass kernelTypes via
-            -- the value channel for 'Constrain.constrainModuleWithFfi'.
-            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases (_lft_implements loadedFfi) (_lft_kernelTypes loadedFfi)
+            -- v0.17 close P1 step 6c — single 'CompileCtx' bundle
+            -- replaces the ad-hoc 'implementsMap' + 'ffiKernelTypes'
+            -- parameters; the solver reads both via ctx accessors.
+            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases ctx
             case solveOutcome of
               SolveDepError _ ->
                   System.Exit.exitWith (System.Exit.ExitFailure 1)
