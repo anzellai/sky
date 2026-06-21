@@ -1468,7 +1468,7 @@ canonPhase
     -> Map.Map String [String]
     -- ^ ffiKernelFns — FFI kernel-functions map sourced from
     -- 'LoadedFfiTables._lft_kernelFunctions'.  v0.17 close P1
-    -- step 5: threaded through 'Canonicalise.canonicaliseWithDepsAndFfi'
+    -- step 5: threaded through 'Canonicalise.canonicaliseWithDeps'
     -- so the @Can.VarKernel@ qualified-name resolution reads
     -- the value channel instead of the legacy
     -- @readIORef Env.ffiKernelFunctionsRef@.
@@ -1490,8 +1490,8 @@ canonPhase entryPath moduleOrder entrySrcMod depModules ffiKernelFns = do
             | (modName, depMod) <- valids
             ]
         canonPassWith m = Async.forConcurrently depModules $ \(n, srcMod) ->
-            -- v0.17 close P1 step 5 — FFI-aware variant.
-            case Canonicalise.canonicaliseWithDepsAndFfi m ffiKernelFns srcMod of
+            -- v0.17 close P1 step 5 — FFI-aware canonicaliser.
+            case Canonicalise.canonicaliseWithDeps m ffiKernelFns srcMod of
                 Right cm -> return (Right (n, cm))
                 Left err -> return (Left (n, err))
         canonFixpoint
@@ -1524,7 +1524,7 @@ canonPhase entryPath moduleOrder entrySrcMod depModules ffiKernelFns = do
             return $ CanonDepError ("Canonicalise error in " ++ n)
         [] ->
             -- v0.17 close P1 step 5 — FFI-aware variant for entry module too.
-            case Canonicalise.canonicaliseWithDepsAndFfi depInfoMap2 ffiKernelFns entrySrcMod of
+            case Canonicalise.canonicaliseWithDeps depInfoMap2 ffiKernelFns entrySrcMod of
                 Left err -> do
                     -- v0.13 Layer 1: same treatment for the entry module.
                     let diag = Canonicalise.legacyToDiag entryPath err
@@ -4191,7 +4191,12 @@ typecheckWorkspace config entryPath = do
     -- bindings — which left the externals incomplete (Std.Ui's
     -- `layout`, `text`, `el`, etc. all missing).
     perMod <- Async.forConcurrently okParsed $ \(n, path, src, srcMod) ->
-        case Canonicalise.canonicaliseWithDeps depInfoMap srcMod of
+        -- v0.17 close P1 step 6a — collapse to single
+        -- 'canonicaliseWithDeps' entry point.  This LSP-driven
+        -- path doesn't have an FFI loader in scope; pass
+        -- 'Map.empty' (kernel surface stays at the static
+        -- baseline, matching pre-v0.17 behaviour).
+        case Canonicalise.canonicaliseWithDeps depInfoMap Map.empty srcMod of
             Left err -> return (n, Left err, srcMod, path, src)
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod

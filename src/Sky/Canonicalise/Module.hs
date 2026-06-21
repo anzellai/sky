@@ -3,7 +3,6 @@
 module Sky.Canonicalise.Module
     ( canonicalise
     , canonicaliseWithDeps
-    , canonicaliseWithDepsAndFfi
     , canonicaliseWithDiagnostics
     , collectUnboundDiagnostics
     , legacyToDiag
@@ -13,9 +12,7 @@ module Sky.Canonicalise.Module
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.IORef (readIORef)
 import Data.Maybe (isJust)
-import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
@@ -62,9 +59,11 @@ filterDepByExports d = case _dep_exports d of
              }
 
 
--- | Back-compat: canonicalise with no cross-module info.
+-- | Back-compat: canonicalise with no cross-module info AND no
+-- FFI seed.  Used by the LSP single-module path where the
+-- compiler driver isn't in scope.
 canonicalise :: Src.Module -> Either String Can.Module
-canonicalise = canonicaliseWithDeps Map.empty
+canonicalise = canonicaliseWithDeps Map.empty Map.empty
 
 
 -- | Canonicalise a source module given a map of known dependency modules
@@ -97,8 +96,10 @@ canonicaliseWithDiagnostics path deps srcMod =
     -- a Diagnostic at the boundary. As more canonicalise error
     -- classes migrate (unbound has a typed Diagnostic; import-hiding
     -- and collision diagnostics get migrated in subsequent Layer 1
-    -- phases), this wrapper shrinks.
-    case canonicaliseWithDeps deps srcMod of
+    -- phases), this wrapper shrinks.  Single-module-style: LSP
+    -- callers don't have an FFI seed available, so pass
+    -- 'Map.empty' (kernel surface remains the static fallback).
+    case canonicaliseWithDeps deps Map.empty srcMod of
         Right canMod -> Right canMod
         Left err     -> Left [legacyToDiag path err]
 
@@ -140,36 +141,29 @@ stripLeadingLineCol s =
     afterColon = drop 1 . dropWhile (/= ':')
 
 
-canonicaliseWithDeps :: Map.Map String DepInfo -> Src.Module -> Either String Can.Module
-canonicaliseWithDeps deps = canonicaliseWithDepsAndFfi deps Map.empty
-
-
--- | v0.17 close P1 step 5 — FFI-aware canonicaliser entry point.
+-- | Canonicalise a source module with FFI-aware kernel surface
+-- + cross-module dep info.
 --
 -- Takes BOTH the canonicaliser dep info AND the FFI-kernel
 -- function-name map (sourced from
--- @LoadedFfiTables._lft_kernelFunctions@) and threads the FFI
--- map down to the helpers that previously read it via
--- @unsafePerformIO (readIORef Env.ffiKernelFunctionsRef)@
--- inside @kernelFunctions ()@.
---
--- Legacy entry points 'canonicalise' / 'canonicaliseWithDeps'
--- delegate to this path with an empty FFI map.  That matches
--- the LSP single-module path where the IORef was never
--- populated — behaviour-equivalent to pre-v0.17.
+-- @LoadedFfiTables._lft_kernelFunctions@).  The FFI map flows
+-- down on the value channel to the helpers that resolve qualified
+-- kernel-name references.  Legacy entry points
+-- ('canonicalise' / 'canonicaliseWithDiagnostics') delegate here
+-- with an empty FFI map — matches the LSP single-module path
+-- where the compiler driver isn't in scope.
 --
 -- The compiler driver passes
 -- @LoadedFfiTables._lft_kernelFunctions loadedFfi@ at every
--- 'canonicaliseWithDepsAndFfi' call site so the FFI seed
--- flows on the value channel.
-canonicaliseWithDepsAndFfi
+-- call site so the FFI seed flows on the value channel.
+canonicaliseWithDeps
     :: Map.Map String DepInfo
     -> Map.Map String [String]
-    -- ^ FFI kernel functions (mirrors @Env.ffiKernelFunctionsRef@).
+    -- ^ FFI kernel functions (sourced from the loader).
     --   Empty is the LSP single-module default.
     -> Src.Module
     -> Either String Can.Module
-canonicaliseWithDepsAndFfi deps ffiKernelFns srcMod =
+canonicaliseWithDeps deps ffiKernelFns srcMod =
     let
         modName = case Src._name srcMod of
             Just (A.At _ segs) -> ModuleName.fromRaw segs
@@ -197,7 +191,7 @@ canonicaliseWithDepsAndFfi deps ffiKernelFns srcMod =
         -- v0.17 close P1 step 5 — pass FFI kernel functions
         -- map so 'allExposedNames' (inside
         -- 'detectExposingCollisions') reads the value channel.
-        ambiguous = detectExposingCollisionsWithFfi
+        ambiguous = detectExposingCollisions
                         ffiKernelFns deps (Src._imports srcMod)
         localNames = Set.fromList
             [ nm
@@ -235,9 +229,9 @@ canonicaliseWithDepsAndFfi deps ffiKernelFns srcMod =
         -- Build environment from imports
         env0 = Env.initialEnv modName
         -- v0.17 close P1 step 5 — thread FFI kernel functions
-        -- map into 'processImportWithFfi' so 'kernelVarsForWith'
-        -- reads the value channel instead of the legacy IORef.
-        env1 = foldl (processImportWithFfi ffiKernelFns deps modName)
+        -- map into 'processImport' so 'kernelVarsFor' reads the
+        -- value channel instead of the legacy IORef.
+        env1 = foldl (processImport ffiKernelFns deps modName)
                      env0 (Src._imports srcMod)
 
         -- Register top-level declarations in env
@@ -438,29 +432,21 @@ checkImportExposingAgainstDep deps imps = concatMap check imps
         Src.ExposedOperator _ -> []
 
 
--- | Back-compat wrapper.
-processImport :: ModuleName.Canonical -> Env.Env -> Src.Import -> Env.Env
-processImport = processImportWith Map.empty
-
-
 -- | Process a single import. When the import is a user module (not a
 -- kernel) and we have its DepInfo, we contribute its union constructors
 -- to the environment according to the exposing clause.
-processImportWith :: Map.Map String DepInfo -> ModuleName.Canonical -> Env.Env -> Src.Import -> Env.Env
-processImportWith = processImportWithFfi Map.empty
-
-
--- | v0.17 close P1 step 5 — FFI-aware variant: takes the FFI
--- kernel functions map and threads it down to 'kernelVarsForWith'.
--- Legacy 'processImportWith' delegates with an empty FFI map.
-processImportWithFfi
+--
+-- Takes the FFI kernel-functions map (sourced from
+-- @LoadedFfiTables._lft_kernelFunctions@) and threads it down to
+-- 'kernelVarsFor' so kernel-name resolution reads the value channel.
+processImport
     :: Map.Map String [String]
     -> Map.Map String DepInfo
     -> ModuleName.Canonical
     -> Env.Env
     -> Src.Import
     -> Env.Env
-processImportWithFfi ffiKernelFns deps _home env imp =
+processImport ffiKernelFns deps _home env imp =
     let
         importSegs = case Src._importName imp of A.At _ segs -> segs
         importPath = ModuleName.joinWith "." importSegs
@@ -528,7 +514,7 @@ processImportWithFfi ffiKernelFns deps _home env imp =
 
         envWithQual = Env.addQualifiedImport qualifier importMod
             -- v0.17 close P1 step 5 — value-channel read.
-            (if useKernel then kernelVarsForWith ffiKernelFns kernelName else depVars)
+            (if useKernel then kernelVarsFor ffiKernelFns kernelName else depVars)
             (qualCtors ++ depCtors)
             env
 
@@ -570,7 +556,7 @@ processImportWithFfi ffiKernelFns deps _home env imp =
             A.At _ Src.ExposingAll ->
                 if useKernel
                 -- v0.17 close P1 step 5 — value-channel read.
-                then Env.addExposed (kernelVarsForWith ffiKernelFns kernelName)
+                then Env.addExposed (kernelVarsFor ffiKernelFns kernelName)
                                     qualCtors envWithQual
                 else Env.addExposed depVars depCtors envWithQual
             A.At _ (Src.ExposingList exposed) ->
@@ -661,27 +647,19 @@ resolveExposedCtor _isKernel _kernelName (A.At _ exposed) = case exposed of
     _ -> []
 
 
--- | Get kernel vars for a stdlib module (legacy IORef-backed
--- variant kept for callers we haven't migrated yet — LSP paths
--- that don't load FFI tables).
-kernelVarsFor :: String -> [(String, Env.VarHome)]
-kernelVarsFor = kernelVarsForWith Map.empty
-
-
--- | v0.17 close P1 step 5 — FFI-aware kernel-vars lookup.
--- Takes the FFI kernel-functions map (sourced from
+-- | Get kernel vars for a stdlib module.  Takes the FFI
+-- kernel-functions map (sourced from
 -- @LoadedFfiTables._lft_kernelFunctions@) as a parameter so
--- the lookup reads the value channel.  The legacy IORef read
--- via @kernelFunctions ()@ stays as the fallback when no FFI
--- map is provided.  Once every caller is migrated we can
--- delete the IORef (P1 step 7 owns deletion).
-kernelVarsForWith
+-- the lookup reads the value channel.  Empty input behaves
+-- like the static-only path — LSP single-module callers that
+-- don't have an FFI loader pass 'Map.empty'.
+kernelVarsFor
     :: Map.Map String [String]
     -- ^ FFI kernel functions value-channel seed
     -> String
     -> [(String, Env.VarHome)]
-kernelVarsForWith ffiKernelFns modName =
-    let merged = kernelFunctionsWith ffiKernelFns
+kernelVarsFor ffiKernelFns modName =
+    let merged = kernelFunctions ffiKernelFns
     in case Map.lookup modName merged of
         Just funcs -> map (\f -> (f, Env.VarKernel modName f)) funcs
         Nothing -> []
@@ -692,34 +670,17 @@ kernelCtorsFor :: String -> [(String, Env.CtorHome)]
 kernelCtorsFor _ = []
 
 
--- | Known functions for each kernel module (legacy entry).
--- This drives what names are available via qualified access.
---
--- v0.17 close P1 step 5 — the FFI seed is now consumable on
--- the value channel via 'kernelFunctionsWith'.  Legacy
--- callers that haven't been migrated still read the
--- module-level IORef via @kernelFunctions ()@; that path
--- stays alive for the LSP entry points
--- ('Canonicalise.canonicalise' /
--- 'canonicaliseWithDeps') which never received an FFI loader.
-{-# NOINLINE kernelFunctions #-}
-kernelFunctions :: () -> Map.Map String [String]
-kernelFunctions () =
-    Map.unionWith (++) staticKernelFunctions
-        (unsafePerformIO (readIORef Env.ffiKernelFunctionsRef))
-
-
--- | v0.17 close P1 step 5 — pure variant of 'kernelFunctions':
--- merges the supplied FFI kernel-functions map (sourced from
+-- | Known functions for each kernel module.  Merges the
+-- supplied FFI kernel-functions map (sourced from
 -- @LoadedFfiTables._lft_kernelFunctions@) with the static
--- kernel function table.  Used by 'kernelVarsForWith' and the
--- 'detectExposingCollisionsWithFfi' helper.  Empty input
--- behaves like the static-only path.
-kernelFunctionsWith
+-- kernel function table.  Empty input behaves like the
+-- static-only path (LSP single-module callers pass
+-- 'Map.empty').
+kernelFunctions
     :: Map.Map String [String]
     -- ^ FFI kernel functions (value-channel seed)
     -> Map.Map String [String]
-kernelFunctionsWith ffiKernelFns =
+kernelFunctions ffiKernelFns =
     Map.unionWith (++) staticKernelFunctions ffiKernelFns
 
 
@@ -949,20 +910,15 @@ detectImportAliasCollisions imps =
 -- Sources that normalise to the same kernel module (e.g. `Sky.Core.Prelude`
 -- re-exports `Basics` names) are treated as the same origin, so re-exports
 -- never count as collisions.
-detectExposingCollisions :: Map.Map String DepInfo -> [Src.Import] -> Map.Map String [String]
-detectExposingCollisions = detectExposingCollisionsWithFfi Map.empty
-
-
--- | v0.17 close P1 step 5 — FFI-aware variant.  Threads the
--- FFI kernel-functions map into 'allExposedNames' so the
--- module's @import M exposing (..)@ allow-list reads the
--- value channel instead of the legacy IORef.
-detectExposingCollisionsWithFfi
+-- | Detect collisions among @import M exposing (..)@ allow-lists.
+-- Takes the FFI kernel-functions map so the kernel-side surface
+-- of @allExposedNames@ reads the value channel.
+detectExposingCollisions
     :: Map.Map String [String]
     -> Map.Map String DepInfo
     -> [Src.Import]
     -> Map.Map String [String]
-detectExposingCollisionsWithFfi ffiKernelFns deps imps =
+detectExposingCollisions ffiKernelFns deps imps =
     let contributions :: [(String, String)]
         contributions = concatMap contributionsFor imps
 
@@ -992,9 +948,8 @@ detectExposingCollisionsWithFfi ffiKernelFns deps imps =
 
     allExposedNames path =
         let kernelName = Map.findWithDefault "" path (Env.kernelModules ())
-            -- v0.17 close P1 step 5 — value-channel read via
-            -- 'kernelFunctionsWith'.
-            merged     = kernelFunctionsWith ffiKernelFns
+            -- v0.17 close P1 step 5 — value-channel read.
+            merged     = kernelFunctions ffiKernelFns
             kernelFns  = Map.findWithDefault [] kernelName merged
             depFns = case fmap filterDepByExports (Map.lookup path deps) of
                 Just d  -> _dep_aliases d ++ _dep_values d
