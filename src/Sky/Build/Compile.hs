@@ -7469,7 +7469,7 @@ goExprGoType ctx mSrc e = case shapeClassified of
 
     structuralFallback = case mSrc of
         Just src | structurallySafeForFallback e ->
-            let solved = Rec._cg_solvedTypes getCgEnv
+            let solved = Rec._cg_solvedTypes getCgEnvFromScope
             in case inferExprType solved src of
                 Just ty
                   -- Reject HM types that still carry an unresolved
@@ -10912,7 +10912,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             -- the list type isn't concrete (polymorphic helpers).
             Can.VarKernel modName funcName
                 | let typedCall = kernelTypedCall ctx
-                        (Rec._cg_solvedTypes getCgEnv) modName funcName args
+                        (Rec._cg_solvedTypes getCgEnvFromScope) modName funcName args
                         (map (exprToGo ctx) args)
                 , Just expr <- typedCall ->
                     expr
@@ -13308,7 +13308,7 @@ coerceCallArgsAt ctx region qualName args =
                                         if finalRet0 == "any"
                                             then if allInputsTyped
                                                    then case inferGoType
-                                                           (Rec._cg_solvedTypes getCgEnv)
+                                                           (Rec._cg_solvedTypes getCgEnvFromScope)
                                                            body of
                                                        "any" -> "any"
                                                        concrete -> concrete
@@ -14280,7 +14280,7 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
                         if finalRet0 == "any"
                             then if allInputsTyped
                                    then case inferGoType
-                                           (Rec._cg_solvedTypes getCgEnv)
+                                           (Rec._cg_solvedTypes getCgEnvFromScope)
                                            body of
                                        "any" -> "any"
                                        concrete -> concrete
