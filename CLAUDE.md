@@ -2087,7 +2087,7 @@ verified against HEAD.
    binding with `()` is currently silently accepted at codegen,
    surfacing only as a Go build error or runtime panic.
 
-   **v0.17 status — IN PROGRESS — PR-A + PR-B SHIPPED.**
+   **v0.17 status — IN PROGRESS — PR-A + PR-B + PR-C SHIPPED.**
    The multi-PR close path is now under way:
 
    * **PR-A — SHIPPED** (`Sky.Type.Type.Constraint` extended with
@@ -2115,19 +2115,40 @@ verified against HEAD.
      consume. `Sky.Type.StrictHmArityGateSpec.h-a-cross`
      (cross-module HeadAlias positive) locks the externals trace
      empirically.
-   * **PR-C, PR-D — PENDING.** Wire gate at `constrainCall` for
-     k-a + u-a (PR-C); value-slot case for k-b + u-b (PR-D). See
-     full plan at
+   * **PR-C — SHIPPED** (iter 31): the strict-HM gate is wired
+     at `constrainCall`. New `arityGateCall` / `arityGateForKernel`
+     / `arityGateForTopLevel` helpers compose with PR-A's
+     `CArityMismatch` constructor + PR-B's `declaredArity` to
+     emit the gate constraint at CAnd-index-0 so the targeted
+     [E2007] diagnostic short-circuits the legacy CEqual. The
+     gate fires when the func head resolves to a `Can.VarKernel`
+     or `Can.VarTopLevel` annotated binding with `D == 0`,
+     `S == 1`, and the head arg is `Can.Unit`. Wildcard-`any`
+     filter (`any (/= "any") freeVars`) preserves real
+     polymorphism on the per-call-site CForeign path. k-a + u-a
+     arms in `Sky.Type.StrictHmArityGateSpec` flipped from
+     `pendingWith` to live `CompileErr` assertions. Companion
+     `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` u-a
+     fixture's diagnostic upgraded from generic CEqual
+     "Variable 'foo' type mismatch" to actionable "[E2007] Arity
+     mismatch".
+   * **PR-D — PENDING.** Value-slot case for k-b + u-b at the
+     `Can.VarKernel` / `Can.VarTopLevel` arm using the
+     already-plumbed `expected :: T.Expected T.Type` parameter
+     (D ≥ 1 with declared `: () -> X` flowing into a non-arrow
+     X slot). See full plan at
      `docs/v0.17-roadmap/strict-hm-arity-gate-design.md`.
 
    Regression spec `Sky.Type.StrictHmArityGateSpec` ships
    **5 live POSITIVE assertions** (h-a HeadAlias unfold /
    p-a Pure.* canonical / wp-a real polymorphism / **h-a-cross
    cross-module HeadAlias** — NEW in PR-B / wa-a wildcard-only
-   soundness) + **4 NEGATIVE arms still `pendingWith`** (k-a /
-   k-b / u-a / u-b). The 5 positives lock the shapes that MUST
-   keep compiling once the gate lands. The 4 negative arms flip
-   live as PR-C + PR-D land. The companion
+   soundness) + **2 NEW live NEGATIVE assertions** (**k-a**
+   `Uuid.v4 ()` + **u-a** `foo : String` called with `()` —
+   shipped in PR-C) + **2 NEGATIVE arms still `pendingWith`**
+   (k-b / u-b — flip live with PR-D). The 5 positives lock the
+   shapes that MUST keep compiling once the gate lands. The 4
+   negative arms flip live as PR-C + PR-D land. The companion
    `Sky.Type.Limitation7CurrentLooseAcceptanceSpec` (6
    red-then-green cases) tracks the current loose-acceptance
    shapes that will FLIP on gate landing.
