@@ -406,3 +406,61 @@ shadow installs) — 88% of criterion-3 architectural progress with
 floor exact end-to-end. S5 DELETE is the final 10%, deferred for
 proper investigation rather than guess-fix.
 
+
+---
+
+## S5 v3 design (iter 43 finding banked, 2026-06-21)
+
+**Root cause of iter-42 regression (hypothesis c, refined):**
+`getCgEnvFromScope` is a NOINLINE top-level CAF. It memoizes
+PROCESS-WIDE at first force. The 30 iter-41 reader sites all
+work fine because they're forced post-importsForced when
+scopeStateRef has its final state (= memoized to the final
+cgEnv).
+
+But iter 42's 3 NEW migrations swapped IO-binding readers for
+the CAF:
+
+```haskell
+-- iter 41 (correct):
+prevEnv <- readIORef globalCgEnv  -- reads current state at force time
+
+-- iter 42 (regressed):
+let prevEnv = getCgEnvFromScope  -- returns CAF-memoized state
+```
+
+These 3 sites — L5342 prevEnv (input to buildFinalCgEnv C10),
+L5534 envForGoSig, L12835 instanceMangledName env — read at
+different points in the pipeline than where the CAF first
+forced. So they get a stale (or differently-staged) cgEnv,
+which cascades to different codegen decisions (+31 rt.Coerce
+/ -3 rt.AsListT).
+
+**S5 v3 fix pattern:** at the 3 IO-bound reader sites, read
+scopeStateRef DIRECTLY inside the do block, not via the CAF:
+
+```haskell
+-- AT L5342 (prevEnv):
+ctx <- readIORef scopeStateRef
+let prevEnv = case LC.lookupCgEnv ctx of
+        Just env -> env
+        Nothing  -> error "BUG: prevEnv read before scopeStateRef cgEnv installed"
+
+-- AT L5534 (envForGoSig): same pattern.
+
+-- AT L12835 (instanceMangledName env): same pattern, but read
+-- inside the existing unsafePerformIO block — it's already
+-- per-call, not CAF.
+```
+
+This makes the 3 reads per-evaluation (no CAF memoization),
+matching the iter-41 readIORef globalCgEnv semantics.
+
+**iter 44 S5 v3 plan:**
+1. Apply S5 v3 with the per-site readIORef scopeStateRef pattern.
+2. Keep everything else from iter 42 (delete writeIORef globalCgEnv,
+   IORef def, getCgEnv CAF, forbidden docstring).
+3. Floor MUST equal 288/190.
+4. 3-agent verify.
+5. If PASS: push (criterion 3 fully closed — major phase boundary).
+
