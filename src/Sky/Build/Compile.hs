@@ -892,6 +892,33 @@ resolveWrapParams ctx mSrc kind fallback =
 getCgEnv :: Rec.CodegenEnv
 getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 
+-- v0.17 iter 38 S4-prep — scopeStateRef-routed reader.  Same CAF
+-- semantics as 'getCgEnv' (NOINLINE + unsafePerformIO + IORef read),
+-- but routes through 'scopeStateRef._lc_cgEnv' (the value-channel
+-- bridge installed by S2 writers).  Falls back to 'getCgEnv' when
+-- the field is uninstalled (Nothing — possible before any S2 writer
+-- fires).  Lazy GoExpr thunks force this CAF at renderer time, by
+-- which point S2's C10-final install at Compile.hs:5329/L5677 has
+-- populated 'scopeStateRef._lc_cgEnv'.
+--
+-- Distinction from iter-37's failed attempt: iter-37 used
+-- 'LC.lookupCgEnv ctx' where 'ctx' was a CAPTURED parameter value.
+-- Captured ctx carries the snapshot from CAPTURE TIME (often
+-- post-C9, pre-C10), so 'lookupCgEnv' returned Just (stale env).
+-- This helper reads 'scopeStateRef' AT FORCE TIME — same trick S3
+-- (finalGoSigMap migration) used.  No captured-stale-ctx risk.
+--
+-- Additive at S4-prep — zero callers.  S4-a v2 onwards migrates
+-- 'getCgEnv' call sites to this helper.  S5 deletes 'globalCgEnv'
+-- + 'getCgEnv' once all callers are on the scopeStateRef route.
+{-# NOINLINE getCgEnvFromScope #-}
+getCgEnvFromScope :: Rec.CodegenEnv
+getCgEnvFromScope = unsafePerformIO $ do
+    ctx <- readIORef scopeStateRef
+    case LC.lookupCgEnv ctx of
+        Just env -> return env
+        Nothing  -> readIORef globalCgEnv
+
 
 -- v0.15.6 #365 — module-hint IORef.
 --
