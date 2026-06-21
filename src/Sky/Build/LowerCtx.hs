@@ -56,6 +56,7 @@ module Sky.Build.LowerCtx
     , withFfiTypedWrapperParams
     , withCgEnv
     , lookupCgEnv
+    , modifyCgEnv
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -465,6 +466,18 @@ withCgEnv newEnv ctx = ctx { _lc_cgEnv = Just newEnv }
 -- fall through to the legacy 'getCgEnv' CAF on 'Nothing'.
 lookupCgEnv :: LowerCtx -> Maybe Rec.CodegenEnv
 lookupCgEnv = _lc_cgEnv
+
+
+-- | v0.17 iter 44 S5 v3 — pure-functional cgEnv mutation. Reads the
+-- current @_lc_cgEnv@ (must be installed by a prior writer), applies
+-- f, and writes the updated env back. Use with @modifyIORef
+-- scopeStateRef (LC.modifyCgEnv f)@ to replace the legacy
+-- @modifyIORef globalCgEnv f@ pattern (the globalCgEnv IORef was
+-- deleted at S5).
+modifyCgEnv :: (Rec.CodegenEnv -> Rec.CodegenEnv) -> LowerCtx -> LowerCtx
+modifyCgEnv f ctx = case _lc_cgEnv ctx of
+    Just env -> ctx { _lc_cgEnv = Just (f env) }
+    Nothing  -> error "BUG: LC.modifyCgEnv on ctx with uninstalled _lc_cgEnv"
 
 
 -- | v0.17 iter 18 (task #654) — install the merged record-alias
