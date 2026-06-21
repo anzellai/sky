@@ -1149,7 +1149,11 @@ compile config entryPath outDir = do
     -- v0.17 close P1 — the returned 'LoadedFfiTables' is the future
     -- threaded-value channel (P3+P4 will consume it directly + delete
     -- the IORefs); for now the IORefs stay live as interim shim.
-    _ <- loadAndSeedFfiRegistry
+    --
+    -- P1 step 1/8 — bind the returned value so 'continueCompile' can
+    -- read FFI tables (e.g. @_lft_implements@) without consulting the
+    -- IORefs. Threaded through as a parameter below.
+    loadedFfi <- loadAndSeedFfiRegistry
 
     -- Phase 0b: Install Sky-source dependencies declared in [dependencies].
     -- Each dep contributes an extra source root that discovery will probe
@@ -1215,7 +1219,7 @@ compile config entryPath outDir = do
             -- incremental rebuild path.
             seedGoDependencies outDir (Toml._goDeps config)
             return (Right existingMain)
-        else continueCompile config entryPath outDir moduleOrder srcHash
+        else continueCompile config entryPath outDir moduleOrder srcHash loadedFfi
 
 
 -- | Compute a stable hash of all source file contents
@@ -2723,8 +2727,13 @@ buildCsiByRegion callSiteInstances depCsiByMod =
         ]
 
 
-continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
-continueCompile config entryPath outDir moduleOrder srcHash = do
+-- | v0.17 close P1 step 1/8 — accepts the 'LoadedFfiTables' bundle so
+-- downstream pure projections (e.g. @_lft_implements@) can replace
+-- @readIORef Env.ffiImplementsRef@ at line ~3062.  The IORefs stay
+-- live in this phase as a backward-compat shim until all readers
+-- migrate (P1 step 7 owns IORef deletion).
+continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> LoadedFfiTables -> IO (Either String FilePath)
+continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
     -- v0.17 PR-α Stage 1 — defensive reset extracted to
     -- 'resetCompileState' (the long rationale comment that used
     -- to live here is preserved in that function's haddock).
@@ -3053,13 +3062,21 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                                     ( (entryModName, typesEnv)
                                     : depSolved )
                                 -- v0.17 PR-21b — install the merged FFI
-                                -- implements registry from the global IORef
-                                -- (seeded at @loadAndSeedFfiRegistry@).  Empty
-                                -- map for projects with no FFI deps; Sky.Type
-                                -- .Unify's @lookupImplements@ then returns
-                                -- @[]@ at every site and the legacy strict-
-                                -- equality unify path stays in force.
-                                implementsMap = readIORefNoCse Env.ffiImplementsRef
+                                -- implements registry. Empty map for
+                                -- projects with no FFI deps; Sky.Type.Unify's
+                                -- @lookupImplements@ then returns @[]@ at
+                                -- every site and the legacy strict-equality
+                                -- unify path stays in force.
+                                --
+                                -- v0.17 close P1 step 1/8 — read from the
+                                -- threaded 'LoadedFfiTables' bundle instead
+                                -- of @readIORefNoCse Env.ffiImplementsRef@.
+                                -- Env.ffiImplementsRef is still written by
+                                -- 'loadAndSeedFfiRegistry' as a backward-
+                                -- compat shim until all readers migrate
+                                -- (Type/Unify.hs in step 3; deletion in P1
+                                -- step 7).
+                                implementsMap = _lft_implements loadedFfi
                             in Solve.withImplementsMap implementsMap
                               (Solve.withPerModuleEnv perModuleEnv
                                 (Solve.withPerModuleRegions perModuleRegions
