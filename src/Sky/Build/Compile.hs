@@ -917,10 +917,45 @@ getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 -- gate landed in v0.17 PR-17.
 
 
--- | Read ffi/*.kernel.json and write the resulting module/function maps into
--- Env.ffiKernelModulesRef and Env.ffiKernelFunctionsRef. After this call the
--- pure kernelModules / kernelFunctions lookups include FFI entries.
-loadAndSeedFfiRegistry :: IO ()
+-- | v0.17 close P1 — bundle returned by 'loadAndSeedFfiRegistry' so
+-- downstream phases (P3 threads to Constrain.Expression; P4a-d threads
+-- to codegen) can consume the FFI tables WITHOUT readIORef.  IORef
+-- writes happen alongside (shim) until those phases land — interim
+-- backward-compat path.  The fields mirror, one-for-one, the 8 FFI
+-- IORefs in 'Sky.Canonicalise.Environment' plus the 'Sky.Type.Unify'
+-- 'ffiImplementsRef' mirror — same data, eliminated impurity.
+--
+-- Lives in Compile.hs (not FfiRegistry) because @_lft_kernelTypes@
+-- carries 'Can.Annotation' and 'Sky.Build.FfiRegistry' cannot import
+-- 'Sky.AST.Canonical' per the cycle constraint at 'Sky.Type.Unify':45-47.
+data LoadedFfiTables = LoadedFfiTables
+    { _lft_kernelModules   :: !(Map.Map String String)
+        -- ^ Mirrors @Env.ffiKernelModulesRef@.  Sky import path → kernel name.
+    , _lft_kernelFunctions :: !(Map.Map String [String])
+        -- ^ Mirrors @Env.ffiKernelFunctionsRef@.  Kernel name → func names.
+    , _lft_kernelArity     :: !(Map.Map (String, String) Int)
+        -- ^ Mirrors @Env.ffiKernelArityRef@.
+    , _lft_kernelTypes     :: !(Map.Map (String, String) Can.Annotation)
+        -- ^ Mirrors @Env.ffiKernelTypeRef@.  Computed by 'ftyToAnnotation'.
+    , _lft_implements      :: !(Map.Map String [String])
+        -- ^ Mirrors @Env.ffiImplementsRef@ + @Unify.ffiImplementsRef@.
+    , _lft_pkgAlias        :: !(Map.Map String String)
+        -- ^ Mirrors @Env.ffiPkgAliasRef@.
+    , _lft_typedWrapperNames  :: !(Set.Set String)
+        -- ^ Mirrors @Env.ffiTypedWrapperNamesRef@.  Populated by
+        -- 'seedTypedFfiNames' from disk-scanning @.skycache/go/*.go@.
+    , _lft_typedWrapperParams :: !(Map.Map String [String])
+        -- ^ Mirrors @Env.ffiTypedWrapperParamsRef@.
+    }
+
+
+-- | Read ffi/*.kernel.json, materialise the typed FFI tables, and seed
+-- the legacy IORefs (interim P1 shim — readers migrate to threaded
+-- 'LoadedFfiTables' through P3+P4).  After this call the pure
+-- kernelModules / kernelFunctions lookups include FFI entries AND the
+-- caller has the same data as a returned 'LoadedFfiTables' value, so
+-- the IORef reads can be progressively replaced phase-by-phase.
+loadAndSeedFfiRegistry :: IO LoadedFfiTables
 loadAndSeedFfiRegistry = do
     reg <- FfiReg.loadRegistry
     let mods = FfiReg._fr_modules reg
@@ -991,26 +1026,47 @@ loadAndSeedFfiRegistry = do
     -- → Sky.Type.Type), so the registry lives in two locations seeded
     -- atomically here.  Same data, two stable read-only IORefs.
     writeIORef Unify.ffiImplementsRef implementsMap
-    seedTypedFfiNames
+    (twNames, twParams) <- seedTypedFfiNames
     if null mods
         then return ()
         else putStrLn $ "-- Loaded " ++ show (length mods) ++ " FFI module(s)"
+    return LoadedFfiTables
+        { _lft_kernelModules      = moduleMap
+        , _lft_kernelFunctions    = functionMap
+        , _lft_kernelArity        = arityMap
+        , _lft_kernelTypes        = typeMap
+        , _lft_implements         = implementsMap
+        , _lft_pkgAlias           = pkgAliasMap
+        , _lft_typedWrapperNames  = twNames
+        , _lft_typedWrapperParams = twParams
+        }
 
 
 -- | P7: scan ffi/*.go (and ffi/**/*.go) for `^func Go_X_yT(` definitions
 -- and populate Env.ffiTypedWrapperNamesRef so call-site codegen can
 -- prefer the typed variant. Silently tolerates a missing .skycache/go dir.
-seedTypedFfiNames :: IO ()
+--
+-- v0.17 close P1 — also returns the computed
+-- @(typedWrapperNames, typedWrapperParams)@ pair so
+-- 'loadAndSeedFfiRegistry' can bundle them into 'LoadedFfiTables' for
+-- post-P1 threaded consumption.  IORef writes are kept as interim
+-- shim until phases P3+P4 migrate the call-site readers.
+seedTypedFfiNames :: IO (Set.Set String, Map.Map String [String])
 seedTypedFfiNames = do
     let ffiDir = ".skycache/go"
     present <- doesDirectoryExist ffiDir
-    if not present then return () else do
-        entries <- listDirectory ffiDir
-        let gofiles = [ ffiDir </> e | e <- entries, takeExtension e == ".go" ]
-        pairLists <- mapM scanTypedWrapperFile gofiles
-        let allEntries = concat pairLists
-        writeIORef Env.ffiTypedWrapperNamesRef (Set.fromList (map fst allEntries))
-        writeIORef Env.ffiTypedWrapperParamsRef (Map.fromList allEntries)
+    if not present
+        then return (Set.empty, Map.empty)
+        else do
+            entries <- listDirectory ffiDir
+            let gofiles = [ ffiDir </> e | e <- entries, takeExtension e == ".go" ]
+            pairLists <- mapM scanTypedWrapperFile gofiles
+            let allEntries = concat pairLists
+                twNames    = Set.fromList (map fst allEntries)
+                twParams   = Map.fromList allEntries
+            writeIORef Env.ffiTypedWrapperNamesRef twNames
+            writeIORef Env.ffiTypedWrapperParamsRef twParams
+            return (twNames, twParams)
 
 
 -- | Return `(name, paramGoTypes)` for every `^func Go_X_yT(…)` definition
@@ -1090,7 +1146,10 @@ compile config entryPath outDir = do
 
     -- Phase 0: Load FFI registry (ffi/*.kernel.json) and seed the kernel
     -- module/function IORefs so FFI packages resolve as first-class kernels.
-    loadAndSeedFfiRegistry
+    -- v0.17 close P1 — the returned 'LoadedFfiTables' is the future
+    -- threaded-value channel (P3+P4 will consume it directly + delete
+    -- the IORefs); for now the IORefs stay live as interim shim.
+    _ <- loadAndSeedFfiRegistry
 
     -- Phase 0b: Install Sky-source dependencies declared in [dependencies].
     -- Each dep contributes an extra source root that discovery will probe
@@ -3947,7 +4006,9 @@ typecheckWorkspace config entryPath = do
         projectRoot = case takeDirectory entryDir of
             "" -> "."
             d  -> d
-    loadAndSeedFfiRegistry
+    -- v0.17 close P1 — value channel for the future threaded path
+    -- (P3+P4 consume + delete the IORefs); IORefs stay live as shim.
+    _ <- loadAndSeedFfiRegistry
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
     -- Materialise stdlib inside `.skycache/` so it lives in the already-
     -- gitignored cache dir instead of polluting `src/`. LSP goto-def can
