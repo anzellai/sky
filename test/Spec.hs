@@ -11,6 +11,7 @@ import qualified Sky.Build.IORefBoundarySpec
 import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.SealedIfaceCarveoutSpec
+import qualified Sky.Build.SealedIfaceEmissionSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -235,6 +236,13 @@ allSpecs fastMode = do
     -- until P3.4 wires the real True-returning branch at the
     -- generateUnion / generateUnionForDep call sites.
     describeT "Sky.Build.SealedIfaceCarveout" Sky.Build.SealedIfaceCarveoutSpec.spec
+    -- v0.17 P3.4a — pure helper that emits the sealed-iface +
+    -- variant struct + factory + gob.Register shape. NOT WIRED
+    -- yet (generateUnion/generateUnionForDep still emit legacy
+    -- type X = rt.SkyADT until P3.4b/c flip per-ADT). Spec calls
+    -- helper directly with hand-built [Can.Ctor] and asserts the
+    -- returned GoDecl list matches the design's claimed shape.
+    describeT "Sky.Build.SealedIfaceEmission" Sky.Build.SealedIfaceEmissionSpec.spec
     -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
     -- 'globalAnonRecords' IORef writer audit. Pairs with the
     -- documentation block above 'generateAnonRecordDecls' in

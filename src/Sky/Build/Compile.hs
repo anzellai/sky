@@ -961,6 +961,205 @@ rtBuilderShadowList = Set.fromList
     ]
 
 
+-- | v0.17 P3.4a — sealed-iface emission helper for monomorphic
+-- non-Enum non-carve-out ADTs.
+--
+-- Returns the 'GoIr.GoDecl' list that would REPLACE the legacy
+-- @type X = rt.SkyADT@ + ctor-funcs + @RegisterAdtTag@ init block
+-- at the @generateUnion@ / @generateUnionForDep@ call sites.
+--
+-- NOT WIRED in P3.4a — the legacy callers still emit the legacy
+-- shape. P3.4b will gate this helper behind 'shouldEmitSealedIface'
+-- (which still returns False at the call sites in P3.3, so no
+-- behaviour change until P3.4e).
+--
+-- For @type Color = Red | Green | RGB Int Int Int@ emits:
+--
+-- @
+-- type Mod_Color interface {
+--     SkyVariantTag()  int
+--     SkyVariantName() string
+-- }
+--
+-- type Mod_Color_Red_V struct { SkyVariant_ uint8 }
+-- func (_ Mod_Color_Red_V) SkyVariantTag()  int    { return 0 }
+-- func (_ Mod_Color_Red_V) SkyVariantName() string { return "Red" }
+--
+-- type Mod_Color_RGB_V struct { V0 int; V1 int; V2 int }
+-- func (_ Mod_Color_RGB_V) SkyVariantTag()  int    { return 2 }
+-- func (_ Mod_Color_RGB_V) SkyVariantName() string { return "RGB" }
+--
+-- var Mod_Color_Red = Mod_Color_Red_V{}
+-- func Mod_Color_RGB(v0 int, v1 int, v2 int) Mod_Color_RGB_V {
+--     return Mod_Color_RGB_V{V0: v0, V1: v1, V2: v2}
+-- }
+--
+-- func init() {
+--     rt.RegisterAdtTag("Red", 0); rt.RegisterAdtTag("RGB", 2);
+--     rt.RegisterAdtVariant("Red", func(raw []json.RawMessage) any {
+--         return Mod_Color_Red_V{}
+--     })
+--     rt.RegisterAdtVariant("RGB", func(raw []json.RawMessage) any {
+--         var v0 int; if len(raw) >= 1 { _ = json.Unmarshal(raw[0], &v0) }
+--         var v1 int; if len(raw) >= 2 { _ = json.Unmarshal(raw[1], &v1) }
+--         var v2 int; if len(raw) >= 3 { _ = json.Unmarshal(raw[2], &v2) }
+--         return Mod_Color_RGB_V{V0: v0, V1: v1, V2: v2}
+--     })
+--     gob.Register(Mod_Color_Red_V{}); gob.Register(Mod_Color_RGB_V{})
+-- }
+-- @
+--
+-- Nullary variants carry an exported @SkyVariant_ uint8@ dummy
+-- field — defence in depth against gob's "no exported fields"
+-- failure mode (Griller 1 iter 49 verified gob.Encode works for
+-- both forms in common paths, but the dummy field guarantees it
+-- across edge paths including standalone Encode without an
+-- enclosing struct holder).
+--
+-- N-ary variants use @V0@, @V1@, ... typed fields routed through
+-- 'safeReturnTypeFull' (same path the legacy 'generateCtorFunc'
+-- uses for ctor arg type emission — no new lowering surface).
+--
+-- Constructor binding:
+--
+--   * Nullary → top-level @var Mod_X_Foo = Mod_X_Foo_V{}@ —
+--     callers reference @Mod_X_Foo@ as a value, matching legacy
+--     bare-ident calling shape.
+--   * N-ary → @func Mod_X_Foo(v0 T0, ...) Mod_X_Foo_V@ — returns
+--     the variant struct, NOT the interface. Go's structural
+--     subtyping widens at every assignment / slice-element use
+--     site (Griller 1 verified empirically against
+--     @[]Mod_Color{...}@ + interface fields).
+--
+-- Both registries written in init():
+--   * @rt.RegisterAdtTag@ stays for legacy callers (EnumTagIs
+--     fallback, etc).
+--   * @rt.RegisterAdtVariant@ adds the typed factory P2
+--     introduced.
+--   * @gob.Register@ per variant pre-registers the concrete type
+--     so Sky.Live session persistence at interface boundaries
+--     succeeds (P3.2 supersession item #2).
+--
+-- Imports: callers (P3.4b) must add @encoding/json@ and
+-- @encoding/gob@ to the file's import set when ANY ADT in the
+-- module returns True from 'shouldEmitSealedIface'. The helper
+-- emits the @json.RawMessage@ / @json.Unmarshal@ / @gob.Register@
+-- references that depend on those imports being present.
+emitSealedIfaceUnion
+    :: String        -- ^ qualified type name (e.g. @Mod_Color@)
+    -> [Can.Ctor]    -- ^ ADT ctors in declaration order
+    -> [GoIr.GoDecl]
+emitSealedIfaceUnion qualType ctors =
+    sealedInterface
+    : concatMap variantDecls ctors
+    ++ map ctorBinding ctors
+    ++ [initBlock]
+  where
+    sealedInterface =
+        GoIr.GoDeclInterface qualType
+            [ ("SkyVariantTag",  [], "int")
+            , ("SkyVariantName", [], "string")
+            ]
+
+    variantStructName cname = qualType ++ "_" ++ cname ++ "_V"
+
+    -- For each ctor: the variant struct decl + Tag method + Name method
+    variantDecls (Can.Ctor cname idx arity argTys) =
+        let vName = variantStructName cname
+            fields
+                | arity == 0 = [("SkyVariant_", "uint8")]
+                | otherwise =
+                    [ ("V" ++ show i, ctorFieldGoType i argTys)
+                    | i <- [0 .. arity - 1]
+                    ]
+        in [ GoIr.GoDeclType vName (GoIr.GoStructDef fields)
+           , GoIr.GoDeclMethod "_" vName GoIr.GoFuncDecl
+                { GoIr._gf_name       = "SkyVariantTag"
+                , GoIr._gf_typeParams = []
+                , GoIr._gf_params     = []
+                , GoIr._gf_returnType = "int"
+                , GoIr._gf_body       = [GoIr.GoReturn (GoIr.GoIntLit idx)]
+                }
+           , GoIr.GoDeclMethod "_" vName GoIr.GoFuncDecl
+                { GoIr._gf_name       = "SkyVariantName"
+                , GoIr._gf_typeParams = []
+                , GoIr._gf_params     = []
+                , GoIr._gf_returnType = "string"
+                , GoIr._gf_body       = [GoIr.GoReturn (GoIr.GoStringLit cname)]
+                }
+           ]
+
+    ctorBinding (Can.Ctor cname _idx arity argTys) =
+        let vName = variantStructName cname
+        in if arity == 0
+            then GoIr.GoDeclVar (qualType ++ "_" ++ cname) vName
+                    (Just (GoIr.GoStructLit vName []))
+            else GoIr.GoDeclFunc GoIr.GoFuncDecl
+                    { GoIr._gf_name       = qualType ++ "_" ++ cname
+                    , GoIr._gf_typeParams = []
+                    , GoIr._gf_params     =
+                        [ GoIr.GoParam ("v" ++ show i) (ctorFieldGoType i argTys)
+                        | i <- [0 .. arity - 1]
+                        ]
+                    , GoIr._gf_returnType = vName
+                    , GoIr._gf_body       =
+                        [ GoIr.GoReturn (GoIr.GoStructLit vName
+                            [ ("V" ++ show i, GoIr.GoIdent ("v" ++ show i))
+                            | i <- [0 .. arity - 1]
+                            ])
+                        ]
+                    }
+
+    -- For each ctor i: arg type via the same path 'generateCtorFunc' uses
+    -- in 'ctorArgGoType' (Compile.hs:5970-5971). Monomorphic ADTs only —
+    -- no TVar substitution map needed.
+    ctorFieldGoType i argTys
+        | i < length argTys = safeReturnTypeFull (argTys !! i)
+        | otherwise         = "any"
+
+    -- init() block as a single GoDeclRaw. Mirrors the existing
+    -- 'generateUnion' init() at Compile.hs:5043. Factory closure
+    -- bodies are 5+ lines each — structurally expressing them
+    -- would require new GoStmt constructors; GoDeclRaw is the
+    -- consistent + practical answer (Griller 2 R4).
+    initBlock = GoIr.GoDeclRaw initBody
+
+    initBody =
+        "func init() {\n"
+        ++ concatMap ((++ "\n") . ("\t" ++) . registerAdtTagLine) ctors
+        ++ concatMap ((++ "\n") . ("\t" ++) . registerVariantLine) ctors
+        ++ concatMap ((++ "\n") . ("\t" ++) . gobRegisterLine) ctors
+        ++ "}"
+
+    registerAdtTagLine (Can.Ctor cname idx _ _) =
+        "rt.RegisterAdtTag(" ++ show cname ++ ", " ++ show idx ++ ")"
+
+    registerVariantLine (Can.Ctor cname _ arity argTys) =
+        let vName = variantStructName cname
+            ctorLit
+                | arity == 0 = vName ++ "{}"
+                | otherwise =
+                    vName ++ "{"
+                    ++ intercalate_ ", "
+                        [ "V" ++ show i ++ ": v" ++ show i
+                        | i <- [0 .. arity - 1]
+                        ]
+                    ++ "}"
+            unmarshalSteps
+                | arity == 0 = ""
+                | otherwise = concatMap stepLine [0 .. arity - 1]
+            stepLine i =
+                "var v" ++ show i ++ " " ++ ctorFieldGoType i argTys
+                ++ "; if len(raw) >= " ++ show (i + 1)
+                ++ " { _ = json.Unmarshal(raw[" ++ show i ++ "], &v" ++ show i ++ ") }; "
+        in "rt.RegisterAdtVariant(" ++ show cname
+           ++ ", func(raw []json.RawMessage) any { "
+           ++ unmarshalSteps ++ "return " ++ ctorLit ++ " })"
+
+    gobRegisterLine (Can.Ctor cname _ _ _) =
+        "gob.Register(" ++ variantStructName cname ++ "{})"
+
+
 -- | Empty 'Rec.CodegenEnv' used when 'scopeStateRef' has no env
 -- installed. Matches the shape of 'initialCgEnv' in
 -- 'resetCompileState' (15 fields, all empty maps/sets +
