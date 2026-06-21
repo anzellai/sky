@@ -52,6 +52,8 @@ module Sky.Build.LowerCtx
     , withAliases
     , withFieldIdx
     , withUnionNames
+    , withFfiTypedWrapperNames
+    , withFfiTypedWrapperParams
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -184,6 +186,23 @@ data LowerCtx = LowerCtx
         -- transitional @ctxFromIORef ()@ bridges see it on the
         -- next read.  Replaces the @lookupKernelAlias@ IORef hop
         -- inside @exprToGo@'s @Can.VarTopLevel@ + @Can.Call@ arms.
+    , _lc_ffiTypedWrapperNames :: !(Set.Set String)
+        -- ^ v0.17 close P1 step 2/8 — snapshot of @Env.ffiTypedWrapperNamesRef@,
+        -- the set of typed-FFI wrapper Go-function names emitted by
+        -- @FfiGen@ (each named @<Kernel>_<fn>T@).  Read at @exprToGo@'s
+        -- @Can.VarKernel@ arms (zero-arg + N-arg FFI dispatch) +
+        -- @caseToGo@'s @isTypedFfiCall@ recogniser to decide whether
+        -- the typed wrapper exists for a given call site.  Populated
+        -- by @loadAndSeedFfiRegistry@ → @LoadedFfiTables@ →
+        -- 'generateGoMulti' at codegen entry; default 'Set.empty' for
+        -- bootstrap (matches the IORef's empty default).
+    , _lc_ffiTypedWrapperParams :: !(Map.Map String [String])
+        -- ^ v0.17 close P1 step 2/8 — snapshot of @Env.ffiTypedWrapperParamsRef@,
+        -- mapping each @<Kernel>_<fn>T@ wrapper to its declared Go
+        -- param-type strings.  Read at @exprToGo@'s @Can.VarKernel@
+        -- N-arg arm to coerce arguments to the wrapper's declared
+        -- param types.  Same population path as
+        -- '_lc_ffiTypedWrapperNames'; default 'Map.empty'.
     }
 
 
@@ -206,6 +225,8 @@ emptyLowerCtx home = LowerCtx
     , _lc_reachableSet = Set.empty
     , _lc_reachableProgram = Set.empty
     , _lc_kernelAlias = Map.empty
+    , _lc_ffiTypedWrapperNames = Set.empty
+    , _lc_ffiTypedWrapperParams = Map.empty
     }
 
 
@@ -247,6 +268,8 @@ buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = L
     , _lc_reachableSet = reached
     , _lc_reachableProgram = reachedProg
     , _lc_kernelAlias = Map.empty
+    , _lc_ffiTypedWrapperNames = Set.empty
+    , _lc_ffiTypedWrapperParams = Map.empty
     }
 
 
@@ -448,3 +471,28 @@ withUnionNames
     -> LowerCtx
 withUnionNames unions ctx =
     ctx { _lc_unionNames = unions }
+
+
+-- | v0.17 close P1 step 2/8 — install the typed-FFI wrapper name set
+-- on the LowerCtx so the lowerer's @Can.VarKernel@ arms read it
+-- structurally instead of via @unsafePerformIO (readIORef
+-- Env.ffiTypedWrapperNamesRef)@.  Populated from
+-- 'LoadedFfiTables._lft_typedWrapperNames' at codegen entry
+-- ('generateGoMulti').
+withFfiTypedWrapperNames
+    :: Set.Set String
+    -> LowerCtx
+    -> LowerCtx
+withFfiTypedWrapperNames names ctx =
+    ctx { _lc_ffiTypedWrapperNames = names }
+
+
+-- | v0.17 close P1 step 2/8 — install the typed-FFI wrapper param-type
+-- map on the LowerCtx.  Sibling of 'withFfiTypedWrapperNames';
+-- read by the N-arg FFI dispatch arm to coerce arguments.
+withFfiTypedWrapperParams
+    :: Map.Map String [String]
+    -> LowerCtx
+    -> LowerCtx
+withFfiTypedWrapperParams params ctx =
+    ctx { _lc_ffiTypedWrapperParams = params }

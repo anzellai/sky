@@ -2806,9 +2806,21 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             -- 'tvarsInEmitted' see the populated maps.
             (allAliasesMap, allFieldIdx, earlyAllRecAliases) <-
                 seedEarlyCgEnv canMod validDeps
+            -- v0.17 close P1 step 2/8 — install the typed-FFI wrapper
+            -- snapshot (names + per-wrapper param Go types) from the
+            -- threaded 'LoadedFfiTables' value bound in 'compile'.
+            -- Read by @exprToGo@'s @Can.VarKernel@ arms +
+            -- @caseToGo@'s @isTypedFfiCall@ recogniser via the
+            -- consolidated @scopeStateRef@ → 'LowerCtx' bridge
+            -- (i.e. wherever @ctx :: LC.LowerCtx@ is in scope).
+            -- The legacy 'typedFfiWrapperSet ()' / 'typedFfiWrapperParams ()'
+            -- IORef readers stay live as a backward-compat shim until
+            -- P1 step 7 retires the IORef declarations.
             modifyIORef' scopeStateRef
                 ( LC.withAliases allAliasesMap
                 . LC.withFieldIdx allFieldIdx
+                . LC.withFfiTypedWrapperNames (_lft_typedWrapperNames loadedFfi)
+                . LC.withFfiTypedWrapperParams (_lft_typedWrapperParams loadedFfi)
                 )
             -- v0.13 Stage 1 (task #189) — depDecls computation moved
             -- LATER in the pipeline (just before generateGoMulti) so
@@ -10781,7 +10793,11 @@ exprToGo ctx (A.At _ expr) = case expr of
                 | take 3 modName == "Go_"
                 , all isUnitArg args
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                , Set.member typedName (typedFfiWrapperSet ()) ->
+                -- v0.17 close P1 step 2/8 — read the typed-FFI wrapper
+                -- registry from the threaded 'LowerCtx' (installed at
+                -- 'continueCompile' via scopeStateRef) instead of via
+                -- @unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)@.
+                , Set.member typedName (LC._lc_ffiTypedWrapperNames ctx) ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
             -- P7 step 5b: migrate N-arg FFI by coercing each arg to the
@@ -10796,8 +10812,9 @@ exprToGo ctx (A.At _ expr) = case expr of
                 , not (null args)
                 , not (all isUnitArg args)
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                , Set.member typedName (typedFfiWrapperSet ())
-                , Just paramTys <- Map.lookup typedName (typedFfiWrapperParams ())
+                -- v0.17 close P1 step 2/8 — ctx-routed reads (see above).
+                , Set.member typedName (LC._lc_ffiTypedWrapperNames ctx)
+                , Just paramTys <- Map.lookup typedName (LC._lc_ffiTypedWrapperParams ctx)
                 , length paramTys == length args ->
                     let anyWrapperName = modName ++ "_" ++ funcName
                     in GoIr.GoCall (GoIr.GoQualified "rt" typedName)
@@ -15528,7 +15545,10 @@ caseToGo ctx mExpectedGo subject branches =
                 | take 3 fnName == "Go_"
                 , not (null fnName)
                 , last fnName == 'T'
-                , Set.member fnName (typedFfiWrapperSet ())
+                -- v0.17 close P1 step 2/8 — read the typed-FFI wrapper
+                -- names off the threaded 'LowerCtx' instead of via
+                -- @unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)@.
+                , Set.member fnName (LC._lc_ffiTypedWrapperNames ctx)
                 -> True
             GoIr.GoCall (GoIr.GoIdent qualName) _
                 | Just retTy <- Map.lookup qualName funcRetTypeMap
