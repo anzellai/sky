@@ -203,6 +203,17 @@ data LowerCtx = LowerCtx
         -- N-arg arm to coerce arguments to the wrapper's declared
         -- param types.  Same population path as
         -- '_lc_ffiTypedWrapperNames'; default 'Map.empty'.
+    , _lc_cgEnv :: !(Maybe Rec.CodegenEnv)
+        -- ^ v0.17 close criterion 3 — globalCgEnv migration
+        -- (staged S1, iter 34).  Bridge field that future reader
+        -- migration (S4) consults instead of the
+        -- 'Sky.Build.Compile.getCgEnv' CAF.  'Nothing' means the
+        -- LowerCtx was built before the C10 cgEnv finalisation;
+        -- consumers fall through to the legacy CAF in that case
+        -- (during S2-S3 transitional staging).  Populated by S3 at
+        -- the post-@importsForced \`seq\`@ install site.
+        --
+        -- See @docs/v0.17-roadmap/globalCgEnv-close-plan.md@ §S1.
     }
 
 
@@ -227,6 +238,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_kernelAlias = Map.empty
     , _lc_ffiTypedWrapperNames = Set.empty
     , _lc_ffiTypedWrapperParams = Map.empty
+    , _lc_cgEnv      = Nothing
     }
 
 
@@ -270,6 +282,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = L
     , _lc_kernelAlias = Map.empty
     , _lc_ffiTypedWrapperNames = Set.empty
     , _lc_ffiTypedWrapperParams = Map.empty
+    , _lc_cgEnv      = Nothing
     }
 
 
