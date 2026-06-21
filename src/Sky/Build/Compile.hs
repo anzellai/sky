@@ -1690,12 +1690,20 @@ solvePhase
     -- ^ earlyAllRecAliases — merged record-alias set (entry + deps,
     -- prefixed + bare forms) from 'seedEarlyCgEnv'.  Used by the
     -- HM-inferred dep sig table builders below.
+    -> Map.Map String [String]
+    -- ^ implementsMap — FFI interface-satisfaction registry sourced
+    -- from 'LoadedFfiTables._lft_implements'.  v0.17 close P1 step 3:
+    -- threaded through 'Solve.solveImpls' /
+    -- 'Solve.solveWithInstancesAndRegionsImpls' so the FFI A\<-\>I
+    -- widening in 'Sky.Type.Unify' reads the value-channel instead of
+    -- the @Unify.ffiImplementsRef@ IORef.  Empty for projects with no
+    -- FFI deps; behaviour-equivalent to the legacy IORef-read.
     -> IO SolveOutcome
-solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases = do
+solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases implementsMap = do
             -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 cs <- Constrain.constrainModule depMod
-                r  <- Solve.solve cs
+                r  <- Solve.solveImpls implementsMap cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ -> return (modName, Solve.emptySolvedTypes)
@@ -1810,7 +1818,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                         -- so the lowerer can query dep-body regions
                         -- too.  Pass-through `regionTys` per dep.
                         (r, _, csi, regionTys)
-                            <- Solve.solveWithInstancesAndRegions cs
+                            <- Solve.solveWithInstancesAndRegionsImpls implementsMap cs
                         case r of
                             Solve.SolveOk t ->
                                 return (modName, Right (t, csi, regionTys, Nothing))
@@ -1927,7 +1935,7 @@ solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
                     -- `_stRegions` — see the `typesWithDeps` builder at
                     -- line ~1611 for the wire-up).
                     (solveResult, callInstances, callSiteInstances, entryRegionTys)
-                        <- Solve.solveWithInstancesAndRegions constraints
+                        <- Solve.solveWithInstancesAndRegionsImpls implementsMap constraints
                     -- v0.15.x P37b — the per-region map no longer lives on
                     -- `scopeStateRef._lc_regionTypes` (that field was
                     -- deleted).  Region types now flow purely through
@@ -2891,7 +2899,18 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             -- ~2630 (pre-iter-12 layout) keeps its byte-equivalent
             -- semantics — it reads only fields surfaced via
             -- SolveOutputs.
-            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases
+            -- v0.17 close P1 step 3 — thread FFI implements registry
+            -- (sourced from 'LoadedFfiTables._lft_implements' via the
+            -- @loadedFfi@ value bound in 'compile' and threaded into
+            -- 'continueCompile') down into 'solvePhase' so it can seed
+            -- 'Solve.solveImpls' / 'Solve.solveWithInstancesAndRegionsImpls'
+            -- at every dep + entry solve call.  Replaces the legacy
+            -- @unsafePerformIO (readIORef Unify.ffiImplementsRef)@ path
+            -- inside 'Sky.Type.Unify.implementsInterface'.  Empty for
+            -- projects with no FFI deps; behaviour-equivalent to the
+            -- legacy IORef-read path (still kept as a backward-compat
+            -- shim until P1 step 7).
+            solveOutcome <- solvePhase entryPath moduleOrder entrySrcMod canMod validDeps earlyAllRecAliases (_lft_implements loadedFfi)
             case solveOutcome of
               SolveDepError _ ->
                   System.Exit.exitWith (System.Exit.ExitFailure 1)

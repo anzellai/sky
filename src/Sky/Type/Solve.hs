@@ -14,6 +14,15 @@ module Sky.Type.Solve
     , solveWithLocals
     , solveWithInstances
     , solveWithInstancesAndRegions   -- v0.15 Stage A
+    -- v0.17 close P1 step 3 — value-channel variants that seed
+    -- SolverState._ffiImplements from a caller-supplied map (typically
+    -- `LoadedFfiTables._lft_implements`).  Behaviour-equivalent to the
+    -- legacy variants when the map is empty.  Compile.hs's
+    -- continueCompile is the production caller; LSP / tests / single-
+    -- module entries keep the empty-impls variants.
+    , solveImpls
+    , solveWithLocalsImpls
+    , solveWithInstancesAndRegionsImpls
     , SolveResult(..)
     , SolvedTypes(..)
     , emptySolvedTypes               -- v0.15.x P37a
@@ -792,14 +801,22 @@ budgetExceededMsg budget = unlines
 
 -- | Solve a constraint tree.
 solve :: T.Constraint -> IO SolveResult
-solve constraint = do
+solve = solveImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solve' with a caller-supplied FFI
+-- implements registry seeded into 'SolverState._ffiImplements'.
+-- Threads through to 'Sky.Type.Unify.UnifyState' at every unify call
+-- site inside 'solveHelpBody'.
+solveImpls :: Map.Map String [String] -> T.Constraint -> IO SolveResult
+solveImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -850,14 +867,23 @@ solve constraint = do
 -- P2-2: the returned map is `name → [types]` (ordered innermost-first)
 -- so shadowed locals don't collapse on hover.
 solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String [T.Type])
-solveWithLocals constraint = do
+solveWithLocals = solveWithLocalsImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solveWithLocals' with FFI implements
+-- registry threading.  See 'solveImpls' for context.
+solveWithLocalsImpls
+    :: Map.Map String [String]
+    -> T.Constraint
+    -> IO (SolveResult, Map.Map String [T.Type])
+solveWithLocalsImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)
     localTypes <- Map.traverseWithKey (\_ vars ->
@@ -908,14 +934,28 @@ solveWithInstances constraint = do
 solveWithInstancesAndRegions
     :: T.Constraint
     -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
-solveWithInstancesAndRegions constraint = do
+solveWithInstancesAndRegions = solveWithInstancesAndRegionsImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solveWithInstancesAndRegions' with FFI
+-- implements registry threading.  This is the production-path
+-- variant: Compile.hs seeds the registry from
+-- 'LoadedFfiTables._lft_implements' (returned by
+-- 'loadAndSeedFfiRegistry') so the @App1 \<-\> App1@ FFI interface-
+-- satisfaction axiom in Unify reads the value-channel instead of
+-- the legacy @unsafePerformIO (readIORef Unify.ffiImplementsRef)@.
+solveWithInstancesAndRegionsImpls
+    :: Map.Map String [String]
+    -> T.Constraint
+    -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
+solveWithInstancesAndRegionsImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 Map.empty locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
