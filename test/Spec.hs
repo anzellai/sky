@@ -10,6 +10,7 @@ import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
 import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
+import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -227,6 +228,13 @@ allSpecs fastMode = do
     -- GoTypeRoundTrip parity specs below to close v0.17 criteria
     -- #2 + #5 as MANDATORY cabal-test items.
     describeT "Sky.Build.EraseBandAidAbsent" Sky.Build.EraseBandAidAbsentSpec.spec
+    -- v0.17 P3.3 — per-ADT sealed-iface carve-out decision function.
+    -- Audit gate: rtBuilderShadowList must match the explicit
+    -- empirically-verified enumeration (silent additions/removals
+    -- trip this spec). Decision function returns False by default
+    -- until P3.4 wires the real True-returning branch at the
+    -- generateUnion / generateUnionForDep call sites.
+    describeT "Sky.Build.SealedIfaceCarveout" Sky.Build.SealedIfaceCarveoutSpec.spec
     -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
     -- 'globalAnonRecords' IORef writer audit. Pairs with the
     -- documentation block above 'generateAnonRecordDecls' in

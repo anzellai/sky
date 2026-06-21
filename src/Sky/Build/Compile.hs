@@ -878,6 +878,89 @@ getCgEnvFromScope = unsafePerformIO $ do
         Nothing  -> return emptyCgEnv
 
 
+-- | v0.17 sealed-iface ADT carve-out decision (P3.3 infrastructure).
+-- Returns True if codegen should emit the new sealed-iface + variant
+-- struct shape for this ADT; False to keep the legacy
+-- @type X = rt.SkyADT@ alias path.
+--
+-- Rules (in priority order):
+--
+-- 1. 'Can.Enum' (all-nullary ADT) → False. Stays as
+--    @type X int + iota@ — sealed-iface adds no value.
+-- 2. Polymorphic (vars non-empty) → False. P4 covers the
+--    parametric story (Element / Attribute / Html phantom-msg +
+--    Maybe / Result / Task real-flow).
+-- 3. ADT in 'rtBuilderShadowList' → False. rt-side Go code
+--    constructs SkyADT-shape values for these (Sky.Core.Error
+--    builders, Sky.Db.SqlValue Money/CurrencyRaw decoders,
+--    Sky.Decimal.Decimal kernel, Sky.Http stream/websocket
+--    constructors). Migrating them to sealed-iface would desync
+--    builder + consumer — user's @case kind of Io -> ...@
+--    type-switches on @Sky_Core_Error_Io_V@ which never exists
+--    because @rt.go:3886@ still returns @SkyADT{...}@.
+-- 4. Default → False until P3.4. P3.4 wires the real True-returning
+--    branch at the call sites where it has the build-level context
+--    (env flag / CLI / per-call-site decision).
+--
+-- Pure function. No IORef reads, no @unsafePerformIO@, no env
+-- lookups. Spec-testable in isolation. Production callers (P3.4+)
+-- thread the build-time decision separately.
+shouldEmitSealedIface
+    :: ModuleName.Canonical  -- ^ module the ADT is declared in
+    -> String                 -- ^ unqualified type name
+    -> [String]               -- ^ ADT's type variables (empty = monomorphic)
+    -> Can.CtorOpts           -- ^ Can.Enum / Can.Normal / Can.Unbox
+    -> Bool
+shouldEmitSealedIface modName typeName vars opts
+    | opts == Can.Enum                               = False  -- (1)
+    | not (null vars)                                = False  -- (2)
+    | qualifiedName `Set.member` rtBuilderShadowList = False  -- (3)
+    | otherwise                                      = False  -- (4) P3.3 default
+  where
+    qualifiedName = ModuleName.toString modName ++ "." ++ typeName
+
+
+-- | Hardcoded carve-out — rt-side Go builders construct SkyADT-shape
+-- values for these ADTs. Migrating them to sealed-iface would
+-- desync builder + consumer.
+--
+-- Empirically derived (iter 49) from grep of @runtime-go/rt/*.go@
+-- for @SkyADT{...}@ literals + cross-referenced with @sky-stdlib@
+-- type declarations:
+--
+--   * @Sky.Core.Error.Error@      — @rt.go:3886@ @skyErrorAdt@
+--   * @Std.Db.SqlValue@           — @db_decoder.go:236/259/261@
+--                                   Money/CurrencyRaw
+--   * @Std.Db.SqlField@           — @db_auth.go@ @SetField@ switch
+--   * @Std.Decimal.Decimal@       — @decimal_kernel.go:34@
+--                                   @Decimal__Internal@ ctor
+--   * @Sky.Core.Http.Stream.ChunkEvent@        — @http_stream.go:747/753/759@
+--   * @Sky.Http.Server.Stream.StreamWriter@    — @server_stream.go:385@
+--   * @Sky.Core.WebSocket.WebSocketMessage@    — @websocket.go:663-687@
+--   * @Sky.Http.Server.WebSocket.WebSocketServer@ — @server_websocket.go:377@
+--
+-- AUDIT GATE: 'Sky.Build.SealedIfaceCarveoutSpec' asserts this list
+-- matches an explicit enumeration; silent additions/removals fail
+-- the build.
+--
+-- Co-dependency invariant: @SqlField@ carries @SqlValue@ in
+-- @SetField SqlValue@. If a future iter drops @SqlValue@ but keeps
+-- @SqlField@, the user's @case sf of SetField v -> ...@ pulls a
+-- sealed-iface @v@ from a legacy-shape parent context → runtime
+-- panic. Both must move together.
+rtBuilderShadowList :: Set.Set String
+rtBuilderShadowList = Set.fromList
+    [ "Sky.Core.Error.Error"
+    , "Std.Db.SqlValue"
+    , "Std.Db.SqlField"
+    , "Std.Decimal.Decimal"
+    , "Sky.Core.Http.Stream.ChunkEvent"
+    , "Sky.Http.Server.Stream.StreamWriter"
+    , "Sky.Core.WebSocket.WebSocketMessage"
+    , "Sky.Http.Server.WebSocket.WebSocketServer"
+    ]
+
+
 -- | Empty 'Rec.CodegenEnv' used when 'scopeStateRef' has no env
 -- installed. Matches the shape of 'initialCgEnv' in
 -- 'resetCompileState' (15 fields, all empty maps/sets +

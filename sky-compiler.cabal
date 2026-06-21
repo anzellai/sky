@@ -446,6 +446,7 @@ test-suite sky-tests
       Sky.Build.IORefBoundarySpec
       Sky.Build.LowerPhaseGoSigMapDeletedSpec
       Sky.Build.EraseBandAidAbsentSpec
+      Sky.Build.SealedIfaceCarveoutSpec
       Sky.Build.AnonRecordWriterAuditSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
