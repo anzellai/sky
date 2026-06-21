@@ -36,6 +36,7 @@ import qualified Sky.Build.LowerCtx as LC
 import Sky.Build.CompileCtx
     ( CompileCtx(..), ctxKernelFunctions, ctxKernelModules
     , ctxKernelTypes, ctxImplements
+    , emptyCtx
     )
 
 import qualified Sky.AST.Source as Src
@@ -1062,6 +1063,15 @@ loadedFfiToCtx loadedFfi = CompileCtx
     , _ctx_pkgAlias           = _lft_pkgAlias           loadedFfi
     , _ctx_typedWrapperNames  = _lft_typedWrapperNames  loadedFfi
     , _ctx_typedWrapperParams = _lft_typedWrapperParams loadedFfi
+    -- v0.17 close criterion 3 — globalCgEnv migration (S0).  The
+    -- 'CompileCtx' threaded out of canonPhase carries the
+    -- empty-cgEnv field at this boundary; the legacy
+    -- 'globalCgEnv' IORef remains authoritative until S2/S3 wire
+    -- the writers + S4 migrates the 47 reader sites.  Use
+    -- 'emptyCtx''s cgEnv shape for the placeholder so the
+    -- 'Rec.CodegenEnv' initialiser stays single-source-of-truth
+    -- in 'Sky.Build.CompileCtx'.
+    , _ctx_cgEnv              = _ctx_cgEnv emptyCtx
     }
 
 

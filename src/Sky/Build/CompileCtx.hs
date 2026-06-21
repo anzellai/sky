@@ -45,12 +45,17 @@ module Sky.Build.CompileCtx
     , ctxPkgAlias
     , ctxTypedWrapperNames
     , ctxTypedWrapperParams
+    -- v0.17 close criterion 3 — globalCgEnv migration (S0).
+    , ctxCgEnv
+    , withCgEnv
     ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
-import qualified Sky.AST.Canonical as Can
+import qualified Sky.AST.Canonical    as Can
+import qualified Sky.Generate.Go.Record as Rec
+import qualified Sky.Type.Solve       as Solve
 
 
 -- | v0.17 close P2 — the pure compile-time context bundle.  Every
@@ -90,6 +95,28 @@ data CompileCtx = CompileCtx
     , _ctx_typedWrapperParams :: !(Map.Map String [String])
         -- ^ Typed wrapper name → param Go types.  Mirrors
         -- 'Sky.Canonicalise.Environment.ffiTypedWrapperParamsRef'.
+    , _ctx_cgEnv              :: !Rec.CodegenEnv
+        -- ^ v0.17 close criterion 3 — staging S0.  Mirrors
+        -- 'Sky.Build.Compile.globalCgEnv' (an 'IORef'
+        -- 'Rec.CodegenEnv' that today holds the per-compile codegen
+        -- environment populated by 'seedEarlyCgEnv' / 'solvePhase'
+        -- C9 / per-dep sig merge / C10 final rebuild — see
+        -- 'docs/v0.17-roadmap/globalCgEnv-close-plan.md' for the
+        -- full pre-implementation grill + 6-stage close path).
+        --
+        -- This field is the pure value-channel target.  Readers
+        -- migrate to consult 'ctx._ctx_cgEnv' instead of the
+        -- 'getCgEnv' CAF; writers migrate to thread an updated
+        -- 'CompileCtx' instead of 'modifyIORef'.  S5 deletes the
+        -- 'globalCgEnv' top-level IORef + 'getCgEnv' CAF.
+        --
+        -- INVARIANT (preserved from the legacy
+        -- 'globalCgEnv' contract): readers MUST consult the
+        -- POST-C10 value.  Reading before the per-dep sig merge or
+        -- before the C10 rebuild observes a partial 'CodegenEnv'
+        -- and re-triggers the iter-20 'Anon_R_*' undefined failure
+        -- class.  S2-S4 wiring threads through 'LowerCtx' which is
+        -- only available POST-C10.
     }
 
 
@@ -108,7 +135,31 @@ emptyCtx = CompileCtx
     , _ctx_pkgAlias           = Map.empty
     , _ctx_typedWrapperNames  = Set.empty
     , _ctx_typedWrapperParams = Map.empty
+    , _ctx_cgEnv              = emptyCgEnv
     }
+
+
+-- | Initial 'Rec.CodegenEnv' matching the value the legacy
+-- 'globalCgEnv' IORef is seeded with at 'Sky.Build.Compile':149.
+-- Lifted here so 'emptyCtx' stays import-clean and the field
+-- initialiser is shared between the pure ctx + the legacy IORef
+-- shim during the S0-S5 migration.
+emptyCgEnv :: Rec.CodegenEnv
+emptyCgEnv = Rec.CodegenEnv
+    Solve.emptySolvedTypes
+    Map.empty   -- _cg_aliases
+    Map.empty   -- _cg_fieldIndex
+    Set.empty   -- _cg_zeroArgs
+    Set.empty   -- _cg_recordAliases
+    Set.empty   -- _cg_unionNames
+    Set.empty   -- _cg_enumNames
+    Map.empty   -- _cg_funcArities
+    Map.empty   -- _cg_funcParamTypes
+    Map.empty   -- _cg_funcRetType
+    Map.empty   -- _cg_funcUltimateRetType
+    Map.empty   -- _cg_funcInferredSigs
+    Map.empty   -- _cg_callSiteInstances
+    Map.empty   -- _cg_funcSkyToGoTVars
 
 
 -- | Field accessor (additive).  Equivalent to '_ctx_kernelModules'
@@ -153,3 +204,24 @@ ctxTypedWrapperNames = _ctx_typedWrapperNames
 -- | See 'ctxKernelModules'.
 ctxTypedWrapperParams :: CompileCtx -> Map.Map String [String]
 ctxTypedWrapperParams = _ctx_typedWrapperParams
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S0).
+-- Accessor for the staged 'Rec.CodegenEnv' field.  Future reader
+-- migration (S4) replaces 'Sky.Build.Compile.getCgEnv' CAF reads
+-- with 'ctxCgEnv ctx' (where 'ctx' comes from the threaded
+-- 'CompileCtx' or 'LowerCtx').  See
+-- 'docs/v0.17-roadmap/globalCgEnv-close-plan.md'.
+ctxCgEnv :: CompileCtx -> Rec.CodegenEnv
+ctxCgEnv = _ctx_cgEnv
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S0).  Setter
+-- for the staged 'Rec.CodegenEnv' field.  Future writer migration
+-- (S2-S3) replaces 'Sky.Build.Compile.modifyIORef globalCgEnv' /
+-- 'writeIORef globalCgEnv' sites with
+-- 'updatedCtx = withCgEnv newCgEnv ctx' threaded through
+-- 'LowerCtx'.  See
+-- 'docs/v0.17-roadmap/globalCgEnv-close-plan.md'.
+withCgEnv :: Rec.CodegenEnv -> CompileCtx -> CompileCtx
+withCgEnv newEnv ctx = ctx { _ctx_cgEnv = newEnv }
