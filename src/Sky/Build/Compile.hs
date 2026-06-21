@@ -7580,7 +7580,7 @@ goExprGoType ctx mSrc e = case shapeClassified of
         -- ctor) got wrapped in `rt.Coerce`.
         GoIr.GoCall (GoIr.GoIdent name) []
             | not ("rt." `List.isPrefixOf` name) ->
-                let env = getCgEnv
+                let env = getCgEnvFromScope
                     retTy = Map.findWithDefault "any" name
                               (Rec._cg_funcRetType env)
                     paramTys = Map.findWithDefault [] name
@@ -7699,7 +7699,7 @@ goExprGoType ctx mSrc e = case shapeClassified of
                 -- typed sig for `TopLevelFn`, the call-site coerceArg
                 -- short-circuits (target type matches source type) and
                 -- emits no wrap.
-                let env = getCgEnv
+                let env = getCgEnvFromScope
                     paramTys = Map.findWithDefault [] name
                                   (Rec._cg_funcParamTypes env)
                     retTy = Map.findWithDefault "any" name
@@ -10463,7 +10463,7 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
                 let finalRet =
                         if finalRet0 == "any"
                             then case inferGoType
-                                    (Rec._cg_solvedTypes getCgEnv)
+                                    (Rec._cg_solvedTypes getCgEnvFromScope)
                                     body of
                                 "any" -> "any"
                                 concrete -> concrete
@@ -10850,7 +10850,7 @@ exprToGo ctx (A.At _ expr) = case expr of
             qualName = if null modStr || modStr == "Main"
                 then goSafeName name
                 else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name
-            env = getCgEnv
+            env = getCgEnvFromScope
             -- Local module: check zeroArgs set. Cross-module: check funcArities
             -- which is populated with qualified names from deps.
             isZeroArg = Set.member name (Rec._cg_zeroArgs env)
@@ -11136,7 +11136,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                 -- Partial application of a top-level function:
                 -- `canViewMonitor session` where canViewMonitor : Session -> Monitor -> Bool
                 -- must yield a closure capturing session.
-                let env = getCgEnv
+                let env = getCgEnvFromScope
                     modStr = ModuleName.toString home
                     -- goSafeName escapes Sky function names that collide
                     -- with Go reserved words / built-ins (e.g. `go`,
@@ -11214,7 +11214,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                                 prefix = if null modStr || modStr == "Main"
                                          then "" else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
                                 aliasName = prefix ++ typeName
-                                env' = getCgEnv
+                                env' = getCgEnvFromScope
                             in case Map.lookup aliasName (Rec._cg_aliases env') of
                                 Just (Can.Alias _ (T.TRecord m _)) ->
                                     let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList m)
@@ -11314,7 +11314,7 @@ exprToGo ctx (A.At _ expr) = case expr of
                             || not isLocalCallable
                             || length args /= 1
                             then Nothing
-                        else let solved = Rec._cg_solvedTypes getCgEnv
+                        else let solved = Rec._cg_solvedTypes getCgEnvFromScope
                              in case inferExprType solved func of
                                   Just ty ->
                                       peelTypedArrows 1 (solvedTypeToGo ty)
@@ -11367,7 +11367,7 @@ exprToGo ctx (A.At _ expr) = case expr of
         -- known record alias AND the target is statically typed
         -- (its Go static type matches a record-alias Go struct).
         -- Falls back to `rt.Field` (reflect) otherwise.
-        let env = getCgEnv
+        let env = getCgEnvFromScope
             solved = Rec._cg_solvedTypes env
             recSet = Rec._cg_recordAliases env
             nameMatches name =
@@ -11539,7 +11539,7 @@ exprToGo ctx (A.At _ expr) = case expr of
         -- Record literal: look up matching type alias → named struct, or anonymous
         let entries = Map.toList fields
             fieldNames = map fst entries
-            env = getCgEnv
+            env = getCgEnvFromScope
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName ->
                 -- Named struct: Alias_R{Name: "Alice", Age: 30}.
@@ -12747,7 +12747,7 @@ emitPartialCtor ctx func suppliedArgs missing =
 -- already typed `T` (redundant assertion) or `any` (real coercion).
 coerceCallArgs :: LC.LowerCtx -> String -> [Can.Expr] -> [GoIr.GoExpr]
 coerceCallArgs ctx qualName args =
-    let env = getCgEnv
+    let env = getCgEnvFromScope
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
          then map (exprToGo ctx) args
@@ -12886,7 +12886,7 @@ unmangleQual = map (\c -> if c == '_' then '.' else c)
 
 coerceCallArgsAt :: LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
 coerceCallArgsAt ctx region qualName args =
-    let env = getCgEnv
+    let env = getCgEnvFromScope
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
         -- v0.17 C24 — CSI key uses ("" :: modName, line, col).
         -- The original modName-aware widening attempt did NOT
