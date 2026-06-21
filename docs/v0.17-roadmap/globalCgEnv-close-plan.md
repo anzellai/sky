@@ -230,3 +230,68 @@ stage + 3-agent re-verification at the close).
   globalCgEnv DELETE in some form (or staged-with-honest-pre-mortem
   if multi-iter required)" — this banked plan IS the
   staged-with-honest-pre-mortem.
+
+---
+
+## S4 reader site classification (banked at iter 36 close, 2026-06-21)
+
+**Total `getCgEnv` reader sites in src/Sky/Build/Compile.hs (excluding
+comments + CAF def at L891-893):** 26 actionable sites (plan's "47"
+estimate was over — many `getCgEnv` matches were comments).
+
+### CLASS A (mechanical — LowerCtx in scope): 15 sites
+
+| Line | Function | Path |
+|------|----------|------|
+| 7445 | structuralFallback in coerceArg | ctx via coerceArg sig |
+| 7556 | emitLambda in exprToGo | ctx via exprToGo sig |
+| 7675 | GoCase arm in exprToGo | ctx via exprToGo sig |
+| 10439 | zipWithDefaultExpect in coerceCallArgs | ctx via sig |
+| 10826 | emitOverApplication in lowerExpr | ctx via lowerExpr sig |
+| 10888 | coerceCallArgsAt entry | ctx via sig |
+| 11112 | emitUserCall entry | ctx via lowerExpr sig |
+| 11190 | emitUserCall else | ctx via lowerExpr sig |
+| 11290 | zipWithDefaultExpect else | ctx via lowerExpr sig |
+| 11343 | emitOverApplication else | ctx via lowerExpr sig |
+| 11515 | emitOverApplication else branch | ctx via lowerExpr sig |
+| 12723 | coerceCallArgs entry | ctx via sig |
+| 12862 | coerceCallArgsAt entry | ctx via sig |
+| 13284 | unifyGoTypes arm in coerceCallArgsAt | ctx via sig |
+| 14256 | zipWithDefaultExpect in coerceCallArgsAt | ctx via sig |
+
+### CLASS B (needs signature threading): 9 sites
+
+| Line | Function | Caller surface |
+|------|----------|----------------|
+| 4570 | generateDef mkDef | thread from generateDeclsForDep |
+| 6541-6548 (2 lines) | lowerTypedDef | thread from caller ~L6480 |
+| 6989 | goZeroValue | thread from 7 emitter callsites |
+| 8182 | safeReturnTypeFullViaPipeline | 1 caller |
+| 8294, 8383, 8424 (3 sites) | splitInferredSigWithRegScoped | typedDestructDef + branches |
+| 10653 | lowerRecordLiteralTo | 2-4 callers in lowerField scope |
+| 15728-15729 (2 sites) | bindCtorArg funcRetTypeMap/inferredSigMap | signature change |
+| 16887 | bindCtorArg coerceSubject arm | signature change |
+
+### CLASS C (lazy-thunk indirection via scopeStateRef): 2 sites
+
+| Line | Function | Pattern |
+|------|----------|---------|
+| 12808 | instanceMangledName | `unsafePerformIO $ readIORef globalCgEnv` → must read from scopeStateRef like S3's finalGoSigMap |
+| 14609 + 11164 | mMangled call sites | closure captured into GoIr.GoCall lazy thunk |
+
+### Sub-stages (4 sequential commits, ~1 iter each)
+
+* **S4-a (~11 sites, mechanical)** — Class A lines 7556, 7675, 10439, 10826, 11112, 11190, 11290, 11343, 11515, 12723, 12862
+* **S4-b (~4 sites, mechanical)** — Class A coerceArg path: 7445, 10888, 13284, 14256
+* **S4-c (~9 sites, signature threading)** — Class B: 4570, 6541-6548, 6989, 8182, 8294, 8383, 8424, 10653, 15728-15729, 16887
+* **S4-d (~2 sites, IORef indirection)** — Class C: 12808 (instanceMangledName) + cleanup of 14609, 11164 call sites
+
+### Adversary flag: importsForced barrier (L5353)
+
+**Pre-barrier (read C9 snapshot, Anon_R_* risk):** 4570, 6541-6548, 6989
+
+**Post-barrier (read post-C10 final cgEnv, safe):** all remaining 23 sites
+
+S4-c must handle pre-barrier sites with `patchMissingAnonRecordDecls`
+runtime backstop verified intact at L5544-5577.
+
