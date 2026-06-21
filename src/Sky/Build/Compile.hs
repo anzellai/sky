@@ -5361,7 +5361,16 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
         -- bound value directly — no IORef hop.
         finalGoSigMap = unsafePerformIO $ do
             importsForced `seq` return ()
-            cgEnvFinal <- readIORef globalCgEnv
+            -- v0.17 iter 36 S3 — first reader migration from globalCgEnv
+            -- CAF to LC.lookupCgEnv (scopeStateRef value channel).  S2
+            -- installed _lc_cgEnv at L5329 inside the imports thunk;
+            -- importsForced `seq` ensures that write is visible here.
+            -- Fallback to legacy globalCgEnv preserved during S3-S4
+            -- staging; S5 deletes the fallback alongside the IORef.
+            ctx <- readIORef scopeStateRef
+            cgEnvFinal <- case LC.lookupCgEnv ctx of
+                Just env -> return env
+                Nothing  -> readIORef globalCgEnv
             return $ buildFinalGoSigMap goSigMapFromSolve
                         (Rec._cg_funcSkyToGoTVars cgEnvFinal)
         -- v0.16 PR 1 — snapshot the lowering-time IORef state into a
