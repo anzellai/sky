@@ -861,7 +861,36 @@ getCgEnvFromScope = unsafePerformIO $ do
     ctx <- readIORef scopeStateRef
     case LC.lookupCgEnv ctx of
         Just env -> return env
-        Nothing  -> error "BUG: getCgEnvFromScope forced before scopeStateRef._lc_cgEnv installed"
+        -- v0.17 iter 47 (audit-found regression): production
+        -- 'resetCompileState' always installs initialCgEnv before
+        -- emission begins, so this branch is unreachable on the
+        -- compile path. The legitimate caller is spec-only —
+        -- 'Sky.Build.IsPlainIdent' intentionally exercises
+        -- 'isPlainIdentForTypedRouting' with no env push to verify
+        -- the soundness-floor strict-reject contract. Returning
+        -- 'emptyCgEnv' (vs the old 'error' BUG trap) preserves
+        -- that contract: an empty CodegenEnv → 'goExprGoType'
+        -- returns Nothing for the base → 'intermediatesTyped'
+        -- rejects → wrap path runs as the soundness floor expects.
+        -- The S5 v3 CAF-memoization regression class is not
+        -- re-introduced because NOINLINE forces a fresh IORef
+        -- read on every evaluation.
+        Nothing  -> return emptyCgEnv
+
+
+-- | Empty 'Rec.CodegenEnv' used when 'scopeStateRef' has no env
+-- installed. Matches the shape of 'initialCgEnv' in
+-- 'resetCompileState' (15 fields, all empty maps/sets +
+-- 'Solve.emptySolvedTypes'). Spec callers that legitimately read
+-- outside a wrap site receive this — production compile paths
+-- always install before emission begins, so this branch is
+-- unreachable on the compile path.
+emptyCgEnv :: Rec.CodegenEnv
+emptyCgEnv =
+    Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
+                   Set.empty Set.empty Set.empty Set.empty
+                   Map.empty Map.empty Map.empty Map.empty
+                   Map.empty Map.empty Map.empty
 
 
 -- v0.15.6 #365 — module-hint IORef.
