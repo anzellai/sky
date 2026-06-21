@@ -313,6 +313,13 @@ constrain counter env (A.At region expr) expected = case expr of
         return $ T.CLocal region name expected
 
     Can.VarTopLevel home name -> do
+        -- v0.17 PR-D (iter 32) — strict-HM value-slot gate.
+        -- Compute the gate constraint BEFORE the existing
+        -- CForeign / CLocal decision so the targeted [E2007]
+        -- diagnostic fires first via 'T.CAnd' composition (the
+        -- existing chain still runs alongside; the solver
+        -- short-circuits on first error per the CEqual contract).
+        valueSlotCon <- valueSlotGateForTopLevel region home name expected
         -- ═══════════════════════════════════════════════════════
         -- STRICT-HM ARITY GATE — surface 2 of 3 (cross-module
         -- externals + same-module annotated TypedDefs)
@@ -489,19 +496,35 @@ constrain counter env (A.At region expr) expected = case expr of
                     -- — both NewAppForm refs need to share their
                     -- inner Record1 var via the env's shared CLocal
                     -- path, not via fresh per-call TAlias UF vars).
-                    return $ T.CForeign region
-                        (homeStr ++ "." ++ name) annot expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CForeign region (homeStr ++ "." ++ name) annot expected
+                        ]
                 _ ->
                     -- Unannotated OR non-polymorphic-only-wildcard
                     -- same-module ref: shared env var.
-                    return $ T.CLocal region name expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CLocal region name expected
+                        ]
             else case Map.lookup (homeStr, name) externals of
                 Just annot ->
-                    return $ T.CForeign region (homeStr ++ "." ++ name) annot expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CForeign region (homeStr ++ "." ++ name) annot expected
+                        ]
                 Nothing ->
-                    return $ T.CLocal region name expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CLocal region name expected
+                        ]
 
     Can.VarKernel modName funcName -> do
+        -- v0.17 PR-D (iter 32) — strict-HM value-slot gate.
+        -- Computed before the existing kernel CForeign / fallback
+        -- decision so the gate's [E2007] diagnostic short-circuits
+        -- the legacy CEqual via the CAnd composition.
+        let valueSlotCon = valueSlotGateForKernel env region modName funcName expected
         -- ═══════════════════════════════════════════════════════
         -- STRICT-HM ARITY GATE — surface 1 of 3 (kernel-bound)
         -- ═══════════════════════════════════════════════════════
@@ -549,7 +572,10 @@ constrain counter env (A.At region expr) expected = case expr of
         -- precedence — they're the most carefully audited surface.
         case lookupKernelType modName funcName of
             Just annot ->
-                return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+                return $ T.CAnd
+                    [ valueSlotCon
+                    , T.CForeign region (modName ++ "." ++ funcName) annot expected
+                    ]
             Nothing -> do
                 -- Per-FFI-function Sky-side type seeded by
                 -- 'Sky.Build.Compile.loadAndSeedFfiRegistry' from
@@ -580,8 +606,11 @@ constrain counter env (A.At region expr) expected = case expr of
                 let ffiTypes = _envFfiKernelTypes env
                 case Map.lookup (modName, funcName) ffiTypes of
                     Just annot ->
-                        return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
-                    Nothing -> return T.CTrue
+                        return $ T.CAnd
+                            [ valueSlotCon
+                            , T.CForeign region (modName ++ "." ++ funcName) annot expected
+                            ]
+                    Nothing -> return (T.CAnd [valueSlotCon, T.CTrue])
 
     Can.VarCtor _opts _home _typeName ctorName annot ->
         return $ T.CForeign region ctorName annot expected
@@ -1092,6 +1121,126 @@ maybeEmitArityMismatch region name (Just annot@(Can.Forall freeVars _)) args
         in if d == 0 && s == 1 && headIsUnit
             then T.CArityMismatch region name 0 1
             else T.CTrue
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-D — Strict-HM arity gate (Var-arm value-slot surface).
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- The Var-arm twin of 'arityGateCall'.  Fires when a bare
+-- reference to a binding declared `: () -> X` (or `: A -> B -> ...`,
+-- any D >= 1 shape) flows into a non-arrow value slot.  Limitation
+-- #7's k-b + u-b shapes:
+--
+--     doNow : Task Error Int   -- value slot — non-arrow
+--     doNow = Time.now         -- Time.now : () -> Task Error Int
+--
+--     msg : String             -- value slot — non-arrow
+--     msg = bar                -- bar : () -> String
+--
+-- The decision logic mirrors 'maybeEmitArityMismatch' but reads
+-- the slot's expected type instead of the supplied args.  Skip
+-- when:
+--   * no annotation found (Nothing — fall back to legacy path)
+--   * real polymorphism (any (/= "any") freeVars)
+--   * D = 0 (already covered by PR-C's call-site gate)
+--   * expected is a TVar (unknown shape — let CEqual decide later
+--     so we don't false-fire on let-bindings with no LHS
+--     annotation, where 'constrain' synthesises a fresh TVar)
+--   * expected's unfolded shape is a function (TLambda or TAlias
+--     unfolding to TLambda — caller wants a function and our
+--     declared `: () -> X` satisfies)
+--
+-- Emit 'T.CArityMismatch region name D 0' otherwise — supplied
+-- arity = 0 (no Call wrapping; bare reference at value slot).
+--
+-- Wired at both 'Can.VarKernel' (kernel-bound) and
+-- 'Can.VarTopLevel' (same-module via globalSameModAnnots,
+-- cross-module via globalExternals).  'Can.VarLocal' is
+-- intentionally NOT gated — local bindings carry no separate
+-- annotation channel and the existing 'CLocal' / 'CForeign'
+-- chain handles them via the standard env-var path.
+valueSlotGateForKernel
+    :: Env -> T.Region -> String -> String -> T.Expected T.Type -> T.Constraint
+valueSlotGateForKernel env region modName funcName expected =
+    let annotMb = case lookupKernelType modName funcName of
+            Just a  -> Just a
+            Nothing -> Map.lookup (modName, funcName) (_envFfiKernelTypes env)
+    in maybeEmitValueSlotMismatch region (modName ++ "." ++ funcName) annotMb expected
+
+
+valueSlotGateForTopLevel
+    :: T.Region -> ModuleName.Canonical -> String -> T.Expected T.Type -> IO T.Constraint
+valueSlotGateForTopLevel region home name expected = do
+    currentModule <- readIORef globalCurrentModule
+    let homeStr = ModuleName.toString home
+    annotMb <-
+        if homeStr == currentModule
+            then do
+                sameModAnnots <- readIORef globalSameModAnnots
+                return (Map.lookup name sameModAnnots)
+            else do
+                externals <- readIORef globalExternals
+                return (Map.lookup (homeStr, name) externals)
+    return (maybeEmitValueSlotMismatch region (homeStr ++ "." ++ name) annotMb expected)
+
+
+-- | Decide whether to emit a 'CArityMismatch' constraint for the
+-- value-slot case.
+maybeEmitValueSlotMismatch
+    :: T.Region -> String -> Maybe T.Annotation -> T.Expected T.Type -> T.Constraint
+maybeEmitValueSlotMismatch _region _name Nothing _expected = T.CTrue
+maybeEmitValueSlotMismatch region name (Just annot@(Can.Forall freeVars _)) expected
+    | any (/= "any") freeVars = T.CTrue
+    | otherwise =
+        let d = declaredArity annot
+            slotShape = expectedSlotShape (expectedTypeOf expected)
+        in case slotShape of
+            SlotShapeValue
+                | d >= 1 -> T.CArityMismatch region name d 0
+            _ -> T.CTrue
+
+
+-- | Extract the 'Type' payload from an 'Expected' wrapper.
+expectedTypeOf :: T.Expected T.Type -> Can.Type
+expectedTypeOf (T.NoExpectation t)         = t
+expectedTypeOf (T.FromContext _ _ t)       = t
+expectedTypeOf (T.FromAnnotation _ _ _ t)  = t
+
+
+-- | Classify the structural shape of an expected slot type so the
+-- value-slot gate can decide.
+--
+--   SlotShapeUnknown — the expected type is a fresh UF var (TVar);
+--                      we don't know what shape the slot expects
+--                      yet; defer to CEqual.
+--   SlotShapeArrow   — the expected type is a TLambda (peeled
+--                      through head-aliases); the slot wants a
+--                      function; our `: () -> X` declared shape
+--                      satisfies the slot; no gate fire.
+--   SlotShapeValue   — the expected type is a concrete non-arrow
+--                      structured type (TType / TRecord / TTuple /
+--                      TUnit); the slot wants a VALUE; our
+--                      `: () -> X` is a function — gate fires when
+--                      D >= 1.
+data SlotShape = SlotShapeUnknown | SlotShapeArrow | SlotShapeValue
+
+
+expectedSlotShape :: Can.Type -> SlotShape
+expectedSlotShape ty = case ty of
+    Can.TVar _              -> SlotShapeUnknown
+    Can.TLambda _ _         -> SlotShapeArrow
+    Can.TAlias _ _ _ aliasT -> expectedSlotShape (aliasInnerType aliasT)
+    Can.TType _ _ _         -> SlotShapeValue
+    Can.TRecord _ _         -> SlotShapeValue
+    Can.TTuple _ _ _        -> SlotShapeValue
+    Can.TUnit               -> SlotShapeValue
+
+
+-- | Extract the alias's filled / hoisted body for structural peel.
+aliasInnerType :: Can.AliasType -> Can.Type
+aliasInnerType (Can.Hoisted t) = t
+aliasInnerType (Can.Filled t)  = t
 
 
 -- ═══════════════════════════════════════════════════════════

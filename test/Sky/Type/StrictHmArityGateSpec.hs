@@ -118,9 +118,11 @@ spec = do
         -- k-b: Time.now has Sky-side type `() -> Task Error Int`.
         -- Reading it bare in a `Task Error Int` value-slot is a
         -- type error (the value IS the function, not the result
-        -- of calling it).  The gate must catch this.
+        -- of calling it).  PR-D (iter 32) wires the gate at the
+        -- 'Can.VarTopLevel' arm via 'valueSlotGateForTopLevel' —
+        -- flipped to live CompileErr assertion.
         it "k-b: rejects bare Time.now in Task Error Int slot (kernel arrow)" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -136,18 +138,16 @@ spec = do
                     , "    in"
                     , "        println \"done\""
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileOk _ -> expectationFailure
-            --           "expected HM arity error, got CompileOk"
-            --       CompileErr e ->
-            --           (e `shouldSatisfy`
-            --              \msg -> any (`isInfixOf` msg)
-            --                  [ "must be called as Time.now ()"
-            --                  , "declared () -> Task Error Int cannot flow into Task Error Int slot"
-            --                  ])
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure
+                    "expected E2007 arity mismatch, got CompileOk"
+                CompileErr e -> do
+                    e `shouldSatisfy` ("[E2007]" `isInfixOf`)
+                    e `shouldSatisfy` ("Arity mismatch" `isInfixOf`)
+                    e `shouldSatisfy` ("Time" `isInfixOf`)
+                    e `shouldSatisfy` ("1-arg" `isInfixOf`)
+                    e `shouldSatisfy` ("0 args" `isInfixOf`)
 
         ------------------------------------------------------------
         -- NEGATIVE: user-binding mismatches
@@ -186,7 +186,7 @@ spec = do
         -- mismatch, not silently degrade through the wildcard
         -- branch.
         it "u-b: rejects bare bar in String slot when bar : () -> String (user arrow)" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -200,13 +200,16 @@ spec = do
                     , "main ="
                     , "    println msg"
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileOk _ -> expectationFailure
-            --           "expected HM arity error, got CompileOk"
-            --       CompileErr _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure
+                    "expected E2007 arity mismatch, got CompileOk"
+                CompileErr e -> do
+                    e `shouldSatisfy` ("[E2007]" `isInfixOf`)
+                    e `shouldSatisfy` ("Arity mismatch" `isInfixOf`)
+                    e `shouldSatisfy` ("bar" `isInfixOf`)
+                    e `shouldSatisfy` ("1-arg" `isInfixOf`)
+                    e `shouldSatisfy` ("0 args" `isInfixOf`)
 
         ------------------------------------------------------------
         -- POSITIVE: shapes that MUST keep compiling after step-4
