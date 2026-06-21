@@ -38,6 +38,7 @@ import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Type.StrictHmArityGateSpec
 import qualified Sky.Type.ArityMismatchScaffoldSpec
+import qualified Sky.Type.DeclaredArityHelperSpec
 import qualified Sky.Type.Limitation7CurrentLooseAcceptanceSpec
 import qualified Sky.Build.GoTypeAdtSpec
 import qualified Sky.Build.GoTypeRoundTripSpec
@@ -735,6 +736,12 @@ allSpecs fastMode = do
     -- caller wiring.
     describeT "Sky.Type.ArityMismatchScaffold"
                                          Sky.Type.ArityMismatchScaffoldSpec.spec
+    -- v0.17 PR-B (iter 30) — pure declaredArity helper for the
+    -- strict-HM arity gate.  Locks the structural T.Annotation
+    -- → Int walk that PR-C/PR-D will read.  No solver interaction
+    -- — pure structural unit tests.
+    describeT "Sky.Type.DeclaredArityHelper"
+                                         Sky.Type.DeclaredArityHelperSpec.spec
     -- v0.17 Limitation #7 closure / step-1 — "red-then-green"
     -- reproduction gate.  Six fixtures: four NEGATIVE cases
     -- (loose-shape applications currently accepted by Sky lowering —

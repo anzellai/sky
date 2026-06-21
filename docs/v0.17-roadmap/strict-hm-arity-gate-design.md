@@ -110,17 +110,70 @@ step to the externals lookup path.
 4. Empty constraint at first — no callers wire it up yet. Existing
    cabal-tests stay green (no behaviour change).
 
-### PR-B — `declaredArity` helper + cross-module externals verification (iter 30)
+### PR-B — `declaredArity` helper + cross-module externals verification (iter 30) — SHIPPED
 
-1. Add `Sky.Type.Constrain.Expression.declaredArity` pure helper.
-2. Trace `Compile.hs` externals collection to verify
-   `globalExternals` `T.Annotation` values come from post-
-   `unfoldHeadAlias` canonicalisation. Document the trace in this
-   doc. If a gap is found, add a pre-gate unfold step.
-3. Add a new SAME-MODULE-CROSS-FILE test fixture to
-   `StrictHmArityGateSpec` covering `myHandler : Handler` defined
-   in a dep module, called from entry — confirms verification
-   task pre-gate.
+Status: **SHIPPED 2026-06-21**. Three artifacts landed:
+
+1. **Pure helper.** `Sky.Type.Constrain.Expression.declaredArity ::
+   T.Annotation -> Int` — exported (added to module export list).
+   Locked by `Sky.Type.DeclaredArityHelperSpec` (9 cases):
+   - bare-value shapes return 0
+   - 1-arg / 2-arg / 3-arg arrows return the right count
+   - polymorphic Forall returns the same arity as monomorphic
+     (helper is structural; caller does the wildcard-`any` gate)
+   - wildcard-only Forall (`view : Model -> any`) returns 1
+   - unfolded HeadAlias shape (`TLambda Request (Task Error
+     Response)`) returns 1 — the load-bearing PR #123 anchor
+
+2. **Externals trace verified safe.** The path from a dep
+   `myHandler : Handler` declaration to the entry module's
+   `globalExternals` lookup is:
+
+       Canonicalise/Module.hs
+         canonicaliseTypedDef  -- includes unfoldHeadAlias via
+                               -- arrowResultN + arrowArgs
+       → Can.TypedDef name freeVars patterns body retTy
+         (retTy is now TLambda-shaped, head TAlias unfolded)
+
+       Sky.Type.Solve  (solving the dep module)
+         emits T.Type per region, including the dep's TypedDefs
+         carrying the unfolded TLambda body
+
+       Compile.hs:1962 (continueCompile entry-module branch)
+         depSolved : [(String, Map.Map String T.Type)]
+                     ← Solve.solveWithInstancesAndRegionsImpls
+
+       Compile.hs:7866 buildCrossModuleExternalsWithMods validDeps depSolved
+         maps T.Type → T.Annotation via:
+           generaliseToAnnotation . fixupHomes
+         The fixupHomes pass only rewrites empty-home TType nodes
+         to their real defining module — it does NOT re-fold
+         TLambda chains or re-introduce TAlias heads.
+
+       Sky.Type.Constrain.Expression:globalExternals
+         IORef stores the cross-module Map keyed by (modName,
+         name).  declaredArity walks the unfolded TLambda body
+         → returns 1 for cross-module `myHandler : Handler`.
+
+   Same-module path uses `globalSameModAnnots` (collected by
+   `collectSameModAnnots` over the entry module's own decls) —
+   same canonicalisation pipeline, same head-alias unfold.
+
+   No pre-gate unfold step needed.  PR-C can consult
+   `declaredArity` against either `globalExternals` or
+   `globalSameModAnnots` and trust the result.
+
+3. **Cross-module regression.** New `h-a-cross` positive in
+   `Sky.Type.StrictHmArityGateSpec`: defines `Handler`
+   (re-exported from `Sky.Http.Server`) + `myHandler : Handler`
+   in dep module `Lib.Handlers`; entry imports + references
+   `Handlers.myHandler`.  Compiles clean — locks the externals
+   trace above so a future refactor breaking the unfold
+   pipeline fails fast at this gate before reaching PR-C/PR-D.
+
+PR-B is purely additive — no caller wires the helper yet.
+Existing cabal-tests stay green (no behaviour change).  The
+gate-fire wiring lands in PR-C.
 
 ### PR-C — Wire gate at `constrainCall` for k-a + u-a (iter 31)
 

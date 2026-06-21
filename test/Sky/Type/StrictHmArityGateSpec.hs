@@ -69,7 +69,7 @@ module Sky.Type.StrictHmArityGateSpec (spec) where
 
 import Test.Hspec
 
-import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess, compileInProcessMulti)
 
 
 -- | Marker for step-4 — every pending case below carries this
@@ -297,6 +297,54 @@ spec = do
             case result of
                 CompileErr e -> expectationFailure
                     ("real polymorphism must stay flexible: " ++ e)
+                CompileOk _ -> return ()
+
+        -- h-a-cross: HeadAlias positive — cross-module variant.
+        -- v0.16.4 PR #123 unfolded the head TAlias inside
+        -- 'Sky.Canonicalise.Module' so 'myHandler : Handler' compiles
+        -- when 'Handler' is the alias.  This anchor verifies that
+        -- the SAME-MODULE-CROSS-FILE shape (dep module declares the
+        -- alias + the handler; entry imports + calls it) also
+        -- survives — load-bearing for PR-B step 2's externals trace
+        -- (Compile.hs:7866 'buildCrossModuleExternalsWithMods' →
+        -- generaliseToAnnotation over post-canonicalisation
+        -- 'T.Type' — meaning 'globalExternals' annotations are
+        -- already head-alias-unfolded when PR-C's gate consults
+        -- 'declaredArity').
+        --
+        -- See docs/v0.17-roadmap/strict-hm-arity-gate-design.md for
+        -- the full trace.
+        it "h-a-cross: HeadAlias positive — cross-module myHandler : Handler compiles" $ do
+            let entrySrc = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Std.Log exposing (println)"
+                    , "import Sky.Core.Task as Task"
+                    , "import Lib.Handlers as Handlers"
+                    , ""
+                    , "main ="
+                    , "    let _ = Handlers.myHandler"
+                    , "    in"
+                    , "        println \"ok\""
+                    ]
+            let depSrc = unlines
+                    [ "module Lib.Handlers exposing (myHandler)"
+                    , ""
+                    , "import Sky.Core.Task as Task"
+                    , "import Sky.Http.Server as Server"
+                    , "import Sky.Http.Server exposing (Handler, Request, Response)"
+                    , ""
+                    , "myHandler : Handler"
+                    , "myHandler req ="
+                    , "    Task.succeed (Server.text \"ok\")"
+                    ]
+            result <- compileInProcessMulti
+                [ ("src/Main.sky", entrySrc)
+                , ("src/Lib/Handlers.sky", depSrc)
+                ]
+            case result of
+                CompileErr e -> expectationFailure
+                    ("cross-module HeadAlias positive must compile: " ++ e)
                 CompileOk _ -> return ()
 
         -- wa-a: Wildcard-any-only positive (preserved).  `view :

@@ -350,6 +350,7 @@ test-suite sky-tests
       Sky.Build.CpsStackConstantBound.IndexedMapSpec
       Sky.Build.CpsStackConstantBound.ConcatMapSpec
       Sky.Type.ArityMismatchScaffoldSpec
+      Sky.Type.DeclaredArityHelperSpec
       Sky.Build.CpsStackConstantBound.ResultCombineSpec
       Sky.Build.CpsStackConstantBound.MaybeCombineSpec
       Sky.Build.FfiKernelAliasSpec

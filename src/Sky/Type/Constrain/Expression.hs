@@ -16,6 +16,7 @@ module Sky.Type.Constrain.Expression
     , stringType
     , boolType
     , charType
+    , declaredArity
     )
     where
 
@@ -3812,3 +3813,66 @@ subTypeOfMsg = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
 -- the user imports from.
 decoderOf :: T.Type -> T.Type
 decoderOf inner = T.TType (ModuleName.Canonical "") "Decoder" [inner]
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-B — Strict-HM arity gate, pure helper
+-- (paired design spec: docs/v0.17-roadmap/strict-hm-arity-gate-design.md)
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- 'declaredArity ann' counts the leading 'T.TLambda' arrows in
+-- @ann@'s body — i.e. how many parameters the annotation declares
+-- the binding takes.  Pure structural walk.  No fresh UF vars; no
+-- 'Instantiate.fromAnnotation' (which returns a 'T.Variable', not
+-- a 'T.Type', and would force us into the solver before we knew the
+-- arity).
+--
+-- Examples (Sky-side annotation → declaredArity):
+--
+--     Uuid.v4    : String                            → 0
+--     Time.now   : () -> Task Error Int              → 1
+--     Server.get : String -> Handler -> Server.Route → 2
+--     myHandler  : Handler                           → see below
+--
+-- The "myHandler : Handler" case is the verification anchor for
+-- PR-B step 2 (cross-module HeadAlias safety).  By the time the
+-- annotation reaches 'globalExternals' / 'globalSameModAnnots',
+-- canonicalisation (Sky.Canonicalise.Module's 'arrowResultN' +
+-- 'arrowArgs' helpers; v0.16.4 PR #123) has UNFOLDED the head
+-- 'TAlias' so the body the gate walks is already
+-- @TLambda Request (TType "Task" [...])@ — declaredArity returns
+-- 1 (one arg, 'Request') and the gate behaves correctly when a
+-- user writes @myHandler req@.  This is preserved across
+-- cross-module reads because 'buildCrossModuleExternalsWithMods'
+-- at 'Sky.Build.Compile.hs:7866' wraps the dep solver's
+-- 'T.Type' (already post-canonicalisation, head-alias-unfolded)
+-- via 'generaliseToAnnotation'.  See the design spec for the
+-- full trace.
+--
+-- USAGE GATE — wildcard-`any` filter MUST gate calls to
+-- declaredArity:
+--
+--     case envLookup name env of
+--         Just ann@(T.Forall freeVars _)
+--             | any (/= "any") freeVars ->
+--                 -- Real polymorphism — fresh per-call-site
+--                 -- instantiation handles arity flexibly via
+--                 -- CForeign.  Do NOT use declaredArity here;
+--                 -- v0.15.1's same-module polymorphic
+--                 -- re-instantiation depends on it.
+--                 polymorphicArm ann
+--         Just ann ->
+--             -- Wildcard-only OR monomorphic.  declaredArity is
+--             -- the load-bearing shape.  Use the strict gate.
+--             strictArm (declaredArity ann)
+--
+-- The above caller wiring is PR-C (iter 31).  This helper ships
+-- in PR-B (iter 30) so 'Sky.Type.StrictHmArityGateSpec' /
+-- 'Sky.Type.Limitation7CurrentLooseAcceptanceSpec' can be
+-- exercised against it without a behaviour change in
+-- 'constrainCall'.
+declaredArity :: T.Annotation -> Int
+declaredArity (Can.Forall _ ty) = go (0 :: Int) ty
+  where
+    go n (Can.TLambda _ to) = let n' = n + 1 in n' `seq` go n' to
+    go n _                  = n
