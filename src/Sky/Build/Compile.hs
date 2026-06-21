@@ -4594,7 +4594,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- module collisions).
               depSolved = Solve.withCurrentModule
                               (Just (ModuleName.toString (Can._name canMod)))
-                              (Rec._cg_solvedTypes getCgEnv)
+                              (Rec._cg_solvedTypes getCgEnvFromScope)
               def = etaExpandPointFreeScoped depSolved def0
               -- For TypedDef, the 5th field is the RETURN type only;
               -- per-pattern arg types live in `typedPats :: [(Pat, Type)]`.
@@ -4624,7 +4624,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- exists, fall back to HM-inferred type. TVars become Go
               -- type parameters (T4b) so partially-inferred functions
               -- get typed generically instead of falling back to `any`.
-              env = getCgEnv
+              env = getCgEnvFromScope
               -- v0.13 typed lowerer: the sig tables (`_cg_funcInferredSigs`,
               -- `_cg_funcRetType`) are keyed with the `goSafeName`-mangled
               -- form (`Sky_Core_List_map_`, not `Sky_Core_List_map`) — see
@@ -6565,14 +6565,14 @@ generateDef home def0 solvedTypes =
                 -- covariance via generic inference).
                 let baseTy = foldr T.TLambda retTy (map snd typedPats)
                 in  splitInferredSigWithRegScoped Nothing
-                        (Rec._cg_recordAliases getCgEnv)
-                        (Rec._cg_fieldIndex getCgEnv)
+                        (Rec._cg_recordAliases getCgEnvFromScope)
+                        (Rec._cg_fieldIndex getCgEnvFromScope)
                         (length typedPats)
                         baseTy
             (_, _, Just funcType) ->
                 splitInferredSigWithRegScoped Nothing
-                    (Rec._cg_recordAliases getCgEnv)
-                    (Rec._cg_fieldIndex getCgEnv)
+                    (Rec._cg_recordAliases getCgEnvFromScope)
+                    (Rec._cg_fieldIndex getCgEnvFromScope)
                     (length params)
                     funcType
             _ -> ([], replicate (length params) "any", "any")
@@ -7013,7 +7013,7 @@ goZeroValue t = case t of
       --   * Unknown (FFI-opaque, unresolved)   → Nothing — keep
       --     the IIFE `func() any` rather than risk invalid Go.
       | isBareCapName t ->
-          let env = getCgEnv
+          let env = getCgEnvFromScope
               enums  = Rec._cg_enumNames env
               unions = Rec._cg_unionNames env
               -- The Go type string may be module-qualified
@@ -8206,7 +8206,7 @@ rendererFullLegacyEnabled = unsafePerformIO $ do
 -- function isn't generic.
 safeReturnTypeFullViaPipeline :: T.Type -> String
 safeReturnTypeFullViaPipeline ty =
-    let ctx = (GoType.buildMappingContext GoType.defaultRenderEnv getCgEnv)
+    let ctx = (GoType.buildMappingContext GoType.defaultRenderEnv getCgEnvFromScope)
                   { GoType.mcTVarsToAny = True }
     in GoType.renderGoType GoType.defaultRenderEnv
             (GoType.mapSkyTypeToGo ctx ty)
@@ -8318,7 +8318,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
                        then ""
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
-            env = getCgEnv
+            env = getCgEnvFromScope
             allAliases = Rec._cg_recordAliases env
             -- Try all known module prefixes so cross-module record
             -- aliases resolve correctly (e.g. "Model" → "State_Model_R").
@@ -8407,7 +8407,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
             -- v0.17 Cause H step 2 — same cycle guard as solvedTypeToGo.
             cycleHit = Set.member base seen
             recCycle = safeReturnTypeFullBounded (fuel - 1) (Set.insert base seen)
-            env = getCgEnv
+            env = getCgEnvFromScope
             allAliases = Rec._cg_recordAliases env
             qualifiedCandidates =
                 [ p ++ "_" ++ name
@@ -8448,7 +8448,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
     -- without this path the type would degrade to `any`.
     T.TRecord fields _ ->
         let fieldNames = Map.keys fields
-            env = getCgEnv
+            env = getCgEnvFromScope
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName -> aliasName ++ "_R"
             Nothing -> "any"
@@ -10677,7 +10677,7 @@ lowerRecordLiteralTo
 lowerRecordLiteralTo targetTy fields =
     let entries = Map.toList fields
         fieldNames = map fst entries
-        env = getCgEnv
+        env = getCgEnvFromScope
         aliasMatch = Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames
         aliasDecl = aliasMatch >>= flip Map.lookup (Rec._cg_aliases env)
         -- Parse `Cfg_R[Msg, OtherMsg]` → ["Msg", "OtherMsg"].
@@ -11696,7 +11696,7 @@ emitTypedTuple3 ctx slotTy a b c =
 -- pattern-match on the returned list shape.
 tupleElementSlots :: Can.Expr -> Can.Expr -> [Can.Expr] -> Maybe [GoType.GoType]
 tupleElementSlots a b extras =
-    let solved = Rec._cg_solvedTypes getCgEnv
+    let solved = Rec._cg_solvedTypes getCgEnvFromScope
         elements = a : b : extras
         slots = map (fmap solvedTypeToGoTyped . inferExprType solved) elements
     in sequence slots
@@ -13447,7 +13447,7 @@ splitCurriedFuncStr s = case splitFuncTypeStr s of
 --   }
 buildCurryAdapter :: String -> [String] -> String -> Maybe GoIr.GoExpr
 buildCurryAdapter name inputTys finalRet =
-    let env = getCgEnv
+    let env = getCgEnvFromScope
         declaredParams = Map.findWithDefault [] name (Rec._cg_funcParamTypes env)
         declaredRet = Map.findWithDefault "any" name (Rec._cg_funcRetType env)
         n = length inputTys
@@ -13778,7 +13778,7 @@ coerceArg ctx mSrc e ty
     , Just src <- mSrc
     , Just aliasName <- aliasBaseFromCanExpr src
     , aliasName ++ "_R" == targetBase
-    , let solved = Rec._cg_solvedTypes getCgEnv
+    , let solved = Rec._cg_solvedTypes getCgEnvFromScope
     , case inferExprType solved src of
           Just srcTy -> not (hasUnresolvedSkyTVar solved srcTy)
           Nothing    -> True
@@ -14175,7 +14175,7 @@ parametricAliasBase ty =
 --     `X_R`).
 aliasBaseFromCanExpr :: Can.Expr -> Maybe String
 aliasBaseFromCanExpr src =
-    let env = getCgEnv
+    let env = getCgEnvFromScope
         solved = Rec._cg_solvedTypes env
     in case inferExprType solved src of
         Just (T.TAlias homeMod aliasName _ _) ->
@@ -14666,7 +14666,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
                      else map (\c -> if c == '.' then '_' else c) modStr
                           ++ "_" ++ goSafeName name
             _ -> ""
-        env = getCgEnv
+        env = getCgEnvFromScope
         paramTypes = Map.findWithDefault [] qualName
                        (Rec._cg_funcParamTypes env)
         suppliedTypes = take (length suppliedArgs) paramTypes
@@ -14878,7 +14878,7 @@ binopToGo ctx op left right =
     -- is String, so a naive `"prefix " + rt.Crypto_sha256(data)`
     -- would fail Go's static type check.  Falls back to runtime
     -- helpers in all other cases (correct, just slower).
-    let solved   = Rec._cg_solvedTypes getCgEnv
+    let solved   = Rec._cg_solvedTypes getCgEnvFromScope
         leftTy   = inferExprType solved left
         rightTy  = inferExprType solved right
         bothAre  prim = leftTy == Just prim && rightTy == Just prim
@@ -15061,7 +15061,7 @@ letToGo _outerCtx mExpectedGo def body =
     -- here for region-types — the prior `let ctx = …` read was
     -- only used to plumb the IORef-backed region map into
     -- `letBindingType`, and that machinery is gone.
-    let solved = Rec._cg_solvedTypes getCgEnv
+    let solved = Rec._cg_solvedTypes getCgEnvFromScope
         -- v0.13 typed lowerer: register a primitive-typed let-binding
         -- under the body's scope so Go-native binops fire on it.
         -- Restricted to primitives — broadening to record/ADT types
@@ -15207,7 +15207,7 @@ loweredDiscard ctx body@(A.At _ inner) = case inner of
     Can.Let{}  -> typed
     _          -> exprToGo ctx body
   where
-    typed = case inferExprType (Rec._cg_solvedTypes getCgEnv) body of
+    typed = case inferExprType (Rec._cg_solvedTypes getCgEnvFromScope) body of
         Just t ->
             let gt = solvedTypeToGo t
             in if isEmittableGoType gt
@@ -15463,7 +15463,7 @@ defToStmts ctx def = case def of
             -- no `scopeStateRef` snapshot needed here.  The region
             -- map flows in through `Solve.SolvedTypes._stRegions`
             -- (populated by P37a for every solver entry point).
-            let solved = Rec._cg_solvedTypes getCgEnv
+            let solved = Rec._cg_solvedTypes getCgEnvFromScope
             in case letBindingType solved name body of
                 Just dt ->
                     letBindStmts name (exprToGoExpect ctx dt body)
@@ -15496,7 +15496,7 @@ defToStmts ctx def = case def of
         -- same-named local lambdas typing against whichever
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
-        let solved = Rec._cg_solvedTypes getCgEnv
+        let solved = Rec._cg_solvedTypes getCgEnvFromScope
             -- v0.17 PR-6b — region-based scope lookup is the sole
             -- source of truth here.  Pre-v0.17, this site consulted
             -- the `globalCurrentDepModule` IORef as a fallback when
@@ -15598,7 +15598,7 @@ caseToGo ctx mExpectedGo subject branches =
         -- inferred typed shape and routing the subject as `_tFfi`
         -- (direct field access), `n` becomes `int` and Go's type
         -- inference works through Test.equal and friends.
-        solvedTypes = Rec._cg_solvedTypes getCgEnv
+        solvedTypes = Rec._cg_solvedTypes getCgEnvFromScope
         -- Cycle 3 task #330 / Dev P40 (skyshop Db.snapshotToDict panic):
         -- when the subject is a bare variable reference, treat the
         -- per-region HM type map as authoritative and do NOT fall back
@@ -15752,8 +15752,8 @@ caseToGo ctx mExpectedGo subject branches =
                 -> True
             _ -> False
 
-        funcRetTypeMap = Rec._cg_funcRetType getCgEnv
-        inferredSigMap = Rec._cg_funcInferredSigs getCgEnv
+        funcRetTypeMap = Rec._cg_funcRetType getCgEnvFromScope
+        inferredSigMap = Rec._cg_funcInferredSigs getCgEnvFromScope
 
         isConcreteResultOrMaybe t =
             let isResult = "rt.SkyResult[" `List.isPrefixOf` t
@@ -16911,7 +16911,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             -- generic struct construction — Tier 4).
             T.TType modName typeName []
                 | let goName = unionGoTypeName modName typeName
-                , Set.member goName (Rec._cg_unionNames getCgEnv) ->
+                , Set.member goName (Rec._cg_unionNames getCgEnvFromScope) ->
                     Just ("rt.Coerce[" ++ goName ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
@@ -17614,7 +17614,7 @@ inferExprType types (A.At r e) = case e of
                         -- top-level keys. Fall back to the user's record
                         -- alias: find an alias whose field-set matches
                         -- and read the field's concrete type from there.
-                        let env = getCgEnv
+                        let env = getCgEnvFromScope
                             fieldSet = Set.fromList (Map.keys fields)
                             aliasMatch = matchAliasByFieldSet env fieldSet
                         in case aliasMatch of
@@ -17642,7 +17642,7 @@ inferExprType types (A.At r e) = case e of
             -- alias map in case the alias body wasn't unfolded into
             -- TAlias form (older HM paths).
             Just (T.TType _ aliasName _) ->
-                let env = getCgEnv
+                let env = getCgEnvFromScope
                     matchAlias = Map.lookup aliasName (Rec._cg_aliases env)
                 in case matchAlias of
                     Just (Can.Alias _ (T.TRecord fields _)) ->
@@ -18573,7 +18573,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
             _ -> Nothing
         lookupFnInputAt :: ModuleName.Canonical -> String -> Int -> Maybe String
         lookupFnInputAt home name idx =
-            let env = getCgEnv
+            let env = getCgEnvFromScope
                 qualKey = map (\c -> if c == '.' then '_' else c)
                     (ModuleName.toString home) ++ "_" ++ name
             in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
@@ -18587,7 +18587,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
         inferRetFromTopLevel :: Can.Expr -> Maybe String
         inferRetFromTopLevel fn = case fn of
             A.At _ (Can.VarTopLevel home name) ->
-                let env = getCgEnv
+                let env = getCgEnvFromScope
                     qualKey = map (\c -> if c == '.' then '_' else c)
                         (ModuleName.toString home) ++ "_" ++ name
                 in case Map.lookup qualKey (Rec._cg_funcRetType env) of
@@ -19384,7 +19384,7 @@ solvedTypeToGoViaPipelineFlat ty =
     -- when the rendered string has no trailing @[…]@).  Touches
     -- only the rendered String, so the structural pipeline stays
     -- byte-identical for every non-parametric case.
-    let cgEnv = getCgEnv
+    let cgEnv = getCgEnvFromScope
         ctx = (GoType.buildMappingContext
                   GoType.defaultRenderEnv cgEnv)
                   { GoType.mcTVarsToAny = True }
