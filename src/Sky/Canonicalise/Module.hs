@@ -63,7 +63,7 @@ filterDepByExports d = case _dep_exports d of
 -- FFI seed.  Used by the LSP single-module path where the
 -- compiler driver isn't in scope.
 canonicalise :: Src.Module -> Either String Can.Module
-canonicalise = canonicaliseWithDeps Map.empty Map.empty
+canonicalise = canonicaliseWithDeps Map.empty Map.empty Map.empty
 
 
 -- | Canonicalise a source module given a map of known dependency modules
@@ -99,7 +99,7 @@ canonicaliseWithDiagnostics path deps srcMod =
     -- phases), this wrapper shrinks.  Single-module-style: LSP
     -- callers don't have an FFI seed available, so pass
     -- 'Map.empty' (kernel surface remains the static fallback).
-    case canonicaliseWithDeps deps Map.empty srcMod of
+    case canonicaliseWithDeps deps Map.empty Map.empty srcMod of
         Right canMod -> Right canMod
         Left err     -> Left [legacyToDiag path err]
 
@@ -161,9 +161,35 @@ canonicaliseWithDeps
     -> Map.Map String [String]
     -- ^ FFI kernel functions (sourced from the loader).
     --   Empty is the LSP single-module default.
+    -> Map.Map String String
+    -- ^ v0.17 close P1 step 6b — FFI kernel modules
+    --   (sourced from @LoadedFfiTables._lft_kernelModules@).
+    --   Empty is the LSP single-module default — kernel
+    --   resolution falls back to the static surface in
+    --   'Env.staticKernelModules'.
     -> Src.Module
     -> Either String Can.Module
-canonicaliseWithDeps deps ffiKernelFns srcMod =
+canonicaliseWithDeps deps ffiKernelFns ffiKernelMods srcMod =
+    let
+        -- v0.17 close P1 step 6b — merge the static + FFI
+        -- kernel modules at the entry boundary so every helper
+        -- below reads the value channel instead of the legacy
+        -- @kernelModules ()@ IORef.  Threaded as a parameter to
+        -- the helpers AND stamped onto the threaded 'Env.Env'
+        -- so 'Canonicalise.Expression.resolveQualVar' reads it
+        -- via @Env._kernelMods env@.
+        kernelMods = Map.union Env.staticKernelModules ffiKernelMods
+    in canonicaliseImpl deps ffiKernelFns kernelMods srcMod
+
+
+canonicaliseImpl
+    :: Map.Map String DepInfo
+    -> Map.Map String [String]
+    -> Map.Map String String
+    -- ^ Pre-merged kernel modules map (static + FFI).
+    -> Src.Module
+    -> Either String Can.Module
+canonicaliseImpl deps ffiKernelFns kernelMods srcMod =
     let
         modName = case Src._name srcMod of
             Just (A.At _ segs) -> ModuleName.fromRaw segs
@@ -192,7 +218,7 @@ canonicaliseWithDeps deps ffiKernelFns srcMod =
         -- map so 'allExposedNames' (inside
         -- 'detectExposingCollisions') reads the value channel.
         ambiguous = detectExposingCollisions
-                        ffiKernelFns deps (Src._imports srcMod)
+                        ffiKernelFns kernelMods deps (Src._imports srcMod)
         localNames = Set.fromList
             [ nm
             | A.At _ v <- Src._values srcMod
@@ -201,7 +227,7 @@ canonicaliseWithDeps deps ffiKernelFns srcMod =
         collisions = checkAmbiguousUses ambiguous localNames srcMod
 
         -- P2: reject `import M exposing (name)` when M doesn't export name.
-        importHidingErrors = checkImportExposingAgainstDep deps (Src._imports srcMod)
+        importHidingErrors = checkImportExposingAgainstDep kernelMods deps (Src._imports srcMod)
 
         -- D5 (Cycle 4): reject when two imports bind the SAME qualifier
         -- but resolve to DIFFERENT canonical modules. Without this guard
@@ -209,7 +235,7 @@ canonicaliseWithDeps deps ffiKernelFns srcMod =
         -- `_qualVars` (union) maps disagree on which module a qualified
         -- TYPE reference belongs to, producing the dishonest
         -- "Model vs Model" error at the type checker.
-        importAliasCollisions = detectImportAliasCollisions (Src._imports srcMod)
+        importAliasCollisions = detectImportAliasCollisions kernelMods (Src._imports srcMod)
 
         -- v0.15.42 audit §3.2 — Prelude-shadow gate. Reject any user-
         -- defined ADT whose type name OR any constructor name collides
@@ -226,12 +252,15 @@ canonicaliseWithDeps deps ffiKernelFns srcMod =
         -- Maybe defines `Maybe(Just, Nothing)` etc.
         preludeShadowErrors = detectPreludeShadowing modName (Src._unions srcMod)
 
-        -- Build environment from imports
-        env0 = Env.initialEnv modName
+        -- Build environment from imports.  v0.17 close P1 step 6b
+        -- stamps the merged kernel-modules map onto the env so
+        -- 'Canonicalise.Expression.resolveQualVar' reads it via
+        -- @Env._kernelMods env@ without an extra parameter.
+        env0 = (Env.initialEnv modName) { Env._kernelMods = kernelMods }
         -- v0.17 close P1 step 5 — thread FFI kernel functions
         -- map into 'processImport' so 'kernelVarsFor' reads the
         -- value channel instead of the legacy IORef.
-        env1 = foldl (processImport ffiKernelFns deps modName)
+        env1 = foldl (processImport ffiKernelFns kernelMods deps modName)
                      env0 (Src._imports srcMod)
 
         -- Register top-level declarations in env
@@ -274,10 +303,10 @@ canonicaliseWithDeps deps ffiKernelFns srcMod =
         -- or zero-deps `canonicalise`), cross-module constructors aren't
         -- registered in env4, so references like `HomePage` from
         -- `import State exposing (..)` would be false positives.
-        hasUserImports = any (not . isKernelImport) (Src._imports srcMod)
+        hasUserImports = any (not . isKernelImport kernelMods) (Src._imports srcMod)
         unboundErrs
             | Map.null deps && hasUserImports = []
-            | otherwise = collectUnboundNameErrors env4 srcMod
+            | otherwise = collectUnboundNameErrors kernelMods env4 srcMod
     in case (importAliasCollisions, importHidingErrors, preludeShadowErrors, collisions, unboundErrs) of
         (err:_, _, _, _, _) -> Left err
         (_, err:_, _, _, _) -> Left err
@@ -362,15 +391,18 @@ buildImportAliasMap srcMod =
 --   `import M exposing (a, B(..), C(Ctor1))`
 -- verify that `a`, `B`, `C`, and `Ctor1` are actually exported by M.
 -- Returns one error string per mismatch (in source order).
-checkImportExposingAgainstDep :: Map.Map String DepInfo -> [Src.Import] -> [String]
-checkImportExposingAgainstDep deps imps = concatMap check imps
+checkImportExposingAgainstDep
+    :: Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
+    -> Map.Map String DepInfo -> [Src.Import] -> [String]
+checkImportExposingAgainstDep kernelMods deps imps = concatMap check imps
   where
     check imp = case Src._importExposing imp of
         A.At _ Src.ExposingAll -> []
         A.At _ (Src.ExposingList xs) ->
             let A.At _ segs = Src._importName imp
                 path = ModuleName.joinWith "." segs
-                isKernel = Map.member path (Env.kernelModules ())
+                isKernel = Map.member path kernelMods
             in if isKernel
                 then []  -- kernel surface is defined by the registry, skip
                 else case fmap filterDepByExports (Map.lookup path deps) of
@@ -436,17 +468,20 @@ checkImportExposingAgainstDep deps imps = concatMap check imps
 -- kernel) and we have its DepInfo, we contribute its union constructors
 -- to the environment according to the exposing clause.
 --
--- Takes the FFI kernel-functions map (sourced from
--- @LoadedFfiTables._lft_kernelFunctions@) and threads it down to
+-- Takes the FFI kernel-functions map + the merged kernel-modules map
+-- (sourced from @LoadedFfiTables._lft_kernelFunctions@ +
+-- @LoadedFfiTables._lft_kernelModules@) and threads them down to
 -- 'kernelVarsFor' so kernel-name resolution reads the value channel.
 processImport
     :: Map.Map String [String]
+    -> Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
     -> Map.Map String DepInfo
     -> ModuleName.Canonical
     -> Env.Env
     -> Src.Import
     -> Env.Env
-processImport ffiKernelFns deps _home env imp =
+processImport ffiKernelFns kernelMods deps _home env imp =
     let
         importSegs = case Src._importName imp of A.At _ segs -> segs
         importPath = ModuleName.joinWith "." importSegs
@@ -478,8 +513,8 @@ processImport ffiKernelFns deps _home env imp =
                      || not (null (_dep_unions dep))
             Nothing  -> False
 
-        isKernel = Map.member importPath (Env.kernelModules ())
-        kernelName = Map.findWithDefault "" importPath (Env.kernelModules ())
+        isKernel = Map.member importPath kernelMods
+        kernelName = Map.findWithDefault "" importPath kernelMods
 
         -- Effective binding source: FFI/dep if it exists, else kernel
         -- (if registered), else nothing. This collapses the prior
@@ -800,8 +835,11 @@ detectPreludeShadowing (ModuleName.Canonical home) unions =
             _ -> []
 
 
-detectImportAliasCollisions :: [Src.Import] -> [String]
-detectImportAliasCollisions imps =
+detectImportAliasCollisions
+    :: Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
+    -> [Src.Import] -> [String]
+detectImportAliasCollisions kernelMods imps =
     let -- For each import, derive (qualifier, canonical-source, region, importPath).
         -- canonical-source folds kernel modules onto their pseudo-module
         -- name so multiple kernel paths to the same dispatch table don't
@@ -818,7 +856,7 @@ detectImportAliasCollisions imps =
                       Nothing    -> case segs of
                           [] -> importPath  -- defensive — parser shouldn't allow
                           _  -> last segs
-                  src = Map.findWithDefault importPath importPath (Env.kernelModules ())
+                  src = Map.findWithDefault importPath importPath kernelMods
             ]
 
         -- Group entries by qualifier. Earliest-region first per group so
@@ -911,14 +949,16 @@ detectImportAliasCollisions imps =
 -- re-exports `Basics` names) are treated as the same origin, so re-exports
 -- never count as collisions.
 -- | Detect collisions among @import M exposing (..)@ allow-lists.
--- Takes the FFI kernel-functions map so the kernel-side surface
--- of @allExposedNames@ reads the value channel.
+-- Takes the FFI kernel-functions + kernel-modules maps so the
+-- kernel-side surface of @allExposedNames@ reads the value channel.
 detectExposingCollisions
     :: Map.Map String [String]
+    -> Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
     -> Map.Map String DepInfo
     -> [Src.Import]
     -> Map.Map String [String]
-detectExposingCollisions ffiKernelFns deps imps =
+detectExposingCollisions ffiKernelFns kernelMods deps imps =
     let contributions :: [(String, String)]
         contributions = concatMap contributionsFor imps
 
@@ -928,7 +968,7 @@ detectExposingCollisions ffiKernelFns deps imps =
     in Map.filter (\srcs -> length (distinct srcs) > 1)
        $ Map.map distinct byName
   where
-    canonicalSource path = Map.findWithDefault path path (Env.kernelModules ())
+    canonicalSource path = Map.findWithDefault path path kernelMods
 
     contributionsFor :: Src.Import -> [(String, String)]
     contributionsFor imp =
@@ -947,7 +987,7 @@ detectExposingCollisions ffiKernelFns deps imps =
         Src.ExposedOperator _ -> []
 
     allExposedNames path =
-        let kernelName = Map.findWithDefault "" path (Env.kernelModules ())
+        let kernelName = Map.findWithDefault "" path kernelMods
             -- v0.17 close P1 step 5 — value-channel read.
             merged     = kernelFunctions ffiKernelFns
             kernelFns  = Map.findWithDefault [] kernelName merged
@@ -1062,8 +1102,11 @@ checkAmbiguousUses ambiguous localNames srcMod
 -- Qualified references (e.g. `Module.thing`) and identifiers used inside
 -- patterns are intentionally out of scope here — see the broader audit notes
 -- in .claude/prompts/soundness-and-lsp-diagnostics.md.
-collectUnboundNameErrors :: Env.Env -> Src.Module -> [String]
-collectUnboundNameErrors env srcMod =
+collectUnboundNameErrors
+    :: Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
+    -> Env.Env -> Src.Module -> [String]
+collectUnboundNameErrors kernelMods env srcMod =
     let
         isBound n =
                Map.member n (Env._vars env)
@@ -1110,7 +1153,7 @@ collectUnboundNameErrors env srcMod =
             -- _qualVars; they're resolved via `kernelToGo`'s default
             -- `Mod_Fn` fallback. Missing kernel runtime functions
             -- get caught by the codegen validator (E4005) instead.
-            , not (Map.member q (Env.kernelModules ()))
+            , not (Map.member q kernelMods)
             -- Only check qualifiers that ARE known (imported via
             -- alias / present in the _qualVars or _qualCtors map).
             -- Unknown qualifiers are handled by the canonicaliser
@@ -1140,7 +1183,7 @@ collectUnboundNameErrors env srcMod =
         -- module, not a cryptic `undefined: NotARealModule_foo`.
         knownQualifiers =
             Set.unions
-                [ Set.fromList (Map.keys (Env.kernelModules ()))
+                [ Set.fromList (Map.keys kernelMods)
                 , Set.fromList (Map.keys (Env._qualVars env))
                 , Set.fromList (Map.keys (Env._qualCtors env))
                 , Set.fromList (Map.keys (Env._importAliases env))
@@ -1172,6 +1215,12 @@ collectUnboundNameErrors env srcMod =
 collectUnboundDiagnostics :: FilePath -> Env.Env -> Src.Module -> [Diag.Diagnostic]
 collectUnboundDiagnostics path env srcMod =
     let
+        -- v0.17 close P1 step 6b — kernel-modules map is sourced
+        -- from the env's _kernelMods field.  LSP callers that
+        -- don't seed the env fall back to the static surface
+        -- (empty FFI seed) — equivalent to pre-v0.17 behaviour.
+        kernelMods = Env._kernelMods env
+
         isBound n =
                Map.member n (Env._vars env)
             || Map.member n (Env._ctors env)
@@ -1213,7 +1262,7 @@ collectUnboundDiagnostics path env srcMod =
             in collectQualifiedRefs shadowed body
         allQualRefs = concatMap collectQual (Src._values srcMod)
         isKnownQualifier q =
-               Map.member q (Env.kernelModules ())
+               Map.member q kernelMods
             || isJust (Env.lookupImportAlias q env)
         -- Flag a qualified ref iff the qualifier IS known (so we know
         -- the user MEANS this module) BUT the qualified lookup fails.
@@ -1226,7 +1275,7 @@ collectUnboundDiagnostics path env srcMod =
                 Nothing ->
                     -- Also check the kernel module fallback the
                     -- canonicaliser uses (e.g. `Crypto.sha256`).
-                    not (Map.member q (Env.kernelModules ()) &&
+                    not (Map.member q kernelMods &&
                          qualifiedExistsInKernel q n)
             ]
         mkQualDiag (q, n, reg) =
@@ -1241,7 +1290,7 @@ collectUnboundDiagnostics path env srcMod =
         -- of the rendered-string detector above; see notes there.
         knownQualifiers =
             Set.unions
-                [ Set.fromList (Map.keys (Env.kernelModules ()))
+                [ Set.fromList (Map.keys kernelMods)
                 , Set.fromList (Map.keys (Env._qualVars env))
                 , Set.fromList (Map.keys (Env._qualCtors env))
                 , Set.fromList (Map.keys (Env._importAliases env))
@@ -1524,11 +1573,14 @@ patternNames (A.At _ p) = case p of
     _                 -> []
 
 
-isKernelImport :: Src.Import -> Bool
-isKernelImport imp =
+isKernelImport
+    :: Map.Map String String
+    -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
+    -> Src.Import -> Bool
+isKernelImport kernelMods imp =
     let segs = case Src._importName imp of A.At _ s -> s
         path = ModuleName.joinWith "." segs
-    in Map.member path (Env.kernelModules ())
+    in Map.member path kernelMods
 
 
 staticKernelFunctions :: Map.Map String [String]

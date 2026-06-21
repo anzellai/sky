@@ -21,6 +21,14 @@ data Env = Env
     , _qualTypes  :: !(Map.Map String (Map.Map String TypeHome))
     , _qualCtors  :: !(Map.Map String (Map.Map String CtorHome))
     , _importAliases :: !(Map.Map String ModuleName.Canonical)  -- alias → full module name
+    , _kernelMods :: !(Map.Map String String)
+        -- ^ v0.17 close P1 step 6b — merged static + FFI kernel modules
+        --   map (mirrors @kernelModules ()@ but on the value channel).
+        --   Populated by 'Sky.Canonicalise.Module.canonicaliseWithDeps'
+        --   at entry; read by 'Canonicalise.Expression.resolveQualVar'
+        --   to resolve unqualified-import kernel qualifier references.
+        --   Empty for LSP single-module path where no FFI loader is
+        --   in scope (kernel resolution falls back to static surface).
     }
     deriving (Show)
 
@@ -68,7 +76,13 @@ data AliasInfo = AliasInfo
 -- CONSTRUCTION
 -- ═══════════════════════════════════════════════════════════
 
--- | Create a base environment with Sky's built-in types and constructors
+-- | Create a base environment with Sky's built-in types and constructors.
+--
+-- 'initialEnv' leaves '_kernelMods' empty by default — the LSP single-
+-- module path uses this shape directly.  'canonicaliseWithDeps' replaces
+-- the field with the merged static + FFI kernel-modules map per build
+-- so kernel-name resolution reads the value channel instead of the
+-- legacy @kernelModules ()@ IORef.
 initialEnv :: ModuleName.Canonical -> Env
 initialEnv home = Env
     { _home      = home
@@ -80,6 +94,7 @@ initialEnv home = Env
     , _qualTypes = Map.empty
     , _qualCtors = Map.empty
     , _importAliases = Map.empty
+    , _kernelMods = Map.empty
     }
 
 
