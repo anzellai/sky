@@ -67,6 +67,7 @@ module Sky.Type.StrictHmArityGateSpec (spec) where
 -- `CompileErr` with diagnostic substring matching; the positive
 -- arms assert on `CompileOk`.
 
+import Data.List (isInfixOf)
 import Test.Hspec
 
 import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess, compileInProcessMulti)
@@ -86,11 +87,15 @@ spec = do
         -- NEGATIVE: kernel-side mismatches
         ------------------------------------------------------------
 
-        -- k-a: Uuid.v4 has Sky-side type `: String` (a bare value,
-        -- NOT a function).  Calling it with `()` is a type error
-        -- the gate must surface.  Today the call sneaks through.
-        it "k-a: rejects Uuid.v4 () when v4 : String (kernel value)" $ do
-            let _src = unlines
+        -- k-a: Uuid.v4's Sky-side sig is `: Task Error String` (the
+        -- runtime kernel returns a thunk; v0.17 Uuid.sky was retyped
+        -- per the Limitation #7 audit so call shape is `Uuid.v4 |>
+        -- Task.run`).  Calling it with `()` mistakes it for the
+        -- companion `() -> Task Error String` arrow form and is a
+        -- type error.  PR-C (iter 31) wires the gate at
+        -- 'constrainCall' — flipped to live CompileErr assertion.
+        it "k-a: rejects Uuid.v4 () (kernel value, declared 0-arg)" $ do
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -99,18 +104,16 @@ spec = do
                     , "main ="
                     , "    println (Uuid.v4 ())"
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileOk _ -> expectationFailure
-            --           "expected HM arity error, got CompileOk"
-            --       CompileErr e ->
-            --           (e `shouldSatisfy`
-            --              \msg -> any (`isInfixOf` msg)
-            --                  [ "cannot be called with ()"
-            --                  , "declared as String"
-            --                  ])
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure
+                    "expected E2007 arity mismatch, got CompileOk"
+                CompileErr e -> do
+                    e `shouldSatisfy` ("[E2007]" `isInfixOf`)
+                    e `shouldSatisfy` ("Arity mismatch" `isInfixOf`)
+                    e `shouldSatisfy` ("Uuid" `isInfixOf`)
+                    e `shouldSatisfy` ("0-arg" `isInfixOf`)
+                    e `shouldSatisfy` ("1 args" `isInfixOf`)
 
         -- k-b: Time.now has Sky-side type `() -> Task Error Int`.
         -- Reading it bare in a `Task Error Int` value-slot is a
@@ -150,11 +153,12 @@ spec = do
         -- NEGATIVE: user-binding mismatches
         ------------------------------------------------------------
 
-        -- u-a: Symmetric to k-a but at a USER binding.  Today the
-        -- call follows the binding's value-shape declaration; the
-        -- gate must reject the unit-call against a bare-value sig.
+        -- u-a: Symmetric to k-a but at a USER binding.  PR-C (iter
+        -- 31) reads the same-module annotation via
+        -- 'globalSameModAnnots' so the user binding's declared
+        -- 0-arity surfaces the same E2007 diagnostic as kernel bindings.
         it "u-a: rejects foo () when foo : String (user value)" $ do
-            let _src = unlines
+            let src = unlines
                     [ "module Main exposing (main)"
                     , ""
                     , "import Std.Log exposing (println)"
@@ -165,13 +169,16 @@ spec = do
                     , "main ="
                     , "    println (foo ())"
                     ]
-            -- Post-step-4 flip:
-            --   result <- compileInProcess _src
-            --   case result of
-            --       CompileOk _ -> expectationFailure
-            --           "expected HM arity error, got CompileOk"
-            --       CompileErr _ -> return ()
-            pendingWith flipMarker
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure
+                    "expected E2007 arity mismatch, got CompileOk"
+                CompileErr e -> do
+                    e `shouldSatisfy` ("[E2007]" `isInfixOf`)
+                    e `shouldSatisfy` ("Arity mismatch" `isInfixOf`)
+                    e `shouldSatisfy` ("foo" `isInfixOf`)
+                    e `shouldSatisfy` ("0-arg" `isInfixOf`)
+                    e `shouldSatisfy` ("1 args" `isInfixOf`)
 
         -- u-b: Symmetric to k-b but at a USER binding.  Bare
         -- reference to `bar : () -> String` in a String value-slot

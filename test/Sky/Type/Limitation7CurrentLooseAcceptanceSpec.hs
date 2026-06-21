@@ -176,12 +176,18 @@ spec = do
             -- (probe at step-1 design): HM ALREADY rejects this
             -- shape today with
             -- `Variable 'foo' type mismatch: String vs a -> b`.
-            -- The user-side strictness is in place; the kernel-side
-            -- (k-a) is the remaining gap.
+            -- The user-side strictness was in place pre-PR-C; the
+            -- kernel-side (k-a) was the remaining gap.
             --
-            -- Step-4: this assertion STAYS — the gate becomes a
-            -- "was-already-strict" regression guard.  Tightening the
-            -- kernel side must not regress the user side.
+            -- v0.17 PR-C (iter 31) wired the strict-HM gate at
+            -- 'constrainCall' for k-a + u-a.  The gate fires
+            -- FIRST in the CAnd, so the user-side diagnostic
+            -- short-circuited from the legacy CEqual "Variable foo
+            -- type mismatch" to the targeted CArityMismatch
+            -- "[E2007] Arity mismatch — Main.foo declared as
+            -- 0-arg, called with 1 args."  The strictness contract
+            -- is preserved (the shape is still rejected); the
+            -- diagnostic upgrade is the point of the gate.
             let src = unlines
                     [ "module Main exposing (main)"
                     , ""
@@ -194,7 +200,7 @@ spec = do
                     , "    println (foo ())"
                     ]
             result <- compileInProcess src
-            result `shouldSatisfy` hasTypeMismatch "Variable 'foo' type mismatch"
+            result `shouldSatisfy` hasTypeMismatch "[E2007] Arity mismatch"
 
         it "(u-b) user TypedDef `bar : () -> String` used as a `String` value — ALREADY STRICT (was-strict guard)" $ do
             -- The mirror of (k-b).  Empirical: HM ALREADY rejects

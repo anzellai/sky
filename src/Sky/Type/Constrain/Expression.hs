@@ -985,6 +985,15 @@ constrainLambda counter env region params body expected = do
 
 constrainCall :: Counter -> Env -> T.Region -> Can.Expr -> [Can.Expr] -> T.Expected T.Type -> IO T.Constraint
 constrainCall counter env region func args expected = do
+    -- v0.17 PR-C (Limitation #7 close, iter 31) — strict-HM arity
+    -- gate.  Build the arity constraint BEFORE the existing chain
+    -- so the diagnostic fires first (solver short-circuits on first
+    -- error per the CEqual contract).  See
+    -- docs/v0.17-roadmap/strict-hm-arity-gate-design.md for the
+    -- full plan; PR-C covers the k-a + u-a shapes (D=0, S=1, head
+    -- arg is Can.Unit).  PR-D extends to the value-slot k-b + u-b
+    -- shapes at the Var arm.
+    arityGateCon <- arityGateCall env region func args
     resultName <- freshName counter "_cres"
     argNames <- mapM (\_ -> freshName counter "_carg") args
     let resultType = T.TVar resultName
@@ -994,7 +1003,95 @@ constrainCall counter env region func args expected = do
     argCons <- zipWithM (\argType arg ->
         constrain counter env arg (T.FromContext region (T.CallArg "f" 0) argType))
         argTypes args
-    return $ T.CAnd (funcCon : argCons ++ [T.CEqual region T.CApp resultType expected])
+    return $ T.CAnd (arityGateCon : funcCon : argCons ++ [T.CEqual region T.CApp resultType expected])
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-C — Strict-HM arity gate (call-site surface).
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- Peeks the immediate function head and emits 'T.CArityMismatch'
+-- when:
+--   * the head resolves to a 'Can.VarKernel' or 'Can.VarTopLevel'
+--     binding with an available annotation,
+--   * the annotation is NOT real-polymorphic
+--     (per 'any (/= "any") freeVars' — wildcard-only and
+--     monomorphic are gate targets; real polymorphism stays
+--     on CForeign per the v0.15.1 contract),
+--   * the declared arity D = 0 AND the supplied arity S = 1
+--     AND the head arg is exactly 'Can.Unit' (the
+--     Limitation #7 k-a + u-a shape).
+--
+-- Returns 'T.CTrue' otherwise — the existing CApp constraint chain
+-- still runs unchanged.  Compose with the existing chain at the
+-- call site via 'T.CAnd'.
+--
+-- See above 'constrainCall' for the (1)-(6) contract this surface
+-- participates in.
+arityGateCall :: Env -> T.Region -> Can.Expr -> [Can.Expr] -> IO T.Constraint
+arityGateCall env region func args =
+    case A.toValue func of
+        Can.VarKernel modName funcName ->
+            return (arityGateForKernel env region modName funcName args)
+        Can.VarTopLevel home funcName ->
+            arityGateForTopLevel region home funcName args
+        _ -> return T.CTrue
+
+
+-- | Lookup the kernel's annotation via the two-channel kernel
+-- registry (handcoded 'lookupKernelType' takes precedence; FFI
+-- registry's @_envFfiKernelTypes@ is the fallback per the existing
+-- 'Can.VarKernel' arm at line ~504).  Then dispatch through the
+-- shared 'maybeEmitArityMismatch' decision.
+arityGateForKernel :: Env -> T.Region -> String -> String -> [Can.Expr] -> T.Constraint
+arityGateForKernel env region modName funcName args =
+    let annotMb = case lookupKernelType modName funcName of
+            Just a  -> Just a
+            Nothing -> Map.lookup (modName, funcName) (_envFfiKernelTypes env)
+    in maybeEmitArityMismatch region (modName ++ "." ++ funcName) annotMb args
+
+
+-- | Lookup the top-level binding's annotation.  Same-module reads
+-- 'globalSameModAnnots'; cross-module reads 'globalExternals'.
+-- Both are POST-canonicalisation (head-alias unfolded per PR #123
+-- / PR-B step 2's externals trace).
+arityGateForTopLevel
+    :: T.Region -> ModuleName.Canonical -> String -> [Can.Expr] -> IO T.Constraint
+arityGateForTopLevel region home name args = do
+    currentModule <- readIORef globalCurrentModule
+    let homeStr = ModuleName.toString home
+    annotMb <-
+        if homeStr == currentModule
+            then do
+                sameModAnnots <- readIORef globalSameModAnnots
+                return (Map.lookup name sameModAnnots)
+            else do
+                externals <- readIORef globalExternals
+                return (Map.lookup (homeStr, name) externals)
+    return (maybeEmitArityMismatch region (homeStr ++ "." ++ name) annotMb args)
+
+
+-- | Decide whether to emit a 'CArityMismatch' constraint given an
+-- annotation candidate.  The decision applies the wildcard-`any`
+-- gate then the (D = 0, S = 1, head = Unit) shape match.
+maybeEmitArityMismatch
+    :: T.Region -> String -> Maybe T.Annotation -> [Can.Expr] -> T.Constraint
+maybeEmitArityMismatch _region _name Nothing _args = T.CTrue
+maybeEmitArityMismatch region name (Just annot@(Can.Forall freeVars _)) args
+    -- Real polymorphism — per the v0.15.1 same-mod CForeign
+    -- contract + the wildcard-`any` rule (CLAUDE.md), free vars
+    -- containing at least one non-`any` name keep the existing
+    -- per-call-site instantiation behaviour unchanged.
+    | any (/= "any") freeVars = T.CTrue
+    | otherwise =
+        let d = declaredArity annot
+            s = length args
+            headIsUnit = case args of
+                (A.At _ Can.Unit : _) -> True
+                _                     -> False
+        in if d == 0 && s == 1 && headIsUnit
+            then T.CArityMismatch region name 0 1
+            else T.CTrue
 
 
 -- ═══════════════════════════════════════════════════════════
