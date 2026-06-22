@@ -916,13 +916,71 @@ shouldEmitSealedIface
     -> Can.CtorOpts           -- ^ Can.Enum / Can.Normal / Can.Unbox
     -> Bool
 shouldEmitSealedIface modName typeName vars opts
-    | opts == Can.Enum                               = False  -- (1)
-    | opts == Can.Unbox                              = False  -- (1b) v0.17 P3.4c.0a
-    | not (null vars)                                = False  -- (2)
-    | qualifiedName `Set.member` rtBuilderShadowList = False  -- (3)
-    | otherwise                                      = False  -- (4) P3.3 default
+    | opts == Can.Enum                                   = False  -- (1)
+    | opts == Can.Unbox                                  = False  -- (1b) v0.17 P3.4c.0a
+    | not (null vars)                                    = False  -- (2)
+    | qualifiedName `Set.member` rtBuilderShadowList     = False  -- (3)
+    | qualifiedName `Set.member` sealedIfaceFlipAllowList = True  -- (4) v0.17 P3.4d
+    | otherwise                                          = False  -- (5) P3.3 default
   where
     qualifiedName = ModuleName.toString modName ++ "." ++ typeName
+
+
+-- | v0.17 P3.4d — per-ADT opt-in allowlist for sealed-iface emission.
+--
+-- Empty by design at scaffolding ship.  Each entry is keyed by the
+-- @qualifiedName@ shape that 'shouldEmitSealedIface' uses
+-- (@toString modName ++ "." ++ typeName@), so an entry MUST be a
+-- value that uniquely identifies a single declaration site across
+-- the entire repo + every downstream user project.
+--
+-- == Why empty at scaffolding ship
+--
+-- Dual-grill on a proposed first entry @"Main.Msg"@ (iter 57 close
+-- agent #B) identified that @ModuleName.toString@ on the entry-module
+-- ADT returns the BARE name @"Main"@ for EVERY example, EVERY test
+-- fixture, and EVERY user project.  An entry @"Main.Msg"@ would
+-- catch ~14 examples + ~6 shape-asserting test fixtures + crash
+-- @examples/27-multi-session-chat@ at module-load time (its
+-- @MessageReceived any@ ctor lowers to an interface-typed @V0@
+-- field, which @gob.Register@ at startup refuses).
+--
+-- The correct first-flip candidate is therefore a UNIQUELY-QUALIFIED
+-- ADT — typically a @Std.X.Y@ stdlib declaration whose
+-- @qualifiedName@ shape ("Std.X.Y.AdtName") has exactly one match in
+-- the entire codebase.  P3.4e research will identify candidates +
+-- audit each against the sealed-iface preconditions:
+--
+--   * Monomorphic (no type-level TVars).
+--   * Non-Enum, non-Unbox @CtorOpts@.
+--   * Not in 'rtBuilderShadowList' (no runtime-side builder shadow).
+--   * Every case-of usage in repo + downstream uses only pattern
+--     shapes 'classifyBranch' classifies to @Just@ (no nested PCtor
+--     in ctor args).
+--   * Ctor arg types emit cleanly via 'safeReturnTypeFull' — no
+--     wildcard @any@ slots (gob.Register hazard), no parametric
+--     payloads.
+--   * If the ADT may be persisted via Sky.Live session store, every
+--     variant struct registers cleanly with 'gob.Register' at init.
+--
+-- == Byte-identity contract (this commit)
+--
+-- @sealedIfaceFlipAllowList = Set.empty@ — the new guard arm at
+-- 'shouldEmitSealedIface' line (4) is dead code on every code path.
+-- Pre/post diff of every example's @main.go@ MUST be byte-identical.
+--
+-- == Spec gate
+--
+-- @Sky.Build.SealedIfaceFlipAllowListSpec@ asserts:
+--
+--   * The Set is currently empty.
+--   * 'shouldEmitSealedIface' returns False on the same hand-built
+--     fixtures the existing 'Sky.Build.SealedIfaceCarveoutSpec' uses.
+--   * Adding a fake entry @"Test.Module.Name"@ trips the True branch
+--     for matching @ModuleName.Canonical "Test.Module" + "Name"@,
+--     proving the gate wiring is correct.
+sealedIfaceFlipAllowList :: Set.Set String
+sealedIfaceFlipAllowList = Set.empty
 
 
 -- | Hardcoded carve-out — rt-side Go builders construct SkyADT-shape

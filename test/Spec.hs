@@ -12,6 +12,7 @@ import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.SealedIfaceEmissionSpec
+import qualified Sky.Build.SealedIfaceFlipAllowListSpec
 import qualified Sky.Build.SealedIfaceMetadataSpec
 import qualified Sky.Build.SubjectIsSealedIfaceSpec
 import qualified Sky.Build.CaseToGoSealedIfaceSpec
@@ -246,6 +247,13 @@ allSpecs fastMode = do
     -- helper directly with hand-built [Can.Ctor] and asserts the
     -- returned GoDecl list matches the design's claimed shape.
     describeT "Sky.Build.SealedIfaceEmission" Sky.Build.SealedIfaceEmissionSpec.spec
+    -- v0.17 P3.4d — per-ADT opt-in allowlist for sealed-iface
+    -- emission.  Empty under scaffolding ship; the spec locks the
+    -- empty state, the gate ordering invariants, and the carve-out /
+    -- allowlist disjointness so a future populated entry cannot
+    -- silently regress.
+    describeT "Sky.Build.SealedIfaceFlipAllowList"
+        Sky.Build.SealedIfaceFlipAllowListSpec.spec
     -- v0.17 P3.4c.0 — verify the metadata map population path
     -- (Rec._cg_unionDetails + LC._lc_unionDetails).  Additive
     -- scaffolding only; consumed by the upcoming

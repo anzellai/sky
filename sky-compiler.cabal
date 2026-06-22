@@ -448,6 +448,7 @@ test-suite sky-tests
       Sky.Build.EraseBandAidAbsentSpec
       Sky.Build.SealedIfaceCarveoutSpec
       Sky.Build.SealedIfaceEmissionSpec
+      Sky.Build.SealedIfaceFlipAllowListSpec
       Sky.Build.SealedIfaceMetadataSpec
       Sky.Build.SubjectIsSealedIfaceSpec
       Sky.Build.CaseToGoSealedIfaceSpec
