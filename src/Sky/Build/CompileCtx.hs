@@ -152,6 +152,7 @@ emptyCgEnv = Rec.CodegenEnv
     Set.empty   -- _cg_zeroArgs
     Set.empty   -- _cg_recordAliases
     Set.empty   -- _cg_unionNames
+    Map.empty   -- _cg_unionDetails  (v0.17 P3.4c.0)
     Set.empty   -- _cg_enumNames
     Map.empty   -- _cg_funcArities
     Map.empty   -- _cg_funcParamTypes

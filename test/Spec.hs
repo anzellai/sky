@@ -12,6 +12,7 @@ import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
 import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.SealedIfaceEmissionSpec
+import qualified Sky.Build.SealedIfaceMetadataSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -243,6 +244,11 @@ allSpecs fastMode = do
     -- helper directly with hand-built [Can.Ctor] and asserts the
     -- returned GoDecl list matches the design's claimed shape.
     describeT "Sky.Build.SealedIfaceEmission" Sky.Build.SealedIfaceEmissionSpec.spec
+    -- v0.17 P3.4c.0 — verify the metadata map population path
+    -- (Rec._cg_unionDetails + LC._lc_unionDetails).  Additive
+    -- scaffolding only; consumed by the upcoming
+    -- 'subjectIsSealedIface' predicate in P3.4c.1.
+    describeT "Sky.Build.SealedIfaceMetadata" Sky.Build.SealedIfaceMetadataSpec.spec
     -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
     -- 'globalAnonRecords' IORef writer audit. Pairs with the
     -- documentation block above 'generateAnonRecordDecls' in

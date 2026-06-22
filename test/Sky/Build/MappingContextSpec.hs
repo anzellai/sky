@@ -40,6 +40,7 @@ emptyCgEnv = Rec.CodegenEnv
     , Rec._cg_zeroArgs           = Set.empty
     , Rec._cg_recordAliases      = Set.empty
     , Rec._cg_unionNames         = Set.empty
+    , Rec._cg_unionDetails       = Map.empty
     , Rec._cg_enumNames          = Set.empty
     , Rec._cg_funcArities        = Map.empty
     , Rec._cg_funcParamTypes     = Map.empty

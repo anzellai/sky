@@ -448,6 +448,7 @@ test-suite sky-tests
       Sky.Build.EraseBandAidAbsentSpec
       Sky.Build.SealedIfaceCarveoutSpec
       Sky.Build.SealedIfaceEmissionSpec
+      Sky.Build.SealedIfaceMetadataSpec
       Sky.Build.AnonRecordWriterAuditSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec

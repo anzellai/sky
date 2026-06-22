@@ -52,6 +52,7 @@ module Sky.Build.LowerCtx
     , withAliases
     , withFieldIdx
     , withUnionNames
+    , withUnionDetails
     , withFfiTypedWrapperNames
     , withFfiTypedWrapperParams
     , withCgEnv
@@ -129,6 +130,16 @@ data LowerCtx = LowerCtx
         -- ^ Union-name set.  Snapshotted from `globalUnionNames`.
         -- Read by `typeStrWithAliasesReg` while emitting dep-function
         -- sigs to discriminate union-typed args.
+    , _lc_unionDetails :: !(Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]))
+        -- ^ v0.17 P3.4c.0 — per-union metadata for the sealed-iface
+        -- emission gate.  Mirror of 'Rec._cg_unionDetails'; threaded
+        -- so the @scopeStateRef@ cascade path reads the same map the
+        -- 'Rec.CodegenEnv' carries.  Keys: same convention as
+        -- '_lc_unionNames' (entry-keyed by bare type name; dep-keyed
+        -- by prefixed name).  Value carries the originating
+        -- 'ModuleName.Canonical' so consumers can rebuild the
+        -- qualified Go name without parsing it back from the key.
+        -- Read by 'subjectIsSealedIface' (P3.4c.1; NOT WIRED yet).
     , _lc_aliasMap    :: !(Map.Map String String)
         -- ^ Reserved for a future module-prefix → unprefixed alias
         -- shortcut map.  Empty today; populated in PR 2 when the
@@ -232,6 +243,7 @@ emptyLowerCtx home = LowerCtx
     , _lc_aliases     = Map.empty
     , _lc_fieldIdx    = Map.empty
     , _lc_unionNames  = Set.empty
+    , _lc_unionDetails = Map.empty
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = Map.empty
     , _lc_enclosingTypeParams = Set.empty
@@ -276,6 +288,7 @@ buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = L
     , _lc_aliases     = aliases
     , _lc_fieldIdx    = fieldIdx
     , _lc_unionNames  = unions
+    , _lc_unionDetails = Map.empty
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = annots
     , _lc_enclosingTypeParams = Set.empty
@@ -521,6 +534,20 @@ withUnionNames
     -> LowerCtx
 withUnionNames unions ctx =
     ctx { _lc_unionNames = unions }
+
+
+-- | v0.17 P3.4c.0 — install the merged per-union metadata map.
+-- Mirror of 'Rec.withUnionDetails'; sibling of 'withUnionNames' on
+-- the LowerCtx-threaded path.  Called at the same cascade points
+-- so '_lc_unionDetails' stays in lock-step with '_lc_unionNames'.
+-- Pure no-op until 'subjectIsSealedIface' / 'shouldEmitSealedIface'
+-- read it (P3.4c.1 onward).
+withUnionDetails
+    :: Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -> LowerCtx
+    -> LowerCtx
+withUnionDetails details ctx =
+    ctx { _lc_unionDetails = details }
 
 
 -- | v0.17 close P1 step 2/8 — install the typed-FFI wrapper name set

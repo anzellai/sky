@@ -1170,7 +1170,9 @@ emitSealedIfaceUnion qualType ctors =
 emptyCgEnv :: Rec.CodegenEnv
 emptyCgEnv =
     Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
-                   Set.empty Set.empty Set.empty Set.empty
+                   Set.empty Set.empty Set.empty
+                   Map.empty            -- _cg_unionDetails (P3.4c.0)
+                   Set.empty
                    Map.empty Map.empty Map.empty Map.empty
                    Map.empty Map.empty Map.empty
 
@@ -1648,7 +1650,9 @@ resetCompileState :: IO ()
 resetCompileState = do
     let initialCgEnv =
             Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty
-                           Set.empty Set.empty Set.empty Set.empty
+                           Set.empty Set.empty Set.empty
+                           Map.empty            -- _cg_unionDetails (P3.4c.0)
+                           Set.empty
                            Map.empty Map.empty Map.empty Map.empty
                            Map.empty Map.empty Map.empty
     -- v0.17 iter 19 (task #654) — globalUnionNames reset removed;
@@ -2859,6 +2863,13 @@ seedEarlyCgEnv canMod validDeps = do
 data DepSigs = DepSigs
     { dsRecAliases   :: !(Set.Set String)
     , dsUnionNames   :: !(Set.Set String)
+    , dsUnionDetails :: !(Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]))
+      -- ^ v0.17 P3.4c.0 — per-dep union metadata, prefixed.  Mirror
+      -- of 'dsUnionNames' for the sealed-iface gate's metadata
+      -- channel.  Same cascade-write contract: caller installs onto
+      -- both 'scopeStateRef' (via 'LC.withUnionDetails') and any
+      -- 'Rec.CodegenEnv' that gets built later (via
+      -- 'Rec.withUnionDetails').
     , dsEnumNames    :: !(Set.Set String)
     , dsArities      :: !(Map.Map String Int)
     , dsParamTypes   :: !(Map.Map String [String])
@@ -2872,13 +2883,14 @@ deriveDepSigs
     -> DepSigs
 deriveDepSigs earlyAllRecAliases validDeps =
     DepSigs
-        { dsRecAliases  = recAliases
-        , dsUnionNames  = unionNames
-        , dsEnumNames   = enumNames
-        , dsArities     = arities
-        , dsParamTypes  = Map.unions [ p | (p, _, _) <- triples ]
-        , dsRetTypes    = Map.unions [ r | (_, r, _) <- triples ]
-        , dsUltRetTypes = Map.unions [ u | (_, _, u) <- triples ]
+        { dsRecAliases   = recAliases
+        , dsUnionNames   = unionNames
+        , dsUnionDetails = unionDetails
+        , dsEnumNames    = enumNames
+        , dsArities      = arities
+        , dsParamTypes   = Map.unions [ p | (p, _, _) <- triples ]
+        , dsRetTypes     = Map.unions [ r | (_, r, _) <- triples ]
+        , dsUltRetTypes  = Map.unions [ u | (_, _, u) <- triples ]
         }
   where
     recAliases = Set.unions
@@ -2890,6 +2902,24 @@ deriveDepSigs earlyAllRecAliases validDeps =
     unionNames = Set.unions
         [ Set.map (\n -> prefix ++ "_" ++ n)
                  (Set.fromList (Map.keys (Can._unions depMod)))
+        | (modName, depMod) <- validDeps
+        , let prefix = map (\c -> if c == '.' then '_' else c) modName
+        ]
+    -- v0.17 P3.4c.0 — per-dep union metadata, keyed by the SAME
+    -- prefixed name as 'unionNames'.  Used by the sealed-iface
+    -- emission gate (P3.4c.1+).  Pure derivation; no behaviour
+    -- change until the gate is wired.
+    unionDetails = Map.unions
+        [ Map.fromList
+            [ ( prefix ++ "_" ++ uname
+              , ( Can._name depMod
+                , Can._u_opts u
+                , Can._u_vars u
+                , Can._u_alts u
+                )
+              )
+            | (uname, u) <- Map.toList (Can._unions depMod)
+            ]
         | (modName, depMod) <- validDeps
         , let prefix = map (\c -> if c == '.' then '_' else c) modName
         ]
@@ -3206,6 +3236,7 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             let depSigs        = deriveDepSigs earlyAllRecAliases validDeps
                 depRecAliases  = dsRecAliases  depSigs
                 depUnionNames  = dsUnionNames  depSigs
+                depUnionDetails = dsUnionDetails depSigs
                 depEnumNames   = dsEnumNames   depSigs
                 depArities     = dsArities     depSigs
                 depParamTypes  = dsParamTypes  depSigs
@@ -3228,7 +3259,10 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
             -- bridge sees the seeded depUnionNames before any
             -- HM-time sig rendering.  Same byte-equivalent
             -- contract as the pre-iter-19 writeIORef.
-            modifyIORef' scopeStateRef (LC.withUnionNames depUnionNames)
+            modifyIORef' scopeStateRef
+                ( LC.withUnionNames depUnionNames
+                . LC.withUnionDetails depUnionDetails  -- P3.4c.0
+                )
             putStrLn "-- Type Checking"
             -- Run HM on each dep module so unannotated functions get
             -- inferred types for the typed-codegen tables.
@@ -3475,7 +3509,7 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
                               (Solve.withPerModuleEnv perModuleEnv
                                 (Solve.withPerModuleRegions perModuleRegions
                                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
+                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
                         -- v0.13 Layer 2: collect Sky-name → source-region
                         -- for every top-level declaration so the post-emit
                         -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -5415,6 +5449,8 @@ buildFinalCgEnv
         -- ^ depRecAliases
     -> Set.Set String
         -- ^ depUnionNames
+    -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+        -- ^ depUnionDetails (P3.4c.0)
     -> Set.Set String
         -- ^ depEnumNames
     -> Map.Map String Int
@@ -5435,7 +5471,7 @@ buildFinalCgEnv
         -- ^ depAliasPairs
     -> Rec.CodegenEnv
 buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
-                depUnionNames depEnumNames depArities
+                depUnionNames depUnionDetails depEnumNames depArities
                 depParamTypes depRetTypes depUltRetTypes
                 extraInferredParamTypes extraInferredRetTypes
                 extraInferredSigs depAliasPairs =
@@ -5500,13 +5536,14 @@ buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
           $ Rec.withDepArities depArities
           $ Rec.withRecordAliases depRecAliases
           $ Rec.withUnionNames depUnionNames
+          $ Rec.withUnionDetails depUnionDetails   -- P3.4c.0
           $ Rec.withEnumNames depEnumNames
           $ Rec.withDepFieldIndex depAliasPairs
           $ Rec.buildCodegenEnv solvedTypes canMod
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> Map.Map String GoSig -> String
+generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]) -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> Map.Map String GoSig -> String
 -- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
 -- 'globalReachableSet' IORef.  Consumed by the 'specDecls' block
 -- (~line 4967) to drive per-instance specialised Go function emission.
@@ -5514,7 +5551,7 @@ generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.S
 -- promoted from 'globalGoSigMap' IORef.  Drives the post-C10
 -- 'finalGoSigMap' purely; consumed by 'specDecls' (σ-projection) +
 -- 'imports' (C10 typeParams refresh via 'buildFinalGoSigMap').
-generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve =
+generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve =
     let
         imports = unsafePerformIO $ do
             -- v0.17 step-1 gap-3 close — the redundant reset of
@@ -5595,7 +5632,8 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
                     Just e -> e
                     Nothing -> error "BUG: prevEnv read before scopeStateRef cgEnv installed"
             let cgEnv = buildFinalCgEnv prevEnv solvedTypes canMod
-                            depRecAliases depUnionNames depEnumNames
+                            depRecAliases depUnionNames depUnionDetails
+                            depEnumNames
                             depArities depParamTypes depRetTypes
                             depUltRetTypes extraInferredParamTypes
                             extraInferredRetTypes extraInferredSigs

@@ -16,6 +16,7 @@ module Sky.Generate.Go.Record
     , withDepFieldIndex
     , withRecordAliases
     , withUnionNames
+    , withUnionDetails
     , withEnumNames
     , withCallSiteInstances
     , withFuncSkyToGoTVars
@@ -30,6 +31,7 @@ import qualified Data.Set as Set
 import qualified Data.List as List
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
+import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Type.Type as T
 import qualified Sky.Type.Solve as Solve
 
@@ -54,6 +56,22 @@ data CodegenEnv = CodegenEnv
                                               --   to `any` for FFI-opaque type
                                               --   refs that don't correspond to
                                               --   any emitted Go type alias.
+    , _cg_unionDetails  :: !(Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]))
+      -- ^ v0.17 P3.4c.0 — per-union metadata for the sealed-iface
+      -- emission gate.  Keyed by the SAME convention as
+      -- '_cg_unionNames': entry-module unions are keyed by the bare
+      -- type name ("Color"); dep-module unions by the prefixed name
+      -- ("Sky_Core_Error_Error").  Value: the originating
+      -- 'ModuleName.Canonical' + 'Can.CtorOpts' + type-variable
+      -- names + constructor list.  Consumed by the carve-out
+      -- predicate 'shouldEmitSealedIface' and the subject-inference
+      -- helper 'subjectIsSealedIface' (both NOT WIRED yet — P3.4c.1).
+      --
+      -- Population: entry module populated from 'Can._unions canMod'
+      -- in 'buildCodegenEnv'.  Dep modules populated by 'withUnionDetails'
+      -- at the per-dep emission point (mirrors 'withUnionNames').
+      -- Cross-spec invariant: every entry in '_cg_unionNames' has a
+      -- matching entry here, and vice versa.
     , _cg_enumNames     :: !(Set.Set String)  -- v0.13 typed lowerer: union
                                               --   names whose Sky declaration is
                                               --   a pure enum (all nullary
@@ -163,6 +181,16 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_zeroArgs = collectZeroArgs (Can._decls canMod)
     , _cg_recordAliases = collectRecordAliases (Can._aliases canMod)
     , _cg_unionNames = Set.fromList (Map.keys (Can._unions canMod))
+    , _cg_unionDetails = Map.fromList
+        [ ( uname
+          , ( Can._name canMod
+            , Can._u_opts u
+            , Can._u_vars u
+            , Can._u_alts u
+            )
+          )
+        | (uname, u) <- Map.toList (Can._unions canMod)
+        ]
     , _cg_enumNames = Set.fromList
         [ uname
         | (uname, u) <- Map.toList (Can._unions canMod)
@@ -219,6 +247,25 @@ withUnionNames extra env =
 withEnumNames :: Set.Set String -> CodegenEnv -> CodegenEnv
 withEnumNames extra env =
     env { _cg_enumNames = Set.union extra (_cg_enumNames env) }
+
+
+-- | v0.17 P3.4c.0 — extend the per-union metadata map with dep-module
+-- entries.  Mirror of 'withUnionNames' for the sealed-iface gate's
+-- metadata channel.  Caller derives the keyed entries (entry-keyed
+-- by bare type name; dep-keyed by @\<prefix\>_\<typeName\>@) so the
+-- key convention matches '_cg_unionNames' / '_cg_enumNames' exactly.
+--
+-- Population at the same per-dep call site as 'withUnionNames'.
+-- Value carries the originating 'ModuleName.Canonical' so consumers
+-- can rebuild the full qualified Go name without round-tripping
+-- through a name parser.  Pure no-op until 'shouldEmitSealedIface'
+-- / 'subjectIsSealedIface' read it (P3.4c.1 onward).
+withUnionDetails
+    :: Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -> CodegenEnv
+    -> CodegenEnv
+withUnionDetails extra env =
+    env { _cg_unionDetails = Map.union extra (_cg_unionDetails env) }
 
 
 -- | v0.13 Phase A5: install the captured call-site instance map.
