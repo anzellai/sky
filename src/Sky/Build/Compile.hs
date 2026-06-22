@@ -1125,35 +1125,86 @@ caseToGoSealedIface
     -> [Can.CaseBranch]              -- ^ branches in source order
     -> String                        -- ^ qualType — keyed Go name (e.g. "Mod_Color")
     -> Maybe GoIr.GoExpr
-caseToGoSealedIface ctx _solved mExpectedGo subject branches qualType =
-    let subjectName = "__subject"
-        goSubject = exprToGo ctx subject
-    in case sequence (map (classifyBranch ctx subjectName qualType) branches) of
+caseToGoSealedIface ctx solved mExpectedGo subject branches qualType =
+    -- v0.17 P3.4c.2c — thin wrapper over 'caseToGoSealedIfaceStmts'.
+    -- Expression-position leafFn returns @[GoReturn (coerced body)]@
+    -- so the IIFE's return type lands a typed value when caller
+    -- supplies a @Just gt@ via 'typeIIFE'.  Default-arm shape:
+    -- @rt.Unreachable@ panic + @return nil@ (the IIFE function
+    -- must return SOMETHING after the panic to satisfy Go's
+    -- reachability checker).
+    let defaultLeaf body =
+            [ GoIr.GoReturn (exprToGo ctx body) ]
+        defaultArmStmts =
+            [ GoIr.GoExprStmt
+                (GoIr.GoRaw
+                    ("_ = rt.Unreachable(\"case/"
+                        ++ qualType ++ "\")"))
+            , GoIr.GoReturn (GoIr.GoRaw "nil")
+            ]
+    in case caseToGoSealedIfaceStmts ctx solved defaultLeaf
+                defaultArmStmts "__subject" subject branches qualType of
+        Nothing -> Nothing
+        Just stmts ->
+            let raw = GoIr.GoBlock stmts (GoIr.GoRaw "nil")
+            in Just $ case mExpectedGo of
+                Just gt -> typeIIFE ctx Nothing gt raw
+                Nothing -> raw
+
+
+-- | v0.17 P3.4c.2c — internal statement-shape core of the
+-- sealed-iface dispatch helper.  Takes:
+--
+--   * @leafFn :: Can.Expr -> [GoStmt]@ — how to lower a branch
+--     body.  Expression-position passes @\body -> [GoReturn
+--     (exprToGo ctx body)]@; TCO position passes @tcoLeaf@ which
+--     detects tail self-calls and emits @\<param reassign\>;
+--     continue@ instead of @GoReturn@ (closes Griller #2 V4).
+--
+--   * @defaultArmStmts :: [GoStmt]@ — the rt.Unreachable
+--     fallthrough body.  Expression-position passes
+--     @[rt.Unreachable("case/<qual>"), GoReturn nil]@ (IIFE
+--     return-type satisfaction); TCO position passes
+--     @[rt.Unreachable("tco/case")]@ (no return — inside
+--     GoForever loop; return would exit the enclosing function).
+--
+--   * @subjectName :: String@ — the type-switch's bound name.
+--     Expression-position passes @"__subject"@; TCO passes
+--     @"__tco_subject"@.
+--
+-- Returns @Just [stmts]@ — a statement list containing the
+-- @GoTypeSwitch@ node ready to splice into either an IIFE
+-- ('caseToGoSealedIface') or a tail-position statement sequence
+-- (P3.4c.2c wire-in at @tcoBodyStmts@).  Returns @Nothing@ on
+-- the deferred-pattern bails (PCtor inside ctor arg, etc).
+caseToGoSealedIfaceStmts
+    :: LC.LowerCtx
+    -> Solve.SolvedTypes
+    -> (Can.Expr -> [GoIr.GoStmt])         -- ^ leafFn
+    -> [GoIr.GoStmt]                       -- ^ defaultArmStmts
+    -> String                              -- ^ subjectName
+    -> Can.Expr                            -- ^ subject
+    -> [Can.CaseBranch]
+    -> String                              -- ^ qualType
+    -> Maybe [GoIr.GoStmt]
+caseToGoSealedIfaceStmts ctx _solved leafFn defaultArmStmts
+                        subjectName subject branches qualType =
+    let goSubject = exprToGo ctx subject
+    in case sequence
+            (map (classifyBranch ctx leafFn subjectName qualType)
+                branches) of
         Nothing -> Nothing
         Just classified ->
             case enforceCatchallTrailing classified of
                 Nothing -> Nothing
                 Just (ctorArms, mDefault) ->
-                    let defaultStmts = case mDefault of
+                    let armDefaultStmts = case mDefault of
                             Just stmts -> stmts
-                            Nothing ->
-                                -- Exhaustiveness guaranteed by Sky.Type.Exhaustiveness.
-                                -- rt.Unreachable raises a Go panic that the
-                                -- synchronous-panic gate (v0.15.43) catches.
-                                [ GoIr.GoExprStmt
-                                    (GoIr.GoRaw
-                                        ("_ = rt.Unreachable(\"case/"
-                                            ++ qualType ++ "\")"))
-                                , GoIr.GoReturn (GoIr.GoRaw "nil")
-                                ]
+                            Nothing    -> defaultArmStmts
                         typeSwitch =
                             GoIr.GoTypeSwitch subjectName goSubject
-                                ctorArms
-                                (Just defaultStmts)
-                        raw = GoIr.GoBlock [typeSwitch] (GoIr.GoRaw "nil")
-                    in Just $ case mExpectedGo of
-                        Just gt -> typeIIFE ctx Nothing gt raw
-                        Nothing -> raw
+                                ctorArms (Just armDefaultStmts)
+                    in Just [typeSwitch]
 
 
 -- | v0.17 P3.4c.2 internal — classification of a single
@@ -1166,62 +1217,43 @@ data SealedArm
 -- | Walk a single branch, returning @Nothing@ when the pattern
 -- shape exceeds the helper's initial scope.
 classifyBranch
-    :: LC.LowerCtx -> String -> String
-    -> Can.CaseBranch -> Maybe SealedArm
-classifyBranch ctx subjectName qualType (Can.CaseBranch (A.At _ pat) body) =
+    :: LC.LowerCtx
+    -> (Can.Expr -> [GoIr.GoStmt])     -- ^ leafFn (P3.4c.2c)
+    -> String                          -- ^ subjectName
+    -> String                          -- ^ qualType
+    -> Can.CaseBranch
+    -> Maybe SealedArm
+classifyBranch ctx leafFn subjectName qualType
+        (Can.CaseBranch (A.At _ pat) body) =
     case pat of
         Can.PCtor _ _ _ ctorName _ args -> do
-            -- v0.17 P3.4c.2b — extended scope: each arg routes
-            -- through 'renderArgBinding' which now handles
-            -- PAnything / PVar / literal / PCons / PList / PTuple /
-            -- PRecord / PUnit / PAlias inner shapes via legacy
-            -- 'patternBindings' recursion.  Bails (returns
-            -- @Nothing@) only when an inner pattern is itself a
-            -- @PCtor@ — that case requires nested sealed-iface
-            -- dispatch which deferred to P3.4c.2d (the first
-            -- flipped ADT MUST NOT have nested-PCtor args; documented
-            -- as a P3.4d precondition).
             argStmtsList <- mapM (renderArgBinding subjectName) args
+            -- v0.17 P3.4c.2c — body lowering routes through leafFn
+            -- instead of hard-coding @[GoReturn (exprToGo ctx
+            -- body)]@.  Expression-position passes the defaultLeaf
+            -- (GoReturn); TCO position passes tcoLeaf which emits
+            -- @\<param reassign\>; continue@ for tail self-calls.
             let variantTypeName = qualType ++ "_" ++ ctorName ++ "_V"
-                bodyExpr = exprToGo ctx body
-                stmts = concat argStmtsList
-                          ++ [GoIr.GoReturn bodyExpr]
+                stmts = concat argStmtsList ++ leafFn body
             Just (SealedCtorArm variantTypeName stmts)
         Can.PAnything ->
-            Just $ SealedDefaultArm
-                [GoIr.GoReturn (exprToGo ctx body)]
+            Just $ SealedDefaultArm (leafFn body)
         Can.PVar name ->
             -- Bind catchall name to the type-switch's bound subject,
             -- which in the default arm has the interface type (the
             -- sealed-iface itself).  Caller body sees @name@ at that
             -- type, which is what Sky's HM checker assigned.
             Just $ SealedDefaultArm
-                [ GoIr.GoShortDecl name (GoIr.GoIdent subjectName)
-                , GoIr.GoReturn (exprToGo ctx body)
-                ]
+                ( GoIr.GoShortDecl name (GoIr.GoIdent subjectName)
+                : leafFn body
+                )
         Can.PAlias (A.At _ innerPat) aliasName ->
             -- v0.17 P3.4c.2b — peel @PAlias@ at branch top-level.
             -- Emit @aliasName := __subject@ inside the arm body
-            -- THEN recursively classify the inner pattern.  Two
-            -- shapes possible:
-            --
-            --   * @(Red) as binding -> use binding@ → inner is
-            --     @PCtor "Red" []@ → SealedCtorArm with the alias
-            --     binding prepended to the arm stmts.
-            --   * @_ as catchall -> use catchall@ → inner is
-            --     @PAnything@ → SealedDefaultArm with the alias
-            --     binding prepended.
-            --
-            -- The alias binding refers to the original interface
-            -- value; under Go's type-switch semantics @__subject@ in
-            -- the ctor arm is the concrete variant struct.  Sky's
-            -- HM annotates @aliasName@ with the SUBJECT's type
-            -- (e.g. @Color@), so a downstream call expecting
-            -- @Color@ accepts the alias correctly (Go auto-boxes
-            -- struct-to-interface at the call site).
+            -- THEN recursively classify the inner pattern.
             let aliasStmt = GoIr.GoShortDecl aliasName
                                 (GoIr.GoIdent subjectName)
-            in case classifyBranch ctx subjectName qualType
+            in case classifyBranch ctx leafFn subjectName qualType
                         (Can.CaseBranch
                             (A.At (A.Region (A.Position 0 0) (A.Position 0 0))
                                   innerPat)
@@ -1232,11 +1264,7 @@ classifyBranch ctx subjectName qualType (Can.CaseBranch (A.At _ pat) body) =
                     Just $ SealedDefaultArm (aliasStmt : innerStmts)
                 Nothing -> Nothing
         -- Top-level literal / unit / tuple / list / cons / record
-        -- patterns against an ADT subject are HM-rejected upstream
-        -- (Sky.Type.Exhaustiveness rejects @case (c : Color) of 0 ->
-        -- ...@).  Bail to legacy as a defensive escape — these
-        -- shapes should never reach 'classifyBranch' for a valid
-        -- ADT subject.
+        -- patterns against an ADT subject are HM-rejected upstream.
         _ -> Nothing
 
 
@@ -16677,44 +16705,56 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
     lowerTail :: Can.Expr -> [GoIr.GoStmt]
     lowerTail (A.At _ e) = case e of
         Can.Case subj branches ->
-            -- Coerce the case-subject when the patterns require a
-            -- typed shape (ADT `.Tag` access, SkyMaybe / SkyResult
-            -- destructure).  For list / primitive patterns
-            -- (`detectSubjectType` returns Nothing) the existing
-            -- `caseBranchToStmts` path runs on `any` because the
-            -- pattern conditions use `len(rt.AsList(__subject))`
-            -- which accepts an any-typed source.
-            let subjectName = "__tco_subject"
-                rawSubjExpr = exprToGo ctx subj
-                anyWrap e0 = GoIr.GoCall (GoIr.GoIdent "any") [e0]
-                subjExpr = case detectSubjectType branches of
-                    Nothing -> rawSubjExpr
-                    Just typeName
-                        | take (length ("rt.SkyMaybe" :: String)) typeName
-                            == "rt.SkyMaybe" ->
-                            GoIr.GoCall
-                                (GoIr.GoIdent "rt.MaybeCoerce[any]") [rawSubjExpr]
-                        | take (length ("rt.SkyResult" :: String)) typeName
-                            == "rt.SkyResult" ->
-                            GoIr.GoCall
-                                (GoIr.GoIdent "rt.ResultCoerce[any, any]")
-                                [rawSubjExpr]
-                        | otherwise ->
-                            GoIr.GoTypeAssert (anyWrap rawSubjExpr) typeName
-                subjStmt = GoIr.GoShortDecl subjectName subjExpr
-                -- Cycle 4 D2 (TCO path): mirror the non-TCO caseToGo
-                -- discard so a tail-position `case` whose only branch
-                -- is `_ -> ...` doesn't emit an unused-var Go build
-                -- error.
-                subjDiscardStmt = GoIr.GoExprStmt
-                    (GoIr.GoRaw ("_ = " ++ subjectName))
-                branchStmts = concatMap
-                    (caseBranchToStmtsWith subjectName tcoLeaf) branches
-                fallthroughStmt = GoIr.GoExprStmt
-                    (GoIr.GoCall
-                        (GoIr.GoQualified "rt" "Unreachable")
-                        [GoIr.GoStringLit "tco/case"])
-            in subjStmt : subjDiscardStmt : branchStmts ++ [fallthroughStmt]
+            -- v0.17 P3.4c.2c — TCO-parity sealed-iface gate.
+            --
+            -- Sandwich identical to the non-TCO caseToGo wire-in
+            -- (Compile.hs:~16357) but routed through
+            -- 'caseToGoSealedIfaceStmts' with TCO-shaped parameters:
+            --
+            --   * subjectName = @"__tco_subject"@ (vs @"__subject"@
+            --     for expression-position).
+            --   * leafFn = @tcoLeaf@ — emits @<param reassign>;
+            --     continue@ for tail self-calls instead of GoReturn.
+            --   * defaultArmStmts = single @rt.Unreachable@ panic
+            --     (NO trailing @GoReturn nil@) — TCO body lives
+            --     inside @GoForever@, so a GoReturn would exit the
+            --     enclosing function instead of looping.  Asymmetric
+            --     vs expression-position which IS inside an IIFE that
+            --     needs the return.
+            --
+            -- == Byte-identity invariant (P3.3 default)
+            --
+            -- 'shouldEmitSealedIface' returns @False@ for every ADT
+            -- under the current default, so 'subjectIsSealedIface'
+            -- returns @Nothing@ for every subject regardless of
+            -- pattern shape.  This sealed-iface path is therefore
+            -- dead code on the production path; we always fall
+            -- through to the legacy @.Tag@-switch via
+            -- @legacyTcoCase@ below.  The @diff -q@ on
+            -- @examples/26-ui-showcase/sky-out/main.go@ AND
+            -- @examples/16-skychess/sky-out/main.go@ (TCO-heavy)
+            -- pre/post this commit MUST be byte-identical — that's
+            -- the ship gate.
+            let scopedSolved =
+                    Solve.withCurrentModule
+                        (LC._lc_currentDepModule ctx)
+                        (Rec._cg_solvedTypes getCgEnvFromScope)
+                tcoDefaultArm =
+                    [ GoIr.GoExprStmt
+                        (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "Unreachable")
+                            [GoIr.GoStringLit "tco/case"])
+                    ]
+                maybeSealedStmts =
+                    case subjectIsSealedIface ctx scopedSolved subj of
+                        Just (_declHome, _typeName, _vars, _opts, _ctors, qualType) ->
+                            caseToGoSealedIfaceStmts
+                                ctx scopedSolved tcoLeaf tcoDefaultArm
+                                "__tco_subject" subj branches qualType
+                        Nothing -> Nothing
+            in case maybeSealedStmts of
+                Just sealedStmts -> sealedStmts
+                Nothing -> legacyTcoCase subj branches
 
         Can.If branches elseExpr ->
             ifToTcoStmts branches elseExpr
@@ -16722,6 +16762,52 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
         -- Top-level body that IS a tail self-call (`f a b = g a b`
         -- style) — handled by tcoLeaf which detects the head.
         _ -> tcoLeaf (A.At A.one e)
+
+    -- v0.17 P3.4c.2c — legacy @.Tag@-switch TCO body extracted into
+    -- its own helper.  Byte-identical to the pre-iter-57 inline body
+    -- of @lowerTail@'s @Can.Case@ arm.  Called when the sealed-iface
+    -- gate returns @Nothing@ (always under P3.3 default).
+    legacyTcoCase
+        :: Can.Expr -> [Can.CaseBranch] -> [GoIr.GoStmt]
+    legacyTcoCase subj branches =
+        -- Coerce the case-subject when the patterns require a
+        -- typed shape (ADT `.Tag` access, SkyMaybe / SkyResult
+        -- destructure).  For list / primitive patterns
+        -- (`detectSubjectType` returns Nothing) the existing
+        -- `caseBranchToStmts` path runs on `any` because the
+        -- pattern conditions use `len(rt.AsList(__subject))`
+        -- which accepts an any-typed source.
+        let subjectName = "__tco_subject"
+            rawSubjExpr = exprToGo ctx subj
+            anyWrap e0 = GoIr.GoCall (GoIr.GoIdent "any") [e0]
+            subjExpr = case detectSubjectType branches of
+                Nothing -> rawSubjExpr
+                Just typeName
+                    | take (length ("rt.SkyMaybe" :: String)) typeName
+                        == "rt.SkyMaybe" ->
+                        GoIr.GoCall
+                            (GoIr.GoIdent "rt.MaybeCoerce[any]") [rawSubjExpr]
+                    | take (length ("rt.SkyResult" :: String)) typeName
+                        == "rt.SkyResult" ->
+                        GoIr.GoCall
+                            (GoIr.GoIdent "rt.ResultCoerce[any, any]")
+                            [rawSubjExpr]
+                    | otherwise ->
+                        GoIr.GoTypeAssert (anyWrap rawSubjExpr) typeName
+            subjStmt = GoIr.GoShortDecl subjectName subjExpr
+            -- Cycle 4 D2 (TCO path): mirror the non-TCO caseToGo
+            -- discard so a tail-position `case` whose only branch
+            -- is `_ -> ...` doesn't emit an unused-var Go build
+            -- error.
+            subjDiscardStmt = GoIr.GoExprStmt
+                (GoIr.GoRaw ("_ = " ++ subjectName))
+            branchStmts = concatMap
+                (caseBranchToStmtsWith subjectName tcoLeaf) branches
+            fallthroughStmt = GoIr.GoExprStmt
+                (GoIr.GoCall
+                    (GoIr.GoQualified "rt" "Unreachable")
+                    [GoIr.GoStringLit "tco/case"])
+        in subjStmt : subjDiscardStmt : branchStmts ++ [fallthroughStmt]
 
     -- Leaf emitter — runs on case-branch bodies + if-arms.
     -- Recursively handles nested case/if; emits the regular
