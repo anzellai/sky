@@ -565,10 +565,11 @@ specialiseFuncDecl mangledName σ originalName func =
         Ir.GoSwitch e branches ->
             Ir.GoSwitch (substExpr e)
                 [(substExpr v, map substStmt body) | (v, body) <- branches]
-        Ir.GoTypeSwitch n e branches ->
+        Ir.GoTypeSwitch n e branches mDefault ->
             Ir.GoTypeSwitch n (substExpr e)
                 [(substTypeParamsInString σ t, map substStmt body)
                 | (t, body) <- branches]
+                (fmap (map substStmt) mDefault)
         Ir.GoFor n e body ->
             Ir.GoFor n (substExpr e) (map substStmt body)
         Ir.GoForever body ->

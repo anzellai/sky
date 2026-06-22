@@ -7220,7 +7220,8 @@ goExprMentionsIdent target = goE
         GoIr.GoReturnVoid    -> False
         GoIr.GoIf c t el     -> goE c || any goS t || any goS el
         GoIr.GoSwitch e cs   -> goE e || any (\(g, body) -> goE g || any goS body) cs
-        GoIr.GoTypeSwitch _ e cs -> goE e || any (any goS . snd) cs
+        GoIr.GoTypeSwitch _ e cs mDef -> goE e || any (any goS . snd) cs
+                                    || maybe False (any goS) mDef
         GoIr.GoFor _ e body  -> goE e || any goS body
         GoIr.GoForever body  -> any goS body
         GoIr.GoContinue      -> False
@@ -7800,9 +7801,10 @@ coerceBlockReturnsT ctx mSrc retType = map go
         GoIr.GoSwitch e brs      -> GoIr.GoSwitch e
                                       [ (v, coerceBlockReturnsT ctx mSrc retType b)
                                       | (v, b) <- brs ]
-        GoIr.GoTypeSwitch n e brs -> GoIr.GoTypeSwitch n e
+        GoIr.GoTypeSwitch n e brs mDef -> GoIr.GoTypeSwitch n e
                                       [ (t, coerceBlockReturnsT ctx mSrc retType b)
                                       | (t, b) <- brs ]
+                                      (fmap (coerceBlockReturnsT ctx mSrc retType) mDef)
         GoIr.GoBlock_ ss         -> GoIr.GoBlock_ (coerceBlockReturnsT ctx mSrc retType ss)
         _                        -> stmt
 

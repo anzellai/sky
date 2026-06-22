@@ -167,9 +167,10 @@ renderStmt stmt = case stmt of
         ++ concatMap renderSwitchCase cases
         ++ ["}"]
 
-    GoTypeSwitch name expr cases ->
+    GoTypeSwitch name expr cases mDefault ->
         ["switch " ++ name ++ " := " ++ renderExpr expr ++ ".(type) {"]
         ++ concatMap renderTypeSwitchCase cases
+        ++ renderTypeSwitchDefault mDefault
         ++ ["}"]
 
     GoFor name expr body ->
@@ -206,6 +207,16 @@ renderSwitchCase (val, stmts) =
 renderTypeSwitchCase :: (String, [GoStmt]) -> [String]
 renderTypeSwitchCase (typ, stmts) =
     ["case " ++ typ ++ ":"]
+    ++ concatMap (map ("\t" ++) . renderStmt) stmts
+
+
+-- | v0.17 P3.4c.2a — render the optional @default:@ arm of a
+-- 'GoTypeSwitch'.  @Nothing@ → empty list (no @default:@ clause
+-- emitted).  @Just stmts@ → @default:@ followed by tabbed stmts.
+renderTypeSwitchDefault :: Maybe [GoStmt] -> [String]
+renderTypeSwitchDefault Nothing = []
+renderTypeSwitchDefault (Just stmts) =
+    ["default:"]
     ++ concatMap (map ("\t" ++) . renderStmt) stmts
 
 
