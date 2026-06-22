@@ -1023,6 +1023,13 @@ subjectIsSealedIface
              , [String]               -- type variables (always [])
              , Can.CtorOpts           -- opts (Normal post-gate)
              , [Can.Ctor]             -- constructors
+             , String                 -- v0.17 P3.4c.3: the lookup key
+                                      --   (matches the _cg_unionDetails /
+                                      --   _lc_unionDetails population
+                                      --   convention).  Exposed so callers
+                                      --   never re-derive the key shape —
+                                      --   the predicate's qualifiedGoKey
+                                      --   is the source of truth.
              )
 subjectIsSealedIface ctx solved (A.At region _) = do
     ty <- Solve.lookupSolvedRegionScoped region solved
@@ -1032,7 +1039,7 @@ subjectIsSealedIface ctx solved (A.At region _) = do
             (declHome, opts, vars, ctors) <-
                 Map.lookup goKey (LC._lc_unionDetails ctx)
             if shouldEmitSealedIface declHome name vars opts
-                then Just (declHome, name, vars, opts, ctors)
+                then Just (declHome, name, vars, opts, ctors, goKey)
                 else Nothing
         _ -> Nothing
   where
@@ -16190,6 +16197,85 @@ defToStmts ctx def = case def of
 -- values recurse.
 caseToGo :: LC.LowerCtx -> Maybe String -> Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
 caseToGo ctx mExpectedGo subject branches =
+    -- v0.17 P3.4c.3 — sealed-iface dispatch gate.
+    --
+    -- Sandwich: ask the P3.4c.1 predicate whether the subject is a
+    -- sealed-iface-eligible ADT.  If Just (gate ALLOWS dispatch) AND
+    -- the P3.4c.2 helper can emit for the branches → use the typed
+    -- @switch __subject := goSubject.(type)@ shape.  Either Nothing
+    -- → fall through to the legacy @.Tag@-switch body via
+    -- 'caseToGoLegacy' unchanged.
+    --
+    -- == Byte-identity invariant (P3.3 default)
+    --
+    -- 'shouldEmitSealedIface' currently returns @False@ for every
+    -- ADT (Compile.hs:914-920).  The predicate therefore returns
+    -- @Nothing@ for every subject regardless of pattern shape, and
+    -- this gate is dead code on the production path.  The
+    -- @diff -q@ on @examples/26-ui-showcase/sky-out/main.go@
+    -- pre/post this commit MUST be byte-identical — that's the
+    -- ship gate.
+    --
+    -- == Solved-types scoping
+    --
+    -- The predicate calls 'Solve.lookupSolvedRegionScoped' which
+    -- honours @_stCurrentModule@.  We wrap the SolvedTypes value
+    -- from 'getCgEnvFromScope' with @withCurrentModule
+    -- (LC._lc_currentDepModule ctx)@ before threading — matches
+    -- the convention at @generateDepDef@ (Compile.hs:5147-5149).
+    -- Without this, dep-module case-of subjects whose region only
+    -- lives in @_stPerModuleRegions[depMod]@ would miss the
+    -- lookup; gate would be a permanent no-op for cross-module
+    -- ADTs.  Closes iter 55 Griller #1 vector 2 BLOCKER.
+    --
+    -- == P3.4d precondition
+    --
+    -- Before any ADT is flipped via @shouldEmitSealedIface@:
+    --
+    --   * 'caseToGoSealedIface' MUST cover EVERY pattern shape the
+    --     canonicaliser produces — its current defensive
+    --     @Maybe GoExpr@ bail-to-legacy contract is UNSOUND under
+    --     a flipped gate (legacy emits @.Tag@ switches against
+    --     structs with no @.Tag@ field → @go build@ fails).
+    --     Tracked: P3.4c.2b (PAlias / nested-PCtor / literal /
+    --     PTuple in ctor arg coverage).
+    --
+    --   * 'Sky.Build.TailCallOpt.tcoBodyStmts' (Compile.hs:~16340)
+    --     handles @Can.Case@ in tail position WITHOUT calling
+    --     'caseToGo' — it emits its own @.Tag@-switch dispatch
+    --     via 'caseBranchToStmtsWith'.  A sealed-iface-emitted
+    --     ADT in a tail-recursive case-of would hit the legacy
+    --     dispatch on a struct family with no @.Tag@.  TCO parity
+    --     must ship as P3.4c.2c before P3.4d.
+    --
+    -- These preconditions are AUDIT-GATED by the
+    -- 'Sky.Build.SealedIfaceCarveoutSpec' tests asserting
+    -- 'shouldEmitSealedIface' returns @False@ for every reachable
+    -- ADT in the canonical fixture set.  Any commit that flips
+    -- the gate without lifting these preconditions will fail
+    -- @diff -q@ on the example sweep.
+    let scopedSolved =
+            Solve.withCurrentModule
+                (LC._lc_currentDepModule ctx)
+                (Rec._cg_solvedTypes getCgEnvFromScope)
+        maybeDispatch =
+            case subjectIsSealedIface ctx scopedSolved subject of
+                Just (_declHome, _typeName, _vars, _opts, _ctors, qualType) ->
+                    caseToGoSealedIface
+                        ctx scopedSolved mExpectedGo subject
+                        branches qualType
+                Nothing -> Nothing
+    in case maybeDispatch of
+        Just goExpr -> goExpr
+        Nothing -> caseToGoLegacy ctx mExpectedGo subject branches
+
+
+-- | v0.17 P3.4c.3 — the pre-sealed-iface implementation of caseToGo.
+-- Renamed from 'caseToGo' itself; the new 'caseToGo' wraps this with
+-- the sealed-iface dispatch gate.  Body byte-identical to the
+-- pre-iter-55 implementation.
+caseToGoLegacy :: LC.LowerCtx -> Maybe String -> Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
+caseToGoLegacy ctx mExpectedGo subject branches =
     let
         goSubject = exprToGo ctx subject
         subjectType = detectSubjectType branches
