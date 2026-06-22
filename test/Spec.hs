@@ -13,6 +13,7 @@ import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.SealedIfaceEmissionSpec
 import qualified Sky.Build.SealedIfaceMetadataSpec
+import qualified Sky.Build.SubjectIsSealedIfaceSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -249,6 +250,13 @@ allSpecs fastMode = do
     -- scaffolding only; consumed by the upcoming
     -- 'subjectIsSealedIface' predicate in P3.4c.1.
     describeT "Sky.Build.SealedIfaceMetadata" Sky.Build.SealedIfaceMetadataSpec.spec
+    -- v0.17 P3.4c.1 — predicate decision tree across TVar / TRecord /
+    -- TTuple / TUnit / TLambda / monomorphic-TType / parametric-TType
+    -- / Enum / Unbox / carve-out / entry-vs-dep key shape / TAlias
+    -- peel (Filled, Hoisted, nested, circular). Pure unit tests
+    -- against hand-built LowerCtx + SolvedTypes; no compile
+    -- pipeline. P3.4c.3 wire-in (caseToGo dispatch) lands later.
+    describeT "Sky.Build.SubjectIsSealedIface" Sky.Build.SubjectIsSealedIfaceSpec.spec
     -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
     -- 'globalAnonRecords' IORef writer audit. Pairs with the
     -- documentation block above 'generateAnonRecordDecls' in

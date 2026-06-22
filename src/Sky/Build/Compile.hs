@@ -966,6 +966,116 @@ rtBuilderShadowList = Set.fromList
     ]
 
 
+-- | v0.17 P3.4c.1 — predicate for sealed-iface dispatch at @caseToGo@.
+--
+-- Returns @Just (modName, typeName, vars, opts, ctors)@ when the
+-- subject's HM-resolved type is a monomorphic non-Enum non-Unbox
+-- non-carve-out user ADT with metadata available in
+-- @LC._lc_unionDetails@.  Returns @Nothing@ for: parametric
+-- subjects, TVar / TRecord / TTuple / TUnit / TLambda subjects,
+-- kernel-opaque ADTs in 'rtBuilderShadowList', and any subject
+-- whose region the solver didn't constrain (synthetic codegen-
+-- synthesised expressions).
+--
+-- Pure function — reads scoped 'LC.LowerCtx' + 'Solve.SolvedTypes'
+-- only.  No IORef, no env, no @unsafePerformIO@.  Spec-testable in
+-- isolation against hand-built fixtures.
+--
+-- == Design notes (iter 53 dual-grill close)
+--
+-- 1. /TAlias peel/.  Walks @T.TAlias _ _ _ (Hoisted|Filled body)@
+--    transparently to the underlying @T.TType@.  Maintains a
+--    @Set (ModuleName.Canonical, String)@ visited set so a future
+--    alias-cycle escape (currently impossible — the canonicaliser
+--    rejects cycles upstream) doesn't loop.
+--
+-- 2. /Region lookup/.  Uses 'Solve.lookupSolvedRegionScoped' (not
+--    the flat 'Solve.lookupSolvedRegion') so cross-module region
+--    collisions go to the correct module's table — same channel
+--    PR #124's region-based curMod lookup landed on.
+--
+-- 3. /Key shape/.  The unified union-details map keys entry-module
+--    unions by bare type name (\"Color\") and dep-module unions by
+--    prefixed Go-mangled name (\"Lib_X_Color\").  The predicate
+--    picks the key based on @T.TType@'s @home@ vs the lowering
+--    context's module:
+--
+--      * @home == _lc_module ctx && _lc_currentDepModule ctx ==
+--        Nothing@ → bare key (entry module emission path).
+--      * Otherwise → prefixed key (dep module emission path or
+--        cross-module reference).
+--
+--    Both forms live in the SAME map post-P3.4c.0a so a single
+--    lookup is unambiguous.
+--
+-- 4. /Position/.  This predicate is for DISPATCH positions only
+--    (case scrutinee).  Constructor-application positions consult
+--    a different code path (@Can.VarCtor@) which already emits
+--    sealed-iface ctor calls via 'emitSealedIfaceUnion''s
+--    @GoDeclFunc@/@GoDeclVar@ outputs when the same gate is True.
+--    Dual-grill iter 53 Griller #2 NF10.
+subjectIsSealedIface
+    :: LC.LowerCtx
+    -> Solve.SolvedTypes
+    -> Can.Expr
+    -> Maybe ( ModuleName.Canonical  -- declared in
+             , String                 -- bare type name
+             , [String]               -- type variables (always [])
+             , Can.CtorOpts           -- opts (Normal post-gate)
+             , [Can.Ctor]             -- constructors
+             )
+subjectIsSealedIface ctx solved (A.At region _) = do
+    ty <- Solve.lookupSolvedRegionScoped region solved
+    case peelTAlias Set.empty ty of
+        T.TType home name _args -> do
+            let goKey = qualifiedGoKey ctx home name
+            (declHome, opts, vars, ctors) <-
+                Map.lookup goKey (LC._lc_unionDetails ctx)
+            if shouldEmitSealedIface declHome name vars opts
+                then Just (declHome, name, vars, opts, ctors)
+                else Nothing
+        _ -> Nothing
+  where
+    -- v0.17 P3.4c.1 — transparent peel of @T.TAlias@ to its
+    -- underlying body.  @AliasType@ has two ctors (Hoisted /
+    -- Filled — Canonical.hs:173-176); both wrap the unfolded
+    -- body.  Visited-set guards a future alias-cycle escape.
+    peelTAlias
+        :: Set.Set (ModuleName.Canonical, String)
+        -> T.Type -> T.Type
+    peelTAlias seen (T.TAlias home aname _ (T.Hoisted body))
+        | Set.notMember (home, aname) seen =
+            peelTAlias (Set.insert (home, aname) seen) body
+    peelTAlias seen (T.TAlias home aname _ (T.Filled body))
+        | Set.notMember (home, aname) seen =
+            peelTAlias (Set.insert (home, aname) seen) body
+    peelTAlias _ t = t
+
+    -- v0.17 P3.4c.1 — build the map key matching '_lc_unionDetails'
+    -- population convention.  Entry-module unions key by bare type
+    -- name (matching @Map.keys (Can._unions canMod)@); dep-module
+    -- unions key by @prefix ++ "_" ++ name@ (matching
+    -- @deriveDepSigs.unionDetails@'s mangle pattern).  Decision
+    -- gated on dep-mode hint (Nothing = entry) PLUS home equality
+    -- with the carrying module — dep-mode emission of an entry-
+    -- module ADT lookup MUST go through the dep-keyed path because
+    -- the entry's bare-keyed entry was REPLACED by the dep mirror
+    -- write order; see Compile.hs:3262 + ~5654 cascade install
+    -- ordering.  Two-fail-safe via fall-through @Nothing@.
+    qualifiedGoKey
+        :: LC.LowerCtx
+        -> ModuleName.Canonical
+        -> String
+        -> String
+    qualifiedGoKey lc home name
+        | LC._lc_currentDepModule lc == Nothing
+          && home == LC._lc_module lc            = name
+        | otherwise =
+            let modStr  = ModuleName.toString home
+                modKey  = map (\c -> if c == '.' then '_' else c) modStr
+            in modKey ++ "_" ++ name
+
+
 -- | v0.17 P3.4a — sealed-iface emission helper for monomorphic
 -- non-Enum non-carve-out ADTs.
 --
