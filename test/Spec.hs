@@ -14,6 +14,7 @@ import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.SealedIfaceEmissionSpec
 import qualified Sky.Build.SealedIfaceMetadataSpec
 import qualified Sky.Build.SubjectIsSealedIfaceSpec
+import qualified Sky.Build.CaseToGoSealedIfaceSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -257,6 +258,14 @@ allSpecs fastMode = do
     -- against hand-built LowerCtx + SolvedTypes; no compile
     -- pipeline. P3.4c.3 wire-in (caseToGo dispatch) lands later.
     describeT "Sky.Build.SubjectIsSealedIface" Sky.Build.SubjectIsSealedIfaceSpec.spec
+    -- v0.17 P3.4c.2 — verify caseToGoSealedIface bails to Nothing
+    -- for out-of-scope patterns AND emits a valid GoTypeSwitch
+    -- (with default arm post-P3.4c.2a IR extension) for in-scope
+    -- shapes.  Includes a Builder round-trip that asserts the
+    -- rendered Go contains `switch __subject := ...(type)` +
+    -- per-variant `case Mod_Color_<Ctor>_V:` arms + `default:`
+    -- (NOT `case default:`).
+    describeT "Sky.Build.CaseToGoSealedIface" Sky.Build.CaseToGoSealedIfaceSpec.spec
     -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
     -- 'globalAnonRecords' IORef writer audit. Pairs with the
     -- documentation block above 'generateAnonRecordDecls' in

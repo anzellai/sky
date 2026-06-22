@@ -450,6 +450,7 @@ test-suite sky-tests
       Sky.Build.SealedIfaceEmissionSpec
       Sky.Build.SealedIfaceMetadataSpec
       Sky.Build.SubjectIsSealedIfaceSpec
+      Sky.Build.CaseToGoSealedIfaceSpec
       Sky.Build.AnonRecordWriterAuditSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec

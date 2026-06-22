@@ -9,7 +9,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
-import Data.Maybe (isJust, isNothing, fromMaybe)
+import Data.Maybe (isJust, isNothing, fromMaybe, catMaybes)
 import Data.List (isPrefixOf)
 import qualified Data.Char as Char
 import qualified Data.List as List
@@ -1074,6 +1074,171 @@ subjectIsSealedIface ctx solved (A.At region _) = do
             let modStr  = ModuleName.toString home
                 modKey  = map (\c -> if c == '.' then '_' else c) modStr
             in modKey ++ "_" ++ name
+
+
+-- | v0.17 P3.4c.2 — emit a sealed-iface @switch __subject :=
+-- goSubject.(type)@ dispatch when the predicate returned @Just@.
+-- DEFENSIVELY-TYPED: returns @Maybe GoIr.GoExpr@.  @Nothing@ tells
+-- the caller (P3.4c.3 wire-in inside @caseToGo@) to fall back to
+-- the legacy @.Tag@ switch.  Initial scope handles the bulk of
+-- real-world case shapes:
+--
+--   * Top-level @PCtor@ patterns with @PVar@ / @PAnything@ args.
+--   * Single @PAnything@ / @PVar@ catchall arm (binds to subject).
+--
+-- Cases the helper currently bails on (returns @Nothing@; legacy
+-- handles correctly):
+--
+--   * Nested @PCtor@ inside @PatternCtorArg._pca_pat@ — needs
+--     @patternBindings@ recursion.  Deferred to P3.4c.2b.
+--   * @PAlias@ at branch top-level OR inside ctor args.
+--   * Non-trivial inner patterns: @PTuple@ / @PList@ / @PCons@ /
+--     @PRecord@ / literal patterns.
+--   * Multiple catchalls (first wins; rest are dead per Sky's
+--     exhaustiveness checker — but the helper plays safe by
+--     bailing if the first catchall isn't the last branch).
+--
+-- The helper routes the returned @GoBlock@ through 'typeIIFE'
+-- when the caller passes @mExpectedGo = Just gt@ — same pattern
+-- as legacy @caseToGo@ at line ~16270.  This ensures arm-body
+-- @GoReturn@s are coerced to the expected return type via the
+-- @coerceBlockReturnsT@ walker (which descends into
+-- @GoTypeSwitch@'s case + default arms post P3.4c.2a).
+--
+-- Iter 54 dual-grill close — addresses Griller #1 vectors 2, 6, 7,
+-- 8 (BLOCKERs) by either fixing in-place OR bailing safely +
+-- Griller #2 vectors 3, 4, 8 (NEEDS-FIX) via the bail-safe fallback
+-- path.  Remaining grill items (cross-module qualType, TCO leaf,
+-- subject double-eval, solvedTypes provenance) tracked in followup.
+caseToGoSealedIface
+    :: LC.LowerCtx
+    -> Solve.SolvedTypes
+    -> Maybe String                  -- ^ expected Go return type (Nothing → any)
+    -> Can.Expr                      -- ^ subject
+    -> [Can.CaseBranch]              -- ^ branches in source order
+    -> String                        -- ^ qualType — keyed Go name (e.g. "Mod_Color")
+    -> Maybe GoIr.GoExpr
+caseToGoSealedIface ctx _solved mExpectedGo subject branches qualType =
+    let subjectName = "__subject"
+        goSubject = exprToGo ctx subject
+    in case sequence (map (classifyBranch ctx subjectName qualType) branches) of
+        Nothing -> Nothing
+        Just classified ->
+            case enforceCatchallTrailing classified of
+                Nothing -> Nothing
+                Just (ctorArms, mDefault) ->
+                    let defaultStmts = case mDefault of
+                            Just stmts -> stmts
+                            Nothing ->
+                                -- Exhaustiveness guaranteed by Sky.Type.Exhaustiveness.
+                                -- rt.Unreachable raises a Go panic that the
+                                -- synchronous-panic gate (v0.15.43) catches.
+                                [ GoIr.GoExprStmt
+                                    (GoIr.GoRaw
+                                        ("_ = rt.Unreachable(\"case/"
+                                            ++ qualType ++ "\")"))
+                                , GoIr.GoReturn (GoIr.GoRaw "nil")
+                                ]
+                        typeSwitch =
+                            GoIr.GoTypeSwitch subjectName goSubject
+                                ctorArms
+                                (Just defaultStmts)
+                        raw = GoIr.GoBlock [typeSwitch] (GoIr.GoRaw "nil")
+                    in Just $ case mExpectedGo of
+                        Just gt -> typeIIFE ctx Nothing gt raw
+                        Nothing -> raw
+
+
+-- | v0.17 P3.4c.2 internal — classification of a single
+-- @Can.CaseBranch@ for sealed-iface dispatch.
+data SealedArm
+    = SealedCtorArm !String ![GoIr.GoStmt]   -- ^ (variantTypeName, body stmts)
+    | SealedDefaultArm ![GoIr.GoStmt]        -- ^ catchall body stmts (binds in scope)
+
+
+-- | Walk a single branch, returning @Nothing@ when the pattern
+-- shape exceeds the helper's initial scope.
+classifyBranch
+    :: LC.LowerCtx -> String -> String
+    -> Can.CaseBranch -> Maybe SealedArm
+classifyBranch ctx subjectName qualType (Can.CaseBranch (A.At _ pat) body) =
+    case pat of
+        Can.PCtor _ _ _ ctorName _ args -> do
+            -- Initial scope: only PAnything/PVar inner-arg patterns.
+            argStmts <- mapM (renderArgBinding subjectName) args
+            let variantTypeName = qualType ++ "_" ++ ctorName ++ "_V"
+                bodyExpr = exprToGo ctx body
+                stmts = catMaybes argStmts
+                          ++ [GoIr.GoReturn bodyExpr]
+            Just (SealedCtorArm variantTypeName stmts)
+        Can.PAnything ->
+            Just $ SealedDefaultArm
+                [GoIr.GoReturn (exprToGo ctx body)]
+        Can.PVar name ->
+            -- Bind catchall name to the type-switch's bound subject,
+            -- which in the default arm has the interface type (the
+            -- sealed-iface itself).  Caller body sees @name@ at that
+            -- type, which is what Sky's HM checker assigned.
+            Just $ SealedDefaultArm
+                [ GoIr.GoShortDecl name (GoIr.GoIdent subjectName)
+                , GoIr.GoReturn (exprToGo ctx body)
+                ]
+        -- PAlias / PUnit / PTuple / PList / PCons / literal patterns:
+        -- bail to legacy.  PRecord shouldn't appear at branch top-level
+        -- for an ADT subject.
+        _ -> Nothing
+
+
+-- | Bind a single ctor arg.  @Just GoStmt@ → emit the binding;
+-- @Just Nothing@ inside the outer @Maybe@-list → no binding (the
+-- @PAnything@ wildcard); outer @Nothing@ → bail (nested pattern).
+renderArgBinding
+    :: String -> Can.PatternCtorArg -> Maybe (Maybe GoIr.GoStmt)
+renderArgBinding subjectName
+        (Can.PatternCtorArg idx _ (A.At _ argPat)) =
+    case argPat of
+        Can.PAnything -> Just Nothing
+        Can.PVar name ->
+            Just $ Just $
+                GoIr.GoShortDecl name
+                    (GoIr.GoSelector (GoIr.GoIdent subjectName)
+                        ("V" ++ show idx))
+        _ -> Nothing  -- nested pattern → bail to legacy
+
+
+-- | Enforce that the catchall arm (if any) is the LAST branch.
+-- Closes Griller #2 vector 3 — Sky source @case x of Red -> a ;
+-- _ -> b ; Green -> c@ has dead third arm under legacy's
+-- source-order if/else cascade; the sealed-iface dispatch's
+-- Go @switch@ would silently make Green REACHABLE again, changing
+-- observable behaviour.  Bail to legacy in this case so the
+-- semantics stay byte-equivalent (legacy emits the dead arm but
+-- never reaches it).
+enforceCatchallTrailing
+    :: [SealedArm]
+    -> Maybe ( [(String, [GoIr.GoStmt])]    -- ctor arms
+             , Maybe [GoIr.GoStmt]          -- optional default arm
+             )
+enforceCatchallTrailing arms =
+    let (ctorArms, defaults) = splitArms arms []
+    in case (defaults, dropWhile isCtorArm arms) of
+        ([], _) ->
+            -- No catchall — every arm is PCtor.
+            Just (ctorArms, Nothing)
+        ([defStmts], post) | length post == 1 ->
+            -- Exactly one catchall AND nothing after it.  Safe.
+            Just (ctorArms, Just defStmts)
+        _ -> Nothing
+  where
+    splitArms [] acc = (reverse acc, [])
+    splitArms (SealedCtorArm n stmts : rest) acc =
+        splitArms rest ((n, stmts) : acc)
+    splitArms (SealedDefaultArm stmts : rest) acc =
+        let (_, defs') = splitArms rest acc
+        in (reverse acc, stmts : defs')
+
+    isCtorArm (SealedCtorArm _ _) = True
+    isCtorArm _ = False
 
 
 -- | v0.17 P3.4a — sealed-iface emission helper for monomorphic
