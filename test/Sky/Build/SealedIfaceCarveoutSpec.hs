@@ -85,6 +85,7 @@ spec = do
             Set.toAscList rtBuilderShadowList `shouldBe`
                 [ "Sky.Core.Error.Error"
                 , "Sky.Core.Http.Stream.ChunkEvent"
+                , "Sky.Core.WebSocket.CloseCode"
                 , "Sky.Core.WebSocket.WebSocketMessage"
                 , "Sky.Http.Server.Stream.StreamWriter"
                 , "Sky.Http.Server.WebSocket.WebSocketServer"
@@ -93,8 +94,18 @@ spec = do
                 , "Std.Decimal.Decimal"
                 ]
 
-        it "contains 8 entries (catches accidental list growth)" $
-            Set.size rtBuilderShadowList `shouldBe` 8
+        it "contains 9 entries (catches accidental list growth)" $
+            Set.size rtBuilderShadowList `shouldBe` 9
+
+        it "Sky.Core.WebSocket.CloseCode is shadowed (iter 58 audit close)" $ do
+            -- runtime-go/rt/websocket.go:676-693 buildCloseCodeValue ships
+            -- SkyADT-shape CloseCode values to user (CloseCode -> msg)
+            -- handlers via sky_call. Flipping to sealed-iface without
+            -- migrating the rt builder → guaranteed runtime panic at the
+            -- user's case-of dispatch. iter 58 dual-grill (A + B) caught
+            -- this hole in the iter 49 audit.
+            "Sky.Core.WebSocket.CloseCode" `Set.member` rtBuilderShadowList
+                `shouldBe` True
 
         it "co-dependency: SqlValue + SqlField are BOTH present" $ do
             -- Griller 2 B1: SqlField carries SqlValue in SetField SqlValue.

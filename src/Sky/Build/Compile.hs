@@ -1000,6 +1000,22 @@ sealedIfaceFlipAllowList = Set.empty
 --   * @Sky.Core.Http.Stream.ChunkEvent@        — @http_stream.go:747/753/759@
 --   * @Sky.Http.Server.Stream.StreamWriter@    — @server_stream.go:385@
 --   * @Sky.Core.WebSocket.WebSocketMessage@    — @websocket.go:663-687@
+--   * @Sky.Core.WebSocket.CloseCode@           — @websocket.go:676-693@
+--                                                'buildCloseCodeValue' factory
+--                                                + 'dispatchOneWsSub:898/916'
+--                                                ships @SkyADT{Tag:n,SkyName:"Normal"}@
+--                                                etc. to user @(CloseCode -> msg)@
+--                                                handlers via @sky_call@.
+--                                                Added iter 58 — iter 49 audit
+--                                                cited @websocket.go:663-687@ but
+--                                                only added WebSocketMessage;
+--                                                CloseCode was missed despite
+--                                                living in the same byte range.
+--                                                Dual-grill on a proposed P3.4e
+--                                                flip of CloseCode (agents A + B)
+--                                                independently confirmed the rt-
+--                                                shadow + prescribed adding it
+--                                                here.
 --   * @Sky.Http.Server.WebSocket.WebSocketServer@ — @server_websocket.go:377@
 --
 -- AUDIT GATE: 'Sky.Build.SealedIfaceCarveoutSpec' asserts this list
@@ -1020,6 +1036,7 @@ rtBuilderShadowList = Set.fromList
     , "Sky.Core.Http.Stream.ChunkEvent"
     , "Sky.Http.Server.Stream.StreamWriter"
     , "Sky.Core.WebSocket.WebSocketMessage"
+    , "Sky.Core.WebSocket.CloseCode"
     , "Sky.Http.Server.WebSocket.WebSocketServer"
     ]
 
