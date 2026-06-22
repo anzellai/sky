@@ -887,6 +887,10 @@ getCgEnvFromScope = unsafePerformIO $ do
 --
 -- 1. 'Can.Enum' (all-nullary ADT) → False. Stays as
 --    @type X int + iota@ — sealed-iface adds no value.
+-- 1b. 'Can.Unbox' (single-ctor single-arg newtype) → False. Unbox
+--    semantically wants the unwrapped representation; emitting a
+--    SkyVariantTag interface defeats the whole point of Unbox.
+--    Added in P3.4c.0a per dual-grill iter 53 Griller #2 NF6.
 -- 2. Polymorphic (vars non-empty) → False. P4 covers the
 --    parametric story (Element / Attribute / Html phantom-msg +
 --    Maybe / Result / Task real-flow).
@@ -913,6 +917,7 @@ shouldEmitSealedIface
     -> Bool
 shouldEmitSealedIface modName typeName vars opts
     | opts == Can.Enum                               = False  -- (1)
+    | opts == Can.Unbox                              = False  -- (1b) v0.17 P3.4c.0a
     | not (null vars)                                = False  -- (2)
     | qualifiedName `Set.member` rtBuilderShadowList = False  -- (3)
     | otherwise                                      = False  -- (4) P3.3 default
@@ -5650,8 +5655,19 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- onto scopeStateRef (refreshes the seed from line ~2719
             -- with the cgEnv's merged set after dep-module imports
             -- finish populating it).
+            --
+            -- v0.17 P3.4c.0a — mirror the unionDetails channel
+            -- alongside.  Without this, `LC._lc_unionDetails` only
+            -- ever carried dep details (the C9 install at line ~3262
+            -- writes depUnionDetails); the entry module's union
+            -- details would be invisible to the upcoming
+            -- subjectIsSealedIface predicate (P3.4c.1).  Dual-grill
+            -- (iter 53, Grillers #1 + #2) flagged this as the
+            -- blocking asymmetry.
             modifyIORef' scopeStateRef
-                (LC.withUnionNames (Rec._cg_unionNames cgEnv))
+                ( LC.withUnionNames   (Rec._cg_unionNames   cgEnv)
+                . LC.withUnionDetails (Rec._cg_unionDetails cgEnv)
+                )
             -- v0.17 C10: GoSig dep-module typeParams population.  C9
             -- captured entry-module-only state; after dep-module
             -- _cg_funcSkyToGoTVars merges in at line 3788-3790, the
@@ -6000,8 +6016,12 @@ generateGo consoleNeeded canMod srcMod config solvedTypes =
             -- v0.17 iter 19 (task #654) — install entry-emit
             -- unionNames onto scopeStateRef (mirrors continueCompile's
             -- cgEnv path; generateGo is the standalone entry).
+            -- v0.17 P3.4c.0a — mirror unionDetails (see paired site
+            -- at line ~5654 for the rationale).
             modifyIORef' scopeStateRef
-                (LC.withUnionNames (Rec._cg_unionNames cgEnv))
+                ( LC.withUnionNames   (Rec._cg_unionNames   cgEnv)
+                . LC.withUnionDetails (Rec._cg_unionDetails cgEnv)
+                )
             return $ collectGoImports consoleNeeded canMod srcMod
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod

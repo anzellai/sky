@@ -54,6 +54,12 @@ spec = do
         it "returns False for Can.Enum even when not in shadow list (rule 1)" $
             shouldEmitSealedIface modColor "Color" [] Can.Enum `shouldBe` False
 
+        it "returns False for Can.Unbox (rule 1b: newtype wrapper)" $
+            -- v0.17 P3.4c.0a — dual-grill iter 53 Griller #2 NF6 close.
+            -- Unbox semantically wants the unwrapped representation;
+            -- sealed-iface defeats the optimisation point.
+            shouldEmitSealedIface modColor "Wrapper" [] Can.Unbox `shouldBe` False
+
         it "returns False for polymorphic ADT (rule 2: P4 scope)" $
             shouldEmitSealedIface modColor "Box" ["a"] Can.Normal `shouldBe` False
 
