@@ -4803,7 +4803,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
             dceOff
             || Set.null reached
             || Set.member (Dce.TopRef canonicalModName n) reached
-    in concatMap (generateUnionForDep modPrefix) (Map.toList (Can._unions canMod))
+    in concatMap (generateUnionForDep (Can._name canMod) modPrefix) (Map.toList (Can._unions canMod))
     ++ concatMap (generateAliasForDep userDefs modPrefix) (Map.toList (Can._aliases canMod))
     ++ go keepName (Can._decls canMod)
   where
@@ -5157,8 +5157,8 @@ collectDeclNames = goNames Set.empty
 -- references like @case x of Just v -> ...@ that today emit bare
 -- @qualType@ in type slots without args.  Fully typing the
 -- consumption side is Phase γ's σ-projection work (C8-C12).
-generateUnionForDep :: String -> (String, Can.Union) -> [GoIr.GoDecl]
-generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
+generateUnionForDep :: ModuleName.Canonical -> String -> (String, Can.Union) -> [GoIr.GoDecl]
+generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
     let qualType = modPrefix ++ "_" ++ typeName
         -- C4: poly ADT — derive Go type-var names + substitution map.
         goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1::Int ..] vars
@@ -5193,6 +5193,14 @@ generateUnionForDep modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
                 | Can.Ctor cname _ _ _ <- ctors
                 ])
             ]
+        _ | shouldEmitSealedIface modName typeName vars opts ->
+            -- v0.17 P3.4b: sealed-iface emission gate. Currently
+            -- 'shouldEmitSealedIface' returns False everywhere
+            -- (P3.3 default), so this branch is unreachable on the
+            -- production path — output is byte-identical to today.
+            -- P3.4d/e flip the gate per-ADT to actually exercise
+            -- this branch.
+            emitSealedIfaceUnion qualType ctors
         _ ->
             -- Type alias stays non-generic — `type qualType = rt.SkyADT`.
             -- The TVar info lives only on the ctor function's params.
@@ -6104,6 +6112,14 @@ generateUnionTypes canMod =
         Can.Enum ->
             -- Enum: type Name int; const ( Name_Ctor = iota ... )
             [ GoIr.GoDeclType typeName (GoIr.GoEnumDef (map (ctorConstName typeName) ctors)) ]
+        _ | shouldEmitSealedIface (Can._name canMod) typeName vars opts ->
+            -- v0.17 P3.4b: sealed-iface emission gate. Currently
+            -- 'shouldEmitSealedIface' returns False everywhere
+            -- (P3.3 default), so this branch is unreachable on
+            -- the production path — output is byte-identical to
+            -- today. P3.4d/e flip the gate per-ADT to actually
+            -- exercise this branch.
+            emitSealedIfaceUnion typeName ctors
         _ ->
             -- Tagged union: alias rt.SkyADT so values constructed here
             -- are assignment-compatible with values produced by rt-side
