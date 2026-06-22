@@ -98,39 +98,17 @@ spec = do
             -- source produces this; exhaustiveness rejects upstream.)
             result `shouldSatisfy` isJust
 
-        it "bails on PAlias top-level" $ do
-            let branch = Can.CaseBranch
-                    (A.At (regionFor 2)
-                        (Can.PAlias
-                            (A.At (regionFor 3) (mkPCtor "Red" 0 []))
-                            "asName"))
-                    (litBody 1)
-            let result = caseToGoSealedIface
-                    mkCtx Solve.emptySolvedTypes Nothing
-                    fixtureSubject [branch] "Mod_Color"
-            result `shouldSatisfy` isNothing
-
-        it "bails on literal pattern (e.g. PInt)" $ do
+        -- v0.17 P3.4c.2b — PAlias now HANDLED (peeled to inner +
+        -- alias binding stmt prepended).  Test moved to happy-path
+        -- block below.  Bail-on-literal still applies — literals
+        -- against an ADT subject are HM-rejected upstream.
+        it "bails on literal pattern (e.g. PInt) against ADT subject" $ do
             let branch = Can.CaseBranch
                     (A.At (regionFor 4) (Can.PInt 0))
                     (litBody 1)
             let result = caseToGoSealedIface
                     mkCtx Solve.emptySolvedTypes Nothing
                     fixtureSubject [branch] "Mod_Color"
-            result `shouldSatisfy` isNothing
-
-        it "bails on nested PCtor inside ctor arg" $ do
-            -- Outer PCtor "Joined" with inner PCtor "Just user"
-            let innerPCtor =
-                    A.At (regionFor 5) (mkPCtor "Just" 1
-                        [A.At (regionFor 6) (Can.PVar "user")])
-                outerBranch = Can.CaseBranch
-                    (A.At (regionFor 7)
-                        (mkPCtor "Joined" 0 [innerPCtor]))
-                    (litBody 1)
-            let result = caseToGoSealedIface
-                    mkCtx Solve.emptySolvedTypes Nothing
-                    fixtureSubject [outerBranch] "Mod_Color"
             result `shouldSatisfy` isNothing
 
         it "bails on catchall NOT as last arm (dead-code preservation)" $ do
@@ -215,6 +193,68 @@ spec = do
                     mkCtx Solve.emptySolvedTypes Nothing
                     fixtureSubject [redBranch, catchall] "Mod_Color"
             result `shouldSatisfy` isJust
+
+        -- v0.17 P3.4c.2b — PAlias now handled (peeled to inner +
+        -- alias binding stmt prepended).
+        it "returns Just for PAlias on top-level PCtor: (Red) as binding" $ do
+            let aliasedBranch = Can.CaseBranch
+                    (A.At (regionFor 32)
+                        (Can.PAlias
+                            (A.At (regionFor 33) (mkPCtor "Red" 0 []))
+                            "binding"))
+                    (litBody 1)
+            let result = caseToGoSealedIface
+                    mkCtx Solve.emptySolvedTypes Nothing
+                    fixtureSubject [aliasedBranch, greenBranch] "Mod_Color"
+            result `shouldSatisfy` isJust
+
+        it "returns Just for PAlias on PAnything catchall: _ as fallback" $ do
+            let aliasedCatchall = Can.CaseBranch
+                    (A.At (regionFor 34)
+                        (Can.PAlias
+                            (A.At (regionFor 35) Can.PAnything)
+                            "fallback"))
+                    (litBody 99)
+            let result = caseToGoSealedIface
+                    mkCtx Solve.emptySolvedTypes Nothing
+                    fixtureSubject [redBranch, aliasedCatchall] "Mod_Color"
+            result `shouldSatisfy` isJust
+
+        -- v0.17 P3.4c.2b — non-PCtor inner arg patterns now route
+        -- through legacy patternBindings recursion.  Bail only on
+        -- inner PCtor (deferred to P3.4c.2d).
+        it "returns Just for N-ary PCtor with PAnything args" $ do
+            let wildArgsBranch = Can.CaseBranch
+                    (A.At (regionFor 36)
+                        (mkPCtor "RGB" 2
+                            [ A.At (regionFor 37) Can.PAnything
+                            , A.At (regionFor 38) Can.PAnything
+                            , A.At (regionFor 39) Can.PAnything
+                            ]))
+                    (litBody 99)
+            let result = caseToGoSealedIface
+                    mkCtx Solve.emptySolvedTypes Nothing
+                    fixtureSubject [redBranch, greenBranch, wildArgsBranch]
+                    "Mod_Color"
+            result `shouldSatisfy` isJust
+
+        it "still bails on nested PCtor inside ctor arg (deferred to P3.4c.2d)" $ do
+            -- This case stays bailed in P3.4c.2b.  Nested sealed-iface
+            -- dispatch is non-trivial — requires a nested GoTypeSwitch
+            -- on the inner ADT.  The first flipped ADT in P3.4d MUST
+            -- NOT have ctor args carrying other sealed-iface-flipped
+            -- ADTs (documented precondition).
+            let innerPCtor =
+                    A.At (regionFor 40) (mkPCtor "Just" 1
+                        [A.At (regionFor 41) (Can.PVar "user")])
+                outerBranch = Can.CaseBranch
+                    (A.At (regionFor 42)
+                        (mkPCtor "Joined" 0 [innerPCtor]))
+                    (litBody 1)
+            let result = caseToGoSealedIface
+                    mkCtx Solve.emptySolvedTypes Nothing
+                    fixtureSubject [outerBranch] "Mod_Color"
+            result `shouldSatisfy` isNothing
 
     describe "caseToGoSealedIface — Builder round-trip emits valid Go" $ do
 

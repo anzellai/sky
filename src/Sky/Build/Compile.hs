@@ -1171,11 +1171,20 @@ classifyBranch
 classifyBranch ctx subjectName qualType (Can.CaseBranch (A.At _ pat) body) =
     case pat of
         Can.PCtor _ _ _ ctorName _ args -> do
-            -- Initial scope: only PAnything/PVar inner-arg patterns.
-            argStmts <- mapM (renderArgBinding subjectName) args
+            -- v0.17 P3.4c.2b — extended scope: each arg routes
+            -- through 'renderArgBinding' which now handles
+            -- PAnything / PVar / literal / PCons / PList / PTuple /
+            -- PRecord / PUnit / PAlias inner shapes via legacy
+            -- 'patternBindings' recursion.  Bails (returns
+            -- @Nothing@) only when an inner pattern is itself a
+            -- @PCtor@ — that case requires nested sealed-iface
+            -- dispatch which deferred to P3.4c.2d (the first
+            -- flipped ADT MUST NOT have nested-PCtor args; documented
+            -- as a P3.4d precondition).
+            argStmtsList <- mapM (renderArgBinding subjectName) args
             let variantTypeName = qualType ++ "_" ++ ctorName ++ "_V"
                 bodyExpr = exprToGo ctx body
-                stmts = catMaybes argStmts
+                stmts = concat argStmtsList
                           ++ [GoIr.GoReturn bodyExpr]
             Just (SealedCtorArm variantTypeName stmts)
         Can.PAnything ->
@@ -1190,27 +1199,90 @@ classifyBranch ctx subjectName qualType (Can.CaseBranch (A.At _ pat) body) =
                 [ GoIr.GoShortDecl name (GoIr.GoIdent subjectName)
                 , GoIr.GoReturn (exprToGo ctx body)
                 ]
-        -- PAlias / PUnit / PTuple / PList / PCons / literal patterns:
-        -- bail to legacy.  PRecord shouldn't appear at branch top-level
-        -- for an ADT subject.
+        Can.PAlias (A.At _ innerPat) aliasName ->
+            -- v0.17 P3.4c.2b — peel @PAlias@ at branch top-level.
+            -- Emit @aliasName := __subject@ inside the arm body
+            -- THEN recursively classify the inner pattern.  Two
+            -- shapes possible:
+            --
+            --   * @(Red) as binding -> use binding@ → inner is
+            --     @PCtor "Red" []@ → SealedCtorArm with the alias
+            --     binding prepended to the arm stmts.
+            --   * @_ as catchall -> use catchall@ → inner is
+            --     @PAnything@ → SealedDefaultArm with the alias
+            --     binding prepended.
+            --
+            -- The alias binding refers to the original interface
+            -- value; under Go's type-switch semantics @__subject@ in
+            -- the ctor arm is the concrete variant struct.  Sky's
+            -- HM annotates @aliasName@ with the SUBJECT's type
+            -- (e.g. @Color@), so a downstream call expecting
+            -- @Color@ accepts the alias correctly (Go auto-boxes
+            -- struct-to-interface at the call site).
+            let aliasStmt = GoIr.GoShortDecl aliasName
+                                (GoIr.GoIdent subjectName)
+            in case classifyBranch ctx subjectName qualType
+                        (Can.CaseBranch
+                            (A.At (A.Region (A.Position 0 0) (A.Position 0 0))
+                                  innerPat)
+                            body) of
+                Just (SealedCtorArm typeName innerStmts) ->
+                    Just $ SealedCtorArm typeName (aliasStmt : innerStmts)
+                Just (SealedDefaultArm innerStmts) ->
+                    Just $ SealedDefaultArm (aliasStmt : innerStmts)
+                Nothing -> Nothing
+        -- Top-level literal / unit / tuple / list / cons / record
+        -- patterns against an ADT subject are HM-rejected upstream
+        -- (Sky.Type.Exhaustiveness rejects @case (c : Color) of 0 ->
+        -- ...@).  Bail to legacy as a defensive escape — these
+        -- shapes should never reach 'classifyBranch' for a valid
+        -- ADT subject.
         _ -> Nothing
 
 
--- | Bind a single ctor arg.  @Just GoStmt@ → emit the binding;
--- @Just Nothing@ inside the outer @Maybe@-list → no binding (the
--- @PAnything@ wildcard); outer @Nothing@ → bail (nested pattern).
+-- | v0.17 P3.4c.2b — bind a single ctor arg, handling nested
+-- non-@PCtor@ patterns via 'patternBindings' recursion on a
+-- synthetic temp.  Returns a list of statements so the caller can
+-- concat across all args.
+--
+--   * @PAnything@ → @_ = __subject.V<idx>@
+--   * @PVar name@ → @name := __subject.V<idx>@
+--   * @PCtor _ _ _@ → 'Nothing' (deferred to P3.4c.2d — needs
+--     nested sealed-iface dispatch; the first flipped ADT in P3.4d
+--     MUST NOT have ctor args carrying other sealed-iface-flipped
+--     ADTs).
+--   * Other inner shapes (PCons / PList / PTuple / PRecord /
+--     PAlias / literal / PUnit) → bind via temp + recurse through
+--     legacy 'patternBindings'.  Legacy handles each shape's
+--     binding semantics correctly because the temp's static Go
+--     type is the variant struct's @V\<idx\>@ field type — which is
+--     a non-ADT shape (Sky's HM rejects ADT-typed inner patterns
+--     under non-PCtor outer patterns).
 renderArgBinding
-    :: String -> Can.PatternCtorArg -> Maybe (Maybe GoIr.GoStmt)
+    :: String -> Can.PatternCtorArg -> Maybe [GoIr.GoStmt]
 renderArgBinding subjectName
         (Can.PatternCtorArg idx _ (A.At _ argPat)) =
-    case argPat of
-        Can.PAnything -> Just Nothing
+    let fieldName = "V" ++ show idx
+        accessor = GoIr.GoSelector (GoIr.GoIdent subjectName) fieldName
+    in case argPat of
+        Can.PAnything ->
+            Just [GoIr.GoAssign "_" accessor]
         Can.PVar name ->
-            Just $ Just $
-                GoIr.GoShortDecl name
-                    (GoIr.GoSelector (GoIr.GoIdent subjectName)
-                        ("V" ++ show idx))
-        _ -> Nothing  -- nested pattern → bail to legacy
+            Just [GoIr.GoShortDecl name accessor]
+        Can.PCtor _ _ _ _ _ _ ->
+            -- Deferred to P3.4c.2d.  Nested sealed-iface dispatch
+            -- needs the predicate threaded down + a nested
+            -- GoTypeSwitch — non-trivial.  Bail to legacy.
+            Nothing
+        _ ->
+            -- Bind temp + recurse through legacy patternBindings.
+            -- Temp-name includes both subjectName + idx to avoid
+            -- collisions across sibling args.
+            let tempName = "__sky_v_" ++ subjectName ++ "_" ++ show idx
+            in Just $
+                GoIr.GoShortDecl tempName accessor
+                : GoIr.GoAssign "_" (GoIr.GoIdent tempName)
+                : patternBindings tempName argPat
 
 
 -- | Enforce that the catchall arm (if any) is the LAST branch.
