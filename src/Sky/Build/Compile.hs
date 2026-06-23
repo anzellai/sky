@@ -1584,23 +1584,45 @@ caseToGoSealedIfaceStmts ctx _solved leafFn defaultArmStmts
                 branches) of
         Nothing -> Nothing
         Just classified ->
-            case enforceCatchallTrailing classified of
+            -- v0.17 iter 83 — fold consecutive same-ctor arms with
+            -- literal payload discriminators (e.g. DescHeading 1,
+            -- DescHeading 2, ...) into one outer type-switch arm +
+            -- inner GoSwitch on the discriminator field.  Bail to
+            -- legacy when the shape isn't safely groupable.
+            case groupSealedArms subjectName classified of
                 Nothing -> Nothing
-                Just (ctorArms, mDefault) ->
-                    let armDefaultStmts = case mDefault of
-                            Just stmts -> stmts
-                            Nothing    -> defaultArmStmts
-                        typeSwitch =
-                            GoIr.GoTypeSwitch subjectName goSubject
-                                ctorArms (Just armDefaultStmts)
-                    in Just [typeSwitch]
+                Just grouped ->
+                    case enforceCatchallTrailing grouped of
+                        Nothing -> Nothing
+                        Just (ctorArms, mDefault) ->
+                            let armDefaultStmts = case mDefault of
+                                    Just stmts -> stmts
+                                    Nothing    -> defaultArmStmts
+                                typeSwitch =
+                                    GoIr.GoTypeSwitch subjectName goSubject
+                                        ctorArms (Just armDefaultStmts)
+                            in Just [typeSwitch]
 
 
 -- | v0.17 P3.4c.2 internal — classification of a single
 -- @Can.CaseBranch@ for sealed-iface dispatch.
+--
+-- v0.17 iter 83 — @SealedCtorArm@ widened to carry the raw arg
+-- patterns alongside the already-rendered body stmts.  The
+-- grouping pre-pass ('groupSealedArms') inspects the arg patterns
+-- to detect literal-payload-discriminated runs (e.g.
+-- @DescHeading 1@ ... @DescHeading 5@) and folds them into a
+-- single outer Go type-switch arm whose body is an inner
+-- @switch __subject.V<idx>@.  Singleton runs flow through
+-- unchanged (the @[single]@ fast-path), preserving byte-identical
+-- emission for every nullary / PVar-arg sealed-iface flip already
+-- shipped.
 data SealedArm
-    = SealedCtorArm !String ![GoIr.GoStmt]   -- ^ (variantTypeName, body stmts)
-    | SealedDefaultArm ![GoIr.GoStmt]        -- ^ catchall body stmts (binds in scope)
+    = SealedCtorArm
+        !String                          -- ^ variantTypeName (Mod_X_Foo_V)
+        ![Can.PatternCtorArg]            -- ^ raw arg patterns (for grouping pre-pass)
+        ![GoIr.GoStmt]                   -- ^ rendered body (arg-binds ++ leafFn body)
+    | SealedDefaultArm ![GoIr.GoStmt]    -- ^ catchall body stmts (binds in scope)
 
 
 -- | Walk a single branch, returning @Nothing@ when the pattern
@@ -1624,7 +1646,11 @@ classifyBranch ctx leafFn subjectName qualType
             -- @\<param reassign\>; continue@ for tail self-calls.
             let variantTypeName = qualType ++ "_" ++ ctorName ++ "_V"
                 stmts = concat argStmtsList ++ leafFn body
-            Just (SealedCtorArm variantTypeName stmts)
+            -- v0.17 iter 83 — keep raw args around so groupSealedArms
+            -- can detect literal-payload-discriminated runs and emit
+            -- one outer Go type-switch arm + inner GoSwitch instead
+            -- of duplicate-case arms.
+            Just (SealedCtorArm variantTypeName args stmts)
         Can.PAnything ->
             Just $ SealedDefaultArm (leafFn body)
         Can.PVar name ->
@@ -1647,8 +1673,9 @@ classifyBranch ctx leafFn subjectName qualType
                             (A.At (A.Region (A.Position 0 0) (A.Position 0 0))
                                   innerPat)
                             body) of
-                Just (SealedCtorArm typeName innerStmts) ->
-                    Just $ SealedCtorArm typeName (aliasStmt : innerStmts)
+                Just (SealedCtorArm typeName args innerStmts) ->
+                    Just $ SealedCtorArm typeName args
+                                (aliasStmt : innerStmts)
                 Just (SealedDefaultArm innerStmts) ->
                     Just $ SealedDefaultArm (aliasStmt : innerStmts)
                 Nothing -> Nothing
@@ -1727,14 +1754,234 @@ enforceCatchallTrailing arms =
         _ -> Nothing
   where
     splitArms [] acc = (reverse acc, [])
-    splitArms (SealedCtorArm n stmts : rest) acc =
+    splitArms (SealedCtorArm n _ stmts : rest) acc =
         splitArms rest ((n, stmts) : acc)
     splitArms (SealedDefaultArm stmts : rest) acc =
         let (_, defs') = splitArms rest acc
         in (reverse acc, stmts : defs')
 
-    isCtorArm (SealedCtorArm _ _) = True
+    isCtorArm (SealedCtorArm _ _ _) = True
     isCtorArm _ = False
+
+
+-- | v0.17 iter 83 — group consecutive sealed-iface arms with the
+-- same variantTypeName into a single Go type-switch arm whose body
+-- is an inner @switch __subject.V<idx>@ discriminator on literal-
+-- shaped payload arms.
+--
+-- Closes the bug class where @case d of DescHeading 1 -> "h1" ;
+-- DescHeading 2 -> "h2" ; ...@ emits N duplicate Go
+-- @case Std_Ui_Description_DescHeading_V:@ arms — Go rejects with
+-- "duplicate case in type switch".
+--
+-- INVARIANT (source-order preservation): only CONSECUTIVE arms with
+-- the same variantTypeName get merged.  If the SAME ctor appears
+-- non-consecutively (interleaved with another ctor), the
+-- post-grouping dedupe gate bails the entire helper back to
+-- @caseToGoLegacy@ — guaranteeing no duplicate-case Go failure.
+--
+-- INVARIANT (byte-identical 22-flip preservation): when a group
+-- has size 1, the single arm flows through UNCHANGED.  Today's 22
+-- already-shipped sealed-iface flips (TestResult, Algorithm, etc.
+-- — all nullary or PVar-arg shapes, no literal payload discrim)
+-- take this @[single]@ fast-path and emit the same Go bytes as
+-- pre-iter-83.
+--
+-- INVARIANT (catchall safety): if a merged run produces NO
+-- intra-ctor wildcard arm (every arm in the group has a literal at
+-- the discriminator slot, no @DescHeading _ -> default@ tail),
+-- AND the outer arm list contains a top-level catchall
+-- @SealedDefaultArm@, we BAIL to legacy.  This avoids the
+-- silent-mis-routing soundness hole where Go type-switch arms do
+-- NOT fall through to the outer @default:@ — control would exit
+-- past the switch without ever executing the top-level catchall.
+-- Legacy's @.Tag == N@ cascade emits the correct semantics in this
+-- shape (Issue H3 from the design grill).
+--
+-- Returns @Nothing@ when the run isn't safely groupable (mixed
+-- discriminator indices, non-trailing wildcard at discriminator
+-- slot, non-inert pattern at a non-discriminator slot, duplicate
+-- literal, or the catchall-mis-route shape above).
+groupSealedArms :: String -> [SealedArm] -> Maybe [SealedArm]
+groupSealedArms subjectName arms = do
+    grouped <- goGroup arms
+    -- H2 close: even after consecutive-group merging, refuse to emit
+    -- if two SealedCtorArm entries share a variantTypeName (would
+    -- still produce duplicate Go cases).  Conservative bail to
+    -- legacy in this shape.
+    let ctorNames = [n | SealedCtorArm n _ _ <- grouped]
+    if hasDup ctorNames
+        then Nothing
+        else Just grouped
+  where
+    goGroup [] = Just []
+    goGroup (SealedDefaultArm s : rest) =
+        fmap (SealedDefaultArm s :) (goGroup rest)
+    goGroup (a@(SealedCtorArm tn _ _) : rest) =
+        let (run, rest') = spanSameCtor tn (a : rest)
+        in case run of
+            [single] -> fmap (single :) (goGroup rest')
+            many     -> do
+                merged <- mergeGroup subjectName outerHasDefault many
+                fmap (merged :) (goGroup rest')
+
+    spanSameCtor tn = span (sameCtor tn)
+      where
+        sameCtor t (SealedCtorArm t' _ _) = t == t'
+        sameCtor _ _                       = False
+
+    -- Whether the original arm list has a top-level catchall.
+    -- mergeGroup uses this to detect H3: a merged run without an
+    -- intra-ctor wildcard would silently bypass the top-level
+    -- catchall if Go type-switch arms don't fall through.
+    outerHasDefault = any isDefaultArm arms
+    isDefaultArm (SealedDefaultArm _) = True
+    isDefaultArm _                    = False
+
+    hasDup xs = length xs /= length (nubEq xs)
+    nubEq = go []
+      where
+        go _    []     = []
+        go seen (x:xs) | x `elem` seen = go seen xs
+                       | otherwise     = x : go (x:seen) xs
+
+
+-- | Collapse a non-empty run of sealed-iface arms with the same
+-- constructor into a single 'SealedCtorArm' whose body is an inner
+-- Go @switch@ on the discriminator field.
+--
+-- Precondition: every element of @arms@ is a 'SealedCtorArm' with
+-- the same variantTypeName (enforced by 'spanSameCtor' in
+-- 'groupSealedArms').
+mergeGroup :: String -> Bool -> [SealedArm] -> Maybe SealedArm
+mergeGroup subjectName outerHasDefault arms = do
+    (typeName, firstArgs) <- case arms of
+        SealedCtorArm n args _ : _ -> Just (n, args)
+        _                          -> Nothing
+    discIdx <- detectDiscriminator arms
+    (caseAlts, mDefault) <- foldGroup discIdx arms
+    -- H3 close: if no intra-ctor wildcard in the run AND a
+    -- top-level catchall exists, BAIL.  Without an inner default,
+    -- the Go type-switch arm would silently fall past the inner
+    -- switch on unmatched literal and skip the outer default.
+    case (mDefault, outerHasDefault) of
+        (Nothing, True) -> Nothing
+        _ -> do
+            let discExpr  = GoIr.GoSelector (GoIr.GoIdent subjectName)
+                                            ("V" ++ show discIdx)
+                innerSw   = GoIr.GoSwitch discExpr caseAlts
+                outerBody = case mDefault of
+                    -- Trailing-wildcard arm body expressed as
+                    -- fall-through stmts AFTER the inner switch.
+                    -- Go semantics: inner switch with no default +
+                    -- no matching case exits to the following stmt
+                    -- — exactly the trailing-_ semantics.
+                    Just defStmts -> [innerSw] ++ defStmts
+                    Nothing       -> [innerSw]
+            Just (SealedCtorArm typeName firstArgs outerBody)
+
+
+-- | Identify the unique arg-index that holds a literal pattern
+-- (PInt / PStr / PBool / PChr) across every literal-bearing arm in
+-- the group.
+--
+-- @Just idx@ — every literal arm uses the same arg slot;
+-- @Nothing@  — no literals OR mixed indices (un-groupable).
+detectDiscriminator :: [SealedArm] -> Maybe Int
+detectDiscriminator arms =
+    let litIndices = nubInt
+            [ idx
+            | SealedCtorArm _ args _ <- arms
+            , Can.PatternCtorArg idx _ (A.At _ p) <- args
+            , isLiteralPattern p
+            ]
+    in case litIndices of
+        [idx] -> Just idx
+        _     -> Nothing
+  where
+    isLiteralPattern Can.PInt{}  = True
+    isLiteralPattern Can.PStr{}  = True
+    isLiteralPattern Can.PBool{} = True
+    isLiteralPattern Can.PChr{}  = True
+    isLiteralPattern _           = False
+
+    nubInt = go []
+      where
+        go _    []     = []
+        go seen (x:xs) | x `elem` seen = go seen xs
+                       | otherwise     = x : go (x:seen) xs
+
+
+-- | Walk a group's arms in source order, splitting into
+--
+--   * @[(GoExpr, [GoStmt])]@ — inner-switch case alts (one per
+--     literal-payload arm), and
+--   * @Maybe [GoStmt]@      — optional trailing fall-through body
+--     when the last arm is a wildcard at the discriminator slot.
+--
+-- Bails (@Nothing@) when:
+--
+--   * A non-trailing wildcard arm appears (would shadow later
+--     literal arms under Sky source-order semantics).
+--   * The discriminator slot's pattern isn't a recognised literal
+--     or wildcard.
+--   * Any NON-discriminator slot has a non-wildcard pattern — the
+--     existing single-arm shape handles that via argBindings; we
+--     don't try to nest a second inner switch.
+--   * A duplicate literal at the discriminator slot (C1 from
+--     dual-grill — Go rejects @case 1: ... ; case 1: ...@).  Bail
+--     to legacy whose @.Tag == N + if/else-if@ cascade tolerates
+--     dead-arm duplicates.
+foldGroup
+    :: Int
+    -> [SealedArm]
+    -> Maybe ([(GoIr.GoExpr, [GoIr.GoStmt])], Maybe [GoIr.GoStmt])
+foldGroup discIdx = go [] []
+  where
+    -- @seen@ — literal-key strings already encountered (for dedup
+    --          detection without an Ord instance on GoExpr).
+    -- @acc@  — case-alts accumulated in reverse source order.
+    go _    acc [] = Just (reverse acc, Nothing)
+    go seen acc (SealedCtorArm _ args stmts : rest) =
+        case classifyArgs args of
+            Just (Just (litExpr, litKey))
+                | litKey `elem` seen -> Nothing  -- C1: dup literal
+                | otherwise -> go (litKey : seen)
+                                   ((litExpr, stmts) : acc)
+                                   rest
+            Just Nothing
+                | null rest -> Just (reverse acc, Just stmts)
+                | otherwise -> Nothing
+            Nothing -> Nothing
+    go _ _ _ = Nothing
+
+    -- @Just (Just (expr, key))@ — literal at the disc slot;
+    -- @Just Nothing@            — wildcard at the disc slot;
+    -- @Nothing@                  — un-groupable.
+    classifyArgs args =
+        let nonDisc =
+                [ p
+                | Can.PatternCtorArg i _ (A.At _ p) <- args
+                , i /= discIdx
+                ]
+            discPat =
+                [ p
+                | Can.PatternCtorArg i _ (A.At _ p) <- args
+                , i == discIdx
+                ]
+        in if any (not . isInert) nonDisc then Nothing
+           else case discPat of
+                [Can.PInt n]    -> Just (Just (GoIr.GoIntLit n,    "i:" ++ show n))
+                [Can.PStr s]    -> Just (Just (GoIr.GoStringLit s, "s:" ++ s))
+                [Can.PBool b]   -> Just (Just (GoIr.GoBoolLit b,   "b:" ++ show b))
+                [Can.PChr c]    -> Just (Just (GoIr.GoRuneLit c,   "c:" ++ c))
+                [Can.PAnything] -> Just Nothing
+                [Can.PVar _]    -> Just Nothing
+                _               -> Nothing
+
+    isInert Can.PAnything = True
+    isInert (Can.PVar _)  = True
+    isInert _             = False
 
 
 -- | v0.17 P3.4a — sealed-iface emission helper for monomorphic
