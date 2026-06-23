@@ -1191,6 +1191,170 @@ runtimeAnyAliases =
     ]
 
 
+-- | v0.17 iter 82 — typed-kernel functions whose declared Go return
+-- type is a Go primitive (@string@ / @int@ / @bool@ / @float64@).
+-- A @rt.CoerceX(rt.X_T(...))@ wrap around a direct call to one of
+-- these kernels is pure noise — the kernel already returns the
+-- target primitive concretely; @rt.CoerceString(string_value)@ is
+-- identity in Go.
+--
+-- Source of truth: kernel signatures declared in
+-- @runtime-go/rt/rt.go@ + @runtime-go/rt/stdlib_extra.go@.
+-- Whenever a kernel function's return type changes (e.g. @Math_absT@
+-- becomes any-returning under a future monomorphisation reshape),
+-- this registry MUST be updated.  A spec gate via grep cross-check
+-- against rt.go is planned for iter 83+.
+--
+-- Safety contract: this map is consumed ONLY by 'wrapTypedReturn'
+-- (FUNCTION-RETURN level) via a structural arm that matches direct
+-- @GoCall (GoQualified "rt" fn) _@ / @GoCall (GoIdent "rt.<fn>") _@
+-- bodies.  It NEVER touches the σ-consensus gate in 'coerceArg'
+-- (CALL-ARGUMENT level, Compile.hs:14950).  The structural skip-
+-- check in 'coerceArg' uses 'goExprGoType'-with-Nothing and is the
+-- load-bearing site for sibling-arg uniformity in polymorphic
+-- kernel calls; touching it re-trips
+-- 'Sky.Build.CoerceArgListMapInterplaySpec' +
+-- 'Sky.Build.SkyshopCompilesSpec'.
+--
+-- Three-level filter:
+--  1. Entry's value MUST be one of @"string"@ / @"int"@ / @"bool"@
+--     / @"float64"@.
+--  2. Body GoExpr MUST be a direct @rt.<fn>(...)@ call shape (either
+--     @GoQualified "rt" fn@ or flat @GoIdent "rt.<fn>"@).
+--  3. @retType@ (target narrowing) MUST equal the registered value.
+--
+-- Excluded by design:
+--  * @CoerceString@ / @AsString@ / @CoerceInt@ / etc. — already
+--    classified directly by 'goExprGoType.shapeClassified' (lines
+--    8520-8531); adding here would double-cover.
+--  * @rt.SkyCall(rt.Ffi_kernel("X"), ...)@ shapes — these dispatch
+--    through dynamic kernel registry and return @any@; the
+--    @rt.CoerceX(...)@ wrap IS load-bearing on that shape.
+--  * Tuple / multi-return kernels — entries here are SINGLE-value
+--    primitive-typed only, by construction.
+--  * @Math_max@ / @Math_min@ when called with float operands — the
+--    T-suffix kernel is @int -> int -> int@; a Sky-source call with
+--    float args routes through the @any@-variant @Math_max@ (no T),
+--    which is NOT in this registry.  The registry only fires on
+--    direct @rt.Math_maxT(...)@ shapes which are type-monomorphic.
+typedKernelPrimitiveReturns :: Map.Map String String
+typedKernelPrimitiveReturns = Map.fromList
+    -- String_* returning string (rt.go: String_appendT, String_fromCharT,
+    -- String_fromFloatT, String_fromIntT, String_joinT, String_replaceT,
+    -- String_reverseT, String_sliceT, String_toLowerT, String_toUpperT,
+    -- String_trimT)
+    [ ("String_appendT",     "string")
+    , ("String_fromCharT",   "string")
+    , ("String_fromFloatT",  "string")
+    , ("String_fromIntT",    "string")
+    , ("String_joinT",       "string")
+    , ("String_replaceT",    "string")
+    , ("String_reverseT",    "string")
+    , ("String_sliceT",      "string")
+    , ("String_toLowerT",    "string")
+    , ("String_toUpperT",    "string")
+    , ("String_trimT",       "string")
+    -- String_* returning int / bool (rt.go: String_lengthT,
+    -- String_containsT, String_endsWithT, String_isEmptyT,
+    -- String_startsWithT)
+    , ("String_lengthT",     "int")
+    , ("String_containsT",   "bool")
+    , ("String_endsWithT",   "bool")
+    , ("String_isEmptyT",    "bool")
+    , ("String_startsWithT", "bool")
+    -- Math_* returning int (rt.go: Math_absT/Math_maxT/Math_minT
+    -- with int sig; Math_ceilT/Math_floorT/Math_roundT/Math_truncT
+    -- with float→int sig)
+    , ("Math_absT",          "int")
+    , ("Math_ceilT",         "int")
+    , ("Math_floorT",        "int")
+    , ("Math_maxT",          "int")
+    , ("Math_minT",          "int")
+    , ("Math_roundT",        "int")
+    , ("Math_truncT",        "int")
+    -- Math_* returning float64 (trig, hyperbolic, log/exp, constants)
+    , ("Math_acosT",         "float64")
+    , ("Math_acoshT",        "float64")
+    , ("Math_asinT",         "float64")
+    , ("Math_asinhT",        "float64")
+    , ("Math_atanT",         "float64")
+    , ("Math_atan2T",        "float64")
+    , ("Math_atanhT",        "float64")
+    , ("Math_cbrtT",         "float64")
+    , ("Math_cosT",          "float64")
+    , ("Math_coshT",         "float64")
+    , ("Math_eT",            "float64")
+    , ("Math_exp2T",         "float64")
+    , ("Math_expT",          "float64")
+    , ("Math_hypotT",        "float64")
+    , ("Math_infT",          "float64")
+    , ("Math_log10T",        "float64")
+    , ("Math_log2T",         "float64")
+    , ("Math_logT",          "float64")
+    , ("Math_modT",          "float64")
+    , ("Math_nanT",          "float64")
+    , ("Math_phiT",          "float64")
+    , ("Math_piT",           "float64")
+    , ("Math_powT",          "float64")
+    , ("Math_remainderT",    "float64")
+    , ("Math_sinT",          "float64")
+    , ("Math_sinhT",         "float64")
+    , ("Math_sqrt2T",        "float64")
+    , ("Math_sqrtT",         "float64")
+    , ("Math_tanT",          "float64")
+    , ("Math_tanhT",         "float64")
+    -- Char_* returning string / int / bool (stdlib_extra.go:
+    -- Char_toLowerT/toUpperT → string; Char_toCodeT → int;
+    -- Char_isAlphaT/isDigitT/isLowerT/isUpperT → bool)
+    , ("Char_toLowerT",      "string")
+    , ("Char_toUpperT",      "string")
+    , ("Char_toCodeT",       "int")
+    , ("Char_isAlphaT",      "bool")
+    , ("Char_isDigitT",      "bool")
+    , ("Char_isLowerT",      "bool")
+    , ("Char_isUpperT",      "bool")
+    -- Basics_* returning primitive (rt.go: Basics_clampT/modByT → int;
+    -- Basics_errorToStringT → string; Basics_notT → bool)
+    , ("Basics_clampT",      "int")
+    , ("Basics_modByT",      "int")
+    , ("Basics_errorToStringT", "string")
+    , ("Basics_notT",        "bool")
+    -- Path_* returning string / bool (stdlib_extra.go: Path_baseT/dirT/
+    -- extT/joinT → string; Path_isAbsoluteT → bool)
+    , ("Path_baseT",         "string")
+    , ("Path_dirT",          "string")
+    , ("Path_extT",          "string")
+    , ("Path_joinT",         "string")
+    , ("Path_isAbsoluteT",   "bool")
+    -- Encoding_* returning string (stdlib_extra.go: Encoding_base64EncodeT,
+    -- Encoding_hexEncodeT, Encoding_urlEncodeT)
+    , ("Encoding_base64EncodeT", "string")
+    , ("Encoding_hexEncodeT",    "string")
+    , ("Encoding_urlEncodeT",    "string")
+    -- Regex_* returning string / bool (Regex_replaceT → string; Regex_matchT
+    -- → bool)
+    , ("Regex_replaceT",     "string")
+    , ("Regex_matchT",       "bool")
+    -- Time_* returning string (Time_formatHTTPT, Time_timeStringT)
+    , ("Time_formatHTTPT",   "string")
+    , ("Time_timeStringT",   "string")
+    -- Dict_* returning bool (Dict_memberT is generic on V but always
+    -- returns bool; bracket-strip on lookup handles
+    -- @rt.Dict_memberT[any]@ → bare @Dict_memberT@)
+    , ("Dict_memberT",       "bool")
+    -- Db_getField / Db_getString / Db_getInt / Db_getFloat / Db_getBool
+    -- are NOT T-suffixed (rt.go: Db_getField/getString → string,
+    -- Db_getInt → int, Db_getFloat → float64, Db_getBool → bool).
+    -- These are reachable at Sky source through `Db.getField` etc.
+    -- and are wrapped with rt.CoerceX at function-return positions.
+    , ("Db_getField",        "string")
+    , ("Db_getString",       "string")
+    , ("Db_getInt",          "int")
+    , ("Db_getFloat",        "float64")
+    , ("Db_getBool",         "bool")
+    ]
+
+
 -- | v0.17 P3.4c.1 — predicate for sealed-iface dispatch at @caseToGo@.
 --
 -- Returns @Just (modName, typeName, vars, opts, ctors)@ when the
@@ -8782,6 +8946,39 @@ wrapTypedReturn ctx mSrc retType body
             [body]
     | Just params <- stripParametric "rt.SkyTask" retType =
         GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ resolveWrapParams ctx mSrc "Task" params ++ "]")) [body]
+    -- v0.17 iter 82 — typed-kernel-return-registry elision.  When
+    -- @body@ is a direct call to a known typed-return kernel and the
+    -- kernel's declared Go return type matches @retType@, the
+    -- @rt.CoerceX@ wrap is pure noise (the kernel already returns
+    -- the target primitive concretely; e.g. @rt.CoerceInt(rt.Math_absT(x))@
+    -- is identity since @Math_absT : int -> int@).
+    --
+    -- Structural match: body == @GoCall (GoQualified "rt" fn) _@
+    -- OR @GoCall (GoIdent "rt.<fn>") _@ (mirrors the dual rt-callee
+    -- shape handled by 'rtCalleeName' in 'goExprGoType' above).  The
+    -- @fn@ name is looked up in 'typedKernelPrimitiveReturns' after
+    -- stripping any @[...]@ monomorphisation suffix (so
+    -- @rt.Dict_memberT[any]@ → @Dict_memberT@).
+    --
+    -- Primitive-only gate (@retType `elem` ["string","int","bool","float64"]@)
+    -- avoids any interaction with parametric / sealed-iface / alias
+    -- arms above; the four primitive-emit arms below become the
+    -- fall-through when the structural match fails.
+    --
+    -- σ-CONSENSUS SAFETY: this arm operates at the FUNCTION-RETURN
+    -- level ('wrapTypedReturn') only.  It does NOT touch the
+    -- σ-consensus skip-check at 'coerceArg' line 14950 (CALL-ARGUMENT
+    -- level), which deliberately keeps the structural fallback
+    -- ungated for sibling-arg uniformity in polymorphic kernel
+    -- calls.  Spec isolation: 'CoerceArgListMapInterplaySpec' +
+    -- 'SkyshopCompilesSpec' stay green by construction (neither
+    -- spec exercises a function-return position with a direct
+    -- typed-kernel call shape matching this registry).
+    | retType `elem` ["string", "int", "bool", "float64"]
+    , Just fn <- rtDirectCallName body
+    , Just registeredRet <- Map.lookup fn typedKernelPrimitiveReturns
+    , registeredRet == retType
+        = body
     -- Audit P0-3: replace raw `any(body).(T)` with a runtime Coerce
     -- helper. Direct assertion panics with a cryptic 'interface
     -- conversion' message on mismatch; Coerce gives a site-identified
@@ -8880,6 +9077,30 @@ isSealedIfaceCtorBody :: GoIr.GoExpr -> String -> Bool
 isSealedIfaceCtorBody body ifaceName =
     isSealedIfaceCtorHead body ifaceName
     || isSealedIfaceReturningCall body ifaceName
+
+
+-- | v0.17 iter 82 — extract the bare kernel function name from a
+-- direct @rt.<fn>(...)@ call body 'GoExpr'.  Mirrors 'rtCalleeName'
+-- (a where-bound helper inside 'goExprGoType') but accepts only the
+-- @GoCall callee _args@ shape (not the bare @callee@ — @body@ here
+-- is the wrapped return expression, which is always a 'GoCall' when
+-- it dispatches through the rt runtime).
+--
+-- Returns the bare function name (no @rt.@ prefix, no type-arg
+-- brackets).  Strips @[...]@ suffix to handle monomorphised generic
+-- kernels (e.g. @Dict_memberT[any]@ → @Dict_memberT@) consistent
+-- with the 'isSealedIfaceReturningCall' pattern at Compile.hs:8868.
+--
+-- Used by 'wrapTypedReturn' iter 82's typed-kernel registry elision
+-- arm to gate elision on a CONFIRMED direct typed-kernel call shape,
+-- never touching the σ-consensus gate at 'coerceArg':14950.
+rtDirectCallName :: GoIr.GoExpr -> Maybe String
+rtDirectCallName (GoIr.GoCall (GoIr.GoQualified "rt" fn) _) =
+    Just (takeWhile (/= '[') fn)
+rtDirectCallName (GoIr.GoCall (GoIr.GoIdent name) _)
+    | "rt." `List.isPrefixOf` name =
+        Just (takeWhile (/= '[') (drop 3 name))
+rtDirectCallName _ = Nothing
 
 
 -- | If `s` is shaped like `<prefix>[params]`, return `params`;
