@@ -170,17 +170,41 @@ import qualified Data.Map.Strict as Map
 --
 -- Investigation notebook: this comment block + the design doc
 -- docs/v0.17-roadmap/strict-hm-arity-gate-design.md.
+-- 2026-06-23 (v0.17 P2.4+P2.5): post sealed-iface flips of
+-- Std.Ui.Element + Std.Html.Attributes.Event + Std.Ui.Input.Label
+-- + Std.Ui.Input.Placeholder + Std.Ui.Input.RadioOption.
+-- Element flip alone retreats ~130 bare-`rt.Coerce[<concrete>]`
+-- sites because every `Element msg` slot now structurally
+-- satisfies the sealed interface without an explicit narrow.
+-- Sub-cluster redistribution:
+--   * rt.Coerce[      : 214 → 84   (-130, dominant win)
+--   * rt.CoerceBool   :  13 → 11   (-2)
+--   * rt.CoerceInt    :  20 → 19   (-1)
+--   * rt.CoerceString :  80 → 93   (+13, redistribution from
+--     bare-coerce as String-narrow sites at user-ADT field
+--     pattern leaves now route through the typed-fast-path
+--     cluster instead of bare rt.Coerce)
+--   * rt.MaybeCoerce  :  24 → 27   (+3, same redistribution
+--     shape for Maybe-typed payload field access)
+--   * rt.AsListT      : 190 → 193  (+3, List-element-narrow
+--     sites at typed slots admit the typed fast path)
+-- Total: 288 → 183 (-105 lines, -36.5%).  These sub-cluster
+-- moves are PURE WINS — sites that previously did
+-- bare-`rt.Coerce[T](x)` now do the type-specific
+-- `rt.CoerceString(x)` / `rt.MaybeCoerce(x)` / `rt.AsListT[T](x)`
+-- typed-fast-path equivalent.  No new untyped path is
+-- introduced.  Ratchet baselines to the new floor.
 rtCoerceBaseline :: Map String Int
 rtCoerceBaseline = Map.fromList
-    [ ("rt.Coerce["     , 214)
-    , ("rt.CoerceInt"   , 20)
-    , ("rt.CoerceString", 80)
-    , ("rt.CoerceBool"  , 13)
+    [ ("rt.Coerce["     , 84)
+    , ("rt.CoerceInt"   , 19)
+    , ("rt.CoerceString", 93)
+    , ("rt.CoerceBool"  , 11)
     , ("rt.CoerceFloat" , 22)
     , ("rt.TaskCoerceT" , 0)
     , ("rt.ResultCoerce", 0)
-    , ("rt.MaybeCoerce" , 24)
-    , ("rt.AsListT"     , 190)
+    , ("rt.MaybeCoerce" , 27)
+    , ("rt.AsListT"     , 193)
     ]
 
 
@@ -204,8 +228,14 @@ rtCoerceBaseline = Map.fromList
 -- substrings via the rt.AsListT[T] suffix.  Justification recorded
 -- on the rtCoerceBaseline comment block above (iter-27 CPS
 -- constant-stack shift).
+-- 2026-06-23 (v0.17 P2.4+P2.5): post sealed-iface flips of
+-- Element + Event + Label + Placeholder + RadioOption.
+-- 288 → 183 (-105 lines, -36.5%).  Dominant -130 from bare
+-- rt.Coerce[ cluster (Element-msg slots now structurally
+-- satisfy the sealed iface).  See rtCoerceBaseline above for
+-- sub-cluster redistribution justification.
 rtCoerceTotalBudget :: Int
-rtCoerceTotalBudget = 288
+rtCoerceTotalBudget = 183
 
 
 -- | Resolve the example's main.go path. Cabal-test runs with the
