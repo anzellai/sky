@@ -66,6 +66,7 @@ baseCgEnv = Rec.CodegenEnv
     , Rec._cg_funcInferredSigs   = Map.empty
     , Rec._cg_callSiteInstances  = Map.empty
     , Rec._cg_funcSkyToGoTVars   = Map.empty
+    , Rec._cg_sealedIfaceNames   = Set.empty
     }
 
 -- | A synthetic region — A.Region is just (start, end) positions.

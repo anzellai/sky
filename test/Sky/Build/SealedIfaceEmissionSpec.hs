@@ -99,14 +99,17 @@ spec = do
                     initBody `shouldContain` "rt.RegisterAdtVariant(\"Red\""
                     initBody `shouldContain` "rt.RegisterAdtVariant(\"Green\""
                     initBody `shouldContain` "rt.RegisterAdtVariant(\"RGB\""
-                    -- N-ary factory has json.Unmarshal steps
-                    initBody `shouldContain` "json.Unmarshal(raw[0]"
-                    initBody `shouldContain` "json.Unmarshal(raw[1]"
-                    initBody `shouldContain` "json.Unmarshal(raw[2]"
-                    -- gob.Register per variant
-                    initBody `shouldContain` "gob.Register(Mod_Color_Red_V{})"
-                    initBody `shouldContain` "gob.Register(Mod_Color_Green_V{})"
-                    initBody `shouldContain` "gob.Register(Mod_Color_RGB_V{})"
+                    -- N-ary factory has rt.JsonUnmarshal steps
+                    -- (v0.17 iter 63 — re-routed via rt.* re-exports
+                    -- to keep emitted main.go's import list to
+                    -- "sky-app/rt" only)
+                    initBody `shouldContain` "rt.JsonUnmarshal(raw[0]"
+                    initBody `shouldContain` "rt.JsonUnmarshal(raw[1]"
+                    initBody `shouldContain` "rt.JsonUnmarshal(raw[2]"
+                    -- rt.GobRegister per variant
+                    initBody `shouldContain` "rt.GobRegister(Mod_Color_Red_V{})"
+                    initBody `shouldContain` "rt.GobRegister(Mod_Color_Green_V{})"
+                    initBody `shouldContain` "rt.GobRegister(Mod_Color_RGB_V{})"
                 _ -> expectationFailure "expected exactly 1 GoDeclRaw (init block)"
 
         it "factory closure body for nullary variant is short-circuit (no Unmarshal)" $ do

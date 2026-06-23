@@ -49,6 +49,7 @@ emptyCgEnv = Rec.CodegenEnv
     , Rec._cg_funcInferredSigs   = Map.empty
     , Rec._cg_callSiteInstances  = Map.empty
     , Rec._cg_funcSkyToGoTVars   = Map.empty
+    , Rec._cg_sealedIfaceNames   = Set.empty
     }
 
 -- | A populated CodegenEnv — exercises every PR-4 field channel.

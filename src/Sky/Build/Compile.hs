@@ -984,6 +984,7 @@ sealedIfaceFlipAllowList = Set.fromList
     [ "Sky.Test.TestResult"             -- v0.17 iter 63 — first ADT flip
     , "Sky.Core.Jwt.Algorithm"          -- v0.17 iter 64 — second flip
     , "Std.Ui.Animation.Iterations"     -- v0.17 iter 65 — third flip
+    , "Std.Ui.Animation.FillMode"       -- v0.17 iter 67 — fourth flip
     ]
 
 
@@ -8705,9 +8706,28 @@ isSealedIfaceCtorBody body ifaceName =
         startsWithPrefix s =
             length s > length prefix
             && take (length prefix) s == prefix
+        -- v0.17 iter 67 — extend coverage: when body is a call to a
+        -- function (NOT a ctor — those are subsumed by
+        -- 'startsWithPrefix') whose declared Go return type IS the
+        -- sealed-iface @ifaceName@, the Coerce wrap is similarly
+        -- redundant.  Reads '_cg_funcRetType' (keyed by goSafeName-
+        -- mangled top-level binding names; populated by
+        -- 'collectFuncTypesWith' and merged into the env at
+        -- 'continueCompile' setup, before any 'wrapTypedReturn' fires).
+        -- Locals (let-bindings, lambdas) are NOT in this map and
+        -- won't match — degrades to the wrap path.
+        --
+        -- Env-read short-circuited behind 'startsWithPrefix' on the
+        -- GoCall arm to avoid an IORef hit on the structural fast-path
+        -- (per griller B's perf review).
+        retTyMatches n =
+            Map.lookup n (Rec._cg_funcRetType getCgEnvFromScope)
+                == Just ifaceName
     in case body of
         GoIr.GoIdent name             -> startsWithPrefix name
-        GoIr.GoCall (GoIr.GoIdent n) _ -> startsWithPrefix n
+        GoIr.GoCall (GoIr.GoIdent n) _
+            | startsWithPrefix n      -> True
+            | otherwise               -> retTyMatches n
         _                             -> False
 
 
