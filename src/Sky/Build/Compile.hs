@@ -1167,6 +1167,24 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- Std_Html_Attributes_Attribute references in 26-ui-showcase
       -- main.go into a sealed-iface dispatch.
     , "Std.Html.Attributes.Attribute"
+      -- v0.17 P2.4 — flip Std.Ui.Element parametric.  RECURSIVE — Node
+      -- carries List (Element msg).  5 variants (Empty/Text/Node/
+      -- TaggedNode/Raw); payload includes a sibling parametric ADT
+      -- (Attribute msg from Std.Ui, already SealedIface-flipped at
+      -- P2.3 cascade).  This is the LARGEST-EXPECTED-DELTA lever per
+      -- the literal-zero close plan §Phase 2.2 — Element wraps
+      -- dominate 26-ui-showcase rt.Coerce sites.  Pre-req: P2.1 _T
+      -- emitter (9f365878), P2.2 Html (30ce42ce), P2.3 Attribute
+      -- (f7c5a479), runtime shim @ 57d77597.
+      --
+      -- Recursion-safety: Element's Node payload carries
+      -- @List (Element msg)@ which references the SAME ADT being
+      -- flipped.  The sealed-iface emitter writes per-variant struct
+      -- definitions BEFORE the marker method, so the interface name
+      -- is in scope when payload types reference Element_T[msg]
+      -- recursively.  Both legacy SkyADT and sealed-iface variant
+      -- shapes are accepted by runtime via unwrapADTShape (#677).
+    , "Std.Ui.Element"
     ]
 
 
@@ -1822,7 +1840,27 @@ renderArgBinding subjectName
         Can.PAnything ->
             Just [GoIr.GoAssign "_" accessor]
         Can.PVar name ->
-            Just [GoIr.GoShortDecl name accessor]
+            -- v0.17 P2.4 — defensively emit @_ = name@ after the
+            -- short-decl.  Sky source patterns commonly bind
+            -- payload names that the body doesn't reference
+            -- (@Node desc attrs children@ where only @attrs@ +
+            -- @children@ are used in the arm body).  The legacy
+            -- SkyADT path routes through @Fields[i]@ where the
+            -- declared @desc := ...@ at the surface body lowers
+            -- via dynamic-typing helpers that mask the unused
+            -- variable from Go's static checker.  Sealed-iface
+            -- emits a direct @desc := __subject.V0@ which Go
+            -- rejects as "declared and not used".
+            --
+            -- The defensive @_ = name@ keeps the binding observable
+            -- in scope (Sky source code is free to reference it)
+            -- AND satisfies Go's unused-local-var check when it
+            -- doesn't.  Net cost: one extra blank-assign per
+            -- ctor-arg per arm; zero runtime cost (Go optimiser
+            -- elides).
+            Just [ GoIr.GoShortDecl name accessor
+                 , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                 ]
         Can.PCtor _ _ _ _ _ _ ->
             -- Deferred to P3.4c.2d.  Nested sealed-iface dispatch
             -- needs the predicate threaded down + a nested

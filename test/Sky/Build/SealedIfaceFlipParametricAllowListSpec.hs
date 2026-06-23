@@ -88,6 +88,17 @@ spec = do
             Set.member "Std.Html.Attributes.Attribute" sealedIfaceFlipParametricAllowList
                 `shouldBe` True
 
+        it "sealedIfaceFlipParametricAllowList contains Std.Ui.Element post-P2.4 flip" $
+            -- v0.17 P2.4 — Std.Ui.Element flipped parametric.  Largest
+            -- expected-delta lever per literal-zero close plan §Phase
+            -- 2.2.  RECURSIVE: Node payload carries
+            -- @List (Element msg)@ self-reference; runtime-shim
+            -- (unwrapADTShape @ 57d77597) accepts both legacy SkyADT
+            -- and variant-struct shapes so the existing rt-side
+            -- consumers don't desync mid-flip.
+            Set.member "Std.Ui.Element" sealedIfaceFlipParametricAllowList
+                `shouldBe` True
+
         it "parametric + monomorphic allowlists are disjoint" $
             -- A name in both would be a gate-ordering tripwire: arm
             -- (3) would fire for parametric inputs while arm (5) would
