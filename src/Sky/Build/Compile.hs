@@ -1206,6 +1206,9 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- carrying `List (Attribute msg) + Element msg`.
       -- Single-variant.
     , "Std.Ui.Input.Placeholder"
+      -- @RadioOption msg@ — Std.Ui.Input radio group choice
+      -- carrying `String + Element msg`.  Single-variant.
+    , "Std.Ui.Input.RadioOption"
     ]
 
 
