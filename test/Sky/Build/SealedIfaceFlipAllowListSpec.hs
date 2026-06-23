@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 15 entries post iter 77" $ do
+    describe "sealedIfaceFlipAllowList — 19 entries post iter 78" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,22 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.FlexDirection (iter 78 — sixteenth)" $
+            "Std.Css.FlexDirection" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.FlexWrap (iter 78 — seventeenth)" $
+            "Std.Css.FlexWrap" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.FontStyle (iter 78 — eighteenth)" $
+            "Std.Css.FontStyle" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.Overflow (iter 78 — nineteenth)" $
+            "Std.Css.Overflow" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Css.Position (iter 77 — twelfth)" $
@@ -150,8 +166,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 15 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 15
+        it "Set.size is 19 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 19
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface

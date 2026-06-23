@@ -1039,6 +1039,14 @@ sealedIfaceFlipAllowList = Set.fromList
     , "Std.Css.FontWeight"              -- v0.17 iter 77 — fifteenth
                                         -- (4 nullary + Weight Int +
                                         -- FontWeightRaw String)
+    , "Std.Css.FlexDirection"           -- v0.17 iter 78 — sixteenth
+                                        -- (4 nullary + FlexDirectionRaw)
+    , "Std.Css.FlexWrap"                -- v0.17 iter 78 — seventeenth
+                                        -- (3 nullary + FlexWrapRaw)
+    , "Std.Css.FontStyle"               -- v0.17 iter 78 — eighteenth
+                                        -- (3 nullary + FontStyleRaw)
+    , "Std.Css.Overflow"                -- v0.17 iter 78 — nineteenth
+                                        -- (4 nullary + OverflowRaw)
     ]
 
 
