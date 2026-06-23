@@ -2070,10 +2070,30 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					if v, ok := afields[1].(string); ok {
 						fmt.Sscanf(v, "%d", &out.gridColumns)
 					}
+				case "__gridTracks":
+					// Std.Ui.Grid.tracks / Grid.columns / Grid.rows emit
+					// explicit CSS-grid track lists (`fr` / `px` / `auto`
+					// / `minmax` / `repeatAutoFit`). The terminal has no
+					// fractional / minmax cells — collapse to a flat
+					// content-grid fallback and warn so users know the
+					// proportions won't survive.
+					tuiWarn("layout", "explicit grid tracks (terminal can't render fr/minmax/auto)")
+				case "aspect-ratio":
+					// Std.Ui.aspectRatio / aspectRatioWH / square /
+					// widescreen / fullHd / cinemascope emit
+					// `aspect-ratio: W / H`. The terminal grid is
+					// driven by parent cell allocation, not CSS ratio.
+					tuiWarn("layout", "aspect-ratio (terminal cells don't honour CSS aspect-ratio)")
 				default:
 					// User-supplied raw CSS — TUI can't render, warn once.
 					if !isInternalMarker(k) {
 						tuiWarn("style", "raw CSS attribute "+k)
+					} else {
+						// Unknown __-prefixed marker — Std.Ui added a
+						// sentinel TUI hasn't ported. Warn so the gap is
+						// visible (we don't want to silently drop a layout
+						// directive).
+						tuiWarn("layout", "unsupported Std.Ui marker "+k)
 					}
 				}
 			}
@@ -2133,6 +2153,55 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					"href", "target", "src", "alt", "accept", "multiple", "selected",
 					"sky-nav":
 					// Known HTML attrs that don't need TUI rendering — silent skip.
+				case "data-sky-pc-rules":
+					// Pseudo-class rule payload from
+					// `Std.Ui.onPseudo` / `Background.hoverColor` /
+					// `focusColor` / `activeColor` / `disabledColor`
+					// / `Font.hoverSize` / `Border.hoverColor` etc.
+					// The terminal has no :hover / :focus / :active /
+					// :disabled CSS pseudo-class engine — every
+					// reactive style is silently inert.
+					tuiWarn("pseudo-class", ":hover / :focus / :active / :disabled (terminal has no CSS pseudo-class engine — base style still renders)")
+				case "data-sky-mq-q":
+					// Media query selector payload from
+					// `Ui.mediaQuery` / `Ui.breakpoint` (Mobile /
+					// Tablet / Desktop / DarkMode / TouchDevice /
+					// Portrait / ReducedMotion / Custom). The
+					// terminal's "viewport" is the terminal size
+					// itself — these directives don't translate.
+					tuiWarn("media-query", "@media rule (terminal viewport is fixed — base style still renders)")
+				case "data-sky-mq-rules":
+					// Companion payload to data-sky-mq-q (the actual
+					// CSS rules). Silent — already warned above on
+					// `data-sky-mq-q` per (category, detail) dedupe.
+				case "data-sky-tr-rules":
+					// Typed CSS transition payload from
+					// `Std.Ui.Transition.attribute` (e.g.
+					// "background-color 200ms ease-out"). The
+					// terminal repaints discretely cell-by-cell;
+					// there's no inter-frame easing.
+					tuiWarn("transition", "CSS transition (terminal can't interpolate between frames)")
+				case "data-sky-tr-respect":
+					// Companion to data-sky-tr-rules (reduced-motion
+					// gate flag). Silent — already warned above.
+				case "data-sky-anim-rules":
+					// Keyframe animation payload from
+					// `Std.Ui.Animation.attribute` (translate /
+					// opacity / scale / rotate / skew). The
+					// terminal has no per-frame animation loop —
+					// the element renders at its final keyframe
+					// position only.
+					tuiWarn("animation", "@keyframes animation (terminal renders final keyframe only — no per-frame loop)")
+				case "data-sky-anim-respect":
+					// Companion to data-sky-anim-rules. Silent.
+				case "data-sky-path":
+					// Sky.Live URL-sync sentinel for history
+					// push/replace. Pure browser-history concept —
+					// no terminal analogue; safe silent skip.
+				case "data-sky-eval":
+					// Legacy Sky.Live CSP-incompatible escape
+					// hatch (post-patch JS eval). No terminal
+					// analogue; safe silent skip.
 				default:
 					tuiWarn("attribute", "raw HTML attribute "+k)
 				}
