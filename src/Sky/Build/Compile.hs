@@ -1154,6 +1154,31 @@ rtBuilderShadowList = Set.fromList
     ]
 
 
+-- | v0.17 iter 79 — runtime types declared as transparent aliases
+-- for @any@.  Every @rt.Coerce[<alias>](e)@ wrap around any
+-- expression is identity in Go since the target IS @any@.  Used
+-- by 'wrapTypedReturn' to elide noise wraps.
+--
+-- Source of truth: @runtime-go/rt/rt.go:3532-3541@ — these 10
+-- entries are the EXACT set of @type SkyXxx = any@ declarations in
+-- the runtime.  Whenever the runtime adds or removes such an alias,
+-- this list MUST be kept in sync (spec gate via grep cross-check
+-- planned for iter 80+).
+runtimeAnyAliases :: [String]
+runtimeAnyAliases =
+    [ "rt.SkyDecoder"
+    , "rt.SkyValue"
+    , "rt.SkyAttribute"
+    , "rt.SkyHandler"
+    , "rt.SkyMiddleware"
+    , "rt.SkySession"
+    , "rt.SkyStore"
+    , "rt.SkyStmt"
+    , "rt.SkyRow"
+    , "rt.SkyConn"
+    ]
+
+
 -- | v0.17 P3.4c.1 — predicate for sealed-iface dispatch at @caseToGo@.
 --
 -- Returns @Just (modName, typeName, vars, opts, ctors)@ when the
@@ -8687,6 +8712,21 @@ goExprGoType ctx mSrc e = case shapeClassified of
 wrapTypedReturn :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
 wrapTypedReturn ctx mSrc retType body
     | retType == "any" = body
+    -- v0.17 iter 79 — runtime alias-to-any elision.  The runtime
+    -- declares 10 rt.* types as transparent aliases for @any@
+    -- (rt.go:3532-3541): @SkyDecoder@ / @SkyValue@ / @SkyAttribute@
+    -- / @SkyHandler@ / @SkyMiddleware@ / @SkySession@ / @SkyStore@
+    -- / @SkyStmt@ / @SkyRow@ / @SkyConn@.  A @rt.Coerce[rt.SkyXxx]@
+    -- wrap around any expression is identity in Go (since the
+    -- target type IS @any@), so the wrap is pure noise.  Elide.
+    --
+    -- Hardcoded list — these aliases are declared exactly once in
+    -- the runtime and are NEVER expected to drift to a concrete
+    -- type (they exist precisely BECAUSE the runtime needs to
+    -- accept any concrete shape at the boundary).  Two grillers
+    -- (iter 79) confirmed empirical safety: 72 sites on
+    -- 26-ui-showcase wrap @rt.SkyAttribute@ alone.
+    | retType `elem` runtimeAnyAliases = body
     -- v0.13 typed lowerer: skip the coercion when `body` is already
     -- provably the target type — no redundant `rt.CoerceInt(int)` /
     -- `rt.Coerce[T](T)` wrap.
