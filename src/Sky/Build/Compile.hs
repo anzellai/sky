@@ -12355,7 +12355,73 @@ rewriteAliasHead expr@(A.At r e) = case e of
     Can.VarTopLevel home name
         | Just (kMod, kFn) <- lookupKernelAlias home name ->
             A.At r (Can.VarKernel kMod kFn)
+    -- v0.17 iter 84 — eta-expanded point-free kernel-alias body.
+    --
+    -- After 'etaExpandPointFree' wraps a point-free body
+    -- @length = Ffi.kernel \"String_length\"@ into
+    -- @length _skyEta_p0 = Ffi.kernel \"String_length\" _skyEta_p0@,
+    -- the resulting outer Can.Call has a Can.Call head — NOT a
+    -- Can.VarTopLevel — so the VarTopLevel arm above can't fire.
+    -- The Can.Call-head catchall in 'Can.Call' codegen then routes
+    -- through 'rt.SkyCall(rt.Ffi_kernel(\"String_length\"), p0)' +
+    -- 'rt.CoerceX' return-wrap.
+    --
+    -- Recognise the @Ffi.kernel \"Mod_func\"@ value-shape at the
+    -- call head and rewrite to @Can.VarKernel kMod kFn@ (the same
+    -- first-underscore split rule 'collectKernelAliases' uses at
+    -- Compile.hs:9467). The typed-kernel dispatch arms
+    -- (typedKernelLiterals / typedKernelArgCoerce / kernelTypedCall
+    -- σ-recovery) then catch the head and emit
+    -- @rt.String_lengthT(rt.AsString p0)@. Iter 82's
+    -- 'typedKernelPrimitiveReturns' elides the outer 'rt.CoerceX'
+    -- wrap because the body is now a direct 'rt.<Fn>T' call shape.
+    --
+    -- Name-validation gate: rewrite ONLY when the split @(kMod, kFn)@
+    -- is a known kernel (registered in 'Kernel.lookup' OR
+    -- 'ConstrainExpr.lookupKernelType').  Unknown kernels (typo /
+    -- version-skew / removed-kernel) fall through to the legacy
+    -- SkyCall+Ffi_kernel path, which preserves the runtime panic
+    -- diagnostic (rt.go Ffi_kernel COMPILER-BUG-CONTRACT).
+    --
+    -- Soundness scope:
+    --   * Fires ONLY at the Can.Call HEAD context (rewriteAliasHead's
+    --     only caller is the call-arm head normaliser at
+    --     Compile.hs:12455).  By construction it cannot touch
+    --     HOF-arg references to @Ffi.kernel@ — those are passed as
+    --     values via @Can.VarKernel \"Ffi\" \"kernel\"@ + the runtime
+    --     'rt.Ffi_kernel' value, never via this call-head context.
+    --   * Disjoint from sealed-iface arms (iter 22/83), iter 70
+    --     cross-ADT region scoping, iter 79 runtimeAnyAliases
+    --     elision, iter 82 wrap-time elision, and SkyshopCompilesSpec
+    --     (Stripe uses Go_<pkg> kernels, not Ffi.kernel sentinel).
+    Can.Call (A.At _ (Can.VarKernel "Ffi" "kernel"))
+             [A.At _ (Can.Str raw)]
+        | Just (kMod, kFn) <- splitFfiKernelName raw
+        , isKnownKernel kMod kFn ->
+            A.At r (Can.VarKernel kMod kFn)
     _ -> expr
+  where
+    -- Local split helper, isomorphic to 'splitKernelName' inside
+    -- 'collectKernelAliases' at Compile.hs:9467.  Kept local because
+    -- the original helper is nested in a 'where' clause.
+    splitFfiKernelName :: String -> Maybe (String, String)
+    splitFfiKernelName s = case break (== '_') s of
+        (kMod, '_' : kFn) | not (null kMod), not (null kFn) ->
+            Just (kMod, kFn)
+        _ -> Nothing
+
+    -- Name-validation gate.  A kernel is "known" if it has either
+    -- a runtime Kernel.lookup entry (KernelInfo registered in
+    -- Sky.Generate.Go.Kernel) OR an HM signature in
+    -- ConstrainExpr.lookupKernelType.  Either suffices because every
+    -- typed-kernel dispatch path consults one of the two.
+    isKnownKernel :: String -> String -> Bool
+    isKnownKernel m f =
+        case Kernel.lookup m f of
+            Just _  -> True
+            Nothing -> case ConstrainExpr.lookupKernelType m f of
+                Just _  -> True
+                Nothing -> False
 
 
 -- | Convert a canonical expression to Go IR
