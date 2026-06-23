@@ -890,3 +890,58 @@ before any other criterion can claim progress on the rt.Coerce floor.
 
 Iter 30 wakeup scheduled. Pre-grill investigation per
 feedback_v017_per_commit_grill before touching code in either track.
+
+---
+
+## Iteration 87 outcome (2026-06-23) — formal closure record for criteria 6 + 7 + 9
+
+Full closure record banked at
+`docs/v0.17-roadmap/iter87-closure.md`. Summary by criterion:
+
+### Criterion-by-criterion state at iter 87 entry
+
+| # | Criterion | Status | Notes |
+|---|---|---|---|
+| 1 | `rt.Coerce` → 0 in `26-ui-showcase` | PARTIAL | 317 → 209 (-108, -34%). Closure path = sealed-iface ADT emission (#677). |
+| 2 | `eraseUndeclaredTVarsInGoSource` DELETED | **CLOSED** | Verified by grep returning 0 hits. Commit `04d6f707`. |
+| 3 | `globalCgEnv` + `globalGoSigMap` DELETED | PARTIAL | `globalGoSigMap` deleted (sentinel installed). `globalCgEnv` deleted iter 44; full path defers to Option A Stage 3+4 batch. |
+| 4 | `SKY_GOSIG_DIFF=1` zero `Anon_R_*` | **CLOSED** | Commit `cde54107`. Verified iter 85 sweep. |
+| 5 | `GoTypeAdt` + `GoTypeRoundTrip` parity (9 tests) | **CLOSED** | 72/72 per iter 85 (task #653). |
+| 6 | Limitations closed or sign-off | **CLOSED-IN-FACT** | All v0.17-scope #4-10 closed in CLAUDE.md with spec + commit. #1-3 open-by-design. |
+| 7 | Cycle 6 #383 close | PARTIAL | Ratchets on criterion #1. |
+| 8 | Property-based fuzzer ≥ 10k iters | **CLOSED** | Shipped iter 86 (commit `b6c9be6e`). |
+| 9 | Umbrellas closed | PARTIAL | #383 #644 #654 #660 #664 #672 #677 ratchet on sealed-iface + Judge. |
+| 10 | Judge verdict 100% ACHIEVED | NOT-YET-RUN | Pending after criterion #1 floor. |
+
+### What iter 87 formally closes
+
+- **Criterion #6** — CLOSED-IN-FACT.
+  All in-scope limitations (#4-10) closed in CLAUDE.md with
+  citation. Open-by-design #1-3 are not in v0.17 scope. Stale
+  comment in `test/Sky/Type/StrictHmArityGateSpec.hs:223-231`
+  refreshed to reflect that all negative arms are LIVE
+  post PR-A→PR-D.
+
+### What iter 87 does NOT close (conservative)
+
+- **Criterion #7 (Cycle 6 #383)** — PARTIAL.
+  Substantive work shipped across v0.15.42-51; umbrella ratchets
+  on criterion #1 reaching floor + Judge verdict.
+
+- **Criterion #9 (umbrella closure)** — PARTIAL.
+  All seven open umbrellas (#383 #644 #654 #660 #664 #672 #677)
+  have documented closure paths; none are stuck on undefined
+  work. Closure ratchets on sealed-iface ADT emission (#677)
+  reaching user-ADT phase + Judge re-spawn.
+
+### Next-iter handoff
+
+The continuous-Judge protocol (CLAUDE.md §0) re-spawns Judge AFTER
+sealed-iface (#677) reaches user-ADT phase + criterion #1 reaches
+floor. Re-spawning at iter 87 would predictably return NOT
+ACHIEVED on criterion #1, wasting an iteration.
+
+Per CLAUDE.md §0 hard rule 4: this is NOT a stop. It is a
+banking-state milestone documenting partial-closure with explicit
+gap inventory. Iteration 88+ continues sealed-iface execution per
+the durable user directive (2026-06-21) logged above.

@@ -221,14 +221,15 @@ spec = do
         -- gate must NOT mis-classify the alias-head shape as an
         -- arity mismatch.
         --
-        -- Iter 27 (2026-06-20): the gate's NEGATIVE arms (k-a / k-b /
-        -- u-a / u-b) remain pendingWith because the strict-HM
-        -- closure shape is multi-PR work and needs per-commit
-        -- adversarial grilling per feedback_v017_per_commit_grill.
-        -- Flipping the POSITIVES live LOCKS the four shapes that
-        -- must NEVER regress once the gate lands — so any future
-        -- closure attempt that breaks HeadAlias / Pure.* /
-        -- real-polymorphism / wildcard-only fails fast here.
+        -- Status update — iter 87 (2026-06-23):
+        -- All negative arms (k-a / k-b / u-a / u-b) are now LIVE
+        -- per the PR-A → PR-D multi-PR plan shipped iters 29-32
+        -- (commits `ccf3c010`, `53d529f4`, `d1394fbc`, `389883cb`).
+        -- The earlier "remain pendingWith" framing is historical.
+        -- The four POSITIVES below still guard against regressing
+        -- HeadAlias / Pure.* / real-polymorphism / wildcard-only —
+        -- so any future close attempt that re-tightens the gate
+        -- and accidentally over-fires fails fast here.
         it "h-a: HeadAlias positive — myHandler : Handler compiles" $ do
             let src = unlines
                     [ "module Main exposing (main)"
