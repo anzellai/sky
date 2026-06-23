@@ -90,11 +90,13 @@ data CompileCtx = CompileCtx
         -- ^ Go import path → canonical alias.  Mirrors
         -- 'Sky.Canonicalise.Environment.ffiPkgAliasRef'.
     , _ctx_typedWrapperNames  :: !(Set.Set String)
-        -- ^ Typed FFI wrapper names (@Go_X_yT@).  Mirrors
-        -- 'Sky.Canonicalise.Environment.ffiTypedWrapperNamesRef'.
+        -- ^ Typed FFI wrapper names (@Go_X_yT@).  v0.17 close iter 5
+        -- (Phase 7 IORef defusing) — single source of truth; the
+        -- legacy @Env.ffiTypedWrapperNamesRef@ has been deleted.
     , _ctx_typedWrapperParams :: !(Map.Map String [String])
-        -- ^ Typed wrapper name → param Go types.  Mirrors
-        -- 'Sky.Canonicalise.Environment.ffiTypedWrapperParamsRef'.
+        -- ^ Typed wrapper name → param Go types.  v0.17 close iter 5
+        -- — single source of truth; the legacy
+        -- @Env.ffiTypedWrapperParamsRef@ has been deleted.
     , _ctx_cgEnv              :: !Rec.CodegenEnv
         -- ^ v0.17 close criterion 3 — staging S0.  Mirrors
         -- 'Sky.Build.Compile.globalCgEnv' (an 'IORef'

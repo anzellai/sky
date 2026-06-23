@@ -106,10 +106,12 @@ lookupFunction reg kname fname =
 -- map under @ffiKernelTypeRef@ is NOT projected here — Compile.hs
 -- materialises that via its existing @ftyToAnnotation@ converter at
 -- load time and threads the resulting map alongside the registry.
--- The 2 typed-wrapper IORefs (ffiTypedWrapperNamesRef,
--- ffiTypedWrapperParamsRef) are populated by Compile.seedTypedFfiNames
--- from disk-scanning ffi/*.go (not from _fr_modules), so they too
--- thread alongside, not through FfiRegistry.
+-- The 2 typed-wrapper sets (typedWrapperNames, typedWrapperParams)
+-- are populated by Compile.seedTypedFfiNames from disk-scanning
+-- ffi/*.go (not from _fr_modules), so they thread alongside the
+-- registry via LoadedFfiTables → CompileCtx → LowerCtx (v0.17 close
+-- iter 5 — Phase 7 IORef defusing; the legacy backing IORefs have
+-- been deleted).
 
 
 -- | Sky import path → kernel module name.  Mirrors

@@ -2464,10 +2464,16 @@ data LoadedFfiTables = LoadedFfiTables
     , _lft_pkgAlias        :: !(Map.Map String String)
         -- ^ Mirrors @Env.ffiPkgAliasRef@.
     , _lft_typedWrapperNames  :: !(Set.Set String)
-        -- ^ Mirrors @Env.ffiTypedWrapperNamesRef@.  Populated by
-        -- 'seedTypedFfiNames' from disk-scanning @.skycache/go/*.go@.
+        -- ^ v0.17 close iter 5 (Phase 7 IORef defusing) — single
+        -- source of truth for the typed-FFI wrapper registry.
+        -- Populated by 'seedTypedFfiNames' from disk-scanning
+        -- @.skycache/go/*.go@.  The legacy
+        -- @Env.ffiTypedWrapperNamesRef@ has been deleted; this
+        -- value flows to @CompileCtx._ctx_typedWrapperNames@ →
+        -- @LowerCtx._lc_ffiTypedWrapperNames@.
     , _lft_typedWrapperParams :: !(Map.Map String [String])
-        -- ^ Mirrors @Env.ffiTypedWrapperParamsRef@.
+        -- ^ v0.17 close iter 5 — companion to '_lft_typedWrapperNames'.
+        -- Single source of truth (no IORef shadow).
     }
 
 
@@ -2593,14 +2599,17 @@ loadedFfiToCtx loadedFfi = CompileCtx
 
 
 -- | P7: scan ffi/*.go (and ffi/**/*.go) for `^func Go_X_yT(` definitions
--- and populate Env.ffiTypedWrapperNamesRef so call-site codegen can
--- prefer the typed variant. Silently tolerates a missing .skycache/go dir.
+-- and return the @(typedWrapperNames, typedWrapperParams)@ pair so
+-- call-site codegen can prefer the typed variant. Silently tolerates
+-- a missing .skycache/go dir.
 --
--- v0.17 close P1 — also returns the computed
--- @(typedWrapperNames, typedWrapperParams)@ pair so
--- 'loadAndSeedFfiRegistry' can bundle them into 'LoadedFfiTables' for
--- post-P1 threaded consumption.  IORef writes are kept as interim
--- shim until phases P3+P4 migrate the call-site readers.
+-- v0.17 close iter 5 (Phase 7 IORef defusing) — the legacy
+-- @Env.ffiTypedWrapperNamesRef@ + @Env.ffiTypedWrapperParamsRef@ IORef
+-- writes have been removed. The value is now propagated PURELY via the
+-- return tuple → 'LoadedFfiTables._lft_typedWrapper{Names,Params}' →
+-- 'CompileCtx._ctx_typedWrapper{Names,Params}' → 'LowerCtx._lc_ffiTypedWrapper{Names,Params}'.
+-- All 4 reader sites in Compile.hs consult the threaded 'LowerCtx';
+-- the two formerly load-bearing IORefs are gone.
 seedTypedFfiNames :: IO (Set.Set String, Map.Map String [String])
 seedTypedFfiNames = do
     let ffiDir = ".skycache/go"
@@ -2614,8 +2623,6 @@ seedTypedFfiNames = do
             let allEntries = concat pairLists
                 twNames    = Set.fromList (map fst allEntries)
                 twParams   = Map.fromList allEntries
-            writeIORef Env.ffiTypedWrapperNamesRef twNames
-            writeIORef Env.ffiTypedWrapperParamsRef twParams
             return (twNames, twParams)
 
 
@@ -2876,9 +2883,9 @@ data ParseOutcome
 --   - #7 globalEntryPath retired (dead chain)
 --   - #8 globalConsoleNeeded retired (pure threading)
 --   - #3 globalIsInlineConsoleBuild retired (env-var CAF)
--- Env.ffiTypedWrapper{Names,Params}Ref intentionally NOT reset
--- here — 'loadAndSeedFfiRegistry' fires earlier in 'compile' and
--- would be clobbered.
+--   - Env.ffiTypedWrapper{Names,Params}Ref retired (iter 5,
+--     Phase 7) — value flows via LoadedFfiTables → CompileCtx →
+--     LowerCtx (4 reader sites, 0 IORefs).
 resetCompileState :: IO ()
 resetCompileState = do
     let initialCgEnv =
@@ -12792,10 +12799,10 @@ exprToGo ctx (A.At _ expr) = case expr of
                 | take 3 modName == "Go_"
                 , all isUnitArg args
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                -- v0.17 close P1 step 2/8 — read the typed-FFI wrapper
-                -- registry from the threaded 'LowerCtx' (installed at
-                -- 'continueCompile' via scopeStateRef) instead of via
-                -- @unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)@.
+                -- v0.17 close iter 5 (Phase 7 IORef defusing) — read the
+                -- typed-FFI wrapper registry from the threaded 'LowerCtx'.
+                -- Single source of truth: the legacy
+                -- @Env.ffiTypedWrapperNamesRef@ has been deleted.
                 , Set.member typedName (LC._lc_ffiTypedWrapperNames ctx) ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
@@ -12811,7 +12818,8 @@ exprToGo ctx (A.At _ expr) = case expr of
                 , not (null args)
                 , not (all isUnitArg args)
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                -- v0.17 close P1 step 2/8 — ctx-routed reads (see above).
+                -- v0.17 close iter 5 (Phase 7) — ctx-routed reads (see
+                -- above); IORef shadow has been deleted.
                 , Set.member typedName (LC._lc_ffiTypedWrapperNames ctx)
                 , Just paramTys <- Map.lookup typedName (LC._lc_ffiTypedWrapperParams ctx)
                 , length paramTys == length args ->
@@ -14265,28 +14273,13 @@ typedKernelLiterals = Set.fromList
     ]
 
 
--- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup.
---
--- Bug #492: this was previously a top-level CAF
--- (`typedFfiWrapperSet :: Set.Set String`).  GHC memoised the first
--- IORef read for the lifetime of the process; multi-compile-per-
--- process consumers (`sky watch`, `sky lsp`, Tier 1 test infra)
--- saw the first compile's FFI snapshot forever.  Adding the unit
--- argument turns this into a function (GHC does NOT memoise
--- function results across calls), and the NOINLINE pragma blocks
--- CSE from collapsing repeated `typedFfiWrapperSet ()` calls into
--- a shared expression.
-{-# NOINLINE typedFfiWrapperSet #-}
-typedFfiWrapperSet :: () -> Set.Set String
-typedFfiWrapperSet () = unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)
-
-
--- | Companion snapshot of typed-wrapper param Go types, keyed by the
--- T-suffix wrapper name.  Bug #492 fix applied: unit-arg + NOINLINE
--- so multi-compile-per-process consumers re-read the IORef each call.
-{-# NOINLINE typedFfiWrapperParams #-}
-typedFfiWrapperParams :: () -> Map.Map String [String]
-typedFfiWrapperParams () = unsafePerformIO (readIORef Env.ffiTypedWrapperParamsRef)
+-- v0.17 close iter 5 (Phase 7 IORef defusing) — the legacy
+-- 'typedFfiWrapperSet' / 'typedFfiWrapperParams' helpers (which wrapped
+-- @readIORef Env.ffiTypedWrapper{Names,Params}Ref@ behind a unit arg to
+-- defeat GHC CAF memoisation, Bug #492) have been removed. All 4 reader
+-- sites in this module consult the threaded 'LowerCtx' fields
+-- @_lc_ffiTypedWrapperNames@ / @_lc_ffiTypedWrapperParams@ directly; the
+-- backing IORefs in 'Sky.Canonicalise.Environment' are gone.
 
 
 -- | Typed-wrapper param types that the sky-out/main.go call site can
@@ -17627,9 +17620,10 @@ caseToGoLegacy ctx mExpectedGo subject branches =
                 | take 3 fnName == "Go_"
                 , not (null fnName)
                 , last fnName == 'T'
-                -- v0.17 close P1 step 2/8 — read the typed-FFI wrapper
-                -- names off the threaded 'LowerCtx' instead of via
-                -- @unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)@.
+                -- v0.17 close iter 5 (Phase 7) — read the typed-FFI
+                -- wrapper names off the threaded 'LowerCtx'.  Single
+                -- source of truth: the legacy
+                -- @Env.ffiTypedWrapperNamesRef@ has been deleted.
                 , Set.member fnName (LC._lc_ffiTypedWrapperNames ctx)
                 -> True
             GoIr.GoCall (GoIr.GoIdent qualName) _

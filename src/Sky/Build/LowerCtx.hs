@@ -201,22 +201,24 @@ data LowerCtx = LowerCtx
         -- next read.  Replaces the @lookupKernelAlias@ IORef hop
         -- inside @exprToGo@'s @Can.VarTopLevel@ + @Can.Call@ arms.
     , _lc_ffiTypedWrapperNames :: !(Set.Set String)
-        -- ^ v0.17 close P1 step 2/8 — snapshot of @Env.ffiTypedWrapperNamesRef@,
-        -- the set of typed-FFI wrapper Go-function names emitted by
+        -- ^ Set of typed-FFI wrapper Go-function names emitted by
         -- @FfiGen@ (each named @<Kernel>_<fn>T@).  Read at @exprToGo@'s
         -- @Can.VarKernel@ arms (zero-arg + N-arg FFI dispatch) +
         -- @caseToGo@'s @isTypedFfiCall@ recogniser to decide whether
         -- the typed wrapper exists for a given call site.  Populated
         -- by @loadAndSeedFfiRegistry@ → @LoadedFfiTables@ →
         -- 'generateGoMulti' at codegen entry; default 'Set.empty' for
-        -- bootstrap (matches the IORef's empty default).
+        -- bootstrap.  v0.17 close iter 5 (Phase 7 IORef defusing):
+        -- single source of truth — the legacy
+        -- @Env.ffiTypedWrapperNamesRef@ IORef has been deleted.
     , _lc_ffiTypedWrapperParams :: !(Map.Map String [String])
-        -- ^ v0.17 close P1 step 2/8 — snapshot of @Env.ffiTypedWrapperParamsRef@,
-        -- mapping each @<Kernel>_<fn>T@ wrapper to its declared Go
+        -- ^ Mapping each @<Kernel>_<fn>T@ wrapper to its declared Go
         -- param-type strings.  Read at @exprToGo@'s @Can.VarKernel@
         -- N-arg arm to coerce arguments to the wrapper's declared
         -- param types.  Same population path as
-        -- '_lc_ffiTypedWrapperNames'; default 'Map.empty'.
+        -- '_lc_ffiTypedWrapperNames'; default 'Map.empty'.  v0.17 close
+        -- iter 5: single source of truth — the legacy
+        -- @Env.ffiTypedWrapperParamsRef@ IORef has been deleted.
     , _lc_cgEnv :: !(Maybe Rec.CodegenEnv)
         -- ^ v0.17 close criterion 3 — globalCgEnv migration
         -- (staged S1, iter 34).  Bridge field that future reader
@@ -550,12 +552,12 @@ withUnionDetails details ctx =
     ctx { _lc_unionDetails = details }
 
 
--- | v0.17 close P1 step 2/8 — install the typed-FFI wrapper name set
--- on the LowerCtx so the lowerer's @Can.VarKernel@ arms read it
--- structurally instead of via @unsafePerformIO (readIORef
--- Env.ffiTypedWrapperNamesRef)@.  Populated from
+-- | Install the typed-FFI wrapper name set on the LowerCtx so the
+-- lowerer's @Can.VarKernel@ arms read it structurally.  Populated from
 -- 'LoadedFfiTables._lft_typedWrapperNames' at codegen entry
--- ('generateGoMulti').
+-- ('generateGoMulti').  v0.17 close iter 5 (Phase 7 IORef defusing):
+-- the legacy @Env.ffiTypedWrapperNamesRef@ IORef has been deleted; this
+-- is the only path the registry can flow through.
 withFfiTypedWrapperNames
     :: Set.Set String
     -> LowerCtx

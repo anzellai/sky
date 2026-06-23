@@ -340,28 +340,15 @@ ffiPkgAliasRef :: IORef (Map.Map String String)
 ffiPkgAliasRef = unsafePerformIO (newIORef Map.empty)
 
 
--- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
--- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
--- been emitted by FfiGen. Call-site codegen consults this set to
--- decide whether to emit the typed variant directly.
---
--- Populated by `Sky.Build.Compile.seedTypedFfiNames`, which scans
--- the examples' ffi/*.go files and records every `^func Go_X_yT(`
--- definition. Empty unless seeded, in which case the fallback is the
--- any/any wrapper (safe default — Go build will surface a missing
--- T name if the caller wrongly assumes it exists).
-{-# NOINLINE ffiTypedWrapperNamesRef #-}
-ffiTypedWrapperNamesRef :: IORef (Set.Set String)
-ffiTypedWrapperNamesRef = unsafePerformIO (newIORef Set.empty)
-
-
--- | P7: per-typed-wrapper param Go types, for call-site coercion of
--- non-literal args. Keyed by the T-suffix wrapper name (e.g.
--- "Go_Uuid_parseT" → ["string"]). Populated by seedTypedFfiNames
--- alongside ffiTypedWrapperNamesRef.
-{-# NOINLINE ffiTypedWrapperParamsRef #-}
-ffiTypedWrapperParamsRef :: IORef (Map.Map String [String])
-ffiTypedWrapperParamsRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 5 (Phase 7 IORef defusing) — the legacy
+-- 'ffiTypedWrapperNamesRef' + 'ffiTypedWrapperParamsRef' IORefs
+-- (P7 typed-FFI wrapper registry; populated by 'seedTypedFfiNames'
+-- from .skycache/go/*.go) have been deleted. The value flows purely
+-- via 'Sky.Build.Compile.LoadedFfiTables._lft_typedWrapper{Names,Params}'
+-- → 'Sky.Build.CompileCtx._ctx_typedWrapper{Names,Params}' →
+-- 'Sky.Build.LowerCtx._lc_ffiTypedWrapper{Names,Params}', threaded
+-- through every codegen entry point. All 4 reader sites in
+-- 'Sky.Build.Compile' consult the threaded LowerCtx.
 
 
 -- | Kernel module mappings: Sky import path → kernel module name.
