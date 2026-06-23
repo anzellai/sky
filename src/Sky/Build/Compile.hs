@@ -2517,10 +2517,17 @@ loadAndSeedFfiRegistry = do
             , f <- FfiReg._fm_functions m
             , Just ast <- [FfiReg._ffn_skyType f]
             ]
-    writeIORef Env.ffiKernelModulesRef moduleMap
-    writeIORef Env.ffiKernelFunctionsRef functionMap
+    -- v0.17 close iter 7 — the legacy 'Env.ffiKernelModulesRef',
+    -- 'Env.ffiKernelFunctionsRef', and 'Env.ffiKernelTypeRef' IORefs
+    -- have been DELETED.  moduleMap / functionMap / typeMap now flow
+    -- purely via the returned 'LoadedFfiTables._lft_kernel{Modules,
+    -- Functions,Types}' value channel, threaded through 'CompileCtx'
+    -- into the canonicaliser's 'Env._kernelMods' field +
+    -- 'kernelVarsFor' threading + the value-channel kernel-type
+    -- lookup in 'Constrain.Expression'.  The three IORef writes
+    -- were dead code (no non-comment read sites) once the value
+    -- channels had landed for every reader.
     writeIORef Env.ffiKernelArityRef arityMap
-    writeIORef Env.ffiKernelTypeRef typeMap
     -- v0.17 PR-21b — merge each FfiModule's _fm_implements + _fm_pkgAlias
     -- into a single global registry.  Two FfiModules carrying the same
     -- key are rare (a qualified type name's full @at@pkg@ form is unique
