@@ -122,8 +122,11 @@ sequence =
     Ffi.kernel "Task_sequence"
 
 
--- | Run a list of tasks concurrently (goroutine-backed); first
--- error short-circuits.  Useful for parallel I/O.
+-- | Run a list of tasks concurrently (goroutine-backed); the first
+-- error observed short-circuits and is returned without waiting for
+-- the remaining tasks to complete naturally.  Successful results
+-- preserve input list order.  Useful for parallel I/O where one
+-- failure should abort the whole batch.
 parallel : List (Task e a) -> Task e (List a)
 parallel =
     Ffi.kernel "Task_parallel"
