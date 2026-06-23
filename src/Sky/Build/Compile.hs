@@ -981,7 +981,8 @@ shouldEmitSealedIface modName typeName vars opts
 --     proving the gate wiring is correct.
 sealedIfaceFlipAllowList :: Set.Set String
 sealedIfaceFlipAllowList = Set.fromList
-    [ "Sky.Test.TestResult"  -- v0.17 iter 63 — first ADT flip
+    [ "Sky.Test.TestResult"     -- v0.17 iter 63 — first ADT flip
+    , "Sky.Core.Jwt.Algorithm"  -- v0.17 iter 64 — second flip
     ]
 
 

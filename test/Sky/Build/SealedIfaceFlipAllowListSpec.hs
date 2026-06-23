@@ -53,19 +53,29 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — single entry post iter 63" $ do
+    describe "sealedIfaceFlipAllowList — 2 entries post iter 64" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
-        it "Set.size is 1 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 1
+        it "contains Sky.Core.Jwt.Algorithm (second ADT flip)" $
+            "Sky.Core.Jwt.Algorithm" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "Set.size is 2 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 2
 
         it "Sky.Test.TestResult triggers sealed-iface gate" $
             shouldEmitSealedIface
                 (ModuleName.Canonical "Sky.Test")
                 "TestResult" [] Can.Normal
+                `shouldBe` True
+
+        it "Sky.Core.Jwt.Algorithm triggers sealed-iface gate" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Sky.Core.Jwt")
+                "Algorithm" [] Can.Normal
                 `shouldBe` True
 
     describe "Sky.Build.shouldEmitSealedIface — gate behaviour" $ do
