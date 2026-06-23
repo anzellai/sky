@@ -8624,6 +8624,22 @@ wrapTypedReturn ctx mSrc retType body
     -- return matches the HM type exactly.  Other shapes still fall
     -- through to `Nothing`.
     | goExprGoType ctx mSrc body == Just retType = body
+    -- v0.17 iter 66 — sealed-iface elision.  When the body is a
+    -- ctor reference of the sealed-iface @retType@ (nullary ctor
+    -- binding @<iface>_<Ctor>@ of type @<iface>_<Ctor>_V@, OR
+    -- N-ary ctor function call @<iface>_<Ctor>(args)@ returning
+    -- @<iface>_<Ctor>_V@), Go's struct→interface assignability
+    -- handles auto-boxing at the return site → the explicit
+    -- @rt.Coerce[<iface>](body)@ wrap is redundant.  Elide it.
+    --
+    -- Pattern is structural on the body GoExpr (cheaper than a
+    -- full 'goExprGoType' that would need to track ctor binding
+    -- types).  Safety: only fires when @retType@ is in the
+    -- sealed-iface name set AND the body's head identifier
+    -- matches the @<iface>_<Ctor>@ shape.
+    | Set.member retType (Rec._cg_sealedIfaceNames getCgEnvFromScope)
+    , isSealedIfaceCtorBody body retType
+        = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
             (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParams ctx mSrc "Result" params ++ "]"))
@@ -8659,6 +8675,40 @@ wrapTypedReturn ctx mSrc retType body
         GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [body]
     | otherwise =
         GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retType ++ "]")) [body]
+
+
+-- | v0.17 iter 66 — predicate for the 'wrapTypedReturn' sealed-iface
+-- elision arm.  Returns True when the body GoExpr is structurally
+-- a ctor reference of the sealed-iface @ifaceName@:
+--
+--   * @GoIdent "Sky_Test_TestResult_Passed"@ — nullary ctor binding
+--     (declared @var <iface>_<Ctor> <iface>_<Ctor>_V = ...@ by
+--     'emitSealedIfaceUnion' at Compile.hs:~1482).
+--   * @GoCall (GoIdent "Sky_Test_TestResult_Failed") [...]@ — N-ary
+--     ctor function call (declared @func <iface>_<Ctor>(...) <iface>_<Ctor>_V@
+--     at Compile.hs:~1485).
+--
+-- Both shapes produce a value whose dynamic type is a variant struct
+-- that implements @ifaceName@; Go's struct→interface assignability
+-- handles auto-boxing at the return site → 'rt.Coerce[<iface>]'
+-- wrap is redundant.
+--
+-- Match: head identifier starts with @ifaceName ++ "_"@.  The bare
+-- identifier head (sans args) carries the ctor name; the variant
+-- struct name (@_V@-suffixed) is implicit via the ctor's declared
+-- Go return type — we don't need to read it because the structural
+-- shape uniquely identifies the ctor binding under the sealed-iface
+-- emission contract.
+isSealedIfaceCtorBody :: GoIr.GoExpr -> String -> Bool
+isSealedIfaceCtorBody body ifaceName =
+    let prefix = ifaceName ++ "_"
+        startsWithPrefix s =
+            length s > length prefix
+            && take (length prefix) s == prefix
+    in case body of
+        GoIr.GoIdent name             -> startsWithPrefix name
+        GoIr.GoCall (GoIr.GoIdent n) _ -> startsWithPrefix n
+        _                             -> False
 
 
 -- | If `s` is shaped like `<prefix>[params]`, return `params`;
