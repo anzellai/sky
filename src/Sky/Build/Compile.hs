@@ -1030,6 +1030,15 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- ColorTransparent — same
                                         -- module as Length tests two
                                         -- concurrent flips in one mod)
+    , "Std.Css.Position"                -- v0.17 iter 77 — twelfth flip
+                                        -- (5 nullary + PositionRaw String)
+    , "Std.Css.TextAlign"               -- v0.17 iter 77 — thirteenth
+                                        -- (4 nullary + TextAlignRaw String)
+    , "Std.Css.Cursor"                  -- v0.17 iter 77 — fourteenth
+                                        -- (6 nullary + CursorRaw String)
+    , "Std.Css.FontWeight"              -- v0.17 iter 77 — fifteenth
+                                        -- (4 nullary + Weight Int +
+                                        -- FontWeightRaw String)
     ]
 
 
