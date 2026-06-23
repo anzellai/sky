@@ -1021,6 +1021,8 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- Std.Ui is heavy-cross-ADT
                                         -- compilation; tests iter 70 fix
                                         -- against the largest dep module)
+    , "Std.Ui.Breakpoint"               -- v0.17 iter 75 — ninth flip
+                                        -- (13 nullary + Custom Int Int)
     ]
 
 
