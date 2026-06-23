@@ -1023,6 +1023,13 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- against the largest dep module)
     , "Std.Ui.Breakpoint"               -- v0.17 iter 75 — ninth flip
                                         -- (13 nullary + Custom Int Int)
+    , "Std.Css.Length"                  -- v0.17 iter 76 — tenth flip
+                                        -- (Px/Rem/Em/Pct/Vh/Vw payloads)
+    , "Std.Css.Color"                   -- v0.17 iter 76 — eleventh flip
+                                        -- (Hex/Rgb/Rgba/Hsl/Hsla +
+                                        -- ColorTransparent — same
+                                        -- module as Length tests two
+                                        -- concurrent flips in one mod)
     ]
 
 

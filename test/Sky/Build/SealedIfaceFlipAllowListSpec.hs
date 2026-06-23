@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 9 entries post iter 75" $ do
+    describe "sealedIfaceFlipAllowList — 11 entries post iter 76" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,17 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.Length (tenth flip — iter 76)" $
+            "Std.Css.Length" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Css.Color (eleventh flip — iter 76)" $
+            -- v0.17 iter 76 — Length + Color flipped CONCURRENTLY
+            -- in the same Std.Css module.  Tests iter 70 fix against
+            -- two-flips-same-module shape.  Both Can.Normal.
+            "Std.Css.Color" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Ui.Breakpoint (ninth flip — iter 75)" $
@@ -123,8 +134,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 9 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 9
+        it "Set.size is 11 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 11
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -178,6 +189,18 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui")
                 "Breakpoint" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Css.Length triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Css")
+                "Length" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Css.Color triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Css")
+                "Color" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $
