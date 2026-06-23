@@ -435,6 +435,9 @@ registry = Map.fromList
     , (("Math", "sqrt2"),         KernelInfo "rt.Math_sqrt2" 0 False)
     , (("Math", "inf"),           KernelInfo "rt.Math_inf" 0 False)
     , (("Math", "nan"),           KernelInfo "rt.Math_nan" 0 False)
+    -- v0.17 G3 — NaN guard. `Math.isNaN x` returns True iff x is
+    -- IEEE 754 NaN (because `nan == nan` is False by IEEE rules).
+    , (("Math", "isNaN"),         KernelInfo "rt.Math_isNaN" 1 False)
 
     , (("Server", "listen"),      KernelInfo "rt.Server_listen" 2 False)
     , (("Server", "get"),         KernelInfo "rt.Server_get" 2 False)

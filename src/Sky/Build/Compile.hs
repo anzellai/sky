@@ -1400,6 +1400,8 @@ typedKernelPrimitiveReturns = Map.fromList
     , ("Math_sqrtT",         "float64")
     , ("Math_tanT",          "float64")
     , ("Math_tanhT",         "float64")
+    -- v0.17 G3 — Math_isNaNT returns bool (NaN guard)
+    , ("Math_isNaNT",        "bool")
     -- Char_* returning string / int / bool (stdlib_extra.go:
     -- Char_toLowerT/toUpperT → string; Char_toCodeT → int;
     -- Char_isAlphaT/isDigitT/isLowerT/isUpperT → bool)

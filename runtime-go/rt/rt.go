@@ -5588,30 +5588,74 @@ func Task_sequence(tasks any) any {
 	}
 }
 
-// Task_parallel: goroutine-backed fan-out; preserves input order; first err wins.
+// Task_parallel: goroutine-backed fan-out; preserves input order;
+// short-circuits on the FIRST error (in launch order). Match the
+// documented Task.parallel semantics: any task returning Err
+// triggers context cancellation so already-running goroutines can
+// observe it (cooperatively, via runWithRecover's panic shield
+// + the result channel select); the function returns as soon as
+// the first error is observed without blocking on every sibling
+// task's natural completion.
+//
+// Important semantic notes:
+//   - Tasks are dispatched eagerly (SkyTask thunks have no input
+//     ctx parameter), so cooperative cancel only helps siblings
+//     that finish before we observe the first Err — the remaining
+//     siblings are best-effort drained in the background via a
+//     detached goroutine that swallows their results.
+//   - Result order is preserved by index: results[i] holds task i's
+//     OkValue when the function returns Ok with the full collected
+//     slice.
+//   - When multiple tasks Err concurrently, the FIRST Err observed
+//     on the channel wins; this matches "first error short-circuits"
+//     in the docstring (declaration order is best-effort given
+//     concurrent dispatch; tie-broken by goroutine scheduling).
 func Task_parallel(tasks any) any {
 	return func() any {
 		xs := AsList(tasks)
 		n := len(xs)
+		if n == 0 {
+			return Ok[any, any]([]any{})
+		}
 		results := make([]any, n)
-		errs := make([]any, n)
-		var wg sync.WaitGroup
+		type item struct {
+			idx int
+			tag int
+			ok  any
+			err any
+		}
+		ch := make(chan item, n)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		for i, t := range xs {
-			wg.Add(1)
 			go func(i int, t any) {
-				defer wg.Done()
 				tag, okV, errV := anyResultView(SkyCall(t))
-				if tag == 0 {
-					results[i] = okV
-				} else {
-					errs[i] = errV
+				// Non-blocking send: if ctx is already cancelled
+				// (someone else won the race), discard so the
+				// goroutine exits cleanly without leaking.
+				select {
+				case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
+				case <-ctx.Done():
 				}
 			}(i, t)
 		}
-		wg.Wait()
-		for _, e := range errs {
-			if e != nil {
-				return Err[any, any](e)
+		received := 0
+		for received < n {
+			select {
+			case it := <-ch:
+				received++
+				if it.tag != 0 {
+					// First error short-circuits — cancel ctx to
+					// release any sibling goroutines whose work
+					// has finished but couldn't send. Remaining
+					// siblings continue running in the background
+					// (best-effort; SkyTask has no ctx-aware API),
+					// but their results are discarded via the
+					// ctx.Done branch in the sender select.
+					cancel()
+					return Err[any, any](it.err)
+				}
+				results[it.idx] = it.ok
 			}
 		}
 		return Ok[any, any](results)
@@ -7095,6 +7139,7 @@ func Math_phi() any                    { return math.Phi }
 func Math_sqrt2() any                  { return math.Sqrt2 }
 func Math_inf() any                    { return math.Inf(1) }
 func Math_nan() any                    { return math.NaN() }
+func Math_isNaN(x any) any             { return math.IsNaN(AsFloat(x)) }
 
 // Typed companions for the new entries
 func Math_asinT(n float64) float64         { return math.Asin(n) }
@@ -7120,6 +7165,7 @@ func Math_phiT() float64                   { return math.Phi }
 func Math_sqrt2T() float64                 { return math.Sqrt2 }
 func Math_infT() float64                   { return math.Inf(1) }
 func Math_nanT() float64                   { return math.NaN() }
+func Math_isNaNT(x float64) bool           { return math.IsNaN(x) }
 
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
