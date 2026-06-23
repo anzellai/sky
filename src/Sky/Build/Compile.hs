@@ -8837,6 +8837,50 @@ shouldTypedTuple ty = case ty of
     isSkyTVar _          = False
 
 
+-- | v0.17 P3 Stage 2 — recognise any Go type string that names a
+-- tuple representation (typed @rt.T2[A,B]@…@rt.T9[…]@, untyped
+-- @rt.SkyTuple2@…@rt.SkyTuple9@, slice-backed @rt.SkyTupleN@, or
+-- a slice / map / SkyMaybe / SkyResult whose element / value / inner
+-- carrier itself names a tuple).
+--
+-- Excludes 'coerceVia' elision on these shapes — the runtime
+-- distinguishes the variants for pattern destructure and
+-- 'rt.Coerce' is the boundary that rebuilds the right shape.  iter
+-- 3+4 lesson preserved by this gate.
+isTupleGoTypeStr :: String -> Bool
+isTupleGoTypeStr s =
+       List.isPrefixOf "rt.T2[" s
+    || List.isPrefixOf "rt.T3[" s
+    || List.isPrefixOf "rt.T4[" s
+    || List.isPrefixOf "rt.T5[" s
+    || List.isPrefixOf "rt.T6[" s
+    || List.isPrefixOf "rt.T7[" s
+    || List.isPrefixOf "rt.T8[" s
+    || List.isPrefixOf "rt.T9[" s
+    || s == "rt.SkyTuple2"
+    || s == "rt.SkyTuple3"
+    || s == "rt.SkyTuple4"
+    || s == "rt.SkyTuple5"
+    || s == "rt.SkyTuple6"
+    || s == "rt.SkyTuple7"
+    || s == "rt.SkyTuple8"
+    || s == "rt.SkyTuple9"
+    || s == "rt.SkyTupleN"
+    -- Composite carriers — recurse on inner.
+    || case stripSlice s of
+         Just inner -> isTupleGoTypeStr inner
+         Nothing -> False
+    || case stripStringMap s of
+         Just inner -> isTupleGoTypeStr inner
+         Nothing -> False
+    || case stripSkyMaybe s of
+         Just inner -> isTupleGoTypeStr inner
+         Nothing -> False
+    || case stripSkyResult s of
+         Just (e, a) -> isTupleGoTypeStr e || isTupleGoTypeStr a
+         Nothing -> False
+
+
 -- | Structural predicate on 'GoType' — TRUE when this Go shape is
 -- safe to embed as an element of a typed @rt.T2[...]@ / @rt.T3[...]@
 -- slot.  Used by 'shouldTypedTuple'; defined separately so the
@@ -14456,6 +14500,37 @@ resolveOrErase ctx mSrc kindHint fallback =
 -- amendment A9 strict-eval guarantee preserved by the 'pickSubstArg'
 -- pure case).
 coerceVia :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceVia ctx mSrc goType goArg
+    -- v0.17 P3 Stage 2 — static-Go-type elision.
+    --
+    -- When the source GoExpr's STATIC Go type (as tracked by
+    -- 'goExprGoType' via LowerCtx) already matches the target
+    -- 'goType' EXACTLY, the entire rt.* wrap is provably redundant
+    -- — Go's type system accepts the source verbatim.
+    --
+    -- Safety gate (iter 3+4 lesson): never elide tuple types.  The
+    -- runtime distinguishes 'rt.T2[A,B]' / 'rt.T3[A,B,C]' /
+    -- 'rt.SkyTuple<N>' / 'rt.SkyTupleN' as separate variants;
+    -- coerceVia is the one boundary where 'rt.Coerce' rebuilds the
+    -- correct typed-tuple shape from whichever variant the source
+    -- carries.  Eliding here would let mismatched tuple variants
+    -- flow through and panic at downstream pattern destructure.
+    --
+    -- Other gates:
+    --   * goType=="any" already a no-op (callers don't reach this
+    --     helper with target "any") — but defensive: skip.
+    --   * Generic-T placeholders (T1/T2/…) keep legacy behaviour;
+    --     'goExprGoType' returns 'Nothing' for them.
+    --
+    -- Net impact (per docs/v0.17-roadmap/phase3-kernel-routing-typed-prop.md):
+    -- ~110 of 122 var-ref-class AsListT wraps + Class C TCO acc +
+    -- Class E sky-source helper return — all elided when the source
+    -- Go type matches the target.
+    | not (isTupleGoTypeStr goType)
+    , Just srcGoTy <- goExprGoType ctx Nothing goArg
+    , srcGoTy == goType
+    , not (isTupleGoTypeStr srcGoTy)
+    = goArg
 coerceVia ctx mSrc goType goArg = case goType of
     "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
