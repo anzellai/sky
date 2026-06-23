@@ -1002,6 +1002,11 @@ sealedIfaceFlipAllowList = Set.fromList
     -- regional-scoping fix is end-to-end correct).
     , "Std.Ui.Transition.Easing"        -- v0.17 iter 70 — fourth real flip
                                         -- (proves iter 70 cross-ADT fix)
+    , "Std.Ui.Transition.Step"          -- v0.17 iter 71 — fifth flip
+                                        -- (4 1-arg variants incl
+                                        -- StepEasing carrying sealed
+                                        -- iface — proves iface-in-
+                                        -- variant-field round-trips)
     ]
 
 

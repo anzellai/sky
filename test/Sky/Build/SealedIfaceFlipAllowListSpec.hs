@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 4 entries post iter 70" $ do
+    describe "sealedIfaceFlipAllowList — 5 entries post iter 71" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,14 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Ui.Transition.Step (fifth flip — iter 71)" $
+            -- v0.17 iter 71 — 4 1-arg variants including
+            -- @StepEasing Easing@ carrying the iter-70-flipped
+            -- Easing sealed iface.  Proves iface-in-variant-struct
+            -- round-trips correctly post-iter-70.
+            "Std.Ui.Transition.Step" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Ui.Transition.Easing (fourth ADT flip — iter 70)" $
@@ -84,8 +92,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 4 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 4
+        it "Set.size is 5 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 5
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -109,6 +117,12 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Transition")
                 "Easing" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Ui.Transition.Step triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Ui.Transition")
+                "Step" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $
