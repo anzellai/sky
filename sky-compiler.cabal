@@ -384,6 +384,9 @@ test-suite sky-tests
       Sky.Build.LiveInitRequestSpec
       Sky.Build.LiveInitRuntimeSpec
       Sky.Stdlib.RecordAliasBuilderConventionSpec
+      Sky.Stdlib.MaybeLawsSpec
+      Sky.Stdlib.ResultLawsSpec
+      Sky.Stdlib.TaskLawsSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec

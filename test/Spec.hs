@@ -110,6 +110,9 @@ import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Build.LiveInitRuntimeSpec
 import qualified Sky.Stdlib.RecordAliasBuilderConventionSpec
+import qualified Sky.Stdlib.MaybeLawsSpec
+import qualified Sky.Stdlib.ResultLawsSpec
+import qualified Sky.Stdlib.TaskLawsSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -759,6 +762,17 @@ allSpecs fastMode = do
     -- v0.16.10 #393(d) — typed record alias builder convention
     describeT "Sky.Stdlib.RecordAliasBuilderConvention"
         Sky.Stdlib.RecordAliasBuilderConventionSpec.spec
+    -- v0.17 G1 (sky-stdlib-correctness §8.1) — Functor/Monad
+    -- algebraic law runtime regression gates for Maybe / Result /
+    -- Task.  Promotes "verified by inspection" to a measurable
+    -- gate via Sky fixtures that assert the law equations at
+    -- runtime against representative values.
+    describeT "Sky.Stdlib.MaybeLaws"
+        Sky.Stdlib.MaybeLawsSpec.spec
+    describeT "Sky.Stdlib.ResultLaws"
+        Sky.Stdlib.ResultLawsSpec.spec
+    describeT "Sky.Stdlib.TaskLaws"
+        Sky.Stdlib.TaskLawsSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now
