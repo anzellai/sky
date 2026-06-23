@@ -318,26 +318,19 @@ ffiKernelTypeRef :: IORef (Map.Map (String, String) Can.Annotation)
 ffiKernelTypeRef = unsafePerformIO (newIORef Map.empty)
 
 
--- | v0.17 PR-21b — FFI interface-satisfaction registry, merged across
--- every loaded @kernel.json@.  Keys are qualified type names
--- (@\"Label\@fyne.io/fyne/v2/widget\"@); values are the lists of
--- qualified interface names that the key type satisfies.  Populated
--- by 'Sky.Build.Compile.loadAndSeedFfiRegistry' from each
--- 'Sky.Build.FfiRegistry.FfiModule._fm_implements'.  Consumed via
--- 'Sky.Type.Solve.withImplementsMap' at the codegen merge site so
--- HM unify rules (PR-21b proper) can consult @A <: I@ axioms.
-{-# NOINLINE ffiImplementsRef #-}
-ffiImplementsRef :: IORef (Map.Map String [String])
-ffiImplementsRef = unsafePerformIO (newIORef Map.empty)
-
-
--- | v0.17 PR-21b — Go import-path → canonical alias registry.
--- Populated alongside 'ffiImplementsRef'.  Reserved for the
--- forthcoming PR-21c resolver flip (codegen of qualified opaque
--- types via @pkg.X@ wrappers).
-{-# NOINLINE ffiPkgAliasRef #-}
-ffiPkgAliasRef :: IORef (Map.Map String String)
-ffiPkgAliasRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 6 (Phase 7 IORef defusing) — the legacy
+-- 'ffiImplementsRef' + 'ffiPkgAliasRef' IORefs (PR-21b FFI
+-- interface-satisfaction registry + Go import-path alias registry)
+-- have been deleted. The values flow purely via
+-- 'Sky.Build.Compile.LoadedFfiTables._lft_{implements,pkgAlias}' →
+-- 'Sky.Build.CompileCtx._ctx_{implements,pkgAlias}' threaded into
+-- 'Sky.Type.Solve.SolverState._ffiImplements' (via
+-- 'Solve.withImplementsMap') and 'Sky.Type.Unify.UnifyState._us_ffiImplements'
+-- (via 'Unify.mkUnifyState'). Both IORefs were write-only (3
+-- 'writeIORef' calls in 'loadAndSeedFfiRegistry'; ZERO 'readIORef'
+-- callsites in non-comment code) before deletion — paired mirror
+-- IORefs that became dead when the threaded value channel landed in
+-- v0.17 P1 step 3.
 
 
 -- v0.17 close iter 5 (Phase 7 IORef defusing) — the legacy

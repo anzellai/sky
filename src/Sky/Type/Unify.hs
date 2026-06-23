@@ -9,14 +9,18 @@
 -- aliases, super types.
 module Sky.Type.Unify
     ( unify
-    , ffiImplementsRef        -- v0.17 PR-21b — seeded by Compile.hs
     , implementsInterface     -- v0.17 PR-21b — A <: I predicate
     , isFfiInterfacePair      -- v0.17 PR-21b — symmetric implements check
     , rowExtCounter           -- v0.17 #624 — reset per compile (in-process)
     -- v0.17 close P1 step 3 — value-channel routing for FFI implements
-    -- registry (replaces @unsafePerformIO (readIORef ffiImplementsRef)@
+    -- registry (replaced @unsafePerformIO (readIORef ffiImplementsRef)@
     -- inside @implementsInterface@).  Solve constructs a 'UnifyState'
     -- once at entry and threads it through every recursive unify arm.
+    -- v0.17 close iter 6 — the legacy 'ffiImplementsRef' IORef has been
+    -- DELETED (was paired write-only mirror with
+    -- 'Sky.Canonicalise.Environment.ffiImplementsRef', written by
+    -- 'Sky.Build.Compile.loadAndSeedFfiRegistry' and never read in
+    -- non-comment code post-step-3).
     , UnifyState (..)
     , emptyUnifyState
     , mkUnifyState
@@ -46,26 +50,14 @@ freshRowExtName = do
     return ("_rowext" ++ show n)
 
 
--- | v0.17 PR-21b — FFI interface-satisfaction registry, populated by
--- @Sky.Build.Compile.loadAndSeedFfiRegistry@ from the inspector's
--- @kernel.json@ output.  Mirror of
--- @Sky.Canonicalise.Environment.ffiImplementsRef@ — kept in this
--- module to avoid an import cycle (Canonicalise.Environment depends on
--- Sky.AST.Canonical which transitively depends on Sky.Type.Type).
---
--- Keys are qualified type names (@\"Label\@fyne.io/fyne/v2/widget\"@);
--- values are the qualified interfaces that the key type satisfies.
--- Consulted in the @App1 ↔ App1@ arm to allow @A <: I@ widening when
--- a value of an FFI-opaque type is passed where its Go interface is
--- expected (the canonical case is Fyne's @Label@ implementing
--- @CanvasObject@).
---
--- Empty by default — projects with no FFI deps OR older kernel.json
--- files that pre-date the implements emission see the legacy strict-
--- equality unify path.
-{-# NOINLINE ffiImplementsRef #-}
-ffiImplementsRef :: IORef (Map.Map String [String])
-ffiImplementsRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 6 — the legacy 'ffiImplementsRef' IORef has been
+-- DELETED.  Was the paired write-only mirror of
+-- 'Sky.Canonicalise.Environment.ffiImplementsRef', written by
+-- 'Sky.Build.Compile.loadAndSeedFfiRegistry' and never read in
+-- non-comment code post-step-3.  The registry now flows purely via
+-- 'LoadedFfiTables._lft_implements' → 'CompileCtx._ctx_implements'
+-- → 'SolverState._ffiImplements' → 'UnifyState._us_ffiImplements',
+-- threaded through every recursive @unify@ arm.
 
 
 -- | v0.17 close P1 step 3 — threaded unifier state.

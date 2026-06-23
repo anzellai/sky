@@ -2547,13 +2547,15 @@ loadAndSeedFfiRegistry = do
             [ (mangleQual k, map mangleQual vs)
             | (k, vs) <- Map.toList implementsMapRaw
             ]
-    writeIORef Env.ffiImplementsRef implementsMap
-    writeIORef Env.ffiPkgAliasRef   pkgAliasMap
-    -- v0.17 PR-21b — mirror into Sky.Type.Unify's local IORef.  Unify
-    -- can't import Canonicalise.Environment (cycle via Sky.AST.Canonical
-    -- → Sky.Type.Type), so the registry lives in two locations seeded
-    -- atomically here.  Same data, two stable read-only IORefs.
-    writeIORef Unify.ffiImplementsRef implementsMap
+    -- v0.17 close iter 6 — the legacy 'Env.ffiImplementsRef' +
+    -- 'Env.ffiPkgAliasRef' + 'Unify.ffiImplementsRef' IORefs have been
+    -- DELETED. Both implementsMap and pkgAliasMap now flow purely via
+    -- the returned 'LoadedFfiTables._lft_implements' +
+    -- '_lft_pkgAlias' value channel, threaded through 'CompileCtx'
+    -- into 'SolverState._ffiImplements' (via 'Solve.withImplementsMap')
+    -- and 'UnifyState._us_ffiImplements' (via 'Unify.mkUnifyState').
+    -- The three IORef writes were dead code (no non-comment read sites)
+    -- once the threaded value channel landed in v0.17 P1 step 3.
     (twNames, twParams) <- seedTypedFfiNames
     if null mods
         then return ()
