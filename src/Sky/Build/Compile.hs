@@ -1047,6 +1047,18 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- (3 nullary + FontStyleRaw)
     , "Std.Css.Overflow"                -- v0.17 iter 78 — nineteenth
                                         -- (4 nullary + OverflowRaw)
+    , "Sky.Test.Test"                   -- v0.17 iter 80 — twentieth
+                                        -- (Leaf String (() -> TestResult)
+                                        -- + Suite String (List Test) —
+                                        -- recursive + func-typed payload)
+    , "Std.Ui.Length"                   -- v0.17 iter 80 — twenty-first
+                                        -- (Px/Content/Fill/Min/Max/Vh/Vw —
+                                        -- recursive Min Int Length /
+                                        -- Max Int Length)
+    , "Std.Ui.Color"                    -- v0.17 iter 80 — twenty-second
+                                        -- (single ctor Rgba Int Int Int
+                                        -- Float — gate may reject as
+                                        -- Can.Unbox, harmless NOP if so)
     ]
 
 
