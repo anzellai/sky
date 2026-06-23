@@ -1159,6 +1159,14 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- _T sibling alias emitter from P2.1 (9f365878) so
       -- Html_T = SkyHtml stays stable across the flip.
       "Std.Html.Html"
+      -- v0.17 P2.3 — flip Std.Html.Attributes.Attribute parametric.
+      -- 4 variants (Attr/BoolAttr/EventAttr/NoAttr); payload includes
+      -- a sibling parametric ADT (Event msg) so cross-ADT references
+      -- exercise the _T sibling alias emitter end-to-end.  This is
+      -- the cascading flip that converts the 269 SkyAttribute /
+      -- Std_Html_Attributes_Attribute references in 26-ui-showcase
+      -- main.go into a sealed-iface dispatch.
+    , "Std.Html.Attributes.Attribute"
     ]
 
 

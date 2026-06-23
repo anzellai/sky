@@ -77,6 +77,17 @@ spec = do
             Set.member "Std.Html.Html" sealedIfaceFlipParametricAllowList
                 `shouldBe` True
 
+        it "sealedIfaceFlipParametricAllowList contains Std.Html.Attributes.Attribute post-P2.3 flip" $
+            -- v0.17 P2.3 — Std.Html.Attributes.Attribute flipped
+            -- parametric.  4 variants (Attr/BoolAttr/EventAttr/NoAttr);
+            -- payload includes a sibling parametric ADT (Event msg) so
+            -- cross-ADT references exercise the _T sibling alias
+            -- emitter end-to-end.  Cascading flip target: 269
+            -- SkyAttribute / Std_Html_Attributes_Attribute references
+            -- in 26-ui-showcase main.go.
+            Set.member "Std.Html.Attributes.Attribute" sealedIfaceFlipParametricAllowList
+                `shouldBe` True
+
         it "parametric + monomorphic allowlists are disjoint" $
             -- A name in both would be a gate-ordering tripwire: arm
             -- (3) would fire for parametric inputs while arm (5) would
