@@ -8720,45 +8720,55 @@ wrapTypedReturn ctx mSrc retType body
 -- Go return type — we don't need to read it because the structural
 -- shape uniquely identifies the ctor binding under the sealed-iface
 -- emission contract.
-isSealedIfaceCtorBody :: GoIr.GoExpr -> String -> Bool
-isSealedIfaceCtorBody body ifaceName =
+-- | iter 66 structural arm — body is a direct reference to (or
+-- nullary call of) a ctor of the sealed-iface ADT.  Pure structural
+-- predicate over the GoExpr; no env read.
+--
+--   ✓ @GoIdent "<iface>_<Ctor>"@               — bare ctor reference
+--   ✓ @GoCall (GoIdent "<iface>_<Ctor>") _@    — applied ctor call
+isSealedIfaceCtorHead :: GoIr.GoExpr -> String -> Bool
+isSealedIfaceCtorHead body ifaceName =
     let prefix = ifaceName ++ "_"
         startsWithPrefix s =
             length s > length prefix
             && take (length prefix) s == prefix
-        -- v0.17 iter 67 — extend coverage: when body is a call to a
-        -- function (NOT a ctor — those are subsumed by
-        -- 'startsWithPrefix') whose declared Go return type IS the
-        -- sealed-iface @ifaceName@, the Coerce wrap is similarly
-        -- redundant.  Reads '_cg_funcRetType' (keyed by goSafeName-
-        -- mangled top-level binding names; populated by
-        -- 'collectFuncTypesWith' and merged into the env at
-        -- 'continueCompile' setup, before any 'wrapTypedReturn' fires).
-        -- Locals (let-bindings, lambdas) are NOT in this map and
-        -- won't match — degrades to the wrap path.
-        --
-        -- Env-read short-circuited behind 'startsWithPrefix' on the
-        -- GoCall arm to avoid an IORef hit on the structural fast-path
-        -- (per griller B's perf review).
-        -- v0.17 iter 68 — also try the type-arg-stripped form of
-        -- the callName: post-monomorphisation a call to a
-        -- polymorphic kernel emits as @Sky_Test_equal[int]@, but
-        -- '_cg_funcRetType' is keyed by the unmangled binding name
-        -- (@Sky_Test_equal@).  Try the raw lookup first (catches
-        -- non-mangled cases), fall back to stripping at the first
-        -- @[@ (catches monomorphised cases).  Griller A's H4
-        -- close: closes the lossy-elision gap iter 67 left open.
-        retTyMatches n =
-            let m       = Rec._cg_funcRetType getCgEnvFromScope
-                stripped = takeWhile (/= '[') n
-                lookups  = if n == stripped then [n] else [n, stripped]
-            in any (\k -> Map.lookup k m == Just ifaceName) lookups
     in case body of
-        GoIr.GoIdent name             -> startsWithPrefix name
-        GoIr.GoCall (GoIr.GoIdent n) _
-            | startsWithPrefix n      -> True
-            | otherwise               -> retTyMatches n
-        _                             -> False
+        GoIr.GoIdent name              -> startsWithPrefix name
+        GoIr.GoCall (GoIr.GoIdent n) _ -> startsWithPrefix n
+        _                              -> False
+
+
+-- | iter 67/68 environmental arm — body is a call to a (non-ctor)
+-- function whose declared Go return type IS the sealed-iface
+-- @ifaceName@.  Reads '_cg_funcRetType' (keyed by 'goSafeName'-
+-- mangled top-level binding names; populated by
+-- 'collectFuncTypesWith' and merged into the env at
+-- 'continueCompile' setup — STABLE before any 'wrapTypedReturn'
+-- fires).  Locals (let-bindings, lambdas) aren't in the map and
+-- won't match.
+--
+-- Also tries the type-arg-stripped form of the call name to
+-- handle monomorphised kernels: @Sky_Test_equal[int]@ →
+-- @Sky_Test_equal@ in the map (iter 68 close of Griller A's H4).
+isSealedIfaceReturningCall :: GoIr.GoExpr -> String -> Bool
+isSealedIfaceReturningCall body ifaceName = case body of
+    GoIr.GoCall (GoIr.GoIdent n) _ ->
+        let m        = Rec._cg_funcRetType getCgEnvFromScope
+            stripped = takeWhile (/= '[') n
+            lookups  = if n == stripped then [n] else [n, stripped]
+        in any (\k -> Map.lookup k m == Just ifaceName) lookups
+    _ -> False
+
+
+-- | Combined predicate used by 'wrapTypedReturn' to short-circuit
+-- the structural fast-path (no IORef read) before falling through
+-- to the env-dependent arm.  Kept as a thin alias so existing
+-- callers don't need to change shape; the split predicates are
+-- the future entry points if these two arms diverge further.
+isSealedIfaceCtorBody :: GoIr.GoExpr -> String -> Bool
+isSealedIfaceCtorBody body ifaceName =
+    isSealedIfaceCtorHead body ifaceName
+    || isSealedIfaceReturningCall body ifaceName
 
 
 -- | If `s` is shaped like `<prefix>[params]`, return `params`;
