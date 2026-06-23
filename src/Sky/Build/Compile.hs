@@ -916,12 +916,20 @@ shouldEmitSealedIface
     -> Can.CtorOpts           -- ^ Can.Enum / Can.Normal / Can.Unbox
     -> Bool
 shouldEmitSealedIface modName typeName vars opts
-    | opts == Can.Enum                                   = False  -- (1)
-    | opts == Can.Unbox                                  = False  -- (1b) v0.17 P3.4c.0a
-    | not (null vars)                                    = False  -- (2)
-    | qualifiedName `Set.member` rtBuilderShadowList     = False  -- (3)
-    | qualifiedName `Set.member` sealedIfaceFlipAllowList = True  -- (4) v0.17 P3.4d
-    | otherwise                                          = False  -- (5) P3.3 default
+    | opts == Can.Enum                                       = False  -- (1)
+    | opts == Can.Unbox                                      = False  -- (1b) v0.17 P3.4c.0a
+    | qualifiedName `Set.member` rtBuilderShadowList         = False  -- (2) rt-side SkyADT builders veto
+    -- v0.17 iter 88 — parametric ADT admit, gated on a SEPARATE allowlist
+    -- from the monomorphic case.  Must precede the bare "not null vars"
+    -- reject below, otherwise it gets shadowed.  TVar erasure happens
+    -- at variant struct field render time via 'safeReturnTypeFull' (its
+    -- mcTVarsToAny policy) — see 'emitSealedIfaceUnion' Haddock for the
+    -- soundness argument.
+    | not (null vars)
+      && qualifiedName `Set.member` sealedIfaceFlipParametricAllowList = True  -- (3) iter 88
+    | not (null vars)                                        = False  -- (4) parametric default
+    | qualifiedName `Set.member` sealedIfaceFlipAllowList    = True   -- (5) v0.17 P3.4d
+    | otherwise                                              = False  -- (6) P3.3 default
   where
     qualifiedName = ModuleName.toString modName ++ "." ++ typeName
 
@@ -1059,6 +1067,95 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- (single ctor Rgba Int Int Int
                                         -- Float — gate may reject as
                                         -- Can.Unbox, harmless NOP if so)
+    ]
+
+
+-- | v0.17 iter 88 — per-ADT opt-in allowlist for PARAMETRIC sealed-iface
+-- emission.  Each entry is a @Mod.X.Y.Adt@ qualified name (same shape
+-- as 'sealedIfaceFlipAllowList' for monomorphic ADTs).  At emission
+-- time the parametric ADT's variant struct fields render via
+-- 'safeReturnTypeFull' (TVars -> @"any"@), so the sealed-iface itself
+-- + every variant struct are NON-GENERIC in Go.  The Sky-side type
+-- parameter is preserved (HM inference still sees @Element msg@ typed
+-- end-to-end) but the Go emission erases it to closed shape —
+-- matching the existing v0.15 convention where @type Maybe =
+-- rt.SkyADT@ is a non-generic alias even though @Maybe a@ is
+-- parametric in Sky source.
+--
+-- == Why this is the right gate shape
+--
+-- The monomorphic allowlist 'sealedIfaceFlipAllowList' admits only
+-- ADTs with @null vars@.  A PARAMETRIC entry like @Std.Ui.Element@
+-- (vars=[\"msg\"]) needs to bypass the parametric default-reject at
+-- guard (4) in 'shouldEmitSealedIface'.  Splitting into TWO allowlists
+-- gives reviewers a sharp signal: monomorphic entries are safe-by-
+-- default, parametric entries cross a higher bar (must verify TVar
+-- erasure doesn't break round-trip + every rt-side consumer handles
+-- both SkyADT and variant-struct shapes).
+--
+-- == Why empty at scaffolding ship — RUNTIME-COMPAT BLOCKER
+--
+-- Phase-0 dual-grill (iter 88) identified a FATAL blocker that the
+-- architect's plan missed: the canonical parametric ADT targets
+-- (@Std.Html.Html@, @Std.Ui.Element msg@, @Std.Ui.Attribute msg@) are
+-- hard-typed as @rt.SkyADT@ via @.(SkyADT)@ assertions at 5 sites in
+-- @runtime-go/rt/live.go@ and 13 sites in @runtime-go/rt/tui_ui.go@
+-- (HtmlToVNode, applyHtmlAttr, htmlAttrToString, walkAttrs, the TUI
+-- renderer's recursive Element walker, and more).  Post-flip, those
+-- consumers receive a variant struct (e.g.
+-- @Std_Html_Html_HText_V{V0: ...}@) — the @.(SkyADT)@ cast returns
+-- @ok=false@ and the renderer silently falls through to
+-- @vtext(fmt.Sprintf(\"%v\", node))@.  Every Sky.Live + Sky.Tui
+-- example regresses to displaying Go-struct dumps instead of HTML.
+--
+-- The 22 existing monomorphic flips (TestResult, Algorithm, Easing,
+-- Step, Track, EmailProvider, Description, Breakpoint, Length, Color,
+-- Position, TextAlign, Cursor, FontWeight, FlexDirection, FlexWrap,
+-- FontStyle, Overflow, Test, Std.Ui.Length, Std.Ui.Color) succeed
+-- precisely because NO rt-side code does @.(SkyADT)@ on them — they
+-- are leaf shape-decorators that flow through pure Sky code only.
+-- The candidates that would close the rt.Coerce gap most (the heavy-
+-- traffic Std.Ui / Std.Html / Std.Html.Attributes ADTs) are the
+-- EXACT ADTs that ALSO have the most rt-side type-assertion contact.
+--
+-- == What's needed to populate this allowlist (iter 89+ work)
+--
+-- Phase A (1-2 sessions): add @unwrapADTShape@ helper to
+-- @runtime-go/rt/adt.go@ that accepts EITHER @rt.SkyADT@ OR a
+-- variant struct (introspect via @SkyVariantTag()@ /
+-- @SkyVariantName()@ method + reflected V0/V1/.. fields).  Migrate
+-- all 18 type-assertion sites in @live.go@ + @tui_ui.go@ +
+-- @console_app/main.go@ to consume via this helper.  Cabal-test +
+-- 13-example sweep proves identity (no ADT flipped, no behavior
+-- change).
+--
+-- Phase B (1 session per ADT): with the runtime shim in place, the
+-- per-parametric flip is safe.  Start with @Std.Html.Html@ (smallest
+-- variant count, no recursive payloads).  Then @Std.Ui.Attribute@.
+-- Then @Std.Ui.Element@ (recursive).
+--
+-- == Byte-identity contract (this commit)
+--
+-- @sealedIfaceFlipParametricAllowList = Set.empty@.  The new guard
+-- arm at 'shouldEmitSealedIface' line (3) is dead code on every
+-- code path.  Pre/post diff of every example's @main.go@ MUST be
+-- byte-identical.
+--
+-- == Spec gate
+--
+-- 'Sky.Build.SealedIfaceFlipParametricAllowListSpec' asserts:
+--
+--   * The Set is currently empty.
+--   * 'shouldEmitSealedIface' returns False on hand-built parametric
+--     fixtures (no allowlist match).
+--   * The parametric + monomorphic allowlists are disjoint (a name
+--     in both would be a gate-ordering tripwire).
+--   * Carve-out 'rtBuilderShadowList' STILL wins over parametric
+--     admit (the gate's arm 2 fires before arm 3).
+sealedIfaceFlipParametricAllowList :: Set.Set String
+sealedIfaceFlipParametricAllowList = Set.fromList
+    [ -- (empty at scaffolding ship — populating requires iter 89+
+      -- rt-side compatibility shim per the comment block above)
     ]
 
 

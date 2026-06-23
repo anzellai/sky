@@ -13,6 +13,7 @@ import qualified Sky.Build.EraseBandAidAbsentSpec
 import qualified Sky.Build.SealedIfaceCarveoutSpec
 import qualified Sky.Build.SealedIfaceEmissionSpec
 import qualified Sky.Build.SealedIfaceFlipAllowListSpec
+import qualified Sky.Build.SealedIfaceFlipParametricAllowListSpec
 import qualified Sky.Build.SealedIfaceMetadataSpec
 import qualified Sky.Build.SubjectIsSealedIfaceSpec
 import qualified Sky.Build.CaseToGoSealedIfaceSpec
@@ -254,6 +255,17 @@ allSpecs fastMode = do
     -- silently regress.
     describeT "Sky.Build.SealedIfaceFlipAllowList"
         Sky.Build.SealedIfaceFlipAllowListSpec.spec
+    -- v0.17 iter 88 — companion PARAMETRIC sealed-iface allowlist.
+    -- Separate Set from the monomorphic one (different default-reject
+    -- rule in 'shouldEmitSealedIface').  Empty at scaffolding ship.
+    -- The Phase-0 dual-grill identified an rt-side compatibility
+    -- blocker (HtmlToVNode / walkAttrs hard-cast to SkyADT) for the
+    -- canonical parametric targets (Std.Html.Html / Std.Ui.Element /
+    -- Std.Ui.Attribute); populating this allowlist requires the iter
+    -- 89+ rt-side shim that admits both SkyADT and variant-struct
+    -- shapes through 'unwrapADTShape'.
+    describeT "Sky.Build.SealedIfaceFlipParametricAllowList"
+        Sky.Build.SealedIfaceFlipParametricAllowListSpec.spec
     -- v0.17 P3.4c.0 — verify the metadata map population path
     -- (Rec._cg_unionDetails + LC._lc_unionDetails).  Additive
     -- scaffolding only; consumed by the upcoming
