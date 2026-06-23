@@ -32,7 +32,7 @@ spec = do
                 , Can.Ctor "RGB"   2 3 []  -- argTys empty; ctorFieldGoType defaults to "any"
                 ]
 
-        let decls = emitSealedIfaceUnion "Mod_Color" colorCtors
+        let decls = emitSealedIfaceUnion "Mod_Color" [] colorCtors
 
         it "first decl is the sealed interface Mod_Color" $ do
             case decls of
@@ -125,7 +125,7 @@ spec = do
 
     describe "emitSealedIfaceUnion — minimal single-ctor ADT" $ do
         let oneCtor = [Can.Ctor "Wrap" 0 0 []]
-        let decls = emitSealedIfaceUnion "Mod_Wrapper" oneCtor
+        let decls = emitSealedIfaceUnion "Mod_Wrapper" [] oneCtor
 
         it "emits interface + 1 struct + 2 methods + 1 var + 1 init for nullary single ctor" $ do
             let counts =

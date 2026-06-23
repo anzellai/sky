@@ -66,12 +66,16 @@ spec :: Spec
 spec = do
     describe "v0.17 iter 88 — parametric sealed-iface allowlist" $ do
 
-        it "sealedIfaceFlipParametricAllowList is empty at scaffolding ship" $
-            -- Byte-identity contract for iter 88: every example's
-            -- main.go must be byte-identical to baseline b3973468.
-            -- Populating this set requires the iter 89+ rt-side
-            -- compatibility shim per the Compile.hs Haddock.
-            Set.null sealedIfaceFlipParametricAllowList `shouldBe` True
+        it "sealedIfaceFlipParametricAllowList contains Std.Html.Html post-P2.2 flip" $
+            -- v0.17 P2.2 — Std.Html.Html flipped parametric.
+            -- Smallest variant count, no recursive payloads.  Paired
+            -- with the _T sibling alias emitter from P2.1 (9f365878)
+            -- so Html_T = SkyHtml stays stable across the flip.
+            -- Successor flips (Std.Ui.Attribute, Std.Ui.Element) will
+            -- extend this set; the disjointness invariant below stays
+            -- the gate.
+            Set.member "Std.Html.Html" sealedIfaceFlipParametricAllowList
+                `shouldBe` True
 
         it "parametric + monomorphic allowlists are disjoint" $
             -- A name in both would be a gate-ordering tripwire: arm

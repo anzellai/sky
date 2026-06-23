@@ -1154,8 +1154,11 @@ sealedIfaceFlipAllowList = Set.fromList
 --     admit (the gate's arm 2 fires before arm 3).
 sealedIfaceFlipParametricAllowList :: Set.Set String
 sealedIfaceFlipParametricAllowList = Set.fromList
-    [ -- (empty at scaffolding ship — populating requires iter 89+
-      -- rt-side compatibility shim per the comment block above)
+    [ -- v0.17 P2.2 — flip Std.Html.Html parametric.  Smallest
+      -- variant count, no recursive payloads.  Paired with the
+      -- _T sibling alias emitter from P2.1 (9f365878) so
+      -- Html_T = SkyHtml stays stable across the flip.
+      "Std.Html.Html"
     ]
 
 
