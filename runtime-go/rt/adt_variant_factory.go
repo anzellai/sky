@@ -1,9 +1,36 @@
 package rt
 
 import (
+	"encoding/gob"
 	"encoding/json"
 	"sync"
 )
+
+// v0.17 iter 63 — re-exports of encoding/json + encoding/gob APIs
+// that 'emitSealedIfaceUnion's init() block needs to call.  Routing
+// through rt.* keeps the emitted main.go's import list minimal
+// (only "sky-app/rt"); the underlying encoding/json + encoding/gob
+// imports live here in the runtime where they're already in scope.
+
+// JsonRawMessage is the type-alias re-export of encoding/json.RawMessage.
+// emitSealedIfaceUnion's per-variant factory uses it as the
+// rawArgs parameter type.
+type JsonRawMessage = json.RawMessage
+
+// JsonUnmarshal is the function re-export of encoding/json.Unmarshal.
+// emitSealedIfaceUnion's per-variant factory uses it to decode each
+// raw arg into the destination Go variable.
+func JsonUnmarshal(data []byte, v any) error {
+	return json.Unmarshal(data, v)
+}
+
+// GobRegister is the function re-export of encoding/gob.Register.
+// emitSealedIfaceUnion's init() block calls it for every variant
+// struct so the gob codec can decode session-store payloads that
+// contain those struct types.
+func GobRegister(value any) {
+	gob.Register(value)
+}
 
 // AdtVariantFactory constructs a typed Sky ADT variant value from
 // raw JSON arguments. Codegen emits one per Ctor at init() time

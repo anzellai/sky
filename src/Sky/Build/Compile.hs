@@ -980,7 +980,9 @@ shouldEmitSealedIface modName typeName vars opts
 --     for matching @ModuleName.Canonical "Test.Module" + "Name"@,
 --     proving the gate wiring is correct.
 sealedIfaceFlipAllowList :: Set.Set String
-sealedIfaceFlipAllowList = Set.empty
+sealedIfaceFlipAllowList = Set.fromList
+    [ "Sky.Test.TestResult"  -- v0.17 iter 63 — first ADT flip
+    ]
 
 
 -- | v0.17 iter 61 — derive the set of qualified Go names whose
@@ -1643,6 +1645,10 @@ emitSealedIfaceUnion qualType ctors =
         "rt.RegisterAdtTag(" ++ show cname ++ ", " ++ show idx ++ ")"
 
     registerVariantLine (Can.Ctor cname _ arity argTys) =
+        -- v0.17 iter 63 — emit @rt.JsonRawMessage@ / @rt.JsonUnmarshal@
+        -- (re-exports of @encoding/json@) so main.go doesn't need an
+        -- @encoding/json@ import line.  Routes the dependency through
+        -- the runtime where @encoding/json@ is already in scope.
         let vName = variantStructName cname
             ctorLit
                 | arity == 0 = vName ++ "{}"
@@ -1659,13 +1665,15 @@ emitSealedIfaceUnion qualType ctors =
             stepLine i =
                 "var v" ++ show i ++ " " ++ ctorFieldGoType i argTys
                 ++ "; if len(raw) >= " ++ show (i + 1)
-                ++ " { _ = json.Unmarshal(raw[" ++ show i ++ "], &v" ++ show i ++ ") }; "
+                ++ " { _ = rt.JsonUnmarshal(raw[" ++ show i ++ "], &v" ++ show i ++ ") }; "
         in "rt.RegisterAdtVariant(" ++ show cname
-           ++ ", func(raw []json.RawMessage) any { "
+           ++ ", func(raw []rt.JsonRawMessage) any { "
            ++ unmarshalSteps ++ "return " ++ ctorLit ++ " })"
 
     gobRegisterLine (Can.Ctor cname _ _ _) =
-        "gob.Register(" ++ variantStructName cname ++ "{})"
+        -- v0.17 iter 63 — route through @rt.GobRegister@ so main.go
+        -- doesn't need an @encoding/gob@ import line.
+        "rt.GobRegister(" ++ variantStructName cname ++ "{})"
 
 
 -- | Empty 'Rec.CodegenEnv' used when 'scopeStateRef' has no env

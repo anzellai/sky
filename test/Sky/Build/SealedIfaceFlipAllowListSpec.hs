@@ -53,15 +53,22 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — empty under P3.4d scaffolding" $ do
+    describe "sealedIfaceFlipAllowList — single entry post iter 63" $ do
 
-        it "is empty (byte-identity contract)" $
-            sealedIfaceFlipAllowList `shouldBe` Set.empty
+        it "contains Sky.Test.TestResult (first ADT flip)" $
+            "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
 
-        it "Set.size is 0 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 0
+        it "Set.size is 1 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 1
 
-    describe "Sky.Build.shouldEmitSealedIface — gate behaviour under empty allowlist" $ do
+        it "Sky.Test.TestResult triggers sealed-iface gate" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Sky.Test")
+                "TestResult" [] Can.Normal
+                `shouldBe` True
+
+    describe "Sky.Build.shouldEmitSealedIface — gate behaviour" $ do
 
         it "returns False for Main.Msg (not in allowlist)" $
             -- This input would, if we populated "Main.Msg", catch
