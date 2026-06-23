@@ -1637,6 +1637,7 @@ emptyCgEnv =
                    Set.empty
                    Map.empty Map.empty Map.empty Map.empty
                    Map.empty Map.empty Map.empty
+                   Set.empty            -- _cg_sealedIfaceNames (iter 60)
 
 
 -- v0.15.6 #365 — module-hint IORef.
@@ -2117,6 +2118,7 @@ resetCompileState = do
                            Set.empty
                            Map.empty Map.empty Map.empty Map.empty
                            Map.empty Map.empty Map.empty
+                           Set.empty            -- _cg_sealedIfaceNames (iter 60)
     -- v0.17 iter 19 (task #654) — globalUnionNames reset removed;
     -- IORef is gone.  The union-names set now flows via
     -- 'scopeStateRef' and is refreshed via 'modifyIORef' scopeStateRef
@@ -7797,6 +7799,7 @@ goZeroValue t = case t of
           let env = getCgEnvFromScope
               enums  = Rec._cg_enumNames env
               unions = Rec._cg_unionNames env
+              sealedIfaceNames = Rec._cg_sealedIfaceNames env
               -- The Go type string may be module-qualified
               -- (`Chess_Piece_Colour`) while the registry holds
               -- both qualified (dep) and unqualified (entry)
@@ -7804,7 +7807,15 @@ goZeroValue t = case t of
               lastSeg = reverse (takeWhile (/= '_') (reverse t))
               isEnum  = Set.member t enums  || Set.member lastSeg enums
               isUnion = Set.member t unions || Set.member lastSeg unions
+              -- v0.17 iter 60 — sealed-iface union: emit interface
+              -- zero value @nil@ instead of struct composite literal
+              -- @T{}@ which is invalid Go on interface types.
+              -- Pre-flip (empty allowlist) the set is empty → check
+              -- always False → byte-identical to legacy.
+              isSealedIface = Set.member t sealedIfaceNames
+                                || Set.member lastSeg sealedIfaceNames
           in if isEnum            then Just "0"
+             else if isSealedIface then Just "nil"
              else if isUnion      then Just (t ++ "{}")
              else Nothing
       | otherwise -> Nothing

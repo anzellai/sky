@@ -17,6 +17,7 @@ module Sky.Generate.Go.Record
     , withRecordAliases
     , withUnionNames
     , withUnionDetails
+    , withSealedIfaceNames
     , withEnumNames
     , withCallSiteInstances
     , withFuncSkyToGoTVars
@@ -138,6 +139,26 @@ data CodegenEnv = CodegenEnv
       -- the survivors (e collapses to `Sky_Core_Error_Error` at
       -- codegen).  Annotation positions absent from this map have
       -- already been baked into the Go sig as concrete types.
+    , _cg_sealedIfaceNames :: !(Set.Set String)
+      -- ^ v0.17 iter 60 — qualified Go names of unions whose
+      -- 'shouldEmitSealedIface' gate returns True.  Keyed by the
+      -- SAME convention as '_cg_unionNames' (entry-module = bare
+      -- type name; dep-module = @<prefix>_<typeName>@).  Consumed
+      -- by 'goZeroValue' (Compile.hs ~line 7796): the union arm's
+      -- @T{}@ literal is invalid Go on an interface type, so a
+      -- name in this set MUST emit @nil@ instead.
+      --
+      -- Population: derived at 'buildCodegenEnv' from the entry
+      -- module's '_cg_unionDetails' via 'shouldEmitSealedIface'
+      -- filter; extended per-dep at every 'withUnionDetails' call
+      -- site via 'withSealedIfaceNames'.  Empty under P3.3 default
+      -- ('shouldEmitSealedIface' returns False everywhere) — byte
+      -- identity preserved.
+      --
+      -- Closes the architectural pre-condition for the first
+      -- sealed-iface flip identified by dual-grill iter 59 (Griller
+      -- A vector V5 / V7) on examples/00-standard-libs's 14 sites
+      -- of @return Sky_Test_TestResult{}@.
     }
 
 
@@ -203,6 +224,13 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_funcInferredSigs = Map.empty
     , _cg_callSiteInstances = Map.empty
     , _cg_funcSkyToGoTVars = Map.empty
+    , _cg_sealedIfaceNames = Set.empty
+      -- ^ v0.17 iter 60 — left empty here; caller (Compile.hs)
+      -- augments via 'withSealedIfaceNames' after consulting
+      -- 'shouldEmitSealedIface' (which lives in Compile.hs to avoid
+      -- a Record→Compile import cycle).  Same pattern as the empty
+      -- '_cg_funcInferredSigs' etc. that Compile.hs populates
+      -- post-construction.
     }
 
 
@@ -266,6 +294,17 @@ withUnionDetails
     -> CodegenEnv
 withUnionDetails extra env =
     env { _cg_unionDetails = Map.union extra (_cg_unionDetails env) }
+
+
+-- | v0.17 iter 60 — extend the sealed-iface name set with dep-module
+-- qualified names whose 'shouldEmitSealedIface' gate returns True.
+-- Mirror of 'withUnionDetails' / 'withUnionNames' — called at the
+-- same per-dep emission install site so 'goZeroValue' sees the
+-- updated set when emitting IIFE fall-throughs for code that
+-- references a dep-module sealed-iface ADT.
+withSealedIfaceNames :: Set.Set String -> CodegenEnv -> CodegenEnv
+withSealedIfaceNames extra env =
+    env { _cg_sealedIfaceNames = Set.union extra (_cg_sealedIfaceNames env) }
 
 
 -- | v0.13 Phase A5: install the captured call-site instance map.

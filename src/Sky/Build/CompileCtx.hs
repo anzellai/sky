@@ -161,6 +161,7 @@ emptyCgEnv = Rec.CodegenEnv
     Map.empty   -- _cg_funcInferredSigs
     Map.empty   -- _cg_callSiteInstances
     Map.empty   -- _cg_funcSkyToGoTVars
+    Set.empty   -- _cg_sealedIfaceNames (v0.17 iter 60)
 
 
 -- | Field accessor (additive).  Equivalent to '_ctx_kernelModules'
