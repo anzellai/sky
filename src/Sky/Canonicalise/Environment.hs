@@ -291,16 +291,17 @@ builtinCtors =
 -- which now reads from threaded CompileCtx).
 
 
--- | Per-FFI-function arity, keyed by `(kernelName, funcName)`. Lets
--- the type checker synthesise a default sig
--- `(t0 -> ... -> tN-1 -> Result Error r)` for unknown Go_* kernels
--- so FFI return-shape mismatches at call sites become HM errors
--- (instead of silently degrading to `any` and panicking at runtime
--- with `rt.AsBool: expected bool, got rt.SkyResult[…]`). Populated
--- from FfiRegistry in `Sky.Build.Compile.loadAndSeedFfiRegistry`.
-{-# NOINLINE ffiKernelArityRef #-}
-ffiKernelArityRef :: IORef (Map.Map (String, String) Int)
-ffiKernelArityRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 9 (Phase 7 IORef defusing) — the legacy
+-- 'ffiKernelArityRef' IORef (per-FFI-function arity, populated by
+-- 'Sky.Build.Compile.loadAndSeedFfiRegistry') has been DELETED.
+-- It was WRITE-ONLY: exactly one 'writeIORef' callsite, ZERO
+-- 'readIORef' callsites in non-comment code.  The historical
+-- type-checker-synthesised default-sig fallback never reached the
+-- IORef because every active call site is HM-annotated through the
+-- value channel (LoadedFfiTables._lft_kernelArity → CompileCtx._ctx_kernelArity).
+-- The pure-channel mirror is preserved in CompileCtx for any future
+-- reader that needs the arity map without re-importing the
+-- Sky.Build.FfiRegistry surface; today it has zero consumers.
 
 
 -- v0.17 close iter 6 (Phase 7 IORef defusing) — the legacy

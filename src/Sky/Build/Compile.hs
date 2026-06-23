@@ -2527,7 +2527,14 @@ loadAndSeedFfiRegistry = do
     -- lookup in 'Constrain.Expression'.  The three IORef writes
     -- were dead code (no non-comment read sites) once the value
     -- channels had landed for every reader.
-    writeIORef Env.ffiKernelArityRef arityMap
+    --
+    -- v0.17 close iter 9 (Phase 7 IORef defusing) — the legacy
+    -- @Env.ffiKernelArityRef@ has been DELETED.  Its sole 'writeIORef'
+    -- site was at this line.  The value still flows through the
+    -- @LoadedFfiTables._lft_kernelArity@ / @CompileCtx._ctx_kernelArity@
+    -- channel (constructed below from the same 'arityMap' let-binding)
+    -- — preserved as a paired field for future readers though it has
+    -- ZERO non-comment consumers at this checkpoint.
     -- v0.17 PR-21b — merge each FfiModule's _fm_implements + _fm_pkgAlias
     -- into a single global registry.  Two FfiModules carrying the same
     -- key are rare (a qualified type name's full @at@pkg@ form is unique
