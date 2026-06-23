@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 3 entries post iter 68" $ do
+    describe "sealedIfaceFlipAllowList — 4 entries post iter 70" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -67,29 +67,25 @@ spec = do
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
-        it "does NOT contain Std.Ui.Animation.FillMode (removed iter 68 — was NOP)" $
-            -- v0.17 iter 67 added FillMode but it's Can.Enum (4 nullary
-            -- variants) → gate guard #1 rejects → allowlist NEVER runs.
-            -- Removed iter 68 to keep allowlist truthful.
+        it "contains Std.Ui.Transition.Easing (fourth ADT flip — iter 70)" $
+            -- v0.17 iter 68 attempted Easing first but the flip
+            -- exposed a cross-ADT name-prefix pollution bug.
+            -- v0.17 iter 70 root-caused it: 'LC.withCurrentDepModule'
+            -- was defined but never installed, so dep-module case-of
+            -- regions fell into the flat '_stRegions' map with
+            -- last-write-wins collisions across ADTs.  Installing
+            -- the missing wire at 'depBodyCtx' (Compile.hs:~5604)
+            -- closed the class; iter 70 re-attempted Easing and it
+            -- ships clean.
+            "Std.Ui.Transition.Easing" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "does NOT contain Std.Ui.Animation.FillMode (removed iter 68 — Can.Enum NOP)" $
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "does NOT contain Std.Ui.Transition.Easing (attempted iter 68, exposed bug)" $
-            -- v0.17 iter 68 attempted Easing (Can.Normal — 4 nullary +
-            -- CubicBezier 4-arg).  Real flip — emitted as
-            -- @type Std_Ui_Transition_Easing interface@.  But exposed
-            -- a cross-ADT name-prefix pollution bug in
-            -- 'caseToGoSealedIface': a sibling Track type's
-            -- 'trackToCss' case emitted variant cases as
-            -- @Std_Ui_Transition_Easing_Fr_V@ (wrong prefix) instead
-            -- of @Std_Ui_Grid_Track_Fr_V@, producing undefined refs
-            -- → @go build@ failure.  Reverted; bug to fix BEFORE
-            -- flipping any further multi-ADT module candidate.
-            "Std.Ui.Transition.Easing" `Set.member` sealedIfaceFlipAllowList
-                `shouldBe` False
-
-        it "Set.size is 3 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 3
+        it "Set.size is 4 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 4
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -107,6 +103,12 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Animation")
                 "Iterations" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Ui.Transition.Easing triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Ui.Transition")
+                "Easing" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $

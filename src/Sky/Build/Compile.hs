@@ -994,17 +994,14 @@ sealedIfaceFlipAllowList = Set.fromList
     --
     -- v0.17 iter 68 ALSO tried "Std.Ui.Transition.Easing" (4 nullary +
     -- CubicBezier 4-arg = Can.Normal — gate fires).  But the flip
-    -- exposed a cross-ADT name-prefix pollution bug in
-    -- 'caseToGoSealedIface' (or upstream lookup): a Track value's
-    -- type-switch in 'Std_Ui_Grid_trackToCss' emitted cases with
-    -- prefix @Std_Ui_Transition_Easing_@ instead of
-    -- @Std_Ui_Grid_Track_@, producing references to undefined
-    -- @Std_Ui_Transition_Easing_Fr_V@ etc.  Empirically matches
-    -- griller A's H1/H3 cross-iface contamination family.
-    --
-    -- Easing flip REVERTED in iter 68.  Track this as a separate
-    -- compiler bug to fix BEFORE flipping any further ADT whose
-    -- module compiles together with another non-trivial ADT.
+    -- exposed a cross-ADT name-prefix pollution bug.  Iter 70 fix
+    -- (install LC.withCurrentDepModule at depBodyCtx site) closes
+    -- the underlying region-collision: dep-module case-of regions
+    -- no longer fall into the flat _stRegions map.  Easing flip
+    -- re-attempted iter 70 (fourth real flip — proves the iter 70
+    -- regional-scoping fix is end-to-end correct).
+    , "Std.Ui.Transition.Easing"        -- v0.17 iter 70 — fourth real flip
+                                        -- (proves iter 70 cross-ADT fix)
     ]
 
 
@@ -5601,8 +5598,25 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- GoExpr CONSTRUCTION time. The IORef path at render
               -- time still works via `withScopedEnclosingTypeParams`
               -- wraps below (kept for downstream lazy readers).
-              depBodyCtx = LC.withEnclosingTypeParams depTypeParams
-                              (ctxFromIORef ())
+              --
+              -- v0.17 iter 70 (task #677) — ALSO install the dep
+              -- module name into 'LC._lc_currentDepModule'.  This
+              -- is the missing wire: 'Solve.withCurrentModule' was
+              -- already populating the solver-side per-module
+              -- region map (v0.15.6 #365), but the LowerCtx side
+              -- was never set — so 'Solve.lookupSolvedRegionScoped'
+              -- in 'subjectIsSealedIface' fell into the flat
+              -- '_stRegions' map for dep-module case-of regions,
+              -- last-write-wins across modules, causing case-emit
+              -- to latch the wrong iface name (cross-ADT pollution
+              -- bug surfaced by iter 68's Easing flip attempt).
+              -- The mirror install closes that class of bug for
+              -- every region lookup that consults
+              -- '_lc_currentDepModule'.
+              depModuleName = ModuleName.toString (Can._name canMod)
+              depBodyCtx = LC.withCurrentDepModule (Just depModuleName)
+                         $ LC.withEnclosingTypeParams depTypeParams
+                                (ctxFromIORef ())
               lowerDepBody e =
                   if depRetType /= "any"
                       then exprToGoExpectGo depBodyCtx depRetType e
