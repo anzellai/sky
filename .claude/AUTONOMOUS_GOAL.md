@@ -945,3 +945,66 @@ Per CLAUDE.md §0 hard rule 4: this is NOT a stop. It is a
 banking-state milestone documenting partial-closure with explicit
 gap inventory. Iteration 88+ continues sealed-iface execution per
 the durable user directive (2026-06-21) logged above.
+
+---
+
+## Floor-touching tactics: AUTHORIZED (2026-06-23)
+
+The user has read the canonical architecture references
+(`docs/architecture/sky-compiler-architecture.md` +
+`docs/architecture/sky-stdlib-correctness.md`) and explicitly
+authorised the **MAXIMALLY-AMBITIOUS** path for v0.17 close:
+
+> "What you considered v0.18 is actually to me v0.17. otherwise good to go."
+
+This authorisation grants permission to:
+
+1. Rewrite the Sky.Live wire-decode format (replace `encoding/gob`
+   with variant-tagged custom binary protocol + per-ADT
+   `MarshalBinary`/`UnmarshalBinary` codegen) — breaking change to
+   session-store format on upgrade (per Path C 2026-06-21
+   directive, already accepted).
+
+2. Replace TEA Msg trampoline (`reflect.MakeFunc`) with codegen-
+   emitted per-Msg-constructor dispatch — eliminates `func(any) any`
+   reflective indirection.
+
+3. Emit per-Go-symbol typed narrowing shims at FFI boundary —
+   rebuilds `.skycache/ffi/*.skyi` entirely on upgrade (~15 min
+   per app on first build).
+
+4. Complete sealed-iface migration on all remaining ADTs including
+   parametric Element / Attribute / Msg.
+
+5. Eliminate `AsListT` family via codegen specialisation of
+   element-narrow at list-typed slots.
+
+6. Delete `scopeStateRef` IORef — thread `CompileCtx` record through
+   every emit site (extends Option A Stage 3+4 from #672).
+
+7. Move `globalAnonRecords` to Reader-style ctx.
+
+The verbatim goal (lines 8-13 above) is the ONLY authority for
+"100% ACHIEVED". The reframe paths R1/R2/R3/R4 documented during
+the 2026-06-23 forensic audit are REJECTED in favour of literal
+zero rt.Coerce via runtime rewrite.
+
+Phased plan: `docs/v0.17-roadmap/literal-zero-close-plan.md`.
+
+### Methodology under which this work runs
+
+CLAUDE.md §0.3 hard rules are now LIVE. Every workflow targeting
+v0.17 close must:
+- Begin with `phase('Architecture-Consult')` — reads architecture
+  refs + cites §6 category + §7 lever + §8 floor membership.
+- Cite Compile.hs line + LowerCtx field + runtime contract for
+  every "close" claim.
+- Halt at 3-strikes on the same lever and re-classify, not retry.
+- Pass Judge verdict against PHASE artifacts (e.g. "sealed-iface
+  emission for Element shipped + rt.Coerce delta on 26-ui-showcase
+  measured ≥30") AND against the verbatim goal at final close.
+
+The 5 stdlib gaps from `docs/architecture/sky-stdlib-correctness.md`
+(G1 Task.parallel / G2 Sky.Tui silent-drop / G3 Math.isNaN /
+G4 Db.migrate doc / G5 Functor-Monad law specs) ship alongside the
+compiler work — they are part of v0.17 close, not deferred.

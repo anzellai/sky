@@ -2169,11 +2169,13 @@ foldGroup discIdx = go [] []
 -- references that depend on those imports being present.
 emitSealedIfaceUnion
     :: String        -- ^ qualified type name (e.g. @Mod_Color@)
+    -> [String]      -- ^ source-ADT type variable names (empty for monomorphic ADTs)
     -> [Can.Ctor]    -- ^ ADT ctors in declaration order
     -> [GoIr.GoDecl]
-emitSealedIfaceUnion qualType ctors =
+emitSealedIfaceUnion qualType vars ctors =
     sealedInterface
-    : concatMap variantDecls ctors
+    : siblingAliasT
+    ++ concatMap variantDecls ctors
     ++ map ctorBinding ctors
     ++ [initBlock]
   where
@@ -2182,6 +2184,35 @@ emitSealedIfaceUnion qualType ctors =
             [ ("SkyVariantTag",  [], "int")
             , ("SkyVariantName", [], "string")
             ]
+
+    -- v0.17 P2.1 — for parametric source ADTs, ALSO emit a typed
+    -- sibling alias @type X_T[T1 any, ...] = X@ adjacent to the
+    -- interface declaration.  The interface itself stays non-
+    -- generic (we erase TVars per @safeReturnTypeFull@'s
+    -- @mcTVarsToAny@ policy), so the sibling alias's RHS is the
+    -- BARE interface name.  Arg count matches the source ADT's
+    -- type-var count.  Mirrors the dual-alias pattern at the
+    -- legacy 'else' branches (Compile.hs:6398-6402 dep path +
+    -- Compile.hs:7355-7359 entry path) so a typed call site that
+    -- references @qualType_T[Msg]@ resolves to the same underlying
+    -- interface regardless of whether the union emits via legacy
+    -- @rt.SkyADT@ shape or the sealed-iface shape.
+    --
+    -- Empty for monomorphic ADTs (the production path today —
+    -- 'shouldEmitSealedIface' returns False so the sealed-iface
+    -- branch is unreachable, and parametric ADTs are not yet on
+    -- the allowlist anyway).  No behavioural change on the
+    -- production sweep until later P2 steps populate the
+    -- parametric allowlist.
+    siblingAliasT
+        | null vars = []
+        | otherwise =
+            let goTVars = zipWith (\i _ -> "T" ++ show (i :: Int))
+                                  [1::Int ..] vars
+            in [ GoIr.GoDeclRaw $
+                 "type " ++ qualType ++ "_T["
+                 ++ intercalate_ ", " [tp ++ " any" | tp <- goTVars]
+                 ++ "] = " ++ qualType ]
 
     variantStructName cname = qualType ++ "_" ++ cname ++ "_V"
 
@@ -6381,7 +6412,10 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
             -- production path — output is byte-identical to today.
             -- P3.4d/e flip the gate per-ADT to actually exercise
             -- this branch.
-            emitSealedIfaceUnion qualType ctors
+            -- v0.17 P2.1: pass @vars@ so parametric ADTs ALSO
+            -- emit a @qualType_T[T1 any, ...] = qualType@ sibling
+            -- alias adjacent to the interface decl.
+            emitSealedIfaceUnion qualType vars ctors
         _ ->
             -- Type alias stays non-generic — `type qualType = rt.SkyADT`.
             -- The TVar info lives only on the ctor function's params.
@@ -7336,7 +7370,10 @@ generateUnionTypes canMod =
             -- the production path — output is byte-identical to
             -- today. P3.4d/e flip the gate per-ADT to actually
             -- exercise this branch.
-            emitSealedIfaceUnion typeName ctors
+            -- v0.17 P2.1: pass @vars@ so parametric ADTs ALSO
+            -- emit a @typeName_T[T1 any, ...] = typeName@ sibling
+            -- alias adjacent to the interface decl.
+            emitSealedIfaceUnion typeName vars ctors
         _ ->
             -- Tagged union: alias rt.SkyADT so values constructed here
             -- are assignment-compatible with values produced by rt-side
