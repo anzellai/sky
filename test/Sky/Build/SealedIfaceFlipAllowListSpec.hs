@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 4 entries post iter 67" $ do
+    describe "sealedIfaceFlipAllowList — 3 entries post iter 68" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -67,36 +67,58 @@ spec = do
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
-        it "contains Std.Ui.Animation.FillMode (fourth ADT flip)" $
+        it "does NOT contain Std.Ui.Animation.FillMode (removed iter 68 — was NOP)" $
+            -- v0.17 iter 67 added FillMode but it's Can.Enum (4 nullary
+            -- variants) → gate guard #1 rejects → allowlist NEVER runs.
+            -- Removed iter 68 to keep allowlist truthful.
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
-                `shouldBe` True
+                `shouldBe` False
 
-        it "Set.size is 4 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 4
+        it "does NOT contain Std.Ui.Transition.Easing (attempted iter 68, exposed bug)" $
+            -- v0.17 iter 68 attempted Easing (Can.Normal — 4 nullary +
+            -- CubicBezier 4-arg).  Real flip — emitted as
+            -- @type Std_Ui_Transition_Easing interface@.  But exposed
+            -- a cross-ADT name-prefix pollution bug in
+            -- 'caseToGoSealedIface': a sibling Track type's
+            -- 'trackToCss' case emitted variant cases as
+            -- @Std_Ui_Transition_Easing_Fr_V@ (wrong prefix) instead
+            -- of @Std_Ui_Grid_Track_Fr_V@, producing undefined refs
+            -- → @go build@ failure.  Reverted; bug to fix BEFORE
+            -- flipping any further multi-ADT module candidate.
+            "Std.Ui.Transition.Easing" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` False
 
-        it "Sky.Test.TestResult triggers sealed-iface gate" $
+        it "Set.size is 3 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 3
+
+        it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
                 (ModuleName.Canonical "Sky.Test")
                 "TestResult" [] Can.Normal
                 `shouldBe` True
 
-        it "Sky.Core.Jwt.Algorithm triggers sealed-iface gate" $
+        it "Sky.Core.Jwt.Algorithm triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
                 (ModuleName.Canonical "Sky.Core.Jwt")
                 "Algorithm" [] Can.Normal
                 `shouldBe` True
 
-        it "Std.Ui.Animation.Iterations triggers sealed-iface gate" $
+        it "Std.Ui.Animation.Iterations triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Animation")
                 "Iterations" [] Can.Normal
                 `shouldBe` True
 
-        it "Std.Ui.Animation.FillMode triggers sealed-iface gate" $
+        it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $
+            -- Even WITH the qualified name in the allowlist, an ADT
+            -- canonicalised as Can.Enum is still rejected by guard #1
+            -- (line 919) — the allowlist NEVER runs.  Locking this
+            -- down so a future "but X is in the allowlist!" claim
+            -- gets explicitly refuted by the gate behaviour.
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Animation")
-                "FillMode" [] Can.Normal
-                `shouldBe` True
+                "Iterations" [] Can.Enum
+                `shouldBe` False
 
     describe "Sky.Build.shouldEmitSealedIface — gate behaviour" $ do
 

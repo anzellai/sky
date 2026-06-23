@@ -984,7 +984,27 @@ sealedIfaceFlipAllowList = Set.fromList
     [ "Sky.Test.TestResult"             -- v0.17 iter 63 — first ADT flip
     , "Sky.Core.Jwt.Algorithm"          -- v0.17 iter 64 — second flip
     , "Std.Ui.Animation.Iterations"     -- v0.17 iter 65 — third flip
-    , "Std.Ui.Animation.FillMode"       -- v0.17 iter 67 — fourth flip
+    -- v0.17 iter 67 added "Std.Ui.Animation.FillMode" here, but it
+    -- emits as `Can.Enum` (4 nullary variants) so 'shouldEmitSealedIface'
+    -- short-circuits at guard #1 (line 919) before the allowlist
+    -- ever runs.  The entry was a NOP and was removed in iter 68
+    -- to keep the allowlist truthful.  Future flip candidates MUST
+    -- be 'Can.Normal' (mixed-shape: nullary + payload variants) so
+    -- the gate actually fires.
+    --
+    -- v0.17 iter 68 ALSO tried "Std.Ui.Transition.Easing" (4 nullary +
+    -- CubicBezier 4-arg = Can.Normal — gate fires).  But the flip
+    -- exposed a cross-ADT name-prefix pollution bug in
+    -- 'caseToGoSealedIface' (or upstream lookup): a Track value's
+    -- type-switch in 'Std_Ui_Grid_trackToCss' emitted cases with
+    -- prefix @Std_Ui_Transition_Easing_@ instead of
+    -- @Std_Ui_Grid_Track_@, producing references to undefined
+    -- @Std_Ui_Transition_Easing_Fr_V@ etc.  Empirically matches
+    -- griller A's H1/H3 cross-iface contamination family.
+    --
+    -- Easing flip REVERTED in iter 68.  Track this as a separate
+    -- compiler bug to fix BEFORE flipping any further ADT whose
+    -- module compiles together with another non-trivial ADT.
     ]
 
 
@@ -8720,9 +8740,19 @@ isSealedIfaceCtorBody body ifaceName =
         -- Env-read short-circuited behind 'startsWithPrefix' on the
         -- GoCall arm to avoid an IORef hit on the structural fast-path
         -- (per griller B's perf review).
+        -- v0.17 iter 68 — also try the type-arg-stripped form of
+        -- the callName: post-monomorphisation a call to a
+        -- polymorphic kernel emits as @Sky_Test_equal[int]@, but
+        -- '_cg_funcRetType' is keyed by the unmangled binding name
+        -- (@Sky_Test_equal@).  Try the raw lookup first (catches
+        -- non-mangled cases), fall back to stripping at the first
+        -- @[@ (catches monomorphised cases).  Griller A's H4
+        -- close: closes the lossy-elision gap iter 67 left open.
         retTyMatches n =
-            Map.lookup n (Rec._cg_funcRetType getCgEnvFromScope)
-                == Just ifaceName
+            let m       = Rec._cg_funcRetType getCgEnvFromScope
+                stripped = takeWhile (/= '[') n
+                lookups  = if n == stripped then [n] else [n, stripped]
+            in any (\k -> Map.lookup k m == Just ifaceName) lookups
     in case body of
         GoIr.GoIdent name             -> startsWithPrefix name
         GoIr.GoCall (GoIr.GoIdent n) _
