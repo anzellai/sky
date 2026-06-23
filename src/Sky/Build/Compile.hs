@@ -1007,6 +1007,12 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- StepEasing carrying sealed
                                         -- iface — proves iface-in-
                                         -- variant-field round-trips)
+    , "Std.Ui.Grid.Track"               -- v0.17 iter 72 — sixth flip
+                                        -- (9 variants incl recursive
+                                        -- Minmax Track Track + Repeat
+                                        -- Int Track — proves self-
+                                        -- referencing iface in own
+                                        -- variant fields)
     ]
 
 

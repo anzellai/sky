@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 5 entries post iter 71" $ do
+    describe "sealedIfaceFlipAllowList — 6 entries post iter 72" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,16 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Ui.Grid.Track (sixth flip — iter 72)" $
+            -- v0.17 iter 72 — 9 variants incl recursive
+            -- @Minmax Track Track@ + @Repeat Int Track@.  Strongest
+            -- test of iter 70 cross-ADT fix: Track is the ADT that
+            -- originally surfaced the bug in iter 68; flipping it
+            -- post-iter-70 proves the dep-module region scoping
+            -- correctly handles self-referencing iface fields.
+            "Std.Ui.Grid.Track" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Ui.Transition.Step (fifth flip — iter 71)" $
@@ -92,8 +102,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 5 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 5
+        it "Set.size is 6 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 6
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -123,6 +133,12 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Transition")
                 "Step" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Ui.Grid.Track triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Ui.Grid")
+                "Track" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $
