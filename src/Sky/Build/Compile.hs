@@ -1202,6 +1202,10 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- Cascades off the Element (P2.4) + Attribute (P2.3) flips.
       -- 2 variants (Label / LabelHidden).
     , "Std.Ui.Input.Label"
+      -- @Placeholder msg@ — Std.Ui.Input placeholder wrapper
+      -- carrying `List (Attribute msg) + Element msg`.
+      -- Single-variant.
+    , "Std.Ui.Input.Placeholder"
     ]
 
 
