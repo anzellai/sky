@@ -373,6 +373,119 @@ Concrete cadence:
   * **Per milestone**: full cabal-test + example-sweep + verify-cli,
     in background, notified when complete
 
+### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
+
+A compiler-level workflow that proposes closing a strategic goal via
+a tactic MUST cite an architectural mechanism from the canonical
+reference. Optimism without mechanism is forbidden in agent prompts
+and judge verdicts.
+
+#### The five hard rules
+
+1. **Architecture reference is Phase 0.** All compiler-level
+   workflows MUST begin by consulting
+   `docs/architecture/sky-compiler-architecture.md` (and where
+   stdlib semantics are touched, `docs/architecture/sky-stdlib-correctness.md`)
+   before claiming a tactic closes a strategic goal. The first
+   phase of every compiler workflow's JS DAG is
+   `phase('Architecture-Consult')`. Tactics proposed without
+   consulting the reference document are rejected at workflow
+   entry.
+
+2. **Tactical vs strategic feasibility.** Agents claim TACTICAL
+   feasibility ("can I implement this change in N hours / one
+   session?"). STRATEGIC feasibility ("does this tactic close the
+   user goal?") is a USER-level decision taken AFTER the
+   architecture reference is consulted and a mechanism is cited.
+   An agent that conflates the two — claims "this closes the goal"
+   without architectural citation — is wrong by construction.
+
+3. **N-strikes circuit-breaker.** If 3 consecutive iterations fail
+   to materially close the same criterion via the same lever, the
+   next workflow MUST start with re-classification — NOT another
+   attempt. Re-classification means: re-read the architecture
+   reference, identify whether the criterion is in the irreducible
+   floor (§8 of the reference), and escalate to the user with the
+   floor citation. Continuing to retry the same lever past 3
+   strikes is forbidden and counts as drift under §0 rule 3.
+
+4. **Optimism-without-citation is forbidden.** Agent prompts must
+   require, and judge verdicts must check, that any "close" claim
+   names:
+   - The Compile.hs / runtime / Solve site (with line citation)
+   - The LowerCtx field, Solve reader, or runtime contract being
+     consulted
+   - The §6 origin category and §7 lever being activated
+   A claim of "this closes rt.Coerce category X" without the §7
+   lever name + the source-line citation is rejected. A judge
+   that returns PASS without verifying the citations failed its
+   adversarial duty.
+
+5. **Floor-touching tactics need user authorisation.** Tactics
+   that touch the irreducible floor (§8 of the reference — Go FFI
+   return, gob/JSON wire decode, TEA reflect.MakeFunc dispatch)
+   MUST escalate to the user before spending iterations.
+   **AUTHORIZED 2026-06-23**: user has explicitly authorised
+   floor-touching tactics for v0.17 close (literal-zero
+   rt.Coerce via runtime rewrite — see
+   `docs/v0.17-roadmap/literal-zero-close-plan.md`).
+
+#### Workflow Phase-0 template (mandatory entry phase)
+
+```js
+phase('Architecture-Consult')
+const archRef = await agent({
+  prompt: `Read docs/architecture/sky-compiler-architecture.md.
+For the proposed tactic <X>:
+  1. Locate the §6 rt.Coerce origin category it would target.
+  2. Identify the §7 architectural lever it would activate.
+  3. Verify the lever is NOT in §8 (the irreducible floor) — OR
+     confirm user-authorisation for floor-touching tactics is
+     present.
+  4. Cite the Compile.hs site (with line) + LowerCtx field /
+     Solve reader / runtime contract being consulted.
+If you cannot make all four citations, return cannotJustify=true
+with a description of what's missing.`,
+  schema: ARCH_REF_SCHEMA
+})
+if (archRef.cannotJustify) {
+  return { halted: 'no architectural justification', missing: archRef.missing }
+}
+if (archRef.inFloor && !userAuthorizedFloor) {
+  return { halted: 'tactic touches irreducible floor; user authorization required' }
+}
+// proceed to tactical phases
+```
+
+#### Forbidden patterns
+
+* Agent prompts: "design and implement a fix for X" without
+  requiring the architecture reference be consulted first.
+* Judge verdicts: "VERDICT: 100% ACHIEVED" without listing the
+  §6 categories closed + §7 levers activated + §8 floor sites
+  documented.
+* Workflows: skipping `phase('Architecture-Consult')` to "save
+  time" — the architecture phase IS the time-saver because it
+  short-circuits re-discovering the floor.
+* Iteration N+1 after 3 consecutive failures on the same lever
+  without re-classification.
+
+#### Companion canonical references
+
+- `docs/architecture/sky-compiler-architecture.md` — compiler
+  pipeline (Parse → Canon → Type → Lower → Emit), rt.Coerce
+  origin catalog, architectural levers, irreducible floor,
+  verbatim-goal verdict.
+- `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
+  algebraic laws, Std.Ui layout invariants, Std.Html + Sky.Live
+  TEA architecture, Std.Db + Std.Auth security invariants,
+  cross-backend parity, per-module correctness verdicts.
+
+These are the durable ground truth across sessions, agents, and
+workflows. They are the FIRST source consulted on any compiler
+or stdlib change — not the in-memory model, not prior session
+context, not optimistic "we can do it" framing.
+
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
 A runaway `sky` / `cabal` / `ghc` / `haskell-language-server` process
