@@ -1185,6 +1185,18 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- recursively.  Both legacy SkyADT and sealed-iface variant
       -- shapes are accepted by runtime via unwrapADTShape (#677).
     , "Std.Ui.Element"
+      -- v0.17 P2.5 — batch-flip remaining parametric stdlib ADTs.
+      -- Each candidate is verified parametric (`type X msg`) in
+      -- sky-stdlib and admitted via the same _T sibling alias
+      -- emitter as P2.2-P2.4.  Per-ADT verification: build
+      -- compiler + clean-build the two measurement examples;
+      -- revert this single entry on failure.
+      --
+      -- @Event msg@ — Std.Html.Attributes payload ADT carried in
+      -- the EventAttr variant of Std.Html.Attributes.Attribute
+      -- (already flipped P2.3).  4 variants (OnMsg / OnString /
+      -- OnBool / OnRaw).
+    , "Std.Html.Attributes.Event"
     ]
 
 
