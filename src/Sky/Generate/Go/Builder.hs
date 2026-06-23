@@ -272,20 +272,40 @@ renderExpr expr = case expr of
         renderExpr expr ++ ".(" ++ typ ++ ")"
 
     GoBlock stmts result ->
-        "func() any { "
-        ++ concatMap (\s -> unlines' (renderStmt s) ++ "; ") stmts
-        ++ "return " ++ renderExpr result ++ " }()"
+        renderIIFE "any" stmts result
 
     -- v0.13 typed lowerer: typed IIFE.  Same shape as GoBlock but the
     -- return type is the concrete Go type instead of `any`.  The
     -- caller (typeIIFE in Compile.hs) guarantees every `return` in
     -- `stmts` and `result` carries a value compatible with `T`.
     GoTypedBlock retTy stmts result ->
+        renderIIFE retTy stmts result
+
+    GoRaw code -> code
+
+
+-- | v0.17 iter 62 — render an IIFE.  Most Sky lowerings produce
+-- single-line @func() T { <stmts>; return <result> }()@ shape, but
+-- a @GoTypeSwitch@ (or @GoSwitch@) STATEMENT inside the IIFE cannot
+-- be linearised: Go's parser rejects @;@ before a @case@ label.
+-- Detect any switch/type-switch in the body and switch to multi-line
+-- rendering for those IIFEs only — the single-line shape stays the
+-- common-case default to preserve byte identity on every legacy
+-- emission.
+renderIIFE :: String -> [GoStmt] -> GoExpr -> String
+renderIIFE retTy stmts result
+    | any needsMultiLine stmts =
+        "func() " ++ retTy ++ " {\n"
+        ++ concatMap (\s -> concatMap (\line -> "\t" ++ line ++ "\n") (renderStmt s)) stmts
+        ++ "\treturn " ++ renderExpr result ++ "\n}()"
+    | otherwise =
         "func() " ++ retTy ++ " { "
         ++ concatMap (\s -> unlines' (renderStmt s) ++ "; ") stmts
         ++ "return " ++ renderExpr result ++ " }()"
-
-    GoRaw code -> code
+  where
+    needsMultiLine (GoSwitch _ _)         = True
+    needsMultiLine (GoTypeSwitch _ _ _ _) = True
+    needsMultiLine _                       = False
 
 
 renderMapEntry :: (GoExpr, GoExpr) -> String
