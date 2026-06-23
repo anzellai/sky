@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 6 entries post iter 72" $ do
+    describe "sealedIfaceFlipAllowList — 7 entries post iter 73" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,14 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Email.EmailProvider (seventh flip — iter 73)" $
+            -- v0.17 iter 73 — 4 variants carrying String + record
+            -- alias args (Resend / Ses / SendGrid / Smtp).  Single
+            -- ADT in Std.Email module — proves the gate fires for
+            -- module-isolated Can.Normal candidates.
+            "Std.Email.EmailProvider" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Ui.Grid.Track (sixth flip — iter 72)" $
@@ -102,8 +110,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 6 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 6
+        it "Set.size is 7 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 7
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -139,6 +147,12 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Ui.Grid")
                 "Track" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Email.EmailProvider triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Email")
+                "EmailProvider" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $

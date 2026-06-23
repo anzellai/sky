@@ -1013,6 +1013,9 @@ sealedIfaceFlipAllowList = Set.fromList
                                         -- Int Track — proves self-
                                         -- referencing iface in own
                                         -- variant fields)
+    , "Std.Email.EmailProvider"         -- v0.17 iter 73 — seventh flip
+                                        -- (4 variants carrying String
+                                        -- + record alias args)
     ]
 
 
