@@ -983,6 +983,52 @@ sealedIfaceFlipAllowList :: Set.Set String
 sealedIfaceFlipAllowList = Set.empty
 
 
+-- | v0.17 iter 61 — derive the set of qualified Go names whose
+-- 'shouldEmitSealedIface' gate returns True from a unionDetails map.
+--
+-- Used to populate '_cg_sealedIfaceNames' from the same metadata
+-- map that 'shouldEmitSealedIface' / 'subjectIsSealedIface' consult.
+-- Both 'goZeroValue' (Compile.hs:~7796) and the gated emission
+-- (Compile.hs:5617 / 6555) share the same source of truth, so the
+-- IIFE fall-through emitter ('nil' vs 'T{}') stays in lockstep with
+-- the actual emission shape.
+--
+-- == Key convention
+--
+-- Mirrors '_cg_unionDetails':
+--   * Entry-module keys are bare type names ("Color").
+--   * Dep-module keys are prefix-mangled ("Sky_Test_TestResult").
+--
+-- 'bareName' strips the dep prefix when present to feed
+-- 'shouldEmitSealedIface' the un-prefixed type name it expects.
+--
+-- == Empty under P3.3 default
+--
+-- 'shouldEmitSealedIface' returns False for every input until
+-- 'sealedIfaceFlipAllowList' grows non-empty.  Under empty
+-- allowlist this fold produces 'Set.empty' for every input, so
+-- 'goZeroValue' never sees a sealed-iface name to special-case.
+-- Byte identity preserved.
+derivedSealedIfaceNames
+    :: Map.Map String
+         (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -> Set.Set String
+derivedSealedIfaceNames unionDetails =
+    Set.fromList
+        [ k
+        | (k, (home, opts, vars, _ctors)) <- Map.toList unionDetails
+        , shouldEmitSealedIface home (bareName home k) vars opts
+        ]
+  where
+    bareName home k =
+        let modStr = ModuleName.toString home
+            modPrefix =
+                map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+        in if modPrefix `List.isPrefixOf` k
+             then drop (length modPrefix) k
+             else k
+
+
 -- | Hardcoded carve-out — rt-side Go builders construct SkyADT-shape
 -- values for these ADTs. Migrating them to sealed-iface would
 -- desync builder + consumer.
@@ -5988,22 +6034,39 @@ buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
             (Map.unionWith betterRetType
                 entryRetTys depRetTypes)
         allUltRetTys = Map.union entryUltRetTys depUltRetTypes
-    in Rec.withCallSiteInstances
-              (Rec._cg_callSiteInstances prevEnv)
-          $ Rec.withFuncSkyToGoTVars
-              (Map.union entrySkyToGoTVars
-                  (Rec._cg_funcSkyToGoTVars prevEnv))
-          $ Rec.withInferredSigs
-              (Map.union extraInferredSigs entryInferredSigs)
-          $ Rec.withFuncUltimateRetTypes allUltRetTys
-          $ Rec.withFuncTypes allParamTys allRetTys
-          $ Rec.withDepArities depArities
-          $ Rec.withRecordAliases depRecAliases
-          $ Rec.withUnionNames depUnionNames
-          $ Rec.withUnionDetails depUnionDetails   -- P3.4c.0
-          $ Rec.withEnumNames depEnumNames
-          $ Rec.withDepFieldIndex depAliasPairs
-          $ Rec.buildCodegenEnv solvedTypes canMod
+    in
+        -- v0.17 iter 61 — apply 'withSealedIfaceNames' OUTERMOST so
+        -- the derived set sees the merged unionDetails from BOTH the
+        -- entry module (via 'buildCodegenEnv') AND the dep modules
+        -- (via 'withUnionDetails depUnionDetails').  Computing inside
+        -- the chain would either see only deps (missing entry-module
+        -- ADTs) or only entry (missing deps); the outer wrap reads
+        -- the just-built env via '_cg_unionDetails' to keep entry +
+        -- dep keys in lockstep with the actual emission gate.
+        --
+        -- Empty under P3.3 default: 'derivedSealedIfaceNames' filters
+        -- via 'shouldEmitSealedIface' which returns False everywhere
+        -- when 'sealedIfaceFlipAllowList' is empty.  Byte identity
+        -- preserved on every example until an allowlist entry lands.
+        let baseEnv = Rec.withCallSiteInstances
+                  (Rec._cg_callSiteInstances prevEnv)
+              $ Rec.withFuncSkyToGoTVars
+                  (Map.union entrySkyToGoTVars
+                      (Rec._cg_funcSkyToGoTVars prevEnv))
+              $ Rec.withInferredSigs
+                  (Map.union extraInferredSigs entryInferredSigs)
+              $ Rec.withFuncUltimateRetTypes allUltRetTys
+              $ Rec.withFuncTypes allParamTys allRetTys
+              $ Rec.withDepArities depArities
+              $ Rec.withRecordAliases depRecAliases
+              $ Rec.withUnionNames depUnionNames
+              $ Rec.withUnionDetails depUnionDetails   -- P3.4c.0
+              $ Rec.withEnumNames depEnumNames
+              $ Rec.withDepFieldIndex depAliasPairs
+              $ Rec.buildCodegenEnv solvedTypes canMod
+        in Rec.withSealedIfaceNames
+             (derivedSealedIfaceNames (Rec._cg_unionDetails baseEnv))
+             baseEnv
 
 
 -- | Generate Go with merged dependency declarations
