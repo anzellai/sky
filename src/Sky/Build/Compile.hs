@@ -1016,6 +1016,11 @@ sealedIfaceFlipAllowList = Set.fromList
     , "Std.Email.EmailProvider"         -- v0.17 iter 73 — seventh flip
                                         -- (4 variants carrying String
                                         -- + record alias args)
+    , "Std.Ui.Description"              -- v0.17 iter 74 — eighth flip
+                                        -- (6 nullary + DescHeading Int —
+                                        -- Std.Ui is heavy-cross-ADT
+                                        -- compilation; tests iter 70 fix
+                                        -- against the largest dep module)
     ]
 
 

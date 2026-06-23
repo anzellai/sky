@@ -53,7 +53,7 @@ spec = do
     let modColor   = ModuleName.Canonical "Mod.Color"
     let modSqlVal  = ModuleName.Canonical "Std.Db"
 
-    describe "sealedIfaceFlipAllowList — 7 entries post iter 73" $ do
+    describe "sealedIfaceFlipAllowList — 8 entries post iter 74" $ do
 
         it "contains Sky.Test.TestResult (first ADT flip)" $
             "Sky.Test.TestResult" `Set.member` sealedIfaceFlipAllowList
@@ -65,6 +65,14 @@ spec = do
 
         it "contains Std.Ui.Animation.Iterations (third ADT flip)" $
             "Std.Ui.Animation.Iterations" `Set.member` sealedIfaceFlipAllowList
+                `shouldBe` True
+
+        it "contains Std.Ui.Description (eighth flip — iter 74)" $
+            -- v0.17 iter 74 — 6 nullary + 1 1-arg payload
+            -- (DescHeading Int).  Std.Ui is the largest dep module
+            -- (heavy cross-ADT compilation) — successful flip
+            -- proves iter 70 fix scales to the worst case.
+            "Std.Ui.Description" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` True
 
         it "contains Std.Email.EmailProvider (seventh flip — iter 73)" $
@@ -110,8 +118,8 @@ spec = do
             "Std.Ui.Animation.FillMode" `Set.member` sealedIfaceFlipAllowList
                 `shouldBe` False
 
-        it "Set.size is 7 (catches accidental population without spec update)" $
-            Set.size sealedIfaceFlipAllowList `shouldBe` 7
+        it "Set.size is 8 (catches accidental population without spec update)" $
+            Set.size sealedIfaceFlipAllowList `shouldBe` 8
 
         it "Sky.Test.TestResult triggers sealed-iface gate (Can.Normal)" $
             shouldEmitSealedIface
@@ -153,6 +161,12 @@ spec = do
             shouldEmitSealedIface
                 (ModuleName.Canonical "Std.Email")
                 "EmailProvider" [] Can.Normal
+                `shouldBe` True
+
+        it "Std.Ui.Description triggers sealed-iface gate (Can.Normal)" $
+            shouldEmitSealedIface
+                (ModuleName.Canonical "Std.Ui")
+                "Description" [] Can.Normal
                 `shouldBe` True
 
         it "iter-67/68 lesson: Can.Enum input rejects regardless of allowlist" $
