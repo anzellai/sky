@@ -107,37 +107,37 @@ func HtmlToVNode(node any) VNode {
 	if vn, ok := node.(VNode); ok {
 		return vn
 	}
-	adt, ok := node.(SkyADT)
+	name, _, fields, ok := unwrapADTShape(node)
 	if !ok {
 		// Defensive: a non-Html value reached the converter — render
 		// it as text rather than panicking.
 		return vtext(fmt.Sprintf("%v", node))
 	}
-	switch adt.SkyName {
+	switch name {
 	case "HText":
-		if len(adt.Fields) > 0 {
-			return vtext(AsString(adt.Fields[0]))
+		if len(fields) > 0 {
+			return vtext(AsString(fields[0]))
 		}
 		return vtext("")
 	case "HRaw":
-		if len(adt.Fields) > 0 {
-			return VNode{Kind: "raw", Text: AsString(adt.Fields[0])}
+		if len(fields) > 0 {
+			return VNode{Kind: "raw", Text: AsString(fields[0])}
 		}
 		return VNode{Kind: "raw"}
 	case "HElement":
-		if len(adt.Fields) < 3 {
+		if len(fields) < 3 {
 			return vtext("")
 		}
 		vn := VNode{
 			Kind:   "element",
-			Tag:    AsString(adt.Fields[0]),
+			Tag:    AsString(fields[0]),
 			Attrs:  map[string]string{},
 			Events: map[string]any{},
 		}
-		for _, a := range asList(adt.Fields[1]) {
+		for _, a := range asList(fields[1]) {
 			applyHtmlAttr(&vn, a)
 		}
-		for _, c := range asList(adt.Fields[2]) {
+		for _, c := range asList(fields[2]) {
 			vn.Children = append(vn.Children, HtmlToVNode(c))
 		}
 		return vn
@@ -149,15 +149,15 @@ func HtmlToVNode(node any) VNode {
 // applyHtmlAttr folds one Sky `Attribute` ADT value into a VNode.
 func applyHtmlAttr(vn *VNode, a any) {
 	a = unwrapAny(a)
-	adt, ok := a.(SkyADT)
+	name, _, fields, ok := unwrapADTShape(a)
 	if !ok {
 		return
 	}
-	switch adt.SkyName {
+	switch name {
 	case "Attr":
-		if len(adt.Fields) >= 2 {
-			k := AsString(adt.Fields[0])
-			v := AsString(adt.Fields[1])
+		if len(fields) >= 2 {
+			k := AsString(fields[0])
+			v := AsString(fields[1])
 			// `class` and `style` are HTML's space- and
 			// semicolon-separated multi-valued attributes — multiple
 			// `class "foo bar"` + `class "baz"` calls on the same
@@ -185,17 +185,17 @@ func applyHtmlAttr(vn *VNode, a any) {
 			vn.Attrs[k] = v
 		}
 	case "BoolAttr":
-		if len(adt.Fields) >= 2 && AsBool(adt.Fields[1]) {
-			k := AsString(adt.Fields[0])
+		if len(fields) >= 2 && AsBool(fields[1]) {
+			k := AsString(fields[0])
 			vn.Attrs[k] = k
 		}
 	case "EventAttr":
-		if len(adt.Fields) >= 1 {
-			ev := unwrapAny(adt.Fields[0])
-			if evADT, ok := ev.(SkyADT); ok && len(evADT.Fields) >= 2 {
+		if len(fields) >= 1 {
+			ev := unwrapAny(fields[0])
+			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
 				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.Events[AsString(evADT.Fields[0])] = evADT.Fields[1]
+				vn.Events[AsString(evFields[0])] = evFields[1]
 			}
 		}
 	case "NoAttr":
@@ -270,19 +270,19 @@ func init() {
 			return ""
 		}
 		a := unwrapAny(args[0])
-		adt, ok := a.(SkyADT)
+		name, _, fields, ok := unwrapADTShape(a)
 		if !ok {
 			return ""
 		}
-		switch adt.SkyName {
+		switch name {
 		case "Attr":
-			if len(adt.Fields) >= 2 {
-				return AsString(adt.Fields[0]) + "=\"" +
-					htmlEscapeAttr(AsString(adt.Fields[1])) + "\""
+			if len(fields) >= 2 {
+				return AsString(fields[0]) + "=\"" +
+					htmlEscapeAttr(AsString(fields[1])) + "\""
 			}
 		case "BoolAttr":
-			if len(adt.Fields) >= 2 && AsBool(adt.Fields[1]) {
-				return AsString(adt.Fields[0])
+			if len(fields) >= 2 && AsBool(fields[1]) {
+				return AsString(fields[0])
 			}
 		}
 		return ""
@@ -4383,15 +4383,11 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// ADTs at runtime. Normal handler-dispatched events always carry
 	// the codegen-assigned tag; direct-send events arrive with Tag -1.
 	// v0.17 sealed-iface ADT: variant structs carry tag + name via
-	// methods, NOT fields — extract via the SkyVariant interface
-	// before falling back to the legacy SkyADT field-read path.
-	if sv, ok := msg.(SkyVariant); ok {
+	// methods, NOT fields — `unwrapADTShape` returns the right pair
+	// for either the SkyVariant interface or the legacy SkyADT struct.
+	if name, tag, _, ok := unwrapADTShape(msg); ok && tag >= 0 {
 		app.msgTagsMu.Lock()
-		app.msgTags[sv.SkyVariantName()] = sv.SkyVariantTag()
-		app.msgTagsMu.Unlock()
-	} else if adt, ok := msg.(SkyADT); ok && adt.Tag >= 0 {
-		app.msgTagsMu.Lock()
-		app.msgTags[adt.SkyName] = adt.Tag
+		app.msgTags[name] = tag
 		app.msgTagsMu.Unlock()
 	}
 	// Tier 1 auto-trace: wrap the TEA update in a Msg span. This is
