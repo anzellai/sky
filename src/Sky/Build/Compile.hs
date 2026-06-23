@@ -1197,6 +1197,11 @@ sealedIfaceFlipParametricAllowList = Set.fromList
       -- (already flipped P2.3).  4 variants (OnMsg / OnString /
       -- OnBool / OnRaw).
     , "Std.Html.Attributes.Event"
+      -- @Label msg@ — Std.Ui.Input form-control wrapper carrying
+      -- `LabelPosition + List (Attribute msg) + Element msg`.
+      -- Cascades off the Element (P2.4) + Attribute (P2.3) flips.
+      -- 2 variants (Label / LabelHidden).
+    , "Std.Ui.Input.Label"
     ]
 
 
