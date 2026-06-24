@@ -13952,6 +13952,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             callName = maybe qualName id mMangled
                         in GoIr.GoCall (GoIr.GoIdent callName)
                                        (coerceCallArgsAt
+                                            _phaseACtxA
                                             ctx
                                             (A.toRegion func)
                                             qualName
@@ -13998,7 +13999,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             -- non-special args (falls through to coerceArg).
                             zipWithDefaultExpect ctx (ctorParamTypes ++ repeat "any") args
                         | not (null localQual) =
-                            coerceCallArgs ctx localQual args
+                            coerceCallArgs _phaseACtxA ctx localQual args
                         | otherwise = map (exprToGo _phaseACtxA ctx) args
                     -- v0.15.10 / Gap A5 — typed-callable HOF fast-path.
                     --
@@ -15485,7 +15486,7 @@ emitPartialCtor ctx func suppliedArgs missing =
         -- parametric-record passing on partial-applied ctors.
         suppliedGo  = zipWithDefaultExpect ctx suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg ctx Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallback ctx) ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
         finalCall = GoIr.GoCall (exprToGo (phaseAFallback ctx) ctx func) (suppliedGo ++ extraIdents)
         -- Wrap outer-first (last extra wrapped first) so the chain is
@@ -15521,8 +15522,15 @@ emitPartialCtor ctx func suppliedArgs missing =
 -- param type is not registered (callee is `any`-typed), pass the arg
 -- through unchanged. The `any(arg).(T)` form works whether `arg` is
 -- already typed `T` (redundant assertion) or `any` (real coercion).
-coerceCallArgs :: LC.LowerCtx -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgs ctx qualName args =
+-- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in iter 6+ Class A reader migration).
+-- All call sites updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+coerceCallArgs :: EmitCompileCtx -> LC.LowerCtx -> String -> [Can.Expr] -> [GoIr.GoExpr]
+coerceCallArgs _phaseACtxD ctx qualName args =
     let env = getCgEnvFromScope
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
@@ -15664,8 +15672,15 @@ unmangleQual :: String -> String
 unmangleQual = map (\c -> if c == '_' then '.' else c)
 
 
-coerceCallArgsAt :: LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgsAt ctx region qualName args =
+-- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in iter 6+ Class A reader migration).
+-- All call sites updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+coerceCallArgsAt :: EmitCompileCtx -> LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
+coerceCallArgsAt _phaseACtxD ctx region qualName args =
     let env = getCgEnvFromScope
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
         -- v0.17 C24 — CSI key uses ("" :: modName, line, col).
@@ -15725,7 +15740,7 @@ coerceCallArgsAt ctx region qualName args =
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                    else coerceArg ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                    else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
                 in zipWith3Default ctx coerceOne paramTypes substituted args
         (_, Just (Solve.CallInstance _ concreteTys quants))
             | length quants == length concreteTys
@@ -15904,7 +15919,7 @@ coerceCallArgsAt ctx region qualName args =
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                    else coerceArg ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                    else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
                 in zipWith3Default ctx coerceOne paramTypes substituted args
         _ ->
             -- v0.13 Phase A5+: when no CSI is captured at this call
@@ -16110,7 +16125,7 @@ coerceCallArgsAt ctx region qualName args =
                         _ ->
                             if subbed == "any" && containsTypeParam orig
                                 then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                else coerceArg ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
             in zipWith3Default ctx coerceFallback paramTypes substituted args
 
 
@@ -16437,8 +16452,15 @@ splitFuncTypeStr s
 -- to preserve the legacy 'enclosingTypeParamInScope' (unsafePerformIO
 -- on scopeStateRef) byte-identical behaviour until Stage 4 migrates
 -- exprToGo's arms to thread upstream ctx explicitly.
-coerceArg :: LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
-coerceArg ctx mSrc e ty
+-- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in iter 6+ Class A reader migration).
+-- All call sites updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+coerceArg :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
+coerceArg _phaseACtxD ctx mSrc e ty
     | ty == "any" || null ty = e
     -- Generic type parameter (T1, T2, ...) — when the arg's static
     -- Go type is concrete (`int`, `string`, `[]T1`, `rt.SkyResult
@@ -17096,7 +17118,7 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
         -- v0.17 PR-17b S2 — Stage 4 threads ctx from the enclosing
         -- caller through `kernelCoerceArg`'s signature; the legacy
         -- IORef snapshot is no longer needed here.
-        _ -> coerceArg ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+        _ -> coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
@@ -17379,7 +17401,7 @@ lowerArgExpect ctx ty e@(A.At _ expr)
     , not (containsGenericTypeParam ty)
     = lowerExprExpectGo ctx ty e
     | otherwise
-    = coerceArg ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) ty
+    = coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) ty
 
 
 -- | Over-application: the call supplied MORE args than the callee's
@@ -17416,7 +17438,7 @@ emitOverApplication ctx func allArgs declared =
         mMangled = instanceMangledName (A.toRegion func) qualName
         callName = maybe qualName id mMangled
         baseCall = GoIr.GoCall (GoIr.GoIdent callName)
-                       (coerceCallArgsAt ctx (A.toRegion func) qualName firstK)
+                       (coerceCallArgsAt (phaseAFallback ctx) ctx (A.toRegion func) qualName firstK)
         applyOne acc arg = GoIr.GoCall
             (GoIr.GoQualified "rt" "SkyCall")
             [acc, exprToGo (phaseAFallback ctx) ctx arg]
@@ -17498,7 +17520,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
         suppliedGo = zipWithDefaultExpect ctx suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg ctx Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallback ctx) ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         -- #580 — when σ-recovery pinned every TVar in the callee's
         -- param list (no remaining unbound generics), drop the
@@ -18942,7 +18964,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             coerceForTco mSrc ge ty
                 | take 5 ty == "func(" = ge
                 -- v0.17 PR-17b S4 batch 3: ctx threaded from caller.
-                | otherwise = coerceArg ctx mSrc ge ty
+                | otherwise = coerceArg (phaseAFallback ctx) ctx mSrc ge ty
             -- Build the (param, tmp, ty, src) tuple list and walk.
             zip4tco (a:as) (b:bs) (c:cs) (d:ds) =
                 (a, b, c, d) : zip4tco as bs cs ds
