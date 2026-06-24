@@ -9751,8 +9751,8 @@ typeIIFE ctx mSrc retType body
             in if canType
                  then GoIr.GoTypedBlock retType
                         (coerceBlockReturnsT ctx mSrc retType stmts) result'
-                 else wrapTypedReturn ctx mSrc retType body
-        _ -> wrapTypedReturn ctx mSrc retType body
+                 else wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType body
+        _ -> wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType body
 
 
 -- | Walk IIFE-level statements coercing every `return` value to
@@ -9803,7 +9803,7 @@ coerceReturnExprT ctx mSrc retType e = case e of
     GoIr.GoRaw "nil" -> case goZeroValue retType of
         Just zv -> GoIr.GoRaw zv
         Nothing -> e
-    _ -> wrapTypedReturn ctx mSrc retType e
+    _ -> wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType e
 
 
 -- | v0.13 typed lowerer: best-effort STATIC Go type of a GoExpr.
@@ -9856,8 +9856,15 @@ coerceReturnExprT ctx mSrc retType e = case e of
 -- parametric-alias arm at line 8536 below; `wrapTypedReturn` and
 -- `coerceToFieldType` already-pass-Nothing sites that aren't
 -- voters) pass `mSrc`.  All other callers MUST pass `Nothing`.
-goExprGoType :: LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> Maybe String
-goExprGoType ctx mSrc e = case shapeClassified of
+-- v0.17 Phase A iter 5v2-c: scaffolding sub-batch c of 4.  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxC@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in a later sub-batch).  All call sites
+-- updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+goExprGoType :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> Maybe String
+goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
     Just t  -> Just t
     Nothing -> structuralFallback
   where
@@ -10033,8 +10040,8 @@ goExprGoType ctx mSrc e = case shapeClassified of
         -- here even if a Can.Expr were available.
         GoIr.GoBinary op l r
             | op `elem` ["+", "-", "*", "/", "%"]
-            , Just lt <- goExprGoType ctx Nothing l
-            , Just rt' <- goExprGoType ctx Nothing r
+            , Just lt <- goExprGoType _phaseACtxC ctx Nothing l
+            , Just rt' <- goExprGoType _phaseACtxC ctx Nothing r
             , lt == rt'
             , lt `elem` ["int", "float64", "string"]
             -> Just lt
@@ -10167,8 +10174,15 @@ goExprGoType ctx mSrc e = case shapeClassified of
 -- SkyMaybe / SkyTask wraps can consult HM via Solve.lookupSolvedRegion
 -- and substitute concrete types into the wrap params (closes T1 leak
 -- at substitution time).
-wrapTypedReturn :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
-wrapTypedReturn ctx mSrc retType body
+-- v0.17 Phase A iter 5v2-c: scaffolding sub-batch c of 4.  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxC@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in a later sub-batch).  All call sites
+-- updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+wrapTypedReturn :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
+wrapTypedReturn _phaseACtxC ctx mSrc retType body
     | retType == "any" = body
     -- v0.17 iter 79 — runtime alias-to-any elision.  The runtime
     -- declares 10 rt.* types as transparent aliases for @any@
@@ -10201,7 +10215,7 @@ wrapTypedReturn ctx mSrc retType body
     -- `name` is a Sky-emitted user function whose declared Go
     -- return matches the HM type exactly.  Other shapes still fall
     -- through to `Nothing`.
-    | goExprGoType ctx mSrc body == Just retType = body
+    | goExprGoType (phaseAFallback ctx) ctx mSrc body == Just retType = body
     -- v0.17 iter 66 — sealed-iface elision.  When the body is a
     -- ctor reference of the sealed-iface @retType@ (nullary ctor
     -- binding @<iface>_<Ctor>@ of type @<iface>_<Ctor>_V@, OR
@@ -13810,7 +13824,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             [ (pty, cgo)
                             | (pty, ga) <- zip kernelParamGoTys goArgs0
                             , isGenericTypeParam pty
-                            , Just cgo <- [goExprGoType ctx Nothing ga]
+                            , Just cgo <- [goExprGoType _phaseACtxA ctx Nothing ga]
                             , cgo /= "any"
                             , not (isGenericTypeParam cgo)
                             ]
@@ -13819,7 +13833,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             | (pty, ga) <- zip kernelParamGoTys goArgs0
                             , not (isGenericTypeParam pty)
                             , containsGenericTypeParam pty
-                            , Just cgo <- [goExprGoType ctx Nothing ga]
+                            , Just cgo <- [goExprGoType _phaseACtxA ctx Nothing ga]
                             , cgo /= "any"
                             ]
                         recovered = Map.union bareRecovered structuralRecovered
@@ -14218,7 +14232,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
             -- NOT used because it can return Just "Job_R" while the
             -- Go-side baseGoExpr is `any` (polymorphic call result,
             -- JSON decode output) — yielding an unsafe `_u.Field` ref.
-            mbStaticTy = case goExprGoType ctx (Just baseExpr) baseGoExpr of
+            mbStaticTy = case goExprGoType _phaseACtxA ctx (Just baseExpr) baseGoExpr of
                 Just t | isRecordAlias t -> Just t
                 _ -> case baseGoExpr of
                     GoIr.GoIdent name
@@ -14668,7 +14682,7 @@ coerceToFieldTypeMSrc ctx mSrc targetTy e
     -- caller has already lowered through `exprToGo`.  Caller-side
     -- variants of this site (`coerceArg`'s parametric-alias arm)
     -- DO have the source expr and pass it through.
-    | goExprGoType ctx Nothing e == Just targetTy = e
+    | goExprGoType (phaseAFallback ctx) ctx Nothing e == Just targetTy = e
     -- v0.17 PR-14 — structural dispatch via the 'CoerceTarget' ADT.
     -- The pre-PR-14 chain of String-prefix guards is now classified
     -- once at the top via 'classifyCoerceTarget' (kept above).
@@ -15382,7 +15396,7 @@ coerceVia ctx mSrc goType goArg
     -- Class E sky-source helper return — all elided when the source
     -- Go type matches the target.
     | not (isTupleGoTypeStr goType)
-    , Just srcGoTy <- goExprGoType ctx Nothing goArg
+    , Just srcGoTy <- goExprGoType (phaseAFallback ctx) ctx Nothing goArg
     , srcGoTy == goType
     , not (isTupleGoTypeStr srcGoTy)
     = goArg
@@ -15527,7 +15541,7 @@ coerceCallArgs ctx qualName args =
                      [ (pty, cgo)
                      | (pty, ga) <- zip paramTypes goArgs
                      , isGenericTypeParam pty
-                     , Just cgo <- [goExprGoType ctx Nothing ga]
+                     , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
                      , cgo /= "any"
                      , not (isGenericTypeParam cgo)
                      ]
@@ -15536,7 +15550,7 @@ coerceCallArgs ctx qualName args =
                      | (pty, ga) <- zip paramTypes goArgs
                      , not (isGenericTypeParam pty)
                      , containsGenericTypeParam pty
-                     , Just cgo <- [goExprGoType ctx Nothing ga]
+                     , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
                      , cgo /= "any"
                      ]
                  recovered = Map.union bareRecovered structuralRecovered
@@ -15950,7 +15964,7 @@ coerceCallArgsAt ctx region qualName args =
                     [ (pty, cgo)
                     | (pty, ga) <- zip paramTypes goArgs
                     , isGenericTypeParam pty
-                    , Just cgo <- [goExprGoType ctx Nothing ga]
+                    , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
                     , cgo /= "any"
                     , not (isGenericTypeParam cgo)
                     ]
@@ -15959,7 +15973,7 @@ coerceCallArgsAt ctx region qualName args =
                     | (pty, ga) <- zip paramTypes goArgs
                     , not (isGenericTypeParam pty)
                     , containsGenericTypeParam pty
-                    , Just cgo <- [goExprGoType ctx Nothing ga]
+                    , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
                     , cgo /= "any"
                     ]
                 -- v0.16.13 #530 — HM-based identity recovery for
@@ -16448,7 +16462,7 @@ coerceArg ctx mSrc e ty
         -- by-shape recovery here; the structural fallback fires
         -- at the typed slots below where the target type is
         -- concrete (not a TVar).
-        case goExprGoType ctx Nothing e of
+        case goExprGoType (phaseAFallback ctx) ctx Nothing e of
             Just t | t /= "any" -> e
             _ ->
                 -- Emit raw rt.Coerce[ty] — keeps generic outer fns
@@ -16520,7 +16534,7 @@ coerceArg ctx mSrc e ty
     -- in T, accepting any instantiation raw).  This is the Gap
     -- A2 closure path for alias-shaped sources.
     | Just targetBase <- parametricAliasBase ty
-    , Just srcTy <- goExprGoType ctx mSrc e
+    , Just srcTy <- goExprGoType (phaseAFallback ctx) ctx mSrc e
     , Just srcBase <- parametricAliasBase srcTy
     , targetBase == srcBase
         = e
@@ -16622,7 +16636,7 @@ coerceArg ctx mSrc e ty
     -- + the standing skyshop-clean-build lock
     -- `test/Sky/Build/SkyshopCompilesSpec.hs`.  Any future change
     -- that breaks this gate re-trips both.
-    | Just shapeTy <- goExprGoType ctx Nothing e
+    | Just shapeTy <- goExprGoType (phaseAFallback ctx) ctx Nothing e
     , shapeTy == ty
         = e
     -- v0.17 PR-17c — pin in-scope enclosing T-vars instead of
@@ -16787,7 +16801,7 @@ isGenericTypeParam _ = False
 --     that the legacy `any(arg).(Foo_R[any])` assertion happens
 --     to handle correctly.
 isParametricCompatibleSource :: GoIr.GoExpr -> Bool
-isParametricCompatibleSource e = case goExprGoType (ctxFromIORef ()) Nothing e of
+isParametricCompatibleSource e = case goExprGoType (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) Nothing e of
     Just srcTy | isJust (parametricAliasBase srcTy) -> True
     _ -> case e of
         GoIr.GoIdent name -> not ("rt." `List.isPrefixOf` name)
@@ -16889,7 +16903,7 @@ isPlainIdentForTypedRouting e = isPlainIdent e && intermediatesTyped e
   where
     intermediatesTyped (GoIr.GoIdent _)       = True
     intermediatesTyped (GoIr.GoSelector b _)  =
-        case goExprGoType (ctxFromIORef ()) Nothing b of
+        case goExprGoType (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) Nothing b of
             Just t  -> t /= "any" && intermediatesTyped b
             Nothing -> False
     intermediatesTyped _                       = False
@@ -17459,7 +17473,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
             | (paramTy, srcArg) <- zip suppliedTypes suppliedArgs
             , containsGenericTypeParam paramTy
             , let srcGoExpr = exprToGo (phaseAFallback ctx) ctx srcArg
-            , Just srcGoTy <- [goExprGoType ctx (Just srcArg) srcGoExpr]
+            , Just srcGoTy <- [goExprGoType (phaseAFallback ctx) ctx (Just srcArg) srcGoExpr]
             , srcGoTy /= "any"
             , not (containsGenericTypeParam srcGoTy)
             , let recovered = unifyGoTypes paramTy srcGoTy
@@ -20201,7 +20215,7 @@ exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
                 -- untyped thunk (typical of the Db.* / Time.* helpers).
                 -- wrapTypedReturn already encapsulates the Coerce-vs-assert
                 -- choice for every parametric shape.
-                wrapTypedReturn (ctxFromIORef ()) (Just origExpr) (solvedTypeToGo rt) callExpr
+                wrapTypedReturn (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) (Just origExpr) (solvedTypeToGo rt) callExpr
             _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
