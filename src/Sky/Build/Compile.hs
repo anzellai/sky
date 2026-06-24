@@ -13024,18 +13024,52 @@ ctxFromIORef :: () -> LC.LowerCtx
 ctxFromIORef () = unsafePerformIO (readIORef scopeStateRef)
 
 
--- | v0.17 Phase A iter 5v2-a — synthesize an empty 'EmitCompileCtx' from a
--- 'LC.LowerCtx', for helper call sites that haven't yet been widened to
--- thread the real ctx through.  The new param is currently unused
--- (underscore-bound in the receiving functions' bodies); this fallback
--- exists purely so the signature widening of 'defToStmts' / 'exprToGo'
--- compiles without cascading sub-batch B/C/D widenings.
+-- | v0.17 Phase A iter 6d — read-through fallback synthesising a REAL
+-- 'EmitCompileCtx' from 'scopeStateRef' + 'AnonRec.readAnonRecords'
+-- at the call site.  Previously (iter 5v2-a) this returned an empty
+-- ctx, which left 17 external Class A call sites feeding the widened
+-- helpers a ctx whose '_cc_cgEnv' was always 'emptyCgEnv'.  Iter 6c's
+-- per-dep ctx rebuild proved the snapshot-vs-mutating-ioref hypothesis
+-- wrong (gates failed unchanged); iter 6b's instrumentation captured
+-- empty stubs, not stale snapshots.  The root cause is the empty ctx
+-- itself.
 --
--- TODO: thread real ctx through 'caseToGo' / 'letToGo' / 'ifToGo' /
--- 'exprToGoExpect' / 'exprToGoExpectGo' / 'coerceArg' / etc. in iter
--- 5v2-X (sub-batches b/c/d) and DELETE this helper.
+-- This iter is a TRANSITIONAL bridge: it re-introduces an IORef hop
+-- at 'phaseAFallback' synthesis so each call site captures the
+-- up-to-date 'scopeStateRef' state.  Subsequent iters (6e/7) widen
+-- the call sites to receive a properly-threaded ctx through their
+-- argument lists; once all callers are migrated 'phaseAFallback'
+-- can be deleted and the IORef coupling removed via the criterion
+-- #3 plan.
+--
+-- The 'Nothing' fallback for 'lookupCgEnv' preserves pre-iter-6d
+-- behaviour for entry points (tests / LSP) that never installed a
+-- cgEnv on 'scopeStateRef'.
+--
+-- NOINLINE prevents GHC from CSE-merging multiple call sites onto a
+-- single shared IORef read; each call site MUST observe a fresh
+-- snapshot.
+{-# NOINLINE phaseAFallback #-}
 phaseAFallback :: LC.LowerCtx -> EmitCompileCtx
-phaseAFallback lc = emptyEmitCompileCtx (LC._lc_module lc)
+phaseAFallback lc = unsafePerformIO $ do
+    scopeSnap     <- readIORef scopeStateRef
+    anonRecsSnap  <- AnonRec.readAnonRecords
+    let home = LC._lc_module lc
+        cgEnv = case LC.lookupCgEnv scopeSnap of
+            Just env -> env
+            Nothing  -> emptyCgEnv
+        kernelAliasMap = LC._lc_kernelAlias scopeSnap
+    return $! buildEmitCompileCtx
+        home
+        cgEnv
+        (LC._lc_solved scopeSnap)
+        kernelAliasMap
+        (LC._lc_unionDetails scopeSnap)
+        anonRecsSnap
+        (LC._lc_aliases scopeSnap)
+        (LC._lc_fieldIdx scopeSnap)
+        (LC._lc_unionNames scopeSnap)
+        (LC._lc_ffiTypedWrapperNames scopeSnap)
 
 
 -- | v0.15.x P38 (Cycle 3 / audit C10) — explicit-snapshot helper for
