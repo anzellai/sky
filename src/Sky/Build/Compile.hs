@@ -6369,11 +6369,49 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- coerceArg's parametricAliasBase short-circuit
               -- emits the bare arg, letting Go's call-site
               -- inference pin the callee's T.
+              -- v0.17 iter 10 Track B (ULTRA-NARROW SEALED-IFACE WHITELIST
+              -- PREDICATE for AsListT elision).  Iter 9's slice-type
+              -- registration yielded -33 AsListT on 26-ui-showcase but
+              -- panicked at runtime when the slice element was a Sky-
+              -- side sealed-iface ADT (e.g. Sky_Test_Test, Std_Ui_Length)
+              -- whose tuple-payload variants land as []rt.T2[any,any]
+              -- at runtime, NOT []Sky_Test_Test.  AsListT IS LOAD-BEARING
+              -- for sealed-iface ADT slices.
+              --
+              -- This predicate admits slice registration ONLY when the
+              -- element type is provably safe to bypass AsListT:
+              --   (1) Go primitive (string/int/bool/float64/byte/rune)
+              --   (2) Parametric record alias (Foo_R[T] — already typed)
+              --   (3) Generic type param (T1/T2/... — passes through)
+              -- EXCLUDED: anything in _cg_sealedIfaceNames (Sky_*/Std_*
+              -- ADT names that emit as sealed Go interfaces).
+              cgEnv = getCgEnvFromScope
+              cgSealedSet = Rec._cg_sealedIfaceNames cgEnv
+              isSealedIfaceTypeStr s =
+                  Set.member s cgSealedSet
+                  -- last `_`-segment fallback for cross-module shapes
+                  || Set.member (reverse (takeWhile (/= '_') (reverse s))) cgSealedSet
+              isSafeSliceElem elemTy =
+                  case elemTy of
+                      "string"  -> True
+                      "int"     -> True
+                      "bool"    -> True
+                      "float64" -> True
+                      "byte"    -> True
+                      "rune"    -> True
+                      _ -> isGenericTypeParam elemTy
+                           || isJust (parametricAliasBase elemTy)
+              isSafeSlicePgo pgo = case stripSlice pgo of
+                  Just elemTy ->
+                      not (isSealedIfaceTypeStr elemTy)
+                      && isSafeSliceElem elemTy
+                  Nothing -> False
               goStringBindings = Map.fromList
                   [ (pname, pgo)
                   | (GoIr.GoParam pname pgo) <- typedGoParams'
                   , take 5 pgo == "func("
                      || isJust (parametricAliasBase pgo)
+                     || isSafeSlicePgo pgo
                   ]
               -- Go-strings INNER, Sky-types OUTER so both bindings are
               -- active during typedBody's render (which is forced
