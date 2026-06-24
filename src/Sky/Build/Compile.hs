@@ -40,6 +40,7 @@ import Sky.Build.CompileCtx
     , emptyCtx
     -- v0.17 Phase A iter 3 — emit-phase context scaffold (additive).
     , EmitCompileCtx, buildEmitCompileCtx, emptyEmitCompileCtx
+    , lookupCgEnvFromCtx
     )
 
 import qualified Sky.AST.Source as Src
@@ -9913,7 +9914,7 @@ coerceReturnExprT ctx mSrc retType e = case e of
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 goExprGoType :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> Maybe String
-goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
+goExprGoType phaseACtxC ctx mSrc e = case shapeClassified of
     Just t  -> Just t
     Nothing -> structuralFallback
   where
@@ -9936,7 +9937,7 @@ goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
 
     structuralFallback = case mSrc of
         Just src | structurallySafeForFallback e ->
-            let solved = Rec._cg_solvedTypes getCgEnvFromScope
+            let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxC)
             in case inferExprType solved src of
                 Just ty
                   -- Reject HM types that still carry an unresolved
@@ -10065,7 +10066,7 @@ goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
         -- ctor) got wrapped in `rt.Coerce`.
         GoIr.GoCall (GoIr.GoIdent name) []
             | not ("rt." `List.isPrefixOf` name) ->
-                let env = getCgEnvFromScope
+                let env = lookupCgEnvFromCtx phaseACtxC
                     retTy = Map.findWithDefault "any" name
                               (Rec._cg_funcRetType env)
                     paramTys = Map.findWithDefault [] name
@@ -10089,8 +10090,8 @@ goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
         -- here even if a Can.Expr were available.
         GoIr.GoBinary op l r
             | op `elem` ["+", "-", "*", "/", "%"]
-            , Just lt <- goExprGoType _phaseACtxC ctx Nothing l
-            , Just rt' <- goExprGoType _phaseACtxC ctx Nothing r
+            , Just lt <- goExprGoType phaseACtxC ctx Nothing l
+            , Just rt' <- goExprGoType phaseACtxC ctx Nothing r
             , lt == rt'
             , lt `elem` ["int", "float64", "string"]
             -> Just lt
@@ -10184,7 +10185,7 @@ goExprGoType _phaseACtxC ctx mSrc e = case shapeClassified of
                 -- typed sig for `TopLevelFn`, the call-site coerceArg
                 -- short-circuits (target type matches source type) and
                 -- emits no wrap.
-                let env = getCgEnvFromScope
+                let env = lookupCgEnvFromCtx phaseACtxC
                     paramTys = Map.findWithDefault [] name
                                   (Rec._cg_funcParamTypes env)
                     retTy = Map.findWithDefault "any" name
