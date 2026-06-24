@@ -13651,9 +13651,9 @@ rewriteAliasHead expr@(A.At r e) = case e of
 -- as first arg; the param is underscore-bound in the body (unused) and
 -- exists purely so iter 6+ consumers can replace cgEnv-snapshot
 -- reads with @asks _cc_cgEnv@.  All internal recursive calls thread
--- @_phaseACtxA@ through unchanged.
+-- @phaseACtxA@ through unchanged.
 exprToGo :: EmitCompileCtx -> LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
-exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
+exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
 
     Can.Str s ->
         GoIr.GoStringLit s
@@ -13693,7 +13693,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
             qualName = if null modStr || modStr == "Main"
                 then goSafeName name
                 else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name
-            env = getCgEnvFromScope
+            env = lookupCgEnvFromCtx phaseACtxA
             -- Local module: check zeroArgs set. Cross-module: check funcArities
             -- which is populated with qualified names from deps.
             isZeroArg = Set.member name (Rec._cg_zeroArgs env)
@@ -13719,21 +13719,21 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
         ctorToGo opts home typeName ctorName annot
 
     Can.List items ->
-        GoIr.GoSliceLit "any" (map (exprToGo _phaseACtxA ctx) items)
+        GoIr.GoSliceLit "any" (map (exprToGo phaseACtxA ctx) items)
 
     Can.Negate inner ->
         -- For literal negation, use direct Go negative literal
         case inner of
             A.At _ (Can.Int n) -> GoIr.GoIntLit (-n)
             A.At _ (Can.Float f) -> GoIr.GoFloatLit (-f)
-            _ -> GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo _phaseACtxA ctx inner]
+            _ -> GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo phaseACtxA ctx inner]
 
     Can.Binop op opHome opName _annot left right ->
         binopToGo ctx op left right
 
     Can.Lambda params body ->
         -- Generate curried function: \a b -> body becomes func(a any) any { return func(b any) any { return body } }
-        curryLambdaPat params (exprToGo _phaseACtxA ctx body)
+        curryLambdaPat params (exprToGo phaseACtxA ctx body)
 
     Can.Call rawFunc args ->
         -- v0.14.x Stage 4: if the callee is a Sky-source binding that's
@@ -13756,7 +13756,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
             Can.VarKernel modName funcName
                 | let typedCall = kernelTypedCall ctx
                         (Rec._cg_solvedTypes getCgEnvFromScope) modName funcName args
-                        (map (exprToGo _phaseACtxA ctx) args)
+                        (map (exprToGo phaseACtxA ctx) args)
                 , Just expr <- typedCall ->
                     expr
 
@@ -13852,7 +13852,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             typedKernelAltName
                     in GoIr.GoCall
                         (GoIr.GoQualified "rt" (modName ++ "_" ++ altSuffix))
-                        (map (exprToGo _phaseACtxA ctx) args)
+                        (map (exprToGo phaseACtxA ctx) args)
 
             -- P8 step 4 widening: kernel typed dispatch for non-literal
             -- args. Coerces each arg via the appropriate runtime helper
@@ -13890,8 +13890,8 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                 , any (\t -> containsGenericTypeParam t
                           || take 5 t == "func(")
                       kernelParamGoTys ->
-                    let goFunc = exprToGo _phaseACtxA ctx func
-                        goArgs0 = map (exprToGo _phaseACtxA ctx) args
+                    let goFunc = exprToGo phaseACtxA ctx func
+                        goArgs0 = map (exprToGo phaseACtxA ctx) args
                         -- v0.15.8 (P2): σ-recovery DELIBERATELY does
                         -- NOT consume the structural fallback (passes
                         -- Nothing).  Reason: over-pinning a callee
@@ -13908,7 +13908,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             [ (pty, cgo)
                             | (pty, ga) <- zip kernelParamGoTys goArgs0
                             , isGenericTypeParam pty
-                            , Just cgo <- [goExprGoType _phaseACtxA ctx Nothing ga]
+                            , Just cgo <- [goExprGoType phaseACtxA ctx Nothing ga]
                             , cgo /= "any"
                             , not (isGenericTypeParam cgo)
                             ]
@@ -13917,7 +13917,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             | (pty, ga) <- zip kernelParamGoTys goArgs0
                             , not (isGenericTypeParam pty)
                             , containsGenericTypeParam pty
-                            , Just cgo <- [goExprGoType _phaseACtxA ctx Nothing ga]
+                            , Just cgo <- [goExprGoType phaseACtxA ctx Nothing ga]
                             , cgo /= "any"
                             ]
                         recovered = Map.union bareRecovered structuralRecovered
@@ -13974,7 +13974,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                     -- ctor slot lowers with the slot's type args, not the
                     -- generic Cfg_R[any] + Coerce wrap that panics on
                     -- Go's nominal generic types.
-                    else GoIr.GoCall (exprToGo _phaseACtxA ctx func)
+                    else GoIr.GoCall (exprToGo phaseACtxA ctx func)
                           (zipWithDefaultExpect ctx paramTys args)
             Can.VarTopLevel home name ->
                 -- Partial application of a top-level function:
@@ -14036,13 +14036,13 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             callName = maybe qualName id mMangled
                         in GoIr.GoCall (GoIr.GoIdent callName)
                                        (coerceCallArgsAt
-                                            _phaseACtxA
+                                            phaseACtxA
                                             ctx
                                             (A.toRegion func)
                                             qualName
                                             args)
             _ ->
-                let goFunc = exprToGo _phaseACtxA ctx func
+                let goFunc = exprToGo phaseACtxA ctx func
                     -- Same-module local function calls (`Can.VarLocal`)
                     -- benefit from coerceCallArgs too so typed callees
                     -- get their args asserted at call time. Look up the
@@ -14083,8 +14083,8 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                             -- non-special args (falls through to coerceArg).
                             zipWithDefaultExpect ctx (ctorParamTypes ++ repeat "any") args
                         | not (null localQual) =
-                            coerceCallArgs _phaseACtxA ctx localQual args
-                        | otherwise = map (exprToGo _phaseACtxA ctx) args
+                            coerceCallArgs phaseACtxA ctx localQual args
+                        | otherwise = map (exprToGo phaseACtxA ctx) args
                     -- v0.15.10 / Gap A5 — typed-callable HOF fast-path.
                     --
                     -- When `func` is NOT one of the structural-direct
@@ -14184,8 +14184,8 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
         letToGo ctx Nothing def body
 
     Can.LetRec defs body ->
-        let stmts = concatMap (defToStmts _phaseACtxA ctx) defs
-        in GoIr.GoBlock stmts (exprToGo _phaseACtxA ctx body)
+        let stmts = concatMap (defToStmts phaseACtxA ctx) defs
+        in GoIr.GoBlock stmts (exprToGo phaseACtxA ctx body)
 
     Can.LetDestruct pat valExpr body ->
         -- Bind the value to a fresh temp, then run the standard pattern-
@@ -14193,10 +14193,10 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
         -- constructor destructuring produces real bindings for each field.
         let tmp = "__destruct__"
             (A.At _ p) = pat
-            valStmt = GoIr.GoShortDecl tmp (exprToGo _phaseACtxA ctx valExpr)
+            valStmt = GoIr.GoShortDecl tmp (exprToGo phaseACtxA ctx valExpr)
             sink    = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
             bindStmts = patternBindings tmp p
-        in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo _phaseACtxA ctx body)
+        in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo phaseACtxA ctx body)
 
     Can.Case subject branches ->
         caseToGo ctx Nothing subject branches
@@ -14276,9 +14276,9 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                 (isRecordAlias && operandIsStaticallyTyped target)
                 || isRecordAliasViaGoStr
         in if targetTyped
-              then GoIr.GoSelector (exprToGo _phaseACtxA ctx target) (capitalise_ field)
+              then GoIr.GoSelector (exprToGo phaseACtxA ctx target) (capitalise_ field)
               else GoIr.GoCall (GoIr.GoQualified "rt" "Field")
-                       [exprToGo _phaseACtxA ctx target, GoIr.GoStringLit (capitalise_ field)]
+                       [exprToGo phaseACtxA ctx target, GoIr.GoStringLit (capitalise_ field)]
 
     Can.Update _name baseExpr fields ->
         -- v0.17 C5: typed closure fast path closes Cause D when the
@@ -14302,7 +14302,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
         -- semantics on Db.query / JSON.Decode / cross-module FFI
         -- return-shaped bases.  Cause D consumption-side close is
         -- Phase γ (C8-C12) σ-projection work.
-        let baseGoExpr = exprToGo _phaseACtxA ctx baseExpr
+        let baseGoExpr = exprToGo phaseACtxA ctx baseExpr
             fieldUpdates = Map.toList fields
             isRecordAlias t =
                 t /= "any" && not (null t)
@@ -14317,7 +14317,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
             -- NOT used because it can return Just "Job_R" while the
             -- Go-side baseGoExpr is `any` (polymorphic call result,
             -- JSON decode output) — yielding an unsafe `_u.Field` ref.
-            mbStaticTy = case goExprGoType _phaseACtxA ctx (Just baseExpr) baseGoExpr of
+            mbStaticTy = case goExprGoType phaseACtxA ctx (Just baseExpr) baseGoExpr of
                 Just t | isRecordAlias t -> Just t
                 _ -> case baseGoExpr of
                     GoIr.GoIdent name
@@ -14375,7 +14375,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                 let baseGo = GoBuilder.renderExpr baseGoExpr
                     pairs = map (\(fname, Can.FieldUpdate _ fexpr) ->
                         "\"" ++ capitalise_ fname ++ "\": "
-                            ++ GoBuilder.renderExpr (exprToGo _phaseACtxA ctx fexpr))
+                            ++ GoBuilder.renderExpr (exprToGo phaseACtxA ctx fexpr))
                         fieldUpdates
                 in GoIr.GoRaw $ "rt.RecordUpdate(" ++ baseGo ++
                     ", map[string]any{" ++ intercalate_ ", " pairs ++ "})"
@@ -14437,19 +14437,19 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
             Nothing ->
                 -- Anonymous struct
                 let fieldDecls = intercalate_ "; " (map (\(fn, _) -> capitalise_ fn ++ " any") entries)
-                    fieldInits = intercalate_ ", " (map (\(fn, fe) -> capitalise_ fn ++ ": " ++ GoBuilder.renderExpr (exprToGo _phaseACtxA ctx fe)) entries)
+                    fieldInits = intercalate_ ", " (map (\(fn, fe) -> capitalise_ fn ++ ": " ++ GoBuilder.renderExpr (exprToGo phaseACtxA ctx fe)) entries)
                 in GoIr.GoRaw $ "struct{ " ++ fieldDecls ++ " }{" ++ fieldInits ++ "}"
 
     Can.Tuple a b more ->
         case length more of
             0 -> GoIr.GoStructLit "rt.SkyTuple2"
-                    [("V0", exprToGo _phaseACtxA ctx a), ("V1", exprToGo _phaseACtxA ctx b)]
+                    [("V0", exprToGo phaseACtxA ctx a), ("V1", exprToGo phaseACtxA ctx b)]
             1 -> GoIr.GoStructLit "rt.SkyTuple3"
-                    [("V0", exprToGo _phaseACtxA ctx a), ("V1", exprToGo _phaseACtxA ctx b), ("V2", exprToGo _phaseACtxA ctx (head more))]
+                    [("V0", exprToGo phaseACtxA ctx a), ("V1", exprToGo phaseACtxA ctx b), ("V2", exprToGo phaseACtxA ctx (head more))]
             _ ->
                 -- arity 4+: pack into SkyTupleN{Vs: []any{...}}
                 let vs = a : b : more
-                    vsInit = GoIr.GoSliceLit "any" (map (exprToGo _phaseACtxA ctx) vs)
+                    vsInit = GoIr.GoSliceLit "any" (map (exprToGo phaseACtxA ctx) vs)
                 in GoIr.GoStructLit "rt.SkyTupleN" [("Vs", vsInit)]
 
 
@@ -18297,13 +18297,13 @@ letBindingType solvedTypes _name body@(A.At r _) =
 -- as first arg; the param is underscore-bound in the body (unused) and
 -- exists purely so iter 6+ consumers can replace cgEnv-snapshot
 -- reads with @asks _cc_cgEnv@.  All internal calls thread
--- @_phaseACtxA@ through unchanged.
+-- @phaseACtxA@ through unchanged.
 defToStmts :: EmitCompileCtx -> LC.LowerCtx -> Can.Def -> [GoIr.GoStmt]
-defToStmts _phaseACtxA ctx def = case def of
+defToStmts phaseACtxA ctx def = case def of
     Can.DestructDef pat valExpr ->
         let tmp = "__destruct__"
             (A.At _ p) = pat
-            valStmt   = GoIr.GoShortDecl tmp (exprToGo _phaseACtxA ctx valExpr)
+            valStmt   = GoIr.GoShortDecl tmp (exprToGo phaseACtxA ctx valExpr)
             sink      = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
             bindStmts = patternBindings tmp p
         in valStmt : sink : bindStmts
@@ -18359,7 +18359,7 @@ defToStmts _phaseACtxA ctx def = case def of
                 Just dt ->
                     letBindStmts name (exprToGoExpect ctx dt body)
                 Nothing ->
-                    letBindStmts name (exprToGo _phaseACtxA ctx body)
+                    letBindStmts name (exprToGo phaseACtxA ctx body)
 
     Can.Def (A.At _ name) params body ->
         -- v0.13 Stage 1 — for unannotated multi-pattern let-defs,
@@ -18439,13 +18439,13 @@ defToStmts _phaseACtxA ctx def = case def of
                         else "any"
                 Nothing -> "any"
             bodyExpr = if retGoTy == "any"
-                then exprToGo _phaseACtxA ctx body
-                else exprToGoExpectGo _phaseACtxA ctx retGoTy body
+                then exprToGo phaseACtxA ctx body
+                else exprToGoExpectGo phaseACtxA ctx retGoTy body
         in letBindStmts name
             (GoIr.GoFuncLit goParams retGoTy [GoIr.GoReturn bodyExpr])
 
     Can.TypedDef (A.At _ name) _ [] body _ ->
-        letBindStmts name (exprToGo _phaseACtxA ctx body)
+        letBindStmts name (exprToGo phaseACtxA ctx body)
 
     Can.TypedDef (A.At _ name) _ typedPats body retType ->
         -- v0.13 Stage 1 — multi-pattern annotated let-def: use the
@@ -18460,8 +18460,8 @@ defToStmts _phaseACtxA ctx def = case def of
             -- body when return can't be safely typed.
             (effectiveRet, bodyExpr) =
                 if isEmittableGoType retGoTy
-                    then (retGoTy, exprToGoExpectGo _phaseACtxA ctx retGoTy body)
-                    else ("any", exprToGo _phaseACtxA ctx body)
+                    then (retGoTy, exprToGoExpectGo phaseACtxA ctx retGoTy body)
+                    else ("any", exprToGo phaseACtxA ctx body)
         in letBindStmts name
             (GoIr.GoFuncLit typedGoParams effectiveRet [GoIr.GoReturn bodyExpr])
 
