@@ -18354,7 +18354,7 @@ defToStmts phaseACtxA ctx def = case def of
             -- no `scopeStateRef` snapshot needed here.  The region
             -- map flows in through `Solve.SolvedTypes._stRegions`
             -- (populated by P37a for every solver entry point).
-            let solved = Rec._cg_solvedTypes getCgEnvFromScope
+            let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
             in case letBindingType solved name body of
                 Just dt ->
                     letBindStmts name (exprToGoExpect ctx dt body)
@@ -18387,7 +18387,7 @@ defToStmts phaseACtxA ctx def = case def of
         -- same-named local lambdas typing against whichever
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
-        let solved = Rec._cg_solvedTypes getCgEnvFromScope
+        let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
             -- v0.17 PR-6b — region-based scope lookup is the sole
             -- source of truth here.  Pre-v0.17, this site consulted
             -- the `globalCurrentDepModule` IORef as a fallback when
