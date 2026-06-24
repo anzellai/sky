@@ -9294,6 +9294,24 @@ goExprGoType ctx mSrc e = case shapeClassified of
                       -- structural recovery, T1 can be pinned).
                       | fn == "AsListAny" -> Just "[]any"
                       | fn == "AsMapAny"  -> Just "map[string]any"
+                      -- v0.17 P5 Stage 2 — typed-kernel primitive return
+                      -- elision via shape classification.  Strip any
+                      -- @[...]@ monomorphisation suffix and look up in
+                      -- @typedKernelPrimitiveReturns@.  A direct call
+                      -- @rt.String_fromIntT(x)@ is statically @string@
+                      -- by the kernel signature in @runtime-go/rt/rt.go@.
+                      -- Surfacing this lets @coerceVia@ (CALL-ARG level,
+                      -- line 14635) elide a redundant @rt.CoerceString@
+                      -- wrap; the σ-consensus voters (CALL-ARG level
+                      -- gated by @mSrc=Nothing@) consume the same shape
+                      -- info as the existing @CoerceInt/AsInt@ arms above
+                      -- — kernels in this registry truly return their
+                      -- declared primitive type, so the static-Go-type
+                      -- carries the same safety class.  Registry is
+                      -- consumed elsewhere (function-return level) by
+                      -- @wrapTypedReturn@ at line 9577.
+                      | Just prim <- Map.lookup (takeWhile (/= '[') fn)
+                                       typedKernelPrimitiveReturns -> Just prim
                       | otherwise -> Nothing
         -- v0.13 Stage 1 — zero-arg call to a top-level Sky function.
         -- `loadHistory()` (`Can.VarTopLevel … "loadHistory"` applied to
