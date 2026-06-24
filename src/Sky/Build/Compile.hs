@@ -33,6 +33,7 @@ import Sky.Build.EmbedDirTH (isEmbeddableRuntimeFile, isEmbeddableRuntimeDir)
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
 import qualified Sky.Build.TailCallOpt as TCO
 import qualified Sky.Build.LowerCtx as LC
+import qualified Sky.Build.MsgDispatch as MsgDispatch
 import Sky.Build.CompileCtx
     ( CompileCtx(..), ctxKernelFunctions, ctxKernelModules
     , ctxKernelTypes, ctxImplements
@@ -7573,6 +7574,48 @@ isTaskImport imp =
 -- DECLARATIONS
 -- ═══════════════════════════════════════════════════════════
 
+-- | v0.17 Phase 4 Stage 1 — emit per-Msg typed dispatch
+-- scaffolding lines for one ADT inside the per-union
+-- @func init() { ... }@ body.
+--
+-- The init() body in 'generateUnionTypes' already emits a
+-- @rt.RegisterAdtTag@ call per ctor; this helper appends:
+--
+--   * One @rt.RegisterMsgUpdate(qual, nil)@ line per ADT
+--     (only when the ADT is Msg-shaped — Normal opts +
+--     non-empty ctor list).
+--   * One @rt.RegisterMsgVariant(qual, ctor, tag, arity)@
+--     line per variant.
+--
+-- Stage 1 is foundation-only: no Sky.Live / Sky.Tui /
+-- Sky.Webview dispatch path reads the new registries yet.
+-- The observable is the emitted Go init() body, which lets
+-- the runtime see the variant metadata at package load.
+-- Stage 2 fills the @rt.RegisterMsgUpdate@ nil with a typed
+-- update map once per-variant typed update arms are emitted.
+--
+-- Returns the empty string for ADT shapes the gate rejects
+-- (Enum / Unbox / zero-variant) so existing init() bodies
+-- stay byte-identical to today.
+emitMsgDispatchStage1 :: String -> [Can.Ctor] -> Can.CtorOpts -> String
+emitMsgDispatchStage1 qualType ctors opts =
+    case opts of
+        Can.Enum  -> ""  -- nullary unions short-circuit via tag-int path
+        Can.Unbox -> ""  -- single-ctor wrappers have no dispatch decision
+        Can.Normal
+            | null ctors -> ""  -- degenerate zero-variant ADT
+            | otherwise  ->
+                let mvariants = MsgDispatch.variantsFromUnion
+                                    (Can.Union [] ctors (length ctors) Can.Normal)
+                    updateLine =
+                        MsgDispatch.emitRegisterUpdateLine qualType ++ "; "
+                    variantLines =
+                        concatMap
+                            (\mv -> MsgDispatch.emitRegisterMsgVariantLine qualType mv ++ "; ")
+                            mvariants
+                in updateLine ++ variantLines
+
+
 -- | Generate Go type declarations for user-defined union types
 generateUnionTypes :: Can.Module -> [GoIr.GoDecl]
 generateUnionTypes canMod =
@@ -7631,6 +7674,27 @@ generateUnionTypes canMod =
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
                         "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
                         ctors
+                   -- v0.17 Phase 4 Stage 1 — per-Msg typed dispatch
+                   -- scaffolding.  For every Msg-shaped union (Normal
+                   -- opts, non-empty ctor list) ALSO emit:
+                   --
+                   --   * rt.RegisterMsgUpdate("<qual>", nil)
+                   --     — registers the ADT name with a nil placeholder
+                   --       table.  Stage 2 replaces nil with the typed
+                   --       update dispatch map once per-variant typed
+                   --       arms are emitted.
+                   --
+                   --   * rt.RegisterMsgVariant("<qual>", "<ctor>", <tag>, <arity>)
+                   --     — one line per variant.  Stage 5 wire decoder
+                   --       consults this to short-circuit reflect.Type
+                   --       lookups in 'applyMsgArgs' / 'decodeMsgArg'.
+                   --
+                   -- Stage 1 contract: writes-only.  The runtime
+                   -- registers the entries; no Sky.Live / Sky.Tui /
+                   -- Sky.Webview dispatch path consults the new
+                   -- registries yet (Stage 6).  User-visible behaviour
+                   -- is byte-identical to today.
+                   ++ emitMsgDispatchStage1 typeName ctors opts
                    ++ "}" ]
 
     ctorConstName typeName (Can.Ctor cname _ _ _) = typeName ++ "_" ++ cname

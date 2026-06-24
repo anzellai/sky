@@ -200,6 +200,7 @@ executable sky
     Sky.Build.Compile
     Sky.Build.CompileCtx
     Sky.Build.LowerCtx
+    Sky.Build.MsgDispatch
     Sky.Build.Dce
     Sky.Build.EmbedDirTH
     Sky.Build.EmbeddedRuntime
@@ -424,6 +425,7 @@ test-suite sky-tests
       Sky.Build.CoerceArgListMapInterplaySpec
       Sky.Build.CrossModuleSetSpec
       Sky.Build.LowerCtxCascadeSpec
+      Sky.Build.MsgDispatchSpec
       Sky.Build.LetBodyCascadeResumeSpec
       Sky.Build.SnapshotCallerCtxSpec
       Sky.Build.SkyshopCompilesSpec

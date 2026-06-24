@@ -149,6 +149,7 @@ import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.CrossModuleSetSpec
 import qualified Sky.Build.LowerCtxCascadeSpec
+import qualified Sky.Build.MsgDispatchSpec
 import qualified Sky.Build.LetBodyCascadeResumeSpec
 import qualified Sky.Build.SnapshotCallerCtxSpec
 import qualified Sky.Build.SkyshopCompilesSpec
@@ -1069,6 +1070,12 @@ allSpecs fastMode = do
     -- Lock fires on the constructor surface + the byte-identical
     -- compile contract for a four-slot exercise.
     describeT "Sky.Build.LowerCtxCascade"    Sky.Build.LowerCtxCascadeSpec.spec
+    -- v0.17 Phase 4 Stage 1 — per-Msg typed dispatch foundation.
+    -- Locks the variant enumeration + Stage 1 emission shape
+    -- ('rt.RegisterMsgUpdate' / 'rt.RegisterMsgVariant') so
+    -- downstream Phase 4 stages (typed update arms, dispatch
+    -- tables, wire decoders) consume one source of truth.
+    describeT "Sky.Build.MsgDispatch"        Sky.Build.MsgDispatchSpec.spec
     -- v0.15.x hardening / Cycle 3 P37b — LowerCtx cascade Phase 3
     -- resume.  `letBindingType` is now pure; the three slots P6
     -- deferred (record-field init / list element / let body) now
