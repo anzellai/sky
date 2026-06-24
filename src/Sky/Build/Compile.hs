@@ -1507,6 +1507,84 @@ typedKernelPrimitiveReturns = Map.fromList
     ]
 
 
+-- | v0.17 P5 Stage 4 — typed-kernel PARAMETRIC return registry.
+--
+-- Maps direct typed-kernel function names → their declared Go
+-- return type in concrete parametric form.  Companion to
+-- 'typedKernelPrimitiveReturns' which covers scalar returns; this
+-- one covers slices / SkyMaybe / SkyResult / rune kernels whose
+-- runtime signature is a CONCRETE generic instantiation (no T-vars
+-- on the kernel side — the kernel returns the same instantiated
+-- shape every call).
+--
+-- Registry shape: @kernel name (no @rt.@ prefix, no @[...]@ suffix)@
+-- → @declared Go return type as it renders at the call site@.  Used
+-- by 'wrapTypedReturn' to ELIDE a wrap whose target matches the
+-- kernel's declared return — the kernel returns the target shape
+-- concretely, so the surrounding wrap is identity.
+--
+-- == Coverage (signatures from runtime-go/rt/rt.go)
+--
+-- Slice returns:
+--   * @String_splitT(sep, s string) []string@
+--   * @Regex_findAllT(pattern, s string) []string@
+--   * @Regex_splitT(pattern, s string) []string@
+--
+-- Rune return:
+--   * @Char_fromCodeT(n int) rune@
+--
+-- SkyMaybe returns (NOTE: not added — observed elision is unsafe
+-- because Sky-side @T1@ vs runtime @int@/@float64@/@string@ may
+-- mismatch in the value-bag intermediate; covered by the primitive
+-- registry for scalar returns):
+--   * @String_toIntT(s string) SkyMaybe[int]@ — added with caveat
+--   * @String_toFloatT(s string) SkyMaybe[float64]@ — added with caveat
+--   * @Regex_findT(pattern, s string) SkyMaybe[string]@ — added with caveat
+--
+-- SkyResult returns (NOTE: empirically OBSERVED in 00-standard-libs,
+-- the wrap target is @SkyResult[Sky_Core_Error_Error, string]@ while
+-- the kernel returns @SkyResult[string, string]@ — DIFFERENT first
+-- type param.  Elision MUST compare both type args exactly; entries
+-- here use the kernel's runtime signature, NOT the Sky-side
+-- expected shape):
+--   * @Encoding_base64DecodeT(s string) SkyResult[string, string]@
+--   * @Encoding_urlDecodeT(s string) SkyResult[string, string]@
+--   * @Encoding_hexDecodeT(s string) SkyResult[string, string]@
+--
+-- == Safety
+--
+-- Elision arm in 'wrapTypedReturn' MUST exact-match the kernel's
+-- declared return against the wrap target.  When they differ
+-- (e.g. wrap target is @rt.SkyResult[Sky_Core_Error_Error, string]@
+-- and kernel returns @rt.SkyResult[string, string]@), the wrap is
+-- NOT identity — it carries a real type conversion that the
+-- @rt.ResultCoerce@ helper performs by tag-preserving cast.  We
+-- conservatively DON'T elide in that case.
+typedKernelParametricReturns :: Map.Map String String
+typedKernelParametricReturns = Map.fromList
+    -- Slice returns ([]T form — note exact spelling matches 'stripSlice')
+    [ ("String_splitT",       "[]string")
+    , ("Regex_findAllT",      "[]string")
+    , ("Regex_splitT",        "[]string")
+    -- Rune return — kernel sig declares 'rune' which Sky-side
+    -- renders as 'rune' at the wrap target.  Elision fires when
+    -- retType=="rune".
+    , ("Char_fromCodeT",      "rune")
+    -- SkyMaybe[T] returns (canonical Sky form 'rt.SkyMaybe[<inner>]')
+    , ("String_toIntT",       "rt.SkyMaybe[int]")
+    , ("String_toFloatT",     "rt.SkyMaybe[float64]")
+    , ("Regex_findT",         "rt.SkyMaybe[string]")
+    -- SkyResult[T, E] returns (kernel's runtime sig is
+    -- SkyResult[string, string] — error string + ok string).  Elision
+    -- fires ONLY when wrap target spells exactly this.  Sky-side
+    -- callers that route Error through ResultCoerce[Error, string]
+    -- WON'T elide (correctly — the wrap carries a real conversion).
+    , ("Encoding_base64DecodeT", "rt.SkyResult[string, string]")
+    , ("Encoding_urlDecodeT",    "rt.SkyResult[string, string]")
+    , ("Encoding_hexDecodeT",    "rt.SkyResult[string, string]")
+    ]
+
+
 -- | v0.17 P3.4c.1 — predicate for sealed-iface dispatch at @caseToGo@.
 --
 -- Returns @Just (modName, typeName, vars, opts, ctors)@ when the
@@ -9553,6 +9631,28 @@ wrapTypedReturn ctx mSrc retType body
     | Just baseT <- stripUnderscoreTParametric retType
     , Set.member baseT (Rec._cg_sealedIfaceNames getCgEnvFromScope)
     , isSealedIfaceCtorBody body baseT
+        = body
+    -- v0.17 P5 Stage 4 — typed-kernel PARAMETRIC return elision.
+    -- When body is a direct call to a registered typed kernel AND
+    -- the kernel's declared parametric return type (from
+    -- 'typedKernelParametricReturns') EXACT-matches @retType@, the
+    -- surrounding wrap is identity — the kernel already returns
+    -- the target shape concretely.  Elide.
+    --
+    -- Coverage: 'rt.SkyMaybe[T]', 'rt.SkyResult[T, E]', 'rune'
+    -- shapes.  Slice ([]T) shape elision lives at the dedicated
+    -- arm below (line ~9619, paired with 'stripSlice').
+    --
+    -- Exact match is critical because the wrap target may use
+    -- DIFFERENT type-args than the kernel's runtime sig
+    -- (e.g. @SkyResult[Sky_Core_Error_Error, string]@ vs the
+    -- kernel's @SkyResult[string, string]@); in that case the
+    -- wrap carries a real conversion via @rt.ResultCoerce@ and
+    -- elision would be unsound.  The exact-string compare guards
+    -- against that automatically.
+    | Just fn <- rtDirectCallName body
+    , Just registeredRet <- Map.lookup fn typedKernelParametricReturns
+    , registeredRet == retType
         = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
