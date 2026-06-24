@@ -6385,6 +6385,26 @@ generateDeclsForDep reachableProg canMod modPrefix =
               --   (3) Generic type param (T1/T2/... — passes through)
               -- EXCLUDED: anything in _cg_sealedIfaceNames (Sky_*/Std_*
               -- ADT names that emit as sealed Go interfaces).
+              --
+              -- v0.17 iter 11 WIDENING ATTEMPT — REVERTED:
+              -- Tried admitting sealed-iface ADTs whose variant payloads
+              -- are syntactically tuple-free (no Can.TTuple in argTys).
+              -- Build succeeded; runtime panicked in 00-standard-libs:
+              --   interface conversion: []rt.T2[interface {},interface {}]
+              --   is not main.Sky_Test_Test: missing method SkyVariantName
+              -- Root cause: tuple-free variants are necessary but NOT
+              -- sufficient for AsListT elision.  Upstream callers (test
+              -- builders) can still construct lists that materialise as
+              -- []rt.T2[any,any] at runtime regardless of the
+              -- declared Sky type, because the producer path passes
+              -- through generic List/foldr/etc whose Go return type is
+              -- []any.  AsListT[Sky_Test_Test] is what converts the any-
+              -- typed elements to the typed variant struct at the
+              -- consumer boundary.  Eliding it breaks soundness even
+              -- when the ADT itself has no tuple payload.
+              --
+              -- Reverted to ultra-narrow predicate.  Delta: 26-ui-showcase
+              -- AsListT 192 (unchanged from iter 10 baseline).
               cgEnv = getCgEnvFromScope
               cgSealedSet = Rec._cg_sealedIfaceNames cgEnv
               isSealedIfaceTypeStr s =
