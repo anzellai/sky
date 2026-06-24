@@ -4718,68 +4718,23 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
                       -- already shows where and how to fix each case.
                       return (Left ("Non-exhaustive patterns: " ++ entryPath))
                   _ -> do
-                    -- v0.17 Phase A iter 3 (task #659) — build the
-                    -- 'EmitCompileCtx' scaffold AT THE BOUNDARY.
-                    -- Snapshot 'scopeStateRef' once + destructure the
-                    -- post-solve bundle; the resulting ctx is threaded
-                    -- into 'emitPhase' alongside the legacy explicit
-                    -- args.  Reader sites in the body are UNCHANGED
-                    -- this iter — the IORef channel still drives the
-                    -- existing readers.  Iters 4-8 migrate readers
-                    -- one bottom-up batch at a time; iters 9-10
-                    -- delete the IORef channel.  See
+                    -- v0.17 Phase A iter 6a Option C — 'EmitCompileCtx'
+                    -- construction MOVED INTO 'emitPhase' (after its
+                    -- explicit 'finalizeCgEnv' C10 barrier) so the
+                    -- ctx snapshot of 'scopeStateRef._lc_cgEnv'
+                    -- carries the post-C10 finalised value.  The
+                    -- prior pre-emitPhase build read the IORef BEFORE
+                    -- the imports thunk fired C10, giving reader
+                    -- sites a stale ctx.  See
                     -- 'docs/v0.17-roadmap/phase-A-cgenv-reshape.md'
-                    -- §"Iter 3".
-                    scopeSnap     <- readIORef scopeStateRef
-                    anonRecsSnap  <- AnonRec.readAnonRecords
-                    -- v0.17 Phase A iter 3 — extract cgEnv from the
-                    -- 'Maybe Rec.CodegenEnv' on 'LowerCtx._lc_cgEnv'.
-                    -- This iter is scaffolding only — the ctx is NOT
-                    -- threaded into emitPhase's body; readers still
-                    -- consult 'scopeStateRef' / 'getCgEnv' as before.
-                    -- Iters 4-8 migrate the readers.  If the cgEnv
-                    -- hasn't been installed yet (pre-C9 in tests /
-                    -- LSP fixtures) we use the empty bootstrap value
-                    -- — matches the legacy IORef's seed-state
-                    -- behaviour.
-                    let cgEnvSnap = case LC.lookupCgEnv scopeSnap of
-                            Just env -> env
-                            Nothing  -> _ctx_cgEnv emptyCtx
-                    let emitCtx = buildEmitCompileCtx
-                            (Can._name canMod)
-                            cgEnvSnap
-                            (LC._lc_solved scopeSnap)
-                            kernelAliasMap
-                            (LC._lc_unionDetails scopeSnap)
-                            anonRecsSnap
-                            (LC._lc_aliases scopeSnap)
-                            (LC._lc_fieldIdx scopeSnap)
-                            (LC._lc_unionNames scopeSnap)
-                            (LC._lc_ffiTypedWrapperNames scopeSnap)
-                    -- v0.17 PR-α Stage 4 (task #659 iter 2) — extracted
-                    -- emit phase: depDecls render, typesWithDeps build,
-                    -- generateGoMulti, auth-boundary gate, main.go write,
-                    -- validator gate, copyRuntime + DCE + cache hash.
-                    -- Pure refactor — body is byte-identical to the
-                    -- legacy inline block; all writeIORef / modifyIORef
-                    -- calls stay where they were (none were lifted out
-                    -- of the boundary).  Locked baseline (PhaseABaseline
-                    -- + SkyshopCompiles + CoerceArgListMapInterplay
-                    -- + SealedIface + MsgDispatch + MonotonicContract)
-                    -- gates this extraction; rt.Coerce/AsListT counts
-                    -- in examples/26 + examples/00 unchanged.
-                    --
-                    -- Iter 3 widening: emitPhase takes the new ctx as
-                    -- an extra arg.  Body does not consume it yet
-                    -- (scaffolding only); the ctx is the value channel
-                    -- iter-4+ readers consume.
+                    -- §"Iter 6a".
                     emitPhase
                         config entryPath outDir srcHash loadedFfi
                         consoleNeeded canMod entrySrcMod validDeps
                         depRecAliases depUnionNames depUnionDetails
                         depEnumNames depArities depParamTypes
                         depRetTypes depUltRetTypes
-                        solveOut emitCtx
+                        solveOut
 
 
 -- | v0.17 PR-α Stage 4 (task #659 iter 2) — extracted emit phase.
@@ -4844,29 +4799,41 @@ emitPhase
     -- ^ depUltRetTypes.
     -> SolveOutputs
     -- ^ the post-solve bundle (iter 1).
-    -> EmitCompileCtx
-    -- ^ v0.17 Phase A iter 3 — emit-phase context (CompileCtx
-    -- scaffold).  This iter does NOT consume the ctx — the body is
-    -- byte-identical to iter 2.  Iters 4-5 thread the ctx into a
-    -- ReaderT for entry + dep emission; iters 6-8 migrate reader
-    -- sites.  The argument is present so the iter-3 commit's only
-    -- visible change is the signature widening + boundary construction
-    -- at the call site (\``continueCompile\``).  See
-    -- 'docs/v0.17-roadmap/phase-A-cgenv-reshape.md' §"Iter 3".
+    -- v0.17 Phase A iter 6a Option C — the prior 'EmitCompileCtx'
+    -- parameter has been DROPPED.  The ctx is now constructed INSIDE
+    -- 'emitPhase' AFTER the explicit C10 barrier ('finalizeCgEnv'
+    -- call) so the snapshot of 'scopeStateRef._lc_cgEnv' it carries
+    -- is GUARANTEED to be the post-C10 finalised value.  This
+    -- unblocks the iter-6 Class A reader migration: previously
+    -- reader sites consulting @ctx._cc_cgEnv@ would observe a
+    -- pre-C10 stale env (because the ctx was built in
+    -- 'continueCompile' BEFORE the C10 write fired via the
+    -- imports thunk's lazy force).  See
+    -- 'docs/v0.17-roadmap/phase-A-cgenv-reshape.md' §"Iter 6a".
     -> IO (Either String FilePath)
 emitPhase config entryPath outDir srcHash loadedFfi
           consoleNeeded canMod entrySrcMod validDeps
           depRecAliases depUnionNames depUnionDetails
           depEnumNames depArities depParamTypes
           depRetTypes depUltRetTypes
-          solveOut phaseACtx = do
-    -- v0.17 Phase A iter 4 — the ctx is now THREADED through the
-    -- entry-module emit helpers ('generateDeclsForDepScoped',
-    -- 'generateGoMulti', and its callees 'generateUnionTypes' /
-    -- 'generateAliasTypes' / 'generateDecls' / 'generateDefMaybe' /
-    -- 'generateDef').  Signature widening only — none of those
-    -- callees consume the ctx yet; iter 6+ migrates the reader
-    -- sites.  Behaviour is byte-identical pre/post iter-4.
+          solveOut = do
+    -- v0.17 Phase A iter 6a Option C — emit phase split into PRE-C10
+    -- (typesWithDeps assembly), explicit C10 barrier
+    -- ('finalizeCgEnv'), and POST-C10 (EmitCompileCtx + depDecls +
+    -- goCodeRaw).  The 'EmitCompileCtx' constructed below sees the
+    -- finalised cgEnv on 'scopeStateRef' so iter-6+ reader migration
+    -- via @ctx._cc_cgEnv@ is sound.
+    --
+    -- Iter 4 wired the ctx through the entry-module emit helpers
+    -- ('generateDeclsForDepScoped', 'generateGoMulti', and its
+    -- callees 'generateUnionTypes' / 'generateAliasTypes' /
+    -- 'generateDecls' / 'generateDefMaybe' / 'generateDef').  Iter 6a
+    -- moves the ctx CONSTRUCTION INTO this function so the value
+    -- consumed by the iter-4 helpers carries the POST-C10 finalised
+    -- state.  Behaviour is byte-identical pre/post iter-6a — the
+    -- legacy imports thunk's IO block still fires (now via
+    -- 'finalizeCgEnv'), just at a known caller-controlled point
+    -- BEFORE the ctx is constructed.
     let types                = _so_types               solveOut
         entryRegionTys       = _so_entryRegionTys      solveOut
         mergedRegionTys      = _so_mergedRegionTys     solveOut
@@ -4878,20 +4845,17 @@ emitPhase config entryPath outDir srcHash loadedFfi
         reached              = _so_reached             solveOut
         csiByCallee          = _so_csiByCallee         solveOut
         reachableProgram     = _so_reachableProg       solveOut
+        kernelAliasMap       = _so_kernelAliasMap      solveOut
         goSigMapFromSolve    = _so_goSigMap            solveOut
     putStrLn "-- Generating Go"
-    -- v0.13 Stage 1 (task #189) — emit dep-module decls
-    -- AFTER typecheck has populated `funcSkyToGoTVars`.
-    -- This is the critical point: dep bodies use
-    -- `withScopedLambdaTypes` to register typed func-
-    -- param names, which `goExprGoType` then resolves
-    -- via `solvedTypeToGo` with Go-side TVar names
-    -- (T1, T2, ...). Without the env populated, the
-    -- skyToGo rename produces empty σ and func types
-    -- render as `func(any) any`.
-    let depDecls = concatMap (\(modName, depMod) ->
-            let prefix = map (\c -> if c == '.' then '_' else c) modName
-            in generateDeclsForDepScoped phaseACtx reachableProgram modName depMod prefix) validDeps
+    -- v0.17 Phase A iter 6a — emitPhasePre: build the typed
+    -- inputs 'finalizeCgEnv' consumes.  None of these need
+    -- cgEnv state (they're pure functions over solver outputs
+    -- + canonical AST + FFI tables).  The 'depDecls' build is
+    -- DEFERRED to emitPhasePost because it consults phaseACtx,
+    -- which doesn't exist yet — building it before the C10
+    -- barrier would lift the dep emission to PRE-C10 state and
+    -- regress the legacy lazy ordering.
     let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                         | (mn, depMod) <- validDeps ]
         -- Conflict-detection merge with TVar normalisation.
@@ -5008,6 +4972,68 @@ emitPhase config entryPath outDir srcHash loadedFfi
               (Solve.withPerModuleEnv perModuleEnv
                 (Solve.withPerModuleRegions perModuleRegions
                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
+    -- v0.17 Phase A iter 6a Option C — EXPLICIT C10 BARRIER.
+    --
+    -- 'finalizeCgEnv' performs the IO side effects that historically
+    -- only fired LAZILY inside the 'imports' thunk of
+    -- 'generateGoMulti' (forced via @importsForced \`seq\`@ at goCode
+    -- consumption time).  Calling it explicitly HERE — between
+    -- typesWithDeps assembly and EmitCompileCtx construction —
+    -- guarantees scopeStateRef carries the post-C10 finalised cgEnv
+    -- when we read it below.
+    --
+    -- The imports thunk continues to call 'finalizeCgEnv' (kept as a
+    -- safety net for non-emitPhase code paths — LSP fixtures, tests).
+    -- Idempotency: 'buildFinalCgEnv' is pure over the same inputs;
+    -- second fire writes the same value to scopeStateRef.
+    finalizeCgEnv consoleNeeded canMod typesWithDeps
+                  depRecAliases depUnionNames depUnionDetails
+                  depEnumNames depArities depParamTypes
+                  depRetTypes depUltRetTypes
+                  depInferredParams depInferredRets depInferredSigs
+                  depAliasPairs
+    -- POST-C10 EmitCompileCtx construction.  scopeStateRef now
+    -- carries the finalised cgEnv (just installed by finalizeCgEnv);
+    -- the ctx field 'phaseACtx._cc_cgEnv' will reflect that.  Iter
+    -- 6+ reader migration (Class A sites: 17 callers consulting
+    -- @ctx._cc_cgEnv@ via the forthcoming 'lookupCgEnvFromCtx'
+    -- path) is sound from this point forward.
+    scopeSnap    <- readIORef scopeStateRef
+    anonRecsSnap <- AnonRec.readAnonRecords
+    let cgEnvSnap = case LC.lookupCgEnv scopeSnap of
+            Just env -> env
+            Nothing  -> error "BUG: emitPhase post-C10 ctx-build saw uninstalled cgEnv (finalizeCgEnv contract violation)"
+    let phaseACtx = buildEmitCompileCtx
+            (Can._name canMod)
+            cgEnvSnap
+            (LC._lc_solved scopeSnap)
+            kernelAliasMap
+            (LC._lc_unionDetails scopeSnap)
+            anonRecsSnap
+            (LC._lc_aliases scopeSnap)
+            (LC._lc_fieldIdx scopeSnap)
+            (LC._lc_unionNames scopeSnap)
+            (LC._lc_ffiTypedWrapperNames scopeSnap)
+    -- v0.17 Phase A iter 6a — emitPhasePost: depDecls + goCodeRaw +
+    -- validator gate + write site.  phaseACtx now carries POST-C10
+    -- state so reader sites under this ctx see the finalised cgEnv.
+    -- 'depDecls' MUST stay here (post-barrier) because
+    -- 'generateDeclsForDepScoped' consumes phaseACtx; lifting it
+    -- pre-barrier would build the dep emit chain against an
+    -- uninitialised ctx.
+    let
+        -- v0.13 Stage 1 (task #189) — emit dep-module decls
+        -- AFTER typecheck has populated `funcSkyToGoTVars`.
+        -- This is the critical point: dep bodies use
+        -- `withScopedLambdaTypes` to register typed func-
+        -- param names, which `goExprGoType` then resolves
+        -- via `solvedTypeToGo` with Go-side TVar names
+        -- (T1, T2, ...). Without the env populated, the
+        -- skyToGo rename produces empty σ and func types
+        -- render as `func(any) any`.
+        depDecls = concatMap (\(modName, depMod) ->
+            let prefix = map (\c -> if c == '.' then '_' else c) modName
+            in generateDeclsForDepScoped phaseACtx reachableProgram modName depMod prefix) validDeps
         goCodeRaw = generateGoMulti phaseACtx consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
         -- v0.13 Layer 2: collect Sky-name → source-region
         -- for every top-level declaration so the post-emit
@@ -7191,6 +7217,97 @@ buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
              baseEnv
 
 
+-- | v0.17 Phase A iter 6a Option C — explicit C10 barrier.
+--
+-- Forces the cgEnv finalisation (the "C10 write" — the
+-- modifyIORef chain that previously lived only inside the
+-- 'imports' lazy thunk of 'generateGoMulti') to fire at a
+-- caller-controlled point.
+--
+-- The original architecture relied on Haskell laziness: the
+-- imports thunk was forced as a side-effect of @writeFile
+-- mainGoPath goCode'@ consuming 'generateGoMulti's output,
+-- which sequenced 'imports' BEFORE 'depDecls' rendered (via
+-- @importsForced \`seq\`@).  That ordering meant the
+-- 'EmitCompileCtx' constructed at 'continueCompile' (BEFORE
+-- 'emitPhase' ran) snapshot 'scopeStateRef' PRE-C10 — so
+-- reader sites consulting @ctx._cc_cgEnv@ via the (iter 6
+-- forthcoming) 'lookupCgEnvFromCtx' path would see a STALE
+-- value missing dep-merged 'funcSkyToGoTVars' /
+-- 'funcParamTypes' etc.
+--
+-- Option C fixes that by giving 'emitPhase' an explicit C10
+-- barrier: it builds 'typesWithDeps', calls 'finalizeCgEnv'
+-- (which performs the same side effects the imports thunk
+-- would have), THEN reads 'scopeStateRef' and builds the
+-- 'EmitCompileCtx' — guaranteeing the ctx carries the
+-- POST-C10 finalised cgEnv.
+--
+-- The imports thunk inside 'generateGoMulti' continues to
+-- call 'finalizeCgEnv' (preserving the lazy-force safety net
+-- for any code path that bypasses the explicit barrier, e.g.
+-- LSP fixtures).  Both calls are IDEMPOTENT: 'buildFinalCgEnv'
+-- is a pure function of (solvedTypes, canMod, dep*) and the
+-- @Rec.with*@ setters use 'Map.union' / 'Set.union' semantics
+-- which are idempotent on same-keyed inputs.  Second-fire
+-- writes the same value to 'scopeStateRef'; no observable
+-- behaviour change.
+--
+-- See @docs/v0.17-roadmap/phase-A-cgenv-reshape.md@ R2/R3.
+finalizeCgEnv
+    :: Bool                                          -- consoleNeeded (unused; kept for parity with imports thunk)
+    -> Can.Module                                    -- canMod
+    -> Solve.SolvedTypes                             -- solvedTypes (already wrapped with implementsMap + perModule*)
+    -> Set.Set String                                -- depRecAliases
+    -> Set.Set String                                -- depUnionNames
+    -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+                                                     -- depUnionDetails
+    -> Set.Set String                                -- depEnumNames
+    -> Map.Map String Int                            -- depArities
+    -> Map.Map String [String]                       -- depParamTypes
+    -> Map.Map String String                         -- depRetTypes
+    -> Map.Map String String                         -- depUltRetTypes
+    -> Map.Map String [String]                       -- extraInferredParamTypes
+    -> Map.Map String String                         -- extraInferredRetTypes
+    -> Map.Map String ([String], [String], String)   -- extraInferredSigs
+    -> [(String, Map.Map String Can.Alias)]          -- depAliasPairs
+    -> IO ()
+finalizeCgEnv _consoleNeeded canMod solvedTypes depRecAliases
+              depUnionNames depUnionDetails depEnumNames depArities
+              depParamTypes depRetTypes depUltRetTypes
+              extraInferredParamTypes extraInferredRetTypes
+              extraInferredSigs depAliasPairs = do
+    -- Init-over-generic diagnostic (warn-only).  Idempotent on
+    -- repeat fire (same 'Solve.SolvedTypes' input → same hPutStrLn).
+    warnInitOverGeneric solvedTypes
+    -- Snapshot the pre-C10 scopeStateRef cgEnv to feed buildFinalCgEnv.
+    -- Same per-evaluation read pattern as the legacy thunk
+    -- (Compile.hs:7286).
+    prevEnvCtx <- readIORef scopeStateRef
+    let prevEnv = case LC.lookupCgEnv prevEnvCtx of
+            Just e  -> e
+            Nothing -> error "BUG: prevEnv read before scopeStateRef cgEnv installed"
+    let cgEnv = buildFinalCgEnv prevEnv solvedTypes canMod
+                    depRecAliases depUnionNames depUnionDetails
+                    depEnumNames
+                    depArities depParamTypes depRetTypes
+                    depUltRetTypes extraInferredParamTypes
+                    extraInferredRetTypes extraInferredSigs
+                    depAliasPairs
+    -- Install the finalised cgEnv on scopeStateRef.  Idempotent:
+    -- second fire from the imports thunk writes the same value
+    -- (buildFinalCgEnv is pure over the same inputs).
+    modifyIORef scopeStateRef (LC.withCgEnv cgEnv)
+    -- Mirror the unionNames + unionDetails channel — same write
+    -- pattern as the legacy thunk (Compile.hs:7318-7321).  Both
+    -- consume 'Rec._cg_unionNames cgEnv' / 'Rec._cg_unionDetails
+    -- cgEnv' which are deterministic over the same cgEnv input.
+    modifyIORef' scopeStateRef
+        ( LC.withUnionNames   (Rec._cg_unionNames   cgEnv)
+        . LC.withUnionDetails (Rec._cg_unionDetails cgEnv)
+        )
+
+
 -- | Generate Go with merged dependency declarations
 --
 -- v0.17 Phase A iter 4 — entry-module top-level emit function takes
@@ -7245,94 +7362,26 @@ generateGoMulti phaseACtx consoleNeeded canMod srcMod config solvedTypes depDecl
             -- 'atomicModifyIORef' (registrations) + 'writeIORef'
             -- (reset at compile entry, BEFORE any registration site
             -- can fire).  Locked by Sky.Build.AnonRecordEmissionGuarantee.
-            -- v0.17 PR-19 — init over-generic diagnostic (warn-only).
-            -- When the entry module declares `init` and HM produces
-            -- unbound TVars in the return tuple's Model slot, warn the
-            -- user — that's the unannotated `init _req = ({}, Cmd.none)`
-            -- shape where Model + Msg escape as wildcards and the
-            -- emitted Go signature degrades to `func(any) (any, rt.SkyCmd[any])`.
-            -- The bundled console (annotated `init : a -> (Model, Cmd Msg)`)
-            -- and any user app that annotates correctly are NOT flagged
-            -- because their tuple slot 0 is a concrete Model type.
-            -- Lattice-driven inference (deriving Model/Msg from
-            -- `Live.app cfg`'s record-row binding) is deferred to v0.18.
-            warnInitOverGeneric solvedTypes
-            -- T2/T6: register entry-module + dep-module typed function
-            -- signatures so call-site codegen (`coerceCallArgs`) can
-            -- emit `any(arg).(T)` coercions when passing args to
-            -- typed-param functions across module boundaries.
-            -- Rebuild the cgEnv fresh from ALL sources (annotations,
-            -- HM-inferred, dep types) so the final env is deterministic
-            -- regardless of when `imports` is forced relative to
-            -- depDecls during goCode rendering.
-            -- Register HM-inferred sigs for ENTRY module functions too
-            -- so call-site coercion (coerceCallArgs / coerceArg) sees
-            -- the typed params. Without this, calling an entry-module
-            -- typed function from another entry function skips
-            -- coercion and Go rejects any→concrete.
-            -- Build alias set early so splitInferredSigWith can resolve
-            -- cross-module record aliases in HM-inferred types.
-            -- v0.17 iter 22a (task #654) — C10 cgEnv build extracted
-            -- to 'buildFinalCgEnv' pure function.  Single 'readIORef
-            -- globalCgEnv' snapshot replaces the two prior reads
-            -- (the previous code read at 'prevEnvEarly' + 'prevEnv'
-            -- — same value at that point in the do-block).  The
-            -- v0.17 iter 44 S5 v3 — read scopeStateRef directly
-            -- (per-evaluation, NOT via getCgEnvFromScope CAF which
-            -- memoizes process-wide and would return a stale env
-            -- from earlier force-time at dep emit). At this point
-            -- post-C9/per-dep installs, scopeStateRef has the
-            -- pre-C10 state needed as prevEnv input.
-            prevEnvCtx <- readIORef scopeStateRef
-            let prevEnv = case LC.lookupCgEnv prevEnvCtx of
-                    Just e -> e
-                    Nothing -> error "BUG: prevEnv read before scopeStateRef cgEnv installed"
-            let cgEnv = buildFinalCgEnv prevEnv solvedTypes canMod
-                            depRecAliases depUnionNames depUnionDetails
-                            depEnumNames
-                            depArities depParamTypes depRetTypes
-                            depUltRetTypes extraInferredParamTypes
-                            extraInferredRetTypes extraInferredSigs
-                            depAliasPairs
-            -- v0.17 iter 44 S5 v3 — globalCgEnv IORef DELETED.
-            -- v0.17 close criterion 3 — globalCgEnv S2 shadow install
-            -- (C10 final).  This is the post-importsForced-`seq`
-            -- write — the cgEnv value here is the authoritative
-            -- post-C10 snapshot.  Install on scopeStateRef so the
-            -- ctx field carries the same final value the legacy
-            -- 'getCgEnv' CAF observes.
-            modifyIORef scopeStateRef (LC.withCgEnv cgEnv)
-            -- v0.17 iter 19 (task #654) — install C10 cgEnv unionNames
-            -- onto scopeStateRef (refreshes the seed from line ~2719
-            -- with the cgEnv's merged set after dep-module imports
-            -- finish populating it).
-            --
-            -- v0.17 P3.4c.0a — mirror the unionDetails channel
-            -- alongside.  Without this, `LC._lc_unionDetails` only
-            -- ever carried dep details (the C9 install at line ~3262
-            -- writes depUnionDetails); the entry module's union
-            -- details would be invisible to the upcoming
-            -- subjectIsSealedIface predicate (P3.4c.1).  Dual-grill
-            -- (iter 53, Grillers #1 + #2) flagged this as the
-            -- blocking asymmetry.
-            modifyIORef' scopeStateRef
-                ( LC.withUnionNames   (Rec._cg_unionNames   cgEnv)
-                . LC.withUnionDetails (Rec._cg_unionDetails cgEnv)
-                )
-            -- v0.17 C10: GoSig dep-module typeParams population.  C9
-            -- captured entry-module-only state; after dep-module
-            -- _cg_funcSkyToGoTVars merges in at line 3788-3790, the
-            -- full map is in cgEnv.  Re-update _gs_typeParams for
-            -- every Sky-named binding the merged map now knows about.
-            -- Preserves the annotation/quantifier fields from C9.
-            -- v0.17 PR-α step-5 (task #654) — C10 goSigMap update
-            -- moved OUT of the imports IO block.  The pure
-            -- 'buildFinalGoSigMap' now runs at the top-level
-            -- 'finalGoSigMap' let binding below, which reads
-            -- 'globalCgEnv' once after 'importsForced' has
-            -- written it.  'globalGoSigMap' IORef DELETED — map
-            -- flows as 'generateGoMulti's 'goSigMapFromSolve'
-            -- argument.
+            -- v0.17 Phase A iter 6a Option C — C10 finalisation extracted
+            -- into the named 'finalizeCgEnv' IO helper above.  The
+            -- explicit call here preserves the legacy lazy-force
+            -- safety net for any code path that bypasses
+            -- 'emitPhase''s explicit pre-emit barrier (LSP fixtures,
+            -- tests).  Idempotent: 'buildFinalCgEnv' is pure over
+            -- the same inputs, and the 'Map.union' / 'Set.union'
+            -- merges inside 'Rec.with*' setters are no-ops when fed
+            -- the same value twice.  So a double-fire (explicit
+            -- barrier in 'emitPhase' + this thunk-deferred fire)
+            -- writes the same finalised cgEnv to 'scopeStateRef'
+            -- and emits 'warnInitOverGeneric' once per evaluation
+            -- (historically fires once anyway because the thunk is
+            -- memoised).
+            finalizeCgEnv consoleNeeded canMod solvedTypes
+                          depRecAliases depUnionNames depUnionDetails
+                          depEnumNames depArities depParamTypes
+                          depRetTypes depUltRetTypes
+                          extraInferredParamTypes extraInferredRetTypes
+                          extraInferredSigs depAliasPairs
             return $ collectGoImports consoleNeeded canMod srcMod
         -- Force `imports` before anything else so the env is set up
         -- before depDecls / decls are evaluated (they read getCgEnv).
