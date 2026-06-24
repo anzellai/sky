@@ -13149,14 +13149,14 @@ exprToGoExpect ctx expectedTy e = exprToGoExpectGo (phaseAFallback ctx) ctx (sol
 -- with 'exprToGo'.  ctx flows through coerceArg / coerceToFieldType
 -- bridges instead of ctxFromIORef IORef reads.
 -- v0.17 Phase A iter 5v2-b: scaffolding sub-batch b of 4.  Widened
--- with @EmitCompileCtx@ as first param (named @_phaseACtxB@,
+-- with @EmitCompileCtx@ as first param (named @phaseACtxB@,
 -- currently underscore-bound + ignored — emitPhase Reader-style
 -- migration will activate it in a later sub-batch).  All call sites
 -- updated to thread their own ctx, falling back to
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 exprToGoExpectGo :: EmitCompileCtx -> LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoExpectGo _phaseACtxB ctx goRendering e@(A.At _ expr)
+exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
     -- Universal safety gate: only thread the expected type when its
     -- Go rendering is a REAL, emittable Go type.  `goZeroValue`
     -- returning `Just` proves it (it can name a zero literal).  For
@@ -13235,7 +13235,7 @@ exprToGoExpectGo _phaseACtxB ctx goRendering e@(A.At _ expr)
                 let finalRet =
                         if finalRet0 == "any"
                             then case inferGoType
-                                    (Rec._cg_solvedTypes getCgEnvFromScope)
+                                    (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxB))
                                     body of
                                 "any" -> "any"
                                 concrete -> concrete
@@ -13245,7 +13245,7 @@ exprToGoExpectGo _phaseACtxB ctx goRendering e@(A.At _ expr)
                     bodyPreTyped = isEmittableGoType finalRet
                     rawBody =
                         if bodyPreTyped
-                            then exprToGoExpectGo _phaseACtxB ctx finalRet body
+                            then exprToGoExpectGo phaseACtxB ctx finalRet body
                             else exprToGo (phaseAFallback ctx) ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
@@ -15607,15 +15607,15 @@ emitPartialCtor ctx func suppliedArgs missing =
 -- through unchanged. The `any(arg).(T)` form works whether `arg` is
 -- already typed `T` (redundant assertion) or `any` (real coercion).
 -- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
--- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- with @EmitCompileCtx@ as first param (named @phaseACtxD@,
 -- currently underscore-bound + ignored — emitPhase Reader-style
 -- migration will activate it in iter 6+ Class A reader migration).
 -- All call sites updated to thread their own ctx, falling back to
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 coerceCallArgs :: EmitCompileCtx -> LC.LowerCtx -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgs _phaseACtxD ctx qualName args =
-    let env = getCgEnvFromScope
+coerceCallArgs phaseACtxD ctx qualName args =
+    let env = lookupCgEnvFromCtx phaseACtxD
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
          then map (exprToGo (phaseAFallback ctx) ctx) args
@@ -15757,15 +15757,15 @@ unmangleQual = map (\c -> if c == '_' then '.' else c)
 
 
 -- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
--- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- with @EmitCompileCtx@ as first param (named @phaseACtxD@,
 -- currently underscore-bound + ignored — emitPhase Reader-style
 -- migration will activate it in iter 6+ Class A reader migration).
 -- All call sites updated to thread their own ctx, falling back to
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 coerceCallArgsAt :: EmitCompileCtx -> LC.LowerCtx -> A.Region -> String -> [Can.Expr] -> [GoIr.GoExpr]
-coerceCallArgsAt _phaseACtxD ctx region qualName args =
-    let env = getCgEnvFromScope
+coerceCallArgsAt phaseACtxD ctx region qualName args =
+    let env = lookupCgEnvFromCtx phaseACtxD
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
         -- v0.17 C24 — CSI key uses ("" :: modName, line, col).
         -- The original modName-aware widening attempt did NOT
@@ -16187,7 +16187,7 @@ coerceCallArgsAt _phaseACtxD ctx region qualName args =
                                         if finalRet0 == "any"
                                             then if allInputsTyped
                                                    then case inferGoType
-                                                           (Rec._cg_solvedTypes getCgEnvFromScope)
+                                                           (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxD))
                                                            body of
                                                        "any" -> "any"
                                                        concrete -> concrete
@@ -16537,14 +16537,14 @@ splitFuncTypeStr s
 -- on scopeStateRef) byte-identical behaviour until Stage 4 migrates
 -- exprToGo's arms to thread upstream ctx explicitly.
 -- v0.17 Phase A iter 5v2-d: scaffolding sub-batch d of 4 (FINAL).  Widened
--- with @EmitCompileCtx@ as first param (named @_phaseACtxD@,
+-- with @EmitCompileCtx@ as first param (named @phaseACtxD@,
 -- currently underscore-bound + ignored — emitPhase Reader-style
 -- migration will activate it in iter 6+ Class A reader migration).
 -- All call sites updated to thread their own ctx, falling back to
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 coerceArg :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
-coerceArg _phaseACtxD ctx mSrc e ty
+coerceArg phaseACtxD ctx mSrc e ty
     | ty == "any" || null ty = e
     -- Generic type parameter (T1, T2, ...) — when the arg's static
     -- Go type is concrete (`int`, `string`, `[]T1`, `rt.SkyResult
@@ -16664,7 +16664,7 @@ coerceArg _phaseACtxD ctx mSrc e ty
     , Just src <- mSrc
     , Just aliasName <- aliasBaseFromCanExpr src
     , aliasName ++ "_R" == targetBase
-    , let solved = Rec._cg_solvedTypes getCgEnvFromScope
+    , let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxD)
     , case inferExprType solved src of
           Just srcTy -> not (hasUnresolvedSkyTVar solved srcTy)
           Nothing    -> True
