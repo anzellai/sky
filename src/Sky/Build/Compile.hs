@@ -6695,6 +6695,14 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
                         }
               | Can.Ctor cname idx arity argTys <- ctors
               ]
+            -- v0.17 Phase 4 Stage 2 — per-variant typed arm functions
+            -- on the dep-module path too.  Uses the per-dep
+            -- 'ctorArgGoTypeDep' renderer (tvarMap-aware) so poly
+            -- dep ADTs emit arms with @T1@/@T2@-shaped params, not
+            -- @any@.  Stage 6 fast-path consumes via the
+            -- LookupMsgVariant registry populated entry-side.
+            ++ emitMsgArmFuncsDep qualType ctors opts
+              (\i argTys -> ctorArgGoTypeDep tvarMap i argTys)
             ++ [ GoIr.GoDeclRaw $ "func init() { "
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
                         "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
@@ -7616,6 +7624,100 @@ emitMsgDispatchStage1 qualType ctors opts =
                 in updateLine ++ variantLines
 
 
+-- | v0.17 Phase 4 Stage 2 — emit per-variant typed arm functions.
+--
+-- Stage 2 is the codegen counterpart to Stage 1's runtime registry
+-- scaffolding.  Per the @phase4-per-msg-dispatch.md@ design, the
+-- compiler emits ONE typed Go function per Msg-shaped variant
+-- alongside the existing typed ctor function.  These arm functions
+-- are pure delegations to the typed ctor and are correctness-safe
+-- by construction — Stage 6 will wire 'sky_call' / 'sky_call2' to
+-- consult these via the @LookupMsgVariant@ registry.
+--
+-- Stage 2 emission shape (per variant, arity-0):
+--
+-- @
+-- func Main_Msg_arm_Increment() Main_Msg { return Main_Msg_Increment }
+-- @
+--
+-- Stage 2 emission shape (per variant, arity \> 0 — typed payload
+-- params straight from the ctor's typed @argTys@):
+--
+-- @
+-- func Main_Msg_arm_SetCount(v0 int) Main_Msg { return Main_Msg_SetCount(v0) }
+-- @
+--
+-- Contract:
+--
+--   * NO 'rt.Coerce' inserted at any site — the arm forwards typed
+--     parameters straight to the typed ctor.
+--
+--   * Skips ADT shapes 'emitMsgDispatchStage1' also skips (Enum /
+--     Unbox / zero-variant) so the gate stays paired.
+--
+--   * Returns empty list for skipped shapes so existing
+--     'generateUnion' output stays byte-identical to today.
+--
+-- Observable: new per-variant Go functions in every emitted
+-- @main.go@ for examples that declare Msg-shaped ADTs.  Stage 6
+-- (sky_call fast-path) consumes them via the registry built in
+-- Stage 1.
+emitMsgArmFuncs
+    :: (Int -> [T.Type] -> String)
+    -- ^ Per-slot Go type renderer: takes (slot index, full argTys).
+    -- Matches the existing 'ctorArgGoType' / 'ctorArgGoTypeDep'
+    -- shape so entry + dep paths can share this emitter.
+    -> String
+    -> [Can.Ctor]
+    -> Can.CtorOpts
+    -> [GoIr.GoDecl]
+emitMsgArmFuncs renderSlotTy typeName ctors opts = case opts of
+    Can.Enum  -> []
+    Can.Unbox -> []
+    Can.Normal
+        | null ctors -> []
+        | otherwise  -> map mkArm ctors
+  where
+    mkArm (Can.Ctor cname _idx arity argTys) =
+        let armName = typeName ++ "_arm_" ++ cname
+            params =
+                [ GoIr.GoParam ("v" ++ show i) (renderSlotTy i argTys)
+                | i <- [0 .. arity - 1]
+                ]
+            paramRefs =
+                [ GoIr.GoIdent ("v" ++ show i)
+                | i <- [0 .. arity - 1]
+                ]
+            ctorRef = typeName ++ "_" ++ cname
+            -- arity-0: ctor is a @var@; reference it directly.
+            -- arity≥1: ctor is a @func@; call it with typed args.
+            bodyExpr =
+                if arity == 0
+                    then GoIr.GoIdent ctorRef
+                    else GoIr.GoCall (GoIr.GoIdent ctorRef) paramRefs
+        in GoIr.GoDeclFunc GoIr.GoFuncDecl
+            { GoIr._gf_name = armName
+            , GoIr._gf_typeParams = []
+            , GoIr._gf_params = params
+            , GoIr._gf_returnType = typeName
+            , GoIr._gf_body = [GoIr.GoReturn bodyExpr]
+            }
+
+
+-- | Dep-path companion to 'emitMsgArmFuncs' — proxy that uses the
+-- per-dep 'ctorArgGoTypeDep' renderer (closed over its tvarMap)
+-- via a slot-index callback supplied by the caller scope.  Same
+-- signature shape so the call site stays readable.
+emitMsgArmFuncsDep
+    :: String
+    -> [Can.Ctor]
+    -> Can.CtorOpts
+    -> (Int -> [T.Type] -> String)
+    -> [GoIr.GoDecl]
+emitMsgArmFuncsDep typeName ctors opts renderSlotTy =
+    emitMsgArmFuncs renderSlotTy typeName ctors opts
+
+
 -- | Generate Go type declarations for user-defined union types
 generateUnionTypes :: Can.Module -> [GoIr.GoDecl]
 generateUnionTypes canMod =
@@ -7670,6 +7772,12 @@ generateUnionTypes canMod =
                                   [tp ++ " any" | tp <- goTVarsEM]
                               ++ "] = rt.SkyADT" ] )
             ++ map (generateCtorFunc typeName) ctors
+            -- v0.17 Phase 4 Stage 2 — per-variant typed arm
+            -- functions.  Pure typed delegations to the existing
+            -- ctor functions/vars.  Stage 6 (sky_call fast-path)
+            -- consumes these via the LookupMsgVariant registry
+            -- populated by Stage 1.  See 'emitMsgArmFuncs' above.
+            ++ emitMsgArmFuncs ctorArgGoType typeName ctors opts
             ++ [ GoIr.GoDeclRaw $ "func init() { "
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
                         "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
