@@ -4715,253 +4715,355 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
                       -- branch).  Return a one-line marker; the renderer
                       -- already shows where and how to fix each case.
                       return (Left ("Non-exhaustive patterns: " ++ entryPath))
-                  _ -> do
-                    putStrLn "-- Generating Go"
-                    -- v0.13 Stage 1 (task #189) — emit dep-module decls
-                    -- AFTER typecheck has populated `funcSkyToGoTVars`.
-                    -- This is the critical point: dep bodies use
-                    -- `withScopedLambdaTypes` to register typed func-
-                    -- param names, which `goExprGoType` then resolves
-                    -- via `solvedTypeToGo` with Go-side TVar names
-                    -- (T1, T2, ...). Without the env populated, the
-                    -- skyToGo rename produces empty σ and func types
-                    -- render as `func(any) any`.
-                    let depDecls = concatMap (\(modName, depMod) ->
-                            let prefix = map (\c -> if c == '.' then '_' else c) modName
-                            in generateDeclsForDepScoped reachableProgram modName depMod prefix) validDeps
-                    let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
-                                        | (mn, depMod) <- validDeps ]
-                        -- Conflict-detection merge with TVar normalisation.
-                        -- See typesWithDepsBuilder below for the algorithm.
-                        typesWithDeps =
-                            -- v0.15.x P37a: `types` is now the new
-                            -- `Solve.SolvedTypes` record.  The merge logic
-                            -- below works over the `_stEnv` Map view;
-                            -- after merging, we re-wrap with the
-                            -- `mergedRegionTys` region map computed
-                            -- earlier so `generateGoMulti` continues to
-                            -- receive a full `Solve.SolvedTypes` value.
-                            let typesEnv = Solve._stEnv types
-                                entryKeys = Map.keysSet typesEnv
-                                allMaps = typesEnv : [t | (_, t) <- depSolved]
-                                keyToTypes = Map.unionsWith (++)
-                                    [ Map.map (:[]) m | m <- allMaps ]
-                                isResolved (T.TVar _) = False
-                                isResolved _ = True
-                                normaliseType = normaliseTypeForMerge
-                                -- Bug fix: a key in `entryKeys` may have come
-                                -- from the entry module's `_locals` ledger
-                                -- (lambda params / inner-let bindings) rather
-                                -- than from a real top-level binding. When the
-                                -- same key also exists in a DEP module's
-                                -- solvedTypes — and disagrees structurally —
-                                -- the dep version is the genuine top-level
-                                -- declaration of THAT module; the entry's is
-                                -- pollution from a same-named local.
-                                -- Concrete case: Main.sky has functions like
-                                -- `fetchLogs parent filter = …` whose lambda
-                                -- param `filter : LogFilter` leaks into
-                                -- solvedTypes; Sky.Core.List.filter (the real
-                                -- HOF) gets shadowed and View.sky's
-                                -- `List.filter (...)` then infers as LogFilter.
-                                -- Detect: if entry's type AND any dep's type
-                                -- disagree structurally, run the ambiguity
-                                -- pipeline (treat as cross-scope conflict).
-                                -- v0.17 PR-10 migration: sentinel writers
-                                -- use 'Solve.unresolvedSentinel' (typed
-                                -- ADT dispatch) instead of raw TVar
-                                -- string literals.  Underlying TVar
-                                -- representation unchanged; the typed
-                                -- surface prevents typo-class bugs at
-                                -- the writers and makes the sentinel set
-                                -- discoverable.
-                                resolveKey k tys
-                                    | k `Set.member` entryKeys =
-                                        let entryTy = Map.findWithDefault (Solve.unresolvedSentinel Solve.UnresolvedUnbound) k typesEnv
-                                            depTys  = [ t | (_, m) <- depSolved
-                                                          , Just t <- [Map.lookup k m]
-                                                          , isResolved t ]
-                                            allCands = if isResolved entryTy
-                                                           then entryTy : depTys
-                                                           else depTys
-                                            normalisedAll = List.nub
-                                                (map normaliseType allCands)
-                                        in case normalisedAll of
-                                            []    -> entryTy
-                                            [_]   -> entryTy
-                                            _     -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
-                                    | otherwise =
-                                        let resolved = filter isResolved tys
-                                            normalised = List.nub (map normaliseType resolved)
-                                        in case normalised of
-                                            []  -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
-                                            [_] -> case resolved of
-                                                     (t:_) -> t
-                                                     []    -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
-                                            _   -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
-                                mergedEnv = Map.mapWithKey resolveKey keyToTypes
-                                -- v0.15.6 #365 — per-module region ledger
-                                -- carries each dep's own region map under
-                                -- its dotted name, plus the entry module's.
-                                -- Consumers `lookupSolvedRegionScoped`
-                                -- consult this ledger first when a
-                                -- `_stCurrentModule` hint is installed by
-                                -- `generateGoMulti`'s per-dep scope.
-                                entryModName = ModuleName.toString (Can._name canMod)
-                                perModuleRegions = Map.fromList
-                                    ( (entryModName, entryRegionTys)
-                                    : depRegionTysByModule )
-                                -- v0.15.6 #365 — per-module env ledger.
-                                -- Each dep's _stEnv (carrying its own
-                                -- let-bound locals' types like `encodeOne`)
-                                -- is preserved separately so consumers
-                                -- consulting via `lookupSolvedVarScoped`
-                                -- under a `_stCurrentModule` hint see the
-                                -- right module's let-bound type — without
-                                -- this, the cross-module merge collapsed
-                                -- distinct `encodeOne` types across modules
-                                -- to whichever survived the ambiguity
-                                -- pick.
-                                perModuleEnv = Map.fromList
-                                    ( (entryModName, typesEnv)
-                                    : depSolved )
-                                -- v0.17 PR-21b — install the merged FFI
-                                -- implements registry. Empty map for
-                                -- projects with no FFI deps; Sky.Type.Unify's
-                                -- @lookupImplements@ then returns @[]@ at
-                                -- every site and the legacy strict-equality
-                                -- unify path stays in force.
-                                --
-                                -- v0.17 close P1 step 1/8 — read from the
-                                -- threaded 'LoadedFfiTables' bundle instead
-                                -- of @readIORefNoCse Env.ffiImplementsRef@.
-                                -- Env.ffiImplementsRef is still written by
-                                -- 'loadAndSeedFfiRegistry' as a backward-
-                                -- compat shim until all readers migrate
-                                -- (Type/Unify.hs in step 3; deletion in P1
-                                -- step 7).
-                                implementsMap = _lft_implements loadedFfi
-                            in Solve.withImplementsMap implementsMap
-                              (Solve.withPerModuleEnv perModuleEnv
-                                (Solve.withPerModuleRegions perModuleRegions
-                                    (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-                        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
-                        -- v0.13 Layer 2: collect Sky-name → source-region
-                        -- for every top-level declaration so the post-emit
-                        -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
-                        -- comments next to the matching Go function decl.
-                        -- The validator + `go build` error refiner consult
-                        -- the resulting OriginMap to map Go-line errors back
-                        -- to Sky source.
-                        declOriginMap = collectDeclOrigins entryPath canMod
-                        goCode = Validator.injectOriginComments
-                                    declOriginMap goCodeRaw
-                        -- v0.15.12 P5 / Gap A6 — Auth typed-boundary gate.
-                        -- Scan the entry module + every validated dep for
-                        -- Auth.* kernel call sites whose String-typed
-                        -- slots receive an `any`-typed argument. The
-                        -- check runs BEFORE codegen writes main.go so
-                        -- the user sees the soundness gap at the source
-                        -- instead of a runtime `mustStringTyped` failure
-                        -- on the request hot path.
-                        authDiagsEntry = authBoundaryDiagnostics
-                                            entryPath typesWithDeps canMod
-                        authDiagsDeps =
-                            [ d
-                            | (modName, depMod) <- validDeps
-                            -- v0.15.x P37a: `depSolved` was extracted via
-                            -- `Solve._stEnv` at the assembly site; wrap
-                            -- back into a `SolvedTypes` record for the
-                            -- auth-boundary helper (region map empty —
-                            -- the gate only consults the env).
-                            , let depTypesMap = case lookup modName depSolved of
-                                    Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
-                                    Nothing -> Solve.emptySolvedTypes
-                            , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
-                            ]
-                        authDiags = authDiagsEntry ++ authDiagsDeps
-                    if not (null authDiags)
-                      then do
-                          rendered <- Render.renderCliMany authDiags
-                          putStrLn rendered
-                          removeStaleBuildOutput outDir (Toml._binName config)
-                          return (Left ("Sky.Auth.UntypedBoundary: " ++ entryPath))
-                      else do
-                        createDirectoryIfMissing True outDir
-                        let mainGoPath = outDir </> "main.go"
-                        -- v0.17 step-6 (#660): the late-stage Go-source
-                        -- band-aid has been DELETED.  All T1/T2 leak paths
-                        -- are now closed at emission time via
-                        -- @resolveWrapParams@'s structural HM-solved type
-                        -- lookup (Wave 3) and the dep-emission SolvedTypes
-                        -- wiring.  Regression gate:
-                        -- @test/Sky/Build/NoT1LeakInEmittedGoSpec.hs@ walks
-                        -- the example sweep + iter-20 fixture and asserts
-                        -- zero unbound T<N> / Anon_R_* tokens leak into
-                        -- emitted main.go.
-                        --
-                        -- v0.17 step-8 (#644): rt.Coerce closed-proof
-                        -- annotation.  Every line carrying an rt.Coerce*
-                        -- emission gets a preceding @// PROOF: ...@
-                        -- comment categorising the site (FFI / JSON-narrow
-                        -- / DB-narrow).  Documents WHY each remaining
-                        -- coerce site is sound at its construction-site
-                        -- boundary.  Regression gate:
-                        -- @test/Sky/Build/UiShowcaseRtCoerceClosedProofSpec.hs@
-                        -- asserts every rt.Coerce in 26-ui-showcase carries
-                        -- a proof comment.
-                        let goCode' = annotateRtCoerceSites goCode
-                        writeFile mainGoPath goCode'
-                        putStrLn $ "   Wrote " ++ mainGoPath
-                        -- v0.13 Layer 2: codegen-stage validator runs after
-                        -- writing main.go but before any downstream tooling
-                        -- (DCE / go build).  It scans the emitted Go for
-                        -- known-bad shapes (typed-kernel call with raw any
-                        -- arg, etc.) and emits a structured Diagnostic with
-                        -- a Sky-source region if the bug shape is found.
-                        -- This gives "if it compiles, it works" defence in
-                        -- depth — even if a new codegen regression slips
-                        -- past the cabal tests, the validator catches it
-                        -- pre-build and prints an actionable Diagnostic
-                        -- instead of a cryptic `go build` error.
-                        let originMap = Validator.parseOriginComments goCode
-                            valDiags  = Validator.validateEmittedGo
-                                          mainGoPath originMap goCode
-                        if not (null valDiags)
-                          then do
-                              rendered <- Render.renderCliMany valDiags
-                              putStrLn rendered
-                              removeStaleBuildOutput outDir (Toml._binName config)
-                              return (Left "Codegen validation rejected the emitted Go")
-                          else do
-                              -- copyRuntime also copies runtime-go/go.mod + go.sum into
-                              -- outDir when it can locate the runtime. Only fall back
-                              -- to a minimal go.mod here if copyRuntime didn't write
-                              -- one (no runtime found).
-                              copyRuntime outDir
-                              hasOutMod <- doesFileExist (outDir </> "go.mod")
-                              if not hasOutMod
-                                  then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
-                                  else return ()
-                              -- Pull in Go deps declared in sky.toml so generated
-                              -- ffi/*_bindings.go can resolve imports.
-                              seedGoDependencies outDir (Toml._goDeps config)
-                              -- P7: strip unreferenced FFI wrappers from
-                              -- sky-out/rt/*_bindings.go.  Tens of thousands of
-                              -- any/any wrapper bodies user code never calls
-                              -- (stripe alone contributes 74k).
-                              dceFfiWrappers outDir
-                              -- Write cache hash to enable incremental rebuild skip
-                              let cacheDir = ".skycache"
-                              createDirectoryIfMissing True cacheDir
-                              writeFile (cacheDir </> "source.hash") srcHash
-                              -- v0.15.42 (audit §3.4): Sky lowering succeeded, but
-                              -- `go build` hasn't run yet. The CLI prints
-                              -- "Compilation successful" only after Go returns 0,
-                              -- so users never see a "successful" banner followed
-                              -- by a go-build failure.
-                              putStrLn "Sky lowering succeeded"
-                              return (Right mainGoPath)
+                  _ ->
+                    -- v0.17 PR-α Stage 4 (task #659 iter 2) — extracted
+                    -- emit phase: depDecls render, typesWithDeps build,
+                    -- generateGoMulti, auth-boundary gate, main.go write,
+                    -- validator gate, copyRuntime + DCE + cache hash.
+                    -- Pure refactor — body is byte-identical to the
+                    -- legacy inline block; all writeIORef / modifyIORef
+                    -- calls stay where they were (none were lifted out
+                    -- of the boundary).  Locked baseline (PhaseABaseline
+                    -- + SkyshopCompiles + CoerceArgListMapInterplay
+                    -- + SealedIface + MsgDispatch + MonotonicContract)
+                    -- gates this extraction; rt.Coerce/AsListT counts
+                    -- in examples/26 + examples/00 unchanged.
+                    emitPhase
+                        config entryPath outDir srcHash loadedFfi
+                        consoleNeeded canMod entrySrcMod validDeps
+                        depRecAliases depUnionNames depUnionDetails
+                        depEnumNames depArities depParamTypes
+                        depRetTypes depUltRetTypes
+                        solveOut
+
+
+-- | v0.17 PR-α Stage 4 (task #659 iter 2) — extracted emit phase.
+--
+-- Wraps the post-solver-gate codegen block that used to live INLINE
+-- in 'continueCompile' (lines 4718-4964 of the pre-extraction
+-- layout).  The boundary is the @_ -> do@ happy-path arm of the
+-- @case (solverError, exhaustErr) of@ gate — extraction begins at
+-- @putStrLn "-- Generating Go"@ and ends at the final
+-- @return (Right mainGoPath)@.
+--
+-- Pure refactor — every statement is byte-identical to the legacy
+-- inline code.  No 'IORef' writes were lifted out; the
+-- 'modifyIORef' / 'writeIORef' calls inside the body stay exactly
+-- where they were.  Locked baseline gates:
+--
+--   * 'PhaseABaselineRegressionSpec' — rt.Coerce / rt.AsListT
+--     counts on 26-ui-showcase + 00-standard-libs.
+--   * 'SkyshopCompilesSpec' — 76k-FFI build smoke.
+--   * 'CoerceArgListMapInterplaySpec' / 'SealedInterfaceSpec'
+--     / 'MsgDispatchSpec' / 'MonotonicContractSpec' — Phase A
+--     contract gates.
+--
+-- The signature surfaces every value the emit phase consumes from
+-- the outer scope.  Iter 3+ may collapse some of these into a
+-- consolidated record (mirror of 'SolveOutputs') if the call site
+-- gains more inputs.
+emitPhase
+    :: Toml.SkyConfig
+    -- ^ project config (sky.toml).
+    -> FilePath
+    -- ^ entryPath — used for diagnostic paths + originMap.
+    -> FilePath
+    -- ^ outDir — where main.go lands.
+    -> String
+    -- ^ srcHash — written to .skycache/source.hash for incremental rebuild.
+    -> LoadedFfiTables
+    -- ^ FFI tables — implementsMap is read for typesWithDeps wrap.
+    -> Bool
+    -- ^ consoleNeeded — Sky.Live console auto-mount flag.
+    -> Can.Module
+    -- ^ canMod — canonicalised entry module.
+    -> Src.Module
+    -- ^ entrySrcMod — surface AST for generateGoMulti.
+    -> [(String, Can.Module)]
+    -- ^ validDeps — topo-ordered surviving deps.
+    -> Set.Set String
+    -- ^ depRecAliases.
+    -> Set.Set String
+    -- ^ depUnionNames.
+    -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -- ^ depUnionDetails.
+    -> Set.Set String
+    -- ^ depEnumNames.
+    -> Map.Map String Int
+    -- ^ depArities.
+    -> Map.Map String [String]
+    -- ^ depParamTypes.
+    -> Map.Map String String
+    -- ^ depRetTypes.
+    -> Map.Map String String
+    -- ^ depUltRetTypes.
+    -> SolveOutputs
+    -- ^ the post-solve bundle (iter 1).
+    -> IO (Either String FilePath)
+emitPhase config entryPath outDir srcHash loadedFfi
+          consoleNeeded canMod entrySrcMod validDeps
+          depRecAliases depUnionNames depUnionDetails
+          depEnumNames depArities depParamTypes
+          depRetTypes depUltRetTypes
+          solveOut = do
+    let types                = _so_types               solveOut
+        entryRegionTys       = _so_entryRegionTys      solveOut
+        mergedRegionTys      = _so_mergedRegionTys     solveOut
+        depSolved            = _so_depSolved           solveOut
+        depRegionTysByModule = _so_depRegionTysByModule solveOut
+        depInferredParams    = _so_depInferredParams   solveOut
+        depInferredRets      = _so_depInferredRets     solveOut
+        depInferredSigs      = _so_depInferredSigs     solveOut
+        reached              = _so_reached             solveOut
+        csiByCallee          = _so_csiByCallee         solveOut
+        reachableProgram     = _so_reachableProg       solveOut
+        goSigMapFromSolve    = _so_goSigMap            solveOut
+    putStrLn "-- Generating Go"
+    -- v0.13 Stage 1 (task #189) — emit dep-module decls
+    -- AFTER typecheck has populated `funcSkyToGoTVars`.
+    -- This is the critical point: dep bodies use
+    -- `withScopedLambdaTypes` to register typed func-
+    -- param names, which `goExprGoType` then resolves
+    -- via `solvedTypeToGo` with Go-side TVar names
+    -- (T1, T2, ...). Without the env populated, the
+    -- skyToGo rename produces empty σ and func types
+    -- render as `func(any) any`.
+    let depDecls = concatMap (\(modName, depMod) ->
+            let prefix = map (\c -> if c == '.' then '_' else c) modName
+            in generateDeclsForDepScoped reachableProgram modName depMod prefix) validDeps
+    let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                        | (mn, depMod) <- validDeps ]
+        -- Conflict-detection merge with TVar normalisation.
+        -- See typesWithDepsBuilder below for the algorithm.
+        typesWithDeps =
+            -- v0.15.x P37a: `types` is now the new
+            -- `Solve.SolvedTypes` record.  The merge logic
+            -- below works over the `_stEnv` Map view;
+            -- after merging, we re-wrap with the
+            -- `mergedRegionTys` region map computed
+            -- earlier so `generateGoMulti` continues to
+            -- receive a full `Solve.SolvedTypes` value.
+            let typesEnv = Solve._stEnv types
+                entryKeys = Map.keysSet typesEnv
+                allMaps = typesEnv : [t | (_, t) <- depSolved]
+                keyToTypes = Map.unionsWith (++)
+                    [ Map.map (:[]) m | m <- allMaps ]
+                isResolved (T.TVar _) = False
+                isResolved _ = True
+                normaliseType = normaliseTypeForMerge
+                -- Bug fix: a key in `entryKeys` may have come
+                -- from the entry module's `_locals` ledger
+                -- (lambda params / inner-let bindings) rather
+                -- than from a real top-level binding. When the
+                -- same key also exists in a DEP module's
+                -- solvedTypes — and disagrees structurally —
+                -- the dep version is the genuine top-level
+                -- declaration of THAT module; the entry's is
+                -- pollution from a same-named local.
+                -- Concrete case: Main.sky has functions like
+                -- `fetchLogs parent filter = …` whose lambda
+                -- param `filter : LogFilter` leaks into
+                -- solvedTypes; Sky.Core.List.filter (the real
+                -- HOF) gets shadowed and View.sky's
+                -- `List.filter (...)` then infers as LogFilter.
+                -- Detect: if entry's type AND any dep's type
+                -- disagree structurally, run the ambiguity
+                -- pipeline (treat as cross-scope conflict).
+                -- v0.17 PR-10 migration: sentinel writers
+                -- use 'Solve.unresolvedSentinel' (typed
+                -- ADT dispatch) instead of raw TVar
+                -- string literals.  Underlying TVar
+                -- representation unchanged; the typed
+                -- surface prevents typo-class bugs at
+                -- the writers and makes the sentinel set
+                -- discoverable.
+                resolveKey k tys
+                    | k `Set.member` entryKeys =
+                        let entryTy = Map.findWithDefault (Solve.unresolvedSentinel Solve.UnresolvedUnbound) k typesEnv
+                            depTys  = [ t | (_, m) <- depSolved
+                                          , Just t <- [Map.lookup k m]
+                                          , isResolved t ]
+                            allCands = if isResolved entryTy
+                                           then entryTy : depTys
+                                           else depTys
+                            normalisedAll = List.nub
+                                (map normaliseType allCands)
+                        in case normalisedAll of
+                            []    -> entryTy
+                            [_]   -> entryTy
+                            _     -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
+                    | otherwise =
+                        let resolved = filter isResolved tys
+                            normalised = List.nub (map normaliseType resolved)
+                        in case normalised of
+                            []  -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
+                            [_] -> case resolved of
+                                     (t:_) -> t
+                                     []    -> Solve.unresolvedSentinel Solve.UnresolvedCrossModule
+                            _   -> Solve.unresolvedSentinel Solve.UnresolvedAmbig
+                mergedEnv = Map.mapWithKey resolveKey keyToTypes
+                -- v0.15.6 #365 — per-module region ledger
+                -- carries each dep's own region map under
+                -- its dotted name, plus the entry module's.
+                -- Consumers `lookupSolvedRegionScoped`
+                -- consult this ledger first when a
+                -- `_stCurrentModule` hint is installed by
+                -- `generateGoMulti`'s per-dep scope.
+                entryModName = ModuleName.toString (Can._name canMod)
+                perModuleRegions = Map.fromList
+                    ( (entryModName, entryRegionTys)
+                    : depRegionTysByModule )
+                -- v0.15.6 #365 — per-module env ledger.
+                -- Each dep's _stEnv (carrying its own
+                -- let-bound locals' types like `encodeOne`)
+                -- is preserved separately so consumers
+                -- consulting via `lookupSolvedVarScoped`
+                -- under a `_stCurrentModule` hint see the
+                -- right module's let-bound type — without
+                -- this, the cross-module merge collapsed
+                -- distinct `encodeOne` types across modules
+                -- to whichever survived the ambiguity
+                -- pick.
+                perModuleEnv = Map.fromList
+                    ( (entryModName, typesEnv)
+                    : depSolved )
+                -- v0.17 PR-21b — install the merged FFI
+                -- implements registry. Empty map for
+                -- projects with no FFI deps; Sky.Type.Unify's
+                -- @lookupImplements@ then returns @[]@ at
+                -- every site and the legacy strict-equality
+                -- unify path stays in force.
+                --
+                -- v0.17 close P1 step 1/8 — read from the
+                -- threaded 'LoadedFfiTables' bundle instead
+                -- of @readIORefNoCse Env.ffiImplementsRef@.
+                -- Env.ffiImplementsRef is still written by
+                -- 'loadAndSeedFfiRegistry' as a backward-
+                -- compat shim until all readers migrate
+                -- (Type/Unify.hs in step 3; deletion in P1
+                -- step 7).
+                implementsMap = _lft_implements loadedFfi
+            in Solve.withImplementsMap implementsMap
+              (Solve.withPerModuleEnv perModuleEnv
+                (Solve.withPerModuleRegions perModuleRegions
+                    (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
+        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
+        -- v0.13 Layer 2: collect Sky-name → source-region
+        -- for every top-level declaration so the post-emit
+        -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
+        -- comments next to the matching Go function decl.
+        -- The validator + `go build` error refiner consult
+        -- the resulting OriginMap to map Go-line errors back
+        -- to Sky source.
+        declOriginMap = collectDeclOrigins entryPath canMod
+        goCode = Validator.injectOriginComments
+                    declOriginMap goCodeRaw
+        -- v0.15.12 P5 / Gap A6 — Auth typed-boundary gate.
+        -- Scan the entry module + every validated dep for
+        -- Auth.* kernel call sites whose String-typed
+        -- slots receive an `any`-typed argument. The
+        -- check runs BEFORE codegen writes main.go so
+        -- the user sees the soundness gap at the source
+        -- instead of a runtime `mustStringTyped` failure
+        -- on the request hot path.
+        authDiagsEntry = authBoundaryDiagnostics
+                            entryPath typesWithDeps canMod
+        authDiagsDeps =
+            [ d
+            | (modName, depMod) <- validDeps
+            -- v0.15.x P37a: `depSolved` was extracted via
+            -- `Solve._stEnv` at the assembly site; wrap
+            -- back into a `SolvedTypes` record for the
+            -- auth-boundary helper (region map empty —
+            -- the gate only consults the env).
+            , let depTypesMap = case lookup modName depSolved of
+                    Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
+                    Nothing -> Solve.emptySolvedTypes
+            , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
+            ]
+        authDiags = authDiagsEntry ++ authDiagsDeps
+    if not (null authDiags)
+      then do
+          rendered <- Render.renderCliMany authDiags
+          putStrLn rendered
+          removeStaleBuildOutput outDir (Toml._binName config)
+          return (Left ("Sky.Auth.UntypedBoundary: " ++ entryPath))
+      else do
+        createDirectoryIfMissing True outDir
+        let mainGoPath = outDir </> "main.go"
+        -- v0.17 step-6 (#660): the late-stage Go-source
+        -- band-aid has been DELETED.  All T1/T2 leak paths
+        -- are now closed at emission time via
+        -- @resolveWrapParams@'s structural HM-solved type
+        -- lookup (Wave 3) and the dep-emission SolvedTypes
+        -- wiring.  Regression gate:
+        -- @test/Sky/Build/NoT1LeakInEmittedGoSpec.hs@ walks
+        -- the example sweep + iter-20 fixture and asserts
+        -- zero unbound T<N> / Anon_R_* tokens leak into
+        -- emitted main.go.
+        --
+        -- v0.17 step-8 (#644): rt.Coerce closed-proof
+        -- annotation.  Every line carrying an rt.Coerce*
+        -- emission gets a preceding @// PROOF: ...@
+        -- comment categorising the site (FFI / JSON-narrow
+        -- / DB-narrow).  Documents WHY each remaining
+        -- coerce site is sound at its construction-site
+        -- boundary.  Regression gate:
+        -- @test/Sky/Build/UiShowcaseRtCoerceClosedProofSpec.hs@
+        -- asserts every rt.Coerce in 26-ui-showcase carries
+        -- a proof comment.
+        let goCode' = annotateRtCoerceSites goCode
+        writeFile mainGoPath goCode'
+        putStrLn $ "   Wrote " ++ mainGoPath
+        -- v0.13 Layer 2: codegen-stage validator runs after
+        -- writing main.go but before any downstream tooling
+        -- (DCE / go build).  It scans the emitted Go for
+        -- known-bad shapes (typed-kernel call with raw any
+        -- arg, etc.) and emits a structured Diagnostic with
+        -- a Sky-source region if the bug shape is found.
+        -- This gives "if it compiles, it works" defence in
+        -- depth — even if a new codegen regression slips
+        -- past the cabal tests, the validator catches it
+        -- pre-build and prints an actionable Diagnostic
+        -- instead of a cryptic `go build` error.
+        let originMap = Validator.parseOriginComments goCode
+            valDiags  = Validator.validateEmittedGo
+                          mainGoPath originMap goCode
+        if not (null valDiags)
+          then do
+              rendered <- Render.renderCliMany valDiags
+              putStrLn rendered
+              removeStaleBuildOutput outDir (Toml._binName config)
+              return (Left "Codegen validation rejected the emitted Go")
+          else do
+              -- copyRuntime also copies runtime-go/go.mod + go.sum into
+              -- outDir when it can locate the runtime. Only fall back
+              -- to a minimal go.mod here if copyRuntime didn't write
+              -- one (no runtime found).
+              copyRuntime outDir
+              hasOutMod <- doesFileExist (outDir </> "go.mod")
+              if not hasOutMod
+                  then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+                  else return ()
+              -- Pull in Go deps declared in sky.toml so generated
+              -- ffi/*_bindings.go can resolve imports.
+              seedGoDependencies outDir (Toml._goDeps config)
+              -- P7: strip unreferenced FFI wrappers from
+              -- sky-out/rt/*_bindings.go.  Tens of thousands of
+              -- any/any wrapper bodies user code never calls
+              -- (stripe alone contributes 74k).
+              dceFfiWrappers outDir
+              -- Write cache hash to enable incremental rebuild skip
+              let cacheDir = ".skycache"
+              createDirectoryIfMissing True cacheDir
+              writeFile (cacheDir </> "source.hash") srcHash
+              -- v0.15.42 (audit §3.4): Sky lowering succeeded, but
+              -- `go build` hasn't run yet. The CLI prints
+              -- "Compilation successful" only after Go returns 0,
+              -- so users never see a "successful" banner followed
+              -- by a go-build failure.
+              putStrLn "Sky lowering succeeded"
+              return (Right mainGoPath)
 
 
 -- LEGACY: single-module parse entry (no longer used from compile)
