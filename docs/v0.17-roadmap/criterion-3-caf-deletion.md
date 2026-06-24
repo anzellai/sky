@@ -222,6 +222,123 @@ Iter 17 begins the Class-A swap.
 
 ---
 
+## Iter 17 — empirical block: Class-A swap is UNSOUND under
+## current writer model
+
+**Status:** Iter 17 attempted the Class-A swap (30 sites — wider
+than the roadmap's "~17" because every `LC.LowerCtx`-receiving
+function with `ctx`/`outerCtx` in scope is structurally a Class-A
+candidate, not just the 5 named in the roadmap surface).
+
+**Outcome:** REVERTED. Cold build of `examples/26-ui-showcase`
+fails Sky-lowering→go-build with:
+
+```
+./main.go:2092: __subject_tAdt.Tag undefined (type Std_Ui_Breakpoint has no field or method Tag)
+./main.go:2092: __subject_tAdt.Fields undefined
+./main.go:2196: __subject_tAdt.Tag undefined (type Std_Ui_Element)
+./main.go:2219: __subject_tAdt.Tag undefined
+... [too many errors]
+```
+
+Also: `rt.Coerce` count on 26 jumps `172 → 253` (+81 — exactly the
+class of regressions the iter-30 TRACK-2 work fought to close).
+
+**Root cause:** The audit comment at `Compile.hs:850-854` is
+load-bearing:
+
+> Distinction from iter-37's failed attempt: iter-37 used
+> `LC.lookupCgEnv ctx` where `ctx` was a CAPTURED parameter
+> value. Captured ctx carries the snapshot from CAPTURE TIME
+> (often post-C9, pre-C10), so `lookupCgEnv` returned Just
+> (stale env). This helper reads `scopeStateRef` AT FORCE TIME
+> — same trick S3 (finalGoSigMap migration) used. No
+> captured-stale-ctx risk.
+
+A Class-A swap substitutes a force-time IORef read with a
+capture-time field read on `ctx`. For Class-A functions whose
+`ctx` is constructed BEFORE the C10 cgEnv finalisation (this
+includes `goExprGoType`, `wrapTypedReturn`, `exprToGoExpectGo`,
+`exprToGo`, and every typed-codegen helper they invoke), the
+capture-time `_lc_cgEnv` is either `Nothing` or a stale empty/
+partial snapshot. The swap then routes through `emptyCgEnv` (or
+worse, a stale partial) and:
+
+- Sealed-iface dispatch in `caseToGo` / `caseToGoLegacy` /
+  `caseBranchToStmts` doesn't see `_cg_sealedIfaceNames` →
+  emits the legacy SkyADT shape `__subject_tAdt.Tag/Fields`
+  where the user-side type is now sealed-iface → Go rejects.
+- `exprToGoExpectGo`'s `finalRet` fallback can't read fresh
+  `_cg_solvedTypes` → fails to elide some `rt.Coerce` wraps
+  the iter-30/iter-15 work depended on.
+- `wrapTypedReturn` skips sealed-iface ctor-body elision (the
+  `_cg_sealedIfaceNames` membership check returns False on
+  empty env) → emits identity `rt.Coerce` wraps that the
+  helper exists specifically to elide.
+
+**Architectural implication:** The naive Class-A swap is
+fundamentally a non-starter while `scopeStateRef` is the
+source-of-truth for cgEnv mutations across the C9→C10 phase
+boundary. The IORef writer model means the cgEnv value visible
+to a renderer-time GoExpr thunk is "whatever scopeStateRef
+holds when the thunk forces" — NOT "whatever the captured
+LowerCtx carries". Iter 38 introduced `getCgEnvFromScope`
+specifically as the read-side counterpart of that contract.
+
+**Correct close path (revised):** Criterion #3's INTENT cannot
+be satisfied by point-substitution at the read sites. It
+requires reshaping the writer side so the cgEnv is FULLY
+CONSTRUCTED before any reader-thunk capture-time:
+
+- **Option α — capture-then-shadow at imports block.** Move
+  the `imports = unsafePerformIO $ do ...` block (which
+  finalises scopeStateRef._lc_cgEnv at C10) to compute
+  `cgEnvFinal :: CodegenEnv` purely, then thread it via a
+  shadowed binding through every renderer entry. Removes the
+  staleness gap by ensuring no reader thunk is constructed
+  before cgEnv is final. ~Large surface change at
+  `generateGoMulti`'s entry.
+- **Option β — strict eager construction.** Force scopeStateRef
+  to install C10's final cgEnv BEFORE `generateDeclsForDep` /
+  `generateGoMulti`'s body fires. Then capture-time `ctx`
+  carries the final value. Requires reordering
+  resetCompileState's writer plan. Untried.
+- **Option γ — accept the IORef CAF as architectural.** Mark
+  `getCgEnvFromScope` as the load-bearing-pure-effect that
+  fits the criterion-#3 SPIRIT (the IORef channel IS the
+  reader bridge, not a CAF hiding mutation) and document the
+  CAF + scopeStateRef pair as the legitimate close-state.
+  This violates the goal's verbatim text ("`getCgEnv` CAF
+  must be gone"); CLAUDE.md §0 hard rule 1 forbids interpreting
+  the goal narrower than the verbatim wording.
+
+**Iter 17 outcome:** Block filed. Code reverted. Documented for
+next-iter architect agent. No commit beyond this doc update.
+
+**Next iter (iter 18) must:** Architect Option α — capture-then-
+shadow at the `imports`/`generateGoMulti` entry — and prove
+soundness with the 26-ui-showcase regression class as the gate
+(rt.Coerce ≤ 172 + go build clean).
+
+**Sites attempted in iter 17 (for the next architect's record):**
+30 sites across 12 enclosing functions —
+- goExprGoType ×3 (L9450, L9579, L9698)
+- wrapTypedReturn ×2 (L9785, L9804)
+- exprToGoExpectGo ×1 (L12686)
+- exprToGo ×7 (L13167, L13229, L13454, L13532, L13632, L13685, L13857)
+- coerceCallArgs ×1, coerceCallArgsAt ×2 (incl. inferGoType arm at L15646)
+- coerceArg ×1 (L16116)
+- kernelCoerceArg ×1 (inferGoType arm at L16618)
+- emitPartialUserCall ×1, binopToGo ×1, letToGo ×1, loweredDiscard ×1
+- defToStmts ×2, caseToGo ×2, caseToGoLegacy ×3, caseBranchToStmts ×1
+
+All 30 sites passed Haskell compile but produced ill-typed Go on
+26-ui-showcase. The proximate failures all routed through
+sealed-iface name set lookups (`_cg_sealedIfaceNames`) reading
+empty/stale env at the destructure site.
+
+---
+
 ## Reader who cares
 
 When iter 20 closes, append a one-line entry to CLAUDE.md
