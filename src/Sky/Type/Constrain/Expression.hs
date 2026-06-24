@@ -23,7 +23,6 @@ module Sky.Type.Constrain.Expression
 import Control.Monad (forM)
 import Data.IORef
 import qualified Data.Map.Strict as Map
-import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
@@ -66,12 +65,21 @@ import qualified Sky.Sky.ModuleName as ModuleName
 data Env = Env
     { _envVars            :: !(Map.Map String T.Annotation)
     , _envFfiKernelTypes  :: !(Map.Map (String, String) T.Annotation)
+    -- v0.17 close iter 10 — IORef defusing batch.  Three additional
+    -- per-compile value channels migrated from the module-level
+    -- 'globalExternals' / 'globalSameModAnnots' / 'globalCurrentModule'
+    -- IORefs.  Populated once at 'constrainModuleWithFfi' entry and
+    -- read at three sites (VarTopLevel arm + arityGateForTopLevel +
+    -- valueSlotGateForTopLevel).
+    , _envExternals       :: !(Map.Map (String, String) T.Annotation)
+    , _envSameModAnnots   :: !(Map.Map String T.Annotation)
+    , _envCurrentModule   :: !String
     }
 
 
 -- | The empty Env (no bindings, no FFI seed).
 emptyEnv :: Env
-emptyEnv = Env Map.empty Map.empty
+emptyEnv = Env Map.empty Map.empty Map.empty Map.empty ""
 
 
 -- | Insert a binding into Env (keeps the FFI seed unchanged).
@@ -98,7 +106,27 @@ envWithFfi
     :: Map.Map String T.Annotation
     -> Map.Map (String, String) T.Annotation
     -> Env
-envWithFfi vars ffi = Env vars ffi
+envWithFfi vars ffi = Env vars ffi Map.empty Map.empty ""
+
+
+-- | v0.17 close iter 10 — primary entry point used by
+-- 'constrainModuleWithFfi' that seeds ALL per-compile channels
+-- (FFI kernel types + cross-module externals + same-module
+-- annotations + current-module name).  The previous
+-- 'envWithFfi' helper is kept for completeness and the test
+-- harness path; the compiler driver uses this variant.
+envWithFfiAndMods
+    :: Map.Map String T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -- ^ cross-module externals
+    -> Map.Map String T.Annotation
+    -- ^ same-module annotated TypedDef annotations
+    -> String
+    -- ^ current module name (ModuleName.toString form)
+    -> Env
+envWithFfiAndMods vars ffi externals sameModAnnots curMod =
+    Env vars ffi externals sameModAnnots curMod
 
 
 -- | Fresh name counter
@@ -162,13 +190,17 @@ constrainModuleWithFfi
     -> IO T.Constraint
 constrainModuleWithFfi externals ffiKernelTypes canMod = do
     counter <- newIORef 0
-    writeIORef globalExternals externals
-    writeIORef globalCurrentModule
-        (ModuleName.toString (Can._name canMod))
-    -- v0.15.1 — register same-module annotated TypedDef annotations
-    -- for fresh-instantiation at sibling call sites.
-    writeIORef globalSameModAnnots (collectSameModAnnots canMod)
-    constrainDecls counter (envWithFfi Map.empty ffiKernelTypes)
+    -- v0.17 close iter 10 — defuse globalExternals /
+    -- globalCurrentModule / globalSameModAnnots IORefs.  These
+    -- three module-level values now flow as fields on the per-
+    -- compile Env, populated once here and read at the three
+    -- consumer sites (VarTopLevel arm + arityGateForTopLevel +
+    -- valueSlotGateForTopLevel).
+    let curModStr     = ModuleName.toString (Can._name canMod)
+        sameModAnnots = collectSameModAnnots canMod
+    constrainDecls counter
+                   (envWithFfiAndMods Map.empty ffiKernelTypes
+                                      externals sameModAnnots curModStr)
                    (Can._decls canMod)
 
 
@@ -194,46 +226,16 @@ collectSameModAnnots canMod =
         _ -> []
 
 
--- | Thread the external signature map through a global IORef so the
--- VarTopLevel handler in constrain can reach it without extending
--- every helper's signature.
---
--- NOT THREAD-SAFE for concurrent calls to constrainModuleWithExternals
--- with different externals. Compile.hs must either serialise those
--- calls or ensure all concurrent modules share the same externals.
-globalExternals :: IORef (Map.Map (String, String) T.Annotation)
-{-# NOINLINE globalExternals #-}
-globalExternals = unsafePerformIO (newIORef Map.empty)
-
-
--- | The module currently being solved. Set by
--- `constrainModuleWithExternals` alongside `globalExternals`.
---
--- VarTopLevel references whose `home` equals this previously emitted
--- `CLocal` regardless — to avoid breaking within-module mutual
--- recursion through stale dep-fixpoint annotations.  Per v0.15.1,
--- references to ANNOTATED TypedDefs in the current module instead
--- emit `CForeign` against the user's annotation (which alpha-renames
--- fresh per call site, fixing the same-module polymorphic-call
--- limitation).  Unannotated same-module refs still emit `CLocal`.
-globalCurrentModule :: IORef String
-{-# NOINLINE globalCurrentModule #-}
-
-
--- | v0.15.1 — same-module annotated TypedDef annotations.  Populated
--- by `constrainModule`/`constrainModuleWithExternals` from the
--- module's own `Can.TypedDef` entries.  Consumed by the
--- `Can.VarTopLevel` arm so same-module references to annotated
--- functions emit `CForeign` (alpha-rename fresh per call site) AND
--- the polymorphic helper handles multiple concrete instantiations
--- in the same module without pinning to the first call's type args.
---
--- Unannotated same-module references still emit `CLocal` to
--- preserve mutual-recursion guarantees (per the comment above).
-globalSameModAnnots :: IORef (Map.Map String T.Annotation)
-{-# NOINLINE globalSameModAnnots #-}
-globalSameModAnnots = unsafePerformIO (newIORef Map.empty)
-globalCurrentModule = unsafePerformIO (newIORef "")
+-- v0.17 close iter 10 — the legacy module-level IORefs
+-- 'globalExternals' / 'globalCurrentModule' / 'globalSameModAnnots'
+-- have all been DELETED.  Their value channels now flow as fields
+-- on the per-compile 'Env' record ('_envExternals' /
+-- '_envCurrentModule' / '_envSameModAnnots'), populated once by
+-- 'constrainModuleWithFfi' at module entry and read at three
+-- consumer sites: the 'Can.VarTopLevel' arm of 'constrain',
+-- 'arityGateForTopLevel', and 'valueSlotGateForTopLevel'.
+-- See criterion #3 ratchet in 'docs/v0.17.x-fully-typed-codegen/'
+-- for the IORef-defusing rationale.
 
 
 -- | Constrain a whole module's declarations.
@@ -319,7 +321,9 @@ constrain counter env (A.At region expr) expected = case expr of
         -- diagnostic fires first via 'T.CAnd' composition (the
         -- existing chain still runs alongside; the solver
         -- short-circuits on first error per the CEqual contract).
-        valueSlotCon <- valueSlotGateForTopLevel region home name expected
+        -- v0.17 close iter 10 — valueSlotGateForTopLevel now reads
+        -- from Env (per-compile value channel) and is pure.
+        let valueSlotCon = valueSlotGateForTopLevel env region home name expected
         -- ═══════════════════════════════════════════════════════
         -- STRICT-HM ARITY GATE — surface 2 of 3 (cross-module
         -- externals + same-module annotated TypedDefs)
@@ -457,10 +461,12 @@ constrain counter env (A.At region expr) expected = case expr of
         -- TypedDef (v0.15.1 — fixes the same-module polymorphic-
         -- call limitation), and CLocal otherwise (preserves mutual-
         -- recursion through shared env vars).
-        externals <- readIORef globalExternals
-        currentModule <- readIORef globalCurrentModule
-        sameModAnnots <- readIORef globalSameModAnnots
-        let homeStr = ModuleName.toString home
+        -- v0.17 close iter 10 — read from Env (per-compile value
+        -- channel) instead of module-level IORefs.
+        let externals     = _envExternals env
+            currentModule = _envCurrentModule env
+            sameModAnnots = _envSameModAnnots env
+            homeStr       = ModuleName.toString home
         if homeStr == currentModule
             then case Map.lookup name sameModAnnots of
                 Just annot@(T.Forall freeVars _) | any (/= "any") freeVars ->
@@ -1063,7 +1069,9 @@ arityGateCall env region func args =
         Can.VarKernel modName funcName ->
             return (arityGateForKernel env region modName funcName args)
         Can.VarTopLevel home funcName ->
-            arityGateForTopLevel region home funcName args
+            -- v0.17 close iter 10 — arityGateForTopLevel now reads
+            -- via Env (per-compile value channel) and is pure.
+            return (arityGateForTopLevel env region home funcName args)
         _ -> return T.CTrue
 
 
@@ -1084,20 +1092,20 @@ arityGateForKernel env region modName funcName args =
 -- 'globalSameModAnnots'; cross-module reads 'globalExternals'.
 -- Both are POST-canonicalisation (head-alias unfolded per PR #123
 -- / PR-B step 2's externals trace).
+--
+-- v0.17 close iter 10 — now reads from the per-compile 'Env'
+-- value-channel (no module-level IORef).  Returns a pure
+-- 'T.Constraint' since the IO side-effect is gone.
 arityGateForTopLevel
-    :: T.Region -> ModuleName.Canonical -> String -> [Can.Expr] -> IO T.Constraint
-arityGateForTopLevel region home name args = do
-    currentModule <- readIORef globalCurrentModule
-    let homeStr = ModuleName.toString home
-    annotMb <-
-        if homeStr == currentModule
-            then do
-                sameModAnnots <- readIORef globalSameModAnnots
-                return (Map.lookup name sameModAnnots)
-            else do
-                externals <- readIORef globalExternals
-                return (Map.lookup (homeStr, name) externals)
-    return (maybeEmitArityMismatch region (homeStr ++ "." ++ name) annotMb args)
+    :: Env -> T.Region -> ModuleName.Canonical -> String -> [Can.Expr] -> T.Constraint
+arityGateForTopLevel env region home name args =
+    let currentModule = _envCurrentModule env
+        homeStr       = ModuleName.toString home
+        annotMb =
+            if homeStr == currentModule
+                then Map.lookup name (_envSameModAnnots env)
+                else Map.lookup (homeStr, name) (_envExternals env)
+    in maybeEmitArityMismatch region (homeStr ++ "." ++ name) annotMb args
 
 
 -- | Decide whether to emit a 'CArityMismatch' constraint given an
@@ -1169,20 +1177,19 @@ valueSlotGateForKernel env region modName funcName expected =
     in maybeEmitValueSlotMismatch region (modName ++ "." ++ funcName) annotMb expected
 
 
+--
+-- v0.17 close iter 10 — reads from per-compile 'Env' value-channel
+-- (no module-level IORef).  Returns a pure 'T.Constraint'.
 valueSlotGateForTopLevel
-    :: T.Region -> ModuleName.Canonical -> String -> T.Expected T.Type -> IO T.Constraint
-valueSlotGateForTopLevel region home name expected = do
-    currentModule <- readIORef globalCurrentModule
-    let homeStr = ModuleName.toString home
-    annotMb <-
-        if homeStr == currentModule
-            then do
-                sameModAnnots <- readIORef globalSameModAnnots
-                return (Map.lookup name sameModAnnots)
-            else do
-                externals <- readIORef globalExternals
-                return (Map.lookup (homeStr, name) externals)
-    return (maybeEmitValueSlotMismatch region (homeStr ++ "." ++ name) annotMb expected)
+    :: Env -> T.Region -> ModuleName.Canonical -> String -> T.Expected T.Type -> T.Constraint
+valueSlotGateForTopLevel env region home name expected =
+    let currentModule = _envCurrentModule env
+        homeStr       = ModuleName.toString home
+        annotMb =
+            if homeStr == currentModule
+                then Map.lookup name (_envSameModAnnots env)
+                else Map.lookup (homeStr, name) (_envExternals env)
+    in maybeEmitValueSlotMismatch region (homeStr ++ "." ++ name) annotMb expected
 
 
 -- | Decide whether to emit a 'CArityMismatch' constraint for the
