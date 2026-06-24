@@ -9497,6 +9497,25 @@ wrapTypedReturn ctx mSrc retType body
     | Set.member retType (Rec._cg_sealedIfaceNames getCgEnvFromScope)
     , isSealedIfaceCtorBody body retType
         = body
+    -- v0.17 iter 11 (P5 Stage 1) — parametric-alias sealed-iface
+    -- elision.  When @retType@ is shaped @<base>_T[<args>]@ (the
+    -- C14 dual-alias parametric form emitted for Std.Ui's Element
+    -- / Attribute and their cross-module siblings) AND @<base>@
+    -- IS in the sealed-iface name set AND the body is a ctor /
+    -- ctor-returning call of @<base>@, the parametric type
+    -- argument is phantom (the underlying alias is just
+    -- @<base>@), so the wrap is identity in Go.
+    --
+    -- The C14 emitter writes @type <base>_T[T1 any] = <base>@
+    -- (transparent alias — see Compile.hs:11723 comment).  This
+    -- elision is the read-side companion to that emit.  Without
+    -- this, sites like @return rt.Coerce[Std_Ui_Element_T[Msg]]
+    -- (Std_Ui_textColumn(...))@ pay both the type-arg suffix
+    -- and a runtime narrowing call that ends up identity.
+    | Just baseT <- stripUnderscoreTParametric retType
+    , Set.member baseT (Rec._cg_sealedIfaceNames getCgEnvFromScope)
+    , isSealedIfaceCtorBody body baseT
+        = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
             (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParams ctx mSrc "Result" params ++ "]"))
@@ -9680,6 +9699,28 @@ stripParametric prefix s
     dropLast1 [] = []
     dropLast1 [_] = []
     dropLast1 (x:xs) = x : dropLast1 xs
+
+
+-- | v0.17 iter 11 (P5 Stage 1) — if @s@ is shaped @<base>_T[<args>]@,
+-- return @<base>@.  Used by 'wrapTypedReturn' to recognise the C14
+-- parametric-alias form @<base>_T[T1 any] = <base>@ so the elision
+-- arm can consult @_cg_sealedIfaceNames@ on the bare base name.
+--
+-- Matches the @_T[…]@ suffix specifically (not arbitrary @[…]@) so
+-- record-alias suffixes like @<Cfg>_R[Msg]@ don't trigger.  The
+-- existing @parametricAliasBase@ helper would also strip @_R@,
+-- which is a DIFFERENT semantic (record alias, not sealed-iface);
+-- keeping this helper @_T@-specific avoids cross-talk.
+stripUnderscoreTParametric :: String -> Maybe String
+stripUnderscoreTParametric s = case break (== '[') s of
+    (prefix, '[':rest)
+        | not (null prefix)
+        , take 2 (reverse prefix) == "T_"
+        , last rest == ']'
+        , let base = take (length prefix - 2) prefix
+        , not (null base)
+            -> Just base
+    _ -> Nothing
 
 
 -- | Decide whether a Sky type can be safely emitted as a Go return
