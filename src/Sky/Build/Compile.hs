@@ -10232,7 +10232,7 @@ goExprGoType phaseACtxC ctx mSrc e = case shapeClassified of
 -- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
 -- behaviour unchanged; this is a pure signature widening.
 wrapTypedReturn :: EmitCompileCtx -> LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
-wrapTypedReturn _phaseACtxC ctx mSrc retType body
+wrapTypedReturn phaseACtxC ctx mSrc retType body
     | retType == "any" = body
     -- v0.17 iter 79 — runtime alias-to-any elision.  The runtime
     -- declares 10 rt.* types as transparent aliases for @any@
@@ -10279,7 +10279,7 @@ wrapTypedReturn _phaseACtxC ctx mSrc retType body
     -- types).  Safety: only fires when @retType@ is in the
     -- sealed-iface name set AND the body's head identifier
     -- matches the @<iface>_<Ctor>@ shape.
-    | Set.member retType (Rec._cg_sealedIfaceNames getCgEnvFromScope)
+    | Set.member retType (Rec._cg_sealedIfaceNames (lookupCgEnvFromCtx phaseACtxC))
     , isSealedIfaceCtorBody body retType
         = body
     -- v0.17 iter 11 (P5 Stage 1) — parametric-alias sealed-iface
@@ -10298,7 +10298,7 @@ wrapTypedReturn _phaseACtxC ctx mSrc retType body
     -- (Std_Ui_textColumn(...))@ pay both the type-arg suffix
     -- and a runtime narrowing call that ends up identity.
     | Just baseT <- stripUnderscoreTParametric retType
-    , Set.member baseT (Rec._cg_sealedIfaceNames getCgEnvFromScope)
+    , Set.member baseT (Rec._cg_sealedIfaceNames (lookupCgEnvFromCtx phaseACtxC))
     , isSealedIfaceCtorBody body baseT
         = body
     -- v0.17 P5 Stage 4 — typed-kernel PARAMETRIC return elision.
