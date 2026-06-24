@@ -39,7 +39,7 @@ import Sky.Build.CompileCtx
     , ctxKernelTypes, ctxImplements
     , emptyCtx
     -- v0.17 Phase A iter 3 — emit-phase context scaffold (additive).
-    , EmitCompileCtx, buildEmitCompileCtx
+    , EmitCompileCtx, buildEmitCompileCtx, emptyEmitCompileCtx
     )
 
 import qualified Sky.AST.Source as Src
@@ -4859,11 +4859,14 @@ emitPhase config entryPath outDir srcHash loadedFfi
           depRecAliases depUnionNames depUnionDetails
           depEnumNames depArities depParamTypes
           depRetTypes depUltRetTypes
-          solveOut _phaseACtx = do
-    -- v0.17 Phase A iter 3 — the ctx is INTENTIONALLY UNUSED this
-    -- iter.  Body is byte-identical to iter 2; the underscore-bind
-    -- documents that.  Iter 4+ migrates readers off the
-    -- 'scopeStateRef' channel to consult this value instead.
+          solveOut phaseACtx = do
+    -- v0.17 Phase A iter 4 — the ctx is now THREADED through the
+    -- entry-module emit helpers ('generateDeclsForDepScoped',
+    -- 'generateGoMulti', and its callees 'generateUnionTypes' /
+    -- 'generateAliasTypes' / 'generateDecls' / 'generateDefMaybe' /
+    -- 'generateDef').  Signature widening only — none of those
+    -- callees consume the ctx yet; iter 6+ migrates the reader
+    -- sites.  Behaviour is byte-identical pre/post iter-4.
     let types                = _so_types               solveOut
         entryRegionTys       = _so_entryRegionTys      solveOut
         mergedRegionTys      = _so_mergedRegionTys     solveOut
@@ -4888,7 +4891,7 @@ emitPhase config entryPath outDir srcHash loadedFfi
     -- render as `func(any) any`.
     let depDecls = concatMap (\(modName, depMod) ->
             let prefix = map (\c -> if c == '.' then '_' else c) modName
-            in generateDeclsForDepScoped reachableProgram modName depMod prefix) validDeps
+            in generateDeclsForDepScoped phaseACtx reachableProgram modName depMod prefix) validDeps
     let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                         | (mn, depMod) <- validDeps ]
         -- Conflict-detection merge with TVar normalisation.
@@ -5005,7 +5008,7 @@ emitPhase config entryPath outDir srcHash loadedFfi
               (Solve.withPerModuleEnv perModuleEnv
                 (Solve.withPerModuleRegions perModuleRegions
                     (Solve.SolvedTypes mergedEnv mergedRegionTys Map.empty Map.empty Nothing Map.empty)))
-        goCodeRaw = generateGoMulti consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
+        goCodeRaw = generateGoMulti phaseACtx consoleNeeded canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve
         -- v0.13 Layer 2: collect Sky-name → source-region
         -- for every top-level declaration so the post-emit
         -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -5173,7 +5176,13 @@ parseSingle config entryPath outDir = do
 
                     -- Phase 5: Generate Go (using solved types)
                     putStrLn "-- Generating Go"
-                    let goCode = generateGo consoleNeeded canMod srcMod config types
+                    -- v0.17 Phase A iter 4 — legacy single-module path
+                    -- builds an empty 'EmitCompileCtx'.  The ctx is
+                    -- plumbed through but not yet consumed; the legacy
+                    -- path already exercises 'scopeStateRef' for cgEnv
+                    -- so behaviour is byte-identical pre/post iter-4.
+                    let phaseACtx = emptyEmitCompileCtx (Can._name canMod)
+                    let goCode = generateGo phaseACtx consoleNeeded canMod srcMod config types
 
                     -- Phase 6: Write output
                     createDirectoryIfMissing True outDir
@@ -6286,8 +6295,13 @@ locateRuntimeDir = do
 -- callback's typed slot reflects the right module's element
 -- type.
 {-# NOINLINE generateDeclsForDepScoped #-}
-generateDeclsForDepScoped :: Set.Set Dce.Ref -> String -> Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDepScoped reachableProg _modName canMod modPrefix =
+-- v0.17 Phase A iter 4 — dep-emission helper takes 'EmitCompileCtx'
+-- as its first arg.  This is the dep-emission path called from
+-- 'emitPhase' (line ~4891) — the ctx is plumbed through; iter 5 may
+-- wrap it via @ReaderT.local (_cc_module := depMod)@.  Iter 4 leaves
+-- the body unchanged.
+generateDeclsForDepScoped :: EmitCompileCtx -> Set.Set Dce.Ref -> String -> Can.Module -> String -> [GoIr.GoDecl]
+generateDeclsForDepScoped _phaseACtx reachableProg _modName canMod modPrefix =
     -- v0.17 PR-α Session 6 — the dep-mode IORef sentinel pattern is
     -- retired.  Every renderer entry point now threads the dep-mode
     -- hint from its caller via pure data (see Compile.hs's
@@ -7178,7 +7192,14 @@ buildFinalCgEnv prevEnv solvedTypes canMod depRecAliases
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]) -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> Map.Map String GoSig -> String
+--
+-- v0.17 Phase A iter 4 — entry-module top-level emit function takes
+-- 'EmitCompileCtx' as its first arg.  Iter 4 plumbs only — the ctx is
+-- threaded into 'generateUnionTypes' / 'generateAliasTypes' /
+-- 'generateDecls' below; readers in the body are unchanged.  Iter 6+
+-- migrates reader sites (the legacy scope-state-channel consumers
+-- inside the @imports@ + @finalGoSigMap@ thunks).
+generateGoMulti :: EmitCompileCtx -> Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]) -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> Mono.ReachableSet -> Map.Map String [String] -> Map.Map String GoSig -> String
 -- v0.17 iter 13 (task #654) — final 'reached' parameter promoted from
 -- 'globalReachableSet' IORef.  Consumed by the 'specDecls' block
 -- (~line 4967) to drive per-instance specialised Go function emission.
@@ -7186,7 +7207,7 @@ generateGoMulti :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.S
 -- promoted from 'globalGoSigMap' IORef.  Drives the post-C10
 -- 'finalGoSigMap' purely; consumed by 'specDecls' (σ-projection) +
 -- 'imports' (C10 typeParams refresh via 'buildFinalGoSigMap').
-generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve =
+generateGoMulti phaseACtx consoleNeeded canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depUnionDetails depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs reached csiByCallee goSigMapFromSolve =
     let
         imports = unsafePerformIO $ do
             -- v0.17 step-1 gap-3 close — the redundant reset of
@@ -7373,9 +7394,9 @@ generateGoMulti consoleNeeded canMod srcMod config solvedTypes depDecls depRecAl
             -- `globalUnionNames` are visible to subsequent
             -- `ctxFromIORef ()` reads.
             importsForced `seq` return ()
-        unionDecls = generateUnionTypes canMod
-        aliasDecls = generateAliasTypes canMod
-        decls = generateDecls canMod solvedTypes
+        unionDecls = generateUnionTypes phaseACtx canMod
+        aliasDecls = generateAliasTypes phaseACtx canMod
+        decls = generateDecls phaseACtx canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod solvedTypes
         -- v0.13 E: emit `type Anon_R_<hash> = struct { … }` decls
         -- for every anon-record shape that `synthAnonRecordName`
@@ -7636,8 +7657,13 @@ escapeGoString s = "\"" ++ concatMap esc s ++ "\""
 
 
 -- | Generate Go source from a canonical module with solved types (single module)
-generateGo :: Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
-generateGo consoleNeeded canMod srcMod config solvedTypes =
+--
+-- v0.17 Phase A iter 4 — legacy single-module path (used only by
+-- 'parseSingle') takes 'EmitCompileCtx' as its first arg.  Threaded
+-- through to 'generateUnionTypes' / 'generateAliasTypes' /
+-- 'generateDecls'.  Iter 4 plumbs only.
+generateGo :: EmitCompileCtx -> Bool -> Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
+generateGo phaseACtx consoleNeeded canMod srcMod config solvedTypes =
     let
         imports = unsafePerformIO $ do
             let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
@@ -7653,9 +7679,9 @@ generateGo consoleNeeded canMod srcMod config solvedTypes =
                 . LC.withUnionDetails (Rec._cg_unionDetails cgEnv)
                 )
             return $ collectGoImports consoleNeeded canMod srcMod
-        unionDecls = generateUnionTypes canMod
-        aliasDecls = generateAliasTypes canMod
-        decls = generateDecls canMod solvedTypes
+        unionDecls = generateUnionTypes phaseACtx canMod
+        aliasDecls = generateAliasTypes phaseACtx canMod
+        decls = generateDecls phaseACtx canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod solvedTypes
         -- v0.13 E: see generateGoMulti for the rationale.
         anonRecordDecls = unsafePerformIO generateAnonRecordDecls
@@ -8090,8 +8116,12 @@ emitDispatchTableVarDecls qualType ctors opts =
 
 
 -- | Generate Go type declarations for user-defined union types
-generateUnionTypes :: Can.Module -> [GoIr.GoDecl]
-generateUnionTypes canMod =
+--
+-- v0.17 Phase A iter 4 — entry-module emit function takes the
+-- threaded 'EmitCompileCtx' as its first arg.  Iter 4 plumbs only;
+-- iter 6+ migrates reader sites.
+generateUnionTypes :: EmitCompileCtx -> Can.Module -> [GoIr.GoDecl]
+generateUnionTypes _phaseACtx canMod =
     concatMap generateUnion (Map.toList (Can._unions canMod))
   where
     -- This module's Go prefix ("Main", "State", ...) — used to rewrite
@@ -8539,8 +8569,13 @@ uniqueSorted = Set.toAscList . Set.fromList
 
 -- | Generate Go type declarations for record type aliases.
 -- Record aliases become Go structs; records with function fields become Go interfaces.
-generateAliasTypes :: Can.Module -> [GoIr.GoDecl]
-generateAliasTypes canMod =
+--
+-- v0.17 Phase A iter 4 — entry-module emit function takes the
+-- threaded 'EmitCompileCtx' as its first arg.  Iter 4 plumbs only;
+-- iter 6+ migrates reader sites in 'solvedTypeToGo' calls inside
+-- this function to consult the ctx.
+generateAliasTypes :: EmitCompileCtx -> Can.Module -> [GoIr.GoDecl]
+generateAliasTypes _phaseACtx canMod =
     let userDefinedNames = collectDeclNames (Can._decls canMod)
     in concatMap (generateAlias userDefinedNames) (Map.toList (Can._aliases canMod))
   where
@@ -8658,8 +8693,12 @@ generateAliasTypes canMod =
 
 
 -- | Generate Go declarations from canonical decls
-generateDecls :: Can.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDecls canMod solvedTypes =
+--
+-- v0.17 Phase A iter 4 — threads 'EmitCompileCtx' through to
+-- 'generateDefMaybe' / 'generateDef'.  Iter 4 plumbs only; iter 6+
+-- migrates reader sites.
+generateDecls :: EmitCompileCtx -> Can.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDecls phaseACtx canMod solvedTypes =
     -- DCE: compute transitive closure from main and only emit reachable defs.
     -- This shrinks binaries + speeds up `go build` for large projects.
     -- Disable with SKY_DCE=0 env var (checked at codegen time).
@@ -8670,16 +8709,21 @@ generateDecls canMod solvedTypes =
   where
     declsToList _ _ _ Can.SaveTheEnvironment acc = acc
     declsToList h reachable dce (Can.Declare def rest) acc =
-        declsToList h reachable dce rest (acc ++ generateDefMaybe h reachable dce def solvedTypes)
+        declsToList h reachable dce rest (acc ++ generateDefMaybe phaseACtx h reachable dce def solvedTypes)
     declsToList h reachable dce (Can.DeclareRec def defs rest) acc =
-        let these = generateDefMaybe h reachable dce def solvedTypes
-                 ++ concatMap (\d -> generateDefMaybe h reachable dce d solvedTypes) defs
+        let these = generateDefMaybe phaseACtx h reachable dce def solvedTypes
+                 ++ concatMap (\d -> generateDefMaybe phaseACtx h reachable dce d solvedTypes) defs
         in declsToList h reachable dce rest (acc ++ these)
 
 
 -- | Emit def only if reachable (or DCE disabled).
-generateDefMaybe :: ModuleName.Canonical -> Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDefMaybe home reachable dceEnabled def solvedTypes = case def of
+--
+-- v0.17 Phase A iter 4 — entry-module emit function takes the
+-- threaded 'EmitCompileCtx' as its first arg.  Iter 4 plumbs the
+-- ctx through to 'generateDef' without consulting it; iter 6+
+-- migrates reader sites.  See the doc-comment on 'generateDef'.
+generateDefMaybe :: EmitCompileCtx -> ModuleName.Canonical -> Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDefMaybe phaseACtx home reachable dceEnabled def solvedTypes = case def of
     Can.DestructDef{} -> []  -- destructure lets only live inside bodies
     _ ->
         let name = case def of
@@ -8687,7 +8731,7 @@ generateDefMaybe home reachable dceEnabled def solvedTypes = case def of
                 Can.TypedDef (A.At _ n) _ _ _ _  -> n
                 Can.DestructDef{} -> error "unreachable: filtered above"
         in if not dceEnabled || Set.member name reachable || name == "main"
-            then generateDef home def solvedTypes
+            then generateDef phaseACtx home def solvedTypes
             else []
 
 
@@ -8819,8 +8863,14 @@ lookupDceFlag = do
 
 
 -- | Generate Go for a single definition, using solved types for signatures
-generateDef :: ModuleName.Canonical -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDef home def0 solvedTypes =
+--
+-- v0.17 Phase A iter 4 — entry-module emit functions take an
+-- 'EmitCompileCtx' as their first arg.  Iter 4 plumbs the ctx through
+-- without consuming it; the underscore-bound parameter documents
+-- intent.  Iter 6+ migrates legacy IORef-CAF reader sites in the
+-- body to consult this ctx instead of the scope-state channel.
+generateDef :: EmitCompileCtx -> ModuleName.Canonical -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDef _phaseACtx home def0 solvedTypes =
     -- v0.15.52 #398 — Point-free top-level alias of a polymorphic /
     -- N-ary function (e.g. `tickle = String.toUpper` where
     -- `String.toUpper : String -> String`) syntactically has 0
