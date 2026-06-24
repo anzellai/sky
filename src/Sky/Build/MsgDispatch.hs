@@ -49,6 +49,9 @@ module Sky.Build.MsgDispatch
     , emitDispatchTableInitLines
     , dispatchTableVarName
     , isMsgShapedUnion
+    , decoderFuncName
+    , emitRegisterMsgDecoderLine
+    , variantHasTypedPayload
     ) where
 
 import qualified Data.Map.Strict   as Map
@@ -278,3 +281,47 @@ emitRegisterMsgVariantLine qualType mv =
         ++ show (_mv_name mv) ++ ", "
         ++ show (_mv_tag mv) ++ ", "
         ++ show (_mv_arity mv) ++ ")"
+
+
+-- | v0.17 Phase 4 Stage 4 — per-variant wire decoder function name.
+-- Mangled @<qualType>_decode_<ctor>@ so it lives in the same
+-- namespace as the per-variant arm functions (Stage 2).
+--
+-- > "Main_Msg"  +  "DoSignIn"  →  "Main_Msg_decode_DoSignIn"
+decoderFuncName :: String -> String -> String
+decoderFuncName qualType ctorName =
+    qualType ++ "_decode_" ++ ctorName
+
+
+-- | v0.17 Phase 4 Stage 4 — predicate: is this variant a candidate
+-- for typed wire decoder emission?
+--
+-- Stage 4 contract: emit a typed decoder ONLY when the variant has
+-- arity > 0.  Zero-arity variants don't carry a payload — the
+-- runtime fast-path can directly return the @arm_<ctor>()@ value
+-- without consulting a decoder.  Variants with arity > 0 always
+-- emit a decoder; the per-slot type may still resolve to @any@
+-- (rt.AnyValue handling) but the decoder shape is correct.
+variantHasTypedPayload :: MsgVariant -> Bool
+variantHasTypedPayload mv = _mv_arity mv > 0
+
+
+-- | v0.17 Phase 4 Stage 4 — emit the @rt.RegisterMsgDecoder@ line
+-- inside the per-union @func init()@ block, one per qualified
+-- variant.  Keyed by bare ctor name to match
+-- 'LookupMsgDecoder''s lookup contract (the wire path uses the
+-- in-band ctor name without first resolving the ADT).
+--
+-- Shape (per variant):
+--
+-- > rt.RegisterMsgDecoder("DoSignIn", Main_Msg_decode_DoSignIn)
+--
+-- Stage 4 is foundation-only on the runtime consumer side: Stage 6
+-- wires the consult into 'applyMsgArgs'.  The registration is
+-- byte-identical-behaviour on user-visible runtime (lookup is
+-- exposed but no production path consults it yet).
+emitRegisterMsgDecoderLine :: String -> MsgVariant -> String
+emitRegisterMsgDecoderLine qualType mv =
+    "rt.RegisterMsgDecoder("
+        ++ show (_mv_name mv) ++ ", "
+        ++ decoderFuncName qualType (_mv_name mv) ++ ")"

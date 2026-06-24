@@ -6703,6 +6703,19 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
             -- LookupMsgVariant registry populated entry-side.
             ++ emitMsgArmFuncsDep qualType ctors opts
               (\i argTys -> ctorArgGoTypeDep tvarMap i argTys)
+            -- v0.17 Phase 4 Stage 4 — dep-module path mirror of
+            -- per-variant wire decoder emission.  SKIPPED on
+            -- polymorphic dep ADTs: the decoder function has no
+            -- Go type parameters (decoder shape is the universal
+            -- @([]rt.JsonRawMessage) (any, error)@), so emitting
+            -- @var v0 T1@ inside it would reference a TVar with
+            -- no binding scope and Go would refuse to compile.
+            -- Non-poly dep ADTs (concrete ctor params) emit
+            -- normally.  Skips arity-0 variants (no payload).
+            ++ ( if isPoly
+                    then []
+                    else emitMsgDecoderFuncsDep qualType ctors opts
+                          (\i argTys -> ctorArgGoTypeDep tvarMap i argTys) )
             -- v0.17 Phase 4 Stage 3 — dep-module path mirror of the
             -- entry-module dispatch-table var declaration above.
             -- Polymorphic dep ADTs benefit just like entry ADTs:
@@ -6721,7 +6734,15 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
                    -- dispatch-table-populate lines that Stage 1
                    -- previously skipped on the dep path.  Stage 6
                    -- can fast-path on dep ADTs too.
-                   ++ emitMsgDispatchStage1 qualType ctors opts
+                   --
+                   -- v0.17 Phase 4 Stage 4 (dep-module path) —
+                   -- polymorphic dep ADTs use the GATED variant so
+                   -- @rt.RegisterMsgDecoder@ lines are SKIPPED (the
+                   -- decoder fns themselves were not emitted; see
+                   -- the 'emitMsgDecoderFuncsDep' isPoly guard
+                   -- above).  Non-poly dep ADTs register decoders
+                   -- normally.
+                   ++ emitMsgDispatchStage1Gated (not isPoly) qualType ctors opts
                    ++ "}" ]
   where
     -- C4: poly ADT — route TVar arg types through substituteTVarsToGo
@@ -7622,6 +7643,19 @@ isTaskImport imp =
 -- stay byte-identical to today.
 emitMsgDispatchStage1 :: String -> [Can.Ctor] -> Can.CtorOpts -> String
 emitMsgDispatchStage1 qualType ctors opts =
+    emitMsgDispatchStage1Gated True qualType ctors opts
+
+
+-- | v0.17 Phase 4 Stage 4 — gated variant of 'emitMsgDispatchStage1'
+-- that lets callers opt out of @rt.RegisterMsgDecoder@ line
+-- emission.  Required for polymorphic dep ADTs whose decoder
+-- functions don't exist (decoder body references unresolvable
+-- TVar slot types); see 'emitMsgDecoderFuncsDep' gate in the dep
+-- path of 'generateUnionForDep'.
+--
+-- Stage 1+2+3 registry lines (update + variant) always emit.
+emitMsgDispatchStage1Gated :: Bool -> String -> [Can.Ctor] -> Can.CtorOpts -> String
+emitMsgDispatchStage1Gated emitDecoderLines qualType ctors opts =
     case opts of
         Can.Enum  -> ""  -- nullary unions short-circuit via tag-int path
         Can.Unbox -> ""  -- single-ctor wrappers have no dispatch decision
@@ -7644,7 +7678,26 @@ emitMsgDispatchStage1 qualType ctors opts =
                         concatMap
                             (\mv -> MsgDispatch.emitRegisterMsgVariantLine qualType mv ++ "; ")
                             mvariants
-                in dispatchPopulate ++ updateLine ++ variantLines
+                    -- v0.17 Phase 4 Stage 4 — register the per-variant
+                    -- typed wire decoder.  Only variants with arity >= 1
+                    -- emit a decoder (arity-0 variants short-circuit at
+                    -- 'applyMsgArgs' without consulting the registry).
+                    -- Keyed by bare ctor name to match
+                    -- 'LookupMsgDecoder''s contract.
+                    -- Gated by 'emitDecoderLines' so the dep-path
+                    -- caller can skip the lines for polymorphic dep
+                    -- ADTs (no decoder fn was emitted; registering
+                    -- would reference an undefined symbol).
+                    decoderLines
+                        | not emitDecoderLines = ""
+                        | otherwise =
+                            concatMap
+                                (\mv ->
+                                    if MsgDispatch.variantHasTypedPayload mv
+                                        then MsgDispatch.emitRegisterMsgDecoderLine qualType mv ++ "; "
+                                        else "")
+                                mvariants
+                in dispatchPopulate ++ updateLine ++ variantLines ++ decoderLines
 
 
 -- | v0.17 Phase 4 Stage 2 — emit per-variant typed arm functions.
@@ -7741,6 +7794,113 @@ emitMsgArmFuncsDep typeName ctors opts renderSlotTy =
     emitMsgArmFuncs renderSlotTy typeName ctors opts
 
 
+-- | v0.17 Phase 4 Stage 4 — emit per-variant wire decoder functions.
+--
+-- Stage 4 is the codegen counterpart to Stage 1's
+-- 'rt.RegisterMsgDecoder' registry slot.  Per the
+-- @phase4-per-msg-dispatch.md@ design, the compiler emits ONE
+-- typed Go decoder function per Msg-shaped variant that carries
+-- non-empty ctor parameters.  These decoder functions allocate
+-- per-slot typed locals, @json.Unmarshal@ each raw arg into its
+-- typed slot, then forward to the variant's ctor function — same
+-- delegation shape as the Stage 2 arm functions, but on the wire
+-- side instead of the dispatch side.
+--
+-- Stage 4 emission shape (per variant with arity \>= 1):
+--
+-- @
+-- func Main_Msg_decode_DoSignIn(raw []rt.JsonRawMessage) (any, error) {
+--     var v0 Main_AuthCreds_R
+--     if err := rt.JsonUnmarshal(raw[0], &v0); err != nil {
+--         return nil, err
+--     }
+--     return Main_Msg_DoSignIn(v0), nil
+-- }
+-- @
+--
+-- Stage 4 emission shape (per variant with arity 0):
+--
+--   * SKIP.  Zero-arity variants don't carry a payload; the runtime
+--     fast-path can directly return the @arm_<ctor>()@ value
+--     without consulting a decoder.
+--
+-- Contract:
+--
+--   * NO @rt.Coerce@ inserted at any site — the decoder forwards
+--     typed parameters straight to the typed ctor.
+--
+--   * Skips ADT shapes 'emitMsgDispatchStage1' also skips (Enum /
+--     Unbox / zero-variant) so the gate stays paired with Stages 1-3.
+--
+--   * Returns empty list for skipped shapes so existing
+--     'generateUnion' output stays byte-identical to today.
+--
+-- Observable: new per-variant Go decoder functions in every emitted
+-- @main.go@ for examples that declare Msg-shaped ADTs with typed
+-- payload ctors.  Stage 6 (applyMsgArgs fast-path) consumes them
+-- via the @LookupMsgDecoder@ registry populated by Stage 1.
+emitMsgDecoderFuncs
+    :: (Int -> [T.Type] -> String)
+    -- ^ Per-slot Go type renderer (same shape as 'emitMsgArmFuncs').
+    -> String
+    -> [Can.Ctor]
+    -> Can.CtorOpts
+    -> [GoIr.GoDecl]
+emitMsgDecoderFuncs renderSlotTy typeName ctors opts = case opts of
+    Can.Enum  -> []
+    Can.Unbox -> []
+    Can.Normal
+        | null ctors -> []
+        | otherwise  ->
+            [ mkDecoder cname arity argTys
+            | Can.Ctor cname _idx arity argTys <- ctors
+            , arity > 0
+            ]
+  where
+    mkDecoder cname arity argTys =
+        let decName = typeName ++ "_decode_" ++ cname
+            -- Per-slot typed local decls + unmarshal-then-error
+            -- pattern.  Emitted as a single GoRaw blob so we keep
+            -- the loop structure tight without introducing new
+            -- GoIr stmt nodes.
+            slotBody =
+                concatMap
+                    (\i ->
+                        let slotTy = renderSlotTy i argTys
+                        in "var v" ++ show i ++ " " ++ slotTy ++ "; "
+                            ++ "if err := rt.JsonUnmarshal(raw["
+                            ++ show i ++ "], &v" ++ show i
+                            ++ "); err != nil { return nil, err }; ")
+                    [0 .. arity - 1]
+            ctorRef = typeName ++ "_" ++ cname
+            ctorArgs = intercalate_ ", "
+                        [ "v" ++ show i | i <- [0 .. arity - 1] ]
+            -- Body is a single raw blob.  All arity > 0 ctors are
+            -- functions (see 'generateCtorFunc') so we always emit
+            -- the function-call form.
+            bodyBlob =
+                slotBody
+                    ++ "return " ++ ctorRef
+                    ++ "(" ++ ctorArgs ++ "), nil"
+        in GoIr.GoDeclRaw $
+            "func " ++ decName
+                ++ "(raw []rt.JsonRawMessage) (any, error) { "
+                ++ bodyBlob ++ " }"
+
+
+-- | Dep-path companion to 'emitMsgDecoderFuncs'.  Same proxy shape
+-- as 'emitMsgArmFuncsDep' — closes over the per-dep
+-- 'ctorArgGoTypeDep' renderer (tvarMap-aware).
+emitMsgDecoderFuncsDep
+    :: String
+    -> [Can.Ctor]
+    -> Can.CtorOpts
+    -> (Int -> [T.Type] -> String)
+    -> [GoIr.GoDecl]
+emitMsgDecoderFuncsDep typeName ctors opts renderSlotTy =
+    emitMsgDecoderFuncs renderSlotTy typeName ctors opts
+
+
 -- | v0.17 Phase 4 Stage 3 — emit the dispatch-table var declaration
 -- per ADT.  Wraps the pure helper in 'Sky.Build.MsgDispatch' so the
 -- emission site stays succinct.
@@ -7829,6 +7989,12 @@ generateUnionTypes canMod =
             -- consumes these via the LookupMsgVariant registry
             -- populated by Stage 1.  See 'emitMsgArmFuncs' above.
             ++ emitMsgArmFuncs ctorArgGoType typeName ctors opts
+            -- v0.17 Phase 4 Stage 4 — per-variant typed wire
+            -- decoder functions.  Stage 6 fast-path (applyMsgArgs
+            -- consult) reads via the LookupMsgDecoder registry
+            -- populated below in 'emitMsgDispatchStage1'.  Skips
+            -- arity-0 variants (no payload to decode).
+            ++ emitMsgDecoderFuncs ctorArgGoType typeName ctors opts
             -- v0.17 Phase 4 Stage 3 — per-ADT dispatch table var
             -- declaration.  Populated in the per-union init() block
             -- below via 'emitDispatchTableInitLines' inside
