@@ -6591,7 +6591,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
                                 (ctxFromIORef ())
               lowerDepBody e =
                   if depRetType /= "any"
-                      then exprToGoExpectGo depBodyCtx depRetType e
+                      then exprToGoExpectGo (phaseAFallback depBodyCtx) depBodyCtx depRetType e
                       else exprToGo (phaseAFallback depBodyCtx) depBodyCtx e
               -- `typeIIFE` runs on the GoExpr STRUCTURE — before
               -- `withScopedLambdaTypes` renders it to a String — so it
@@ -8967,7 +8967,7 @@ generateDef _phaseACtx home def0 solvedTypes =
                               (ctxFromIORef ())
             lowerFnBody e =
                 if goRetType /= "any"
-                    then exprToGoExpectGo entryBodyCtx goRetType e
+                    then exprToGoExpectGo (phaseAFallback entryBodyCtx) entryBodyCtx goRetType e
                     else exprToGo (phaseAFallback entryBodyCtx) entryBodyCtx e
             -- `typeIIFE` runs on the GoExpr STRUCTURE — before
             -- `withScopedLambdaTypes` renders it to a String — so it
@@ -12940,7 +12940,7 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
     ctx `seq` return ()
     prev <- readIORef scopeStateRef
     writeIORef scopeStateRef ctx
-    let rendered = GoBuilder.renderExpr (exprToGoExpectGo ctx goRendering e)
+    let rendered = GoBuilder.renderExpr (exprToGoExpectGo (phaseAFallback ctx) ctx goRendering e)
         forced = length rendered
     forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
@@ -13040,7 +13040,7 @@ snapshotCallerCtx () = unsafePerformIO $ do
 -- v0.17 PR-17b S4 batch 3: takes ctx as first arg; callers thread
 -- their own ctx instead of reading the legacy IORef.
 exprToGoExpect :: LC.LowerCtx -> T.Type -> Can.Expr -> GoIr.GoExpr
-exprToGoExpect ctx expectedTy e = exprToGoExpectGo ctx (solvedTypeToGo expectedTy) e
+exprToGoExpect ctx expectedTy e = exprToGoExpectGo (phaseAFallback ctx) ctx (solvedTypeToGo expectedTy) e
 
 
 -- | Like `exprToGoExpect` but takes the expected GO TYPE STRING
@@ -13050,8 +13050,15 @@ exprToGoExpect ctx expectedTy e = exprToGoExpectGo ctx (solvedTypeToGo expectedT
 -- v0.17 PR-17b Reader-threading Stage 4 — symmetric ctx threading
 -- with 'exprToGo'.  ctx flows through coerceArg / coerceToFieldType
 -- bridges instead of ctxFromIORef IORef reads.
-exprToGoExpectGo :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoExpectGo ctx goRendering e@(A.At _ expr)
+-- v0.17 Phase A iter 5v2-b: scaffolding sub-batch b of 4.  Widened
+-- with @EmitCompileCtx@ as first param (named @_phaseACtxB@,
+-- currently underscore-bound + ignored — emitPhase Reader-style
+-- migration will activate it in a later sub-batch).  All call sites
+-- updated to thread their own ctx, falling back to
+-- @phaseAFallback@ where the ambient ctx is not yet plumbed.  Body
+-- behaviour unchanged; this is a pure signature widening.
+exprToGoExpectGo :: EmitCompileCtx -> LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
+exprToGoExpectGo _phaseACtxB ctx goRendering e@(A.At _ expr)
     -- Universal safety gate: only thread the expected type when its
     -- Go rendering is a REAL, emittable Go type.  `goZeroValue`
     -- returning `Just` proves it (it can name a zero literal).  For
@@ -13140,7 +13147,7 @@ exprToGoExpectGo ctx goRendering e@(A.At _ expr)
                     bodyPreTyped = isEmittableGoType finalRet
                     rawBody =
                         if bodyPreTyped
-                            then exprToGoExpectGo ctx finalRet body
+                            then exprToGoExpectGo _phaseACtxB ctx finalRet body
                             else exprToGo (phaseAFallback ctx) ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
@@ -14254,7 +14261,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                         -- class at the RecordUpdate emission path.
                         in coerceToFieldTypeMSrc ctx (Just fexpr)
                                 fieldGoTy
-                                (exprToGoExpectGo ctx fieldGoTy fexpr)
+                                (exprToGoExpectGo (phaseAFallback ctx) ctx fieldGoTy fexpr)
                     initStmt = GoIr.GoShortDecl "_u" baseGoExpr
                     assignStmts =
                         [ GoIr.GoAssign ("_u." ++ capitalise_ fname)
@@ -14323,7 +14330,7 @@ exprToGo _phaseACtxA ctx (A.At _ expr) = case expr of
                         -- class at the Record literal emission path.
                         in coerceToFieldTypeMSrc ctx (Just fe)
                                 fieldGoTy
-                                (exprToGoExpectGo ctx fieldGoTy fe)
+                                (exprToGoExpectGo (phaseAFallback ctx) ctx fieldGoTy fe)
                 in GoIr.GoStructLit structName
                     [ (capitalise_ fn, lowerField fn fe)
                     | (fn, fe) <- entries
@@ -14387,13 +14394,13 @@ emitTypedTuple2 ctx slotTy a b =
             let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b)]
+                [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b)]
         _ -> case tupleElementSlots a b [] of
             Just [tA, tB] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b)]
+                    [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b)]
             _ -> GoIr.GoStructLit "rt.SkyTuple2"
                 [("V0", exprToGo (phaseAFallback ctx) ctx a), ("V1", exprToGo (phaseAFallback ctx) ctx b)]
 
@@ -14406,16 +14413,16 @@ emitTypedTuple3 ctx slotTy a b c =
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 strC = GoType.renderGoType GoType.defaultRenderEnv tC
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b),
-                 ("V2", exprToGoExpectGo ctx strC c)]
+                [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b),
+                 ("V2", exprToGoExpectGo (phaseAFallback ctx) ctx strC c)]
         _ -> case tupleElementSlots a b [c] of
             Just [tA, tB, tC] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                     strC = GoType.renderGoType GoType.defaultRenderEnv tC
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo ctx strA a), ("V1", exprToGoExpectGo ctx strB b),
-                     ("V2", exprToGoExpectGo ctx strC c)]
+                    [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b),
+                     ("V2", exprToGoExpectGo (phaseAFallback ctx) ctx strC c)]
             _ -> GoIr.GoStructLit "rt.SkyTuple3"
                 [("V0", exprToGo (phaseAFallback ctx) ctx a), ("V1", exprToGo (phaseAFallback ctx) ctx b), ("V2", exprToGo (phaseAFallback ctx) ctx c)]
 
@@ -15700,7 +15707,7 @@ coerceCallArgsAt ctx region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo ctx subbed e
+                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
@@ -15815,7 +15822,7 @@ coerceCallArgsAt ctx region qualName args =
                                         bodyPreTyped = isEmittableGoType finalRet
                                         rawBody =
                                             if bodyPreTyped
-                                                then exprToGoExpectGo ctx finalRet body
+                                                then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
                                                 else exprToGo (phaseAFallback ctx) ctx body
                                         body' = withScopedLambdaTypes bindings rawBody
                                     in if bodyPreTyped
@@ -15847,15 +15854,15 @@ coerceCallArgsAt ctx region qualName args =
                             Can.Case{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo ctx subbed e
+                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
                             Can.If{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo ctx subbed e
+                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
                             Can.Let{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo ctx subbed e
+                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
                             -- v0.15.2: Can.Record at a parametric-alias
                             -- monomorphisation slot (`Cfg_R[Msg]`).  Route
                             -- to `exprToGoExpectGo` so the literal emits
@@ -15879,7 +15886,7 @@ coerceCallArgsAt ctx region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo ctx subbed e
+                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
@@ -16078,7 +16085,7 @@ coerceCallArgsAt ctx region qualName args =
                                     bodyPreTyped = isEmittableGoType finalRet
                                     rawBody =
                                         if bodyPreTyped
-                                            then exprToGoExpectGo ctx finalRet body
+                                            then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
                                             else exprToGo (phaseAFallback ctx) ctx body
                                     body' = withScopedLambdaTypes bindings rawBody
                                 in if bodyPreTyped
@@ -17050,7 +17057,7 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
                     bodyPreTyped = isEmittableGoType finalRet
                     rawBody =
                         if bodyPreTyped
-                            then exprToGoExpectGo ctx finalRet body
+                            then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
                             else exprToGo (phaseAFallback ctx) ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
@@ -17071,7 +17078,7 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
         Can.Record _
             | isParametricAliasInstantiation subbed
             , not (containsGenericTypeParam subbed) ->
-                exprToGoExpectGo ctx subbed e
+                exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
         -- v0.17 PR-17b S2 — Stage 4 threads ctx from the enclosing
         -- caller through `kernelCoerceArg`'s signature; the legacy
         -- IORef snapshot is no longer needed here.
@@ -17770,7 +17777,7 @@ ifToGo ctx mExpectedGo branches elseExpr =
         -- case/if/let in a branch gets the type threaded DIRECTLY —
         -- not just through `typeIIFE`'s return-position recursion.
         lowerBody = case mExpectedGo of
-            Just gt -> exprToGoExpectGo ctx gt
+            Just gt -> exprToGoExpectGo (phaseAFallback ctx) ctx gt
             Nothing -> exprToGo (phaseAFallback ctx) ctx
         buildIf [] = [GoIr.GoReturn (lowerBody elseExpr)]
         buildIf ((cond, body):rest) =
@@ -17970,7 +17977,7 @@ loweredDiscard ctx body@(A.At _ inner) = case inner of
         Just t ->
             let gt = solvedTypeToGo t
             in if isEmittableGoType gt
-                 then exprToGoExpectGo ctx gt body
+                 then exprToGoExpectGo (phaseAFallback ctx) ctx gt body
                  else exprToGo (phaseAFallback ctx) ctx body
         Nothing -> exprToGo (phaseAFallback ctx) ctx body
 
@@ -18313,7 +18320,7 @@ defToStmts _phaseACtxA ctx def = case def of
                 Nothing -> "any"
             bodyExpr = if retGoTy == "any"
                 then exprToGo _phaseACtxA ctx body
-                else exprToGoExpectGo ctx retGoTy body
+                else exprToGoExpectGo _phaseACtxA ctx retGoTy body
         in letBindStmts name
             (GoIr.GoFuncLit goParams retGoTy [GoIr.GoReturn bodyExpr])
 
@@ -18333,7 +18340,7 @@ defToStmts _phaseACtxA ctx def = case def of
             -- body when return can't be safely typed.
             (effectiveRet, bodyExpr) =
                 if isEmittableGoType retGoTy
-                    then (retGoTy, exprToGoExpectGo ctx retGoTy body)
+                    then (retGoTy, exprToGoExpectGo _phaseACtxA ctx retGoTy body)
                     else ("any", exprToGo _phaseACtxA ctx body)
         in letBindStmts name
             (GoIr.GoFuncLit typedGoParams effectiveRet [GoIr.GoReturn bodyExpr])
