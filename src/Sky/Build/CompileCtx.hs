@@ -48,14 +48,36 @@ module Sky.Build.CompileCtx
     -- v0.17 close criterion 3 — globalCgEnv migration (S0).
     , ctxCgEnv
     , withCgEnv
+    -- v0.17 Phase A iter 3 — emit-phase CompileCtx record (NEW, distinct from
+    -- the iter-S0 cgEnv-bridge CompileCtx above; uses @_cc_*@ field names).
+    , EmitCompileCtx(..)
+    , emptyEmitCompileCtx
+    , buildEmitCompileCtx
+    , EmitM
+    , runEmitM
+    , askEmitCtx
+    , lookupCgEnvFromCtx
+    , lookupSolvedTypesFromCtx
+    , lookupKernelAliasFromCtx
+    , lookupUnionDetailsFromCtx
+    , lookupAnonRecordsFromCtx
+    , lookupModuleFromCtx
+    , lookupAliasesFromCtx
+    , lookupFieldIdxFromCtx
+    , lookupUnionNamesFromCtx
+    , lookupFfiTypedWrappersFromCtx
     ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
+import Control.Monad.Reader (ReaderT, runReaderT, ask)
+
 import qualified Sky.AST.Canonical    as Can
 import qualified Sky.Generate.Go.Record as Rec
+import qualified Sky.Sky.ModuleName   as ModuleName
 import qualified Sky.Type.Solve       as Solve
+import qualified Sky.Type.Type        as T
 
 
 -- | v0.17 close P2 — the pure compile-time context bundle.  Every
@@ -229,3 +251,238 @@ ctxCgEnv = _ctx_cgEnv
 -- 'docs/v0.17-roadmap/globalCgEnv-close-plan.md'.
 withCgEnv :: Rec.CodegenEnv -> CompileCtx -> CompileCtx
 withCgEnv newEnv ctx = ctx { _ctx_cgEnv = newEnv }
+
+
+-- =====================================================================
+-- v0.17 Phase A iter 3 — emit-phase CompileCtx scaffold
+-- ---------------------------------------------------------------------
+-- The record + helpers below are the iter-3 deliverable per
+-- @docs/v0.17-roadmap/phase-A-cgenv-reshape.md@ §"Iter 3 — Introduce
+-- CompileCtx record + ReaderT scaffold".  THIS iter is purely
+-- additive — the record type ships, a thin ReaderT alias ('EmitM')
+-- exists, lookup helpers exist, but NO existing reader site has been
+-- migrated yet.  Iters 4+ thread the ctx through entry/dep emission;
+-- iter 6-8 swap reader sites; iter 9-10 delete the IORef channel.
+--
+-- Naming convention: the new record uses @_cc_*@ field prefixes
+-- (Compile-Ctx).  This is intentional — the existing 'CompileCtx'
+-- above (the iter-S0 cgEnv-bridge record with @_ctx_*@ fields)
+-- mirrors the FFI/registry IORefs and is consumed by canonicaliser
+-- + solver code BEFORE emit.  The new 'EmitCompileCtx' record is
+-- consumed by emit AFTER solve — distinct lifecycle, distinct
+-- consumers, distinct prefix.  Keeping both in one module avoids a
+-- new file + cabal entry while making the lifecycle separation
+-- visible at every read site.
+-- =====================================================================
+
+
+-- | v0.17 Phase A iter 3 — emit-phase compile context.
+--
+-- Holds every value the post-solve emit pass needs to consume.  The
+-- record is constructed ONCE in 'continueCompile' after 'solvePhase'
+-- returns its 'SolveOutputs' bundle, at the boundary BEFORE
+-- 'emitPhase' fires.  Iters 4-5 thread this ctx through emission
+-- helpers via a ReaderT; iters 6-8 migrate reader sites from
+-- 'getCgEnvFromScope' / 'scopeStateRef' reads to @asks (..._cc_*)@
+-- reads.  Iter 9 deletes the CAF, iter 10 deletes the IORef.
+--
+-- Strict in every field — a partial bundle can't sneak past via
+-- thunks.  Note that the @_cc_anonRecords@ field is a SNAPSHOT, not
+-- a live IORef proxy: the iter-11 anon-records reshape (locked
+-- Option (c)) keeps the underlying IORef as the writer channel; the
+-- snapshot here lets emit-time readers consult the at-build-entry
+-- value when needed.  See
+-- @docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md@.
+data EmitCompileCtx = EmitCompileCtx
+    { _cc_cgEnv :: !Rec.CodegenEnv
+        -- ^ Post-C10 codegen env — the deletion target of criterion #3.
+        -- Constructed AT emit boundary (after every writer in
+        -- 'continueCompile' has settled).  Iter 4-5 readers read this
+        -- field via @asks _cc_cgEnv@ instead of 'getCgEnvFromScope'.
+    , _cc_solvedTypes :: !Solve.SolvedTypes
+        -- ^ Merged entry + dep solved-types map — what
+        -- 'generateGoMulti' / 'lowerCtx' consume for HM type lookups.
+        -- Mirrors 'LowerCtx._lc_solved' AFTER the @typesWithDeps@
+        -- conflict-detection merge fires.  Iter 6+ readers in
+        -- emit-time helpers consult this via @asks _cc_solvedTypes@.
+    , _cc_kernelAlias :: !(Map.Map (ModuleName.Canonical, String) (String, String))
+        -- ^ Kernel-alias registry — Sky-source @(home, name)@ pair to
+        -- @(kernelMod, kernelName)@ for @Ffi.kernel "K_n"@ aliases.
+        -- Mirrors 'SolveOutputs._so_kernelAliasMap' threaded into emit.
+        -- Iter 6+ replaces the @scopeStateRef._lc_kernelAlias@ reads
+        -- in 'exprToGo' / 'rewriteAliasHead' with @asks
+        -- _cc_kernelAlias@.
+    , _cc_unionDetails :: !(Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]))
+        -- ^ Per-union metadata for the sealed-iface emission gate.
+        -- Mirror of @Rec._cg_unionDetails@ AND
+        -- @LowerCtx._lc_unionDetails@.  Iter 6+ consolidates the two
+        -- channels into a single @asks _cc_unionDetails@ read.
+    , _cc_anonRecords :: !(Map.Map String (Map.Map String T.FieldType))
+        -- ^ Snapshot of @globalAnonRecords@ at emit entry.  Iter 11
+        -- (locked Option (c) per the contract doc) keeps the IORef as
+        -- writer channel; readers that need build-entry state can
+        -- consult this snapshot.  Live readers consume the IORef
+        -- directly per the contract.  This field exists so future
+        -- iters can DELETE the IORef channel WITHOUT a new field; the
+        -- migration path is "promote snapshot → live", not "add new
+        -- field".
+    , _cc_module :: !ModuleName.Canonical
+        -- ^ The module currently being emitted (entry-module).  Iter
+        -- 5 dep emission wraps this via @ReaderT.local (\\ctx -> ctx
+        -- { _cc_module = depMod })@ — same trick the existing
+        -- @LowerCtx._lc_module@ uses.
+    , _cc_aliases :: !(Map.Map String Can.Alias)
+        -- ^ Entry + dep merged alias map.  Mirrors
+        -- 'LowerCtx._lc_aliases'.  Iter 6+ readers in emit-time
+        -- helpers consult this via @asks _cc_aliases@ instead of
+        -- @LC._lc_aliases (readIORefNoCse scopeStateRef)@.
+    , _cc_fieldIdx :: !Rec.RecordRegistry
+        -- ^ Field-set → alias-name registry.  Mirrors
+        -- 'LowerCtx._lc_fieldIdx'.  Same iter-6+ migration shape as
+        -- 'aliases'.
+    , _cc_unionNames :: !(Set.Set String)
+        -- ^ Union-name set.  Mirrors 'LowerCtx._lc_unionNames'.  Same
+        -- iter-6+ migration shape.
+    , _cc_ffiTypedWrappers :: !(Set.Set String)
+        -- ^ Typed-FFI wrapper Go-function names (@<Kernel>_<fn>T@).
+        -- Mirrors 'LowerCtx._lc_ffiTypedWrapperNames'.  Iter 6+
+        -- readers in 'exprToGo' (Can.VarKernel arms) +
+        -- 'caseToGo' (isTypedFfiCall) consult this via @asks
+        -- _cc_ffiTypedWrappers@.
+    }
+
+
+-- | Empty 'EmitCompileCtx' for tests + bootstrap.  Real emit goes
+-- through 'buildEmitCompileCtx' which takes the post-solve bundle +
+-- the C10 final cgEnv.
+emptyEmitCompileCtx :: ModuleName.Canonical -> EmitCompileCtx
+emptyEmitCompileCtx home = EmitCompileCtx
+    { _cc_cgEnv             = emptyCgEnv
+    , _cc_solvedTypes       = Solve.emptySolvedTypes
+    , _cc_kernelAlias       = Map.empty
+    , _cc_unionDetails      = Map.empty
+    , _cc_anonRecords       = Map.empty
+    , _cc_module            = home
+    , _cc_aliases           = Map.empty
+    , _cc_fieldIdx          = Map.empty
+    , _cc_unionNames        = Set.empty
+    , _cc_ffiTypedWrappers  = Set.empty
+    }
+
+
+-- | Construct an 'EmitCompileCtx' from the values the emit phase
+-- consumes.  Caller in 'continueCompile' destructures 'SolveOutputs'
+-- + reads the C10-finalised cgEnv from 'scopeStateRef' (transitional
+-- — iter 5 hoists C10 construction so the read disappears) and
+-- passes the snapshots here.
+--
+-- Pure — decoupling the snapshot from the read site means tests can
+-- build an 'EmitCompileCtx' directly without touching any global
+-- state.  Same pattern as 'Sky.Build.LowerCtx.buildLowerCtx'.
+buildEmitCompileCtx
+    :: ModuleName.Canonical
+    -> Rec.CodegenEnv
+    -> Solve.SolvedTypes
+    -> Map.Map (ModuleName.Canonical, String) (String, String)
+    -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -> Map.Map String (Map.Map String T.FieldType)
+    -> Map.Map String Can.Alias
+    -> Rec.RecordRegistry
+    -> Set.Set String
+    -> Set.Set String
+    -> EmitCompileCtx
+buildEmitCompileCtx home cgEnv solved kernelAlias unionDetails
+                    anonRecs aliases fieldIdx unionNames ffiWrappers =
+    EmitCompileCtx
+        { _cc_cgEnv             = cgEnv
+        , _cc_solvedTypes       = solved
+        , _cc_kernelAlias       = kernelAlias
+        , _cc_unionDetails      = unionDetails
+        , _cc_anonRecords       = anonRecs
+        , _cc_module            = home
+        , _cc_aliases           = aliases
+        , _cc_fieldIdx          = fieldIdx
+        , _cc_unionNames        = unionNames
+        , _cc_ffiTypedWrappers  = ffiWrappers
+        }
+
+
+-- | v0.17 Phase A iter 3 — emit monad alias.  ReaderT over 'IO' with
+-- 'EmitCompileCtx' as the environment.  THIS iter ships the alias +
+-- the 'runEmitM' helper but does NOT migrate any existing function
+-- to use it; existing IORef code continues to work unchanged.
+--
+-- Iter 4 will wrap entry-module emission in 'runEmitM'.  Iter 5
+-- wraps dep emission.  Iters 6-8 migrate the reader sites.  See the
+-- design doc § "Iter 4-8".
+type EmitM = ReaderT EmitCompileCtx IO
+
+
+-- | Run an 'EmitM' action against an explicit ctx.
+runEmitM :: EmitCompileCtx -> EmitM a -> IO a
+runEmitM ctx action = runReaderT action ctx
+
+
+-- | Convenience — fetch the ctx inside an 'EmitM' computation.
+-- Identical to mtl's 'ask' but re-exported here so call sites only
+-- need to import 'Sky.Build.CompileCtx'.
+askEmitCtx :: EmitM EmitCompileCtx
+askEmitCtx = ask
+
+
+-- | Read the codegen env from a threaded 'EmitCompileCtx'.  Pure
+-- substitute for @unsafePerformIO (readIORef scopeStateRef) >>=
+-- return . LC._lc_cgEnv@ that the 'getCgEnvFromScope' CAF performs.
+-- Iter 6+ reader migration calls this at every site that previously
+-- consulted the CAF.
+lookupCgEnvFromCtx :: EmitCompileCtx -> Rec.CodegenEnv
+lookupCgEnvFromCtx = _cc_cgEnv
+
+
+-- | Read the merged solved-types map.  Same migration shape as
+-- 'lookupCgEnvFromCtx'.
+lookupSolvedTypesFromCtx :: EmitCompileCtx -> Solve.SolvedTypes
+lookupSolvedTypesFromCtx = _cc_solvedTypes
+
+
+-- | Read the kernel-alias registry.
+lookupKernelAliasFromCtx :: EmitCompileCtx -> Map.Map (ModuleName.Canonical, String) (String, String)
+lookupKernelAliasFromCtx = _cc_kernelAlias
+
+
+-- | Read the per-union metadata map.
+lookupUnionDetailsFromCtx :: EmitCompileCtx -> Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+lookupUnionDetailsFromCtx = _cc_unionDetails
+
+
+-- | Read the anon-records snapshot.  Note: live readers still
+-- consult the IORef per the iter-11 Option (c) contract; this
+-- helper is for emit-time consumers that want the build-entry
+-- state.
+lookupAnonRecordsFromCtx :: EmitCompileCtx -> Map.Map String (Map.Map String T.FieldType)
+lookupAnonRecordsFromCtx = _cc_anonRecords
+
+
+-- | Read the currently-emitting module name.
+lookupModuleFromCtx :: EmitCompileCtx -> ModuleName.Canonical
+lookupModuleFromCtx = _cc_module
+
+
+-- | Read the merged record-alias map.
+lookupAliasesFromCtx :: EmitCompileCtx -> Map.Map String Can.Alias
+lookupAliasesFromCtx = _cc_aliases
+
+
+-- | Read the field-set → alias-name registry.
+lookupFieldIdxFromCtx :: EmitCompileCtx -> Rec.RecordRegistry
+lookupFieldIdxFromCtx = _cc_fieldIdx
+
+
+-- | Read the union-names set.
+lookupUnionNamesFromCtx :: EmitCompileCtx -> Set.Set String
+lookupUnionNamesFromCtx = _cc_unionNames
+
+
+-- | Read the typed-FFI wrapper names set.
+lookupFfiTypedWrappersFromCtx :: EmitCompileCtx -> Set.Set String
+lookupFfiTypedWrappersFromCtx = _cc_ffiTypedWrappers

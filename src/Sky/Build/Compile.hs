@@ -38,6 +38,8 @@ import Sky.Build.CompileCtx
     ( CompileCtx(..), ctxKernelFunctions, ctxKernelModules
     , ctxKernelTypes, ctxImplements
     , emptyCtx
+    -- v0.17 Phase A iter 3 — emit-phase context scaffold (additive).
+    , EmitCompileCtx, buildEmitCompileCtx
     )
 
 import qualified Sky.AST.Source as Src
@@ -4715,7 +4717,45 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
                       -- branch).  Return a one-line marker; the renderer
                       -- already shows where and how to fix each case.
                       return (Left ("Non-exhaustive patterns: " ++ entryPath))
-                  _ ->
+                  _ -> do
+                    -- v0.17 Phase A iter 3 (task #659) — build the
+                    -- 'EmitCompileCtx' scaffold AT THE BOUNDARY.
+                    -- Snapshot 'scopeStateRef' once + destructure the
+                    -- post-solve bundle; the resulting ctx is threaded
+                    -- into 'emitPhase' alongside the legacy explicit
+                    -- args.  Reader sites in the body are UNCHANGED
+                    -- this iter — the IORef channel still drives the
+                    -- existing readers.  Iters 4-8 migrate readers
+                    -- one bottom-up batch at a time; iters 9-10
+                    -- delete the IORef channel.  See
+                    -- 'docs/v0.17-roadmap/phase-A-cgenv-reshape.md'
+                    -- §"Iter 3".
+                    scopeSnap     <- readIORef scopeStateRef
+                    anonRecsSnap  <- AnonRec.readAnonRecords
+                    -- v0.17 Phase A iter 3 — extract cgEnv from the
+                    -- 'Maybe Rec.CodegenEnv' on 'LowerCtx._lc_cgEnv'.
+                    -- This iter is scaffolding only — the ctx is NOT
+                    -- threaded into emitPhase's body; readers still
+                    -- consult 'scopeStateRef' / 'getCgEnv' as before.
+                    -- Iters 4-8 migrate the readers.  If the cgEnv
+                    -- hasn't been installed yet (pre-C9 in tests /
+                    -- LSP fixtures) we use the empty bootstrap value
+                    -- — matches the legacy IORef's seed-state
+                    -- behaviour.
+                    let cgEnvSnap = case LC.lookupCgEnv scopeSnap of
+                            Just env -> env
+                            Nothing  -> _ctx_cgEnv emptyCtx
+                    let emitCtx = buildEmitCompileCtx
+                            (Can._name canMod)
+                            cgEnvSnap
+                            (LC._lc_solved scopeSnap)
+                            kernelAliasMap
+                            (LC._lc_unionDetails scopeSnap)
+                            anonRecsSnap
+                            (LC._lc_aliases scopeSnap)
+                            (LC._lc_fieldIdx scopeSnap)
+                            (LC._lc_unionNames scopeSnap)
+                            (LC._lc_ffiTypedWrapperNames scopeSnap)
                     -- v0.17 PR-α Stage 4 (task #659 iter 2) — extracted
                     -- emit phase: depDecls render, typesWithDeps build,
                     -- generateGoMulti, auth-boundary gate, main.go write,
@@ -4728,13 +4768,18 @@ continueCompile config entryPath outDir moduleOrder srcHash loadedFfi = do
                     -- + SealedIface + MsgDispatch + MonotonicContract)
                     -- gates this extraction; rt.Coerce/AsListT counts
                     -- in examples/26 + examples/00 unchanged.
+                    --
+                    -- Iter 3 widening: emitPhase takes the new ctx as
+                    -- an extra arg.  Body does not consume it yet
+                    -- (scaffolding only); the ctx is the value channel
+                    -- iter-4+ readers consume.
                     emitPhase
                         config entryPath outDir srcHash loadedFfi
                         consoleNeeded canMod entrySrcMod validDeps
                         depRecAliases depUnionNames depUnionDetails
                         depEnumNames depArities depParamTypes
                         depRetTypes depUltRetTypes
-                        solveOut
+                        solveOut emitCtx
 
 
 -- | v0.17 PR-α Stage 4 (task #659 iter 2) — extracted emit phase.
@@ -4799,13 +4844,26 @@ emitPhase
     -- ^ depUltRetTypes.
     -> SolveOutputs
     -- ^ the post-solve bundle (iter 1).
+    -> EmitCompileCtx
+    -- ^ v0.17 Phase A iter 3 — emit-phase context (CompileCtx
+    -- scaffold).  This iter does NOT consume the ctx — the body is
+    -- byte-identical to iter 2.  Iters 4-5 thread the ctx into a
+    -- ReaderT for entry + dep emission; iters 6-8 migrate reader
+    -- sites.  The argument is present so the iter-3 commit's only
+    -- visible change is the signature widening + boundary construction
+    -- at the call site (\``continueCompile\``).  See
+    -- 'docs/v0.17-roadmap/phase-A-cgenv-reshape.md' §"Iter 3".
     -> IO (Either String FilePath)
 emitPhase config entryPath outDir srcHash loadedFfi
           consoleNeeded canMod entrySrcMod validDeps
           depRecAliases depUnionNames depUnionDetails
           depEnumNames depArities depParamTypes
           depRetTypes depUltRetTypes
-          solveOut = do
+          solveOut _phaseACtx = do
+    -- v0.17 Phase A iter 3 — the ctx is INTENTIONALLY UNUSED this
+    -- iter.  Body is byte-identical to iter 2; the underscore-bind
+    -- documents that.  Iter 4+ migrates readers off the
+    -- 'scopeStateRef' channel to consult this value instead.
     let types                = _so_types               solveOut
         entryRegionTys       = _so_entryRegionTys      solveOut
         mergedRegionTys      = _so_mergedRegionTys     solveOut
