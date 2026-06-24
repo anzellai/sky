@@ -392,6 +392,41 @@ and judge verdicts.
    consulting the reference document are rejected at workflow
    entry.
 
+   **Criterion #3 deletion-target wording (locked 2026-06-24).**
+   Earlier framings of `.claude/AUTONOMOUS_GOAL.md` criterion #3
+   read "`globalCgEnv` + `globalGoSigMap` IORefs DELETED". That
+   wording UNDER-SPECIFIED the bridge IORefs (`scopeStateRef`)
+   and the successor CAFs (`getCgEnvFromScope`, env-CAFs) that
+   surfaced during the iter 17 / 37 / 42 / Class-A swap attempts.
+   The locked wording is:
+
+   > Criterion #3 = `{globalCgEnv, globalGoSigMap, scopeStateRef,
+   > env-CAFs}` DELETED **AND** any residual IORef in `Compile.hs`
+   > carries a machine-verified single-writer / single-reader
+   > monotonic contract (see
+   > `docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`
+   > for the `globalAnonRecords` precedent and the
+   > `Sky.Build.AnonRecordWriterAuditSpec` verification gate).
+
+   **This is NOT a relaxation** — it is a precise specification
+   of the substantive purity guarantee. The original "DELETE"
+   wording is satisfied by deleting the named IORefs; the
+   "machine-verified contract" clause closes the loophole that
+   would otherwise let an unnamed bridge IORef survive under a
+   "load-bearing-but-pure" reframe (forbidden per §0 hard rule
+   3). The contract has TWO parts:
+   - Source-level contract docstring naming the writer site +
+     reader sites + monotonic invariant (e.g. "register-on-
+     first-mention; never overwrites; end-of-module barrier").
+   - Spec gate (cabal-test) that builds a multi-module fixture
+     and asserts the invariant programmatically — a write that
+     overwrites OR reads a stale value MUST fail the gate.
+
+   Any "close" claim against criterion #3 cites BOTH the named-
+   IORef deletions AND the surviving-IORef contract+spec
+   pair. Judge verdicts that PASS without the second citation
+   are rejected.
+
 2. **Tactical vs strategic feasibility.** Agents claim TACTICAL
    feasibility ("can I implement this change in N hours / one
    session?"). STRATEGIC feasibility ("does this tactic close the

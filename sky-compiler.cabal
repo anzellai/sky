@@ -331,6 +331,7 @@ test-suite sky-tests
       Sky.Build.UiShowcaseRtCoerceClosedProofSpec
       Sky.Build.RtCoerceBudgetSpec
       Sky.Build.RtCoerceScanner
+      Sky.Build.PhaseABaselineRegressionSpec
       Sky.Build.UiMultilineTextareaSpec
       Sky.Build.InputAttrsSplitSpec
       Sky.Build.ExposingTypeCtorsSpec

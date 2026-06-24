@@ -1008,3 +1008,120 @@ The 5 stdlib gaps from `docs/architecture/sky-stdlib-correctness.md`
 (G1 Task.parallel / G2 Sky.Tui silent-drop / G3 Math.isNaN /
 G4 Db.migrate doc / G5 Functor-Monad law specs) ship alongside the
 compiler work — they are part of v0.17 close, not deferred.
+
+---
+
+## Architectural close plan v3 (2026-06-24, decisions locked)
+
+The user reviewed iter-0 audit findings (bracketed-writer audit at
+`docs/v0.17-roadmap/phase-A-iter-0-bracketed-writers.md`,
+`globalAnonRecords` contract analysis, baseline rt.Coerce / IORef
+spec) and **LOCKED the following decisions at 2026-06-24**.
+Branch tip at decision time: `f4848aba`.
+
+### Locked decisions
+
+1. **`globalAnonRecords` resolution = Option (c)** —
+   bounded-monotonic IORef with a DOCUMENTED CONTRACT +
+   machine-verified spec proving single-writer / single-reader /
+   monotonic-only mutation. NOT a "load-bearing-but-pure" reframe;
+   the contract is the substantive purity guarantee. Contract
+   doc: `docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`.
+   Verification spec: `Sky.Build.AnonRecordWriterAuditSpec`
+   (already locked at iter 19, #644) — extended to assert the
+   monotonic invariant + the end-of-module barrier contract.
+
+2. **Phase C (runtime kernel monomorphisation) DROPPED** — per
+   REVISED SCOPE 2026-06-21 above, the 26-ui-showcase coerce-
+   surface audit confirmed Maybe / Result / Task have **zero**
+   `rt.Coerce` hits because their parametric struct shape
+   (`SkyMaybe[A]{Tag int; JustValue A}`) is already typed
+   end-to-end. The 202 `SkyMaybe` / `SkyResult` field-access
+   sites in `rt.go` are NOT in the migration surface. Phase C
+   is unnecessary. The 4-phase plan below subsumes the
+   previously-considered Phase C scope into Phase B (sealed-
+   iface emission picks up the remaining typed-payload sites).
+
+3. **Phase A timeline = 6-10 weeks (honest)** — supersedes the
+   "3-4 weeks @ 8-12 iters" placeholder in
+   `docs/v0.17-roadmap/phase-A-cgenv-reshape.md` § confidence
+   verdict. The honest estimate accounts for the prior 4 failed
+   attempts (iter 17 / 37 / 42 / Class-A swap iters), the 23k
+   LOC mechanical surface of Compile.hs, the dual-write iter 4-5
+   risk window, and the per-commit adversarial grill discipline
+   per `feedback_v017_per_commit_grill`.
+
+4. **Phase B is independent of Phase A, parallel-trackable** —
+   the sealed-iface ADT emission (#677) does NOT depend on the
+   cgEnv reader migration. Phase B can ship in parallel on an
+   adjacent feature branch. Coordination point: the rt.Coerce
+   floor on 26-ui-showcase moves under Phase B; Phase A's gate
+   is "floor UNCHANGED at entry-floor". If both phases land in
+   the same commit window, the gate normalises to the LATEST
+   Phase B floor at the moment of Phase A's verification iter.
+
+5. **Phase D = Phase 4 Stage 7+ continuation, not a separate
+   phase** — the typed UPDATE arms shipped through Stage 6 in
+   the v0.17 close already. Stage 7+ extends the same pattern
+   to the residual cases (per-Msg-constructor dispatch
+   continuation). It is sequenced under Phase D not as a new
+   architectural surface but as the completion of the existing
+   one.
+
+### Revised 4-phase plan
+
+| Phase | Scope | Wall-clock | Parallel-OK | Artifact |
+|---|---|---|---|---|
+| **0** | iter-0 audits + decision artifacts (THIS workflow) | 1 week | n/a | `docs/v0.17-roadmap/phase-A-iter-0-bracketed-writers.md`, `docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`, baseline spec |
+| **A** | cgEnv reshape + IORef deletion + criterion #3 close | 6-10 weeks | with B | `docs/v0.17-roadmap/phase-A-cgenv-reshape.md` |
+| **B** | `Std.Ui.Element` parametric sealed-iface ADT emission | 4-6 weeks | with A | `docs/v0.17-roadmap/sealed-interface-adt-workflow-output.json` (synthesis) + Phase B design doc (authored at Phase 0 close) |
+| **D** | Phase 4 Stage 7+ typed UPDATE arms continuation | 3-4 weeks | sequential after A+B | Phase D design doc (authored at Phase A close) |
+| **E** | Sweep + fuzzer 10k + tag v0.17.0 | 1-2 weeks | sequential after D | tag commit + release notes |
+
+**Total: 14-22 weeks (~4-5 months)** — honest band including
+adversarial-grill discipline, per-iter empirical gates, and the
+contingency for genuine implementation blockers requiring user
+input under §0 hard rule 4.
+
+### Floor authorization (extended)
+
+The 2026-06-23 floor-touching authorisation logged above (lines
+951-991) remains LIVE and is extended with the 2026-06-24
+decisions:
+
+- All seven floor-touching tactics enumerated under "Floor-
+  touching tactics: AUTHORIZED (2026-06-23)" remain authorised.
+- Plus: the v3 plan above is the authoritative execution path.
+  Future workflows / sessions read this section as the locked
+  decision authority. Any deviation requires explicit user
+  override.
+
+### What this plan changes about the verbatim goal
+
+Nothing. The verbatim goal (lines 10-13) remains the ONLY
+authority on "100% ACHIEVED". The v3 plan is the EXECUTION
+PATH the user has accepted as honest and ready to ship. Judge
+verdicts continue to verify the literal claim at final close.
+
+### Phase 0 deliverable (this workflow)
+
+- Bracketed-writer audit doc (existing) +
+  `globalAnonRecords` contract doc (new) + baseline spec
+  (Sky.Build.AnonRecordWriterAuditSpec extension).
+- Phase A iter-level plan refresh
+  (`docs/v0.17-roadmap/phase-A-cgenv-reshape.md`).
+- Phase A iter 1 commit(s): pure refactor extracting `solvePhase`
+  from `continueCompile`. No behaviour change; provides the
+  emit/solve phase boundary that iters 2+ depend on.
+
+### User direction logged 2026-06-24
+
+> "make the judgement... want to see final outcomes ready to
+> review/merge."
+
+This grants execution authority for Phase 0 + Phase A iter 1
+commits without further per-step confirmation. The mandate is
+the durable permission (per CLAUDE.md §0 rule 1 workflow tool
+auto-launch clause). Subsequent phases (Phase A iter 2+, Phase
+B, Phase D, Phase E) follow the same continuous-loop protocol
+unless the user explicitly revokes or redirects.

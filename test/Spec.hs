@@ -60,6 +60,7 @@ import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiAspectGridSpec
 import qualified Sky.Build.UiShowcaseRtCoerceClosedProofSpec
 import qualified Sky.Build.RtCoerceBudgetSpec
+import qualified Sky.Build.PhaseABaselineRegressionSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
@@ -487,6 +488,14 @@ allSpecs fastMode = do
     -- this one is the quantitative budget, that one is the qualitative
     -- "every site carries a proof comment" check.
     describeT "Sky.Build.RtCoerceBudget" Sky.Build.RtCoerceBudgetSpec.spec
+    -- v0.17 Phase A ratchet gate (cgEnv reshape iter-0 baseline).
+    -- Pins iter-0 measurements (rt.Coerce / rt.AsListT in two examples,
+    -- IORef count + getCgEnvFromScope reader count in Compile.hs) and
+    -- asserts monotone non-increasing at every build.  Secondary safety
+    -- net for the iter-9 IORef DELETE that vacates SKY_CGENV_DIFF=1.
+    -- Design doc: docs/v0.17-roadmap/phase-A-cgenv-reshape.md
+    describeT "Sky.Build.PhaseABaselineRegression"
+        Sky.Build.PhaseABaselineRegressionSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix
