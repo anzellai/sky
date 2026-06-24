@@ -13755,7 +13755,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
             -- the list type isn't concrete (polymorphic helpers).
             Can.VarKernel modName funcName
                 | let typedCall = kernelTypedCall ctx
-                        (Rec._cg_solvedTypes getCgEnvFromScope) modName funcName args
+                        (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)) modName funcName args
                         (map (exprToGo phaseACtxA ctx) args)
                 , Just expr <- typedCall ->
                     expr
@@ -13980,7 +13980,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                 -- Partial application of a top-level function:
                 -- `canViewMonitor session` where canViewMonitor : Session -> Monitor -> Bool
                 -- must yield a closure capturing session.
-                let env = getCgEnvFromScope
+                let env = lookupCgEnvFromCtx phaseACtxA
                     modStr = ModuleName.toString home
                     -- goSafeName escapes Sky function names that collide
                     -- with Go reserved words / built-ins (e.g. `go`,
@@ -14059,7 +14059,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                                 prefix = if null modStr || modStr == "Main"
                                          then "" else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
                                 aliasName = prefix ++ typeName
-                                env' = getCgEnvFromScope
+                                env' = lookupCgEnvFromCtx phaseACtxA
                             in case Map.lookup aliasName (Rec._cg_aliases env') of
                                 Just (Can.Alias _ (T.TRecord m _)) ->
                                     let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList m)
@@ -14159,7 +14159,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                             || not isLocalCallable
                             || length args /= 1
                             then Nothing
-                        else let solved = Rec._cg_solvedTypes getCgEnvFromScope
+                        else let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
                              in case inferExprType solved func of
                                   Just ty ->
                                       peelTypedArrows 1 (solvedTypeToGo ty)
@@ -14212,7 +14212,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
         -- known record alias AND the target is statically typed
         -- (its Go static type matches a record-alias Go struct).
         -- Falls back to `rt.Field` (reflect) otherwise.
-        let env = getCgEnvFromScope
+        let env = lookupCgEnvFromCtx phaseACtxA
             solved = Rec._cg_solvedTypes env
             recSet = Rec._cg_recordAliases env
             nameMatches name =
@@ -14384,7 +14384,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
         -- Record literal: look up matching type alias → named struct, or anonymous
         let entries = Map.toList fields
             fieldNames = map fst entries
-            env = getCgEnvFromScope
+            env = lookupCgEnvFromCtx phaseACtxA
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName ->
                 -- Named struct: Alias_R{Name: "Alice", Age: 30}.
