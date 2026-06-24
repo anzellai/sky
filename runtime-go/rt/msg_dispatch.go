@@ -2,6 +2,7 @@ package rt
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // v0.17 Phase 4, Stage 1 — per-Msg typed dispatch registries.
@@ -113,17 +114,53 @@ type MsgVariantInfo struct {
 var msgVariantInfo = make(map[string]MsgVariantInfo)
 var msgVariantInfoMu sync.RWMutex
 
+// Stage 5 reverse registry: ctorName → adtName.  Populated as a
+// side effect of RegisterMsgVariant so the sky_call2 fast-path
+// consumer can resolve "given Msg value with SkyName=Foo, which
+// ADT does Foo belong to?" in O(1).  Phase 4 Stage 6 uses this
+// to find the right LookupMsgUpdate table; Stage 5 ships only
+// the population + lookup for fast-path probing.
+//
+// Last-write-wins, mirroring RegisterMsgVariant.  Ambiguous
+// ctor names across ADTs (the same ctor name on two different
+// ADTs) are forbidden by Sky's namespacing — every ctor name
+// is globally unique in the emitted Go program — so collisions
+// here would indicate a codegen bug rather than user code.
+var msgCtorToAdt = make(map[string]string)
+var msgCtorToAdtMu sync.RWMutex
+
 // RegisterMsgVariant records the (ADT, ctor) → (tag, arity)
 // mapping.  Stage 5 codegen consults this to short-circuit
 // reflect.Type.NumIn lookups in 'applyMsgArgs' / 'decodeMsgArg'.
 //
 // Stage 1: Sky codegen emits the line per ADT × ctor; runtime
 // consumers don't read yet.  Population is the observable.
+//
+// Stage 5: additionally populates the reverse ctor → adt map
+// (msgCtorToAdt) so the sky_call2 fast-path consumer can
+// resolve the ADT name from a Msg value's SkyName.
 func RegisterMsgVariant(adtName, ctorName string, tag, arity int) {
 	key := adtName + ":" + ctorName
 	msgVariantInfoMu.Lock()
 	msgVariantInfo[key] = MsgVariantInfo{Tag: tag, Arity: arity}
 	msgVariantInfoMu.Unlock()
+
+	msgCtorToAdtMu.Lock()
+	msgCtorToAdt[ctorName] = adtName
+	msgCtorToAdtMu.Unlock()
+}
+
+// LookupAdtByCtor returns the ADT name for a given constructor
+// name (e.g. "Inc" → "Main_Msg").  Stage 5 sky_call2 consumer
+// uses this to derive the registry key for LookupMsgUpdate from
+// a SkyADT's SkyName field.
+//
+// Returns ("", false) when the ctor name isn't registered.
+func LookupAdtByCtor(ctorName string) (string, bool) {
+	msgCtorToAdtMu.RLock()
+	adt, ok := msgCtorToAdt[ctorName]
+	msgCtorToAdtMu.RUnlock()
+	return adt, ok
 }
 
 // LookupMsgVariant returns the (tag, arity) for a registered
@@ -196,4 +233,87 @@ func MsgDecoderRegistrySize() int {
 	n := len(msgDecoders)
 	msgDecodersMu.RUnlock()
 	return n
+}
+
+// ── Stage 5: sky_call2 fast-path consumer infrastructure ─────
+//
+// Phase 4 Stage 5 wires the LookupMsgUpdate consumer into
+// 'sky_call2' (live.go).  The consumer's job is to fast-path
+// the update dispatch when the Msg ADT has a registered typed
+// dispatch table — short-circuiting reflect.MakeFunc and
+// per-arg coerceReflectArg costs.
+//
+// Stage 5 ships only the *infrastructure*: the helper that
+// classifies the call site as fast-path-eligible and looks up
+// the registered table.  The actual table consumption (typed
+// arm invocation, payload extraction from SkyADT.Fields, return
+// shape narrowing) lands in Stage 6 alongside the rt.Coerce
+// drop.  Stage 5 always returns 'ok=false', so sky_call2 falls
+// through to the existing reflect path unchanged — no observable
+// behavior change at this stage.
+//
+// The two-stage split keeps the diff diagnosable: if Stage 6
+// regresses an example, the bisect points at the typed-arm
+// consumption, not at the eligibility classifier.
+
+// fastPathProbeCounter records how many sky_call2 calls were
+// fast-path-eligible (table existed) vs how many fell through
+// (no table registered for the Msg ADT, or 'a' wasn't a SkyADT).
+// Test-facing only; production code does not consult these.
+// Atomics avoid an extra lock on the hot path.
+var fastPathEligibleCount uint64
+var fastPathFallthroughCount uint64
+
+// tryFastPathMsgUpdate is the Stage 5 consumer infrastructure
+// invoked at 'sky_call2' entry.  It classifies the call site
+// and looks up the typed dispatch table:
+//
+//   * If 'a' is a SkyADT and its SkyName resolves via
+//     LookupAdtByCtor → LookupMsgUpdate to a non-nil typed
+//     table, increment fastPathEligibleCount and return
+//     (table, true).
+//   * Otherwise increment fastPathFallthroughCount and return
+//     (nil, false).
+//
+// Stage 5 callers (sky_call2) IGNORE the returned table and
+// always fall through to the reflect path — the lookup is pure
+// observation for telemetry / probe purposes.  Stage 6 changes
+// sky_call2 to consume the table when ok==true.
+//
+// Cost on the hot path: one type assertion ('a.(SkyADT)') +
+// one RLock'd map read + one RLock'd map read.  The fast-path
+// classification is intentionally cheap so a Stage 6 'ok' path
+// can pay for itself.
+func tryFastPathMsgUpdate(a any) (any, bool) {
+	adt, isSkyADT := a.(SkyADT)
+	if !isSkyADT {
+		atomic.AddUint64(&fastPathFallthroughCount, 1)
+		return nil, false
+	}
+	adtName, ok := LookupAdtByCtor(adt.SkyName)
+	if !ok {
+		atomic.AddUint64(&fastPathFallthroughCount, 1)
+		return nil, false
+	}
+	table, ok := LookupMsgUpdate(adtName)
+	if !ok || table == nil {
+		atomic.AddUint64(&fastPathFallthroughCount, 1)
+		return nil, false
+	}
+	atomic.AddUint64(&fastPathEligibleCount, 1)
+	return table, true
+}
+
+// FastPathProbeStats returns the (eligible, fallthrough) counts
+// observed by tryFastPathMsgUpdate since process start.
+// Test-facing only.
+func FastPathProbeStats() (eligible, fallthrough_ uint64) {
+	return atomic.LoadUint64(&fastPathEligibleCount),
+		atomic.LoadUint64(&fastPathFallthroughCount)
+}
+
+// FastPathProbeReset zeros the probe counters.  Test-facing only.
+func FastPathProbeReset() {
+	atomic.StoreUint64(&fastPathEligibleCount, 0)
+	atomic.StoreUint64(&fastPathFallthroughCount, 0)
 }

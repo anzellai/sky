@@ -170,6 +170,98 @@ func TestMsgDispatch_ConcurrentRegisterAndLookupSafe(t *testing.T) {
 	}
 }
 
+// ── Stage 5: fast-path consumer infrastructure tests ────────
+
+func TestLookupAdtByCtor_PopulatedViaRegisterMsgVariant(t *testing.T) {
+	const adt = "TestADT_Stage5_LookupByCtor"
+	const ctor = "TestCtor_Stage5_AB"
+	RegisterMsgVariant(adt, ctor, 0, 0)
+
+	got, ok := LookupAdtByCtor(ctor)
+	if !ok {
+		t.Fatalf("LookupAdtByCtor(%q) ok=false, want true after RegisterMsgVariant", ctor)
+	}
+	if got != adt {
+		t.Errorf("LookupAdtByCtor(%q) = %q, want %q", ctor, got, adt)
+	}
+}
+
+func TestLookupAdtByCtor_AbsentReturnsFalse(t *testing.T) {
+	const ctor = "TestCtor_Stage5_DoesNotExist_Absent"
+	if _, ok := LookupAdtByCtor(ctor); ok {
+		t.Errorf("LookupAdtByCtor(%q) ok=true, want false for unregistered ctor", ctor)
+	}
+}
+
+func TestFastPathProbe_NonSkyADTFallsThrough(t *testing.T) {
+	FastPathProbeReset()
+	// Non-SkyADT argument: e.g. an int — must fall through.
+	_, ok := tryFastPathMsgUpdate(42)
+	if ok {
+		t.Errorf("tryFastPathMsgUpdate(int) ok=true, want false")
+	}
+	eligible, fall := FastPathProbeStats()
+	if eligible != 0 || fall != 1 {
+		t.Errorf("probe stats = (e=%d, f=%d), want (0, 1)", eligible, fall)
+	}
+}
+
+func TestFastPathProbe_SkyADTWithNoRegistryFallsThrough(t *testing.T) {
+	FastPathProbeReset()
+	a := SkyADT{Tag: 0, SkyName: "TestCtor_FastPath_Unknown_NotInRegistry", Fields: nil}
+	_, ok := tryFastPathMsgUpdate(a)
+	if ok {
+		t.Errorf("tryFastPathMsgUpdate(SkyADT) with no registry ok=true, want false")
+	}
+	eligible, fall := FastPathProbeStats()
+	if eligible != 0 || fall != 1 {
+		t.Errorf("probe stats = (e=%d, f=%d), want (0, 1)", eligible, fall)
+	}
+}
+
+func TestFastPathProbe_RegisteredADTReportsEligible(t *testing.T) {
+	const adt = "TestADT_FastPath_Eligible"
+	const ctor = "TestCtor_FastPath_Eligible_Inc"
+	// Register both the variant (populates reverse ctor->adt map)
+	// and the update dispatch table (non-nil so probe reports eligible).
+	RegisterMsgVariant(adt, ctor, 0, 0)
+	RegisterMsgUpdate(adt, map[int]any{0: "sentinel"})
+
+	FastPathProbeReset()
+	table, ok := tryFastPathMsgUpdate(SkyADT{Tag: 0, SkyName: ctor, Fields: nil})
+	if !ok {
+		t.Fatalf("tryFastPathMsgUpdate(eligible SkyADT) ok=false, want true")
+	}
+	m, isMap := table.(map[int]any)
+	if !isMap || m[0] != "sentinel" {
+		t.Errorf("returned table = %v, want map with sentinel", table)
+	}
+	eligible, fall := FastPathProbeStats()
+	if eligible != 1 || fall != 0 {
+		t.Errorf("probe stats = (e=%d, f=%d), want (1, 0)", eligible, fall)
+	}
+}
+
+func TestFastPathProbe_RegisteredVariantButNilUpdateTableFallsThrough(t *testing.T) {
+	// Stage 1 contract: RegisterMsgUpdate("X", nil) is valid
+	// (placeholder).  Probe MUST treat nil as "no table" and fall
+	// through — Stage 6 fast-path can't consume a nil table.
+	const adt = "TestADT_FastPath_NilTable"
+	const ctor = "TestCtor_FastPath_NilTable_X"
+	RegisterMsgVariant(adt, ctor, 0, 0)
+	RegisterMsgUpdate(adt, nil)
+
+	FastPathProbeReset()
+	_, ok := tryFastPathMsgUpdate(SkyADT{Tag: 0, SkyName: ctor, Fields: nil})
+	if ok {
+		t.Errorf("tryFastPathMsgUpdate(SkyADT, nil table) ok=true, want false")
+	}
+	eligible, fall := FastPathProbeStats()
+	if eligible != 0 || fall != 1 {
+		t.Errorf("probe stats = (e=%d, f=%d), want (0, 1)", eligible, fall)
+	}
+}
+
 // itoaFast — local int → string without pulling strconv into the
 // dispatch test surface.  Stays portable across the Go versions
 // the runtime supports.

@@ -7920,6 +7920,18 @@ func sky_call(f any, arg any) any {
 }
 
 func sky_call2(f any, a, b any) any {
+	// v0.17 Phase 4 Stage 5 — fast-path consumer infrastructure.
+	// Probe the LookupMsgUpdate registry for a typed update
+	// dispatch table keyed by the Msg ADT's ctor name.  Stage 5
+	// always falls through to the reflect path; Stage 6 will
+	// consume the table when ok==true to short-circuit
+	// reflect.MakeFunc + per-arg coerceReflectArg costs.
+	//
+	// The cost on the hot path is one type assertion + at most
+	// two RLock'd map reads (msgCtorToAdt, msgUpdateDispatch) —
+	// well-bounded so the eventual Stage 6 fast-path pays for
+	// itself.  Counter updates are atomic, no lock.
+	_, _ = tryFastPathMsgUpdate(a)
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		return f
