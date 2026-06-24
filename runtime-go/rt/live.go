@@ -7920,32 +7920,77 @@ func sky_call(f any, arg any) any {
 }
 
 func sky_call2(f any, a, b any) any {
-	// v0.17 Phase 4 Stage 5 — fast-path consumer infrastructure.
-	// Probe the LookupMsgUpdate registry for a typed update
-	// dispatch table keyed by the Msg ADT's ctor name.  Stage 5
-	// always falls through to the reflect path; Stage 6 will
-	// consume the table when ok==true to short-circuit
-	// reflect.MakeFunc + per-arg coerceReflectArg costs.
+	// v0.17 Phase 4 Stage 6 — typed-arm CONSUMPTION at sky_call2.
 	//
-	// The cost on the hot path is one type assertion + at most
-	// two RLock'd map reads (msgCtorToAdt, msgUpdateDispatch) —
-	// well-bounded so the eventual Stage 6 fast-path pays for
-	// itself.  Counter updates are atomic, no lock.
-	_, _ = tryFastPathMsgUpdate(a)
+	// Stage 5 shipped a pure probe (lookup + counters; always fell
+	// through).  Stage 6 makes the fast-path observation actionable:
+	// when 'a' is a registered SkyADT message AND the dispatch
+	// table exists, we KNOW the Msg parameter is already a typed
+	// SkyADT struct value — no map→struct narrowing, no struct→
+	// struct field copy is needed at coerceReflectArg time.  The
+	// model param ('b') still goes through coerceReflectArg in case
+	// the call site passed an untyped map (e.g. session restore).
+	//
+	// Why this is correctness-safe (no rt.Coerce regression):
+	//   * The eligibility predicate ('table != nil' for the SkyADT's
+	//     ADT name) is checked structurally — any SkyADT whose
+	//     SkyName is registered.  Pre-Stage-6 every such call went
+	//     through coerceReflectArg(av, rv.Type().In(0)) which, for
+	//     a SkyADT value vs an interface-typed In(0), already takes
+	//     the AssignableTo fast-path (line 7811).  Skipping the
+	//     coerceReflectArg call for 'a' when av is already a typed
+	//     SkyADT therefore produces a byte-identical reflect.Value
+	//     to what coerceReflectArg returned — zero behaviour change
+	//     beyond bypassing the 4-branch check.
+	//   * The model 'b' still routes through coerceReflectArg so
+	//     map-restored sessions (Cmd.perform completion + sub-app
+	//     model rehydration) keep their map→struct narrowing path.
+	//
+	// rt.Coerce drop expectation: Stage 6 is a runtime perf lever
+	// (fewer reflect operations on the steady-state event loop) and
+	// does NOT directly drop rt.Coerce wrap emission in codegen.
+	// The user-facing rt.Coerce count is dominated by view-side
+	// typed-record returns + record-field initialisation; Msg
+	// dispatch contributes negligibly.  Stage 7+ (typed UPDATE arms
+	// per case-arm) is the lever that would let us replace the
+	// reflect.Call entirely on the steady-state event loop AND let
+	// codegen drop wraps around Msg-routing call sites.  Stage 6
+	// is the necessary CONSUMER scaffold for that future close.
+	_, fastPathOk := tryFastPathMsgUpdate(a)
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		return f
 	}
 	if rv.Type().NumIn() == 2 {
-		av := reflect.ValueOf(a)
-		bv := reflect.ValueOf(b)
-		if !av.IsValid() {
-			av = reflect.Zero(rv.Type().In(0))
+		var av reflect.Value
+		if fastPathOk {
+			// Typed SkyADT — bypass coerceReflectArg's branch chain.
+			// 'a' is already the concrete struct value, so its
+			// reflect.Value is directly assignable to the function's
+			// In(0) (which is rt.SkyADT or any).  Symmetric with the
+			// AssignableTo / Interface-target fast paths inside
+			// coerceReflectArg.
+			av = reflect.ValueOf(a)
+			if !av.IsValid() {
+				av = reflect.Zero(rv.Type().In(0))
+			} else if want := rv.Type().In(0); want.Kind() != reflect.Interface &&
+				!av.Type().AssignableTo(want) {
+				// Defensive fallback: assignability mismatch (e.g.
+				// generic SkyADT_T[Msg] vs SkyADT) — route through
+				// the full coerce path so we don't regress correctness.
+				av = coerceReflectArg(av, want)
+			}
+		} else {
+			av = reflect.ValueOf(a)
+			if !av.IsValid() {
+				av = reflect.Zero(rv.Type().In(0))
+			}
+			av = coerceReflectArg(av, rv.Type().In(0))
 		}
+		bv := reflect.ValueOf(b)
 		if !bv.IsValid() {
 			bv = reflect.Zero(rv.Type().In(1))
 		}
-		av = coerceReflectArg(av, rv.Type().In(0))
 		bv = coerceReflectArg(bv, rv.Type().In(1))
 		out := rv.Call([]reflect.Value{av, bv})
 		if len(out) > 0 {
