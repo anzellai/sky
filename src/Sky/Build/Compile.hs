@@ -6703,10 +6703,25 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
             -- LookupMsgVariant registry populated entry-side.
             ++ emitMsgArmFuncsDep qualType ctors opts
               (\i argTys -> ctorArgGoTypeDep tvarMap i argTys)
+            -- v0.17 Phase 4 Stage 3 — dep-module path mirror of the
+            -- entry-module dispatch-table var declaration above.
+            -- Polymorphic dep ADTs benefit just like entry ADTs:
+            -- the table is keyed by tag, payload values flow as
+            -- @any@ via the variant arms.
+            ++ emitDispatchTableVarDecls qualType ctors opts
             ++ [ GoIr.GoDeclRaw $ "func init() { "
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
                         "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
                         ctors
+                   -- v0.17 Phase 4 Stage 3 (dep-module path) — same
+                   -- Stage 1+Stage 3 dispatch population +
+                   -- registration as the entry-module path
+                   -- (line 7805).  Dep ADTs now also see the
+                   -- @RegisterMsgUpdate@ + @RegisterMsgVariant@ +
+                   -- dispatch-table-populate lines that Stage 1
+                   -- previously skipped on the dep path.  Stage 6
+                   -- can fast-path on dep ADTs too.
+                   ++ emitMsgDispatchStage1 qualType ctors opts
                    ++ "}" ]
   where
     -- C4: poly ADT — route TVar arg types through substituteTVarsToGo
@@ -7615,13 +7630,21 @@ emitMsgDispatchStage1 qualType ctors opts =
             | otherwise  ->
                 let mvariants = MsgDispatch.variantsFromUnion
                                     (Can.Union [] ctors (length ctors) Can.Normal)
+                    -- v0.17 Phase 4 Stage 3 — populate the dispatch
+                    -- table inside init() BEFORE registering it, so
+                    -- the runtime sees a populated map when Stage 6
+                    -- consults it.
+                    dispatchPopulate =
+                        MsgDispatch.emitDispatchTableInitLines qualType mvariants
+                    -- v0.17 Phase 4 Stage 3 — register the table
+                    -- (no longer nil; points at <qualType>_dispatch).
                     updateLine =
-                        MsgDispatch.emitRegisterUpdateLine qualType ++ "; "
+                        MsgDispatch.emitRegisterUpdateLineWithTable qualType ++ "; "
                     variantLines =
                         concatMap
                             (\mv -> MsgDispatch.emitRegisterMsgVariantLine qualType mv ++ "; ")
                             mvariants
-                in updateLine ++ variantLines
+                in dispatchPopulate ++ updateLine ++ variantLines
 
 
 -- | v0.17 Phase 4 Stage 2 — emit per-variant typed arm functions.
@@ -7718,6 +7741,34 @@ emitMsgArmFuncsDep typeName ctors opts renderSlotTy =
     emitMsgArmFuncs renderSlotTy typeName ctors opts
 
 
+-- | v0.17 Phase 4 Stage 3 — emit the dispatch-table var declaration
+-- per ADT.  Wraps the pure helper in 'Sky.Build.MsgDispatch' so the
+-- emission site stays succinct.
+--
+-- Stage 3 shape (one decl per ADT):
+--
+-- > var Main_Msg_dispatch = map[int]any{}
+--
+-- Returns @[]@ for ADT shapes the gate rejects (Enum / Unbox /
+-- zero-variant) so existing 'generateUnion' output stays
+-- byte-identical to today on those shapes.
+emitDispatchTableVarDecls
+    :: String -> [Can.Ctor] -> Can.CtorOpts -> [GoIr.GoDecl]
+emitDispatchTableVarDecls qualType ctors opts =
+    case opts of
+        Can.Enum  -> []
+        Can.Unbox -> []
+        Can.Normal
+            | null ctors -> []
+            | otherwise  ->
+                let mvariants = MsgDispatch.variantsFromUnion
+                                    (Can.Union [] ctors (length ctors) Can.Normal)
+                    declLine  = MsgDispatch.emitDispatchTableVarDecl qualType mvariants
+                in if null declLine
+                       then []
+                       else [GoIr.GoDeclRaw declLine]
+
+
 -- | Generate Go type declarations for user-defined union types
 generateUnionTypes :: Can.Module -> [GoIr.GoDecl]
 generateUnionTypes canMod =
@@ -7778,6 +7829,12 @@ generateUnionTypes canMod =
             -- consumes these via the LookupMsgVariant registry
             -- populated by Stage 1.  See 'emitMsgArmFuncs' above.
             ++ emitMsgArmFuncs ctorArgGoType typeName ctors opts
+            -- v0.17 Phase 4 Stage 3 — per-ADT dispatch table var
+            -- declaration.  Populated in the per-union init() block
+            -- below via 'emitDispatchTableInitLines' inside
+            -- 'emitMsgDispatchStage1', and registered with
+            -- 'rt.RegisterMsgUpdate' at the same site.
+            ++ emitDispatchTableVarDecls typeName ctors opts
             ++ [ GoIr.GoDeclRaw $ "func init() { "
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
                         "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")

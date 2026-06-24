@@ -43,7 +43,11 @@ module Sky.Build.MsgDispatch
     , collectMsgVariants
     , variantsFromUnion
     , emitRegisterUpdateLine
+    , emitRegisterUpdateLineWithTable
     , emitRegisterMsgVariantLine
+    , emitDispatchTableVarDecl
+    , emitDispatchTableInitLines
+    , dispatchTableVarName
     , isMsgShapedUnion
     ) where
 
@@ -160,6 +164,98 @@ isMsgShapedUnion mu =
 emitRegisterUpdateLine :: String -> String
 emitRegisterUpdateLine qualType =
     "rt.RegisterMsgUpdate(" ++ show qualType ++ ", nil)"
+
+
+-- | v0.17 Phase 4 Stage 3 — emit @rt.RegisterMsgUpdate@ pointing at
+-- the per-ADT dispatch table variable (instead of @nil@ in Stage 1).
+--
+-- The table variable is constructed via 'emitDispatchTableVarDecl' +
+-- 'emitDispatchTableInitLines' at the same emission site (one
+-- adjacent @var@ + one @init()@ population block per ADT).  This
+-- replaces the Stage 1 placeholder with an actual map literal that
+-- the runtime fast-path (Stage 6) can consult.
+--
+-- Stage 3 emission shape:
+--
+-- > rt.RegisterMsgUpdate("Main_Msg", Main_Msg_dispatch)
+--
+-- Where @Main_Msg_dispatch@ is the @map[int]any@ var emitted by
+-- 'emitDispatchTableVarDecl' for the same ADT.
+emitRegisterUpdateLineWithTable :: String -> String
+emitRegisterUpdateLineWithTable qualType =
+    "rt.RegisterMsgUpdate(" ++ show qualType ++ ", " ++ dispatchTableVarName qualType ++ ")"
+
+
+-- | Per-ADT dispatch-table variable name.  Mangles the qualified
+-- type name with a @_dispatch@ suffix.  Examples:
+--
+-- > "Main_Msg"        →  "Main_Msg_dispatch"
+-- > "Lib_Auth_Action" →  "Lib_Auth_Action_dispatch"
+--
+-- Stable across Stage 3 + Stage 6 so the codegen + runtime fast
+-- path stay in lockstep.
+dispatchTableVarName :: String -> String
+dispatchTableVarName qualType = qualType ++ "_dispatch"
+
+
+-- | v0.17 Phase 4 Stage 3 — declare the dispatch-table variable.
+--
+-- Shape (per ADT):
+--
+-- > var Main_Msg_dispatch = map[int]any{}
+--
+-- Stage 3 contract: variable is declared at package scope (next to
+-- the existing ctor/arm declarations) and POPULATED via per-init()
+-- assignments emitted by 'emitDispatchTableInitLines'.  We don't
+-- use a single-shot map literal because emission iterates per-ctor
+-- and map-literal entries don't compose across multiple emission
+-- arms cleanly without intermediate buffering.
+--
+-- Value type is @any@ (not the typed @func(any, M) (M, rt.SkyCmd)@
+-- shape sketched in the design doc).  Reasoning:
+--
+--   * The model type @M@ is not known at ADT-declaration time — it
+--     comes from the @Live.app cfg.update@ type-arg discovered only
+--     at the @Live.app@ call site (a later stage's job).
+--   * Stage 3's deliverable is the OBSERVABLE registration shape:
+--     a non-nil dispatch table the runtime can lookup.  Stage 6
+--     wires the typed fast-path that consumes it.
+--   * Using @any@ keeps Stage 3 byte-identical to today on the
+--     user-visible runtime behaviour — Stage 6 is what flips the
+--     fast-path consumer on.
+--
+-- Returns @""@ for ADT shapes that don't get a dispatch table
+-- (Enum / Unbox / zero-variant).
+emitDispatchTableVarDecl :: String -> [MsgVariant] -> String
+emitDispatchTableVarDecl qualType vs
+    | null vs = ""
+    | otherwise =
+        "var " ++ dispatchTableVarName qualType ++ " = map[int]any{}"
+
+
+-- | v0.17 Phase 4 Stage 3 — populate the dispatch table inside the
+-- per-union @func init()@ block.
+--
+-- One line per variant of the form:
+--
+-- > Main_Msg_dispatch[0] = Main_Msg_arm_Increment;
+--
+-- The arm function symbol is the per-variant typed delegation
+-- emitted by 'emitMsgArmFuncs' (Stage 2).  Population order matches
+-- declaration order, but lookup is keyed by tag — order is purely
+-- cosmetic for the emitted code.
+--
+-- Returns @""@ for ADT shapes 'emitDispatchTableVarDecl' also
+-- skips, so the gate stays paired.
+emitDispatchTableInitLines :: String -> [MsgVariant] -> String
+emitDispatchTableInitLines qualType vs
+    | null vs = ""
+    | otherwise =
+        concatMap (\mv ->
+            dispatchTableVarName qualType
+                ++ "[" ++ show (_mv_tag mv) ++ "] = "
+                ++ qualType ++ "_arm_" ++ _mv_name mv ++ "; ")
+            vs
 
 
 -- | Emit one @rt.RegisterMsgVariant@ scaffolding line per
