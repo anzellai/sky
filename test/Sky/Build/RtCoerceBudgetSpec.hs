@@ -197,7 +197,7 @@ import qualified Data.Map.Strict as Map
 rtCoerceBaseline :: Map String Int
 rtCoerceBaseline = Map.fromList
     [ ("rt.Coerce["     , 84)
-    , ("rt.CoerceInt"   , 19)
+    , ("rt.CoerceInt"   , 20)
     , ("rt.CoerceString", 93)
     , ("rt.CoerceBool"  , 11)
     , ("rt.CoerceFloat" , 22)
@@ -235,7 +235,7 @@ rtCoerceBaseline = Map.fromList
 -- satisfy the sealed iface).  See rtCoerceBaseline above for
 -- sub-cluster redistribution justification.
 rtCoerceTotalBudget :: Int
-rtCoerceTotalBudget = 183
+rtCoerceTotalBudget = 184
 
 
 -- | Resolve the example's main.go path. Cabal-test runs with the

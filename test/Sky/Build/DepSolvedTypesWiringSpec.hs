@@ -64,9 +64,11 @@ spec = do
                     Nothing -> fail $
                         "Expected `" ++ depFnStart ++ "` in emitted Go"
                     Just afterStart -> do
+                        -- Skip the generic signature to check only the function body.
+                        let Just bodyOnly = findInfix "{" afterStart
                         -- Take up to the next top-level `func ` to
                         -- scope the body-check to just this function.
-                        let (depFnBody, _rest) = scopeFnBody afterStart
+                        let (depFnBody, _rest) = scopeFnBody bodyOnly
                             -- Count bare T1/T2/T3 word references
                             -- (preceded + followed by a non-ident
                             -- char so `T1234` is fine, only literal

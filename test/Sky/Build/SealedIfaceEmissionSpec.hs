@@ -19,6 +19,8 @@ import           Test.Hspec
 
 import qualified Sky.AST.Canonical    as Can
 import           Sky.Build.Compile    (emitSealedIfaceUnion)
+import           Sky.Build.CompileCtx (emptyEmitCompileCtx)
+import qualified Sky.Sky.ModuleName   as ModuleName
 import qualified Sky.Generate.Go.Ir   as GoIr
 
 
@@ -32,7 +34,8 @@ spec = do
                 , Can.Ctor "RGB"   2 3 []  -- argTys empty; ctorFieldGoType defaults to "any"
                 ]
 
-        let decls = emitSealedIfaceUnion "Mod_Color" [] colorCtors
+        let dummyCtx = emptyEmitCompileCtx (ModuleName.Canonical "Main")
+        let decls = emitSealedIfaceUnion dummyCtx "Mod_Color" [] colorCtors
 
         it "first decl is the sealed interface Mod_Color" $ do
             case decls of
@@ -125,7 +128,8 @@ spec = do
 
     describe "emitSealedIfaceUnion — minimal single-ctor ADT" $ do
         let oneCtor = [Can.Ctor "Wrap" 0 0 []]
-        let decls = emitSealedIfaceUnion "Mod_Wrapper" [] oneCtor
+        let dummyCtx = emptyEmitCompileCtx (ModuleName.Canonical "Main")
+        let decls = emitSealedIfaceUnion dummyCtx "Mod_Wrapper" [] oneCtor
 
         it "emits interface + 1 struct + 2 methods + 1 var + 1 init for nullary single ctor" $ do
             let counts =

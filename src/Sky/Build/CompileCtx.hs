@@ -66,6 +66,7 @@ module Sky.Build.CompileCtx
     , lookupFieldIdxFromCtx
     , lookupUnionNamesFromCtx
     , lookupFfiTypedWrappersFromCtx
+    , withCurrentModuleInCtx
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -486,3 +487,9 @@ lookupUnionNamesFromCtx = _cc_unionNames
 -- | Read the typed-FFI wrapper names set.
 lookupFfiTypedWrappersFromCtx :: EmitCompileCtx -> Set.Set String
 lookupFfiTypedWrappersFromCtx = _cc_ffiTypedWrappers
+
+
+-- | Install a scoped current module hint for the SolvedTypes in the context.
+withCurrentModuleInCtx :: Maybe String -> EmitCompileCtx -> EmitCompileCtx
+withCurrentModuleInCtx mModName ctx =
+    ctx { _cc_solvedTypes = Solve.withCurrentModule mModName (_cc_solvedTypes ctx) }

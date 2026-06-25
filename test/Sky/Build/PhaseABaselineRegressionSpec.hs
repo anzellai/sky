@@ -164,7 +164,7 @@ baselineCompileIORefCount = 1
 -- monotonically to 0 over iters 1-8 before iter 9 deletes the
 -- helper entirely.
 baselineGetCgEnvFromScopeCount :: Int
-baselineGetCgEnvFromScopeCount = 59
+baselineGetCgEnvFromScopeCount = 37
 
 
 -- ---------------------------------------------------------------------------

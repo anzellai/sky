@@ -10,7 +10,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
 import Data.Maybe (isJust, isNothing, fromMaybe, catMaybes)
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, isSuffixOf)
 import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified System.Directory
@@ -22,11 +22,15 @@ import qualified Control.Exception as E
 import Control.Exception (evaluate)
 import qualified System.IO
 import qualified System.Environment
-import Data.List (isSuffixOf)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory, removeFile, removeDirectoryRecursive)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
+
+
 import System.FilePath (takeDirectory, takeExtension, (</>))
+import qualified Debug.Trace
+
+
 
 import qualified Data.ByteString as BS
 import Sky.Build.EmbedDirTH (isEmbeddableRuntimeFile, isEmbeddableRuntimeDir)
@@ -40,7 +44,10 @@ import Sky.Build.CompileCtx
     , emptyCtx
     -- v0.17 Phase A iter 3 — emit-phase context scaffold (additive).
     , EmitCompileCtx, buildEmitCompileCtx, emptyEmitCompileCtx
-    , lookupCgEnvFromCtx
+    , lookupCgEnvFromCtx, lookupUnionNamesFromCtx, lookupSolvedTypesFromCtx
+    , lookupKernelAliasFromCtx, lookupUnionDetailsFromCtx, lookupModuleFromCtx
+    , lookupAliasesFromCtx, lookupFieldIdxFromCtx, lookupFfiTypedWrappersFromCtx
+    , withCurrentModuleInCtx
     )
 
 import qualified Sky.AST.Source as Src
@@ -537,6 +544,7 @@ withLambdaTypes additions x = unsafePerformIO $ do
 -- Use this at points where the bindings MUST NOT leak into sibling
 -- scopes — e.g. record field-access optimisation, let-binding
 -- typed registration, function-param registration.
+{-# NOINLINE withScopedLambdaTypes #-}
 withScopedLambdaTypes :: Map.Map String T.Type -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaTypes additions x = unsafePerformIO $ do
     prev <- readIORef scopeStateRef
@@ -605,6 +613,7 @@ lookupLambdaGoType ctx k = unsafePerformIO $ do
 -- consumers continue to work.
 --
 -- | Like `withScopedLambdaTypes` but stores Go-type strings directly.
+{-# NOINLINE withScopedLambdaGoStrings #-}
 withScopedLambdaGoStrings :: Map.Map String String -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaGoStrings additions x = unsafePerformIO $ do
     prev <- readIORef scopeStateRef
@@ -696,6 +705,33 @@ withScopedEnclosingTypeParamsStmts tps stmts = unsafePerformIO $ do
     return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
 
 
+-- | v0.17 compactor/soundness fix — sibling of 'withScopedEnclosingTypeParams'
+-- that pushes the entire correct 'LC.LowerCtx' for that definition's body,
+-- ensuring that the scope state is live during the body's rendering.
+{-# NOINLINE withScopedCtx #-}
+withScopedCtx :: LC.LowerCtx -> GoIr.GoExpr -> GoIr.GoExpr
+withScopedCtx ctx x = unsafePerformIO $ do
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef ctx
+    let rendered = GoBuilder.renderExpr x
+        forced = length rendered
+    forced `seq` writeIORef scopeStateRef prev
+    return (GoIr.GoRaw rendered)
+
+
+-- | v0.17 compactor/soundness fix — sibling of 'withScopedEnclosingTypeParamsStmts'
+-- that operates on a list of 'GoStmt' under the correct 'LC.LowerCtx'.
+{-# NOINLINE withScopedCtxStmts #-}
+withScopedCtxStmts :: LC.LowerCtx -> [GoIr.GoStmt] -> [GoIr.GoStmt]
+withScopedCtxStmts ctx stmts = unsafePerformIO $ do
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef ctx
+    let rendered = unlines (concatMap GoBuilder.renderStmt stmts)
+        forced = length rendered
+    forced `seq` writeIORef scopeStateRef prev
+    return [GoIr.GoExprStmt (GoIr.GoRaw rendered)]
+
+
 -- | v0.17 PR-17b Reader-threading — pure ctx-aware predicate that
 -- replaced the legacy 'enclosingTypeParamInScope' (deleted at
 -- Stage 6).  Membership test: is `t` a generic type parameter
@@ -758,11 +794,37 @@ resolveWrapParams ctx mSrc kind fallback =
         Just src ->
             let region = A.toRegion src
                 solved = LC._lc_solved ctx
+                cgEnv = case LC.lookupCgEnv ctx of
+                    Just env -> env
+                    Nothing  -> emptyCgEnv
+                enclosingParams = LC._lc_enclosingTypeParams ctx
+                substMap = Map.fromList
+                    [ (sky, go)
+                    | pairs <- Map.elems (Rec._cg_funcSkyToGoTVars cgEnv)
+                    , (sky, go) <- pairs
+                    , Set.member go enclosingParams
+                    ]
+                hasTVar (T.TVar v) = not (Map.member v substMap || Set.member v enclosingParams)
+                hasTVar (T.TType _ _ args) = any hasTVar args
+                hasTVar (T.TLambda from to) = hasTVar from || hasTVar to
+                hasTVar (T.TRecord fields _) = any (\(T.FieldType _ ft) -> hasTVar ft) (Map.elems fields)
+                hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
+                hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
+                hasTVar T.TUnit = False
+
+                renderTy ty =
+                    let mappingCtx = (GoType.buildMappingContext GoType.defaultRenderEnv cgEnv)
+                                        { GoType.mcTVarsToAny = True
+                                        , GoType.mcTVarSubst = Map.toList substMap
+                                        }
+                        rendered = GoType.renderGoType GoType.defaultRenderEnv (GoType.mapSkyTypeToGo mappingCtx ty)
+                    in padBareParametricAliasArity cgEnv rendered
+
             in case Solve.lookupSolvedRegionScoped region solved of
                 Just (T.TType _ k args)
                     | k == kind
                     , all (not . hasTVar) args ->
-                        List.intercalate ", " (map solvedTypeToGo args)
+                        List.intercalate ", " (map renderTy args)
                 -- v0.17 step-3 (attack-#1 amendment A2): when mSrc is
                 -- Just but the region lookup returned Nothing OR a
                 -- non-matching kind, log a diagnostic for stale-
@@ -772,14 +834,6 @@ resolveWrapParams ctx mSrc kind fallback =
                 _ -> wrapDebug region $ eraseScopedCtx ctx fallback
         Nothing -> eraseScopedCtx ctx fallback
   where
-    hasTVar :: T.Type -> Bool
-    hasTVar (T.TVar _) = True
-    hasTVar (T.TType _ _ args) = any hasTVar args
-    hasTVar (T.TLambda from to) = hasTVar from || hasTVar to
-    hasTVar (T.TRecord fields _) = any (\(T.FieldType _ ft) -> hasTVar ft) (Map.elems fields)
-    hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
-    hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
-    hasTVar T.TUnit = False
 
     wrapDebug :: A.Region -> String -> String
     wrapDebug region result =
@@ -787,6 +841,71 @@ resolveWrapParams ctx mSrc kind fallback =
             then unsafePerformIO $ do
                 let modHint = fromMaybe (ModuleName.toString
                                             (LC._lc_module ctx))
+                                (LC._lc_currentDepModule ctx)
+                    line = "[wrap-debug] kind=" ++ kind
+                        ++ " region=" ++ show region
+                        ++ " module=" ++ modHint
+                        ++ " fallback=" ++ fallback
+                        ++ "\n"
+                E.handle (\e -> do
+                    _ <- return (e :: E.SomeException)
+                    return ()) $
+                    appendFile "/tmp/wrap-debug.log" line
+                return result
+            else result
+
+
+resolveWrapParamsCtx
+    :: EmitCompileCtx
+    -> LC.LowerCtx
+    -> Maybe Can.Expr  -- ^ source expression
+    -> String          -- ^ expected kind: "Task" | "Result" | "Maybe"
+    -> String          -- ^ fallback params (already T-var-erased)
+    -> String
+resolveWrapParamsCtx phaseACtx ctx mSrc kind fallback =
+    case mSrc of
+        Just src ->
+            let region = A.toRegion src
+                solved = lookupSolvedTypesFromCtx phaseACtx
+                cgEnv = lookupCgEnvFromCtx phaseACtx
+                enclosingParams = LC._lc_enclosingTypeParams ctx
+                substMap = Map.fromList
+                    [ (sky, go)
+                    | pairs <- Map.elems (Rec._cg_funcSkyToGoTVars cgEnv)
+                    , (sky, go) <- pairs
+                    , Set.member go enclosingParams
+                    ]
+                hasTVar (T.TVar v) = not (Map.member v substMap || Set.member v enclosingParams)
+                hasTVar (T.TType _ _ args) = any hasTVar args
+                hasTVar (T.TLambda from to) = hasTVar from || hasTVar to
+                hasTVar (T.TRecord fields _) = any (\(T.FieldType _ ft) -> hasTVar ft) (Map.elems fields)
+                hasTVar (T.TTuple a b cs) = hasTVar a || hasTVar b || any hasTVar cs
+                hasTVar (T.TAlias _ _ args _) = any (hasTVar . snd) args
+                hasTVar T.TUnit = False
+
+                renderTy ty =
+                    let mappingCtx = (GoType.buildMappingContext GoType.defaultRenderEnv cgEnv)
+                                        { GoType.mcTVarsToAny = True
+                                        , GoType.mcTVarSubst = Map.toList substMap
+                                        }
+                        rendered = GoType.renderGoType GoType.defaultRenderEnv (GoType.mapSkyTypeToGo mappingCtx ty)
+                    in padBareParametricAliasArity cgEnv rendered
+
+            in case Solve.lookupSolvedRegionScoped region solved of
+                Just (T.TType _ k args)
+                    | k == kind
+                    , all (not . hasTVar) args ->
+                        List.intercalate ", " (map renderTy args)
+                _ -> wrapDebug region $ eraseScopedCtx ctx fallback
+        Nothing -> eraseScopedCtx ctx fallback
+  where
+
+    wrapDebug :: A.Region -> String -> String
+    wrapDebug region result =
+        if wrapDebugEnabled
+            then unsafePerformIO $ do
+                let modHint = fromMaybe (ModuleName.toString
+                                             (LC._lc_module ctx))
                                 (LC._lc_currentDepModule ctx)
                     line = "[wrap-debug] kind=" ++ kind
                         ++ " region=" ++ show region
@@ -859,27 +978,7 @@ resolveWrapParams ctx mSrc kind fallback =
 -- Additive at S4-prep — zero callers.  S4-a v2 onwards migrates
 -- 'getCgEnv' call sites to this helper.  S5 deletes 'globalCgEnv'
 -- + 'getCgEnv' once all callers are on the scopeStateRef route.
-{-# NOINLINE getCgEnvFromScope #-}
-getCgEnvFromScope :: Rec.CodegenEnv
-getCgEnvFromScope = unsafePerformIO $ do
-    ctx <- readIORef scopeStateRef
-    case LC.lookupCgEnv ctx of
-        Just env -> return env
-        -- v0.17 iter 47 (audit-found regression): production
-        -- 'resetCompileState' always installs initialCgEnv before
-        -- emission begins, so this branch is unreachable on the
-        -- compile path. The legitimate caller is spec-only —
-        -- 'Sky.Build.IsPlainIdent' intentionally exercises
-        -- 'isPlainIdentForTypedRouting' with no env push to verify
-        -- the soundness-floor strict-reject contract. Returning
-        -- 'emptyCgEnv' (vs the old 'error' BUG trap) preserves
-        -- that contract: an empty CodegenEnv → 'goExprGoType'
-        -- returns Nothing for the base → 'intermediatesTyped'
-        -- rejects → wrap path runs as the soundness floor expects.
-        -- The S5 v3 CAF-memoization regression class is not
-        -- re-introduced because NOINLINE forces a fresh IORef
-        -- read on every evaluation.
-        Nothing  -> return emptyCgEnv
+
 
 
 -- | v0.17 sealed-iface ADT carve-out decision (P3.3 infrastructure).
@@ -1654,17 +1753,32 @@ subjectIsSealedIface
                                       --   the predicate's qualifiedGoKey
                                       --   is the source of truth.
              )
-subjectIsSealedIface ctx solved (A.At region _) = do
-    ty <- Solve.lookupSolvedRegionScoped region solved
-    case peelTAlias Set.empty ty of
-        T.TType home name _args -> do
-            let goKey = qualifiedGoKey ctx home name
-            (declHome, opts, vars, ctors) <-
-                Map.lookup goKey (LC._lc_unionDetails ctx)
-            if shouldEmitSealedIface declHome name vars opts
-                then Just (declHome, name, vars, opts, ctors, goKey)
-                else Nothing
-        _ -> Nothing
+subjectIsSealedIface ctx solved (A.At region expr) =
+    let mTy = Solve.lookupSolvedRegionScoped region solved
+        res = do
+            ty <- mTy
+            case peelTAlias Set.empty ty of
+                T.TType home name _args -> do
+                    let goKey = qualifiedGoKey ctx home name
+                    case Map.lookup goKey (LC._lc_unionDetails ctx) of
+                        Just (declHome, opts, vars, ctors) ->
+                            if shouldEmitSealedIface declHome name vars opts
+                                then Just (declHome, name, vars, opts, ctors, goKey)
+                                else Nothing
+                        Nothing -> Nothing
+                _ -> Nothing
+    in let dbg = "subjectIsSealedIface: region=" ++ show region 
+                 ++ " expr=" ++ show expr 
+                 ++ " mTy=" ++ show mTy 
+                 ++ " curMod=" ++ show (Solve._stCurrentModule solved)
+                 ++ " inFlat=" ++ show (Map.member region (Solve._stRegions solved))
+                 ++ " inScoped=" ++ show (case Solve._stCurrentModule solved of
+                                            Just mn -> case Map.lookup mn (Solve._stPerModuleRegions solved) of
+                                                Just mr -> Map.member region mr
+                                                Nothing -> False
+                                            Nothing -> False)
+                 ++ " res=" ++ show (fmap (\(dh, n, _, _, _, k) -> (ModuleName.toString dh, n, k)) res)
+       in Debug.Trace.trace dbg res
   where
     -- v0.17 P3.4c.1 — transparent peel of @T.TAlias@ to its
     -- underlying body.  @AliasType@ has two ctors (Hoisted /
@@ -1872,7 +1986,7 @@ classifyBranch ctx leafFn subjectName qualType
         (Can.CaseBranch (A.At _ pat) body) =
     case pat of
         Can.PCtor _ _ _ ctorName _ args -> do
-            argStmtsList <- mapM (renderArgBinding subjectName) args
+            argStmtsList <- mapM (renderArgBinding (phaseAFallback ctx) subjectName) args
             -- v0.17 P3.4c.2c — body lowering routes through leafFn
             -- instead of hard-coding @[GoReturn (exprToGo ctx
             -- body)]@.  Expression-position passes the defaultLeaf
@@ -1937,8 +2051,8 @@ classifyBranch ctx leafFn subjectName qualType
 --     a non-ADT shape (Sky's HM rejects ADT-typed inner patterns
 --     under non-PCtor outer patterns).
 renderArgBinding
-    :: String -> Can.PatternCtorArg -> Maybe [GoIr.GoStmt]
-renderArgBinding subjectName
+    :: EmitCompileCtx -> String -> Can.PatternCtorArg -> Maybe [GoIr.GoStmt]
+renderArgBinding ctx subjectName
         (Can.PatternCtorArg idx _ (A.At _ argPat)) =
     let fieldName = "V" ++ show idx
         accessor = GoIr.GoSelector (GoIr.GoIdent subjectName) fieldName
@@ -1980,7 +2094,7 @@ renderArgBinding subjectName
             in Just $
                 GoIr.GoShortDecl tempName accessor
                 : GoIr.GoAssign "_" (GoIr.GoIdent tempName)
-                : patternBindings tempName argPat
+                : patternBindings ctx tempName argPat
 
 
 -- | Enforce that the catchall arm (if any) is the LAST branch.
@@ -2323,11 +2437,12 @@ foldGroup discIdx = go [] []
 -- emits the @json.RawMessage@ / @json.Unmarshal@ / @gob.Register@
 -- references that depend on those imports being present.
 emitSealedIfaceUnion
-    :: String        -- ^ qualified type name (e.g. @Mod_Color@)
+    :: EmitCompileCtx
+    -> String        -- ^ qualified type name (e.g. @Mod_Color@)
     -> [String]      -- ^ source-ADT type variable names (empty for monomorphic ADTs)
     -> [Can.Ctor]    -- ^ ADT ctors in declaration order
     -> [GoIr.GoDecl]
-emitSealedIfaceUnion qualType vars ctors =
+emitSealedIfaceUnion phaseACtx qualType vars ctors =
     sealedInterface
     : siblingAliasT
     ++ concatMap variantDecls ctors
@@ -2422,7 +2537,7 @@ emitSealedIfaceUnion qualType vars ctors =
     -- in 'ctorArgGoType' (Compile.hs:5970-5971). Monomorphic ADTs only —
     -- no TVar substitution map needed.
     ctorFieldGoType i argTys
-        | i < length argTys = safeReturnTypeFull (argTys !! i)
+        | i < length argTys = safeReturnTypeFull phaseACtx (argTys !! i)
         | otherwise         = "any"
 
     -- init() block as a single GoDeclRaw. Mirrors the existing
@@ -5007,7 +5122,7 @@ emitPhase config entryPath outDir srcHash loadedFfi
     let phaseACtx = buildEmitCompileCtx
             (Can._name canMod)
             cgEnvSnap
-            (LC._lc_solved scopeSnap)
+            typesWithDeps
             kernelAliasMap
             (LC._lc_unionDetails scopeSnap)
             anonRecsSnap
@@ -6328,7 +6443,7 @@ locateRuntimeDir = do
 -- wrap it via @ReaderT.local (_cc_module := depMod)@.  Iter 4 leaves
 -- the body unchanged.
 generateDeclsForDepScoped :: EmitCompileCtx -> Set.Set Dce.Ref -> String -> Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDepScoped _phaseACtx reachableProg _modName canMod modPrefix =
+generateDeclsForDepScoped phaseACtx reachableProg _modName canMod modPrefix =
     -- v0.17 PR-α Session 6 — the dep-mode IORef sentinel pattern is
     -- retired.  Every renderer entry point now threads the dep-mode
     -- hint from its caller via pure data (see Compile.hs's
@@ -6353,15 +6468,15 @@ generateDeclsForDepScoped _phaseACtx reachableProg _modName canMod modPrefix =
     -- explanation.  The architectural close requires lazy-thunk
     -- isolation (NOINLINE-per-decl + sharing-busting wrapper) —
     -- multi-session work.
-    generateDeclsForDep reachableProg canMod modPrefix
+    generateDeclsForDep phaseACtx reachableProg canMod modPrefix
 
 
 -- | Generate Go declarations for a dependency module's functions
 --
 -- v0.17 iter 16 (task #654) — 'reachableProg' threaded as a pure
 -- parameter (replaces 'readIORefNoCse globalReachableProgram').
-generateDeclsForDep :: Set.Set Dce.Ref -> Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDep reachableProg canMod modPrefix =
+generateDeclsForDep :: EmitCompileCtx -> Set.Set Dce.Ref -> Can.Module -> String -> [GoIr.GoDecl]
+generateDeclsForDep phaseACtx reachableProg canMod modPrefix =
     let userDefs = collectDeclNames (Can._decls canMod)
         -- v0.13 F: whole-program DCE. Drop dep-module decls that
         -- aren't transitively reachable from the entry module's
@@ -6374,7 +6489,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
             dceOff
             || Set.null reached
             || Set.member (Dce.TopRef canonicalModName n) reached
-    in concatMap (generateUnionForDep (Can._name canMod) modPrefix) (Map.toList (Can._unions canMod))
+    in concatMap (generateUnionForDep phaseACtx (Can._name canMod) modPrefix) (Map.toList (Can._unions canMod))
     ++ concatMap (generateAliasForDep userDefs modPrefix) (Map.toList (Can._aliases canMod))
     ++ go keepName (Can._decls canMod)
   where
@@ -6403,7 +6518,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- module collisions).
               depSolved = Solve.withCurrentModule
                               (Just (ModuleName.toString (Can._name canMod)))
-                              (Rec._cg_solvedTypes getCgEnvFromScope)
+                              (lookupSolvedTypesFromCtx phaseACtx)
               def = etaExpandPointFreeScoped depSolved def0
               -- For TypedDef, the 5th field is the RETURN type only;
               -- per-pattern arg types live in `typedPats :: [(Pat, Type)]`.
@@ -6427,13 +6542,13 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- `Sky_Core_Result_map` while call sites looked for
               -- `Sky_Core_Result_map_` → `go build` undefined.
               goName = modPrefix ++ "_" ++ goSafeName name
-              (goParams', destructStmts) = destructureParams params
+              (goParams', destructStmts) = destructureParams phaseACtx params
               -- T3 (dep path): annotated dep functions get typed return.
               -- T2/T6 (dep path): typed params too. When no annotation
               -- exists, fall back to HM-inferred type. TVars become Go
               -- type parameters (T4b) so partially-inferred functions
               -- get typed generically instead of falling back to `any`.
-              env = getCgEnvFromScope
+              env = lookupCgEnvFromCtx phaseACtx
               -- v0.13 typed lowerer: the sig tables (`_cg_funcInferredSigs`,
               -- `_cg_funcRetType`) are keyed with the `goSafeName`-mangled
               -- form (`Sky_Core_List_map_`, not `Sky_Core_List_map`) — see
@@ -6615,7 +6730,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               depModuleName = ModuleName.toString (Can._name canMod)
               depBodyCtx = LC.withCurrentDepModule (Just depModuleName)
                          $ LC.withEnclosingTypeParams depTypeParams
-                                (ctxFromIORef ())
+                                (buildLowerCtxFromEmitCtx (withCurrentModuleInCtx (Just depModuleName) phaseACtx))
               lowerDepBody e =
                   if depRetType /= "any"
                       then exprToGoExpectGo (phaseAFallback depBodyCtx) depBodyCtx depRetType e
@@ -6631,7 +6746,12 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- consult HM via Solve.lookupSolvedRegionScoped at the
               -- function body's region and substitute concrete type
               -- args.  Closes T1 leak at construction time.
-              typedBody = typeIIFE depBodyCtx (Just body) depRetType (lowerDepBody body)
+              typedBody = unsafePerformIO $ do
+                  prev <- readIORef scopeStateRef
+                  writeIORef scopeStateRef depBodyCtx
+                  let res = typeIIFE depBodyCtx (Just body) depRetType (lowerDepBody body)
+                  res `seq` writeIORef scopeStateRef prev
+                  return res
               -- v0.13 Stage 1 (task #189) — register func-typed
               -- params in the Go-string registry too, so the
               -- recursive call-site `goExprGoType` resolves
@@ -6685,7 +6805,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               --
               -- Reverted to ultra-narrow predicate.  Delta: 26-ui-showcase
               -- AsListT 192 (unchanged from iter 10 baseline).
-              cgEnv = getCgEnvFromScope
+              cgEnv = lookupCgEnvFromCtx phaseACtx
               cgSealedSet = Rec._cg_sealedIfaceNames cgEnv
               isSealedIfaceTypeStr s =
                   Set.member s cgSealedSet
@@ -6741,7 +6861,7 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- with empty depTypeParams, to snap the body's lazy
               -- reads NOW.  Set.union {} prev = prev makes empty-tps
               -- a no-op semantically; only the eager force matters.
-              bodyExpr = withScopedEnclosingTypeParams depTypeParams bodyExpr0
+              bodyExpr = withScopedCtx depBodyCtx bodyExpr0
               -- v0.14.x TCO: same shape as the entry-module emission.
               -- Tail-recursive dep functions (Sky.Core.List.foldl,
               -- find, any, all, …) emit as a `for {}` loop with
@@ -6757,7 +6877,8 @@ generateDeclsForDep reachableProg canMod modPrefix =
               -- coerceToFieldType reads inside the loop preserve
               -- T-vars instead of erasing to `any`.  Closes
               -- probe-TCO-4 (polymorphic case-arm tail jump).
-              tcoBody = withScopedEnclosingTypeParamsStmts depTypeParams
+              -- v0.17 compactor/soundness fix: wrap TCO body in withScopedCtxStmts.
+              tcoBody = withScopedCtxStmts depBodyCtx
                           [GoIr.GoForever
                               (tcoBodyStmts depBodyCtx depHome name (length params)
                                             depParamNames depParamTyped depRetType body)]
@@ -6803,8 +6924,8 @@ collectDeclNames = goNames Set.empty
 -- references like @case x of Just v -> ...@ that today emit bare
 -- @qualType@ in type slots without args.  Fully typing the
 -- consumption side is Phase γ's σ-projection work (C8-C12).
-generateUnionForDep :: ModuleName.Canonical -> String -> (String, Can.Union) -> [GoIr.GoDecl]
-generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
+generateUnionForDep :: EmitCompileCtx -> ModuleName.Canonical -> String -> (String, Can.Union) -> [GoIr.GoDecl]
+generateUnionForDep phaseACtx modName modPrefix (typeName, Can.Union vars ctors _numAlts opts) =
     let qualType = modPrefix ++ "_" ++ typeName
         -- C4: poly ADT — derive Go type-var names + substitution map.
         goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1::Int ..] vars
@@ -6849,7 +6970,7 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
             -- v0.17 P2.1: pass @vars@ so parametric ADTs ALSO
             -- emit a @qualType_T[T1 any, ...] = qualType@ sibling
             -- alias adjacent to the interface decl.
-            emitSealedIfaceUnion qualType vars ctors
+            emitSealedIfaceUnion phaseACtx qualType vars ctors
         _ ->
             -- Type alias stays non-generic — `type qualType = rt.SkyADT`.
             -- The TVar info lives only on the ctor function's params.
@@ -6959,7 +7080,7 @@ generateUnionForDep modName modPrefix (typeName, Can.Union vars ctors _numAlts o
             in case aty of
                 T.TVar skyTV
                     | Just goTV <- Map.lookup skyTV tvarMap -> goTV
-                _ -> safeReturnTypeFull aty
+                _ -> safeReturnTypeFull phaseACtx aty
         | otherwise = "any"
 
 
@@ -7050,7 +7171,9 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
 --
 -- Sub-iter 22b goal: prove mechanical extractability for
 -- goSigMap, matching iter 22a's cgEnv treatment.  The IORef
--- stays alive (writeIORef at line ~4996).
+-- stays alive (writeIORef at line ~4996).  Iter 22b extracts the
+-- goSigMap C10 update similarly; iter 22c moves both into
+-- solvePhase; iter 22d+22e defuse the IORefs.
 buildFinalGoSigMap
     :: Map.Map String GoSig
         -- ^ existingGoSig: snapshot of globalGoSigMap at C10 entry
@@ -7598,7 +7721,7 @@ generateGoMulti phaseACtx consoleNeeded canMod srcMod config solvedTypes depDecl
                         -- the record DOES have a Go alias; only the
                         -- genuinely-anonymous slots widen).
                         σ_go = Map.fromList
-                            [ (gn, solvedTypeToGo cty)
+                            [ (gn, solvedTypeToGoViaPipelineFlatCtx env cty)
                             | (sn, gn) <- skyToGo
                             , Just cty <- [Map.lookup sn σ_sky]
                             ]
@@ -8201,7 +8324,7 @@ generateUnionTypes _phaseACtx canMod =
             -- v0.17 P2.1: pass @vars@ so parametric ADTs ALSO
             -- emit a @typeName_T[T1 any, ...] = typeName@ sibling
             -- alias adjacent to the interface decl.
-            emitSealedIfaceUnion typeName vars ctors
+            emitSealedIfaceUnion _phaseACtx typeName vars ctors
         _ ->
             -- Tagged union: alias rt.SkyADT so values constructed here
             -- are assignment-compatible with values produced by rt-side
@@ -8303,7 +8426,7 @@ generateUnionTypes _phaseACtx canMod =
     -- T1: ctor params are typed from the union's declared arg types.
     -- Call sites coerce via the VarCtor branch of exprToGo Can.Call.
     ctorArgGoType i argTys
-        | i < length argTys = safeReturnTypeFull (argTys !! i)
+        | i < length argTys = safeReturnTypeFull _phaseACtx (argTys !! i)
         | otherwise = "any"
 
     hasTVar :: T.Type -> Bool
@@ -8625,7 +8748,7 @@ uniqueSorted = Set.toAscList . Set.fromList
 -- iter 6+ migrates reader sites in 'solvedTypeToGo' calls inside
 -- this function to consult the ctx.
 generateAliasTypes :: EmitCompileCtx -> Can.Module -> [GoIr.GoDecl]
-generateAliasTypes _phaseACtx canMod =
+generateAliasTypes phaseACtx canMod =
     let userDefinedNames = collectDeclNames (Can._decls canMod)
     in concatMap (generateAlias userDefinedNames) (Map.toList (Can._aliases canMod))
   where
@@ -8644,7 +8767,7 @@ generateAliasTypes _phaseACtx canMod =
             -- declaration here is non-generic (no @[T any]@ params),
             -- so any TVar in the body has no enclosing Go scope.
             -- Parity locked by RendererParitySpec.
-            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
+            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGoViaPipelineFlatCtx (lookupCgEnvFromCtx phaseACtx) body ]
 
     -- vars carries the Sky-side type parameter NAMES for parametric
     -- aliases (e.g. `type alias Cfg msg = { ... }` has vars = ["msg"]).
@@ -8770,7 +8893,7 @@ generateDecls phaseACtx canMod solvedTypes =
 --
 -- v0.17 Phase A iter 4 — entry-module emit function takes the
 -- threaded 'EmitCompileCtx' as its first arg.  Iter 4 plumbs the
--- ctx through to 'generateDef' without consulting it; iter 6+
+-- ctx through without consulting it; iter 6+
 -- migrates reader sites.  See the doc-comment on 'generateDef'.
 generateDefMaybe :: EmitCompileCtx -> ModuleName.Canonical -> Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
 generateDefMaybe phaseACtx home reachable dceEnabled def solvedTypes = case def of
@@ -8915,12 +9038,11 @@ lookupDceFlag = do
 -- | Generate Go for a single definition, using solved types for signatures
 --
 -- v0.17 Phase A iter 4 — entry-module emit functions take an
--- 'EmitCompileCtx' as their first arg.  Iter 4 plumbs the ctx through
--- without consuming it; the underscore-bound parameter documents
--- intent.  Iter 6+ migrates legacy IORef-CAF reader sites in the
--- body to consult this ctx instead of the scope-state channel.
+-- 'EmitCompileCtx' as their first arg.  Iter 4 plumbs only;
+-- iter 6+ migrates reader sites in the body to consult this ctx
+-- instead of the scope-state channel.
 generateDef :: EmitCompileCtx -> ModuleName.Canonical -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDef _phaseACtx home def0 solvedTypes =
+generateDef phaseACtx home def0 solvedTypes =
     -- v0.15.52 #398 — Point-free top-level alias of a polymorphic /
     -- N-ary function (e.g. `tickle = String.toUpper` where
     -- `String.toUpper : String -> String`) syntactically has 0
@@ -8971,14 +9093,14 @@ generateDef _phaseACtx home def0 solvedTypes =
                 -- covariance via generic inference).
                 let baseTy = foldr T.TLambda retTy (map snd typedPats)
                 in  splitInferredSigWithRegScoped Nothing
-                        (Rec._cg_recordAliases getCgEnvFromScope)
-                        (Rec._cg_fieldIndex getCgEnvFromScope)
+                        (Rec._cg_recordAliases (lookupCgEnvFromCtx phaseACtx))
+                        (Rec._cg_fieldIndex (lookupCgEnvFromCtx phaseACtx))
                         (length typedPats)
                         baseTy
             (_, _, Just funcType) ->
                 splitInferredSigWithRegScoped Nothing
-                    (Rec._cg_recordAliases getCgEnvFromScope)
-                    (Rec._cg_fieldIndex getCgEnvFromScope)
+                    (Rec._cg_recordAliases (lookupCgEnvFromCtx phaseACtx))
+                    (Rec._cg_fieldIndex (lookupCgEnvFromCtx phaseACtx))
                     (length params)
                     funcType
             _ -> ([], replicate (length params) "any", "any")
@@ -9014,7 +9136,7 @@ generateDef _phaseACtx home def0 solvedTypes =
             -- correctly sees the enclosing fn's declared TVars.
             -- Mirror of dep-side depBodyCtx.
             entryBodyCtx = LC.withEnclosingTypeParams entryTypeParams
-                              (ctxFromIORef ())
+                              (buildLowerCtxFromEmitCtx phaseACtx)
             lowerFnBody e =
                 if goRetType /= "any"
                     then exprToGoExpectGo (phaseAFallback entryBodyCtx) entryBodyCtx goRetType e
@@ -9028,7 +9150,12 @@ generateDef _phaseACtx home def0 solvedTypes =
             -- as source so wrap-param fallbacks consult HM via
             -- Solve.lookupSolvedRegionScoped at the function body's
             -- region.
-            typedBody = typeIIFE entryBodyCtx (Just body) goRetType (lowerFnBody body)
+            typedBody = unsafePerformIO $ do
+                prev <- readIORef scopeStateRef
+                writeIORef scopeStateRef entryBodyCtx
+                let res = typeIIFE entryBodyCtx (Just body) goRetType (lowerFnBody body)
+                res `seq` writeIORef scopeStateRef prev
+                return res
             bodyExpr0 = if Map.null paramTypeBindings
                 then typedBody
                 else withScopedLambdaTypes paramTypeBindings typedBody
@@ -9040,10 +9167,8 @@ generateDef _phaseACtx home def0 solvedTypes =
             -- `view cfg = ...` shape (the exact #521 repro) lives
             -- in entry modules; without this push the dep-side fix
             -- is symmetric-half-empty.
-            bodyExpr = if null entryTypeParams
-                then bodyExpr0
-                else withScopedEnclosingTypeParams entryTypeParams bodyExpr0
-            (goParams', destructStmts) = destructureParams params
+            bodyExpr = withScopedCtx entryBodyCtx bodyExpr0
+            (goParams', destructStmts) = destructureParams phaseACtx params
             -- Replace each param's Go type with the typed form (from
             -- annotation or HM inference). destructureParams gave us
             -- the parameter patterns with `"any"` types by default.
@@ -9062,7 +9187,8 @@ generateDef _phaseACtx home def0 solvedTypes =
             -- (tuple-pattern locals re-bind each iteration; closes
             -- probe-TCO-2).  PR-17c wraps the body in the enclosing
             -- type-param scope (probe-TCO-4 closer).
-            tcoBody = withScopedEnclosingTypeParamsStmts entryTypeParams
+            -- v0.17 compactor/soundness fix: wrap TCO body in withScopedCtxStmts.
+            tcoBody = withScopedCtxStmts entryBodyCtx
                         [GoIr.GoForever
                             (destructStmts ++
                                 tcoBodyStmts entryBodyCtx home name (length params)
@@ -9084,8 +9210,8 @@ generateDef _phaseACtx home def0 solvedTypes =
 -- | Generate function parameters and destructuring statements for any
 -- non-PVar patterns. Returns (params, prelude stmts) where the prelude
 -- binds names extracted from complex patterns in the function body.
-destructureParams :: [Can.Pattern] -> ([GoIr.GoParam], [GoIr.GoStmt])
-destructureParams pats =
+destructureParams :: EmitCompileCtx -> [Can.Pattern] -> ([GoIr.GoParam], [GoIr.GoStmt])
+destructureParams ctx pats =
     let (params, stmtLists) = unzip (zipWith oneParam [0::Int ..] pats)
     in (params, concat stmtLists)
   where
@@ -9095,7 +9221,7 @@ destructureParams pats =
         Can.PUnit     -> (GoIr.GoParam "_" "any", [])
         _ ->
             let tmp = "_p" ++ show idx
-            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
+            in (GoIr.GoParam tmp "any", patternBindings ctx tmp pat)
 
 
 -- | Escape Sky identifiers that collide with Go reserved/builtin
@@ -9357,8 +9483,8 @@ coerceExprFor goTy src = case goTy of
 -- literal (Result/Maybe/Task generic structs, opaque aliases) — in
 -- those cases the IIFE stays `func() any` (the trailing unreachable
 -- `return nil` sentinel needs `any`).
-goZeroValue :: String -> Maybe String
-goZeroValue t = case t of
+goZeroValue :: EmitCompileCtx -> String -> Maybe String
+goZeroValue phaseACtx t = case t of
     "int"      -> Just "0"
     "int64"    -> Just "0"
     "float64"  -> Just "0.0"
@@ -9420,7 +9546,7 @@ goZeroValue t = case t of
       --   * Unknown (FFI-opaque, unresolved)   → Nothing — keep
       --     the IIFE `func() any` rather than risk invalid Go.
       | isBareCapName t ->
-          let env = getCgEnvFromScope
+          let env = lookupCgEnvFromCtx phaseACtx
               enums  = Rec._cg_enumNames env
               unions = Rec._cg_unionNames env
               sealedIfaceNames = Rec._cg_sealedIfaceNames env
@@ -9439,9 +9565,9 @@ goZeroValue t = case t of
               isSealedIface = Set.member t sealedIfaceNames
                                 || Set.member lastSeg sealedIfaceNames
           in if isEnum            then Just "0"
-             else if isSealedIface then Just "nil"
-             else if isUnion      then Just (t ++ "{}")
-             else Nothing
+              else if isSealedIface then Just "nil"
+              else if isUnion      then Just (t ++ "{}")
+              else Nothing
       | otherwise -> Nothing
   where
     isBareCapName s =
@@ -9461,10 +9587,10 @@ goZeroValue t = case t of
 -- the caller's fallback path (`coerceArg` / `any()` widening) must
 -- handle it instead.  Used by both `exprToGoExpectGo`'s safety gate
 -- and `coerceCallArgsAt`'s control-flow-arg branch.
-isEmittableGoType :: String -> Bool
-isEmittableGoType s =
+isEmittableGoType :: EmitCompileCtx -> String -> Bool
+isEmittableGoType ctx s =
     s /= "any"
-    && (isJust (goZeroValue s) || "func(" `List.isPrefixOf` s)
+    && (isJust (goZeroValue ctx s) || "func(" `List.isPrefixOf` s)
 
 
 -- | v0.17 Cause H step 4 — single shared gate used at every typed-
@@ -9494,9 +9620,9 @@ isEmittableGoType s =
 -- depth 64 (or hits the visited set) and renders as `"any"`, which
 -- this gate rejects — falling back to `rt.SkyTuple2` exactly as
 -- before.
-isTypedTupleElement :: String -> Bool
-isTypedTupleElement s =
-    isEmittableGoType s && not (containsGenericTypeParam s)
+isTypedTupleElement :: EmitCompileCtx -> String -> Bool
+isTypedTupleElement ctx s =
+    isEmittableGoType ctx s && not (containsGenericTypeParam s)
 
 
 -- | v0.17 Strategy-C PR 4 (smart) — SHARED decision used by all six
@@ -9791,12 +9917,12 @@ typeIIFE ctx mSrc retType body
         GoIr.GoTypedBlock t _ _ | t == retType -> body
         GoIr.GoBlock stmts result ->
             let result' = case result of
-                    GoIr.GoRaw "nil" -> case goZeroValue retType of
+                    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallback ctx) retType of
                         Just zv -> GoIr.GoRaw zv
                         Nothing -> result  -- can't zero — bail below
                     _ -> coerceReturnExprT ctx mSrc retType result
                 canType = case result of
-                    GoIr.GoRaw "nil" -> isJust (goZeroValue retType)
+                    GoIr.GoRaw "nil" -> isJust (goZeroValue (phaseAFallback ctx) retType)
                     _                -> True
             in if canType
                  then GoIr.GoTypedBlock retType
@@ -9850,7 +9976,7 @@ coerceBlockReturnsT ctx mSrc retType = map go
 coerceReturnExprT :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
 coerceReturnExprT ctx mSrc retType e = case e of
     GoIr.GoBlock _ _ -> typeIIFE ctx mSrc retType e
-    GoIr.GoRaw "nil" -> case goZeroValue retType of
+    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallback ctx) retType of
         Just zv -> GoIr.GoRaw zv
         Nothing -> e
     _ -> wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType e
@@ -9937,8 +10063,8 @@ goExprGoType phaseACtxC ctx mSrc e = case shapeClassified of
 
     structuralFallback = case mSrc of
         Just src | structurallySafeForFallback e ->
-            let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxC)
-            in case inferExprType solved src of
+            let solved = lookupSolvedTypesFromCtx phaseACtxC
+            in case inferExprTypeCtx (lookupSolvedTypesFromCtx phaseACtxC) (lookupCgEnvFromCtx phaseACtxC) ctx src of
                 Just ty
                   -- Reject HM types that still carry an unresolved
                   -- TVar — `solvedTypeToGo` would render the leaf
@@ -9958,7 +10084,7 @@ goExprGoType phaseACtxC ctx mSrc e = case shapeClassified of
                           && goTy /= ""
                           && not (isGenericTypeParam goTy)
                           && not (containsGenericTypeParam goTy)
-                          && isEmittableGoType goTy
+                          && isEmittableGoType phaseACtxC goTy
                        then Just goTy
                        else Nothing
                 Nothing -> Nothing
@@ -10280,7 +10406,7 @@ wrapTypedReturn phaseACtxC ctx mSrc retType body
     -- sealed-iface name set AND the body's head identifier
     -- matches the @<iface>_<Ctor>@ shape.
     | Set.member retType (Rec._cg_sealedIfaceNames (lookupCgEnvFromCtx phaseACtxC))
-    , isSealedIfaceCtorBody body retType
+    , isSealedIfaceCtorBody phaseACtxC body retType
         = body
     -- v0.17 iter 11 (P5 Stage 1) — parametric-alias sealed-iface
     -- elision.  When @retType@ is shaped @<base>_T[<args>]@ (the
@@ -10299,7 +10425,7 @@ wrapTypedReturn phaseACtxC ctx mSrc retType body
     -- and a runtime narrowing call that ends up identity.
     | Just baseT <- stripUnderscoreTParametric retType
     , Set.member baseT (Rec._cg_sealedIfaceNames (lookupCgEnvFromCtx phaseACtxC))
-    , isSealedIfaceCtorBody body baseT
+    , isSealedIfaceCtorBody phaseACtxC body baseT
         = body
     -- v0.17 P5 Stage 4 — typed-kernel PARAMETRIC return elision.
     -- When body is a direct call to a registered typed kernel AND
@@ -10325,14 +10451,14 @@ wrapTypedReturn phaseACtxC ctx mSrc retType body
         = body
     | Just params <- stripParametric "rt.SkyResult" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParams ctx mSrc "Result" params ++ "]"))
+            (GoIr.GoIdent ("rt.ResultCoerce[" ++ resolveWrapParamsCtx phaseACtxC ctx mSrc "Result" params ++ "]"))
             [body]
     | Just inner <- stripParametric "rt.SkyMaybe" retType =
         GoIr.GoCall
-            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ resolveWrapParams ctx mSrc "Maybe" inner ++ "]"))
+            (GoIr.GoIdent ("rt.MaybeCoerce[" ++ resolveWrapParamsCtx phaseACtxC ctx mSrc "Maybe" inner ++ "]"))
             [body]
     | Just params <- stripParametric "rt.SkyTask" retType =
-        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ resolveWrapParams ctx mSrc "Task" params ++ "]")) [body]
+        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ resolveWrapParamsCtx phaseACtxC ctx mSrc "Task" params ++ "]")) [body]
     -- v0.17 iter 82 — typed-kernel-return-registry elision.  When
     -- @body@ is a direct call to a known typed-return kernel and the
     -- kernel's declared Go return type matches @retType@, the
@@ -10445,10 +10571,10 @@ isSealedIfaceCtorHead body ifaceName =
 -- Also tries the type-arg-stripped form of the call name to
 -- handle monomorphised kernels: @Sky_Test_equal[int]@ →
 -- @Sky_Test_equal@ in the map (iter 68 close of Griller A's H4).
-isSealedIfaceReturningCall :: GoIr.GoExpr -> String -> Bool
-isSealedIfaceReturningCall body ifaceName = case body of
+isSealedIfaceReturningCall :: EmitCompileCtx -> GoIr.GoExpr -> String -> Bool
+isSealedIfaceReturningCall phaseACtxC body ifaceName = case body of
     GoIr.GoCall (GoIr.GoIdent n) _ ->
-        let m        = Rec._cg_funcRetType getCgEnvFromScope
+        let m        = Rec._cg_funcRetType (lookupCgEnvFromCtx phaseACtxC)
             stripped = takeWhile (/= '[') n
             lookups  = if n == stripped then [n] else [n, stripped]
         in any (\k -> Map.lookup k m == Just ifaceName) lookups
@@ -10460,10 +10586,10 @@ isSealedIfaceReturningCall body ifaceName = case body of
 -- to the env-dependent arm.  Kept as a thin alias so existing
 -- callers don't need to change shape; the split predicates are
 -- the future entry points if these two arms diverge further.
-isSealedIfaceCtorBody :: GoIr.GoExpr -> String -> Bool
-isSealedIfaceCtorBody body ifaceName =
+isSealedIfaceCtorBody :: EmitCompileCtx -> GoIr.GoExpr -> String -> Bool
+isSealedIfaceCtorBody phaseACtxC body ifaceName =
     isSealedIfaceCtorHead body ifaceName
-    || isSealedIfaceReturningCall body ifaceName
+    || isSealedIfaceReturningCall phaseACtxC body ifaceName
 
 
 -- | v0.17 iter 82 — extract the bare kernel function name from a
@@ -10883,13 +11009,13 @@ renderPrimitiveT rec ty = case ty of
 -- per-input divergence.  Default still legacy until a clean diff
 -- run validates the pipeline is byte-stable across all 18 call
 -- sites.
-safeReturnTypeFull :: T.Type -> String
-safeReturnTypeFull ty
+safeReturnTypeFull :: EmitCompileCtx -> T.Type -> String
+safeReturnTypeFull phaseACtx ty
     | rendererFullLegacyEnabled =
-        safeReturnTypeFullBounded 64 Set.empty ty
+        safeReturnTypeFullBounded phaseACtx 64 Set.empty ty
     | rendererDiffFullEnabled =
-        let legacy   = safeReturnTypeFullBounded 64 Set.empty ty
-            pipeline = safeReturnTypeFullViaPipeline ty
+        let legacy   = safeReturnTypeFullBounded phaseACtx 64 Set.empty ty
+            pipeline = safeReturnTypeFullViaPipeline phaseACtx ty
         in if legacy == pipeline
             then pipeline
             else unsafePerformIO $ do
@@ -10898,7 +11024,7 @@ safeReturnTypeFull ty
                         ++ " pipeline=" ++ show pipeline
                         ++ " sky-type=" ++ show ty
                 return pipeline
-    | otherwise = safeReturnTypeFullViaPipeline ty
+    | otherwise = safeReturnTypeFullViaPipeline phaseACtx ty
 
 
 -- | v0.17 close — emergency-bisect escape hatch matching the
@@ -10921,9 +11047,9 @@ rendererFullLegacyEnabled = unsafePerformIO $ do
 -- emits @goTypeParam@ identifiers ("A", "E", "T_msg", …) that leak
 -- as undefined Go names at call sites where the surrounding
 -- function isn't generic.
-safeReturnTypeFullViaPipeline :: T.Type -> String
-safeReturnTypeFullViaPipeline ty =
-    let ctx = (GoType.buildMappingContext GoType.defaultRenderEnv getCgEnvFromScope)
+safeReturnTypeFullViaPipeline :: EmitCompileCtx -> T.Type -> String
+safeReturnTypeFullViaPipeline phaseACtx ty =
+    let ctx = (GoType.buildMappingContext GoType.defaultRenderEnv (lookupCgEnvFromCtx phaseACtx))
                   { GoType.mcTVarsToAny = True }
     in GoType.renderGoType GoType.defaultRenderEnv
             (GoType.mapSkyTypeToGo ctx ty)
@@ -10939,17 +11065,17 @@ rendererDiffFullEnabled = unsafePerformIO $ do
     return (v == Just "1" || v == Just "true")
 
 
-safeReturnTypeFullBounded :: Int -> Set.Set String -> T.Type -> String
-safeReturnTypeFullBounded fuel _ _ | fuel <= 0 = "any"
-safeReturnTypeFullBounded fuel seen t =
-    let rec = safeReturnTypeFullBounded (fuel - 1) seen
+safeReturnTypeFullBounded :: EmitCompileCtx -> Int -> Set.Set String -> T.Type -> String
+safeReturnTypeFullBounded _ fuel _ _ | fuel <= 0 = "any"
+safeReturnTypeFullBounded phaseACtx fuel seen t =
+    let rec = safeReturnTypeFullBounded phaseACtx (fuel - 1) seen
     in case renderPrimitiveT rec t of
         Just s -> s
-        Nothing -> safeReturnTypeFullBoundedRest rec fuel seen t
+        Nothing -> safeReturnTypeFullBoundedRest phaseACtx rec fuel seen t
 
 safeReturnTypeFullBoundedRest
-    :: (T.Type -> String) -> Int -> Set.Set String -> T.Type -> String
-safeReturnTypeFullBoundedRest rec fuel seen t = case t of
+    :: EmitCompileCtx -> (T.Type -> String) -> Int -> Set.Set String -> T.Type -> String
+safeReturnTypeFullBoundedRest phaseACtx rec fuel seen t = case t of
     -- T5: list/dict/set typed as concrete Go types. User-code audit
     -- required in parallel — when a function annotated to return
     -- `Dict String String` actually holds mixed-type values (e.g.
@@ -11035,7 +11161,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
                        then ""
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
-            env = getCgEnvFromScope
+            env = lookupCgEnvFromCtx phaseACtx
             allAliases = Rec._cg_recordAliases env
             -- Try all known module prefixes so cross-module record
             -- aliases resolve correctly (e.g. "Model" → "State_Model_R").
@@ -11078,7 +11204,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
             unionRecoveryFull
               | not (null modStr) = Nothing
               | otherwise =
-                  let allUnions = LC._lc_unionNames (readIORefNoCse scopeStateRef)
+                  let allUnions = lookupUnionNamesFromCtx phaseACtx
                   in case [ u | u <- Set.toList allUnions
                               , '_' `elem` u
                               , reverse (takeWhile (/= '_') (reverse u)) == name
@@ -11123,8 +11249,8 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
             base = prefix ++ name
             -- v0.17 Cause H step 2 — same cycle guard as solvedTypeToGo.
             cycleHit = Set.member base seen
-            recCycle = safeReturnTypeFullBounded (fuel - 1) (Set.insert base seen)
-            env = getCgEnvFromScope
+            recCycle = safeReturnTypeFullBounded phaseACtx (fuel - 1) (Set.insert base seen)
+            env = lookupCgEnvFromCtx phaseACtx
             allAliases = Rec._cg_recordAliases env
             qualifiedCandidates =
                 [ p ++ "_" ++ name
@@ -11165,7 +11291,7 @@ safeReturnTypeFullBoundedRest rec fuel seen t = case t of
     -- without this path the type would degrade to `any`.
     T.TRecord fields _ ->
         let fieldNames = Map.keys fields
-            env = getCgEnvFromScope
+            env = lookupCgEnvFromCtx phaseACtx
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName -> aliasName ++ "_R"
             Nothing -> "any"
@@ -13059,18 +13185,33 @@ phaseAFallback lc = unsafePerformIO $ do
         cgEnv = case LC.lookupCgEnv scopeSnap of
             Just env -> env
             Nothing  -> emptyCgEnv
-        kernelAliasMap = LC._lc_kernelAlias scopeSnap
     return $! buildEmitCompileCtx
         home
         cgEnv
-        (LC._lc_solved scopeSnap)
-        kernelAliasMap
-        (LC._lc_unionDetails scopeSnap)
+        (LC._lc_solved lc)
+        (LC._lc_kernelAlias lc)
+        (LC._lc_unionDetails lc)
         anonRecsSnap
-        (LC._lc_aliases scopeSnap)
-        (LC._lc_fieldIdx scopeSnap)
-        (LC._lc_unionNames scopeSnap)
-        (LC._lc_ffiTypedWrapperNames scopeSnap)
+        (LC._lc_aliases lc)
+        (LC._lc_fieldIdx lc)
+        (LC._lc_unionNames lc)
+        (LC._lc_ffiTypedWrapperNames lc)
+
+
+-- | Purely construct a 'LC.LowerCtx' from an 'EmitCompileCtx'.
+-- This avoids global IORef reads (ctxFromIORef) inside sub-generators
+-- like generateDeclsForDep and generateDef where EmitCompileCtx is purely available.
+buildLowerCtxFromEmitCtx :: EmitCompileCtx -> LC.LowerCtx
+buildLowerCtxFromEmitCtx ecc = (LC.emptyLowerCtx (lookupModuleFromCtx ecc))
+    { LC._lc_solved             = lookupSolvedTypesFromCtx ecc
+    , LC._lc_aliases            = lookupAliasesFromCtx ecc
+    , LC._lc_fieldIdx           = lookupFieldIdxFromCtx ecc
+    , LC._lc_unionNames         = lookupUnionNamesFromCtx ecc
+    , LC._lc_unionDetails       = lookupUnionDetailsFromCtx ecc
+    , LC._lc_kernelAlias        = lookupKernelAliasFromCtx ecc
+    , LC._lc_ffiTypedWrapperNames = lookupFfiTypedWrappersFromCtx ecc
+    , LC._lc_cgEnv              = Just (lookupCgEnvFromCtx ecc)
+    }
 
 
 -- | v0.15.x P38 (Cycle 3 / audit C10) — explicit-snapshot helper for
@@ -13112,9 +13253,15 @@ phaseAFallback lc = unsafePerformIO $ do
 -- "tidy up" refactor.  Removing it re-opens the PR #91 thunk hazard
 -- class.
 {-# NOINLINE snapshotCallerCtx #-}
-snapshotCallerCtx :: () -> LC.LowerCtx
-snapshotCallerCtx () = unsafePerformIO $ do
-    ctx <- readIORef scopeStateRef
+snapshotCallerCtx :: () -> LC.LowerCtx -> LC.LowerCtx
+snapshotCallerCtx () threadedCtx = unsafePerformIO $ do
+    live <- readIORef scopeStateRef
+    let ctx = threadedCtx
+            { LC._lc_lambdaTypes         = LC._lc_lambdaTypes live `Map.union` LC._lc_lambdaTypes threadedCtx
+            , LC._lc_lambdaGoStr         = LC._lc_lambdaGoStr live `Map.union` LC._lc_lambdaGoStr threadedCtx
+            , LC._lc_lambdaGoTypes       = LC._lc_lambdaGoTypes live `Map.union` LC._lc_lambdaGoTypes threadedCtx
+            , LC._lc_enclosingTypeParams = LC._lc_enclosingTypeParams live `Set.union` LC._lc_enclosingTypeParams threadedCtx
+            }
     ctx `seq` return ctx
 
 
@@ -13166,13 +13313,13 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
     -- prevents the f2c7892-class regression: a mismatched /
     -- undefined Go type can never reach `rt.Coerce[…]` /
     -- `GoTypedBlock`.
-    | goRendering == "any" = exprToGo (phaseAFallback ctx) ctx e
-    | not (isEmittableGoType goRendering) = exprToGo (phaseAFallback ctx) ctx e
+    | goRendering == "any" = exprToGo phaseACtxB ctx e
+    | not (isEmittableGoType phaseACtxB goRendering) = exprToGo phaseACtxB ctx e
     | otherwise = case expr of
         Can.If branches elseExpr ->
             ifToGo ctx (Just goRendering) branches elseExpr
         Can.Let def body ->
-            letToGo ctx (Just goRendering) def body
+            letToGo phaseACtxB ctx (Just goRendering) def body
         Can.Case subject branches ->
             caseToGo ctx (Just goRendering) subject branches
         -- v0.15 Stage C — type-directed Can.Lambda lowering.
@@ -13192,8 +13339,7 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
         -- `coerceReturnExprT` path.
         -- v0.17 PR-12 — structural slot-shape destructure.  Replaces
         -- the lossy String parser `parseFuncType`'s output
-        -- (`Just ([P1..PN], R)`) with `GoType.parseGoType`'s structural
-        -- return — `GoMultiFunc params ret` for N>=2, `GoFunc from to`
+        -- (`Just ([P1..PN], R)`) with `GoType.parseGoType` early-return — `GoMultiFunc params ret` for N>=2, `GoFunc from to`
         -- for N=1.  Each param renders via `renderGoType` so the
         -- downstream `lowerTypedLambda` keeps its `[String] -> String`
         -- contract; the gain is that the slot shape is now
@@ -13231,22 +13377,22 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
             , length inputTypes == length pats
             , length inputTypes > 0
             , all (/= "any") inputTypes
-            , all isEmittableGoType inputTypes ->
+            , all (isEmittableGoType phaseACtxB) inputTypes ->
                 let finalRet =
                         if finalRet0 == "any"
                             then case inferGoType
-                                    (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxB))
+                                    (lookupSolvedTypesFromCtx phaseACtxB)
                                     body of
                                 "any" -> "any"
                                 concrete -> concrete
                             else finalRet0
                     skyTys = map goTypeStrToSkyType inputTypes
                     bindings = patVarTypes pats skyTys
-                    bodyPreTyped = isEmittableGoType finalRet
+                    bodyPreTyped = isEmittableGoType phaseACtxB finalRet
                     rawBody =
                         if bodyPreTyped
                             then exprToGoExpectGo phaseACtxB ctx finalRet body
-                            else exprToGo (phaseAFallback ctx) ctx body
+                            else exprToGo phaseACtxB ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
                     then curryLambdaPatTypedPre inputTypes finalRet
@@ -13276,8 +13422,8 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
                 -- ctx through `snapshotCallerCtx` so the snapshot is
                 -- forced to WHNF at the call site (closes the P37b
                 -- PR #91 thunk hazard for the cascade-resume slots).
-                let elemCtx = snapshotCallerCtx ()
-                in GoIr.GoSliceLit elemTy
+                let elemCtx = snapshotCallerCtx () ctx
+                in elemCtx `seq` GoIr.GoSliceLit elemTy
                     [ lowerExprExpectGo elemCtx elemTy it | it <- items ]
 
         -- v0.15 Stage E.2 — type-directed record literal.  When
@@ -13288,7 +13434,7 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
         -- Go rejects for generic types.
         Can.Record fields
             | isParametricAliasInstantiation goRendering ->
-                lowerRecordLiteralTo goRendering fields
+                lowerRecordLiteralTo phaseACtxB ctx goRendering fields
 
         -- v0.17 Cause H — typed tuple literal emission.  When the
         -- slot's Go type is a typed `rt.T2[A,B]` / `rt.T3[A,B,C]`
@@ -13314,10 +13460,10 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
         -- 'GoTuple' shape, matching the value-side emission contract.
         Can.Tuple a b []
             | Just slotTy@(GoType.GoTuple [_, _]) <- GoType.parseGoType goRendering ->
-                emitTypedTuple2 ctx slotTy a b
+                emitTypedTuple2 phaseACtxB ctx slotTy a b
         Can.Tuple a b [c]
             | Just slotTy@(GoType.GoTuple [_, _, _]) <- GoType.parseGoType goRendering ->
-                emitTypedTuple3 ctx slotTy a b c
+                emitTypedTuple3 phaseACtxB ctx slotTy a b c
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -13407,7 +13553,7 @@ lowerTypedLambda parentCtx pats paramTys retTy body =
         Can.PUnit     -> (GoIr.GoParam "_" gty, [])
         _ ->
             let tmp = "_lp" ++ show idx
-            in (GoIr.GoParam tmp gty, patternBindings tmp pat)
+            in (GoIr.GoParam tmp gty, patternBindings (phaseAFallback parentCtx) tmp pat)
 
 
 -- v0.17 PR-11 — `inferTypeFromGoString` (lossy String→T.Type reverse
@@ -13443,13 +13589,15 @@ isParametricAliasInstantiation s =
 -- `func(Form_R) Msg`, not `func(Form_R) any`.  Field-init lowering
 -- routes via `exprToGoExpectGo` with that typed slot.
 lowerRecordLiteralTo
-    :: String                        -- target Go type, e.g. "Cfg_R[Msg]"
+    :: EmitCompileCtx
+    -> LC.LowerCtx
+    -> String                        -- target Go type, e.g. "Cfg_R[Msg]"
     -> Map.Map String Can.Expr       -- record fields
     -> GoIr.GoExpr
-lowerRecordLiteralTo targetTy fields =
+lowerRecordLiteralTo phaseACtx ctx targetTy fields =
     let entries = Map.toList fields
         fieldNames = map fst entries
-        env = getCgEnvFromScope
+        env = lookupCgEnvFromCtx phaseACtx
         aliasMatch = Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames
         aliasDecl = aliasMatch >>= flip Map.lookup (Rec._cg_aliases env)
         -- Parse `Cfg_R[Msg, OtherMsg]` → ["Msg", "OtherMsg"].
@@ -13474,7 +13622,7 @@ lowerRecordLiteralTo targetTy fields =
         -- `snapshotCallerCtx` so the WHNF force happens at the
         -- snapshot site, not deferred to the wrapper's entry seq
         -- (see helper Haddock for the P37b PR #91 thunk hazard).
-        fieldCtx = snapshotCallerCtx ()
+        fieldCtx = snapshotCallerCtx () ctx
         lowerField fn fe =
             let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
             -- v0.17 PR-17b S1 — thread fieldCtx (the WHNF-forced
@@ -13489,7 +13637,7 @@ lowerRecordLiteralTo targetTy fields =
             -- record-literal emission path.
             in coerceToFieldTypeMSrc fieldCtx (Just fe) fieldGoTy
                    (lowerExprExpectGo fieldCtx fieldGoTy fe)
-    in GoIr.GoStructLit targetTy
+    in fieldCtx `seq` GoIr.GoStructLit targetTy
         [ (capitalise_ fn, lowerField fn fe)
         | (fn, fe) <- entries
         ]
@@ -13755,7 +13903,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
             -- the list type isn't concrete (polymorphic helpers).
             Can.VarKernel modName funcName
                 | let typedCall = kernelTypedCall ctx
-                        (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)) modName funcName args
+                        (lookupSolvedTypesFromCtx phaseACtxA) modName funcName args
                         (map (exprToGo phaseACtxA ctx) args)
                 , Just expr <- typedCall ->
                     expr
@@ -13954,7 +14102,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                         -- fallback (handles Can.Lambda → typed
                         -- emission, regular args → coerceArg).
                         goArgs = zipWith3
-                            (kernelCoerceArg ctx substitutedParams)
+                            (kernelCoerceArg phaseACtxA ctx substitutedParams)
                             [0 :: Int ..]
                             substitutedParams
                             args
@@ -13965,7 +14113,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                 -- applied to just `jid` must close over jid.
                 let declared = ctorArity annot
                     got = length args
-                    paramTys = ctorParamTypes annot
+                    paramTys = ctorParamTypes phaseACtxA annot
                 in if got < declared
                     then emitPartialCtor ctx func args (declared - got)
                     -- T1: coerce each arg to the ctor's declared param type.
@@ -14068,7 +14216,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                                     -- ADT constructor: extract param types
                                     -- from the annotation's arrow type.
                                     let extractParams (T.TLambda from to) =
-                                            safeReturnTypeFull from : extractParams to
+                                            safeReturnTypeFull phaseACtxA from : extractParams to
                                         extractParams _ = []
                                     in extractParams ctorTy
                         _ -> []
@@ -14159,10 +14307,9 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                             || not isLocalCallable
                             || length args /= 1
                             then Nothing
-                        else let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
-                             in case inferExprType solved func of
+                        else case inferExprTypeCtx (lookupSolvedTypesFromCtx phaseACtxA) (lookupCgEnvFromCtx phaseACtxA) ctx func of
                                   Just ty ->
-                                      peelTypedArrows 1 (solvedTypeToGo ty)
+                                      peelTypedArrows phaseACtxA 1 (solvedTypeToGo ty)
                                   Nothing -> Nothing
                 in case typedCallableShape of
                     Just (typedParamTys, _typedRetTy) ->
@@ -14181,7 +14328,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
         ifToGo ctx Nothing branches elseExpr
 
     Can.Let def body ->
-        letToGo ctx Nothing def body
+        letToGo phaseACtxA ctx Nothing def body
 
     Can.LetRec defs body ->
         let stmts = concatMap (defToStmts phaseACtxA ctx) defs
@@ -14195,7 +14342,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
             (A.At _ p) = pat
             valStmt = GoIr.GoShortDecl tmp (exprToGo phaseACtxA ctx valExpr)
             sink    = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-            bindStmts = patternBindings tmp p
+            bindStmts = patternBindings phaseACtxA tmp p
         in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo phaseACtxA ctx body)
 
     Can.Case subject branches ->
@@ -14213,7 +14360,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
         -- (its Go static type matches a record-alias Go struct).
         -- Falls back to `rt.Field` (reflect) otherwise.
         let env = lookupCgEnvFromCtx phaseACtxA
-            solved = Rec._cg_solvedTypes env
+            solved = lookupSolvedTypesFromCtx phaseACtxA
             recSet = Rec._cg_recordAliases env
             nameMatches name =
                 Set.member name recSet ||
@@ -14233,7 +14380,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
             -- aliases like `t : Tree Int` whose Tree-param sub-
             -- type is required at element-type-rendering sites
             -- and is captured correctly by solvedTypes.
-            inferredViaSolved = inferExprType solved target
+            inferredViaSolved = inferExprTypeCtx solved (lookupCgEnvFromCtx phaseACtxA) ctx target
             isAmbigTVar (Just (T.TVar _)) = True
             isAmbigTVar _ = False
             targetTy = case (target, inferredViaSolved) of
@@ -14485,26 +14632,26 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
 -- as a defensive fallback for the 'Nothing'-from-GoType case the
 -- call-site gate already filters out — kept for robustness if a
 -- future caller passes a non-GoTuple slotTy.
-emitTypedTuple2 :: LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple2 ctx slotTy a b =
+emitTypedTuple2 :: EmitCompileCtx -> LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple2 phaseACtx ctx slotTy a b =
     let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
     in case slotTy of
         GoType.GoTuple [tA, tB] ->
             let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b)]
-        _ -> case tupleElementSlots a b [] of
+                [("V0", exprToGoExpectGo phaseACtx ctx strA a), ("V1", exprToGoExpectGo phaseACtx ctx strB b)]
+        _ -> case tupleElementSlots phaseACtx ctx a b [] of
             Just [tA, tB] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b)]
+                    [("V0", exprToGoExpectGo phaseACtx ctx strA a), ("V1", exprToGoExpectGo phaseACtx ctx strB b)]
             _ -> GoIr.GoStructLit "rt.SkyTuple2"
-                [("V0", exprToGo (phaseAFallback ctx) ctx a), ("V1", exprToGo (phaseAFallback ctx) ctx b)]
+                [("V0", exprToGo phaseACtx ctx a), ("V1", exprToGo phaseACtx ctx b)]
 
-emitTypedTuple3 :: LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-emitTypedTuple3 ctx slotTy a b c =
+emitTypedTuple3 :: EmitCompileCtx -> LC.LowerCtx -> GoType.GoType -> Can.Expr -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+emitTypedTuple3 phaseACtx ctx slotTy a b c =
     let slotStr = GoType.renderGoType GoType.defaultRenderEnv slotTy
     in case slotTy of
         GoType.GoTuple [tA, tB, tC] ->
@@ -14512,18 +14659,18 @@ emitTypedTuple3 ctx slotTy a b c =
                 strB = GoType.renderGoType GoType.defaultRenderEnv tB
                 strC = GoType.renderGoType GoType.defaultRenderEnv tC
             in GoIr.GoStructLit slotStr
-                [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b),
-                 ("V2", exprToGoExpectGo (phaseAFallback ctx) ctx strC c)]
-        _ -> case tupleElementSlots a b [c] of
+                [("V0", exprToGoExpectGo phaseACtx ctx strA a), ("V1", exprToGoExpectGo phaseACtx ctx strB b),
+                 ("V2", exprToGoExpectGo phaseACtx ctx strC c)]
+        _ -> case tupleElementSlots phaseACtx ctx a b [c] of
             Just [tA, tB, tC] ->
                 let strA = GoType.renderGoType GoType.defaultRenderEnv tA
                     strB = GoType.renderGoType GoType.defaultRenderEnv tB
                     strC = GoType.renderGoType GoType.defaultRenderEnv tC
                 in GoIr.GoStructLit slotStr
-                    [("V0", exprToGoExpectGo (phaseAFallback ctx) ctx strA a), ("V1", exprToGoExpectGo (phaseAFallback ctx) ctx strB b),
-                     ("V2", exprToGoExpectGo (phaseAFallback ctx) ctx strC c)]
+                    [("V0", exprToGoExpectGo phaseACtx ctx strA a), ("V1", exprToGoExpectGo phaseACtx ctx strB b),
+                     ("V2", exprToGoExpectGo phaseACtx ctx strC c)]
             _ -> GoIr.GoStructLit "rt.SkyTuple3"
-                [("V0", exprToGo (phaseAFallback ctx) ctx a), ("V1", exprToGo (phaseAFallback ctx) ctx b), ("V2", exprToGo (phaseAFallback ctx) ctx c)]
+                [("V0", exprToGo phaseACtx ctx a), ("V1", exprToGo phaseACtx ctx b), ("V2", exprToGo phaseACtx ctx c)]
 
 
 -- | v0.17 Strategy-C PR 3 — structural replacement for the legacy
@@ -14539,11 +14686,10 @@ emitTypedTuple3 ctx slotTy a b c =
 -- The function is element-list-aware (not tuple-arity-bound) so the
 -- same helper backs 2-, 3-, and arbitrary-arity emitters; callers
 -- pattern-match on the returned list shape.
-tupleElementSlots :: Can.Expr -> Can.Expr -> [Can.Expr] -> Maybe [GoType.GoType]
-tupleElementSlots a b extras =
-    let solved = Rec._cg_solvedTypes getCgEnvFromScope
-        elements = a : b : extras
-        slots = map (fmap solvedTypeToGoTyped . inferExprType solved) elements
+tupleElementSlots :: EmitCompileCtx -> LC.LowerCtx -> Can.Expr -> Can.Expr -> [Can.Expr] -> Maybe [GoType.GoType]
+tupleElementSlots phaseACtx ctx a b extras =
+    let elements = a : b : extras
+        slots = map (fmap solvedTypeToGoTyped . inferExprTypeCtx (lookupSolvedTypesFromCtx phaseACtx) (lookupCgEnvFromCtx phaseACtx) ctx) elements
     in sequence slots
 
 
@@ -14887,17 +15033,17 @@ coerceToFieldTypeMSrc ctx mSrc targetTy e
 --     ==> Nothing
 --   peelTypedArrows 1 "func(any) int"  -- `any` slot, can't pin
 --     ==> Nothing
-peelTypedArrows :: Int -> String -> Maybe ([String], String)
-peelTypedArrows = go []
+peelTypedArrows :: EmitCompileCtx -> Int -> String -> Maybe ([String], String)
+peelTypedArrows phaseACtx = go []
   where
     go acc 0 ret = Just (reverse acc, ret)
     go acc n curTy = case parseFuncType curTy of
         Just ([pty], retTy)
-          | isEmittableGoType pty
+          | isEmittableGoType phaseACtx pty
           , pty /= "any"
           , not (isGenericTypeParam pty)
           , not (containsGenericTypeParam pty)
-          , isEmittableGoType retTy
+          , isEmittableGoType phaseACtx retTy
           -> if n == 1
                  then if retTy /= "any"
                           && not (isGenericTypeParam retTy)
@@ -14910,12 +15056,12 @@ peelTypedArrows = go []
         -- callback `func(a, b int) int` reached through FFI).
         Just (ptys, retTy)
           | length ptys == n
-          , all isEmittableGoType ptys
+          , all (isEmittableGoType phaseACtx) ptys
           , all (\p -> p /= "any"
                     && not (isGenericTypeParam p)
                     && not (containsGenericTypeParam p))
                 ptys
-          , isEmittableGoType retTy
+          , isEmittableGoType phaseACtx retTy
           , retTy /= "any"
           , not (isGenericTypeParam retTy)
           , not (containsGenericTypeParam retTy)
@@ -15520,10 +15666,10 @@ isDirectCallable (A.At _ e) = case e of
 -- | Per-argument Go types for a constructor, derived from its
 -- canonical annotation. Uses safeReturnTypeFull (env-aware so record
 -- aliases resolve). Missing slots degrade to "any".
-ctorParamTypes :: Can.Annotation -> [String]
-ctorParamTypes (Can.Forall _ t) = go t
+ctorParamTypes :: EmitCompileCtx -> Can.Annotation -> [String]
+ctorParamTypes phaseACtx (Can.Forall _ t) = go t
   where
-    go (T.TLambda from to) = safeReturnTypeFull from : go to
+    go (T.TLambda from to) = safeReturnTypeFull phaseACtx from : go to
     go _                   = []
 
 ctorArity :: Can.Annotation -> Int
@@ -15541,7 +15687,7 @@ emitPartialCtor ctx func suppliedArgs missing =
         -- types from its annotation so both already-supplied args and
         -- the closure-captured extras coerce to the right Go types.
         paramTys = case A.toValue func of
-            Can.VarCtor _ _ _ _ annot -> ctorParamTypes annot
+            Can.VarCtor _ _ _ _ annot -> ctorParamTypes (phaseAFallback ctx) annot
             _                         -> []
         -- v0.13 Stage 1 — ctor's final return type (the ADT/record
         -- name) — used as the typed lambda return so partial-app
@@ -15549,8 +15695,9 @@ emitPartialCtor ctx func suppliedArgs missing =
         ctorRetTy = case A.toValue func of
             Can.VarCtor _ _ typeName _ annot ->
                 let (_, r) = peelArgs (skyAnnotType annot)
+                    phaseACtx = phaseAFallback ctx
                 in case r of
-                    _ | safeReturnTypeFull r /= "any" -> safeReturnTypeFull r
+                    _ | safeReturnTypeFull phaseACtx r /= "any" -> safeReturnTypeFull phaseACtx r
                     _ -> typeName
             _ -> "any"
         suppliedTys = take (length suppliedArgs) paramTys
@@ -15932,11 +16079,11 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                                     -- innermost `wrapRet`.
                                     let skyTys = map goTypeStrToSkyType inputTypes
                                         bindings = patVarTypes pats skyTys
-                                        bodyPreTyped = isEmittableGoType finalRet
+                                        bodyPreTyped = isEmittableGoType phaseACtxD finalRet
                                         rawBody =
                                             if bodyPreTyped
-                                                then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
-                                                else exprToGo (phaseAFallback ctx) ctx body
+                                                then exprToGoExpectGo phaseACtxD ctx finalRet body
+                                                else exprToGo phaseACtxD ctx body
                                         body' = withScopedLambdaTypes bindings rawBody
                                     in if bodyPreTyped
                                         then curryLambdaPatTypedPre inputTypes finalRet
@@ -15965,17 +16112,17 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                             -- scope), so the explicit exclusion is
                             -- required here.
                             Can.Case{}
-                                | isEmittableGoType subbed
+                                | isEmittableGoType phaseACtxD subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                                    exprToGoExpectGo phaseACtxD ctx subbed e
                             Can.If{}
-                                | isEmittableGoType subbed
+                                | isEmittableGoType phaseACtxD subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                                    exprToGoExpectGo phaseACtxD ctx subbed e
                             Can.Let{}
-                                | isEmittableGoType subbed
+                                | isEmittableGoType phaseACtxD subbed
                                 , not (isGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                                    exprToGoExpectGo phaseACtxD ctx subbed e
                             -- v0.15.2: Can.Record at a parametric-alias
                             -- monomorphisation slot (`Cfg_R[Msg]`).  Route
                             -- to `exprToGoExpectGo` so the literal emits
@@ -16097,7 +16244,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                     [ (tv, tv)
                     | (pty, arg) <- zip paramTypes args
                     , Just paramBase <- [parametricAliasBase pty]
-                    , Just srcAlias <- [aliasBaseFromCanExpr arg]
+                    , Just srcAlias <- [aliasBaseFromCanExpr phaseACtxD arg]
                     , srcAlias ++ "_R" == paramBase
                     , tv <- tvarsInGoTypeStr pty
                     , not (Map.member tv bareRecovered)
@@ -16187,7 +16334,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                                         if finalRet0 == "any"
                                             then if allInputsTyped
                                                    then case inferGoType
-                                                           (Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxD))
+                                                           (lookupSolvedTypesFromCtx phaseACtxD)
                                                            body of
                                                        "any" -> "any"
                                                        concrete -> concrete
@@ -16195,11 +16342,11 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                                             else finalRet0
                                     skyTys = map goTypeStrToSkyType inputTypes
                                     bindings = patVarTypes pats skyTys
-                                    bodyPreTyped = isEmittableGoType finalRet
+                                    bodyPreTyped = isEmittableGoType phaseACtxD finalRet
                                     rawBody =
                                         if bodyPreTyped
-                                            then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
-                                            else exprToGo (phaseAFallback ctx) ctx body
+                                            then exprToGoExpectGo phaseACtxD ctx finalRet body
+                                            else exprToGo phaseACtxD ctx body
                                     body' = withScopedLambdaTypes bindings rawBody
                                 in if bodyPreTyped
                                     then curryLambdaPatTypedPre inputTypes finalRet
@@ -16208,8 +16355,8 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                                             pats body'
                         _ ->
                             if subbed == "any" && containsTypeParam orig
-                                then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo phaseACtxD ctx e]
+                                else coerceArg phaseACtxD ctx (Just e) (exprToGo phaseACtxD ctx e) subbed
             in zipWith3Default ctx coerceFallback paramTypes substituted args
 
 
@@ -16324,9 +16471,9 @@ splitCurriedFuncStr s = case splitFuncTypeStr s of
 --           }
 --       }
 --   }
-buildCurryAdapter :: String -> [String] -> String -> Maybe GoIr.GoExpr
-buildCurryAdapter name inputTys finalRet =
-    let env = getCgEnvFromScope
+buildCurryAdapter :: EmitCompileCtx -> String -> [String] -> String -> Maybe GoIr.GoExpr
+buildCurryAdapter phaseACtx name inputTys finalRet =
+    let env = lookupCgEnvFromCtx phaseACtx
         declaredParams = Map.findWithDefault [] name (Rec._cg_funcParamTypes env)
         declaredRet = Map.findWithDefault "any" name (Rec._cg_funcRetType env)
         n = length inputTys
@@ -16662,9 +16809,9 @@ coerceArg phaseACtxD ctx mSrc e ty
     -- `rt.RecordUpdate` already uses.
     | Just targetBase <- parametricAliasBase ty
     , Just src <- mSrc
-    , Just aliasName <- aliasBaseFromCanExpr src
+    , Just aliasName <- aliasBaseFromCanExpr phaseACtxD src
     , aliasName ++ "_R" == targetBase
-    , let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxD)
+    , let solved = lookupSolvedTypesFromCtx phaseACtxD
     , case inferExprType solved src of
           Just srcTy -> not (hasUnresolvedSkyTVar solved srcTy)
           Nothing    -> True
@@ -16711,7 +16858,7 @@ coerceArg phaseACtxD ctx mSrc e ty
     , length inputTys > 1
     , GoIr.GoIdent name <- e
     , not ("rt." `List.isPrefixOf` name)
-    , Just curryWrapper <- buildCurryAdapter name inputTys finalRet =
+    , Just curryWrapper <- buildCurryAdapter phaseACtxD name inputTys finalRet =
         curryWrapper
     -- v0.13 typed lowerer: `e` is already provably the target type —
     -- skip the coercion entirely (no `rt.CoerceInt(int)` etc.).
@@ -17059,10 +17206,10 @@ parametricAliasBase ty =
 --   * The alias isn't a record alias (raw `type alias X = Int`
 --     style aliases that emit as their underlying Go type, not
 --     `X_R`).
-aliasBaseFromCanExpr :: Can.Expr -> Maybe String
-aliasBaseFromCanExpr src =
-    let env = getCgEnvFromScope
-        solved = Rec._cg_solvedTypes env
+aliasBaseFromCanExpr :: EmitCompileCtx -> Can.Expr -> Maybe String
+aliasBaseFromCanExpr phaseACtx src =
+    let env = lookupCgEnvFromCtx phaseACtx
+        solved = lookupSolvedTypesFromCtx phaseACtx
     in case inferExprType solved src of
         Just (T.TAlias homeMod aliasName _ _) ->
             -- Only RECORD aliases emit as `<name>_R` in Go.  Aliases
@@ -17135,8 +17282,8 @@ kernelParamGoTypes ty n =
 -- coerceCallArgsAt) so kernel callbacks like Cmd.perform's
 -- `(Result e a -> msg)` arg emit as `func(__p State_Msg) any`
 -- instead of `func(__p any) any`.
-kernelCoerceArg :: LC.LowerCtx -> [String] -> Int -> String -> Can.Expr -> GoIr.GoExpr
-kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
+kernelCoerceArg :: EmitCompileCtx -> LC.LowerCtx -> [String] -> Int -> String -> Can.Expr -> GoIr.GoExpr
+kernelCoerceArg phaseACtx ctx _allSubbed _idx subbed e@(A.At _ inner) =
     case inner of
         Can.Lambda pats body
             | all isSimpleVarPattern pats
@@ -17166,7 +17313,7 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
                         if finalRet0 == "any"
                             then if allInputsTyped
                                    then case inferGoType
-                                           (Rec._cg_solvedTypes getCgEnvFromScope)
+                                           (lookupSolvedTypesFromCtx phaseACtx)
                                            body of
                                        "any" -> "any"
                                        concrete -> concrete
@@ -17174,11 +17321,11 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
                             else finalRet0
                     skyTys = map goTypeStrToSkyType inputTypes
                     bindings = patVarTypes pats skyTys
-                    bodyPreTyped = isEmittableGoType finalRet
+                    bodyPreTyped = isEmittableGoType phaseACtx finalRet
                     rawBody =
                         if bodyPreTyped
-                            then exprToGoExpectGo (phaseAFallback ctx) ctx finalRet body
-                            else exprToGo (phaseAFallback ctx) ctx body
+                            then exprToGoExpectGo phaseACtx ctx finalRet body
+                            else exprToGo phaseACtx ctx body
                     body' = withScopedLambdaTypes bindings rawBody
                 in if bodyPreTyped
                     then curryLambdaPatTypedPre inputTypes finalRet pats body'
@@ -17198,11 +17345,11 @@ kernelCoerceArg ctx _allSubbed _idx subbed e@(A.At _ inner) =
         Can.Record _
             | isParametricAliasInstantiation subbed
             , not (containsGenericTypeParam subbed) ->
-                exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                exprToGoExpectGo phaseACtx ctx subbed e
         -- v0.17 PR-17b S2 — Stage 4 threads ctx from the enclosing
         -- caller through `kernelCoerceArg`'s signature; the legacy
         -- IORef snapshot is no longer needed here.
-        _ -> coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+        _ -> coerceArg phaseACtx ctx (Just e) (exprToGo phaseACtx ctx e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
@@ -17552,7 +17699,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
                      else map (\c -> if c == '.' then '_' else c) modStr
                           ++ "_" ++ goSafeName name
             _ -> ""
-        env = getCgEnvFromScope
+        env = lookupCgEnvFromCtx (phaseAFallback ctx)
         paramTypes = Map.findWithDefault [] qualName
                        (Rec._cg_funcParamTypes env)
         suppliedTypes = take (length suppliedArgs) paramTypes
@@ -17764,7 +17911,7 @@ binopToGo ctx op left right =
     -- is String, so a naive `"prefix " + rt.Crypto_sha256(data)`
     -- would fail Go's static type check.  Falls back to runtime
     -- helpers in all other cases (correct, just slower).
-    let solved   = Rec._cg_solvedTypes getCgEnvFromScope
+    let solved   = lookupSolvedTypesFromCtx (phaseAFallback ctx)
         leftTy   = inferExprType solved left
         rightTy  = inferExprType solved right
         bothAre  prim = leftTy == Just prim && rightTy == Just prim
@@ -17931,8 +18078,8 @@ toBoolExpr expr = case expr of
 
 -- | Convert let-in to Go (IIFE with local declarations).  Takes the
 -- surrounding context's expected type — see `ifToGo`.
-letToGo :: LC.LowerCtx -> Maybe String -> Can.Def -> Can.Expr -> GoIr.GoExpr
-letToGo _outerCtx mExpectedGo def body =
+letToGo :: EmitCompileCtx -> LC.LowerCtx -> Maybe String -> Can.Def -> Can.Expr -> GoIr.GoExpr
+letToGo phaseACtx outerCtx mExpectedGo def body =
     -- v0.13 typed lowerer: when the def binds a primitive-typed
     -- local from a statically-typed value, register it under the
     -- body's scope so binops on this local can emit Go-native.
@@ -17947,7 +18094,7 @@ letToGo _outerCtx mExpectedGo def body =
     -- here for region-types — the prior `let ctx = …` read was
     -- only used to plumb the IORef-backed region map into
     -- `letBindingType`, and that machinery is gone.
-    let solved = Rec._cg_solvedTypes getCgEnvFromScope
+    let solved = lookupSolvedTypesFromCtx phaseACtx
         -- v0.13 typed lowerer: register a primitive-typed let-binding
         -- under the body's scope so Go-native binops fire on it.
         -- Restricted to primitives — broadening to record/ADT types
@@ -18017,7 +18164,7 @@ letToGo _outerCtx mExpectedGo def body =
         -- `snapshotCallerCtx` so the WHNF force happens at the
         -- snapshot site (see helper Haddock for the P37b PR #91
         -- thunk hazard the seq pattern was designed to close).
-        bodyCtx = snapshotCallerCtx ()
+        bodyCtx = snapshotCallerCtx () outerCtx
         lowerBody = case mExpectedGo of
             Just gt -> lowerExprExpectGo bodyCtx gt
             Nothing -> lowerExpr bodyCtx
@@ -18031,17 +18178,17 @@ letToGo _outerCtx mExpectedGo def body =
         defStmts = case def of
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
-                , Just dt <- letBindingType solvedTypes dn valExpr ->
-                    letBindStmts dn (exprToGoExpect bodyCtx dt valExpr)
+                , Just dt <- letBindingType phaseACtx solvedTypes dn valExpr ->
+                    letBindStmts dn (exprToGoExpectGo phaseACtx bodyCtx (solvedTypeToGo dt) valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
-                | Just dt <- letBindingType solvedTypes dn valExpr ->
-                    letBindStmts dn (exprToGoExpect bodyCtx dt valExpr)
-            _ -> defToStmts (phaseAFallback bodyCtx) bodyCtx def
+                | Just dt <- letBindingType phaseACtx solvedTypes dn valExpr ->
+                    letBindStmts dn (exprToGoExpectGo phaseACtx bodyCtx (solvedTypeToGo dt) valExpr)
+            _ -> defToStmts phaseACtx bodyCtx def
         bodyGo = if Map.null bindingExtras
             then lowerBody body
             else withScopedLambdaTypes bindingExtras (lowerBody body)
         raw = GoIr.GoBlock defStmts bodyGo
-    in case mExpectedGo of
+    in bodyCtx `seq` case mExpectedGo of
         -- v0.17 step-3 residual leak point: letToGo doesn't carry the
         -- parent `Can.Expr` (the whole let-in expression).  We DO have
         -- `body` (the let-body Can.Expr) in scope — its solved region
@@ -18086,20 +18233,20 @@ splitOn c = foldr f [[]]
 -- types.  The caller still wraps the result in `rt.AnyTaskRun`, so
 -- the auto-force semantics are untouched — only the IIFE's own
 -- return type is tightened.
-loweredDiscard :: LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
-loweredDiscard ctx body@(A.At _ inner) = case inner of
+loweredDiscard :: EmitCompileCtx -> LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
+loweredDiscard phaseACtx ctx body@(A.At _ inner) = case inner of
     Can.Case{} -> typed
     Can.If{}   -> typed
     Can.Let{}  -> typed
-    _          -> exprToGo (phaseAFallback ctx) ctx body
+    _          -> exprToGo phaseACtx ctx body
   where
-    typed = case inferExprType (Rec._cg_solvedTypes getCgEnvFromScope) body of
+    typed = case inferExprType (lookupSolvedTypesFromCtx phaseACtx) body of
         Just t ->
             let gt = solvedTypeToGo t
-            in if isEmittableGoType gt
-                 then exprToGoExpectGo (phaseAFallback ctx) ctx gt body
-                 else exprToGo (phaseAFallback ctx) ctx body
-        Nothing -> exprToGo (phaseAFallback ctx) ctx body
+            in if isEmittableGoType phaseACtx gt
+                 then exprToGoExpectGo phaseACtx ctx gt body
+                 else exprToGo phaseACtx ctx body
+        Nothing -> exprToGo phaseACtx ctx body
 
 
 -- | v0.15.3 — register a `main`-body let-binding's HM type into
@@ -18116,8 +18263,8 @@ loweredDiscard ctx body@(A.At _ inner) = case inner of
 -- level scoping seam to thread through.  The leak is bounded —
 -- `main` is the last function emitted for the entry module, and
 -- the registry is read fresh on each compile.
-registerMainLetBindingType :: Solve.SolvedTypes -> Can.Def -> ()
-registerMainLetBindingType types def =
+registerMainLetBindingType :: EmitCompileCtx -> Solve.SolvedTypes -> Can.Def -> ()
+registerMainLetBindingType phaseACtx types def =
     -- v0.15.x P37b — `letBindingType` is now pure; the prior
     -- `scopeStateRef` snapshot only fed its region lookup, and
     -- that path now reads `Solve.SolvedTypes._stRegions` directly.
@@ -18126,13 +18273,13 @@ registerMainLetBindingType types def =
     case def of
         Can.Def (A.At _ name) [] body
             | name /= "_"
-            , Just t <- letBindingType types name body ->
+            , Just t <- letBindingType phaseACtx types name body ->
                 unsafePerformIO $ do
                     modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
                     return ()
         Can.TypedDef (A.At _ name) _ [] body _
             | name /= "_"
-            , Just t <- letBindingType types name body ->
+            , Just t <- letBindingType phaseACtx types name body ->
                 unsafePerformIO $ do
                     modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
                     return ()
@@ -18187,8 +18334,8 @@ registerMainLetBindingType types def =
 -- unrelated sibling-region binding when keys collide across
 -- modules in the merged snapshot.  Tracked as audit residual #8 +
 -- #14 in `docs/improvement-plan-v0.16.md`.
-letBindingType :: Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
-letBindingType solvedTypes _name body@(A.At r _) =
+letBindingType :: EmitCompileCtx -> Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
+letBindingType phaseACtx solvedTypes _name body@(A.At r _) =
     -- v0.15.3 — Two-axis gate.
     --
     -- (A) Body-shape gate: ONLY route typed for body shapes where
@@ -18281,7 +18428,7 @@ letBindingType solvedTypes _name body@(A.At r _) =
                 (c >= '0' && c <= '9') || c == '_'
         emittable t =
             let goTy = solvedTypeToGo t
-            in isEmittableGoType goTy
+            in isEmittableGoType phaseACtx goTy
                && goTy /= "any"
                && not (containsAny goTy)
     in if not canRouteTyped
@@ -18305,7 +18452,7 @@ defToStmts phaseACtxA ctx def = case def of
             (A.At _ p) = pat
             valStmt   = GoIr.GoShortDecl tmp (exprToGo phaseACtxA ctx valExpr)
             sink      = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-            bindStmts = patternBindings tmp p
+            bindStmts = patternBindings phaseACtxA tmp p
         in valStmt : sink : bindStmts
 
     Can.Def (A.At _ name) [] body ->
@@ -18337,7 +18484,7 @@ defToStmts phaseACtxA ctx def = case def of
             -- type is tightened.
             [GoIr.GoAssign "_"
                 (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun")
-                    [loweredDiscard ctx body])]
+                    [loweredDiscard phaseACtxA ctx body])]
         else
             -- v0.15.3: prefer the HM-solved type for the binding
             -- over `inferExprType`. `solvedTypes` carries the fully
@@ -18354,8 +18501,8 @@ defToStmts phaseACtxA ctx def = case def of
             -- no `scopeStateRef` snapshot needed here.  The region
             -- map flows in through `Solve.SolvedTypes._stRegions`
             -- (populated by P37a for every solver entry point).
-            let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
-            in case letBindingType solved name body of
+            let solved = lookupSolvedTypesFromCtx phaseACtxA
+            in case letBindingType phaseACtxA solved name body of
                 Just dt ->
                     letBindStmts name (exprToGoExpect ctx dt body)
                 Nothing ->
@@ -18387,7 +18534,7 @@ defToStmts phaseACtxA ctx def = case def of
         -- same-named local lambdas typing against whichever
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
-        let solved = Rec._cg_solvedTypes (lookupCgEnvFromCtx phaseACtxA)
+        let solved = lookupSolvedTypesFromCtx phaseACtxA
             -- v0.17 PR-6b — region-based scope lookup is the sole
             -- source of truth here.  Pre-v0.17, this site consulted
             -- the `globalCurrentDepModule` IORef as a fallback when
@@ -18423,7 +18570,7 @@ defToStmts phaseACtxA ctx def = case def of
                 in case mTy of
                     Just t ->
                         let goTy = solvedTypeToGo t
-                        in if isEmittableGoType goTy
+                        in if isEmittableGoType phaseACtxA goTy
                               && not (isGenericTypeParam goTy)
                             then case raw of
                                 GoIr.GoParam pn _ -> GoIr.GoParam pn goTy
@@ -18433,7 +18580,7 @@ defToStmts phaseACtxA ctx def = case def of
             retGoTy = case retTy of
                 Just t ->
                     let goTy = solvedTypeToGo t
-                    in if isEmittableGoType goTy
+                    in if isEmittableGoType phaseACtxA goTy
                           && not (isGenericTypeParam goTy)
                         then goTy
                         else "any"
@@ -18453,13 +18600,13 @@ defToStmts phaseACtxA ctx def = case def of
         -- the all-`any` default. Critical for let-bound helpers in
         -- user code (e.g. 18-job-queue's `insertRow db ts = …` in
         -- saveSnapshot) whose call sites benefit from typed flow.
-        let typedGoParams = map typedPatToParam typedPats
+        let typedGoParams = map (typedPatToParam phaseACtxA) typedPats
             retGoTy = solvedTypeToGo retType
             -- isEmittableGoType is the same gate `exprToGoExpectGo`
             -- uses; fall back to "any" return + plain `exprToGo`
             -- body when return can't be safely typed.
             (effectiveRet, bodyExpr) =
-                if isEmittableGoType retGoTy
+                if isEmittableGoType phaseACtxA retGoTy
                     then (retGoTy, exprToGoExpectGo phaseACtxA ctx retGoTy body)
                     else ("any", exprToGo phaseACtxA ctx body)
         in letBindStmts name
@@ -18534,10 +18681,15 @@ caseToGo ctx mExpectedGo subject branches =
     -- ADT in the canonical fixture set.  Any commit that flips
     -- the gate without lifting these preconditions will fail
     -- @diff -q@ on the example sweep.
-    let scopedSolved =
-            Solve.withCurrentModule
-                (LC._lc_currentDepModule ctx)
-                (Rec._cg_solvedTypes getCgEnvFromScope)
+    let solved = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+        region = A.toRegion subject
+        curMod = case Solve.moduleForRegion region solved of
+                    Just m -> Just m
+                    Nothing -> case LC._lc_currentDepModule ctx of
+                                Just dm -> Just dm
+                                Nothing -> Just (ModuleName.toString (LC._lc_module ctx))
+        _ = Debug.Trace.trace ("caseToGo: region=" ++ show region ++ " curMod=" ++ show curMod ++ " _lc_module=" ++ show (LC._lc_module ctx) ++ " _lc_currentDepModule=" ++ show (LC._lc_currentDepModule ctx)) ()
+        scopedSolved = Solve.withCurrentModule curMod solved
         maybeDispatch =
             case subjectIsSealedIface ctx scopedSolved subject of
                 Just (_declHome, _typeName, _vars, _opts, _ctors, qualType) ->
@@ -18568,7 +18720,7 @@ caseToGoLegacy ctx mExpectedGo subject branches =
         -- inferred typed shape and routing the subject as `_tFfi`
         -- (direct field access), `n` becomes `int` and Go's type
         -- inference works through Test.equal and friends.
-        solvedTypes = Rec._cg_solvedTypes getCgEnvFromScope
+        solvedTypes = lookupSolvedTypesFromCtx (phaseAFallback ctx)
         -- Cycle 3 task #330 / Dev P40 (skyshop Db.snapshotToDict panic):
         -- when the subject is a bare variable reference, treat the
         -- per-region HM type map as authoritative and do NOT fall back
@@ -18723,8 +18875,8 @@ caseToGoLegacy ctx mExpectedGo subject branches =
                 -> True
             _ -> False
 
-        funcRetTypeMap = Rec._cg_funcRetType getCgEnvFromScope
-        inferredSigMap = Rec._cg_funcInferredSigs getCgEnvFromScope
+        funcRetTypeMap = Rec._cg_funcRetType (lookupCgEnvFromCtx (phaseAFallback ctx))
+        inferredSigMap = Rec._cg_funcInferredSigs (lookupCgEnvFromCtx (phaseAFallback ctx))
 
         isConcreteResultOrMaybe t =
             let isResult = "rt.SkyResult[" `List.isPrefixOf` t
@@ -18835,7 +18987,7 @@ detectSubjectType branches =
 -- threaded explicitly instead of reading the legacy IORef.
 caseBranchToStmts :: LC.LowerCtx -> String -> Can.CaseBranch -> [GoIr.GoStmt]
 caseBranchToStmts ctx subject =
-    caseBranchToStmtsWith subject (\body -> [GoIr.GoReturn (exprToGo (phaseAFallback ctx) ctx body)])
+    caseBranchToStmtsWith (phaseAFallback ctx) subject (\body -> [GoIr.GoReturn (exprToGo (phaseAFallback ctx) ctx body)])
 
 
 -- | Same as `caseBranchToStmts` but with a customisable leaf
@@ -18844,15 +18996,16 @@ caseBranchToStmts ctx subject =
 -- tail self-calls.  The default leaf emitter (`caseBranchToStmts`)
 -- is unchanged.
 caseBranchToStmtsWith
-    :: String
+    :: EmitCompileCtx
+    -> String
     -> (Can.Expr -> [GoIr.GoStmt])
     -> Can.CaseBranch
     -> [GoIr.GoStmt]
-caseBranchToStmtsWith subject leafFn (Can.CaseBranch pat body) =
+caseBranchToStmtsWith ctx subject leafFn (Can.CaseBranch pat body) =
     let
         (A.At _ patInner) = pat
         cond = patternCondition subject patInner
-        bindings = patternBindings subject patInner
+        bindings = patternBindings ctx subject patInner
         bodyStmts = bindings ++ leafFn body
     in
     case cond of
@@ -18916,10 +19069,14 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             -- @examples/16-skychess/sky-out/main.go@ (TCO-heavy)
             -- pre/post this commit MUST be byte-identical — that's
             -- the ship gate.
-            let scopedSolved =
-                    Solve.withCurrentModule
-                        (LC._lc_currentDepModule ctx)
-                        (Rec._cg_solvedTypes getCgEnvFromScope)
+            let solved = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+                region = A.toRegion subj
+                curMod = case Solve.moduleForRegion region solved of
+                            Just m -> Just m
+                            Nothing -> case LC._lc_currentDepModule ctx of
+                                        Just dm -> Just dm
+                                        Nothing -> Just (ModuleName.toString (LC._lc_module ctx))
+                scopedSolved = Solve.withCurrentModule curMod solved
                 tcoDefaultArm =
                     [ GoIr.GoExprStmt
                         (GoIr.GoCall
@@ -18983,7 +19140,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             subjDiscardStmt = GoIr.GoExprStmt
                 (GoIr.GoRaw ("_ = " ++ subjectName))
             branchStmts = concatMap
-                (caseBranchToStmtsWith subjectName tcoLeaf) branches
+                (caseBranchToStmtsWith (phaseAFallback ctx) subjectName tcoLeaf) branches
             fallthroughStmt = GoIr.GoExprStmt
                 (GoIr.GoCall
                     (GoIr.GoQualified "rt" "Unreachable")
@@ -19634,8 +19791,9 @@ tuplePatternCondition subj pats =
 
 
 -- | Generate Go variable bindings from a pattern
-patternBindings :: String -> Can.Pattern_ -> [GoIr.GoStmt]
-patternBindings subject pat = case pat of
+-- | Generate Go variable bindings from a pattern
+patternBindings :: EmitCompileCtx -> String -> Can.Pattern_ -> [GoIr.GoStmt]
+patternBindings ctx subject pat = case pat of
     Can.PVar name ->
         if isDiscardName name
             then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
@@ -19650,7 +19808,7 @@ patternBindings subject pat = case pat of
 
     Can.PCtor _home typeName _union ctorName _ctorIdx args ->
         -- Bind constructor arguments
-        concatMap (bindCtorArg subject ctorName) args
+        concatMap (bindCtorArg ctx subject ctorName) args
 
     -- head :: tail  →  h := rt.AsList(subject)[0]; t := rt.AsList(subject)[1:]
     -- `rt.AsList` widens any Go slice (typed or `[]any`) to `[]any`
@@ -19679,7 +19837,7 @@ patternBindings subject pat = case pat of
                 Can.PAnything -> [ GoIr.GoAssign "_" headExpr ]
                 _ -> GoIr.GoShortDecl headName headExpr
                     : GoIr.GoAssign "_" (GoIr.GoIdent headName)
-                    : patternBindings headName hPat
+                    : patternBindings ctx headName hPat
             tailStmts = case tPat of
                 Can.PVar name ->
                     if isDiscardName name
@@ -19690,7 +19848,7 @@ patternBindings subject pat = case pat of
                 Can.PAnything -> [ GoIr.GoAssign "_" tailExpr ]
                 _ -> GoIr.GoShortDecl tailName tailExpr
                     : GoIr.GoAssign "_" (GoIr.GoIdent tailName)
-                    : patternBindings tailName tPat
+                    : patternBindings ctx tailName tPat
         in headStmts ++ tailStmts
 
     -- [a, b, c]  →  bind each element by index
@@ -19708,7 +19866,7 @@ patternBindings subject pat = case pat of
                     let sub = "__sky_li_" ++ show i ++ "_" ++ subject
                     in GoIr.GoShortDecl sub (asSlice i)
                         : GoIr.GoAssign "_" (GoIr.GoIdent sub)
-                        : patternBindings sub p
+                        : patternBindings ctx sub p
         in concat (zipWith bindEl [0::Int ..] xs)
 
     -- (a, b[, c, ...])  →  bind V0/V1/V2 (SkyTuple2/3) or Vs[N] (SkyTupleN)
@@ -19748,7 +19906,7 @@ patternBindings subject pat = case pat of
                     let sub = "__sky_t_V" ++ show i ++ "_" ++ subject
                     in GoIr.GoShortDecl sub (accessor i)
                        : GoIr.GoAssign "_" (GoIr.GoIdent sub)
-                       : patternBindings sub p
+                       : patternBindings ctx sub p
         in concat (zipWith bindField [0 :: Int ..] allPats)
 
     -- { name }  →  name := rt.Field(subject, "Name")
@@ -19770,7 +19928,7 @@ patternBindings subject pat = case pat of
             aliasStmt = if isDiscardName name
                 then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
                 else [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
-        in aliasStmt ++ patternBindings subject innerPat
+        in aliasStmt ++ patternBindings ctx subject innerPat
 
 
 -- | Bind a constructor argument to a local variable.
@@ -19779,8 +19937,8 @@ patternBindings subject pat = case pat of
 -- destructure temp) — otherwise `.OkValue` / `.JustValue` on `any` fails
 -- Go's type check. For user-defined Tag-based ADTs, the outer case already
 -- asserted the subject to the struct type so `.Fields[i]` works directly.
-bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
-bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
+bindCtorArg :: EmitCompileCtx -> String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
+bindCtorArg ctx subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
     let (A.At _ innerPat) = pat
         -- P7: a subject name suffixed with "_tFfi" is the typed-FFI
         -- shortcut — the outer caseToGo already guarantees it's a
@@ -19940,7 +20098,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             -- generic struct construction — Tier 4).
             T.TType modName typeName []
                 | let goName = unionGoTypeName modName typeName
-                , Set.member goName (Rec._cg_unionNames getCgEnvFromScope) ->
+                , Set.member goName (Rec._cg_unionNames (lookupCgEnvFromCtx ctx)) ->
                     Just ("rt.Coerce[" ++ goName ++ "]")
             _              -> Nothing
         typedField raw = case payloadCoercer of
@@ -19966,7 +20124,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx pcaTy pat) =
             let tmp = "__sky_cf_" ++ show idx ++ "_" ++ subject
             in GoIr.GoShortDecl tmp fieldAccess
                : GoIr.GoAssign "_" (GoIr.GoIdent tmp)
-               : patternBindings tmp innerPat
+               : patternBindings ctx tmp innerPat
 
 
 -- | v0.17 PR-23 Gap 10 — extract a primitive Go type ident from a
@@ -20164,11 +20322,11 @@ exprToMainStmtsTyped ctx types (A.At _ expr) = case expr of
         -- can't pin Setup_R[Msg] as wformCfg's Go-static type —
         -- coerceArg's parametric-record short-circuit doesn't
         -- fire, and the legacy nominal cast panics at runtime.
-        registerMainLetBindingType types def `seq`
+        registerMainLetBindingType (phaseAFallback ctx) types def `seq`
             (defToStmts (phaseAFallback ctx) ctx def ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetRec defs body ->
-        foldr seq () (map (registerMainLetBindingType types) defs) `seq`
+        foldr seq () (map (registerMainLetBindingType (phaseAFallback ctx) types) defs) `seq`
             (concatMap (defToStmts (phaseAFallback ctx) ctx) defs ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetDestruct _pat valExpr body ->
@@ -20225,13 +20383,13 @@ exprToMainStmts = exprToMainStmtsTyped (ctxFromIORef ()) Solve.emptySolvedTypes
 
 -- | Generate Go expression in typed context with known return type.
 exprToGoTypedWithRet :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoTypedWithRet types retType expr = exprToGoTyped types retType expr
+exprToGoTypedWithRet types retType expr = exprToGoTyped (ctxFromIORef ()) types retType expr
 
 
 -- | Generate Go expression in typed context — uses direct Go operators
 -- instead of any-typed runtime wrappers.
-exprToGoTyped :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
+exprToGoTyped :: LC.LowerCtx -> Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
+exprToGoTyped ctx types retType origExpr@(A.At _ expr) = case expr of
     Can.Int n -> GoIr.GoIntLit n
     Can.Float f -> GoIr.GoFloatLit f
     Can.Str s -> GoIr.GoStringLit s
@@ -20246,12 +20404,12 @@ exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
     Can.VarTopLevel _ name -> GoIr.GoIdent (goSafeName name)
     Can.VarKernel modName funcName -> kernelToGo modName funcName
 
-    Can.Binop op _ _ _ left right -> typedBinop types retType op left right
-    Can.If branches elseExpr -> typedIf types retType branches elseExpr
+    Can.Binop op _ _ _ left right -> typedBinop ctx types retType op left right
+    Can.If branches elseExpr -> typedIf ctx types retType branches elseExpr
 
     Can.Call func args ->
-        let goFunc = exprToGoTyped types retType func
-            goArgs = map (exprToGoTyped types retType) args
+        let goFunc = exprToGoTyped ctx types retType func
+            goArgs = map (exprToGoTyped ctx types retType) args
             -- Try typed kernel routing first. When func is a kernel
             -- with a typed *T variant AND we can derive concrete
             -- arg types, emit `rt.List_mapT[int, any](...)` instead
@@ -20262,7 +20420,7 @@ exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
                     -- entry-point caller without a threaded ctx;
                     -- bridge here (Stage 5 territory for the typed
                     -- path-b lowerer).
-                    kernelTypedCall (ctxFromIORef ()) types m f args goArgs
+                    kernelTypedCall ctx types m f args goArgs
                 _ -> Nothing
             callExpr = case typedKernelCall of
                 Just expr -> expr
@@ -20285,8 +20443,7 @@ exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
                     -- rejects the un-typed lambda. Delegating routes
                     -- the call through the typed-aware path.
                     A.At _ (Can.VarTopLevel _ _) ->
-                        let _ctxF = ctxFromIORef ()
-                        in exprToGo (phaseAFallback _ctxF) _ctxF (A.At A.one (Can.Call func args))
+                        exprToGo (phaseAFallback ctx) ctx (A.At A.one (Can.Call func args))
                     _ -> GoIr.GoCall goFunc goArgs
             -- If the called function has a known return type and we need a primitive,
             -- assert the result. This handles: n * factorial(n-1) where factorial returns any.
@@ -20321,38 +20478,37 @@ exprToGoTyped types retType origExpr@(A.At _ expr) = case expr of
                 -- untyped thunk (typical of the Db.* / Time.* helpers).
                 -- wrapTypedReturn already encapsulates the Coerce-vs-assert
                 -- choice for every parametric shape.
-                wrapTypedReturn (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) (Just origExpr) (solvedTypeToGo rt) callExpr
+                wrapTypedReturn (phaseAFallback ctx) ctx (Just origExpr) (solvedTypeToGo rt) callExpr
             _ -> callExpr
 
-    Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
+    Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped ctx types retType inner)
 
     Can.Lambda params body ->
-        curryLambdaPat params (exprToGoTyped types retType body)
+        curryLambdaPat params (exprToGoTyped ctx types retType body)
 
-    _ -> let _ctxF = ctxFromIORef ()
-         in exprToGo (phaseAFallback _ctxF) _ctxF (A.At A.one expr)
+    _ -> exprToGo (phaseAFallback ctx) ctx (A.At A.one expr)
 
 
-typedBinop :: Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
-typedBinop types retType op left right = case op of
-    "|>" -> pipeApply (ctxFromIORef ()) left right
-    "<|" -> pipeApply (ctxFromIORef ()) right left
+typedBinop :: LC.LowerCtx -> Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+typedBinop ctx types retType op left right = case op of
+    "|>" -> pipeApply ctx left right
+    "<|" -> pipeApply ctx right left
     -- String concat: use rt.Concat which returns any, then assert to string if needed
-    "++" -> let concatExpr = GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGoTyped types retType left, exprToGoTyped types retType right]
+    "++" -> let concatExpr = GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGoTyped ctx types retType left, exprToGoTyped ctx types retType right]
             in if retType == "string"
                then GoIr.GoTypeAssert concatExpr "string"
                else concatExpr
-    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGoTyped types retType left, exprToGoTyped types retType right]
-    _ -> GoIr.GoBinary op (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGoTyped ctx types retType left, exprToGoTyped ctx types retType right]
+    _ -> GoIr.GoBinary op (exprToGoTyped ctx types retType left) (exprToGoTyped ctx types retType right)
 
 
-typedIf :: Solve.SolvedTypes -> String -> [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
-typedIf types retType branches elseExpr =
+typedIf :: LC.LowerCtx -> Solve.SolvedTypes -> String -> [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
+typedIf ctx types retType branches elseExpr =
     let
-        go [] = "return " ++ GoBuilder.renderExpr (exprToGoTyped types retType elseExpr)
+        go [] = "return " ++ GoBuilder.renderExpr (exprToGoTyped ctx types retType elseExpr)
         go ((cond, body):rest) =
-            "if " ++ GoBuilder.renderExpr (exprToGoTyped types retType cond)
-            ++ " { return " ++ GoBuilder.renderExpr (exprToGoTyped types retType body) ++ " }; "
+            "if " ++ GoBuilder.renderExpr (exprToGoTyped ctx types retType cond)
+            ++ " { return " ++ GoBuilder.renderExpr (exprToGoTyped ctx types retType body) ++ " }; "
             ++ go rest
     in
     GoIr.GoRaw $ "func() " ++ retType ++ " { " ++ go branches ++ " }()"
@@ -20501,7 +20657,14 @@ hasUnresolvedSkyTVar solved = go Set.empty
 
 
 inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type
-inferExprType types (A.At r e) = case e of
+inferExprType types expr = inferExprTypeCtx types emptyCgEnv (LC.emptyLowerCtx (ModuleName.Canonical "Main")) expr
+
+
+inferExprTypeCtx :: Solve.SolvedTypes -> Rec.CodegenEnv -> LC.LowerCtx -> Can.Expr -> Maybe T.Type
+inferExprTypeCtx types env lc expr = go expr
+  where
+  inferExprType _ = go
+  go (A.At r e) = case e of
     Can.Int _    -> Just ConstrainExpr.intType
     Can.Float _  -> Just ConstrainExpr.floatType
     Can.Str _    -> Just ConstrainExpr.stringType
@@ -20534,7 +20697,7 @@ inferExprType types (A.At r e) = case e of
             Just t -> Just t
             Nothing -> case Solve.lookupSolvedRegion r types of
                 Just t | not (isSentinelTVar t) -> Just t
-                _ -> lookupLambdaType (ctxFromIORef ()) name
+                _ -> lookupLambdaType lc name
     Can.VarTopLevel _ n  -> Solve.lookupSolvedVar n types
     -- VarKernel: instantiate the kernel's HM annotation. Strips the
     -- Forall wrapper (kernel sigs are universally quantified) so the
@@ -20645,8 +20808,7 @@ inferExprType types (A.At r e) = case e of
                         -- top-level keys. Fall back to the user's record
                         -- alias: find an alias whose field-set matches
                         -- and read the field's concrete type from there.
-                        let env = getCgEnvFromScope
-                            fieldSet = Set.fromList (Map.keys fields)
+                        let fieldSet = Set.fromList (Map.keys fields)
                             aliasMatch = matchAliasByFieldSet env fieldSet
                         in case aliasMatch of
                             Just (T.TRecord aliasFields _) ->
@@ -20673,8 +20835,7 @@ inferExprType types (A.At r e) = case e of
             -- alias map in case the alias body wasn't unfolded into
             -- TAlias form (older HM paths).
             Just (T.TType _ aliasName _) ->
-                let env = getCgEnvFromScope
-                    matchAlias = Map.lookup aliasName (Rec._cg_aliases env)
+                let matchAlias = Map.lookup aliasName (Rec._cg_aliases env)
                 in case matchAlias of
                     Just (Can.Alias _ (T.TRecord fields _)) ->
                         case Map.lookup fieldName fields of
@@ -20846,16 +21007,16 @@ inferExprType types (A.At r e) = case e of
     -- Anything else (chr/other AST shapes already shadowed by the
     -- explicit arms above) — safe fallback.
     _ -> Nothing
-  where
-    mkListType elemTy = T.TType ModuleName.list "List" [elemTy]
-    -- | `>>` / `<<` composition helper.  `first` is the side that
-    -- runs first under `apply`; `second` runs second.  Result is
-    -- a function from `first`'s input to `second`'s output.
-    composeResult first second =
-        case (inferExprType types first, inferExprType types second) of
-            (Just (T.TLambda fIn _), Just sTy) ->
-                Just (T.TLambda fIn (snd (splitFuncType 1 sTy)))
-            _ -> Nothing
+    where
+      mkListType elemTy = T.TType ModuleName.list "List" [elemTy]
+      -- | `>>` / `<<` composition helper.  `first` is the side that
+      -- runs first under `apply`; `second` runs second.  Result is
+      -- a function from `first`'s input to `second`'s output.
+      composeResult first second =
+          case (inferExprType types first, inferExprType types second) of
+              (Just (T.TLambda fIn _), Just sTy) ->
+                  Just (T.TLambda fIn (snd (splitFuncType 1 sTy)))
+              _ -> Nothing
 
 
 -- | Compute the Go-type string for an arbitrary Can.Expr by combining
@@ -21604,7 +21765,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
             _ -> Nothing
         lookupFnInputAt :: ModuleName.Canonical -> String -> Int -> Maybe String
         lookupFnInputAt home name idx =
-            let env = getCgEnvFromScope
+            let env = lookupCgEnvFromCtx (phaseAFallback ctx)
                 qualKey = map (\c -> if c == '.' then '_' else c)
                     (ModuleName.toString home) ++ "_" ++ name
             in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
@@ -21618,7 +21779,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
         inferRetFromTopLevel :: Can.Expr -> Maybe String
         inferRetFromTopLevel fn = case fn of
             A.At _ (Can.VarTopLevel home name) ->
-                let env = getCgEnvFromScope
+                let env = lookupCgEnvFromCtx (phaseAFallback ctx)
                     qualKey = map (\c -> if c == '.' then '_' else c)
                         (ModuleName.toString home) ++ "_" ++ name
                 in case Map.lookup qualKey (Rec._cg_funcRetType env) of
@@ -22379,49 +22540,18 @@ solvedTypeToGoViaPipeline =
 --
 -- For sites that DO depend on env data, the migration is gated on
 -- 'MappingContext' widening (separate PR-22 slices).
-solvedTypeToGoViaPipelineFlat :: T.Type -> String
-solvedTypeToGoViaPipelineFlat ty =
-    -- v0.17 PR-22 bulk root-cause fix — read the live codegen env
-    -- so 'mapSkyTypeToGo' sees record-alias / union-name / enum /
-    -- alias registries when classifying user-defined types.  Without
-    -- this, 'flatMappingContext' starts with empty registries and the
-    -- pipeline can't distinguish non-generic Sky ADTs (Go-side
-    -- `type Foo = rt.SkyADT`) from parametric record aliases
-    -- (Go-side `type Cfg_R[T any] = struct{...}`).  Result of
-    -- ignoring the env: passing through `[args]` for non-generic
-    -- types → `Sky_Core_Task_ShouldRetry[any]` against
-    -- non-generic declaration → Go build rejects with "is not a
-    -- generic type".
-    --
-    -- v0.17 step-2 (root-cause fix for DepSolvedTypesWiringSpec):
-    -- the structural pipeline's 'mapRecordType' returns a bare
-    -- @Foo_R@ (no type-arg list) when an anonymous Sky 'T.TRecord'
-    -- matches a field-set in a registered alias.  When that alias
-    -- is PARAMETRIC (Sky-side @type alias Cfg msg = { ... }@,
-    -- Go-side @type Cfg_R[T any] struct{...}@), Go rejects the
-    -- bare @Cfg_R@ identifier in a type position with
-    -- @cannot use generic type Cfg_R[T any] without instantiation@.
-    -- The matched record literal lowering DOES emit the typed
-    -- form @Cfg_R[any]{...}@ (it routes through the field-index
-    -- separately and adds the arity-padded TVar args at value
-    -- site), so the type-position vs value-position rendering
-    -- diverge — and the @rt.Coerce[Foo_R](Foo_R[any]{...})@ wrap
-    -- the let-binding's typed-IIFE emits fails to compile.
-    --
-    -- Close: post-process the rendered output.  When the bare
-    -- output is a known alias name + @_R@ AND the alias has Sky
-    -- type-params, append @[any, ...]@ with one @any@ per param.
-    -- Idempotent on already-suffixed outputs (the gate fires only
-    -- when the rendered string has no trailing @[…]@).  Touches
-    -- only the rendered String, so the structural pipeline stays
-    -- byte-identical for every non-parametric case.
-    let cgEnv = getCgEnvFromScope
-        ctx = (GoType.buildMappingContext
+solvedTypeToGoViaPipelineFlatCtx :: Rec.CodegenEnv -> T.Type -> String
+solvedTypeToGoViaPipelineFlatCtx cgEnv ty =
+    let ctx = (GoType.buildMappingContext
                   GoType.defaultRenderEnv cgEnv)
                   { GoType.mcTVarsToAny = True }
         rendered = GoType.renderGoType GoType.defaultRenderEnv
                         (GoType.mapSkyTypeToGo ctx ty)
     in padBareParametricAliasArity cgEnv rendered
+
+solvedTypeToGoViaPipelineFlat :: T.Type -> String
+solvedTypeToGoViaPipelineFlat ty =
+    solvedTypeToGoViaPipelineFlatCtx emptyCgEnv ty
 
 
 -- | v0.17 step-2 (DepSolvedTypesWiringSpec root-cause helper).
@@ -22508,6 +22638,7 @@ curryLambdaPat pats body =
         [GoIr.GoReturn e] -> e
         _ -> body
   where
+    dummyCtx = emptyEmitCompileCtx (ModuleName.Canonical "Main")
     oneLambdaParam :: Int -> Can.Pattern -> (GoIr.GoParam, [GoIr.GoStmt])
     oneLambdaParam idx (A.At _ pat) = case pat of
         Can.PVar name -> (GoIr.GoParam (goSafeName name) "any", [])
@@ -22515,7 +22646,7 @@ curryLambdaPat pats body =
         Can.PUnit     -> (GoIr.GoParam "_" "any", [])
         _ ->
             let tmp = "_lp" ++ show idx
-            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
+            in (GoIr.GoParam tmp "any", patternBindings dummyCtx tmp pat)
 
 
 -- | Typed variant of curryLambdaPat: emit a Sky lambda with typed
@@ -22602,6 +22733,7 @@ curryLambdaPatTypedW bodyPreTyped paramTypes retType pats body
                     (rebindAll ++ [GoIr.GoReturn inner])
         in buildLambdas zipped
   where
+    dummyCtx = emptyEmitCompileCtx (ModuleName.Canonical "Main")
     -- Each lambda param emits two things: a typed Go param + any
     -- statements needed to re-bind the param name as `any` inside
     -- the body (so the existing reflect-based dispatch works).
@@ -22652,7 +22784,7 @@ curryLambdaPatTypedW bodyPreTyped paramTypes retType pats body
                     else [GoIr.GoShortDecl tmpAny
                             (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent tmp])]
             in ( GoIr.GoParam tmp paramTy
-               , rebind ++ patternBindings tmpAny pat
+               , rebind ++ patternBindings dummyCtx tmpAny pat
                , [] )
 
 
@@ -22667,10 +22799,10 @@ patternToParam (A.At _ pat) = case pat of
 -- pattern's annotated Sky type to produce a typed Go param.
 -- Falls back to "any" when the Sky type can't render to a safely-
 -- usable Go type (TVars in non-emittable positions, etc.).
-typedPatToParam :: (Can.Pattern, T.Type) -> GoIr.GoParam
-typedPatToParam (A.At _ pat, skyTy) =
+typedPatToParam :: EmitCompileCtx -> (Can.Pattern, T.Type) -> GoIr.GoParam
+typedPatToParam phaseACtx (A.At _ pat, skyTy) =
     let goTy = solvedTypeToGo skyTy
-        useTy = if isEmittableGoType goTy && not (isGenericTypeParam goTy)
+        useTy = if isEmittableGoType phaseACtx goTy && not (isGenericTypeParam goTy)
                   then goTy
                   else "any"
         name = case pat of
