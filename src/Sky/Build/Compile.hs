@@ -22713,9 +22713,27 @@ solvedTypeToGoViaPipelineFlatCtx cgEnv ty =
                         (GoType.mapSkyTypeToGo ctx ty)
     in padBareParametricAliasArity cgEnv rendered
 
+-- | v0.17 regression fix (Store-vs-rt.SkyStore class) — read the live
+-- 'scopeStateRef._lc_cgEnv' at call time so non-parametric record
+-- aliases whose name collides with a 'runtimeTypedMap' bare-name
+-- (e.g. bundled console's @type alias Store = { ... }@) resolve to
+-- the user's @<base>_R@ struct instead of leaking the kernel
+-- @rt.SkyStore@ mapping.  Mirrors the pre-PR-22 'getCgEnv' behaviour
+-- (line 1087-1107) used by the legacy 'solvedTypeToGo' renderer; the
+-- collapse to 'emptyCgEnv' in PR-22 S7 dropped the populated
+-- @_cg_recordAliases@ registry and made the 'mapAliasType'/'mapNamedType'
+-- @matches@ arm always-empty, falling straight through to 'runtimeHit'.
+--
+-- Pattern: NOINLINE + 'readIORefNoCse' is the same shape as
+-- 'lookupAliasDecl' (line 326-334) and the inline-cgEnv reads scattered
+-- through the renderer.  Falls back to 'emptyCgEnv' when the field is
+-- 'Nothing' (pre-C9 bootstrap path).
+{-# NOINLINE solvedTypeToGoViaPipelineFlat #-}
 solvedTypeToGoViaPipelineFlat :: T.Type -> String
 solvedTypeToGoViaPipelineFlat ty =
-    solvedTypeToGoViaPipelineFlatCtx emptyCgEnv ty
+    let cgEnv = fromMaybe emptyCgEnv
+              $ LC.lookupCgEnv (readIORefNoCse scopeStateRef)
+    in solvedTypeToGoViaPipelineFlatCtx cgEnv ty
 
 
 -- | v0.17 step-2 (DepSolvedTypesWiringSpec root-cause helper).
