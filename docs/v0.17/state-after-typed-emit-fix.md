@@ -75,7 +75,7 @@ All addressable limitations CLOSED. Fundamental design constraints carry explici
 
 ### Criterion #8 — Property-based fuzzer
 
-**Status: NOT SHIPPED.** No fuzzer artifact in current source tree.
+**Status: ✅ CLOSED** (corrected 2026-06-28 by Judge agent finding I missed in my initial sweep). Fuzzer artifacts SHIPPED at `test/Sky/Build/WellTypedFuzzerSpec.hs` + `test/Sky/Build/WellTypedFuzzerGen.hs`. AUTONOMOUS_GOAL.md commit `b6c9be6e` documents 10k-iter clean milestone.
 
 ### Criterion #9 — All v0.17 umbrella tasks CLOSED
 
