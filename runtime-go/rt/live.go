@@ -4510,9 +4510,9 @@ func (app *liveApp) safeViewCall(model any) (VNode, bool) {
 				// immediately (no Task wrap) since we're already inside
 				// the deferred recover.
 				logEmit(logLevelError, "error", "sky.live.view.panic",
-					[]any{
-						"reason", reason,
-						"stack_head", firstLines(stack, 8),
+					map[string]any{
+						"reason":     reason,
+						"stack_head": firstLines(stack, 8),
 					},
 				)
 				vn = renderViewPanicFallback(reason)
