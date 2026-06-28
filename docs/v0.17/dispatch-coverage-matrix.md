@@ -1,5 +1,94 @@
 # v0.17 Fully-Typed Go Codegen Dispatch Coverage Matrix
 
+## ✅ Session 3b — ROOT CAUSE LOCATED + precise fix plan
+
+**Status**: Empirical A5 probe identified the exact bug. Fix is bounded (2 files, ~6 line edits).
+
+### A5 probe (forcing pattern, then reverted)
+
+Added an always-False guard arm BEFORE A4 at Compile.hs:14134 that fires `Debug.Trace.trace` for every Go_* Can.VarKernel call, prints all gate values, then `seq marker False` falls through to the real dispatch.
+
+Run on examples/13-skyshop:
+```
+A5-PROBE: Go_Firestore_queryDocumentsT inSet=True  paramTysLen=Nothing nargs=2 allUnit=False
+A5-PROBE: Go_GoV4_appAuthT             inSet=True  paramTysLen=Nothing nargs=2 allUnit=False
+A5-PROBE: Go_Stripe_goV84_*T           inSet=True  paramTysLen=Nothing nargs=2 allUnit=False
+... (30+ entries; every Go_*T name in set, every paramTysLen=Nothing)
+```
+
+**Every typed wrapper name IS in `_lc_ffiTypedWrapperNames` (Set).
+NONE has an entry in `_lc_ffiTypedWrapperParams` (Map).**
+
+The A5 gate fails at the params lookup (line 14142), not the wrapper-set membership (line 14141).
+
+### Root cause
+
+`seedTypedFfiNames` (Compile.hs:2990) correctly returns BOTH `twNames :: Set` AND `twParams :: Map` from the same `allEntries` list — both should be populated identically.
+
+But the **`EmitCompileCtx` struct** (`CompileCtx.hs:347`) has only `_cc_ffiTypedWrappers :: !(Set.Set String)` — NO companion `_cc_ffiTypedWrapperParams` field. The Map dies at the EmitCompileCtx boundary.
+
+Then `buildLowerCtxFromEmitCtx` (Compile.hs:13368) sets `_lc_ffiTypedWrapperNames = lookupFfiTypedWrappersFromCtx ecc` but leaves `_lc_ffiTypedWrapperParams = Map.empty` (from `emptyLowerCtx`). So every LowerCtx constructed via this helper has the Set populated and the Map empty.
+
+This is the IORef-defusing migration from v0.17 iter 5 — names were migrated but params were left behind.
+
+### The fix (exact mechanical edits)
+
+**File 1: `src/Sky/Build/CompileCtx.hs`**
+
+1. After line 352 (after `_cc_ffiTypedWrappers` field), add:
+```haskell
+    , _cc_ffiTypedWrapperParams :: !(Map.Map String [String])
+        -- ^ Typed-FFI wrapper name → param Go types.  Mirrors
+        -- 'LowerCtx._lc_ffiTypedWrapperParams'.  v0.17 close iter 5
+        -- companion to '_cc_ffiTypedWrappers' (was missed during the
+        -- names-only IORef→ctx migration; restored Session 3b).
+```
+
+2. After `_cc_ffiTypedWrappers  = Set.empty` in `emptyEmitCompileCtx` (line 370), add:
+```haskell
+    , _cc_ffiTypedWrapperParams = Map.empty
+```
+
+3. After `lookupFfiTypedWrappersFromCtx` definition (line 489), add:
+```haskell
+-- | Read the typed-FFI wrapper param Go types.
+lookupFfiTypedWrapperParamsFromCtx :: EmitCompileCtx -> Map.Map String [String]
+lookupFfiTypedWrapperParamsFromCtx = _cc_ffiTypedWrapperParams
+```
+
+4. Export `lookupFfiTypedWrapperParamsFromCtx` (next to line 68's existing `lookupFfiTypedWrappersFromCtx` export).
+
+**File 2: `src/Sky/Build/Compile.hs`**
+
+1. Find `buildEmitCompileCtx` (the real builder, not the empty one). Populate `_cc_ffiTypedWrapperParams` from `CompileCtx._ctx_typedWrapperParams` (which already exists per line 119).
+
+2. At line 13376 in `buildLowerCtxFromEmitCtx`, after `_lc_ffiTypedWrapperNames = lookupFfiTypedWrappersFromCtx ecc`, add:
+```haskell
+    , _lc_ffiTypedWrapperParams = lookupFfiTypedWrapperParamsFromCtx ecc
+```
+
+3. Import the new accessor at the top of Compile.hs (next to existing `lookupFfiTypedWrappersFromCtx` import at line 49).
+
+### Verification gates for Session 3b close
+
+- `cd examples/13-skyshop && rm -rf sky-out && sky build src/Main.sky` succeeds (currently fails with `undefined: rt.Go_<Pkg>_<method>`)
+- Examples 05 + 11 same
+- `bundled console regenerate` succeeds
+- `cabal test` zero regressions
+- Byte-diff: examples that DON'T use Go_* FFI should be byte-identical (no collateral)
+
+### Architectural verdict
+
+**Closes Problem B** from `docs/v0.17/stabilization-postmortem.md` (3 examples fail with `undefined: rt.Go_<Pkg>_<method>`). Likely partially closes Problem A too (bundled console regenerate may share this gap).
+
+Mechanism is **§7 architectural lever** "complete the IORef→ctx migration (defuse leaks left behind by partial defusing)". NOT in §8 floor. NO scaffolding survives the close — net cleaner.
+
+### Session 4 implication
+
+If the fix is byte-clean and gates pass, Sessions 4-5 (env-thread `solvedTypeToGoViaPipelineFlat` + spec retarget) can proceed unmodified — the 4th-path investigation was a SEPARATE bug from Problem A's renderer divergence.
+
+---
+
 ## ⚠ Session 3 — CORRECTION to Session 2 (Haskell laziness bug)
 
 **Status**: Session 2's conclusion (`exprToGoTyped` line 20586 is the 4th path) was **WRONG**. The traces Session 2 added used `let _ = if X then trace ... else ()` which never forces `_`, so the trace expressions were never evaluated. Their "ZERO HITS" results were artifacts of Haskell laziness, not proof of unreached arms.
