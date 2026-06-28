@@ -65,6 +65,45 @@ A Judge verdict of "100% ACHIEVED" requires ALL of:
 
 ## User directives logged (resume context — persists across sessions)
 
+### 2026-06-28 — Full architectural close + autonomous mode (green-light)
+
+User explicit direction after the Session-0 stabilization-postmortem +
+full-close-roadmap docs (commits `63207ed4` + `33b6f9d0`):
+
+> green light all above, autonomous mode, dont defer and no stopping
+> midway. set loop + schedule + agents + grilling mode
+
+> full or close to full arch close. we need known bugs fixed so all
+> examples run correctly with LSP + sky compiler fully working.
+
+**Concrete authorization** (all 3 questions answered YES):
+1. Roadmap shape OK (the 9-session plan in `docs/v0.17/full-close-roadmap.md`)
+2. Session budget OK (13-18 sessions = weeks-to-months)
+3. Branch protection holds (no main push, no force-push, no auto-tag)
+
+**Expanded DoD** (criteria 11-16 in `docs/v0.17/full-close-roadmap.md`
+DoD section) — ADDED to the 10 mandate criteria above:
+- 11. All 39+ examples build + run clean (currently 36/39 — fix 05/11/13)
+- 12. Bundled console regenerate green
+- 13. LSP fully working
+- 14. Sky compiler fully working (sweep + verify-all-web + verify-cli)
+- 15. No spec encodes bug-compatible behavior (10-spec audit)
+- 16. Architectural docstring at every IORef + scopeStateRef field
+
+**Mode**: loop + schedule + agents + grilling.
+- Loop = continuous-Judge per CLAUDE.md §0 protocol
+- Schedule = ScheduleWakeup for cross-session continuation, no idle stops
+- Agents = Architecture-Consult + Adversarial Grill + Judge per §0.4
+- Grilling = per-commit grill per `feedback_v017_per_commit_grill`
+
+**Branch**: `feat/v0.17-pure-sound-codegen` (NOT `feat/v0.17-fully-typed-codegen`
+— branch name evolved during this work).  HEAD currently at `33b6f9d0`
+(roadmap doc).
+
+**Next execution unit**: Session 1 per `docs/v0.17/full-close-roadmap.md` =
+dispatch coverage matrix.  NO code in Session 1 — just survey
+(removes guesswork that produced the previous regressions).
+
 ### 2026-06-21 — Sealed-interface ADT emission (criterion 1 architectural close)
 
 User pushed back hard on the "Sky type lies, Go type lies, they
