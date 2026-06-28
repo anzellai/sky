@@ -15830,6 +15830,23 @@ coerceVia ctx mSrc goType goArg = case goType of
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
     "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
     "float64" -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [goArg]
+    -- v0.17 Session 3g — fixed-width numeric widening for FFI params.
+    -- Sky.Int → Go.int; some FFI typed wrappers (Stripe SDK, Time,
+    -- crypto sizes) take int64/int32/etc. Cast via the canonical
+    -- rt.CoerceInt/Float helper to handle the any-boxed source uniformly.
+    -- Closes examples/13-skyshop's Stripe SetUnitAmount int64 mismatch.
+    "int64"   -> GoIr.GoCall (GoIr.GoIdent "int64")   [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "int32"   -> GoIr.GoCall (GoIr.GoIdent "int32")   [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "int16"   -> GoIr.GoCall (GoIr.GoIdent "int16")   [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "int8"    -> GoIr.GoCall (GoIr.GoIdent "int8")    [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "uint"    -> GoIr.GoCall (GoIr.GoIdent "uint")    [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "uint64"  -> GoIr.GoCall (GoIr.GoIdent "uint64")  [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "uint32"  -> GoIr.GoCall (GoIr.GoIdent "uint32")  [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "uint16"  -> GoIr.GoCall (GoIr.GoIdent "uint16")  [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "uint8"   -> GoIr.GoCall (GoIr.GoIdent "uint8")   [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "byte"    -> GoIr.GoCall (GoIr.GoIdent "byte")    [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "rune"    -> GoIr.GoCall (GoIr.GoIdent "rune")    [GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]]
+    "float32" -> GoIr.GoCall (GoIr.GoIdent "float32") [GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [goArg]]
     _ -> case stripSkyMaybe goType of
         Just inner -> GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [goArg]
         Nothing -> case stripSkyResult goType of
