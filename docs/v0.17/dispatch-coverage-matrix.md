@@ -1,8 +1,73 @@
 # v0.17 Fully-Typed Go Codegen Dispatch Coverage Matrix
 
-## ✅ Session 2 — 4th path LOCATED (`exprToGoTyped` line 20586)
+## ⚠ Session 3 — CORRECTION to Session 2 (Haskell laziness bug)
 
-**Status**: Conclusive. The 4th FFI emission path is `exprToGoTyped`'s `Can.VarKernel` arm.
+**Status**: Session 2's conclusion (`exprToGoTyped` line 20586 is the 4th path) was **WRONG**. The traces Session 2 added used `let _ = if X then trace ... else ()` which never forces `_`, so the trace expressions were never evaluated. Their "ZERO HITS" results were artifacts of Haskell laziness, not proof of unreached arms.
+
+### Re-traced with forcing (`trace ... $ result`)
+
+| Trace tag | Site | Function | Result for Go_Firestore.* |
+|---|---|---|---|
+| `BARE-VK` | line 14027 (in `exprToGo`) | bare `Can.VarKernel` arm | **15 HITS** ← real 4th path |
+| `ALIAS-TOP` | line 13998 | `Can.VarTopLevel` Ffi.kernel alias arm | 0 |
+| `TYPED-VK` | line 20575 (in `exprToGoTyped`) | bare `Can.VarKernel` arm | 0 |
+
+`exprToGoTyped` is **NOT** the path for `examples/13-skyshop`. Session 2 was wrong.
+
+### The actual 4th path
+
+`exprToGo`'s bare `Can.VarKernel` arm at line **14027** is the immediate caller of `kernelToGo` for Go_Firestore.* calls (15 hits empirically).
+
+Reached via `exprToGo`'s Can.Call dispatch (line 14056+):
+1. Sky source: `Firestore.queryDocuments dbConn coll` → `Can.Call (Can.VarKernel "Go_Firestore" "queryDocuments") [dbConn, coll]`
+2. Can.Call arm tries typed dispatch arms A1-A8 (lines 14068-14260)
+3. **None fire for Go_Firestore.queryDocuments** (gate failures — paramTys/wrapper-set mismatch)
+4. Falls through to `_ ->` at line 14356 → does `let goFunc = exprToGo phaseACtxA ctx func`
+5. Re-enters `exprToGo` with bare `func` (which is `Can.VarKernel ...`)
+6. **Bare `Can.VarKernel` arm at line 14027 fires** → `kernelToGo` emits bare `rt.Go_Firestore_queryDocuments`
+7. **But `runtime-go/rt/firestore_bindings.go` only exports `Go_Firestore_queryDocumentsT`** — the bare-name reference fails Go build with `undefined: rt.Go_<Pkg>_<method>`
+
+### Verified: only typed-T variants exist in runtime
+
+```
+$ grep "^func Go_Firestore_queryDocuments" examples/13-skyshop/sky-out/rt/firestore_bindings.go
+908:func Go_Firestore_queryDocumentsT(arg0 pkg.Query, arg1 context.Context) ...
+```
+
+No bare `Go_Firestore_queryDocuments` exists. Same shape for every Go_* FFI binding — only `T` variants. The compiler's fallback to bare-name emission is the gap.
+
+### Session 3 fix direction (CORRECTED)
+
+Three options:
+
+1. **Option A — Fix the gates at A4/A5** so they fire for Go_* kernels (find which condition fails — paramTys lookup vs wrapper-set lookup). Smallest surface; requires further investigation per gate.
+2. **Option B — Add typed-T fallback at `kernelToGo` itself** (line 14882): when modName starts with `Go_` AND only the `T` variant exists in `_lc_ffiTypedWrapperNames`, emit `GoQualified "rt" (modName ++ "_" ++ funcName ++ "T")` instead of bare. This is a one-line change but might emit T-variants in positions that can't accept them (curried HOF refs, partial app).
+3. **Option C — Pre-flight: never emit bare for Go_* kernels that have no bare runtime export**. Compiler error at emit-time pointing the user to investigate the typed wrapper.
+
+**Recommendation**: investigate Option A first (gate failure root cause). If the gate fails due to a registry-population race (typed wrappers exist in the runtime but aren't in `_lc_ffiTypedWrapperNames` when the dispatch fires), Option A fixes everything cleanly. If gates fail intentionally (paramTys length mismatch on FFI shapes that ARE valid), Option B becomes the safety net.
+
+### Session 3 next steps
+
+1. Trace inside A5 (line 14134) with forcing pattern + print gate values (typedName + Set membership + paramTys lookup + length comparison)
+2. If gate fails on Set lookup: investigate `_lc_ffiTypedWrapperNames` population — is the Go_* kernel registered late?
+3. If gate fails on paramTys length: investigate the FFI generator (`tools/sky-ffi-inspect`) — does it emit paramTys with the right arity?
+4. Architecture-Consult agent verifies before any fix
+
+### Methodology lesson (logged for future sessions)
+
+**Haskell tracing requires `trace ... $` forcing**. The patterns:
+- `Debug.Trace.trace "X" $ result` — fires (result is demanded)
+- `trace "X" result` — fires (same as above without `$`)
+- `let _ = trace "X" () in result` — DOES NOT FIRE (the `_` binding is never demanded)
+- `let m = trace "X" () in seq m result` — fires (seq forces m)
+
+This bug invalidated Session 2's elimination methodology. Future tracing in Compile.hs MUST use the `trace ... $` pattern or explicit `seq`.
+
+---
+
+## ✅ Session 2 — 4th path LOCATED (`exprToGoTyped` line 20586) — INVALIDATED
+
+**Status**: ~~Conclusive~~. The 4th FFI emission path is ~~`exprToGoTyped`'s `Can.VarKernel` arm~~. **REJECTED — see Session 3 correction above.** Session 2's traces used a lazy `let _ = ...` pattern that never fires.
 
 ### Empirical method
 
