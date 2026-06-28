@@ -15307,7 +15307,14 @@ isRecordAliasTy :: String -> Bool
 isRecordAliasTy ty
     | not (null ty)
     , (prefix, rest) <- span (/= '[') ty
-    , "_R" `List.isSuffixOf` prefix
+    -- Named alias: `Foo_R`, `Mod_Foo_R[A]`, etc.
+    -- Anonymous alias: `Anon_R_<names>__<hash>` — same runtime shape
+    --   (struct alias) but with hash suffix instead of `_R` suffix.
+    -- Both route to `rt.Coerce[T]` so the runtime can field-walk a
+    -- struct→struct narrow (e.g. typed-FFI Ui.button cfg literal with
+    -- raw `any` field types into the Anon_R that wraps OnPress in
+    -- `rt.SkyMaybe[any]`).
+    , ("_R" `List.isSuffixOf` prefix) || ("Anon_R_" `List.isPrefixOf` prefix)
     , isIdentLike prefix
     , isBracketSuffix rest = True
     | otherwise = False
