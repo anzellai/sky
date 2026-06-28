@@ -1,5 +1,75 @@
 # v0.17 Fully-Typed Go Codegen Dispatch Coverage Matrix
 
+## ✅ Session 2 — 4th path LOCATED (`exprToGoTyped` line 20586)
+
+**Status**: Conclusive. The 4th FFI emission path is `exprToGoTyped`'s `Can.VarKernel` arm.
+
+### Empirical method
+
+Four Debug.Trace.trace instrumentations were added to `Compile.hs` (then reverted), tagging the four possible callers of `kernelToGo`:
+
+| Trace tag | Site | Function | Result for Go_Firestore.* |
+|---|---|---|---|
+| `KTG-ENTRY` | line 14868 | `kernelToGo` entry | **HITS** (15+ Firestore calls fire) |
+| `BARE-VARKERNEL-ARM` | line 14027 | `exprToGo` bare `Can.VarKernel` arm | **ZERO HITS** |
+| `FALLBACK-VARKERNEL` | line 14356 | `exprToGo` Can.Call `_ ->` fallback | **ZERO HITS** |
+| `ALIAS-VARTOPLEVEL-ARM` | line 13998 | `Can.VarTopLevel` Ffi.kernel alias arm | **ZERO HITS** |
+
+### Conclusion by elimination
+
+The callers of `kernelToGo`:
+1. Line 13999 — `Can.VarTopLevel` Ffi.kernel alias arm (in `exprToGo`)
+2. Line 14031 — bare `Can.VarKernel` arm (in `exprToGo`)
+3. Line 14882 — `kernelToGo` itself (self-loop, not relevant)
+4. **Line 20586 — `exprToGoTyped` Can.VarKernel arm** ← THE 4TH PATH
+
+Three of the four traced cleanly with zero hits for Firestore. By elimination, `exprToGoTyped` is the only viable source. **The bare-rt.Go_X_y emission for examples 05/11/13 originates from `exprToGoTyped`** — Sky.Live's typed-emission path.
+
+### The architectural problem
+
+`exprToGoTyped` is Sky.Live's typed-IIFE entry. Its `Can.VarKernel` arm at line 20586 is one line:
+
+```haskell
+Can.VarKernel modName funcName -> kernelToGo modName funcName
+```
+
+It does **NOT**:
+- Check `_lc_ffiTypedWrapperNames` (typed-T wrapper registry)
+- Check `_lc_ffiTypedWrapperParams` (param-type registry)
+- Dispatch via A4 zero-arg (`exprToGo:14116`), A5 N-arg (`exprToGo:14134`), P8 typed-kernel (`exprToGo:14157, 14175`)
+
+It just calls `kernelToGo` → bare-name `rt.Go_Firestore_queryDocuments` — but runtime-go only exports the typed-T variant `rt.Go_Firestore_queryDocumentsT`.
+
+Likewise, `exprToGoTyped`'s Can.Call arm at line 20591:
+```haskell
+Can.Call func args ->
+    let goFunc = exprToGoTyped ctx types retType func
+        goArgs = map (exprToGoTyped ctx types retType) args
+```
+recursively lowers `func` via `exprToGoTyped` (NOT `exprToGo`), so kernel `func` heads bypass the typed-T arms entirely.
+
+### Session 3 fix direction (PROPOSED — Architecture-Consult must verify)
+
+Three options for the architectural close:
+
+1. **Option A — Mirror** the A4/A5/P8 arms inside `exprToGoTyped`'s Can.Call. Smallest surface, divergence risk over time.
+2. **Option B — Extract** the typed-FFI dispatch into a shared helper `dispatchTypedFfiCall :: LowerCtx -> String -> String -> [Can.Expr] -> Maybe GoExpr` callable from BOTH entry points. Cleanest, single source of truth.
+3. **Option C — Route** `exprToGoTyped`'s VarKernel arm through `exprToGo` (but exprToGo doesn't know retType — type-context loss).
+
+**Recommendation**: Option B. The shared helper takes `LowerCtx` + names + args, returns `Maybe GoExpr` (Just when typed dispatch fired; Nothing falls through to `kernelToGo` bare). Both entry points consume.
+
+### Spec gates needed for Session 3
+
+- `Sky.Build.TypedFfiDispatchInTypedEmitSpec` — fixture: Sky.Live `view` that calls a Go_* FFI kernel; asserts emitted Go uses `rt.Go_<X>_<y>T(...)` not `rt.Go_<X>_<y>(...)`.
+- Regression: `examples/13-skyshop` + `examples/05` + `examples/11` clean-build.
+- Byte-diff: pre-fix vs post-fix Go for examples that DON'T use Go_* FFI from typed-emit context — should be byte-identical (no collateral).
+
+### Architectural verdict
+
+This is **NOT** in the irreducible floor (§8 of `docs/architecture/sky-compiler-architecture.md`). It's a **dispatch-symmetry gap** between `exprToGo` and `exprToGoTyped` — they evolved independently and only `exprToGo` ever received the typed-FFI dispatch arms (A4/A5/P8). The §7 architectural lever is "Per-instance kernel σ + typed dispatch parity across emission entry points". Closure mechanism: shared dispatch helper.
+
+---
+
 ## Session 1 — Phase 0 / 2 / 2.5 (empirical verify)
 
 **Status**: Matrix is theoretical; empirical verify CONTRADICTS theory.
