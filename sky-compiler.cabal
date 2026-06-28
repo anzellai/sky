@@ -461,6 +461,7 @@ test-suite sky-tests
       Sky.Build.CaseToGoSealedIfaceSpec
       Sky.Build.AnonRecordWriterAuditSpec
       Sky.Build.ScopeStateRefAuditSpec
+      Sky.Build.PanicClassGateSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec

@@ -19,6 +19,7 @@ import qualified Sky.Build.SubjectIsSealedIfaceSpec
 import qualified Sky.Build.CaseToGoSealedIfaceSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.ScopeStateRefAuditSpec
+import qualified Sky.Build.PanicClassGateSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -308,6 +309,15 @@ allSpecs fastMode = do
     -- writer is a regression that would silently leak scope or
     -- overwrite pipeline state.
     describeT "Sky.Build.ScopeStateRefAudit" Sky.Build.ScopeStateRefAuditSpec.spec
+    -- v0.17 release Phase 3 — the third leg of the soundness stool.
+    -- Per-panic-class emission-time regression locks proving
+    -- that well-typed Sky code does NOT emit raw panic-prone Go
+    -- ops AND that the synchronous-panic gate (defer
+    -- rt.LogPanicAndExit()) is wired at every emitted main entry.
+    -- Pairs with runtime-go/rt/panic_recover_test.go (Go-side
+    -- classification) and the example sweep / fuzzer (real-world
+    -- runtime gates).
+    describeT "Sky.Build.PanicClassGate" Sky.Build.PanicClassGateSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).
