@@ -1,5 +1,64 @@
 # v0.17 Fully-Typed Go Codegen Dispatch Coverage Matrix
 
+## Session 3d — secondary bug located (`resolveOrErase` over-erasure)
+
+**Status**: Session 3c shipped commit `7e634194` — A5 dispatch now fires. New build error surfaced: `cannot use rt.Coerce[any](q) ... as firestore.Query`. Root cause located after deeper trace.
+
+### Architecture is correct in 2 of 3 places
+
+1. **FFI generator (FfiGen.hs:1546 `emitFfiTAliases`)** — emits `type FfiT_<wrapper>_P<idx> = <paramType>` correctly. Verified: 1762 FfiT_ aliases in `.skycache/go/firestore_bindings.go`.
+2. **DCE pruner (Compile.hs:5859 `pruneOrphanFfiTypes`)** — correctly keeps aliases referenced in main.go. Verified: removes aliases when zero `rt.FfiT_*` references found in main.go.
+3. **❌ Compiler coercer (`resolveOrErase` at Compile.hs:15702 + `eraseScopedCtx`)** — converts the FfiT_ alias name → "any" via HM-substitution of source's TVar type. THIS is the bug.
+
+### Mechanism
+
+For `Firestore.queryDocuments q ctx`:
+1. A5 fires (Session 3c fix). Calls `coerceFfiArgViaAlias ctx "Go_Firestore_queryDocuments" 0 "pkg.Query" q`.
+2. `isCallerVisibleGoType "pkg.Query"` = False → branch 3.
+3. `aliasName = "rt.FfiT_Go_Firestore_queryDocuments_P0"` → `coerceVia ctx (Just q) aliasName goArg`.
+4. coerceVia line 15818: `rt.Coerce[resolveOrErase ctx (Just q) CoerceTHint aliasName](goArg)`.
+5. `resolveOrErase`:
+   - `lookupSolvedRegionScoped (region q) ...` → Just solvedT
+   - `pickSubstArg CoerceTHint solvedT` returns Just t (for TType/TAlias/TRecord/TTuple)
+   - `not (hasTVarT t)` passes
+   - Returns `solvedTypeToGo t`
+6. `solvedTypeToGo` for q's unknown FFI type → "any"
+7. Final emit: `rt.Coerce[any](q)` → Go build fails on the typed call site
+
+### The fix (Session 3d)
+
+Add an "any guard" to `resolveOrErase` (Compile.hs:15702). When `solvedTypeToGo t == "any"` (i.e. the HM substitution loses type information), DON'T substitute — fall back to `eraseScopedCtx ctx fallback` so the alias name survives.
+
+```haskell
+resolveOrErase ctx mSrc kindHint fallback =
+    case mSrc of
+        Just src
+            | Just solvedT <- Solve.lookupSolvedRegionScoped (A.toRegion src) (LC._lc_solved ctx)
+            , Just substArg <- pickSubstArg kindHint solvedT
+            , not (hasTVarT substArg)
+            , let substStr = solvedTypeToGo substArg
+            , substStr /= "any"   -- NEW guard: don't lose alias info
+                -> substStr
+        _   -> eraseScopedCtx ctx fallback
+```
+
+One-line addition. The fallback path with the FfiT_ alias name has the necessary type info (the alias points to the real Go type); the substitution path with "any" loses it.
+
+### Verification gates (Session 3d close)
+
+Same as Session 3c:
+1. Rebuild compiler
+2. 13-skyshop builds clean (expect `rt.Coerce[rt.FfiT_Go_Firestore_queryDocuments_P0](q)` emit)
+3. 05 + 11 build clean
+4. 01 + 26 + 00 still build (no regression)
+5. cabal test zero new regressions
+
+### Architectural verdict
+
+NOT in §8 floor. §7 lever: "resolveOrErase: prefer alias when HM-substitution loses type info". Tiny surface change with high leverage.
+
+---
+
 ## ✅ Session 3b — ROOT CAUSE LOCATED + precise fix plan
 
 **Status**: Empirical A5 probe identified the exact bug. Fix is bounded (2 files, ~6 line edits).
