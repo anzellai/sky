@@ -2,17 +2,17 @@
 
 > **Quick orientation.** Sky is an Elm-family functional language
 > compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
-> branch is **v0.16.6 release candidate**: bundled console reads
-> `Hub_currentIdentity`, runtime tenant-prefix SQL enforcement
-> closes the multi-tenant defense-in-depth loop, two-app hub demo
-> ships at `examples/39-hub-demo`. v0.15 type-directed lowering,
-> Go generics on parametric record aliases, same-module polymorphic
-> re-instantiation, and the wildcard-`any` soundness gate all carry
-> forward as baseline. The verification sweep (39 examples +
-> Sky.Test assertions + 410+ cabal specs) is the source of truth —
-> green-everywhere is a hard release gate.
+> release is **v0.17.0** — typed-emit fix closes the wrong-typed
+> wrap class; documented rt.Coerce residual surface across 8 sound
+> safety classes; `scopeStateRef` IORef contract + audit spec; per-
+> panic-class emission-time regression locks. v0.15 type-directed
+> lowering, Go generics on parametric record aliases, same-module
+> polymorphic re-instantiation, and the wildcard-`any` soundness
+> gate all carry forward as baseline. The verification sweep (39
+> examples + Sky.Test assertions + 410+ cabal specs) is the source
+> of truth — green-everywhere is a hard release gate.
 
-## Current state (v0.16.6)
+## Current state (v0.17.0)
 
 | Surface | Status |
 |---|---|
@@ -27,6 +27,10 @@
 | `Hub_currentIdentity` kernel + Sky.Live session identity persistence (gob round-trip) | ✅ shipped — v0.16.5 |
 | Runtime tenant-prefix SQL enforcement (`HubStoreReaderWithTenant`) | ✅ shipped — v0.16.6 |
 | Sky.Webview v0.1 (desktop, macOS) | ✅ shipped — `runtime-go/rt/webview.go`, `sky-stdlib/Std/Webview.sky` |
+| Typed-emit fix (resolveWrapParams enclosing-T-var gate) | ✅ shipped — v0.17.0 — closes wrong-typed wrap class |
+| rt.Coerce residual surface documented across 8 safety classes | ✅ shipped — v0.17.0 — `docs/v0.17/rt-coerce-residual-surface.md` |
+| `scopeStateRef` IORef contract + machine-verified audit spec | ✅ shipped — v0.17.0 — `Compile.hs:496-595` + `Sky.Build.ScopeStateRefAuditSpec` |
+| Per-panic-class emission-time regression locks | ✅ shipped — v0.17.0 — `Sky.Build.PanicClassGateSpec` |
 | 39-example sweep + 410+ cabal specs | ✅ green |
 
 ## When users ask for an app — the architecture decision matrix
@@ -520,6 +524,169 @@ These are the durable ground truth across sessions, agents, and
 workflows. They are the FIRST source consulted on any compiler
 or stdlib change — not the in-memory model, not prior session
 context, not optimistic "we can do it" framing.
+
+### 0.4 Session methodology — phase pattern + agents + grilling + verify
+
+The patterns below are the durable approach used on every non-trivial
+work item. They are LOAD-BEARING — sessions that skipped them
+historically produced cascade regressions (iter 17 / 37 / 42 /
+Class-A swap attempts). Future sessions follow these by default.
+
+#### Phase pattern (decide → plan → execute → verify)
+
+1. **Decide what's IN scope** before doing any work. Write an explicit
+   scope decision with rationale (what's in, what's deferred, what
+   the success criterion is). Per CLAUDE.md §0 rule 1 — verbatim
+   user goal is captured at `.claude/AUTONOMOUS_GOAL.md` for
+   autonomous mandates.
+2. **Plan** the execution as discrete additive phases. Each phase
+   ships its own commit. Phase boundaries are checkpoints —
+   verifiable, revertable, and shippable in isolation.
+3. **Execute** one phase at a time. Per CLAUDE.md §0.2 — narrow
+   gates per change, full sweep at milestone boundaries only.
+4. **Verify** at every phase boundary. Per CLAUDE.md §0 — Judge
+   agent verification at the close, fresh-context, adversarial.
+
+This is the pattern that shipped v0.17.0 (typed-emit fix +
+documented rt.Coerce surface + scopeStateRef contract + panic-class
+gate locks) in additive phases with zero regression.
+
+#### Agent + grilling pattern (for non-trivial work)
+
+For any work where solo execution carries cascade risk
+(Compile.hs surgery, multi-system changes, broad audits), the
+DEFAULT pattern is:
+
+1. **Architecture-Consult agent** (Phase 0) — fresh-context agent
+   reads `docs/architecture/sky-compiler-architecture.md` +
+   `docs/architecture/sky-stdlib-correctness.md`, cites §6
+   rt.Coerce origin + §7 lever + §8 floor for the proposed
+   tactic. Returns PROCEED / REVISE / ABORT.
+2. **Adversarial grill** (Phase 0b) — the architecture proposal
+   is grilled BEFORE implementation. Grill questions:
+   - G1: Could this produce false negatives (gaps the regression
+     wouldn't catch)?
+   - G2: Could this produce false positives (over-eager
+     rejection)?
+   - G3: Estimated cost? Time budget bounded?
+   - G4: Layering clean? Dependency direction correct?
+   - G5: Does this close the criterion, or just document a partial
+     close?
+3. **Implement** with the grilled plan — phase boundaries
+   commit + verify.
+4. **Judge re-verify** at close — fresh-context Judge agent runs
+   the actual verification commands, returns PASS / NOT ACHIEVED
+   with concrete file:line citations.
+
+Agent prompts include FORBIDDEN PHRASES in PASS verdicts
+("but / except / however / caveat / mostly / essentially / for
+the scope of / modulo"). These signals indicate the verdict is
+drifting from the literal claim.
+
+#### Three-leg soundness stool (for soundness claims)
+
+A soundness claim ("no runtime panics from well-typed Sky") is
+verified by THREE independent legs, not one:
+
+1. **Runtime classification leg** — Go-side tests (e.g.
+   `runtime-go/rt/panic_recover_test.go`) proving the panic
+   surface is correctly classified.
+2. **Emission-time leg** — Sky.Build specs (e.g.
+   `Sky.Build.PanicClassGateSpec`) proving the lowering does NOT
+   emit raw panic-prone Go ops AND the safety net is wired.
+3. **Real-world e2e leg** — example sweep + verify-cli + Playwright
+   + fuzzer (`Sky.Build.WellTypedFuzzerSpec` 10k iter) proving
+   real-world + random programs do not panic.
+
+A single-leg "proof" is NOT a proof; ship all three legs.
+
+#### N-strikes circuit-breaker (per CLAUDE.md §0.2, reinforced)
+
+3 consecutive failures on the same architectural lever (iter
+17 / 37 / 42 / Class-A swap pattern) FORBIDS a 4th attempt without
+re-classification. Re-classification means:
+
+1. Re-read `docs/architecture/sky-compiler-architecture.md`
+   §6/§7/§8.
+2. Identify whether the criterion sits in the irreducible floor
+   (§8). If yes — escalate to user with the floor citation.
+3. Author a postmortem of what the 3 prior attempts missed.
+4. Get explicit user authorization for the 4th attempt with the
+   postmortem cited.
+
+Without re-classification, a 4th attempt counts as drift per CLAUDE.md
+§0 rule 3 and the session is forfeit.
+
+#### Reframed vs literal goal handling
+
+When the user reframes a goal mid-mandate (e.g. v0.17 "100% fully
+typed" → "rock solid + ~100% sound with documented surface"):
+
+- The verbatim goal at `.claude/AUTONOMOUS_GOAL.md` REMAINS the
+  literal anchor. Don't overwrite it without user direction.
+- The reframe is a SHIPPING SCOPE decision, not a goal change.
+  Both readings must be verified at close — Judge returns
+  separate LITERAL and REFRAMED verdicts. The reframe says which
+  is required for the release; the literal verdict tracks
+  long-term progress.
+- Per CLAUDE.md §0 rule 3 — phrases like "for the scope of",
+  "shipped under the reframe", "essentially closed" in a literal
+  verdict are forbidden. Be precise about which goal a closure
+  satisfies.
+
+#### Push discipline (per CLAUDE.md §0.1, reinforced)
+
+Local commits are checkpoints; remote pushes are CI invocations.
+The right cadence is BATCH at milestones, not per-commit. A
+milestone is one of:
+
+- A Judge-verified phase boundary
+- An umbrella task closed
+- A user-requested checkpoint
+- A genuine blocker requiring CI cross-platform verification
+
+Per-commit pushes burn CI minutes, fail-spam branch status, and
+obscure real progress. The pattern that worked: ship 3-5
+related commits LOCALLY, run a milestone Judge verification,
+then push once. v0.17.0 closure shipped this way (5 commits in
+2 pushes vs the 6 individual pushes that preceded the
+correction).
+
+#### Context discipline (the underlying constraint)
+
+Per `docs/session-protocol.md` (folded here): Claude has a
+finite context window. On this codebase, two patterns burn it
+fast: (1) task-list reminders compound after every Bash call,
+(2) reactive grep-read-edit cycles produce dozens of small
+operations.
+
+Mitigations:
+
+- **Read with `offset` + `limit`**, never naked Read on files >
+  1000 lines. For `Compile.hs` (23k lines), know the line number
+  before reading.
+- **Delegate exploration to agents.** Audit-style questions go
+  to `Explore` subagents whose context isolates the burn.
+- **Batch Bash calls** when independent. Chained `&&` beats
+  three separate invocations.
+- **Scripts over individual invocations.** `scripts/cabal-test.sh`
+  encapsulates timeouts + resource guards; raw `cabal test` does
+  not.
+- **Don't use TaskCreate / TaskUpdate / TaskGet** unless the user
+  explicitly asks. The task list (~400 entries deep) is appended
+  after every Bash call as a reminder; cleanup costs more than
+  skipping it. Plan + execute via phase boundary commits instead.
+
+#### Stop conditions and honesty
+
+- **Bounded surface = bounded session.** Touching >5 files or
+  >200 lines without a clear delegation strategy is a flag —
+  delegate to a focused agent or stop and checkpoint.
+- **"I can't finish this in this session" is a valid outcome**
+  with a checkpoint file (e.g. `docs/v0.17/session-N-checkpoint.md`).
+  "I'll keep trying" without a path forward is not.
+- **3 attempts on the same approach → halt and reclassify**, not
+  a 4th retry. Per N-strikes above.
 
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 

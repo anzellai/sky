@@ -1,7 +1,8 @@
 # Sky docs
 
-Live reference for v0.16.x.  Historical / superseded docs live in
-[`archive/`](archive/).
+Live reference for v0.17.x.  Compiler-journey history (per-version
+design notes, audits, plans, postmortems) is preserved under
+[`archive/`](archive/) and the per-version directories below.
 
 ## Start here
 
@@ -59,9 +60,21 @@ Live reference for v0.16.x.  Historical / superseded docs live in
 * [`errors/`](errors/) — error model + diagnostic format.
 * [`ffi/`](ffi/) — Go interop + binding generation.
 
-## Archived
+## Compiler journey (full history, kept by design)
 
-* [`archive/`](archive/) — pre-v0.16 design docs, audits,
-  cycle-log narratives, and superseded roadmaps.  Useful as
-  historical context; the live docs above are the source of
-  truth.
+* [`architecture/`](architecture/) — canonical compiler + stdlib
+  architecture references. First source consulted on any compiler
+  or stdlib change.
+* [`v0.17/`](v0.17/) — active v0.17.x release docs (release plan,
+  rt.Coerce residual surface, Judge verdicts, session checkpoints).
+* [`v0.17-roadmap/`](v0.17-roadmap/) — multi-PR roadmap for the
+  v0.17 typed-emit close.
+* [`v0.17.x/`](v0.17.x/), [`v1-rfc/`](v1-rfc/) — forward-looking
+  release + RFC drafts.
+* [`v0.16.x-console/`](v0.16.x-console/) — v0.16 Sky Console
+  embedded mode, hub mode (`sky console-serve`), HubExporter,
+  telemetry flow.
+* [`archive/`](archive/) — pre-v0.16 design docs, v0.15.x hardening
+  cycle log, v0.17 per-PR design notes (moved here 2026-06-28),
+  superseded roadmaps. Useful as historical context; the live
+  docs above are the source of truth.

@@ -2,6 +2,68 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+## v0.17.0 — typed-emit soundness floor (2026-06-28)
+
+Release plan: [`docs/v0.17/release-plan.md`](docs/v0.17/release-plan.md).
+Judge re-verdict: REFRAMED 100% ACHIEVED + VERIFIED.
+
+### Compiler
+
+- **Typed-emit wrap-target gate.** `resolveWrapParams` +
+  `resolveWrapParamsCtx` now gate HM-override on enclosing-scope T-var
+  presence. Closes the wrong-typed wrap class (8 go-build errors on
+  `examples/00-standard-libs` → 0; 131/131 runtime). Symbol-level
+  diagnosis at `docs/v0.17/session-2026-06-28-diagnosis.md`.
+
+- **rt.Coerce residual surface — documented sound.** All Coerce-family
+  sites on the canonical `examples/26-ui-showcase` benchmark enumerated
+  across 8 safety classes with explicit soundness proofs at
+  `docs/v0.17/rt-coerce-residual-surface.md`. Zero "unknown / unsafe"
+  remainders. Closes the rock-solid soundness claim under the reframed
+  v0.17.0 goal.
+
+- **`scopeStateRef` IORef contract + audit spec.** Per CLAUDE.md §0.3
+  criterion #3 locked wording. Compile.hs:496-595 documents the
+  bracket-scoped (Class A) + monotonic-accumulating (Class B) write
+  semantics; `Sky.Build.ScopeStateRefAuditSpec` machine-verifies the
+  writer counts (25 + 17) + the layering invariant. Pattern mirrors
+  `Sky.Build.AnonRecordWriterAuditSpec`.
+
+- **Per-panic-class emission-time regression locks.**
+  `Sky.Build.PanicClassGateSpec` adds the emission leg of the
+  three-leg soundness stool (runtime classification at
+  `runtime-go/rt/panic_recover_test.go` + example sweep / verify-cli /
+  WellTypedFuzzer real-world leg + this emission-time leg). 11 tests
+  covering C1-C7 panic classes.
+
+### Limitations closed in v0.17
+
+See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for the
+full current-state catalog. Items closed since v0.16.x:
+
+- Negative literal arguments (`f -1` parses as `f (-1)`)
+- Multi-line function signatures (both `: T` and `-> T` continuation)
+- Zero-arg call shape arity gate (`[E2007]` StrictHmArityGate)
+- `Css.*` keyword constants are bare values (`Css.zero`)
+- `Dict.toList` typed-key inference works inline AND let-bound
+- `sky check` validates Go interface satisfaction empirically
+- All list ops on constant Go stack (CPS / accumulator rewrites)
+- 3-tuple literals at top-level
+- Sky.Live `init` receives full `Request`
+- URL-driven route matches fire `Navigate` Msg
+
+### Docs
+
+- **Cleanup pass.** 22 v0.17 design notes + 2 v0.16.13 handoffs moved
+  to `docs/archive/`. 39 MB of build artifacts under
+  `docs/v0.16.x-console/parametric-cfg-repro/sky-out/` deleted.
+- **`docs/session-protocol.md` folded into `CLAUDE.md` §0.4** as a
+  durable Session Methodology section (phase pattern, agent +
+  grilling, three-leg soundness stool, N-strikes circuit-breaker,
+  reframed-vs-literal goal handling, push discipline, context
+  discipline).
+- **`docs/KNOWN_LIMITATIONS.md` refreshed** to v0.17.0 state.
+
 ## v0.15.3 — typed let-binding RHS + sibling-helper call sites (2026-05-25)
 
 ### Codegen

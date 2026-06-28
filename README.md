@@ -2,9 +2,12 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/) · [SkyDeploy](https://skydeploy.app)
 
-> **Status: v0.16.x release candidate.** Public APIs are stable for the
+> **Status: v0.17.x release candidate.** Public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
-> still change between minor versions.
+> still change between minor versions. v0.17.0 closes the typed-emit
+> soundness floor under the reframed "rock solid + ~100% sound with
+> documented surface for remaining rt.Coerce" goal — see
+> [docs/v0.17/release-plan.md](docs/v0.17/release-plan.md).
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,
