@@ -262,6 +262,13 @@ viewDetailStock model stock =
                     [text (Tr.t lang "product.unlimited")]]
 
 
+-- Concrete-Int helper isolates the polymorphic context so the typed
+-- lowerer doesn't over-erase model.quantity to T1 in the onInput lambda.
+parseQty : Int -> String -> Int
+parseQty fallback s =
+    Maybe.withDefault fallback (String.toInt s)
+
+
 viewAddToCart : Model -> a -> Int -> (Html Msg)
 viewAddToCart model product stock =
     let
@@ -297,9 +304,7 @@ viewAddToCart model product stock =
                                       , onInput
                                             (\s ->
                                                 UpdateQuantity
-                                                    (Maybe.withDefault
-                                                        model.quantity
-                                                        (String.toInt s)))
+                                                    (parseQty model.quantity s))
                                       , Attr.min "1"
                                       , Attr.max
                                             (if stock > 0 then

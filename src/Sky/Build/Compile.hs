@@ -1918,32 +1918,18 @@ subjectIsSealedIface
                                       --   the predicate's qualifiedGoKey
                                       --   is the source of truth.
              )
-subjectIsSealedIface ctx solved (A.At region expr) =
-    let mTy = Solve.lookupSolvedRegionScoped region solved
-        res = do
-            ty <- mTy
-            case peelTAlias Set.empty ty of
-                T.TType home name _args -> do
-                    let goKey = qualifiedGoKey ctx home name
-                    case Map.lookup goKey (LC._lc_unionDetails ctx) of
-                        Just (declHome, opts, vars, ctors) ->
-                            if shouldEmitSealedIface declHome name vars opts
-                                then Just (declHome, name, vars, opts, ctors, goKey)
-                                else Nothing
-                        Nothing -> Nothing
-                _ -> Nothing
-    in let dbg = "subjectIsSealedIface: region=" ++ show region 
-                 ++ " expr=" ++ show expr 
-                 ++ " mTy=" ++ show mTy 
-                 ++ " curMod=" ++ show (Solve._stCurrentModule solved)
-                 ++ " inFlat=" ++ show (Map.member region (Solve._stRegions solved))
-                 ++ " inScoped=" ++ show (case Solve._stCurrentModule solved of
-                                            Just mn -> case Map.lookup mn (Solve._stPerModuleRegions solved) of
-                                                Just mr -> Map.member region mr
-                                                Nothing -> False
-                                            Nothing -> False)
-                 ++ " res=" ++ show (fmap (\(dh, n, _, _, _, k) -> (ModuleName.toString dh, n, k)) res)
-       in Debug.Trace.trace dbg res
+subjectIsSealedIface ctx solved (A.At region _expr) = do
+    ty <- Solve.lookupSolvedRegionScoped region solved
+    case peelTAlias Set.empty ty of
+        T.TType home name _args -> do
+            let goKey = qualifiedGoKey ctx home name
+            case Map.lookup goKey (LC._lc_unionDetails ctx) of
+                Just (declHome, opts, vars, ctors) ->
+                    if shouldEmitSealedIface declHome name vars opts
+                        then Just (declHome, name, vars, opts, ctors, goKey)
+                        else Nothing
+                Nothing -> Nothing
+        _ -> Nothing
   where
     -- v0.17 P3.4c.1 — transparent peel of @T.TAlias@ to its
     -- underlying body.  @AliasType@ has two ctors (Hoisted /
@@ -18899,7 +18885,6 @@ caseToGo ctx mExpectedGo subject branches =
                     Nothing -> case LC._lc_currentDepModule ctx of
                                 Just dm -> Just dm
                                 Nothing -> Just (ModuleName.toString (LC._lc_module ctx))
-        _ = Debug.Trace.trace ("caseToGo: region=" ++ show region ++ " curMod=" ++ show curMod ++ " _lc_module=" ++ show (LC._lc_module ctx) ++ " _lc_currentDepModule=" ++ show (LC._lc_currentDepModule ctx)) ()
         scopedSolved = Solve.withCurrentModule curMod solved
         maybeDispatch =
             case subjectIsSealedIface ctx scopedSolved subject of
