@@ -15816,6 +15816,15 @@ coerceVia ctx mSrc goType goArg
     , srcGoTy == goType
     , not (isTupleGoTypeStr srcGoTy)
     = goArg
+coerceVia ctx mSrc goType goArg
+    -- v0.17 Session 3f — FfiT_ aliases are exact targets: emit Coerce[alias]
+    -- directly, bypass resolveOrErase + eraseScopedCtx (both may rewrite
+    -- alias-shaped strings via T-var erasure heuristics, producing
+    -- wrong-type Coerce calls). Tested with examples/13-skyshop:
+    -- without this short-circuit, arg1 emits `rt.Coerce[rt.SkyValue]`
+    -- instead of `rt.Coerce[rt.FfiT_Go_Firestore_queryDocuments_P1]`.
+    | take 8 goType == "rt.FfiT_"
+    = GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goType ++ "]")) [goArg]
 coerceVia ctx mSrc goType goArg = case goType of
     "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
