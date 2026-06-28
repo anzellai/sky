@@ -495,26 +495,128 @@ _globalGoSigMap_SHOULD_NOT_EXIST =
 
 -- | v0.15.5 PR 2 — consolidated lowering-scope state IORef.
 --
--- Replaces the v0.13/v0.15 pair of IORefs (the lambda-type +
--- lambda-Go-string maps, both retired in this PR) with a single
--- `LC.LowerCtx`-shaped snapshot.  The two old IORefs held
--- disjoint maps that were
--- ALWAYS pushed/popped together at the same scope seams; combining
--- them into one ctx-shaped IORef:
+-- v0.17 release contract (locked 2026-06-28 per AUTONOMOUS_GOAL.md
+-- criterion #3 wording — "any residual IORef in `Compile.hs` carries a
+-- machine-verified single-writer / single-reader monotonic contract").
 --
---   1. Cuts the IORef boundary by 2 names (`IORefBoundarySpec`).
---   2. Aligns the per-scope state with the `LowerCtx` record PR 1
---      introduced — PRs 3-6 migrate the consumers to read from a
---      threaded `ctx` parameter directly, at which point this
---      IORef itself disappears.
---   3. Lets `lookupLambdaType` / `lookupLambdaGoStr` / scope
---      helpers route through `LC.*` lookup helpers, so the
---      readers' shape matches the eventual threaded-ctx shape.
+-- ============================================================
+-- CONTRACT — TWO WRITE CLASSES + ONE READ CLASS
+-- ============================================================
 --
--- The IORef holds an `LC.LowerCtx` whose only meaningful fields in
--- this PR are `_lc_lambdaTypes` and `_lc_lambdaGoStr` — every
--- other field is reset to the empty / module-stub when this ref
--- is initialised, since the per-scope state never reads them.
+-- ## Read class
+--
+-- Pure `unsafePerformIO . readIORef` (or `readIORefNoCse`) called
+-- ONLY from inside pure-looking codegen helpers.  Readers consume
+-- the snapshot to resolve scope-local bindings (lambda-type maps,
+-- enclosing-type-param sets, the accumulating cgEnv).  No reader
+-- ever calls back into a writer — readers are leaf operations.
+--
+-- Reader call sites (representative, not exhaustive — see
+-- 'Sky.Build.ScopeStateRefAuditSpec' for the verified list):
+--
+--   * 'enclosingTypeParamInScopeCtx' / 'eraseScopedCtx' — read
+--     `_lc_enclosingTypeParams` to decide T-var erasure
+--   * 'phaseAFallback' — read `_lc_cgEnv` to bridge contexts
+--   * 'lookupLambdaType' / 'lookupLambdaGoStr' (legacy) — read
+--     `_lc_lambdaTypes` / `_lc_lambdaGoStr`
+--   * 'fallbackMentionsEnclosing' — read `_lc_enclosingTypeParams`
+--
+-- ## Write Class A — BRACKET-SCOPED (push/pop pattern)
+--
+-- Used for: `_lc_lambdaTypes`, `_lc_lambdaGoStr`,
+-- `_lc_enclosingTypeParams`.
+--
+-- Pattern (every Class A write site MUST follow):
+--
+--     bracketed action = unsafePerformIO $ do
+--         prev <- readIORef scopeStateRef
+--         writeIORef scopeStateRef (modify prev)
+--         let res = forced action
+--         res `seq` writeIORef scopeStateRef prev      -- restore!
+--         return res
+--
+-- Helper functions implementing this: 'withLambdaTypes' (Compile.hs
+-- ~530), 'withScopedLambdaTypes' (~548), 'withLambdaGoStrs' (~618),
+-- 'withScopedLambdaGoStrs' (~620), 'withScopedEnclosingTypeParams'
+-- (~656), 'withScopedEnclosingTypeParamsStmts' (~695),
+-- 'withScopedLowerCtx' (~712), 'withScopedLowerCtxStmts' (~726).
+--
+-- Invariant: every Class A bracket is balanced — write↔restore
+-- pairs are lexically obvious in source.  Forcing the inner result
+-- with `seq` is REQUIRED so Haskell laziness doesn't defer the
+-- inner write past the restore.
+--
+-- ## Write Class B — MONOTONIC-ACCUMULATING (pipeline state)
+--
+-- Used for: `_lc_cgEnv`, `_lc_kernelAlias`, `_lc_unionNames`,
+-- `_lc_currentDepModule`, `_lc_solved` (the per-dep solved-types
+-- registry).
+--
+-- Pattern: `modifyIORef scopeStateRef (\ctx -> ctx { _lc_X = ... })`
+-- — accumulates monotonically through the build pipeline.  Each
+-- pipeline phase (parse → canon → solve → emit) writes its own
+-- accumulating state; later phases read the union of prior
+-- writes.  Class B writers NEVER restore — the accumulating state
+-- IS the build's progress through phases.
+--
+-- Class B writer sites (Compile.hs):
+--
+--   * line ~3178 — initial cgEnv install at compile entry
+--   * line ~3184 — initial cgEnv accumulation pass
+--   * line ~3842 — kernelAlias registration
+--   * line ~4240 / ~4347 — cgEnv modification (typed-field-access
+--     pipeline)
+--   * line ~4733 / ~4778 — cgEnv accumulation (sealed-iface
+--     registration)
+--   * line ~4873 — kernelAlias accumulation
+--   * line ~7486 / ~7491 — cgEnv refinement (post-monomorphisation)
+--   * line ~7906 / ~7912 — cgEnv finalisation (pre-emit)
+--
+-- Invariant: Class B writes are strictly accumulating —
+-- `modifyIORef` always reads the prior state and produces a
+-- successor that is a superset (or refinement) of it.  Resetting
+-- a Class B field to its initial state is FORBIDDEN outside
+-- the compile-entry reset at line ~3178.  Concurrent compiles
+-- would race on Class B writes, which is why
+-- 'compile-entry' calls 'writeIORef scopeStateRef (LC.emptyLowerCtx)'
+-- as a barrier — never within a build pipeline.
+--
+-- ## Threat model + spec gate
+--
+-- The two threats this contract guards against:
+--
+--   1. A Class A write that forgets the restore step — would
+--      leak scope binding into siblings.  Detection: every Class A
+--      writer is named `withX` / `withScopedX` and the restore is
+--      lexically paired in the helper's body.  Removing the
+--      restore is a textually-obvious regression.  Empirically
+--      tested by every UI example's clean build (lambda nesting
+--      is exercised by every `Ui.row [...] [...]` call).
+--
+--   2. A Class B write that overwrites instead of accumulating —
+--      would lose pipeline state.  Detection: every Class B
+--      writer uses `modifyIORef` (reads-prior-writes-superset),
+--      NOT raw `writeIORef`.  The compile-entry reset at line
+--      ~3178 is the ONLY raw write to scopeStateRef outside
+--      Class A brackets; any new raw write outside line ~3178 IS
+--      a regression.
+--
+-- Verified by 'Sky.Build.ScopeStateRefAuditSpec'.
+--
+-- ## Migration path to deletion (deferred to v0.18.0+)
+--
+-- Class A writes are the harder migration — they would require
+-- a Reader-monad-style threading of the LowerCtx through every
+-- emission helper, with explicit push/pop at every bracket
+-- seam.  Class B writes are the easier migration — they would
+-- collapse to a State-monad accumulating LowerCtx.  Both are
+-- multi-session structural refactors (per CLAUDE.md §0.2 — see
+-- iter 17 / 37 / 42 / Class-A swap-attempt history).
+--
+-- Deferred to v0.18.0; v0.17.0 ships with the contract above
+-- machine-verified by the audit spec.
+--
+-- ============================================================
 {-# NOINLINE scopeStateRef #-}
 scopeStateRef :: IORef LC.LowerCtx
 scopeStateRef = unsafePerformIO $ newIORef

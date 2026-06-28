@@ -18,6 +18,7 @@ import qualified Sky.Build.SealedIfaceMetadataSpec
 import qualified Sky.Build.SubjectIsSealedIfaceSpec
 import qualified Sky.Build.CaseToGoSealedIfaceSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
+import qualified Sky.Build.ScopeStateRefAuditSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -300,6 +301,13 @@ allSpecs fastMode = do
     -- generateAnonRecordDecls from silent shape loss
     -- (the failure mode is 'go build' -> "undefined: Anon_R_…").
     describeT "Sky.Build.AnonRecordWriterAudit" Sky.Build.AnonRecordWriterAuditSpec.spec
+    -- v0.17 criterion #3 contract gate — audits scopeStateRef
+    -- writer counts (Class A bracket-scoped + Class B monotonic
+    -- accumulating) against the documented contract at
+    -- 'scopeStateRef' in "Sky.Build.Compile".  An unaccounted
+    -- writer is a regression that would silently leak scope or
+    -- overwrite pipeline state.
+    describeT "Sky.Build.ScopeStateRefAudit" Sky.Build.ScopeStateRefAuditSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).

@@ -460,6 +460,7 @@ test-suite sky-tests
       Sky.Build.SubjectIsSealedIfaceSpec
       Sky.Build.CaseToGoSealedIfaceSpec
       Sky.Build.AnonRecordWriterAuditSpec
+      Sky.Build.ScopeStateRefAuditSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
