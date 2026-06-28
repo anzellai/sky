@@ -15662,8 +15662,16 @@ coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
     | isCallerVisibleGoType goType =
         coerceVia ctx (Just arg) goType (exprToGo (phaseAFallback ctx) ctx arg)
     | otherwise =
+        -- v0.17 Session 3e — When targeting an FfiT_ alias (synthesized
+        -- by FfiGen to match the typed wrapper's param type exactly),
+        -- the alias name IS the right Go type. Pass `Nothing` as mSrc
+        -- so resolveOrErase skips HM substitution entirely and uses
+        -- the alias name verbatim. Otherwise HM substitution wins
+        -- with the source's Sky-side type (e.g. `rt.SkyValue` for
+        -- opaque FFI handles, `any` for TVars) — neither of which
+        -- satisfies the typed wrapper's concrete Go param type.
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in coerceVia ctx (Just arg) aliasName (exprToGo (phaseAFallback ctx) ctx arg)
+        in coerceVia ctx Nothing aliasName (exprToGo (phaseAFallback ctx) ctx arg)
 
 
 -- | v0.17 step-4 (attack-#2 amendment A5) — TYPE-AWARE substitution
@@ -15713,7 +15721,16 @@ resolveOrErase ctx mSrc kindHint fallback =
                                   (LC._lc_solved ctx)
             , Just substArg <- pickSubstArg kindHint solvedT
             , not (hasTVarT substArg)
-                -> solvedTypeToGo substArg
+            , let substStr = solvedTypeToGo substArg
+            -- v0.17 Session 3e — don't lose type info: when the HM
+            -- substitution erases to "any", prefer the fallback path
+            -- (typically a typed alias like `rt.FfiT_<wrapper>_P<N>`
+            -- whose alias definition carries the real Go type).
+            -- Closes Problem B: typed FFI calls were emitting
+            -- `rt.Coerce[any](q)` instead of
+            -- `rt.Coerce[rt.FfiT_Go_Firestore_queryDocuments_P0](q)`.
+            , substStr /= "any"
+                -> substStr
         _   -> eraseScopedCtx ctx fallback
   where
     -- Pick the single type arg the kind hint wants us to substitute
