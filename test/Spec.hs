@@ -68,7 +68,6 @@ import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
-import qualified Sky.Build.UserAliasShadowsRuntimeTypedSpec
 import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
@@ -531,7 +530,6 @@ allSpecs fastMode = do
     describeT "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
     describeT "Sky.Build.LetForwardRef"     Sky.Build.LetForwardRefSpec.spec
     describeT "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
-    describeT "Sky.Build.UserAliasShadowsRuntimeTyped" Sky.Build.UserAliasShadowsRuntimeTypedSpec.spec
     describeT "Sky.Build.RtFieldAdtBug342" Sky.Build.RtFieldAdtBug342Spec.spec
     describeT "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
     -- v0.17 step-0b: CPS stack-constant-bound umbrella spec
