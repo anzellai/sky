@@ -753,6 +753,33 @@ eraseScopedCtx :: LC.LowerCtx -> String -> String
 eraseScopedCtx ctx = eraseTypeParamsExceptScope (enclosingTypeParamInScopeCtx ctx)
 
 
+-- | v0.17 close — predicate for resolveWrapParams' HM-override gate.
+-- Returns True when the slot-derived @fallback@ string mentions at
+-- least one type-var token that names an ENCLOSING-scope type
+-- parameter (caller's function's type-param set).  Used to discriminate
+-- the three cases that share the wrap-emission site:
+--
+--   * fallback has enclosing T-vars → HM-override is needed
+--     (substitutes enclosing T-vars with concrete HM-resolved types,
+--     closes the original T1-leak class @resolveWrapParams@ was
+--     introduced for).
+--   * fallback has callee-Go-generic T-vars (NOT in enclosing scope)
+--     → HM-override is HARMFUL — Go's call-site inference will pin
+--     the T-vars from the args; forcing HM-typed wrap would force a
+--     concrete type that conflicts with @func(any) any@ callback
+--     inference.  Fall through to @eraseScopedCtx@ which widens the
+--     T-vars to @any@ matching the callback.
+--   * fallback has no T-vars (slot is concrete, e.g. mono-erased
+--     stdlib functions like @Sky_Test_ok@ whose @a@ erases to
+--     @rt.SkyValue@) → HM-override is HARMFUL — would force a
+--     concrete-typed wrap that mismatches the @rt.SkyValue@ slot.
+--     Fall through to @eraseScopedCtx@ which preserves the
+--     slot-derived fallback verbatim.
+fallbackMentionsEnclosing :: LC.LowerCtx -> String -> Bool
+fallbackMentionsEnclosing ctx fb =
+    any (enclosingTypeParamInScopeCtx ctx) (tvarsInGoTypeStr fb)
+
+
 -- | v0.17 Wave 3 — substitute polymorphic kernel template T-vars in a
 -- wrap's params string with the HM-solved concrete types from the
 -- source expression's region.
@@ -823,7 +850,30 @@ resolveWrapParams ctx mSrc kind fallback =
             in case Solve.lookupSolvedRegionScoped region solved of
                 Just (T.TType _ k args)
                     | k == kind
-                    , all (not . hasTVar) args ->
+                    , all (not . hasTVar) args
+                    -- v0.17 close (session 2026-06-28 diagnosis):
+                    -- only override the slot-derived @fallback@ with
+                    -- HM-resolved types when @fallback@ actually
+                    -- mentions an enclosing-scope T-var that needs
+                    -- HM-substitution.  Without this guard the
+                    -- override ALSO fires for concrete slots
+                    -- (Sky_Test_ok's @rt.SkyValue@ inner) and for
+                    -- CALLEE Go-generic T-vars (Maybe.map's @T1@ that
+                    -- Go infers at the call site).  Both cases force
+                    -- a concrete-typed wrap that mismatches the slot,
+                    -- producing the 8 @go build@ errors documented in
+                    -- docs/v0.17/session-2026-06-28-diagnosis.md.
+                    --
+                    -- The original motivation for the override
+                    -- (resolveWrapParams' v0.17 step-5 commit message:
+                    -- "TaskCoerceT[T1, any] preserves enclosing T-vars
+                    -- from the function's type-parameter set even when
+                    -- the underlying call's HM-solved Task params are
+                    -- concrete") IS preserved — that case has T1 IN
+                    -- enclosing scope; the guard returns True; the
+                    -- override fires; @[Error, Decimal]@ replaces
+                    -- @[T1, any]@.  Unchanged.
+                    , fallbackMentionsEnclosing ctx fallback ->
                         List.intercalate ", " (map renderTy args)
                 -- v0.17 step-3 (attack-#1 amendment A2): when mSrc is
                 -- Just but the region lookup returned Nothing OR a
@@ -894,7 +944,19 @@ resolveWrapParamsCtx phaseACtx ctx mSrc kind fallback =
             in case Solve.lookupSolvedRegionScoped region solved of
                 Just (T.TType _ k args)
                     | k == kind
-                    , all (not . hasTVar) args ->
+                    , all (not . hasTVar) args
+                    -- v0.17 close (session 2026-06-28 diagnosis): sibling
+                    -- of resolveWrapParams' guard.  Only override slot-
+                    -- derived @fallback@ with HM-resolved types when
+                    -- @fallback@ mentions an enclosing-scope T-var that
+                    -- needs HM-substitution.  Without the guard the
+                    -- override fires for concrete slots (mono-erased
+                    -- stdlib return types like @rt.SkyValue@) and for
+                    -- callee Go-generic T-vars (Go pins T1 from args at
+                    -- the call site), producing typed wraps that
+                    -- mismatch the slot.  See
+                    -- docs/v0.17/session-2026-06-28-diagnosis.md.
+                    , fallbackMentionsEnclosing ctx fallback ->
                         List.intercalate ", " (map renderTy args)
                 _ -> wrapDebug region $ eraseScopedCtx ctx fallback
         Nothing -> eraseScopedCtx ctx fallback
