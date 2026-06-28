@@ -66,6 +66,7 @@ module Sky.Build.CompileCtx
     , lookupFieldIdxFromCtx
     , lookupUnionNamesFromCtx
     , lookupFfiTypedWrappersFromCtx
+    , lookupFfiTypedWrapperParamsFromCtx
     , withCurrentModuleInCtx
     ) where
 
@@ -350,6 +351,14 @@ data EmitCompileCtx = EmitCompileCtx
         -- readers in 'exprToGo' (Can.VarKernel arms) +
         -- 'caseToGo' (isTypedFfiCall) consult this via @asks
         -- _cc_ffiTypedWrappers@.
+    , _cc_ffiTypedWrapperParams :: !(Map.Map String [String])
+        -- ^ Typed-FFI wrapper name → param Go types.  Companion to
+        -- '_cc_ffiTypedWrappers'.  Mirrors
+        -- 'LowerCtx._lc_ffiTypedWrapperParams'.  v0.17 Session 3c
+        -- restored — the IORef→ctx migration moved names but missed
+        -- this companion field, causing the A5 typed-FFI dispatch gate
+        -- to always fail on Map lookup → bare-name emission →
+        -- "undefined: rt.Go_<Pkg>_<method>" build failures.
     }
 
 
@@ -368,6 +377,7 @@ emptyEmitCompileCtx home = EmitCompileCtx
     , _cc_fieldIdx          = Map.empty
     , _cc_unionNames        = Set.empty
     , _cc_ffiTypedWrappers  = Set.empty
+    , _cc_ffiTypedWrapperParams = Map.empty
     }
 
 
@@ -391,9 +401,11 @@ buildEmitCompileCtx
     -> Rec.RecordRegistry
     -> Set.Set String
     -> Set.Set String
+    -> Map.Map String [String]
     -> EmitCompileCtx
 buildEmitCompileCtx home cgEnv solved kernelAlias unionDetails
-                    anonRecs aliases fieldIdx unionNames ffiWrappers =
+                    anonRecs aliases fieldIdx unionNames ffiWrappers
+                    ffiWrapperParams =
     EmitCompileCtx
         { _cc_cgEnv             = cgEnv
         , _cc_solvedTypes       = solved
@@ -405,6 +417,7 @@ buildEmitCompileCtx home cgEnv solved kernelAlias unionDetails
         , _cc_fieldIdx          = fieldIdx
         , _cc_unionNames        = unionNames
         , _cc_ffiTypedWrappers  = ffiWrappers
+        , _cc_ffiTypedWrapperParams = ffiWrapperParams
         }
 
 
@@ -487,6 +500,14 @@ lookupUnionNamesFromCtx = _cc_unionNames
 -- | Read the typed-FFI wrapper names set.
 lookupFfiTypedWrappersFromCtx :: EmitCompileCtx -> Set.Set String
 lookupFfiTypedWrappersFromCtx = _cc_ffiTypedWrappers
+
+
+-- | Read the typed-FFI wrapper param Go types map.  v0.17 Session 3c
+-- — companion to 'lookupFfiTypedWrappersFromCtx'.  Closes the A5 gate
+-- failure where the names Set was populated but the params Map was
+-- left empty by the IORef→ctx migration.
+lookupFfiTypedWrapperParamsFromCtx :: EmitCompileCtx -> Map.Map String [String]
+lookupFfiTypedWrapperParamsFromCtx = _cc_ffiTypedWrapperParams
 
 
 -- | Install a scoped current module hint for the SolvedTypes in the context.

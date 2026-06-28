@@ -47,6 +47,7 @@ import Sky.Build.CompileCtx
     , lookupCgEnvFromCtx, lookupUnionNamesFromCtx, lookupSolvedTypesFromCtx
     , lookupKernelAliasFromCtx, lookupUnionDetailsFromCtx, lookupModuleFromCtx
     , lookupAliasesFromCtx, lookupFieldIdxFromCtx, lookupFfiTypedWrappersFromCtx
+    , lookupFfiTypedWrapperParamsFromCtx
     , withCurrentModuleInCtx
     )
 
@@ -5294,6 +5295,7 @@ emitPhase config entryPath outDir srcHash loadedFfi
             (LC._lc_fieldIdx scopeSnap)
             (LC._lc_unionNames scopeSnap)
             (LC._lc_ffiTypedWrapperNames scopeSnap)
+            (LC._lc_ffiTypedWrapperParams scopeSnap)
     -- v0.17 Phase A iter 6a — emitPhasePost: depDecls + goCodeRaw +
     -- validator gate + write site.  phaseACtx now carries POST-C10
     -- state so reader sites under this ctx see the finalised cgEnv.
@@ -13360,6 +13362,7 @@ phaseAFallback lc = unsafePerformIO $ do
         (LC._lc_fieldIdx lc)
         (LC._lc_unionNames lc)
         (LC._lc_ffiTypedWrapperNames lc)
+        (LC._lc_ffiTypedWrapperParams lc)
 
 
 -- | Purely construct a 'LC.LowerCtx' from an 'EmitCompileCtx'.
@@ -13374,6 +13377,7 @@ buildLowerCtxFromEmitCtx ecc = (LC.emptyLowerCtx (lookupModuleFromCtx ecc))
     , LC._lc_unionDetails       = lookupUnionDetailsFromCtx ecc
     , LC._lc_kernelAlias        = lookupKernelAliasFromCtx ecc
     , LC._lc_ffiTypedWrapperNames = lookupFfiTypedWrappersFromCtx ecc
+    , LC._lc_ffiTypedWrapperParams = lookupFfiTypedWrapperParamsFromCtx ecc
     , LC._lc_cgEnv              = Just (lookupCgEnvFromCtx ecc)
     }
 
