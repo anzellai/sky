@@ -1424,8 +1424,29 @@ mapNamedType ctx home name args
                 modStr = ModuleName.toString home
                 qualHit = lookup (modStr, name) (mcQualRuntimeTyped ctx)
                 runtimeHit = lookup name (mcRuntimeTypedMap ctx)
+                -- v0.17 Session 7 — registry-key shape widening.
+                -- `collectRecordAliases` (Record.hs:391) stores BARE
+                -- names; `depRecAliases` (Compile.hs:4503) wraps with
+                -- module prefix but NO `_R` suffix.  The legacy
+                -- predicate's two `_R`-suffixed probes both miss for
+                -- every user/stdlib record alias → execution falls
+                -- through to `runtimeHit` → bare-name kernel wins
+                -- (`rt.SkyStore` for user State.Store, `rt.SkyRequest`
+                -- for Sky.Http.Server.Request).  This is the Problem A
+                -- root cause established empirically via
+                -- docs/v0.17/session-4-commit-3-bisection-result.md.
+                --
+                -- The two NEW disjuncts match the registry's actual
+                -- key shape (BARE).  Gated on prefix-nullity so the
+                -- empty-home case still routes through aliasRecovery's
+                -- last-segment walk above (avoiding cross-module
+                -- silent wins when home attribution is lost).
                 isRecordAlias = Set.member aliasName (mcRecordAliases ctx)
                               || Set.member (name ++ "_R") (mcRecordAliases ctx)
+                              || (not (null prefix)
+                                   && Set.member base (mcRecordAliases ctx))
+                              || (null prefix
+                                   && Set.member name (mcRecordAliases ctx))
                 isKnownUnion = Set.member base (mcUnionNames ctx)
                              || Set.member name (mcUnionNames ctx)
                 -- v0.17 PR-22 bulk root-cause fix — cross-module union
@@ -1473,9 +1494,25 @@ mapNamedType ctx home name args
                         [] -> GoNamed a []
                         _  -> GoNamed a (map (mapSkyTypeToGo ctx) args)
                     (_, True) ->
+                        -- v0.17 Session 7 — emit `<base>_R` when the
+                        -- registry-bare match fires.  The 4-way
+                        -- predicate above admits the BARE forms;
+                        -- raliasName must construct the `_R`-suffixed
+                        -- emit form for them too.
                         let raliasName =
                                 if Set.member aliasName (mcRecordAliases ctx)
                                    then aliasName
+                                   else if Set.member (name ++ "_R")
+                                                       (mcRecordAliases ctx)
+                                       then name ++ "_R"
+                                   else if not (null prefix)
+                                          && Set.member base
+                                                  (mcRecordAliases ctx)
+                                       then base ++ "_R"
+                                   else if null prefix
+                                          && Set.member name
+                                                  (mcRecordAliases ctx)
+                                       then name ++ "_R"
                                    else name ++ "_R"
                         in case args of
                             [] -> GoNamed raliasName []
