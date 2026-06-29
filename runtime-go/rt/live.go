@@ -4512,7 +4512,7 @@ func (app *liveApp) safeViewCall(model any) (VNode, bool) {
 				logEmit(logLevelError, "error", "sky.live.view.panic",
 					map[string]any{
 						"reason":     reason,
-						"stack_head": firstLines(stack, 8),
+						"stack_head": firstLines(stack, 40),
 					},
 				)
 				vn = renderViewPanicFallback(reason)
