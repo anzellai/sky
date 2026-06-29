@@ -22622,24 +22622,64 @@ solvedTypeToGoPreserveTVarsBounded fuel _seen ty =
 -- self-referential parametric alias bodies (e.g. Std.Ui Element /
 -- Std.Html Html), reproducing the `<<loop>>` blackhole probe-C-stdui-
 -- msg-typed used to mask via the primitive-only whitelist.
+-- | v0.17 Session 4 Commit 2 — env-aware substituting renderer.
+--
+-- The TVar-substituting renderer falls through to
+-- @solvedTypeToGoViaPipelineFlatCtx cgEnv ty@ for nominal type shapes
+-- it does not handle structurally.  When called at a dep-module emit
+-- site whose record alias is NOT in the entry-module CodegenEnv, the
+-- env-FREE alias 'solvedTypeToGo' (= 'solvedTypeToGoViaPipelineFlatCtx
+-- emptyCgEnv') emits the kernel name (e.g. @rt.SkyStore@) instead of
+-- the dep-module struct name (e.g. @State_Store_R@).  Threading the
+-- caller-supplied @cgEnv@ closes this leak class (Problem A in the
+-- v0.17 stabilization postmortem; bundled-console-regenerate CI gate).
+--
+-- Backward compat: the legacy non-@Ctx@ entry points
+-- ('substituteTVarsToGo' / 'substituteTVarsToGoBounded') delegate to
+-- the @Ctx@ variants with 'emptyCgEnv'.  Since
+-- @solvedTypeToGo = solvedTypeToGoViaPipelineFlat = ... emptyCgEnv@,
+-- the legacy entry points are byte-identical to the pre-refactor
+-- behaviour for every existing caller.
+--
+-- Migration path (subsequent commits): flip declared call sites to
+-- the @Ctx@ variant + thread the correct cgEnv from the caller's
+-- scope ('phaseACtx' for entry-module sites, the dep-emission @env@
+-- param for dep-module sites).  See
+-- @docs/v0.17/session-4-architecture-consult.md@ for the per-caller
+-- assignment table.
 substituteTVarsToGo :: Map.Map String String -> T.Type -> String
-substituteTVarsToGo tvarMap = substituteTVarsToGoBounded tvarMap 64 Set.empty
+substituteTVarsToGo = substituteTVarsToGoCtx emptyCgEnv
+
+
+substituteTVarsToGoCtx :: Rec.CodegenEnv -> Map.Map String String -> T.Type -> String
+substituteTVarsToGoCtx cgEnv tvarMap =
+    substituteTVarsToGoBoundedCtx cgEnv tvarMap 64 Set.empty
 
 
 substituteTVarsToGoBounded :: Map.Map String String -> Int -> Set.Set String -> T.Type -> String
-substituteTVarsToGoBounded _ fuel _ _ | fuel <= 0 = "any"
-substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
+substituteTVarsToGoBounded = substituteTVarsToGoBoundedCtx emptyCgEnv
+
+
+substituteTVarsToGoBoundedCtx
+    :: Rec.CodegenEnv
+    -> Map.Map String String
+    -> Int
+    -> Set.Set String
+    -> T.Type
+    -> String
+substituteTVarsToGoBoundedCtx _ _ fuel _ _ | fuel <= 0 = "any"
+substituteTVarsToGoBoundedCtx cgEnv tvarMap fuel seen rootTy = go rootTy
   where
-    rec = substituteTVarsToGoBounded tvarMap (fuel - 1) seen
+    rec = substituteTVarsToGoBoundedCtx cgEnv tvarMap (fuel - 1) seen
     -- Cycle-aware recurrence — passes a visited-set with @base@
     -- inserted so a parametric-alias body that re-references the
     -- SAME alias returns @"any"@ instead of looping.
     recCycle base =
-        substituteTVarsToGoBounded tvarMap (fuel - 1) (Set.insert base seen)
+        substituteTVarsToGoBoundedCtx cgEnv tvarMap (fuel - 1) (Set.insert base seen)
     go ty = case ty of
         T.TVar name
             | Just goName <- Map.lookup name tvarMap -> goName
-            | otherwise -> solvedTypeToGo ty
+            | otherwise -> solvedTypeToGoViaPipelineFlatCtx cgEnv ty
         T.TLambda from to ->
             "func(" ++ rec from ++ ") " ++ rec to
         T.TType _ "List" [elem_] ->
@@ -22715,8 +22755,13 @@ substituteTVarsToGoBounded tvarMap fuel seen rootTy = go rootTy
                     else
                         let argStrs = map (recCycle name . snd) pairs
                         in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
-        _ -> solvedTypeToGo ty
-            -- For other shapes the legacy renderer is correct.
+        _ -> solvedTypeToGoViaPipelineFlatCtx cgEnv ty
+            -- For other shapes the legacy renderer is correct.  Routed
+            -- through 'solvedTypeToGoViaPipelineFlatCtx' so the cgEnv
+            -- threaded from the call site reaches alias-name lookups
+            -- (otherwise dep-module sites lose access to their record
+            -- alias scope and emit kernel names like @rt.SkyStore@ in
+            -- place of the dep struct alias @State_Store_R@).
 
 
 -- | v0.17 Cause H step 1 — recursion guard.  The legacy renderer
