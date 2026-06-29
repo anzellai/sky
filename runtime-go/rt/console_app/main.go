@@ -7855,53 +7855,53 @@ func viewWrapped(model State_Model_R) rt.SkyValue {
 }
 
 type Anon_R_baseMs_jitter_kind_maxAttempts_shouldRetry__gsumkitj = struct {
-	BaseMs      any
-	Jitter      any
-	Kind        any
-	MaxAttempts any
-	ShouldRetry any
+	MaxAttempts int
+	BaseMs      int
+	Jitter      bool
+	Kind        int
+	ShouldRetry Sky_Core_Task_ShouldRetry
 }
 
 type Anon_R_bottom_left_right_top__237rntgq = struct {
-	Bottom any
-	Left   any
-	Right  any
-	Top    any
+	Left   int
+	Right  int
+	Top    int
+	Bottom int
 }
 
 type Anon_R_bufferLogUsed_bufferTraceUsed_builtAt_commit_errorRate5xx_productionMode_requestsTotal_skyVersion_uptimeSeconds__5ljo3bfj = struct {
-	BufferLogUsed   any
-	BufferTraceUsed any
-	BuiltAt         any
-	Commit          any
-	ErrorRate5xx    any
-	ProductionMode  any
-	RequestsTotal   any
-	SkyVersion      any
-	UptimeSeconds   any
+	SkyVersion      string
+	Commit          string
+	BuiltAt         string
+	UptimeSeconds   int
+	RequestsTotal   int
+	ErrorRate5xx    float64
+	BufferLogUsed   int
+	BufferTraceUsed int
+	ProductionMode  bool
 }
 
 type Anon_R_color_gridLines_height_title_width_yRange__54vqoqlq = struct {
-	Color     any
-	GridLines any
-	Height    any
-	Title     any
-	Width     any
-	YRange    any
+	Width     int
+	Height    int
+	Color     Std_Ui_Color
+	Title     rt.SkyMaybe[string]
+	YRange    rt.SkyMaybe[rt.T2[float64, float64]]
+	GridLines bool
 }
 
 type Anon_R_query_session_showDebug_showError_showInfo_showWarn__42e5vnsn = struct {
-	Query     any
-	Session   any
-	ShowDebug any
-	ShowError any
-	ShowInfo  any
-	ShowWarn  any
+	Query     string
+	Session   string
+	ShowDebug bool
+	ShowInfo  bool
+	ShowWarn  bool
+	ShowError bool
 }
 
 type Anon_R_rootAttrs_wrapperAttrs__5n085ahc = struct {
-	RootAttrs    any
-	WrapperAttrs any
+	WrapperAttrs []rt.SkyAttribute
+	RootAttrs    []rt.SkyAttribute
 }
 
 func Sky_Core_Maybe_withDefault__String(def string, m rt.SkyMaybe[string]) string {

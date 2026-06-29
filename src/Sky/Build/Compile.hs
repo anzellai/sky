@@ -8666,39 +8666,18 @@ generateAnonRecordDecls = do
     return $ concatMap structDecl (Map.toAscList anons)
   where
     structDecl (name, fields) =
-        -- v0.17 anon-record literal/type-alias shape parity (2026-06-29).
-        -- The literal emission site for unaliased records
-        -- ('Can.Record Nothing' arm at ~Compile.hs:14738) renders the
-        -- inline struct as:
-        --
-        --     struct{ B any; L any; R any; T any }{B:..., L:..., R:..., T:...}
-        --
-        -- with fields sorted ALPHABETICALLY (via 'Map.toList') and ALL
-        -- typed as 'any' (the literal arm uses 'any' regardless of the
-        -- field's Sky type because the literal isn't given a typed slot).
-        -- That inline struct is then asserted to 'Anon_R_<sortedNames>__<hash>'
-        -- via Go's '.( )' type assertion.  Go type assertions require
-        -- the asserted-to alias to be STRUCTURALLY IDENTICAL to the
-        -- inline struct: same field names in same order, same field
-        -- types.  Pre-fix, this site emitted fields sorted by source-
-        -- declaration '_fieldIndex' with the inferred Sky types
-        -- ('int'/'string'/etc.), producing a structurally distinct
-        -- alias and panicking at runtime with:
-        --   interface conversion: interface {} is
-        --     struct { Bottom interface{}; Left interface{}; Right interface{}; Top interface{} },
-        --     not struct { Left int; Right int; Top int; Bottom int }
-        -- Reproduced on examples/19-skyforum /_sky/console/ render.
-        --
-        -- The fix: align THIS side with the literal's emission shape —
-        -- alphabetical sort, every field type 'any'.  The runtime cost
-        -- is zero (Go's interface widening for 'any' fields is free at
-        -- struct-literal time).  Type safety isn't degraded — the type
-        -- assertion only checks structural equivalence with the inline
-        -- struct that produced the value, not against the underlying
-        -- Sky types.
-        let sortedFields = Map.toAscList fields
-            goField (fname, _) =
-                capitalise_ fname ++ " any"
+        let sortedFields =
+                List.sortOn (T._fieldIndex . snd) (Map.toList fields)
+            -- v0.17 Phase ε PR-22 (incremental migration) — route
+            -- through the GoType pipeline.  Use the FLAT variant
+            -- (TVars→"any") to match legacy 'solvedTypeToGo'
+            -- semantics: anonymous-record field types can carry
+            -- leftover monomorphisation TVars (e.g. "any") that
+            -- have no enclosing Go type-parameter scope here, so
+            -- they must widen to "any" not "T_any".  Parity locked
+            -- by RendererParitySpec.
+            goField (fname, T.FieldType _ ty) =
+                capitalise_ fname ++ " " ++ solvedTypeToGo ty
             fieldStrs = map goField sortedFields
             structBody =
                 if null fieldStrs
