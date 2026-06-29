@@ -127,8 +127,16 @@ import Test.Hspec
 -- | Baseline `rt.Coerce` matching-line count for
 -- examples/26-ui-showcase post-iter-0.  CURRENT FLOOR (the ratchet
 -- comparison is `actual <= baseline`).
+--
+-- Bumped 172 → 177 (2026-06-29): `ad7d7eec` routed Anon_R_* targets
+-- through `rt.Coerce[T]` instead of nominal `any(x).(Anon_R)` direct
+-- assertions.  +5 `rt.Coerce` calls is the price of removing a panic
+-- class (struct→struct narrowing now goes through the rt.Coerce
+-- reflect path which handles field-mismatch gracefully).  Future
+-- compiler-level reductions (struct→struct elision when source +
+-- target structural-equal) can ratchet this back down.
 baseline26UiShowcaseRtCoerce :: Int
-baseline26UiShowcaseRtCoerce = 172
+baseline26UiShowcaseRtCoerce = 177
 
 
 -- | Baseline `rt.Coerce` matching-line count for
@@ -145,8 +153,11 @@ baseline00StandardLibsRtCoerce = 124
 
 -- | Baseline `rt.AsListT` matching-line count for
 -- examples/26-ui-showcase post-iter-0.
+--
+-- Ratcheted 191 → 189 (2026-06-29): typed-emit improvements
+-- reduced 2 redundant AsListT wraps on cross-module HOF callbacks.
 baseline26UiShowcaseRtAsListT :: Int
-baseline26UiShowcaseRtAsListT = 191
+baseline26UiShowcaseRtAsListT = 189
 
 
 -- | Baseline declared-IORef count in src/Sky/Build/Compile.hs.
@@ -159,12 +170,17 @@ baselineCompileIORefCount = 1
 
 
 -- | Baseline `getCgEnvFromScope` reader-site count in
--- src/Sky/Build/Compile.hs.  Currently 59.  Phase A migrates each
--- reader to receive a threaded `cgEnv` parameter; the count drops
--- monotonically to 0 over iters 1-8 before iter 9 deletes the
--- helper entirely.
+-- src/Sky/Build/Compile.hs.  Phase A migrates each reader to receive
+-- a threaded `cgEnv` parameter; the count drops monotonically to 0
+-- over iters 1-8 before iter 9 deletes the helper entirely.
+--
+-- Ratcheted 37 → 3 (2026-06-29): the v0.17 PR-α + IORef-defusing
+-- batch + Phase A iter 6a/6b/6c/6d work collectively migrated 34
+-- reader sites to threaded-ctx form.  3 remaining are the residual
+-- bridge sites still consulting the scopeStateRef IORef while the
+-- final reader migration is in flight.
 baselineGetCgEnvFromScopeCount :: Int
-baselineGetCgEnvFromScopeCount = 37
+baselineGetCgEnvFromScopeCount = 3
 
 
 -- ---------------------------------------------------------------------------
