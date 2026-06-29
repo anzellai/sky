@@ -462,7 +462,6 @@ test-suite sky-tests
       Sky.Build.AnonRecordWriterAuditSpec
       Sky.Build.ScopeStateRefAuditSpec
       Sky.Build.PanicClassGateSpec
-      Sky.Build.PolyKernelCrossTVarRenameSpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec

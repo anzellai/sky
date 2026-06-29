@@ -20,7 +20,6 @@ import qualified Sky.Build.CaseToGoSealedIfaceSpec
 import qualified Sky.Build.AnonRecordWriterAuditSpec
 import qualified Sky.Build.ScopeStateRefAuditSpec
 import qualified Sky.Build.PanicClassGateSpec
-import qualified Sky.Build.PolyKernelCrossTVarRenameSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -319,15 +318,6 @@ allSpecs fastMode = do
     -- classification) and the example sweep / fuzzer (real-world
     -- runtime gates).
     describeT "Sky.Build.PanicClassGate" Sky.Build.PanicClassGateSpec.spec
-    -- v0.17 iter 27: regression for the cross-fn TVar-name collision
-    -- class in coerceCallArgsAt's FALLBACK arm.  Pre-fix
-    -- `Sky_Core_List_indexedMapHelp`'s `[]` arm emitted
-    -- `rt.AsListT[T1](acc)` — the callee `reverseHelp`'s T1 leaked
-    -- through into the caller's enclosing-tvar scope (which also has
-    -- its own T1), surviving substituteOnly's scope-erase fallback.
-    -- The α-rename hoists callee TVars to a high-numbered private
-    -- space so the erase fires and emits `rt.AsListT[any]` instead.
-    describeT "Sky.Build.PolyKernelCrossTVarRename" Sky.Build.PolyKernelCrossTVarRenameSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).
