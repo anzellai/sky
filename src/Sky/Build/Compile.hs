@@ -13298,9 +13298,25 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
 -- a fresh read on every invocation matches the implicit-IO
 -- semantics the rest of the codegen helpers (lookupLambdaType etc.)
 -- already rely on.
+--
+-- v0.17 iter 7 fix (2026-06-29) — route through 'readIORefNoCse'
+-- (defined at Compile.hs:265-267) instead of an inline
+-- @unsafePerformIO (readIORef …)@.  GHC -O2 may CSE inline
+-- @unsafePerformIO (readIORef <toplevelRef>)@ expressions across
+-- call sites despite the wrapper's NOINLINE pragma; the bang-on-arg
+-- pattern in 'readIORefNoCse' (`!ref ->` clause) forces a
+-- value-level dependency on the IORef arg so GHC must re-execute
+-- the read per call.  Symptom this fix closes: in-process Sky
+-- compiles (cabal-test fixtures) that ran AFTER a fixture without
+-- Dict.* imports inherited that earlier fixture's snapshot,
+-- missing the kernel-alias map entries needed for
+-- @Sky.Core.Dict.toList → rt.Dict_toListIntKey@ rewriting.
+-- See 'DictSourceSpec' "Dict.toList on Dict Int v emits
+-- rt.Dict_toListIntKey" + task #492's prior precedent for the
+-- same CSE-defuse pattern on @globalReachableProgram@.
 {-# NOINLINE ctxFromIORef #-}
 ctxFromIORef :: () -> LC.LowerCtx
-ctxFromIORef () = unsafePerformIO (readIORef scopeStateRef)
+ctxFromIORef () = readIORefNoCse scopeStateRef
 
 
 -- | v0.17 Phase A iter 6d — read-through fallback synthesising a REAL
