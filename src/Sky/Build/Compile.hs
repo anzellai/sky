@@ -20589,7 +20589,23 @@ defBody (Can.DestructDef _ body) = body
 -- v0.17 PR-17b S4 batch 3: takes ctx as first arg so internal defToStmts /
 -- exprToGoMain calls thread the upstream ctx instead of reading the legacy IORef.
 exprToMainStmtsTyped :: LC.LowerCtx -> Solve.SolvedTypes -> Can.Expr -> [GoIr.GoStmt]
-exprToMainStmtsTyped ctx types (A.At _ expr) = case expr of
+exprToMainStmtsTyped ctx0 types (A.At _ expr) =
+  -- v0.17 — install the entry-point's `types` into the LowerCtx
+  -- so `defToStmts`'s `letBindingType` call (which reads from
+  -- `lookupSolvedTypesFromCtx phaseACtxA`) sees the same per-region
+  -- HM map that `registerMainLetBindingType` uses (which gets `types`
+  -- explicitly).  Pre-fix, the two reads diverged: the ctx-flow read
+  -- via `phaseAFallback` snapshots `scopeStateRef`, which holds
+  -- whatever was last installed — typically a SolvedTypes whose
+  -- region map omits the main module's local regions.  That made
+  -- `let inc = \n -> n + 1` lower as `func(n any) any { ... }` (no
+  -- typed routing) at every typed user-function call site, since
+  -- the binding's HM `Int -> Int` was invisible to the call-site
+  -- coerceArg.  Regression:
+  -- `Sky.Canonicalise.HeadAliasFunctionSig.function-typed alias as
+  -- both head AND leaf (middleware shape)`.
+  let ctx = ctx0 { LC._lc_solved = types }
+  in case expr of
     Can.Let def body ->
         -- v0.15.3 — register the let-binding's HM type into the
         -- in-scope lambda-types map BEFORE defToStmts runs so
