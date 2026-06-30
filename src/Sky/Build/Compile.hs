@@ -15812,12 +15812,11 @@ isCallerVisibleGoType t =
 -- 'coerceVia' so the kind-aligned HM-substitution path can fire
 -- when the source's solved type structurally matches the target
 -- Go slot shape.
-coerceFfiArg :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
-coerceFfiArg ctx goType arg =
-    let goArg = exprToGo (phaseAFallback ctx) ctx arg
-    in if isPrimLiteralArg arg
-        then goArg
-        else coerceVia ctx (Just arg) goType goArg
+-- v0.17 Phase A iter 11 — dead helper 'coerceFfiArg' DELETED.  Grep
+-- of @src/@ confirms zero callers (it had been superseded by
+-- 'coerceFfiArgViaAlias' which carries the alias-name parameter).
+-- The deletion shaves 1 'phaseAFallback' reader from the surface
+-- and unblocks the iter-12+ multi-entry helper batch.
 
 
 -- | Call-site coercion that consults the `rt.FfiT_<Name>_P<N>` alias
@@ -15828,11 +15827,16 @@ coerceFfiArg ctx goType arg =
 --
 -- v0.17 step-4 (attack-#2 amendment A5): threads @Just arg@ into
 -- both 'coerceVia' branches.
+--
+-- v0.17 Phase A iter 11 — drain 3 phaseAFallback IORef hops via
+-- phaseAFallbackFromCtx ctx.  Caller-tree: single caller in
+-- exprToGo's VarKernel arm reached via lowerExpr/lowerExprExpectGo
+-- typedBody bracket.  No ctx rebinding inside this function.
 coerceFfiArgViaAlias :: LC.LowerCtx -> String -> Int -> String -> Can.Expr -> GoIr.GoExpr
 coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
-    | isPrimLiteralArg arg   = exprToGo (phaseAFallback ctx) ctx arg
+    | isPrimLiteralArg arg   = exprToGo (phaseAFallbackFromCtx ctx) ctx arg
     | isCallerVisibleGoType goType =
-        coerceVia ctx (Just arg) goType (exprToGo (phaseAFallback ctx) ctx arg)
+        coerceVia ctx (Just arg) goType (exprToGo (phaseAFallbackFromCtx ctx) ctx arg)
     | otherwise =
         -- v0.17 Session 3e — When targeting an FfiT_ alias (synthesized
         -- by FfiGen to match the typed wrapper's param type exactly),
@@ -15843,7 +15847,7 @@ coerceFfiArgViaAlias ctx anyWrapperName idx goType arg
         -- opaque FFI handles, `any` for TVars) — neither of which
         -- satisfies the typed wrapper's concrete Go param type.
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in coerceVia ctx Nothing aliasName (exprToGo (phaseAFallback ctx) ctx arg)
+        in coerceVia ctx Nothing aliasName (exprToGo (phaseAFallbackFromCtx ctx) ctx arg)
 
 
 -- | v0.17 step-4 (attack-#2 amendment A5) — TYPE-AWARE substitution
