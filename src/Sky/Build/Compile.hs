@@ -13856,7 +13856,8 @@ lowerTypedLambda parentCtx pats paramTys retTy body =
         Can.PUnit     -> (GoIr.GoParam "_" gty, [])
         _ ->
             let tmp = "_lp" ++ show idx
-            in (GoIr.GoParam tmp gty, patternBindings (phaseAFallback parentCtx) tmp pat)
+            -- v0.17 Phase A iter 14 — drain final phaseAFallback ctx-shape site.
+            in (GoIr.GoParam tmp gty, patternBindings (phaseAFallbackFromCtx parentCtx) tmp pat)
 
 
 -- v0.17 PR-11 — `inferTypeFromGoString` (lossy String→T.Type reverse
