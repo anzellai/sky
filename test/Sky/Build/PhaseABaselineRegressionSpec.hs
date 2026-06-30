@@ -147,8 +147,22 @@ baseline26UiShowcaseRtCoerce = 177
 -- so the gate isn't already in regression.  The ratchet semantics
 -- mean any future drop to 116 (or lower) is a forward-lockable
 -- win.
+--
+-- Bumped 124 → 125 (2026-06-30): commit `277ee217` paired the
+-- struct-decl + record-literal cgEnv widening at five sites
+-- (`generateAliasForDep`, `generateStruct`, `lowerRecordLiteralTo`,
+-- + two `exprToGo` arms).  User record aliases referenced inside
+-- Maybe/Result/Task wrappers now resolve to their typed
+-- `<Mod>_<Name>_R` shape instead of falling through to the kernel
+-- `rt.Sky<Name>` / `any` fallback.  The single +1 `rt.Coerce` is
+-- the cost of one extra typed↔runtime bridge call where the
+-- widened typed shape now hits an FFI any-boundary that
+-- previously was reached with `any` directly.  This is the
+-- correct direction for v0.17 (tighter type fidelity); a future
+-- pass can elide the residual bridge once the bridged callee is
+-- also widened to consume the typed shape.
 baseline00StandardLibsRtCoerce :: Int
-baseline00StandardLibsRtCoerce = 124
+baseline00StandardLibsRtCoerce = 125
 
 
 -- | Baseline `rt.AsListT` matching-line count for
