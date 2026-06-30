@@ -3,6 +3,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.String as String
+import Sky.Core.System as System
 import Sky.Core.Time as Time
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
@@ -16,9 +17,21 @@ import Sky.Core.Error exposing (Error)
 --
 -- Verify with `curl --no-buffer http://localhost:8000/events` —
 -- chunks should appear progressively, not all at once.
+--
+-- Port resolution: reads `PORT` env var (Cloud Run / Heroku /
+-- Fly.io / SkyDeploy convention), falls back to 8000 for local
+-- dev.  Non-Live HTTP servers don't consume sky.toml's
+-- `[live] port` — that's Sky.Live-specific.  This is the idiomatic
+-- pattern for `Sky.Http.Server.listen` apps; copy it into any
+-- HTTP server that needs to honour the platform-provided port.
+port_ : Int
+port_ =
+    Maybe.withDefault 8000 (String.toInt (System.getenvOr "PORT" "8000"))
+
+
 main =
     Server.listen
-        8000
+        port_
         [ Server.get "/" handleHome, Server.get "/events" handleEvents ]
 
 

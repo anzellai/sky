@@ -1800,7 +1800,36 @@ func narrowMsgArg(fn any, arg any) any {
 	// fallback in narrowReflectValue — that would silently turn a
 	// wrong-type radio bool into the string "true" and pass it to a
 	// String-typed Msg constructor.
+	//
+	// EXCEPTION (v0.17 #4 fix): Number→String IS coerced via
+	// strconv.FormatFloat / strconv.FormatInt. Range/number inputs
+	// (Input.slider, type=number) send their values as wire Float per
+	// the documented wire-event shape; the matching stdlib Input.slider
+	// declares `onChange : String -> msg` because it round-trips
+	// through the DOM as text.  Stringifying Float→String here closes
+	// the contract gap without forcing every range-using app to
+	// declare a Float-typed Msg ctor.  Bool→String stays rejected
+	// (the radio "[true] into String" case in the comment above) —
+	// only numeric types coerce.
 	switch {
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Float64 ||
+		srcV.Kind() == reflect.Float32):
+		f := srcV.Float()
+		// Integer-valued floats print without trailing ".0" (matches
+		// browser behaviour and Sky's ToString.fromInt convention) —
+		// "55" not "55.0".
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Int ||
+		srcV.Kind() == reflect.Int8 || srcV.Kind() == reflect.Int16 ||
+		srcV.Kind() == reflect.Int32 || srcV.Kind() == reflect.Int64):
+		return strconv.FormatInt(srcV.Int(), 10)
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Uint ||
+		srcV.Kind() == reflect.Uint8 || srcV.Kind() == reflect.Uint16 ||
+		srcV.Kind() == reflect.Uint32 || srcV.Kind() == reflect.Uint64):
+		return strconv.FormatUint(srcV.Uint(), 10)
 	case paramT.Kind() == reflect.Map && srcV.Kind() == reflect.Map:
 		out := coerceMapValue(srcV, paramT)
 		if out.IsValid() {

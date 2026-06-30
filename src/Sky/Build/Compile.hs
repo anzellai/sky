@@ -6642,7 +6642,7 @@ generateDeclsForDep phaseACtx reachableProg canMod modPrefix =
             || Set.null reached
             || Set.member (Dce.TopRef canonicalModName n) reached
     in concatMap (generateUnionForDep phaseACtx (Can._name canMod) modPrefix) (Map.toList (Can._unions canMod))
-    ++ concatMap (generateAliasForDep userDefs modPrefix) (Map.toList (Can._aliases canMod))
+    ++ concatMap (generateAliasForDep phaseACtx userDefs modPrefix) (Map.toList (Can._aliases canMod))
     ++ go keepName (Can._decls canMod)
   where
     defName d = case d of
@@ -7241,8 +7241,8 @@ generateUnionForDep phaseACtx modName modPrefix (typeName, Can.Union vars ctors 
 -- Record aliases emit BOTH a struct type (suffixed "_R" to avoid collision
 -- with user-defined constructor functions of the same name) AND an auto-
 -- constructor function using the original alias name.
-generateAliasForDep :: Set.Set String -> String -> (String, Can.Alias) -> [GoIr.GoDecl]
-generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
+generateAliasForDep :: EmitCompileCtx -> Set.Set String -> String -> (String, Can.Alias) -> [GoIr.GoDecl]
+generateAliasForDep phaseACtx userDefs modPrefix (aliasName, Can.Alias skyVars body) =
     let qualName = modPrefix ++ "_" ++ aliasName
         structName = qualName ++ "_R"
     in case body of
@@ -7252,7 +7252,16 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
                 -- generic struct.
                 goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1 ..] skyVars
                 tvarMap = Map.fromList (zip skyVars goTVars)
-                fieldGoType fty = substituteTVarsToGo tvarMap fty
+                -- v0.17 Session 8 — paired widening with the literal
+                -- site at 'lowerRecordLiteralTo'.  Thread phaseACtx's
+                -- cgEnv so user record aliases (e.g. State_Store) and
+                -- aliases inside Maybe/Result/Task resolve to typed
+                -- names instead of @rt.Sky*@ kernels.  Symmetry with
+                -- the literal site is REQUIRED — widening either
+                -- side alone causes struct-decl-vs-literal type
+                -- mismatch at @go build@.
+                fieldGoType fty =
+                    substituteTVarsToGoCtx (lookupCgEnvFromCtx phaseACtx) tvarMap fty
                 typeParamDecl =
                     if null goTVars
                         then ""
@@ -8719,6 +8728,7 @@ generateAnonRecordDecls = do
 -- canonical pos for late-bound auxiliary decls (after every other
 -- decl has rendered, before the entry point).  If @func main()@ is
 -- absent (single-module library compile) the decls go at end of file.
+{-# NOINLINE patchMissingAnonRecordDecls #-}
 patchMissingAnonRecordDecls :: String -> String
 patchMissingAnonRecordDecls src =
     let referenced = collectAnonRefs src
@@ -8727,17 +8737,61 @@ patchMissingAnonRecordDecls src =
     in case missing of
         [] -> src
         ms ->
-            let recovered =
+            -- v0.17 #3 fix — RECOVERY PRIORITY:
+            --   1. Re-read 'globalAnonRecords' IORef post-render.
+            --      Rendering 'generateAnonRecordDecls's structDecl
+            --      bodies calls 'synthAnonRecordName' on nested field
+            --      types — those nested registrations happen AFTER
+            --      the initial 'readIORef globalAnonRecords' that
+            --      seeded 'generateAnonRecordDecls'.  By the end of
+            --      rendering, the IORef carries every anon shape
+            --      that was named.  Reading it again here picks up
+            --      the nested-field-only references that 'findCastShape'
+            --      can't recover (no cast site exists for a name that
+            --      only appears as a struct field type — typical for
+            --      Decoder-shaped anons that flow through type-only
+            --      positions).
+            --   2. Fall back to 'findCastShape' for any name STILL
+            --      missing after the IORef pass — preserves the
+            --      cross-module HOF hash-divergence recovery.
+            --
+            -- 'src' is fully forced via 'collectAnonRefs' before we
+            -- snapshot the IORef, so the read sees post-render state.
+            -- '{-# NOINLINE #-}' on this function defeats GHC's
+            -- common-subexpression-elimination of the unsafePerformIO
+            -- read.
+            let !_force         = length ms `seq` length src
+                postRenderAnons = unsafePerformIO (readIORef globalAnonRecords)
+                recovered =
                     [ d
                     | name <- ms
-                    , Just shape <- [findCastShape name src]
-                    , let d = "type " ++ name ++ " = struct" ++ shape
+                    , Just shape <-
+                          [recoverShape postRenderAnons name src]
+                    , let d = "type " ++ name ++ " = struct " ++ shape
                     ]
                 block = intercalate_ "\n" recovered
             in if null recovered
                    then src
                    else insertBeforeMain block src
   where
+    -- Per-name shape recovery: try the post-render IORef snapshot
+    -- first (covers field-type-only references), then the
+    -- cast-site recovery (covers cross-module HOF hash-divergence).
+    recoverShape anons name s =
+        case Map.lookup name anons of
+            Just fields ->
+                let sortedFields =
+                        List.sortOn (T._fieldIndex . snd) (Map.toList fields)
+                    goField (fname, T.FieldType _ ty) =
+                        capitalise_ fname ++ " " ++ solvedTypeToGo ty
+                    fieldStrs = map goField sortedFields
+                    body =
+                        if null fieldStrs
+                            then "{}"
+                            else "{ " ++ intercalate_ "; " fieldStrs ++ " }"
+                in Just body
+            Nothing -> findCastShape name s
+
     -- Insert a block of newline-separated decls immediately before
     -- "func main()".  Adds a leading + trailing newline for readability.
     insertBeforeMain block s =
@@ -8938,7 +8992,12 @@ generateAliasTypes phaseACtx canMod =
         let structName = name ++ "_R"
             goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1 ..] skyVars
             tvarMap = Map.fromList (zip skyVars goTVars)
-            fieldGoType fty = substituteTVarsToGo tvarMap fty
+            -- v0.17 Session 8 — entry-module sibling of the
+            -- 'generateAliasForDep' widening.  Same rationale, same
+            -- contract: paired with literal site at
+            -- 'lowerRecordLiteralTo' so struct + literal stay locked.
+            fieldGoType fty =
+                substituteTVarsToGoCtx (lookupCgEnvFromCtx phaseACtx) tvarMap fty
             goFields = map (\(fname, T.FieldType _ ftype) ->
                 (capitalise fname, fieldGoType ftype)) fields
             typeParamDecl =
@@ -13759,8 +13818,16 @@ lowerRecordLiteralTo phaseACtx ctx targetTy fields =
         fieldTypeMap = case aliasDecl of
             Just (Can.Alias skyVars (T.TRecord m _)) ->
                 let tvarSubst = Map.fromList (zip skyVars targetArgs)
+                -- v0.17 Session 8 — bundled-console regenerate close.
+                -- Thread the populated @env@ (already bound above as
+                -- @lookupCgEnvFromCtx phaseACtx@) so user record
+                -- aliases referenced inside Maybe/Result/Task wrappers
+                -- resolve to their typed names rather than @any@ /
+                -- kernel-name fallbacks.  Locks the literal-side type
+                -- to the struct-decl-side type (see paired widening
+                -- at 'generateAliasForDep' / 'generateStruct').
                 in Map.map (\(T.FieldType _ ty) ->
-                        substituteTVarsToGo tvarSubst ty) m
+                        substituteTVarsToGoCtx env tvarSubst ty) m
             _ -> Map.empty
         -- v0.15.x P37b — record-field-init slot cascade RESUMED.
         -- P6 reverted this site because the wrapper's
@@ -14646,7 +14713,16 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                     aliasDecl = lookupAliasDecl aliasNameFromT
                     fieldTypeMap = case aliasDecl of
                         Just (Can.Alias _ (T.TRecord m _)) ->
-                            Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
+                            -- v0.17 Session 8 — thread populated cgEnv
+                            -- through 'solvedTypeToGoViaPipelineFlatCtx'
+                            -- so user record alias field types resolve
+                            -- to typed @<Mod>_<Name>_R@ instead of the
+                            -- kernel @rt.Sky<Name>@ fallback.  Paired
+                            -- with the struct-decl widening at
+                            -- 'generateAliasForDep' / 'generateStruct'.
+                            Map.map (\(T.FieldType _ ty) ->
+                                solvedTypeToGoViaPipelineFlatCtx
+                                    (lookupCgEnvFromCtx phaseACtxA) ty) m
                         _ -> Map.empty
                     lowerFieldValue fname fexpr =
                         let fieldGoTy =
@@ -14707,7 +14783,16 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                                  "]"
                     fieldTypeMap = case aliasDecl of
                         Just (Can.Alias _ (T.TRecord m _)) ->
-                            Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
+                            -- v0.17 Session 8 — thread populated cgEnv
+                            -- through 'solvedTypeToGoViaPipelineFlatCtx'
+                            -- so user record alias field types resolve
+                            -- to typed @<Mod>_<Name>_R@ instead of the
+                            -- kernel @rt.Sky<Name>@ fallback.  Paired
+                            -- with the struct-decl widening at
+                            -- 'generateAliasForDep' / 'generateStruct'.
+                            Map.map (\(T.FieldType _ ty) ->
+                                solvedTypeToGoViaPipelineFlatCtx
+                                    (lookupCgEnvFromCtx phaseACtxA) ty) m
                         _ -> Map.empty
                     -- v0.15 Stage C — type-directed field-init
                     -- lowering.  `exprToGoExpectGo` threads the
