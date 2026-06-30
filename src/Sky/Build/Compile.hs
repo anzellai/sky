@@ -15244,7 +15244,8 @@ coerceToFieldTypeMSrc ctx mSrc targetTy e
     -- caller has already lowered through `exprToGo`.  Caller-side
     -- variants of this site (`coerceArg`'s parametric-alias arm)
     -- DO have the source expr and pass it through.
-    | goExprGoType (phaseAFallback ctx) ctx Nothing e == Just targetTy = e
+    -- v0.17 Phase A iter 12 — drain (coerceToFieldTypeMSrc).
+    | goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing e == Just targetTy = e
     -- v0.17 PR-14 — structural dispatch via the 'CoerceTarget' ADT.
     -- The pre-PR-14 chain of String-prefix guards is now classified
     -- once at the top via 'classifyCoerceTarget' (kept above).
@@ -15988,7 +15989,8 @@ coerceVia ctx mSrc goType goArg
     -- Class E sky-source helper return — all elided when the source
     -- Go type matches the target.
     | not (isTupleGoTypeStr goType)
-    , Just srcGoTy <- goExprGoType (phaseAFallback ctx) ctx Nothing goArg
+    -- v0.17 Phase A iter 12 — drain (coerceVia).
+    , Just srcGoTy <- goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing goArg
     , srcGoTy == goType
     , not (isTupleGoTypeStr srcGoTy)
     = goArg
@@ -17122,7 +17124,8 @@ coerceArg phaseACtxD ctx mSrc e ty
         -- by-shape recovery here; the structural fallback fires
         -- at the typed slots below where the target type is
         -- concrete (not a TVar).
-        case goExprGoType (phaseAFallback ctx) ctx Nothing e of
+        -- v0.17 Phase A iter 12 — drain (coerceArg site 1).
+        case goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing e of
             Just t | t /= "any" -> e
             _ ->
                 -- Emit raw rt.Coerce[ty] — keeps generic outer fns
@@ -17193,8 +17196,9 @@ coerceArg phaseACtxD ctx mSrc e ty
     -- generic-call inference (the live callee IS Cfg_R-generic
     -- in T, accepting any instantiation raw).  This is the Gap
     -- A2 closure path for alias-shaped sources.
+    -- v0.17 Phase A iter 12 — drain (coerceArg site 2).
     | Just targetBase <- parametricAliasBase ty
-    , Just srcTy <- goExprGoType (phaseAFallback ctx) ctx mSrc e
+    , Just srcTy <- goExprGoType (phaseAFallbackFromCtx ctx) ctx mSrc e
     , Just srcBase <- parametricAliasBase srcTy
     , targetBase == srcBase
         = e
@@ -17296,7 +17300,8 @@ coerceArg phaseACtxD ctx mSrc e ty
     -- + the standing skyshop-clean-build lock
     -- `test/Sky/Build/SkyshopCompilesSpec.hs`.  Any future change
     -- that breaks this gate re-trips both.
-    | Just shapeTy <- goExprGoType (phaseAFallback ctx) ctx Nothing e
+    -- v0.17 Phase A iter 12 — drain (coerceArg site 3).
+    | Just shapeTy <- goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing e
     , shapeTy == ty
         = e
     -- v0.17 PR-17c — pin in-scope enclosing T-vars instead of
