@@ -2022,7 +2022,7 @@ caseToGoSealedIface ctx solved mExpectedGo subject branches qualType =
     -- must return SOMETHING after the panic to satisfy Go's
     -- reachability checker).
     let defaultLeaf body =
-            [ GoIr.GoReturn (exprToGo (phaseAFallback ctx) ctx body) ]
+            [ GoIr.GoReturn (exprToGo (phaseAFallbackFromCtx ctx) ctx body) ]
         defaultArmStmts =
             [ GoIr.GoExprStmt
                 (GoIr.GoRaw
@@ -2077,7 +2077,7 @@ caseToGoSealedIfaceStmts
     -> Maybe [GoIr.GoStmt]
 caseToGoSealedIfaceStmts ctx _solved leafFn defaultArmStmts
                         subjectName subject branches qualType =
-    let goSubject = exprToGo (phaseAFallback ctx) ctx subject
+    let goSubject = exprToGo (phaseAFallbackFromCtx ctx) ctx subject
     in case sequence
             (map (classifyBranch ctx leafFn subjectName qualType)
                 branches) of
@@ -2137,7 +2137,7 @@ classifyBranch ctx leafFn subjectName qualType
         (Can.CaseBranch (A.At _ pat) body) =
     case pat of
         Can.PCtor _ _ _ ctorName _ args -> do
-            argStmtsList <- mapM (renderArgBinding (phaseAFallback ctx) subjectName) args
+            argStmtsList <- mapM (renderArgBinding (phaseAFallbackFromCtx ctx) subjectName) args
             -- v0.17 P3.4c.2c — body lowering routes through leafFn
             -- instead of hard-coding @[GoReturn (exprToGo ctx
             -- body)]@.  Expression-position passes the defaultLeaf
@@ -13356,7 +13356,7 @@ lowerExpr ctx e = unsafePerformIO $ do
     ctx `seq` return ()
     prev <- readIORef scopeStateRef
     writeIORef scopeStateRef ctx
-    let rendered = GoBuilder.renderExpr (exprToGo (phaseAFallback ctx) ctx e)
+    let rendered = GoBuilder.renderExpr (exprToGo (phaseAFallbackFromCtx ctx) ctx e)
         forced = length rendered
     forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
@@ -13371,7 +13371,7 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
     ctx `seq` return ()
     prev <- readIORef scopeStateRef
     writeIORef scopeStateRef ctx
-    let rendered = GoBuilder.renderExpr (exprToGoExpectGo (phaseAFallback ctx) ctx goRendering e)
+    let rendered = GoBuilder.renderExpr (exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx goRendering e)
         forced = length rendered
     forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
@@ -16076,7 +16076,7 @@ emitPartialCtor ctx func suppliedArgs missing =
         -- types from its annotation so both already-supplied args and
         -- the closure-captured extras coerce to the right Go types.
         paramTys = case A.toValue func of
-            Can.VarCtor _ _ _ _ annot -> ctorParamTypes (phaseAFallback ctx) annot
+            Can.VarCtor _ _ _ _ annot -> ctorParamTypes (phaseAFallbackFromCtx ctx) annot
             _                         -> []
         -- v0.13 Stage 1 — ctor's final return type (the ADT/record
         -- name) — used as the typed lambda return so partial-app
@@ -16084,7 +16084,7 @@ emitPartialCtor ctx func suppliedArgs missing =
         ctorRetTy = case A.toValue func of
             Can.VarCtor _ _ typeName _ annot ->
                 let (_, r) = peelArgs (skyAnnotType annot)
-                    phaseACtx = phaseAFallback ctx
+                    phaseACtx = phaseAFallbackFromCtx ctx
                 in case r of
                     _ | safeReturnTypeFull phaseACtx r /= "any" -> safeReturnTypeFull phaseACtx r
                     _ -> typeName
@@ -16106,9 +16106,9 @@ emitPartialCtor ctx func suppliedArgs missing =
         -- parametric-record passing on partial-applied ctors.
         suppliedGo  = zipWithDefaultExpect ctx suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallback ctx) ctx Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallbackFromCtx ctx) ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
-        finalCall = GoIr.GoCall (exprToGo (phaseAFallback ctx) ctx func) (suppliedGo ++ extraIdents)
+        finalCall = GoIr.GoCall (exprToGo (phaseAFallbackFromCtx ctx) ctx func) (suppliedGo ++ extraIdents)
         -- Wrap outer-first (last extra wrapped first) so the chain is
         -- func(extraN-1) func(...) ... func(extra0) Ret.
         -- Build from innermost up. innermost return type = ctorRetTy.
@@ -16154,14 +16154,14 @@ coerceCallArgs phaseACtxD ctx qualName args =
     let env = lookupCgEnvFromCtx phaseACtxD
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
-         then map (exprToGo (phaseAFallback ctx) ctx) args
+         then map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
          else
              -- v0.13 Stage 1 — same recovery σ pattern as
              -- `coerceCallArgsAt`: pin TVars from typed arg sides;
              -- only erase un-pinned TVars. Critical for recursive
              -- calls in Sky-source kernel bodies (`Sky_Core_List_map_`'s
              -- `map fn rest` where fn has typed `func(T1) T2` sig).
-             let goArgs = map (exprToGo (phaseAFallback ctx) ctx) args
+             let goArgs = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
                  -- v0.15.8 (P2): σ-recovery stays strict — passes
                  -- Nothing.  See the rationale comment in the
                  -- VarKernel branch of `coerceCallArgsAt`.
@@ -16169,7 +16169,7 @@ coerceCallArgs phaseACtxD ctx qualName args =
                      [ (pty, cgo)
                      | (pty, ga) <- zip paramTypes goArgs
                      , isGenericTypeParam pty
-                     , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
+                     , Just cgo <- [goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing ga]
                      , cgo /= "any"
                      , not (isGenericTypeParam cgo)
                      ]
@@ -16178,7 +16178,7 @@ coerceCallArgs phaseACtxD ctx qualName args =
                      | (pty, ga) <- zip paramTypes goArgs
                      , not (isGenericTypeParam pty)
                      , containsGenericTypeParam pty
-                     , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
+                     , Just cgo <- [goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing ga]
                      , cgo /= "any"
                      ]
                  recovered = Map.union bareRecovered structuralRecovered
@@ -16320,7 +16320,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
         skyToGo = Map.findWithDefault [] qualName
                     (Rec._cg_funcSkyToGoTVars env)
     in case (paramTypes, instM) of
-        ([], _) -> map (exprToGo (phaseAFallback ctx) ctx) args
+        ([], _) -> map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
         -- v0.17 C24 closer — CSI fires AND user-defined function has
         -- typed param TVars BUT skyToGo registry is empty.  Happens
         -- for Sky bindings whose annotation is inferred (no explicit
@@ -16356,11 +16356,11 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                                    exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
-                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                    else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallbackFromCtx ctx) ctx e]
+                                    else coerceArg (phaseAFallbackFromCtx ctx) ctx (Just e) (exprToGo (phaseAFallbackFromCtx ctx) ctx e) subbed
                 in zipWith3Default ctx coerceOne paramTypes substituted args
         (_, Just (Solve.CallInstance _ concreteTys quants))
             | length quants == length concreteTys
@@ -16535,11 +16535,11 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                             Can.Record{}
                                 | isParametricAliasInstantiation subbed
                                 , not (containsGenericTypeParam subbed) ->
-                                    exprToGoExpectGo (phaseAFallback ctx) ctx subbed e
+                                    exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
-                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx e]
-                                    else coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) subbed
+                                    then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallbackFromCtx ctx) ctx e]
+                                    else coerceArg (phaseAFallbackFromCtx ctx) ctx (Just e) (exprToGo (phaseAFallbackFromCtx ctx) ctx e) subbed
                 in zipWith3Default ctx coerceOne paramTypes substituted args
         _ ->
             -- v0.13 Phase A5+: when no CSI is captured at this call
@@ -16597,7 +16597,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
             let paramTypes = map alphaRenameCalleeTVars
                     (Map.findWithDefault [] qualName
                         (Rec._cg_funcParamTypes env))
-                goArgs = map (exprToGo (phaseAFallback ctx) ctx) args
+                goArgs = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
                 -- partial σ: bare-type-param ↦ concrete Go type, for
                 -- every position whose arg has a known static type.
                 --
@@ -16619,7 +16619,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                     [ (pty, cgo)
                     | (pty, ga) <- zip paramTypes goArgs
                     , isGenericTypeParam pty
-                    , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
+                    , Just cgo <- [goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing ga]
                     , cgo /= "any"
                     , not (isGenericTypeParam cgo)
                     ]
@@ -16628,7 +16628,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                     | (pty, ga) <- zip paramTypes goArgs
                     , not (isGenericTypeParam pty)
                     , containsGenericTypeParam pty
-                    , Just cgo <- [goExprGoType (phaseAFallback ctx) ctx Nothing ga]
+                    , Just cgo <- [goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing ga]
                     , cgo /= "any"
                     ]
                 -- v0.16.13 #530 — HM-based identity recovery for
@@ -16778,8 +16778,8 @@ zipWith3Default
     :: LC.LowerCtx
     -> (String -> String -> Can.Expr -> GoIr.GoExpr)
     -> [String] -> [String] -> [Can.Expr] -> [GoIr.GoExpr]
-zipWith3Default ctx _ [] _ args = map (exprToGo (phaseAFallback ctx) ctx) args
-zipWith3Default ctx _ _ [] args = map (exprToGo (phaseAFallback ctx) ctx) args
+zipWith3Default ctx _ [] _ args = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
+zipWith3Default ctx _ _ [] args = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) args
 zipWith3Default _ _ _ _ [] = []
 zipWith3Default ctx f (o:os) (s:ss) (a:as) = f o s a : zipWith3Default ctx f os ss as
 
@@ -18063,7 +18063,7 @@ zipWithDefault f fb (a:as) (c:cs) = f (fb c) a : zipWithDefault f fb as cs
 -- `func(any) any` body with `rt.Coerce[func(X) Y]`, working but
 -- reflecting through MakeFunc on every call.
 zipWithDefaultExpect :: LC.LowerCtx -> [String] -> [Can.Expr] -> [GoIr.GoExpr]
-zipWithDefaultExpect ctx [] cs = map (exprToGo (phaseAFallback ctx) ctx) cs
+zipWithDefaultExpect ctx [] cs = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) cs
 zipWithDefaultExpect _ _ [] = []
 zipWithDefaultExpect ctx (ty:tys) (e:es) =
     lowerArgExpect ctx ty e : zipWithDefaultExpect ctx tys es
@@ -18099,7 +18099,7 @@ lowerArgExpect ctx ty e@(A.At _ expr)
     , not (containsGenericTypeParam ty)
     = lowerExprExpectGo ctx ty e
     | otherwise
-    = coerceArg (phaseAFallback ctx) ctx (Just e) (exprToGo (phaseAFallback ctx) ctx e) ty
+    = coerceArg (phaseAFallbackFromCtx ctx) ctx (Just e) (exprToGo (phaseAFallbackFromCtx ctx) ctx e) ty
 
 
 -- | Over-application: the call supplied MORE args than the callee's
@@ -18136,10 +18136,10 @@ emitOverApplication ctx func allArgs declared =
         mMangled = instanceMangledName (A.toRegion func) qualName
         callName = maybe qualName id mMangled
         baseCall = GoIr.GoCall (GoIr.GoIdent callName)
-                       (coerceCallArgsAt (phaseAFallback ctx) ctx (A.toRegion func) qualName firstK)
+                       (coerceCallArgsAt (phaseAFallbackFromCtx ctx) ctx (A.toRegion func) qualName firstK)
         applyOne acc arg = GoIr.GoCall
             (GoIr.GoQualified "rt" "SkyCall")
-            [acc, exprToGo (phaseAFallback ctx) ctx arg]
+            [acc, exprToGo (phaseAFallbackFromCtx ctx) ctx arg]
     in foldl applyOne baseCall rest
 
 
@@ -18166,7 +18166,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
                      else map (\c -> if c == '.' then '_' else c) modStr
                           ++ "_" ++ goSafeName name
             _ -> ""
-        env = lookupCgEnvFromCtx (phaseAFallback ctx)
+        env = lookupCgEnvFromCtx (phaseAFallbackFromCtx ctx)
         paramTypes = Map.findWithDefault [] qualName
                        (Rec._cg_funcParamTypes env)
         suppliedTypes = take (length suppliedArgs) paramTypes
@@ -18192,8 +18192,8 @@ emitPartialUserCall ctx func suppliedArgs missing =
             [ recovered
             | (paramTy, srcArg) <- zip suppliedTypes suppliedArgs
             , containsGenericTypeParam paramTy
-            , let srcGoExpr = exprToGo (phaseAFallback ctx) ctx srcArg
-            , Just srcGoTy <- [goExprGoType (phaseAFallback ctx) ctx (Just srcArg) srcGoExpr]
+            , let srcGoExpr = exprToGo (phaseAFallbackFromCtx ctx) ctx srcArg
+            , Just srcGoTy <- [goExprGoType (phaseAFallbackFromCtx ctx) ctx (Just srcArg) srcGoExpr]
             , srcGoTy /= "any"
             , not (containsGenericTypeParam srcGoTy)
             , let recovered = unifyGoTypes paramTy srcGoTy
@@ -18218,7 +18218,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
         suppliedGo = zipWithDefaultExpect ctx suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallback ctx) ctx Nothing (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg (phaseAFallbackFromCtx ctx) ctx Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         -- #580 — when σ-recovery pinned every TVar in the callee's
         -- param list (no remaining unbound generics), drop the
@@ -18236,7 +18236,7 @@ emitPartialUserCall ctx func suppliedArgs missing =
                               && not (null availableExtras)
         finalCallTarget
             | allExtrasConcrete = GoIr.GoIdent qualName
-            | otherwise         = exprToGo (phaseAFallback ctx) ctx func
+            | otherwise         = exprToGo (phaseAFallbackFromCtx ctx) ctx func
         finalCall = GoIr.GoCall finalCallTarget (suppliedGo ++ extraIdents)
         -- Build the curried wrapper chain from the inside out.
         -- Innermost wrapper returns `ultRetType`; each outer
@@ -18315,7 +18315,7 @@ emitPartialKernelCall ctx modName funcName suppliedArgs missing =
             Nothing  -> "rt." ++ modName ++ "_" ++ funcName
         -- Closure param names for the missing args, plus their
         -- supplied counterparts (already-evaluated Sky exprs).
-        suppliedGo = map (exprToGo (phaseAFallback ctx) ctx) suppliedArgs
+        suppliedGo = map (exprToGo (phaseAFallbackFromCtx ctx) ctx) suppliedArgs
         extraNames = [ "__pk" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = map GoIr.GoIdent extraNames
         -- Build the final kernel invocation: all supplied + all
@@ -18378,7 +18378,7 @@ binopToGo ctx op left right =
     -- is String, so a naive `"prefix " + rt.Crypto_sha256(data)`
     -- would fail Go's static type check.  Falls back to runtime
     -- helpers in all other cases (correct, just slower).
-    let solved   = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+    let solved   = lookupSolvedTypesFromCtx (phaseAFallbackFromCtx ctx)
         leftTy   = inferExprType solved left
         rightTy  = inferExprType solved right
         bothAre  prim = leftTy == Just prim && rightTy == Just prim
@@ -18401,30 +18401,30 @@ binopToGo ctx op left right =
     "<|" -> pipeApply ctx right left
 
     -- Composition operators (>> and <<)
-    ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+    ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- String concat (++) when both operands type to String: emit
     -- Go-native concat which is `+` on string. List concat keeps the
     -- runtime helper (slice concat needs reflect).
     "++"
       | bothAre strTy ->
-          GoIr.GoBinary "+" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+          GoIr.GoBinary "+" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
       | otherwise ->
-          GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+          GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Cons operator
-    "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+    "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Equality — Go-native when both operands type to a known primitive
     -- (Go's `==` is well-defined for these). Avoids reflect dispatch
     -- through rt.Eq and the polymorphic-comparable trap.
     "==" | anyOf [intTy, floatTy, boolTy, strTy] ->
-        GoIr.GoBinary "==" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "==" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "/=" | anyOf [intTy, floatTy, boolTy, strTy] ->
-        GoIr.GoBinary "!=" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
-    "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+        GoIr.GoBinary "!=" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
+    "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Arithmetic — Go-native when both operands are Int OR both Float.
     -- Mixed / unknown types fall back to rt.* helpers which reflect-
@@ -18432,45 +18432,45 @@ binopToGo ctx op left right =
     -- is `++`); Go's `+` is overloaded for string but rt.Add handles
     -- both numeric cases.
     "+" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "+" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "+" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "-" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "-" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "-" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "*" | bothAre intTy || bothAre floatTy ->
-        GoIr.GoBinary "*" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "*" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "/" | bothAre floatTy ->
-        GoIr.GoBinary "/" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "/" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "//" | bothAre intTy ->
-        GoIr.GoBinary "/" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
-    "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "//" -> GoIr.GoCall (GoIr.GoQualified "rt" "IntDiv") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+        GoIr.GoBinary "/" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
+    "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "//" -> GoIr.GoCall (GoIr.GoQualified "rt" "IntDiv") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Comparison operators — Go-native for known orderable primitives.
     ">"  | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary ">" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary ">" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "<"  | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary "<" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "<" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     ">=" | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary ">=" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary ">=" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "<=" | anyOf [intTy, floatTy, strTy] ->
-        GoIr.GoBinary "<=" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
-    ">"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Gt") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "<"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Lt") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    ">=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Gte") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "<=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Lte") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+        GoIr.GoBinary "<=" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
+    ">"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Gt") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "<"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Lt") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    ">=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Gte") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "<=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Lte") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Logic — Go-native when both Bool (the only valid operand type).
     "&&" | bothAre boolTy ->
-        GoIr.GoBinary "&&" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+        GoIr.GoBinary "&&" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
     "||" | bothAre boolTy ->
-        GoIr.GoBinary "||" (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
-    "&&" -> GoIr.GoCall (GoIr.GoQualified "rt" "And") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
-    "||" -> GoIr.GoCall (GoIr.GoQualified "rt" "Or") [exprToGo (phaseAFallback ctx) ctx left, exprToGo (phaseAFallback ctx) ctx right]
+        GoIr.GoBinary "||" (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
+    "&&" -> GoIr.GoCall (GoIr.GoQualified "rt" "And") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
+    "||" -> GoIr.GoCall (GoIr.GoQualified "rt" "Or") [exprToGo (phaseAFallbackFromCtx ctx) ctx left, exprToGo (phaseAFallbackFromCtx ctx) ctx right]
 
     -- Other operators
-    _ -> GoIr.GoBinary op (exprToGo (phaseAFallback ctx) ctx left) (exprToGo (phaseAFallback ctx) ctx right)
+    _ -> GoIr.GoBinary op (exprToGo (phaseAFallbackFromCtx ctx) ctx left) (exprToGo (phaseAFallbackFromCtx ctx) ctx right)
 
 
 -- | Apply a pipe: `value |> func` becomes `func(value)`
@@ -18482,7 +18482,7 @@ pipeApply ctx valueExpr funcExpr =
     -- typed-FFI / typed-kernel migrations that would otherwise be
     -- missed by the bypass that calls exprToGo on each piece directly.
     let region = case funcExpr of A.At r _ -> r
-        synth f xs = exprToGo (phaseAFallback ctx) ctx (A.At region (Can.Call f xs))
+        synth f xs = exprToGo (phaseAFallbackFromCtx ctx) ctx (A.At region (Can.Call f xs))
     in case funcExpr of
         A.At _ (Can.Call innerFunc innerArgs) ->
             synth innerFunc (innerArgs ++ [valueExpr])
@@ -18511,11 +18511,11 @@ ifToGo ctx mExpectedGo branches elseExpr =
         -- case/if/let in a branch gets the type threaded DIRECTLY —
         -- not just through `typeIIFE`'s return-position recursion.
         lowerBody = case mExpectedGo of
-            Just gt -> exprToGoExpectGo (phaseAFallback ctx) ctx gt
-            Nothing -> exprToGo (phaseAFallback ctx) ctx
+            Just gt -> exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx gt
+            Nothing -> exprToGo (phaseAFallbackFromCtx ctx) ctx
         buildIf [] = [GoIr.GoReturn (lowerBody elseExpr)]
         buildIf ((cond, body):rest) =
-            [GoIr.GoIf (toBoolExpr (exprToGo (phaseAFallback ctx) ctx cond)) [GoIr.GoReturn (lowerBody body)] (buildIf rest)]
+            [GoIr.GoIf (toBoolExpr (exprToGo (phaseAFallbackFromCtx ctx) ctx cond)) [GoIr.GoReturn (lowerBody body)] (buildIf rest)]
         raw = GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "nil")
     in case mExpectedGo of
         -- v0.17 step-3 residual leak point: ifToGo doesn't carry the
@@ -19148,7 +19148,7 @@ caseToGo ctx mExpectedGo subject branches =
     -- ADT in the canonical fixture set.  Any commit that flips
     -- the gate without lifting these preconditions will fail
     -- @diff -q@ on the example sweep.
-    let solved = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+    let solved = lookupSolvedTypesFromCtx (phaseAFallbackFromCtx ctx)
         region = A.toRegion subject
         curMod = case Solve.moduleForRegion region solved of
                     Just m -> Just m
@@ -19175,7 +19175,7 @@ caseToGo ctx mExpectedGo subject branches =
 caseToGoLegacy :: LC.LowerCtx -> Maybe String -> Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
 caseToGoLegacy ctx mExpectedGo subject branches =
     let
-        goSubject = exprToGo (phaseAFallback ctx) ctx subject
+        goSubject = exprToGo (phaseAFallbackFromCtx ctx) ctx subject
         subjectType = detectSubjectType branches
         -- v0.13.x: derive the subject's concrete typed shape from
         -- HM inference when available. The legacy `MaybeCoerce[any]`
@@ -19186,7 +19186,7 @@ caseToGoLegacy ctx mExpectedGo subject branches =
         -- inferred typed shape and routing the subject as `_tFfi`
         -- (direct field access), `n` becomes `int` and Go's type
         -- inference works through Test.equal and friends.
-        solvedTypes = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+        solvedTypes = lookupSolvedTypesFromCtx (phaseAFallbackFromCtx ctx)
         -- Cycle 3 task #330 / Dev P40 (skyshop Db.snapshotToDict panic):
         -- when the subject is a bare variable reference, treat the
         -- per-region HM type map as authoritative and do NOT fall back
@@ -19341,8 +19341,8 @@ caseToGoLegacy ctx mExpectedGo subject branches =
                 -> True
             _ -> False
 
-        funcRetTypeMap = Rec._cg_funcRetType (lookupCgEnvFromCtx (phaseAFallback ctx))
-        inferredSigMap = Rec._cg_funcInferredSigs (lookupCgEnvFromCtx (phaseAFallback ctx))
+        funcRetTypeMap = Rec._cg_funcRetType (lookupCgEnvFromCtx (phaseAFallbackFromCtx ctx))
+        inferredSigMap = Rec._cg_funcInferredSigs (lookupCgEnvFromCtx (phaseAFallbackFromCtx ctx))
 
         isConcreteResultOrMaybe t =
             let isResult = "rt.SkyResult[" `List.isPrefixOf` t
@@ -19453,7 +19453,7 @@ detectSubjectType branches =
 -- threaded explicitly instead of reading the legacy IORef.
 caseBranchToStmts :: LC.LowerCtx -> String -> Can.CaseBranch -> [GoIr.GoStmt]
 caseBranchToStmts ctx subject =
-    caseBranchToStmtsWith (phaseAFallback ctx) subject (\body -> [GoIr.GoReturn (exprToGo (phaseAFallback ctx) ctx body)])
+    caseBranchToStmtsWith (phaseAFallbackFromCtx ctx) subject (\body -> [GoIr.GoReturn (exprToGo (phaseAFallbackFromCtx ctx) ctx body)])
 
 
 -- | Same as `caseBranchToStmts` but with a customisable leaf
@@ -19535,7 +19535,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             -- @examples/16-skychess/sky-out/main.go@ (TCO-heavy)
             -- pre/post this commit MUST be byte-identical — that's
             -- the ship gate.
-            let solved = lookupSolvedTypesFromCtx (phaseAFallback ctx)
+            let solved = lookupSolvedTypesFromCtx (phaseAFallbackFromCtx ctx)
                 region = A.toRegion subj
                 curMod = case Solve.moduleForRegion region solved of
                             Just m -> Just m
@@ -19582,7 +19582,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
         -- pattern conditions use `len(rt.AsList(__subject))`
         -- which accepts an any-typed source.
         let subjectName = "__tco_subject"
-            rawSubjExpr = exprToGo (phaseAFallback ctx) ctx subj
+            rawSubjExpr = exprToGo (phaseAFallbackFromCtx ctx) ctx subj
             anyWrap e0 = GoIr.GoCall (GoIr.GoIdent "any") [e0]
             subjExpr = case detectSubjectType branches of
                 Nothing -> rawSubjExpr
@@ -19606,7 +19606,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             subjDiscardStmt = GoIr.GoExprStmt
                 (GoIr.GoRaw ("_ = " ++ subjectName))
             branchStmts = concatMap
-                (caseBranchToStmtsWith (phaseAFallback ctx) subjectName tcoLeaf) branches
+                (caseBranchToStmtsWith (phaseAFallbackFromCtx ctx) subjectName tcoLeaf) branches
             fallthroughStmt = GoIr.GoExprStmt
                 (GoIr.GoCall
                     (GoIr.GoQualified "rt" "Unreachable")
@@ -19640,7 +19640,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
         -- leaf Can.Expr as source so wrap-param HM substitution can
         -- fire on the leaf return.
         _ -> let leafExpr = A.At A.one e
-             in [GoIr.GoReturn (coerceReturnExprT ctx (Just leafExpr) goRetType (exprToGo (phaseAFallback ctx) ctx leafExpr))]
+             in [GoIr.GoReturn (coerceReturnExprT ctx (Just leafExpr) goRetType (exprToGo (phaseAFallbackFromCtx ctx) ctx leafExpr))]
 
     -- Emit param-reassign + continue for a tail self-call.
     -- Tmps capture the OLD param values before reassignment so a
@@ -19659,7 +19659,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
     tcoJump args =
         let tmps = ["__tco_t" ++ show i | i <- [0 .. length args - 1]]
             decls = zipWith
-                (\t a -> GoIr.GoShortDecl t (exprToGo (phaseAFallback ctx) ctx a))
+                (\t a -> GoIr.GoShortDecl t (exprToGo (phaseAFallbackFromCtx ctx) ctx a))
                 tmps args
             -- v0.15.x hardening / Gap A1 — pass the underlying
             -- Can.Expr through to coerceArg so the structural-
@@ -19671,7 +19671,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
             coerceForTco mSrc ge ty
                 | take 5 ty == "func(" = ge
                 -- v0.17 PR-17b S4 batch 3: ctx threaded from caller.
-                | otherwise = coerceArg (phaseAFallback ctx) ctx mSrc ge ty
+                | otherwise = coerceArg (phaseAFallbackFromCtx ctx) ctx mSrc ge ty
             -- Build the (param, tmp, ty, src) tuple list and walk.
             zip4tco (a:as) (b:bs) (c:cs) (d:ds) =
                 (a, b, c, d) : zip4tco as bs cs ds
@@ -19696,7 +19696,7 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
     ifToTcoStmts branches elseExpr =
         foldr
             (\(c, b) acc ->
-                [GoIr.GoIf (toBoolExpr (exprToGo (phaseAFallback ctx) ctx c)) (tcoLeaf b) acc])
+                [GoIr.GoIf (toBoolExpr (exprToGo (phaseAFallbackFromCtx ctx) ctx c)) (tcoLeaf b) acc])
             (tcoLeaf elseExpr)
             branches
 
@@ -20804,12 +20804,12 @@ exprToMainStmtsTyped ctx0 types (A.At _ expr) =
         -- can't pin Setup_R[Msg] as wformCfg's Go-static type —
         -- coerceArg's parametric-record short-circuit doesn't
         -- fire, and the legacy nominal cast panics at runtime.
-        registerMainLetBindingType (phaseAFallback ctx) types def `seq`
-            (defToStmts (phaseAFallback ctx) ctx def ++ exprToMainStmtsTyped ctx types body)
+        registerMainLetBindingType (phaseAFallbackFromCtx ctx) types def `seq`
+            (defToStmts (phaseAFallbackFromCtx ctx) ctx def ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetRec defs body ->
-        foldr seq () (map (registerMainLetBindingType (phaseAFallback ctx) types) defs) `seq`
-            (concatMap (defToStmts (phaseAFallback ctx) ctx) defs ++ exprToMainStmtsTyped ctx types body)
+        foldr seq () (map (registerMainLetBindingType (phaseAFallbackFromCtx ctx) types) defs) `seq`
+            (concatMap (defToStmts (phaseAFallbackFromCtx ctx) ctx) defs ++ exprToMainStmtsTyped ctx types body)
 
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain ctx types valExpr)]
@@ -20847,7 +20847,7 @@ exprToMainStmtsTyped ctx0 types (A.At _ expr) =
 -- to fail at go build when called from `main`.
 -- v0.17 PR-17b S4 batch 3: takes ctx as first arg.
 exprToGoMain :: LC.LowerCtx -> Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
-exprToGoMain ctx _types e = exprToGo (phaseAFallback ctx) ctx e
+exprToGoMain ctx _types e = exprToGo (phaseAFallbackFromCtx ctx) ctx e
 
 
 -- | Legacy untyped main stmts (kept for reference)
@@ -20925,7 +20925,7 @@ exprToGoTyped ctx types retType origExpr@(A.At _ expr) = case expr of
                     -- rejects the un-typed lambda. Delegating routes
                     -- the call through the typed-aware path.
                     A.At _ (Can.VarTopLevel _ _) ->
-                        exprToGo (phaseAFallback ctx) ctx (A.At A.one (Can.Call func args))
+                        exprToGo (phaseAFallbackFromCtx ctx) ctx (A.At A.one (Can.Call func args))
                     _ -> GoIr.GoCall goFunc goArgs
             -- If the called function has a known return type and we need a primitive,
             -- assert the result. This handles: n * factorial(n-1) where factorial returns any.
@@ -20960,7 +20960,7 @@ exprToGoTyped ctx types retType origExpr@(A.At _ expr) = case expr of
                 -- untyped thunk (typical of the Db.* / Time.* helpers).
                 -- wrapTypedReturn already encapsulates the Coerce-vs-assert
                 -- choice for every parametric shape.
-                wrapTypedReturn (phaseAFallback ctx) ctx (Just origExpr) (solvedTypeToGo rt) callExpr
+                wrapTypedReturn (phaseAFallbackFromCtx ctx) ctx (Just origExpr) (solvedTypeToGo rt) callExpr
             _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped ctx types retType inner)
@@ -20968,7 +20968,7 @@ exprToGoTyped ctx types retType origExpr@(A.At _ expr) = case expr of
     Can.Lambda params body ->
         curryLambdaPat params (exprToGoTyped ctx types retType body)
 
-    _ -> exprToGo (phaseAFallback ctx) ctx (A.At A.one expr)
+    _ -> exprToGo (phaseAFallbackFromCtx ctx) ctx (A.At A.one expr)
 
 
 typedBinop :: LC.LowerCtx -> Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
@@ -22247,7 +22247,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
             _ -> Nothing
         lookupFnInputAt :: ModuleName.Canonical -> String -> Int -> Maybe String
         lookupFnInputAt home name idx =
-            let env = lookupCgEnvFromCtx (phaseAFallback ctx)
+            let env = lookupCgEnvFromCtx (phaseAFallbackFromCtx ctx)
                 qualKey = map (\c -> if c == '.' then '_' else c)
                     (ModuleName.toString home) ++ "_" ++ name
             in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
@@ -22261,7 +22261,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
         inferRetFromTopLevel :: Can.Expr -> Maybe String
         inferRetFromTopLevel fn = case fn of
             A.At _ (Can.VarTopLevel home name) ->
-                let env = lookupCgEnvFromCtx (phaseAFallback ctx)
+                let env = lookupCgEnvFromCtx (phaseAFallbackFromCtx ctx)
                     qualKey = map (\c -> if c == '.' then '_' else c)
                         (ModuleName.toString home) ++ "_" ++ name
                 in case Map.lookup qualKey (Rec._cg_funcRetType env) of
@@ -22312,7 +22312,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallback ctx) ctx body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "any" pats body'
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapT[" ++ elemGo ++ ", any]"))
@@ -22347,7 +22347,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallback ctx) ctx body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "bool" pats body'
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_filterT[" ++ elemGo ++ "]"))
@@ -22459,7 +22459,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                         let lambdaTypes = case elemSkyTy of
                                 Just t  -> patVarTypes pats [t]
                                 Nothing -> Map.empty
-                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallback ctx) ctx body)
+                            body' = withLambdaTypes lambdaTypes (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                             typedFn = curryLambdaPatTyped [elemGo] "bool" pats body'
                             -- TA helper expects fn as any; box the
                             -- typed func.
@@ -22630,7 +22630,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body)
                       | all isSimpleVarPattern pats ->
-                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (phaseAFallback ctx) ctx body)
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.Maybe_mapT[" ++ inner ++ ", any]"))
                             [typedFn, wrapMaybe inner goMaybe])
@@ -22648,7 +22648,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                     case args !! 0 of
                         A.At _ (Can.Lambda pats body)
                           | all isSimpleVarPattern pats ->
-                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (phaseAFallback ctx) ctx body)
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                             in Just (GoIr.GoCall
                                 (GoIr.GoIdent ("rt.Result_mapT[" ++ eGo ++ ", " ++ aGo ++ ", any]"))
                                 [typedFn, wrapResult eGo aGo goResult])
@@ -22671,7 +22671,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                         [goFn, goMaybe])
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
-                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (phaseAFallback ctx) ctx body)
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                             anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
                         in Just (GoIr.GoCall
                             (GoIr.GoQualified "rt" "Maybe_andThenAnyT")
@@ -22687,7 +22687,7 @@ kernelTypedCall ctx types modName funcName args goArgs =
                 Just (_, aGo) ->
                     case args !! 0 of
                         A.At _ (Can.Lambda pats body) ->
-                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (phaseAFallback ctx) ctx body)
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo (phaseAFallbackFromCtx ctx) ctx body)
                                 anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
                             in Just (GoIr.GoCall
                                 (GoIr.GoQualified "rt" "Result_andThenAnyT")
