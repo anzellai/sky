@@ -5321,8 +5321,15 @@ emitPhase config entryPath outDir srcHash loadedFfi
         -- the user sees the soundness gap at the source
         -- instead of a runtime `mustStringTyped` failure
         -- on the request hot path.
+        -- v0.17 Phase A iter 17b — thread a properly-populated
+        -- LowerCtx (via the existing `buildLowerCtxFromEmitCtx`
+        -- helper) so `authBoundaryDiagnostics`'s inner
+        -- `rewriteAliasHead` call reads the kernel-alias map
+        -- via `LC.lookupKernelAlias ctx` instead of the legacy
+        -- `ctxFromIORef ()` bridge.
+        authCtx = buildLowerCtxFromEmitCtx phaseACtx
         authDiagsEntry = authBoundaryDiagnostics
-                            entryPath typesWithDeps canMod
+                            authCtx entryPath typesWithDeps canMod
         authDiagsDeps =
             [ d
             | (modName, depMod) <- validDeps
@@ -5334,7 +5341,7 @@ emitPhase config entryPath outDir srcHash loadedFfi
             , let depTypesMap = case lookup modName depSolved of
                     Just ts -> Solve.SolvedTypes ts Map.empty Map.empty Map.empty Nothing Map.empty
                     Nothing -> Solve.emptySolvedTypes
-            , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
+            , d <- authBoundaryDiagnostics authCtx entryPath depTypesMap depMod
             ]
         authDiags = authDiagsEntry ++ authDiagsDeps
     if not (null authDiags)
@@ -13377,19 +13384,24 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
     return (GoIr.GoRaw rendered)
 
 
--- | v0.15.x P6 (Phase 2) — read the current scope-state ctx from
--- the IORef.  Phase 2 callers that don't yet have an explicit
--- `ctx` parameter use this to opt in to ctx threading without
--- changing their call-graph parents.  Phase 3 (P7) deletes the
--- IORef; this helper goes with it.
---
--- NOINLINE so GHC doesn't memoise the snapshot across call sites:
--- a fresh read on every invocation matches the implicit-IO
--- semantics the rest of the codegen helpers (lookupLambdaType etc.)
--- already rely on.
-{-# NOINLINE ctxFromIORef #-}
-ctxFromIORef :: () -> LC.LowerCtx
-ctxFromIORef () = unsafePerformIO (readIORef scopeStateRef)
+-- v0.17 Phase A iter 17 — `ctxFromIORef` was the IORef-bridge
+-- helper `:: () -> LC.LowerCtx` that read `scopeStateRef` via
+-- `unsafePerformIO (readIORef ...)` to surface a snapshot
+-- to legacy callers without explicit ctx threading.  After
+-- iters 7-17b drained every `ctxFromIORef ()` call site
+-- (the last was the `lookupKernelAlias` bridge inside
+-- `rewriteAliasHead`'s caller chain), the helper has zero
+-- consumers and is deleted.  All codegen IORef hops to
+-- `scopeStateRef` for ctx-derived state now route via a
+-- properly-threaded `LC.LowerCtx`.  This closes the
+-- `ctxFromIORef`-bridge half of CLAUDE.md §0.3 rule 1's
+-- locked criterion #3 wording for site `:13391-13392`.
+-- The remaining `scopeStateRef` bracket-scope readers
+-- (`phaseAFallback`, `phaseAFallbackFromCtx`,
+-- `lookupLambdaType`, `lookupLambdaGoType`,
+-- `lookupLambdaGoStr`, `withScopedLambdaGoStrings`) carry
+-- the contract+spec gate that satisfies the second clause
+-- (see `Sky.Build.ScopeStateRefAuditSpec`).
 
 
 -- | v0.17 Phase A iter 6d — read-through fallback synthesising a REAL
@@ -14002,35 +14014,28 @@ parseTargetArgs s =
     splitTopLevelArgs d acc (c:cs)       = splitTopLevelArgs d (c:acc) cs
 
 
--- | v0.14.x Stage 4: look up a Sky-source (home, name) in the
--- kernel-alias registry.  Returns the matching (kernelMod, kernelName)
--- pair so codegen can route the call through the typed kernel dispatch
--- instead of treating the Sky-source binding as a regular user function.
---
--- v0.17 iter 17 (task #654) — read path migrated from the dedicated
--- 'globalKernelAlias' IORef (now deleted) to the consolidated
--- 'scopeStateRef' bridge.  'continueCompile' installs the
--- 'kernelAliasMap' onto 'scopeStateRef' immediately after the
--- solve-phase destructures it from 'SolveOutputs', so all reads on
--- this path now route through one IORef instead of two.  Direct
--- 'LowerCtx' callers (e.g. 'exprToGo' 'VarTopLevel' arm) read off
--- the threaded ctx via 'LC.lookupKernelAlias ctx home name' — the
--- only impure read inside the GoExpr renderer was at that site
--- and is now pure.
-{-# NOINLINE lookupKernelAlias #-}
-lookupKernelAlias :: ModuleName.Canonical -> String -> Maybe (String, String)
-lookupKernelAlias home name =
-    LC.lookupKernelAlias (ctxFromIORef ()) home name
+-- v0.17 Phase A iter 17b — `lookupKernelAlias` was the legacy
+-- IORef-bridge form `:: ModuleName.Canonical -> String -> Maybe
+-- (String, String)` that read `ctxFromIORef ()` to consult the
+-- kernel-alias registry.  Both its callers (`rewriteAliasHead` +
+-- `walkAuthCalls.walkExpr`) now thread `LC.LowerCtx` explicitly
+-- and call `LC.lookupKernelAlias ctx home name` directly.
+-- Deleted as part of the criterion #3 IORef DELETE close.
 
 
 -- | v0.14.x Stage 4: if `func` is a `Can.VarTopLevel` that resolves to
 -- a kernel alias, rewrite the head to the corresponding `Can.VarKernel`
 -- so the existing kernel-dispatch arms in `Can.Call` codegen take over
 -- (typed-kernel routing, literal-arg fast paths, etc.).
-rewriteAliasHead :: Can.Expr -> Can.Expr
-rewriteAliasHead expr@(A.At r e) = case e of
+-- v0.17 Phase A iter 17b — takes 'LC.LowerCtx' to thread the
+-- kernel-alias map purely instead of reading via the legacy
+-- 'lookupKernelAlias' → 'ctxFromIORef ()' bridge.  Both callers
+-- (exprToGo's Can.Call arm + walkAuthCalls.walkExpr) now pass
+-- a properly-populated ctx.
+rewriteAliasHead :: LC.LowerCtx -> Can.Expr -> Can.Expr
+rewriteAliasHead ctx expr@(A.At r e) = case e of
     Can.VarTopLevel home name
-        | Just (kMod, kFn) <- lookupKernelAlias home name ->
+        | Just (kMod, kFn) <- LC.lookupKernelAlias ctx home name ->
             A.At r (Can.VarKernel kMod kFn)
     -- v0.17 iter 84 — eta-expanded point-free kernel-alias body.
     --
@@ -14200,7 +14205,10 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
         -- aliased to a kernel via `name = Ffi.kernel "K_n"`, rewrite the
         -- head to `Can.VarKernel "K" "n"` so the kernel-dispatch arms
         -- below take over.  No-op when not an alias.
-        let func = rewriteAliasHead rawFunc in
+        -- v0.17 Phase A iter 17b — thread `ctx` so `rewriteAliasHead`
+        -- reads the kernel-alias map via `LC.lookupKernelAlias` instead
+        -- of the legacy `ctxFromIORef ()` bridge.
+        let func = rewriteAliasHead ctx rawFunc in
         case A.toValue func of
             -- v0.12.x typed-codegen Phase 3: route List.* kernels with
             -- typed-T variants when the call-site list arg's element
@@ -21672,12 +21680,18 @@ argSourceCarriesAny srcAnnots (A.At _ e) = case e of
 -- the full call expression so it can re-extract args + region for
 -- the diagnostic. Tail-recursive accumulator pattern keeps the walk
 -- stack-safe on large modules (Std.Ui / skyshop scale).
+-- v0.17 Phase A iter 17b — takes 'LC.LowerCtx' so the inner
+-- 'rewriteAliasHead' call reads the kernel-alias map via
+-- 'LC.lookupKernelAlias' instead of the legacy 'ctxFromIORef ()'
+-- bridge.  The audit walker is post-canonicalisation single-reader
+-- monotonic — same semantics, pure threaded form.
 walkAuthCalls
-    :: (A.Region -> String -> [Can.Expr] -> a -> a)
+    :: LC.LowerCtx
+    -> (A.Region -> String -> [Can.Expr] -> a -> a)
     -> a
     -> Can.Module
     -> a
-walkAuthCalls visit z0 m =
+walkAuthCalls ctx visit z0 m =
     foldDecls (\acc d -> foldDef visit acc d) z0 (Can._decls m)
   where
     foldDecls f acc decls = case decls of
@@ -21700,7 +21714,7 @@ walkAuthCalls visit z0 m =
             -- become at lowering time. The kernel-alias registry is
             -- populated during canonicalisation so reading it here
             -- (BEFORE codegen) is safe.
-            let A.At _ funcV = rewriteAliasHead funcE
+            let A.At _ funcV = rewriteAliasHead ctx funcE
                 acc1 = case funcV of
                     Can.VarKernel "Auth" name ->
                         vis r name args acc
@@ -21753,13 +21767,18 @@ walkAuthCalls visit z0 m =
 -- gate stops the program from compiling so the user sees the
 -- soundness gap at the source instead of as a runtime error in a
 -- production audit log.
+-- v0.17 Phase A iter 17b — takes 'LC.LowerCtx' so the inner
+-- 'walkAuthCalls' threads it down to 'rewriteAliasHead', closing
+-- the last `ctxFromIORef ()` bridge call site outside the
+-- 'ctxFromIORef' definition itself.
 authBoundaryDiagnostics
-    :: FilePath
+    :: LC.LowerCtx
+    -> FilePath
     -> Solve.SolvedTypes
     -> Can.Module
     -> [Diag.Diagnostic]
-authBoundaryDiagnostics filePath solved canMod =
-    reverse $ walkAuthCalls visit [] canMod
+authBoundaryDiagnostics ctx filePath solved canMod =
+    reverse $ walkAuthCalls ctx visit [] canMod
   where
     srcAnnots = collectSourceAnnots canMod
     -- An arg slot is "bad" iff EITHER its HM-inferred type doesn't
