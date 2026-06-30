@@ -9355,10 +9355,17 @@ generateDef phaseACtx home def0 solvedTypes =
             -- Mirror of dep-side depBodyCtx.
             entryBodyCtx = LC.withEnclosingTypeParams entryTypeParams
                               (buildLowerCtxFromEmitCtx phaseACtx)
+            -- v0.17 Phase A iter 8 — symmetric drain to iter 7 at the
+            -- entry-module emission path.  Like the dep-body site at
+            -- :6888, the typedBody bracket below writes entryBodyCtx
+            -- to scopeStateRef immediately before forcing lowerFnBody,
+            -- so the IORef hop in phaseAFallback is self-referential
+            -- here too.  Use phaseAFallbackFromCtx for the pure read.
+            -- Design: docs/v0.17-roadmap/phase-A-iter-7-8-design.md
             lowerFnBody e =
                 if goRetType /= "any"
-                    then exprToGoExpectGo (phaseAFallback entryBodyCtx) entryBodyCtx goRetType e
-                    else exprToGo (phaseAFallback entryBodyCtx) entryBodyCtx e
+                    then exprToGoExpectGo (phaseAFallbackFromCtx entryBodyCtx) entryBodyCtx goRetType e
+                    else exprToGo (phaseAFallbackFromCtx entryBodyCtx) entryBodyCtx e
             -- `typeIIFE` runs on the GoExpr STRUCTURE — before
             -- `withScopedLambdaTypes` renders it to a String — so it
             -- can still see a `GoBlock` and convert it to a typed
