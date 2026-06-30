@@ -415,9 +415,43 @@ This document does NOT use any of:
 
 ---
 
-## Iter 9+ preview (next sessions, not designed here)
+## Iter 9 — extended drain inside typeIIFE / wrapTypedReturn (shipped)
 
-- **Iter 9**: drain `phaseAFallback ctx` at 2-3 more high-leverage
+### Sites drained
+
+- Compile.hs:10145 / :10150 — `goZeroValue (phaseAFallbackFromCtx ctx)`
+  inside `typeIIFE`
+- Compile.hs:10161 / :10162 — `wrapTypedReturn (phaseAFallbackFromCtx ctx)` from `typeIIFE`'s "canType=False" + `_` fallback arms
+- Compile.hs:10210 / :10214 — `goZeroValue` + `wrapTypedReturn` inside `coerceReturnExprT`
+- Compile.hs:10626 — `goExprGoType (phaseAFallbackFromCtx ctx)` INSIDE `wrapTypedReturn` (the "third reader" the iter-9 grill agent flagged; the surface comment claimed to drain it but the inner IORef hop remained until this fix)
+
+### Safety lemma (verified by grill)
+
+The original design doc claimed "typeIIFE has 3 callers". The grill agent corrected this: **typeIIFE has 8 call sites** — `:2039` (caseToGoSealedIface), `:6911` (lowerDepBody typedBody bracket), `:9381` (lowerFnBody typedBody bracket), `:18503` (ifToGo), `:18640` (letToGo), `:19397` (caseToGoLegacy), plus recursive at `:10209`, plus the definition itself.
+
+The actual safety lemma the grill validated: **every render-forced reachability of typeIIFE / coerceReturnExprT / wrapTypedReturn goes through a `scopeStateRef := ctx; force; restore` bracket — verified at Compile.hs:6908-6913, 9378-9383, 13348-13352, 13363-13367**. The 8 typeIIFE call sites are all transitively guarded by one of these brackets.
+
+Critically: iter 9 is **strictly more deterministic** than the legacy IORef hop. Even when nested calls inside typeIIFE OVERWRITE scopeStateRef during typeIIFE's execution, `phaseAFallbackFromCtx ctx` reads the THREADED ctx (the invariant), not the IORef (which may carry a nested-overwrite transient). This is iter 9's actual safety advantage.
+
+### N-strikes audit (iter 9)
+
+Lever family = "drain phaseAFallback caller via phaseAFallbackFromCtx where typedBody bracket holds":
+- iter 7 — site 6911 (depBodyCtx). LANDED.
+- iter 8 — site 9381 (entryBodyCtx). LANDED.
+- iter 9 — 7 sites total (6 in typeIIFE/coerceReturnExprT + 1 in wrapTypedReturn).
+
+Strikes = 0 reverts. iter 7 + 8 SUSTAINED for ~2h before iter 9 retry. Lever earned its first batch-extension via grill validation.
+
+### Grill-mandated revisions accepted
+
+The grill agent returned REVISE with 3 mandatory revisions:
+1. **Document the actual 8-caller safety lemma** — done above.
+2. **Address the third reader at :10626** — drained in this iter (the same commit).
+3. **Add example-sweep verification gate covering the 4 newly-covered paths** (case-of, if-then-else, let-in, sealed-iface dispatch) — full `scripts/example-sweep.sh` exercises examples 19/26/13 which cover all 4. No additional gates beyond the full sweep are needed.
+
+## Iter 10+ preview (next sessions, not designed here)
+
+- **Iter 10**: drain `phaseAFallback ctx` at remaining high-leverage
   sites (whichever surface the T1-leak class — see
   `Sky.Build.NoT1LeakInNotesApp` for the canonical reproducer).
 - **Iter 10**: typedBody bracket IORef-write removal (once

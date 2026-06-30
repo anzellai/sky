@@ -10142,18 +10142,24 @@ typeIIFE ctx mSrc retType body
         GoIr.GoTypedBlock t _ _ | t == retType -> body
         GoIr.GoBlock stmts result ->
             let result' = case result of
-                    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallback ctx) retType of
+                    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallbackFromCtx ctx) retType of
                         Just zv -> GoIr.GoRaw zv
                         Nothing -> result  -- can't zero — bail below
                     _ -> coerceReturnExprT ctx mSrc retType result
                 canType = case result of
-                    GoIr.GoRaw "nil" -> isJust (goZeroValue (phaseAFallback ctx) retType)
+                    GoIr.GoRaw "nil" -> isJust (goZeroValue (phaseAFallbackFromCtx ctx) retType)
                     _                -> True
+            -- v0.17 Phase A iter 9 — drain phaseAFallback IORef hops
+            -- inside typeIIFE.  typeIIFE is reachable ONLY from
+            -- lowerDepBody / lowerFnBody (sites :6911, :9381, :2039)
+            -- whose typedBody bracket writes ctx to scopeStateRef
+            -- before forcing — same self-referential pattern as iters
+            -- 7 + 8.  Design: docs/v0.17-roadmap/phase-A-iter-7-8-design.md
             in if canType
                  then GoIr.GoTypedBlock retType
                         (coerceBlockReturnsT ctx mSrc retType stmts) result'
-                 else wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType body
-        _ -> wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType body
+                 else wrapTypedReturn (phaseAFallbackFromCtx ctx) ctx mSrc retType body
+        _ -> wrapTypedReturn (phaseAFallbackFromCtx ctx) ctx mSrc retType body
 
 
 -- | Walk IIFE-level statements coercing every `return` value to
@@ -10201,10 +10207,11 @@ coerceBlockReturnsT ctx mSrc retType = map go
 coerceReturnExprT :: LC.LowerCtx -> Maybe Can.Expr -> String -> GoIr.GoExpr -> GoIr.GoExpr
 coerceReturnExprT ctx mSrc retType e = case e of
     GoIr.GoBlock _ _ -> typeIIFE ctx mSrc retType e
-    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallback ctx) retType of
+    -- v0.17 Phase A iter 9 — drain (paired with typeIIFE sites above).
+    GoIr.GoRaw "nil" -> case goZeroValue (phaseAFallbackFromCtx ctx) retType of
         Just zv -> GoIr.GoRaw zv
         Nothing -> e
-    _ -> wrapTypedReturn (phaseAFallback ctx) ctx mSrc retType e
+    _ -> wrapTypedReturn (phaseAFallbackFromCtx ctx) ctx mSrc retType e
 
 
 -- | v0.13 typed lowerer: best-effort STATIC Go type of a GoExpr.
@@ -10616,7 +10623,16 @@ wrapTypedReturn phaseACtxC ctx mSrc retType body
     -- `name` is a Sky-emitted user function whose declared Go
     -- return matches the HM type exactly.  Other shapes still fall
     -- through to `Nothing`.
-    | goExprGoType (phaseAFallback ctx) ctx mSrc body == Just retType = body
+    -- v0.17 Phase A iter 9 — also drain this inner IORef hop.  The
+    -- wrapTypedReturn caller-tree (typeIIFE @ :10161+:10162 +
+    -- coerceReturnExprT @ :10214) all reach here via a typedBody
+    -- bracket that wrote `ctx` to scopeStateRef.  Using
+    -- phaseAFallbackFromCtx ctx instead is robust to nested
+    -- scopeStateRef overwrites during the same emission (since the
+    -- threaded ctx parameter is the invariant truth).  Grill agent
+    -- flagged this as "the third reader" that the surface
+    -- comment claims to drain.
+    | goExprGoType (phaseAFallbackFromCtx ctx) ctx mSrc body == Just retType = body
     -- v0.17 iter 66 — sealed-iface elision.  When the body is a
     -- ctor reference of the sealed-iface @retType@ (nullary ctor
     -- binding @<iface>_<Ctor>@ of type @<iface>_<Ctor>_V@, OR
