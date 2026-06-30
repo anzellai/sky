@@ -14732,7 +14732,7 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                         _ -> False
                 _ -> False
             targetTyped =
-                (isRecordAlias && operandIsStaticallyTyped target)
+                (isRecordAlias && operandIsStaticallyTyped ctx target)
                 || isRecordAliasViaGoStr
         in if targetTyped
               then GoIr.GoSelector (exprToGo phaseACtxA ctx target) (capitalise_ field)
@@ -18369,12 +18369,12 @@ binopToGo ctx op left right =
         leftTy   = inferExprType solved left
         rightTy  = inferExprType solved right
         bothAre  prim = leftTy == Just prim && rightTy == Just prim
-                        && operandIsStaticallyTyped left
-                        && operandIsStaticallyTyped right
+                        && operandIsStaticallyTyped ctx left
+                        && operandIsStaticallyTyped ctx right
         anyOf    prims = case (leftTy, rightTy) of
             (Just l, Just r) | l == r && any (l ==) prims
-                             , operandIsStaticallyTyped left
-                             , operandIsStaticallyTyped right
+                             , operandIsStaticallyTyped ctx left
+                             , operandIsStaticallyTyped ctx right
                              -> True
             _ -> False
         intTy    = ConstrainExpr.intType
@@ -18563,12 +18563,12 @@ letToGo phaseACtx outerCtx mExpectedGo def body =
             Can.Def (A.At _ name) [] valExpr
                 | name /= "_"
                 , Just t <- inferExprType solved valExpr
-                , operandIsStaticallyTyped valExpr
+                , operandIsStaticallyTyped outerCtx valExpr
                 , isTypedPrimitive t ->
                     Map.singleton name t
             Can.TypedDef (A.At _ name) _ [] valExpr _
                 | Just t <- inferExprType solved valExpr
-                , operandIsStaticallyTyped valExpr
+                , operandIsStaticallyTyped outerCtx valExpr
                 , isTypedPrimitive t ->
                     Map.singleton name t
             -- v0.13 Stage 1 — annotated let-bound function: register
@@ -20837,9 +20837,13 @@ exprToGoMain :: LC.LowerCtx -> Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
 exprToGoMain ctx _types e = exprToGo (phaseAFallbackFromCtx ctx) ctx e
 
 
--- | Legacy untyped main stmts (kept for reference)
-exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
-exprToMainStmts = exprToMainStmtsTyped (ctxFromIORef ()) Solve.emptySolvedTypes
+-- v0.17 Phase A iter 16 — `exprToMainStmts` was a legacy untyped
+-- wrapper "kept for reference".  Exhaustive grep across src/+test/
+-- +app/ confirms zero call sites (the only matches were docstring
+-- cross-references in `LowerCtx.hs`).  Deleted as part of the
+-- criterion #3 IORef DELETE close — removing a dead reader of
+-- `scopeStateRef` (via `ctxFromIORef ()`) is strictly safer than
+-- draining it.
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -20850,9 +20854,11 @@ exprToMainStmts = exprToMainStmtsTyped (ctxFromIORef ()) Solve.emptySolvedTypes
 -- TYPED EXPRESSION CODEGEN
 -- ═══════════════════════════════════════════════════════════
 
--- | Generate Go expression in typed context with known return type.
-exprToGoTypedWithRet :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
-exprToGoTypedWithRet types retType expr = exprToGoTyped (ctxFromIORef ()) types retType expr
+-- v0.17 Phase A iter 16 — `exprToGoTypedWithRet` was a legacy wrapper
+-- that supplied `(ctxFromIORef ())` to `exprToGoTyped`'s first arg.
+-- Exhaustive grep across src/+test/+app/ confirms zero call sites.
+-- All internal `exprToGoTyped` callers thread `ctx` directly.
+-- Deleted as part of the criterion #3 IORef DELETE close.
 
 
 -- | Generate Go expression in typed context — uses direct Go operators
@@ -21888,8 +21894,21 @@ goTypeStrToSkyType s = case s of
 -- (e.g. `rt.Crypto_sha256`) return Go `any` even when HM says the
 -- result is String, and forcing a Go-native binop on those would
 -- produce `mismatched types string and any`.
-operandIsStaticallyTyped :: Can.Expr -> Bool
-operandIsStaticallyTyped (A.At _ e) = case e of
+-- v0.17 Phase A iter 16 — widened to thread `LC.LowerCtx` through
+-- the lambda-type and lambda-Go-type lookups, draining the two
+-- `phaseAFallback (ctxFromIORef ())` IORef hops that previously
+-- read `scopeStateRef` at every recursive descent.  The 3 caller
+-- sites (`coerceArg` Access arm @ :14735, `binopToGo` @ :18372/77,
+-- `letToGo` @ :18566/71) all already carry a `LowerCtx`-shaped
+-- value in scope; no cascading widening was required.  The
+-- bracket-scope semantics of `lookupLambdaType` /
+-- `lookupLambdaGoType` are preserved — those helpers still merge
+-- the live `scopeStateRef` push/pop state with the threaded ctx
+-- (criterion #3 contract: bracket-scope readers carry a
+-- documented single-writer / single-reader monotonic invariant —
+-- iter 17 ships the spec gate).
+operandIsStaticallyTyped :: LC.LowerCtx -> Can.Expr -> Bool
+operandIsStaticallyTyped ctx (A.At _ e) = case e of
     Can.Int _    -> True
     Can.Float _  -> True
     Can.Str _    -> True
@@ -21901,23 +21920,23 @@ operandIsStaticallyTyped (A.At _ e) = case e of
         -- adds the structural `lookupLambdaGoType` fallback so
         -- `lowerTypedLambda`-registered params (no longer in the
         -- T.Type ledger) keep gating correctly.
-        case lookupLambdaType (ctxFromIORef ()) name of
+        case lookupLambdaType ctx name of
             Just t  ->
                 let goTy = solvedTypeToGo t
                 in goTy /= "any" && not (isGenericTypeParam goTy)
-            Nothing -> case lookupLambdaGoType (ctxFromIORef ()) name of
+            Nothing -> case lookupLambdaGoType ctx name of
                 Just gt ->
                     let goTy = GoType.renderGoType GoType.defaultRenderEnv gt
                     in goTy /= "any" && not (isGenericTypeParam goTy)
                 Nothing -> False
-    Can.Negate inner -> operandIsStaticallyTyped inner
+    Can.Negate inner -> operandIsStaticallyTyped ctx inner
     -- Record field access on a statically-typed target: the field
     -- access emits `target.Field` (typed) AND the field's HM type
     -- is the field's declared type in the record alias.  Both
     -- conditions are gated by the same `operandIsStaticallyTyped`
     -- check recursively + the `isRecordAlias` check in the Can.
     -- Access emit branch.
-    Can.Access target _ -> operandIsStaticallyTyped target
+    Can.Access target _ -> operandIsStaticallyTyped ctx target
     _            -> False
 
 
