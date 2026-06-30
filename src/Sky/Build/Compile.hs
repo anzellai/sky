@@ -7738,7 +7738,7 @@ generateGoMulti phaseACtx consoleNeeded canMod srcMod config solvedTypes depDecl
         unionDecls = generateUnionTypes phaseACtx canMod
         aliasDecls = generateAliasTypes phaseACtx canMod
         decls = generateDecls phaseACtx canMod solvedTypes
-        mainDecl = generateMainFunc canMod srcMod solvedTypes
+        mainDecl = generateMainFunc phaseACtx canMod srcMod solvedTypes
         -- v0.13 E: emit `type Anon_R_<hash> = struct { … }` decls
         -- for every anon-record shape that `synthAnonRecordName`
         -- produced during this compilation. Wired AFTER `decls`
@@ -8023,7 +8023,7 @@ generateGo phaseACtx consoleNeeded canMod srcMod config solvedTypes =
         unionDecls = generateUnionTypes phaseACtx canMod
         aliasDecls = generateAliasTypes phaseACtx canMod
         decls = generateDecls phaseACtx canMod solvedTypes
-        mainDecl = generateMainFunc canMod srcMod solvedTypes
+        mainDecl = generateMainFunc phaseACtx canMod srcMod solvedTypes
         -- v0.13 E: see generateGoMulti for the rationale.
         anonRecordDecls = unsafePerformIO generateAnonRecordDecls
         pkg = GoIr.GoPackage
@@ -20638,9 +20638,22 @@ unionGoTypeName modName typeName =
 -- MAIN FUNCTION
 -- ═══════════════════════════════════════════════════════════
 
--- | Generate the main() function (uses solved types for typed codegen)
-generateMainFunc :: Can.Module -> Src.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateMainFunc canMod srcMod solvedTypes =
+-- | Generate the main() function (uses solved types for typed codegen).
+--
+-- v0.17 Phase A iter 17 — takes 'EmitCompileCtx' so the inner
+-- 'exprToMainStmtsTyped' call threads a properly-populated
+-- 'LC.LowerCtx' built via 'buildLowerCtxFromEmitCtx' instead of
+-- reading 'scopeStateRef' via the legacy 'ctxFromIORef ()' bridge.
+-- 'buildLowerCtxFromEmitCtx' is the same production-verified helper
+-- already used by 'generateDeclsForDep' (:6885) + 'generateDef'
+-- (:9357), populating the 9 fields the main-body emission path
+-- consults (solved / aliases / fieldIdx / unionNames / unionDetails
+-- / kernelAlias / ffiTypedWrapperNames / ffiTypedWrapperParams /
+-- cgEnv).  Iter 17a's empirical failure (FFI wrapper loss on 4/26
+-- examples) confirmed the wrapper-name + wrapper-params fields are
+-- load-bearing here; the helper installs both.
+generateMainFunc :: EmitCompileCtx -> Can.Module -> Src.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateMainFunc phaseACtx canMod srcMod solvedTypes =
     case findMain canMod of
         Nothing ->
             [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -20656,7 +20669,18 @@ generateMainFunc canMod srcMod solvedTypes =
         Just def ->
             let body = defBody def
                 hasTask = any isTaskImport (Src._imports srcMod)
-                stmts = exprToMainStmtsTyped (ctxFromIORef ()) solvedTypes body
+                -- v0.17 Phase A iter 17 — drain `ctxFromIORef ()` via
+                -- the production-verified `buildLowerCtxFromEmitCtx`
+                -- helper.  Iter 17a tried a hand-rolled
+                -- `LC.withCgEnv (lookupCgEnvFromCtx phaseACtx)
+                --   (LC.emptyLowerCtx home)` and lost the FFI typed
+                -- wrapper fields — 4/26 examples regressed with
+                -- `undefined: rt.Go_*` symbols.  The existing helper
+                -- installs all 9 reachable fields from EmitCompileCtx
+                -- and is already production-consumed at :6885 +
+                -- :9357 with zero regression.
+                mainCtx = buildLowerCtxFromEmitCtx phaseACtx
+                stmts = exprToMainStmtsTyped mainCtx solvedTypes body
                 wrappedStmts = if hasTask
                     then stmts  -- TODO: wrap in rt.RunMainTask
                     else stmts
