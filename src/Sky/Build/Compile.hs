@@ -13585,7 +13585,9 @@ snapshotCallerCtx () threadedCtx = unsafePerformIO $ do
 -- v0.17 PR-17b S4 batch 3: takes ctx as first arg; callers thread
 -- their own ctx instead of reading the legacy IORef.
 exprToGoExpect :: LC.LowerCtx -> T.Type -> Can.Expr -> GoIr.GoExpr
-exprToGoExpect ctx expectedTy e = exprToGoExpectGo (phaseAFallback ctx) ctx (solvedTypeToGo expectedTy) e
+-- v0.17 Phase A iter 10 — drain via phaseAFallbackFromCtx (ctx is
+-- bracket-installed; agent-verified SAFE batch).
+exprToGoExpect ctx expectedTy e = exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx (solvedTypeToGo expectedTy) e
 
 
 -- | Like `exprToGoExpect` but takes the expected GO TYPE STRING
@@ -13774,7 +13776,8 @@ exprToGoExpectGo phaseACtxB ctx goRendering e@(A.At _ expr)
             -- source so the wrapTypedReturn fallback can consult HM via
             -- Solve.lookupSolvedRegionScoped at e's region for accurate
             -- wrap-param substitution.
-            coerceReturnExprT ctx (Just e) goRendering (exprToGo (phaseAFallback ctx) ctx e)
+            -- v0.17 Phase A iter 10 — drain (paired with the exprToGoExpect drain above).
+            coerceReturnExprT ctx (Just e) goRendering (exprToGo (phaseAFallbackFromCtx ctx) ctx e)
 
 
 -- | v0.15 Stage C helper — emit a `Can.Lambda` as a single typed
@@ -14824,7 +14827,8 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                         -- class at the RecordUpdate emission path.
                         in coerceToFieldTypeMSrc ctx (Just fexpr)
                                 fieldGoTy
-                                (exprToGoExpectGo (phaseAFallback ctx) ctx fieldGoTy fexpr)
+                                -- v0.17 Phase A iter 10 — SAFE batch (RecordUpdate field-lower).
+                                (exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx fieldGoTy fexpr)
                     initStmt = GoIr.GoShortDecl "_u" baseGoExpr
                     assignStmts =
                         [ GoIr.GoAssign ("_u." ++ capitalise_ fname)
@@ -14902,7 +14906,8 @@ exprToGo phaseACtxA ctx (A.At _ expr) = case expr of
                         -- class at the Record literal emission path.
                         in coerceToFieldTypeMSrc ctx (Just fe)
                                 fieldGoTy
-                                (exprToGoExpectGo (phaseAFallback ctx) ctx fieldGoTy fe)
+                                -- v0.17 Phase A iter 10 — SAFE batch (Record literal field-lower).
+                                (exprToGoExpectGo (phaseAFallbackFromCtx ctx) ctx fieldGoTy fe)
                 in GoIr.GoStructLit structName
                     [ (capitalise_ fn, lowerField fn fe)
                     | (fn, fe) <- entries
@@ -15710,15 +15715,17 @@ typedKernelArgCoerce = Map.fromList
 -- "AsString" is special-cased as `fmt.Sprintf("%v", arg)` to match
 -- the existing convention; AsInt / AsFloat / AsBool are direct
 -- rt.* calls. Literals pass through as-is.
+-- v0.17 Phase A iter 10 — drain via phaseAFallbackFromCtx for all 3
+-- exprToGo calls in the coerceTypedKernelArg trio.  Agent-verified SAFE.
 coerceTypedKernelArg :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
 coerceTypedKernelArg ctx coercer arg
-    | isPrimLiteralArg arg = exprToGo (phaseAFallback ctx) ctx arg
+    | isPrimLiteralArg arg = exprToGo (phaseAFallbackFromCtx ctx) ctx arg
     -- "Pass" erases the arg's concrete type via `any(arg)` so Go
     -- generic inference picks V=any uniformly (e.g. Dict_insertT[V]
     -- where the dict side came in as map[string]any via AsDict).
-    | coercer == "Pass" = GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallback ctx) ctx arg]
+    | coercer == "Pass" = GoIr.GoCall (GoIr.GoIdent "any") [exprToGo (phaseAFallbackFromCtx ctx) ctx arg]
     | otherwise =
-        GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo (phaseAFallback ctx) ctx arg]
+        GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo (phaseAFallbackFromCtx ctx) ctx arg]
 
 
 typedKernelLiterals :: Set.Set (String, String)
