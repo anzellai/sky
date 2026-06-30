@@ -6883,10 +6883,17 @@ generateDeclsForDep phaseACtx reachableProg canMod modPrefix =
               depBodyCtx = LC.withCurrentDepModule (Just depModuleName)
                          $ LC.withEnclosingTypeParams depTypeParams
                                 (buildLowerCtxFromEmitCtx (withCurrentModuleInCtx (Just depModuleName) phaseACtx))
+              -- v0.17 Phase A iter 7 — drain the phaseAFallback IORef
+              -- hop at this dep-body emission site.  The typedBody
+              -- bracket below writes depBodyCtx to scopeStateRef
+              -- immediately before forcing lowerDepBody, so the
+              -- IORef hop is self-referential at this site;
+              -- phaseAFallbackFromCtx reads depBodyCtx directly
+              -- instead.  Design: docs/v0.17-roadmap/phase-A-iter-7-8-design.md
               lowerDepBody e =
                   if depRetType /= "any"
-                      then exprToGoExpectGo (phaseAFallback depBodyCtx) depBodyCtx depRetType e
-                      else exprToGo (phaseAFallback depBodyCtx) depBodyCtx e
+                      then exprToGoExpectGo (phaseAFallbackFromCtx depBodyCtx) depBodyCtx depRetType e
+                      else exprToGo (phaseAFallbackFromCtx depBodyCtx) depBodyCtx e
               -- `typeIIFE` runs on the GoExpr STRUCTURE — before
               -- `withScopedLambdaTypes` renders it to a String — so it
               -- can still see a `GoBlock` and convert it to a typed
@@ -13394,6 +13401,63 @@ phaseAFallback lc = unsafePerformIO $ do
     anonRecsSnap  <- AnonRec.readAnonRecords
     let home = LC._lc_module lc
         cgEnv = case LC.lookupCgEnv scopeSnap of
+            Just env -> env
+            Nothing  -> emptyCgEnv
+    return $! buildEmitCompileCtx
+        home
+        cgEnv
+        (LC._lc_solved lc)
+        (LC._lc_kernelAlias lc)
+        (LC._lc_unionDetails lc)
+        anonRecsSnap
+        (LC._lc_aliases lc)
+        (LC._lc_fieldIdx lc)
+        (LC._lc_unionNames lc)
+        (LC._lc_ffiTypedWrapperNames lc)
+        (LC._lc_ffiTypedWrapperParams lc)
+
+
+-- | v0.17 Phase A iter 7 — pure-cgEnv variant of 'phaseAFallback'
+-- for sites where the threaded 'LC.LowerCtx' is the authoritative
+-- cgEnv source.
+--
+-- Compared to 'phaseAFallback', this function does NOT read
+-- 'scopeStateRef' at all.  The cgEnv channel resolves through
+-- 'LC.lookupCgEnv lc' instead, which is the same value the IORef
+-- carries at the call sites we drain (the typedBody bracket at
+-- :6901-6906 / :9366 writes 'lc' to 'scopeStateRef' immediately
+-- before forcing the body lowering, so the IORef hop in
+-- 'phaseAFallback' is structurally self-referential at those
+-- sites).
+--
+-- The 'globalAnonRecords' IORef IS still read here — that IORef is
+-- sanctioned per the iter-0 contract
+-- (`docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`):
+-- it's bounded + monotonic + reset-per-compile + machine-verified.
+-- Criterion #3 mandates deletion of @scopeStateRef@ + @globalCgEnv@
+-- only.
+--
+-- Force-time stability check: thunks that close over the returned
+-- 'EmitCompileCtx' force LATER (at @renderPackage@ time).  Both
+-- channels are stable in that interval:
+--   * cgEnv comes from 'lc' which is a pure value — does not change
+--     during emit.
+--   * anonRecsSnap is the snapshot at construction time; per the
+--     iter-0 contract anon writes are monotonic ('insertWith \\_old
+--     -> old'), so a snapshot taken now is a subset of the
+--     end-of-emit snapshot the renderer consumes via the existing
+--     'generateAnonRecordDecls' path.
+--
+-- NOINLINE prevents GHC from CSE-merging the 'AnonRec.readAnonRecords'
+-- call across multiple invocations.
+--
+-- Design rationale: `docs/v0.17-roadmap/phase-A-iter-7-8-design.md`.
+{-# NOINLINE phaseAFallbackFromCtx #-}
+phaseAFallbackFromCtx :: LC.LowerCtx -> EmitCompileCtx
+phaseAFallbackFromCtx lc = unsafePerformIO $ do
+    anonRecsSnap <- AnonRec.readAnonRecords
+    let home = LC._lc_module lc
+        cgEnv = case LC.lookupCgEnv lc of
             Just env -> env
             Nothing  -> emptyCgEnv
     return $! buildEmitCompileCtx
