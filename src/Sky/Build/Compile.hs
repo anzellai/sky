@@ -17423,7 +17423,7 @@ coerceArg phaseACtxD ctx mSrc e ty
                   -- base via `goExprGoType` (non-`any`).  Invariant
                   -- locked by `IsPlainIdentSpec`.
                   then if containsGenericTypeParam ty
-                          && isPlainIdentForTypedRouting e
+                          && isPlainIdentForTypedRouting ctx e
                        then e
                        else GoIr.GoCall
                               (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
@@ -17497,39 +17497,17 @@ alphaRenameCalleeTVars = go Nothing
               || (c >= '0' && c <= '9') || c == '_' || c == '.'
 
 
--- | v0.15.3 — accept a Go expression as a compatible source for
--- a parametric record alias slot.  When the target is `Foo_R[X]`
--- (a generic-callee param type), the goal is to pass the arg
--- raw so Go's call-site type inference pins the callee's T from
--- the source's actual instantiation.
---
--- Sources we accept:
---   * `goExprGoType e` returns the SAME `Foo_R` base (typed
---     local with known static type) — perfect match, Go infers.
---   * `GoIdent name` for a user-introduced local (not `rt.*`)
---     where `goExprGoType` is Nothing — could be a function param
---     whose type isn't tracked in the lambda-types scope (the
---     scoped-binding-vs-lazy-rendering race), but its Go-static
---     type IS `Foo_R[T]` at the actual call site.  Go's
---     inference handles it.  If the type turns out wrong, Go
---     compile-fails — caught at build time, not runtime.
---   * `GoSelector base _` where `base` is a plain ident — same
---     reasoning (e.g. `cfg.WfSubmit` field access).
---
--- Sources we REJECT (fall through to the existing wrap path):
---   * Kernel call results (`rt.*`), Coerce wrappers, struct lits,
---     literal values — those have their own type management
---     that the legacy `any(arg).(Foo_R[any])` assertion happens
---     to handle correctly.
-isParametricCompatibleSource :: GoIr.GoExpr -> Bool
-isParametricCompatibleSource e = case goExprGoType (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) Nothing e of
-    Just srcTy | isJust (parametricAliasBase srcTy) -> True
-    _ -> case e of
-        GoIr.GoIdent name -> not ("rt." `List.isPrefixOf` name)
-                          && not ("__tco" `List.isPrefixOf` name)
-                          && not ("__destruct" `List.isPrefixOf` name)
-        GoIr.GoSelector base _ -> isParametricCompatibleSource base
-        _ -> False
+-- v0.17 Phase A iter 15 — `isParametricCompatibleSource` was an
+-- early v0.15.3 helper for accepting parametric-record-alias
+-- sources raw at generic-callee slots.  Its only call site was
+-- subsumed by the broader `coerceToFieldType` short-circuit
+-- (Compile.hs:17305 — `goExprGoType e == Just ty`) once
+-- type-directed lowering matured in v0.15.x; by v0.17 it carried
+-- no external caller (verified by exhaustive grep across
+-- src/ + test/ + app/ — only its own definition and the
+-- recursive self-call remained).  Deleted as part of the
+-- criterion #3 IORef DELETE close: removing dead readers of
+-- `scopeStateRef` is strictly safer than draining them.
 
 
 -- | v0.15.3 — recognise a "plain user identifier" Go expression
@@ -17619,12 +17597,20 @@ isPlainIdent e = case e of
 -- companion runtime-shape tests (CoerceArgParametricSpec + the
 -- 27-example sweep) confirm the over-rejection rate is benign in
 -- practice (golden-size delta ≤ ±3 % per Planner's risk register).
-isPlainIdentForTypedRouting :: GoIr.GoExpr -> Bool
-isPlainIdentForTypedRouting e = isPlainIdent e && intermediatesTyped e
+-- v0.17 Phase A iter 15 — widened to thread `LC.LowerCtx` so the
+-- typed-routing check reads the per-call CgEnv via the
+-- `phaseAFallbackFromCtx` reader (no more `ctxFromIORef ()` /
+-- `phaseAFallback (ctxFromIORef ())` IORef hops).  The single
+-- caller in `coerceArg` already has `ctx` in scope (its 2nd
+-- parameter); the spec fixture in `IsPlainIdentSpec` threads
+-- `LC.emptyLowerCtx` to preserve the original empty-env semantics
+-- (every selector-base resolves to Nothing → strict reject).
+isPlainIdentForTypedRouting :: LC.LowerCtx -> GoIr.GoExpr -> Bool
+isPlainIdentForTypedRouting ctx e = isPlainIdent e && intermediatesTyped e
   where
     intermediatesTyped (GoIr.GoIdent _)       = True
     intermediatesTyped (GoIr.GoSelector b _)  =
-        case goExprGoType (phaseAFallback (ctxFromIORef ())) (ctxFromIORef ()) Nothing b of
+        case goExprGoType (phaseAFallbackFromCtx ctx) ctx Nothing b of
             Just t  -> t /= "any" && intermediatesTyped b
             Nothing -> False
     intermediatesTyped _                       = False

@@ -39,7 +39,18 @@ module Sky.Build.IsPlainIdentSpec (spec) where
 
 import Test.Hspec
 import qualified Sky.Build.Compile as C
+import qualified Sky.Build.LowerCtx as LC
 import qualified Sky.Generate.Go.Ir as GoIr
+import qualified Sky.Sky.ModuleName as ModuleName
+
+
+-- | Empty `LowerCtx` for the typed-routing tests.  Mirrors the
+-- pre-iter-15 empty-codegen-env behaviour (`scopeStateRef` empty,
+-- `globalCgEnv` empty) — `goExprGoType` returns Nothing for every
+-- ident/selector base, so the typed gate's "Nothing → False" rule
+-- rejects EVERY selector chain.  Bare idents still pass.
+emptyCtx :: LC.LowerCtx
+emptyCtx = LC.emptyLowerCtx (ModuleName.Canonical "Main")
 
 
 -- | Build a `someName` ident.
@@ -174,11 +185,11 @@ spec = describe "isPlainIdent (Gap A4 / P3 structural classifier)" $ do
     describe "isPlainIdentForTypedRouting (Gap A4 / P3 typed gate)" $ do
         it "accepts a bare user ident (leaf — type check\
            \ doesn't apply at the leaf)" $
-            C.isPlainIdentForTypedRouting (ident "cfg") `shouldBe` True
+            C.isPlainIdentForTypedRouting emptyCtx (ident "cfg") `shouldBe` True
 
         it "rejects a bare `rt.*` ident (structural-classifier\
            \ rejects first)" $
-            C.isPlainIdentForTypedRouting (rtIdent "Whatever")
+            C.isPlainIdentForTypedRouting emptyCtx (rtIdent "Whatever")
                 `shouldBe` False
 
         it "rejects `cfg.WfSubmit` in an empty env (base's\
@@ -191,12 +202,12 @@ spec = describe "isPlainIdent (Gap A4 / P3 structural classifier)" $ do
             -- gate accepts.  Under the test harness — no env push
             -- — the base looks untyped and we conservatively wrap.
             -- The soundness floor.
-            C.isPlainIdentForTypedRouting (dot (ident "cfg") "WfSubmit")
+            C.isPlainIdentForTypedRouting emptyCtx (dot (ident "cfg") "WfSubmit")
                 `shouldBe` False
 
         it "rejects `(rt.SkyCall(...)).Field` (structural reject\
            \ — kernel-call base)" $
-            C.isPlainIdentForTypedRouting
+            C.isPlainIdentForTypedRouting emptyCtx
                 (dot (rtCall "SkyCall" [ident "f"]) "Field")
                 `shouldBe` False
 
@@ -204,7 +215,7 @@ spec = describe "isPlainIdent (Gap A4 / P3 structural classifier)" $ do
            \ A4 deep-recursion case — structural reject)" $
             let inner = rtCall "SkyCall" [ident "f", ident "x"]
                 chain = dot (dot inner "Field") "Nested"
-            in C.isPlainIdentForTypedRouting chain `shouldBe` False
+            in C.isPlainIdentForTypedRouting emptyCtx chain `shouldBe` False
 
         it "rejects deep user-only chains in empty env (every\
            \ intermediate base resolves to Nothing)" $
@@ -214,14 +225,14 @@ spec = describe "isPlainIdent (Gap A4 / P3 structural classifier)" $ do
             -- classifier: P3 adds the type-aware soundness check
             -- on top of the structural classifier, and over-
             -- rejection here is the BENIGN side of the trade.
-            C.isPlainIdentForTypedRouting
+            C.isPlainIdentForTypedRouting emptyCtx
                 (dot (dot (ident "outer") "inner") "leaf")
                 `shouldBe` False
 
         it "rejects a literal (structural reject)" $
-            C.isPlainIdentForTypedRouting (GoIr.GoIntLit 42)
+            C.isPlainIdentForTypedRouting emptyCtx (GoIr.GoIntLit 42)
                 `shouldBe` False
 
         it "rejects a kernel call directly (structural reject)" $
-            C.isPlainIdentForTypedRouting (rtCall "SkyCall" [ident "f"])
+            C.isPlainIdentForTypedRouting emptyCtx (rtCall "SkyCall" [ident "f"])
                 `shouldBe` False
