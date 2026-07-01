@@ -1,0 +1,11 @@
+# Cause H — tuple typing
+#
+# Today's (String, Int) returns + destructure routes through
+# rt.SkyTuple2 = T2[any, any] (non-generic).  C6a emits typed
+# T2[string, int]; C6b drops the SkyTuple2 alias.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN makePair
+MUST_CONTAIN showPair
+MUST_NOT_PANIC_AT_RUNTIME

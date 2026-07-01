@@ -1,0 +1,34 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+parityEven : List a -> Bool
+parityEven xs =
+    case xs of
+        [] ->
+            True
+
+        _ :: rest ->
+            parityOdd rest
+
+
+parityOdd : List a -> Bool
+parityOdd xs =
+    case xs of
+        [] ->
+            False
+
+        _ :: rest ->
+            parityEven rest
+
+
+main =
+    println
+        (if parityEven [ 1, 2, 3, 4 ] then
+            "even"
+
+         else
+            "odd"
+        )

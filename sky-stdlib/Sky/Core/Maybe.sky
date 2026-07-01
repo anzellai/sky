@@ -9,11 +9,29 @@
 -- site coerceArg gets the call's actual concrete type from
 -- `_cg_callSiteInstances` and emits e.g. `MaybeCoerce[string]`
 -- instead of `MaybeCoerce[any]`.
+--
+-- v0.17 step-6 (Limitation #8 CPS rewrite umbrella): `combine` is
+-- rewritten as a delegating binding to a tail-recursive
+-- `combineHelp` accumulator that builds the result list in reverse
+-- on a `Just`, short-circuits to `Nothing` on a `Nothing`, and
+-- flips the accumulator once via a local `reverseHelp` when the
+-- input is exhausted.  All three tail-positions reuse the auto-TCO
+-- `for { ... continue }` lowering shared with the rest of the CPS
+-- family.
+--
+-- The `reverseHelp acc out` helper is INLINED into this module to
+-- avoid an `Sky.Core.Maybe` ↔ `Sky.Core.List` cyclic import.  It
+-- is byte-identical to `Sky.Core.List.reverseHelp`; future work
+-- can extract a shared internal module (e.g. `Sky.Core.Internal`)
+-- but that is out of scope for the CPS rewrite batch.
 module Sky.Core.Maybe exposing
     ( withDefault
     , map
     , andThen
-    , map2, map3, map4, map5
+    , map2
+    , map3
+    , map4
+    , map5
     , andMap
     , combine
     , isJust
@@ -23,104 +41,210 @@ module Sky.Core.Maybe exposing
 
 withDefault def m =
     case m of
-        Just x -> x
-        Nothing -> def
+
+        Just x ->
+            x
+
+        Nothing ->
+            def
 
 
 map fn m =
     case m of
-        Just x -> Just (fn x)
-        Nothing -> Nothing
+
+        Just x ->
+            Just (fn x)
+
+        Nothing ->
+            Nothing
 
 
 andThen fn m =
     case m of
-        Just x -> fn x
-        Nothing -> Nothing
+
+        Just x ->
+            fn x
+
+        Nothing ->
+            Nothing
 
 
 map2 fn ma mb =
     case ma of
+
         Just a ->
             case mb of
-                Just b -> Just (fn a b)
-                Nothing -> Nothing
-        Nothing -> Nothing
+
+                Just b ->
+                    Just (fn a b)
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
 
 
 map3 fn ma mb mc =
     case ma of
+
         Just a ->
             case mb of
+
                 Just b ->
                     case mc of
-                        Just c -> Just (fn a b c)
-                        Nothing -> Nothing
-                Nothing -> Nothing
-        Nothing -> Nothing
+
+                        Just c ->
+                            Just (fn a b c)
+
+                        Nothing ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
 
 
 map4 fn ma mb mc md =
     case ma of
+
         Just a ->
             case mb of
+
                 Just b ->
                     case mc of
+
                         Just c ->
                             case md of
-                                Just d -> Just (fn a b c d)
-                                Nothing -> Nothing
-                        Nothing -> Nothing
-                Nothing -> Nothing
-        Nothing -> Nothing
+
+                                Just d ->
+                                    Just (fn a b c d)
+
+                                Nothing ->
+                                    Nothing
+
+                        Nothing ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
 
 
 map5 fn ma mb mc md me =
     case ma of
+
         Just a ->
             case mb of
+
                 Just b ->
                     case mc of
+
                         Just c ->
                             case md of
+
                                 Just d ->
                                     case me of
-                                        Just e -> Just (fn a b c d e)
-                                        Nothing -> Nothing
-                                Nothing -> Nothing
-                        Nothing -> Nothing
-                Nothing -> Nothing
-        Nothing -> Nothing
+
+                                        Just e ->
+                                            Just (fn a b c d e)
+
+                                        Nothing ->
+                                            Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        Nothing ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
 
 
 andMap ma mfn =
     case mfn of
+
         Just fn ->
             case ma of
-                Just a -> Just (fn a)
-                Nothing -> Nothing
-        Nothing -> Nothing
+
+                Just a ->
+                    Just (fn a)
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
 
 
+-- v0.17 step-6 CPS rewrite (Limitation #8): the public binding is
+-- a thin shim that delegates to `combineHelp maybes []`.  The
+-- auto-TCO `for { ... continue }` loop lives in
+-- `Sky_Core_Maybe_combineHelp`'s emitted Go body — NOT in the
+-- public `Sky_Core_Maybe_combine`'s.
 combine maybes =
+    combineHelp maybes []
+
+
+-- Tail-recursive accumulator worker.  Builds the unwrapped result
+-- in reverse on `Just x`, short-circuits to `Nothing` on a
+-- `Nothing`, and flips the accumulator via the inlined
+-- `reverseHelp` when the input is exhausted.  All three arms land
+-- in tail position: `combineHelp rest (x :: acc)` (recurse),
+-- `Nothing` (return), `Just (reverseHelp acc [])` (return).
+combineHelp maybes acc =
     case maybes of
-        [] -> Just []
-        (m :: rest) ->
+
+        [] ->
+            Just (reverseHelp acc [])
+
+        m :: rest ->
             case m of
+
                 Just x ->
-                    case combine rest of
-                        Just xs -> Just (x :: xs)
-                        Nothing -> Nothing
-                Nothing -> Nothing
+                    combineHelp rest (x :: acc)
+
+                Nothing ->
+                    Nothing
+
+
+-- Private list-reverse accumulator.  Inlined from
+-- `Sky.Core.List.reverseHelp` to avoid a `Sky.Core.Maybe` ↔
+-- `Sky.Core.List` cyclic import.  Byte-identical to its sibling
+-- there; see the module header for the extraction plan.
+reverseHelp list acc =
+    case list of
+
+        [] ->
+            acc
+
+        x :: rest ->
+            reverseHelp rest (x :: acc)
 
 
 isJust m =
     case m of
-        Just _ -> True
-        Nothing -> False
+
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 
 isNothing m =
     case m of
-        Just _ -> False
-        Nothing -> True
+
+        Just _ ->
+            False
+
+        Nothing ->
+            True

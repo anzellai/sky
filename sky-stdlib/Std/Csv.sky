@@ -11,6 +11,9 @@
 -- v0.15.47.
 module Std.Csv exposing
     ( Csv
+    , defaultCsv
+    , withHeader
+    , withRows
     , parse
     , parseWithDelimiter
     , encode
@@ -36,6 +39,28 @@ type alias Csv =
     { header : List String
     , rows : List (List String)
     }
+
+
+-- | `defaultCsv` — empty CSV document (no header, no rows).  Builder
+-- chain stays source-compat when v0.17+ adds optional fields.
+defaultCsv : Csv
+defaultCsv =
+    { header = []
+    , rows = []
+    }
+
+
+-- | `withHeader ["id", "email"] csv` — replace the header row.
+withHeader : List String -> Csv -> Csv
+withHeader header csv =
+    { csv | header = header }
+
+
+-- | `withRows [["1", "a@example.com"], ["2", "b@example.com"]] csv`
+-- — replace the body rows.
+withRows : List (List String) -> Csv -> Csv
+withRows rows csv =
+    { csv | rows = rows }
 
 
 -- | `parse text` — parse `text` as comma-delimited CSV.  The first

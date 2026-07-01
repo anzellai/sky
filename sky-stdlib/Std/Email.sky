@@ -34,6 +34,16 @@ module Std.Email exposing
     , SesConfig
     , SmtpConfig
     , defaultMessage
+    , defaultAttachment
+    , withMimeType
+    , withContent
+    , defaultSesConfig
+    , withSesKey
+    , withSesSecret
+    , defaultSmtpConfig
+    , withSmtpPort
+    , withSmtpUser
+    , withSmtpPass
     , withCc
     , withBcc
     , withTextBody
@@ -156,6 +166,84 @@ withAttachment att msg =
 withReplyTo : String -> EmailMessage -> EmailMessage
 withReplyTo addr msg =
     { msg | replyTo = addr }
+
+
+-- | `defaultAttachment "report.pdf"` — Attachment named with empty
+-- mime type + empty content.  Pair with `withMimeType` + `withContent`
+-- (or pass `File.readFileBytes` output directly to `withContent`).
+defaultAttachment : String -> Attachment
+defaultAttachment filename =
+    { filename = filename
+    , mimeType = ""
+    , content = ""
+    }
+
+
+-- | `withMimeType "application/pdf" att` — replace the MIME type.
+withMimeType : String -> Attachment -> Attachment
+withMimeType mime att =
+    { att | mimeType = mime }
+
+
+-- | `withContent bytes att` — replace the attachment body bytes.
+withContent : String -> Attachment -> Attachment
+withContent bytes att =
+    { att | content = bytes }
+
+
+-- | `defaultSesConfig "us-east-1"` — SesConfig with the region set;
+-- pair with `withSesKey` + `withSesSecret` to provision credentials.
+defaultSesConfig : String -> SesConfig
+defaultSesConfig region =
+    { region = region
+    , key = ""
+    , secret = ""
+    }
+
+
+-- | `withSesKey "AKIA..." cfg` — replace the SES access key.
+withSesKey : String -> SesConfig -> SesConfig
+withSesKey key cfg =
+    { cfg | key = key }
+
+
+-- | `withSesSecret "..." cfg` — replace the SES secret key.  Never
+-- log this — `Std.Auth`'s typed-secret hygiene applies.
+withSesSecret : String -> SesConfig -> SesConfig
+withSesSecret secret cfg =
+    { cfg | secret = secret }
+
+
+-- | `defaultSmtpConfig "smtp.example.com"` — SmtpConfig with host
+-- set, port 587 (submission), and empty credentials.  Most providers
+-- expect SMTP submission on 587; override via `withSmtpPort` for 465
+-- (implicit TLS) or 25 (legacy, no TLS).
+defaultSmtpConfig : String -> SmtpConfig
+defaultSmtpConfig host =
+    { host = host
+    , port = 587
+    , user = ""
+    , pass = ""
+    }
+
+
+-- | `withSmtpPort 465 cfg` — replace the SMTP port.
+withSmtpPort : Int -> SmtpConfig -> SmtpConfig
+withSmtpPort port cfg =
+    { cfg | port = port }
+
+
+-- | `withSmtpUser "user" cfg` — replace the SMTP username.
+withSmtpUser : String -> SmtpConfig -> SmtpConfig
+withSmtpUser user cfg =
+    { cfg | user = user }
+
+
+-- | `withSmtpPass "..." cfg` — replace the SMTP password.  Never
+-- log this — `Std.Auth`'s typed-secret hygiene applies.
+withSmtpPass : String -> SmtpConfig -> SmtpConfig
+withSmtpPass pass cfg =
+    { cfg | pass = pass }
 
 
 -- | `send provider message` — submit the message to the chosen

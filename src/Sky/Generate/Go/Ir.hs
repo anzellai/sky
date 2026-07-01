@@ -49,7 +49,16 @@ data GoStmt
     | GoReturnVoid                                  -- return
     | GoIf !GoExpr [GoStmt] [GoStmt]                -- if cond { then } else { else }
     | GoSwitch !GoExpr [(GoExpr, [GoStmt])]         -- switch expr { case val: stmts }
-    | GoTypeSwitch !String !GoExpr [(String, [GoStmt])] -- switch name := expr.(type) { case T: ... }
+    | GoTypeSwitch !String !GoExpr [(String, [GoStmt])] !(Maybe [GoStmt])
+        -- ^ switch name := expr.(type) { case T: ... [; default: ...] }
+        -- Last arg is the optional @default:@ arm.  @Nothing@ → no
+        -- default clause (Go falls through silently if no case matches);
+        -- @Just stmts@ → renders @default: stmts@ at the end of the
+        -- switch block.  v0.17 P3.4c.2a — needed by the upcoming
+        -- sealed-iface dispatch so the @rt.Unreachable@ safety net at
+        -- the bottom of a sealed-iface type-switch lands in the right
+        -- Go syntactic slot (a typeName-keyed @case "default":@ would
+        -- be invalid Go).
     | GoFor !String !GoExpr [GoStmt]                -- for _, name := range expr { stmts }
     | GoForever [GoStmt]                            -- for { stmts } — TCO target
     | GoContinue                                    -- continue (only valid inside ForRange / Forever)

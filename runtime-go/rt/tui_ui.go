@@ -1384,32 +1384,32 @@ type layoutBox struct {
 //   maxW, maxH: parent-imposed upper bounds in cells
 //   parentAxis: how this element is being laid out by its parent
 func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layoutAxis) layoutBox {
-	adt, ok := elem.(SkyADT)
+	_, tag, fields, ok := unwrapADTShape(elem)
 	if !ok {
 		return layoutBox{kind: "empty"}
 	}
-	switch adt.Tag {
+	switch tag {
 	case 0: // Empty
 		return layoutBox{kind: "empty"}
 	case 1: // Text s
 		s := ""
-		if len(adt.Fields) > 0 {
-			if str, ok := adt.Fields[0].(string); ok {
+		if len(fields) > 0 {
+			if str, ok := fields[0].(string); ok {
 				s = str
 			}
 		}
 		return layoutBox{kind: "text", text: s, width: runeLen(s), height: 1}
 	case 2: // Node desc attrs children
-		return layoutNode("", adt.Fields, ctx, maxW, maxH, parentAxis)
+		return layoutNode("", fields, ctx, maxW, maxH, parentAxis)
 	case 3: // TaggedNode tag desc attrs children
-		tag := ""
-		if len(adt.Fields) > 0 {
-			if s, ok := adt.Fields[0].(string); ok {
-				tag = s
+		ntag := ""
+		if len(fields) > 0 {
+			if s, ok := fields[0].(string); ok {
+				ntag = s
 			}
 		}
 		// Skip first field (tag); the rest mirror Node's layout.
-		return layoutNode(tag, adt.Fields[1:], ctx, maxW, maxH, parentAxis)
+		return layoutNode(ntag, fields[1:], ctx, maxW, maxH, parentAxis)
 	case 4: // Raw _
 		return layoutBox{kind: "text", text: "[raw]", width: 5, height: 1}
 	}
@@ -1871,37 +1871,37 @@ func layoutChildren(children []any, ctx tuiLayoutCtx, availW, availH int, axis l
 // finer-grained "Fill is mediated via Length" walk would integrate
 // with walkAttrs.
 func childFillPortion(child any, axis layoutAxis) int {
-	adt, ok := child.(SkyADT)
+	_, tag, fields, ok := unwrapADTShape(child)
 	if !ok {
 		return 0
 	}
-	if adt.Tag != 2 && adt.Tag != 3 {
+	if tag != 2 && tag != 3 {
 		return 0
 	}
 	var attrs []any
-	switch adt.Tag {
+	switch tag {
 	case 2:
-		if len(adt.Fields) >= 2 {
-			attrs = asList(adt.Fields[1])
+		if len(fields) >= 2 {
+			attrs = asList(fields[1])
 		}
 	case 3:
-		if len(adt.Fields) >= 3 {
-			attrs = asList(adt.Fields[2])
+		if len(fields) >= 3 {
+			attrs = asList(fields[2])
 		}
 	}
 	for _, a := range attrs {
-		ad, ok := a.(SkyADT)
+		_, atag, afields, ok := unwrapADTShape(a)
 		if !ok {
 			continue
 		}
 		// AttrWidth = tag 1, AttrHeight = tag 2 (per Std.Ui.Attribute order)
 		switch {
-		case axis == layoutAxisRow && ad.Tag == 1:
-			if p := lengthFillPortion(ad.Fields); p > 0 {
+		case axis == layoutAxisRow && atag == 1:
+			if p := lengthFillPortion(afields); p > 0 {
 				return p
 			}
-		case axis == layoutAxisColumn && ad.Tag == 2:
-			if p := lengthFillPortion(ad.Fields); p > 0 {
+		case axis == layoutAxisColumn && atag == 2:
+			if p := lengthFillPortion(afields); p > 0 {
 				return p
 			}
 		}
@@ -1913,13 +1913,13 @@ func lengthFillPortion(fields []any) int {
 	if len(fields) == 0 {
 		return 0
 	}
-	l, ok := fields[0].(SkyADT)
+	_, ltag, lfields, ok := unwrapADTShape(fields[0])
 	if !ok {
 		return 0
 	}
 	// Length.Fill = tag 2 (per Length ADT order: Px=0, Content=1, Fill=2, Min=3, Max=4, Vh=5, Vw=6)
-	if l.Tag == 2 && len(l.Fields) > 0 {
-		if n, ok := l.Fields[0].(int); ok {
+	if ltag == 2 && len(lfields) > 0 {
+		if n, ok := lfields[0].(int); ok {
 			return n
 		}
 	}
@@ -1980,7 +1980,7 @@ type nearbyEntry struct {
 func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 	out := walkedAttrs{}
 	for _, a := range attrs {
-		adt, ok := a.(SkyADT)
+		aname, atag, afields, ok := unwrapADTShape(a)
 		if !ok {
 			continue
 		}
@@ -1995,21 +1995,21 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		// 27:BorderWidthEach 28:BorderColor 29:BorderRounded
 		// 30:BorderStyle 31:BorderShadow 32:BorderInsetShadow
 		// 33:Pointer 34:Overflow
-		switch adt.Tag {
+		switch atag {
 		case 0: // NoAttribute
 			continue
 		case 1: // AttrWidth Length
-			if len(adt.Fields) > 0 {
-				out.width = adt.Fields[0]
+			if len(afields) > 0 {
+				out.width = afields[0]
 			}
 		case 2: // AttrHeight Length
-			if len(adt.Fields) > 0 {
-				out.height = adt.Fields[0]
+			if len(afields) > 0 {
+				out.height = afields[0]
 			}
 		case 3: // AttrAlignX HAlign — HAlign tags: 0=Left, 1=CenterX, 2=Right
-			if len(adt.Fields) > 0 {
-				if ah, ok := adt.Fields[0].(SkyADT); ok {
-					switch ah.Tag {
+			if len(afields) > 0 {
+				if _, ahtag, _, ok := unwrapADTShape(afields[0]); ok {
+					switch ahtag {
 					case 0:
 						out.alignX = "left"
 					case 1:
@@ -2020,9 +2020,9 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 				}
 			}
 		case 4: // AttrAlignY VAlign — VAlign tags: 0=Top, 1=CenterY, 2=Bottom
-			if len(adt.Fields) > 0 {
-				if av, ok := adt.Fields[0].(SkyADT); ok {
-					switch av.Tag {
+			if len(afields) > 0 {
+				if _, avtag, _, ok := unwrapADTShape(afields[0]); ok {
+					switch avtag {
 					case 0:
 						out.alignY = "top"
 					case 1:
@@ -2033,25 +2033,25 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 				}
 			}
 		case 5: // AttrNearby Location (Element msg) — Location tags: 0=Above 1=Below 2=OnRight 3=OnLeft 4=InFront 5=Behind
-			if len(adt.Fields) >= 2 {
-				if loc, ok := adt.Fields[0].(SkyADT); ok {
-					out.nearby = append(out.nearby, nearbyEntry{location: loc.Tag, elem: adt.Fields[1]})
+			if len(afields) >= 2 {
+				if _, loctag, _, ok := unwrapADTShape(afields[0]); ok {
+					out.nearby = append(out.nearby, nearbyEntry{location: loctag, elem: afields[1]})
 				}
 			}
 		case 6: // AttrPadding T R B L
-			if len(adt.Fields) >= 4 {
-				out.padding[0] = pxToCellsY(intOf(adt.Fields[0]), ctx)
-				out.padding[1] = pxToCellsX(intOf(adt.Fields[1]), ctx)
-				out.padding[2] = pxToCellsY(intOf(adt.Fields[2]), ctx)
-				out.padding[3] = pxToCellsX(intOf(adt.Fields[3]), ctx)
+			if len(afields) >= 4 {
+				out.padding[0] = pxToCellsY(intOf(afields[0]), ctx)
+				out.padding[1] = pxToCellsX(intOf(afields[1]), ctx)
+				out.padding[2] = pxToCellsY(intOf(afields[2]), ctx)
+				out.padding[3] = pxToCellsX(intOf(afields[3]), ctx)
 			}
 		case 7: // AttrSpacing N
-			if len(adt.Fields) > 0 {
-				out.spacing = pxToCellsX(intOf(adt.Fields[0]), ctx)
+			if len(afields) > 0 {
+				out.spacing = pxToCellsX(intOf(afields[0]), ctx)
 			}
 		case 8: // AttrStyle "k" "v" — sentinel for row/col/wrap/grid + raw CSS escape
-			if len(adt.Fields) >= 2 {
-				k, _ := adt.Fields[0].(string)
+			if len(afields) >= 2 {
+				k, _ := afields[0].(string)
 				switch k {
 				case "__row":
 					out.isRow = true
@@ -2067,13 +2067,33 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					out.isTextColumn = true
 				case "__gridMin":
 					// gridColumns N → AttrStyle "__gridMin" (encoded value)
-					if v, ok := adt.Fields[1].(string); ok {
+					if v, ok := afields[1].(string); ok {
 						fmt.Sscanf(v, "%d", &out.gridColumns)
 					}
+				case "__gridTracks":
+					// Std.Ui.Grid.tracks / Grid.columns / Grid.rows emit
+					// explicit CSS-grid track lists (`fr` / `px` / `auto`
+					// / `minmax` / `repeatAutoFit`). The terminal has no
+					// fractional / minmax cells — collapse to a flat
+					// content-grid fallback and warn so users know the
+					// proportions won't survive.
+					tuiWarn("layout", "explicit grid tracks (terminal can't render fr/minmax/auto)")
+				case "aspect-ratio":
+					// Std.Ui.aspectRatio / aspectRatioWH / square /
+					// widescreen / fullHd / cinemascope emit
+					// `aspect-ratio: W / H`. The terminal grid is
+					// driven by parent cell allocation, not CSS ratio.
+					tuiWarn("layout", "aspect-ratio (terminal cells don't honour CSS aspect-ratio)")
 				default:
 					// User-supplied raw CSS — TUI can't render, warn once.
 					if !isInternalMarker(k) {
 						tuiWarn("style", "raw CSS attribute "+k)
+					} else {
+						// Unknown __-prefixed marker — Std.Ui added a
+						// sentinel TUI hasn't ported. Warn so the gap is
+						// visible (we don't want to silently drop a layout
+						// directive).
+						tuiWarn("layout", "unsupported Std.Ui marker "+k)
 					}
 				}
 			}
@@ -2099,25 +2119,25 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			// keystroke / mouse click silently drops because the
 			// type assertion in focusableEvent silently rejects the
 			// SkyADT shape.
-			if len(adt.Fields) > 0 {
-				payload := unwrapAny(adt.Fields[0])
+			if len(afields) > 0 {
+				payload := unwrapAny(afields[0])
 				if ep, ok := payload.(eventPair); ok {
 					out.events = append(out.events, ep)
-				} else if evAttr, ok := payload.(SkyADT); ok && len(evAttr.Fields) >= 1 {
+				} else if _, _, evAttrFields, ok := unwrapADTShape(payload); ok && len(evAttrFields) >= 1 {
 					// EventAttr wrapping Event — unwrap once more.
-					if inner, ok := unwrapAny(evAttr.Fields[0]).(SkyADT); ok && len(inner.Fields) >= 2 {
-						name, _ := inner.Fields[0].(string)
+					if _, _, innerFields, ok := unwrapADTShape(unwrapAny(evAttrFields[0])); ok && len(innerFields) >= 2 {
+						name, _ := innerFields[0].(string)
 						out.events = append(out.events, eventPair{
 							name: name,
-							msg:  inner.Fields[1],
+							msg:  innerFields[1],
 						})
 					}
 				}
 			}
 		case 12: // AttrAttribute "k" "v" — raw HTML attr; we read "value"/"placeholder"/"name"
-			if len(adt.Fields) >= 2 {
-				k, _ := adt.Fields[0].(string)
-				v, _ := adt.Fields[1].(string)
+			if len(afields) >= 2 {
+				k, _ := afields[0].(string)
+				v, _ := afields[1].(string)
 				switch k {
 				case "value":
 					out.valueAttr = v
@@ -2133,6 +2153,55 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					"href", "target", "src", "alt", "accept", "multiple", "selected",
 					"sky-nav":
 					// Known HTML attrs that don't need TUI rendering — silent skip.
+				case "data-sky-pc-rules":
+					// Pseudo-class rule payload from
+					// `Std.Ui.onPseudo` / `Background.hoverColor` /
+					// `focusColor` / `activeColor` / `disabledColor`
+					// / `Font.hoverSize` / `Border.hoverColor` etc.
+					// The terminal has no :hover / :focus / :active /
+					// :disabled CSS pseudo-class engine — every
+					// reactive style is silently inert.
+					tuiWarn("pseudo-class", ":hover / :focus / :active / :disabled (terminal has no CSS pseudo-class engine — base style still renders)")
+				case "data-sky-mq-q":
+					// Media query selector payload from
+					// `Ui.mediaQuery` / `Ui.breakpoint` (Mobile /
+					// Tablet / Desktop / DarkMode / TouchDevice /
+					// Portrait / ReducedMotion / Custom). The
+					// terminal's "viewport" is the terminal size
+					// itself — these directives don't translate.
+					tuiWarn("media-query", "@media rule (terminal viewport is fixed — base style still renders)")
+				case "data-sky-mq-rules":
+					// Companion payload to data-sky-mq-q (the actual
+					// CSS rules). Silent — already warned above on
+					// `data-sky-mq-q` per (category, detail) dedupe.
+				case "data-sky-tr-rules":
+					// Typed CSS transition payload from
+					// `Std.Ui.Transition.attribute` (e.g.
+					// "background-color 200ms ease-out"). The
+					// terminal repaints discretely cell-by-cell;
+					// there's no inter-frame easing.
+					tuiWarn("transition", "CSS transition (terminal can't interpolate between frames)")
+				case "data-sky-tr-respect":
+					// Companion to data-sky-tr-rules (reduced-motion
+					// gate flag). Silent — already warned above.
+				case "data-sky-anim-rules":
+					// Keyframe animation payload from
+					// `Std.Ui.Animation.attribute` (translate /
+					// opacity / scale / rotate / skew). The
+					// terminal has no per-frame animation loop —
+					// the element renders at its final keyframe
+					// position only.
+					tuiWarn("animation", "@keyframes animation (terminal renders final keyframe only — no per-frame loop)")
+				case "data-sky-anim-respect":
+					// Companion to data-sky-anim-rules. Silent.
+				case "data-sky-path":
+					// Sky.Live URL-sync sentinel for history
+					// push/replace. Pure browser-history concept —
+					// no terminal analogue; safe silent skip.
+				case "data-sky-eval":
+					// Legacy Sky.Live CSP-incompatible escape
+					// hatch (post-patch JS eval). No terminal
+					// analogue; safe silent skip.
 				default:
 					tuiWarn("attribute", "raw HTML attribute "+k)
 				}
@@ -2140,14 +2209,14 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		case 13: // AttrFontSize — terminal has one cell size
 			tuiWarn("font", "size (terminal cells are uniform)")
 		case 14: // AttrFontColor Color
-			if len(adt.Fields) > 0 {
-				out.fg = colorOf(adt.Fields[0])
+			if len(afields) > 0 {
+				out.fg = colorOf(afields[0])
 			}
 		case 15: // AttrFontFamily — terminal font is set by emulator
 			tuiWarn("font", "family (terminal font is fixed)")
 		case 16: // AttrFontWeight
-			if len(adt.Fields) > 0 {
-				if w, ok := adt.Fields[0].(int); ok && w >= 600 {
+			if len(afields) > 0 {
+				if w, ok := afields[0].(int); ok && w >= 600 {
 					out.bold = true
 				}
 			}
@@ -2156,8 +2225,8 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		case 18: // AttrFontUnderline
 			out.underline = true
 		case 19: // AttrFontDecoration String
-			if len(adt.Fields) > 0 {
-				if s, ok := adt.Fields[0].(string); ok {
+			if len(afields) > 0 {
+				if s, ok := afields[0].(string); ok {
 					switch s {
 					case "underline":
 						out.underline = true
@@ -2179,42 +2248,42 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		case 21: // AttrFontWordSpacing
 			tuiWarn("font", "word-spacing (terminal cells are atomic)")
 		case 22: // AttrFontAlign
-			if len(adt.Fields) > 0 {
-				if s, ok := adt.Fields[0].(string); ok {
+			if len(afields) > 0 {
+				if s, ok := afields[0].(string); ok {
 					out.textAlign = s
 				}
 			}
 		case 23: // AttrBgColor Color
-			if len(adt.Fields) > 0 {
-				out.bg = colorOf(adt.Fields[0])
+			if len(afields) > 0 {
+				out.bg = colorOf(afields[0])
 			}
 		case 24: // AttrBgImage
 			tuiWarn("background", "image (terminals can't render image fills)")
 		case 25: // AttrBgGradient
 			tuiWarn("background", "gradient (terminals can't render gradient fills)")
 		case 26: // AttrBorderWidth Int — uniform border on all sides
-			if len(adt.Fields) > 0 {
-				if w, ok := adt.Fields[0].(int); ok && w > 0 {
+			if len(afields) > 0 {
+				if w, ok := afields[0].(int); ok && w > 0 {
 					out.borderWidth = [4]int{1, 1, 1, 1}
 				}
 			}
 		case 27: // AttrBorderWidthEach T R B L
-			if len(adt.Fields) >= 4 {
+			if len(afields) >= 4 {
 				for i := 0; i < 4; i++ {
-					if w, ok := adt.Fields[i].(int); ok && w > 0 {
+					if w, ok := afields[i].(int); ok && w > 0 {
 						out.borderWidth[i] = 1
 					}
 				}
 			}
 		case 28: // AttrBorderColor Color
-			if len(adt.Fields) > 0 {
-				out.borderColor = colorOf(adt.Fields[0])
+			if len(afields) > 0 {
+				out.borderColor = colorOf(afields[0])
 			}
 		case 29: // AttrBorderRounded — no rounded box-drawing in standard Unicode
 			tuiWarn("border", "rounded corners (Unicode box-drawing has no rounded chars)")
 		case 30: // AttrBorderStyle String — "solid" | "dashed" | "dotted"
-			if len(adt.Fields) > 0 {
-				if s, ok := adt.Fields[0].(string); ok {
+			if len(afields) > 0 {
+				if s, ok := afields[0].(string); ok {
 					out.borderStyle = s
 				}
 			}
@@ -2226,9 +2295,9 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			// Silent skip — pointer is purely a mouse cursor hint, the
 			// focus indicator already telegraphs interactivity.
 		case 34: // AttrOverflow String String — overflow-x, overflow-y
-			if len(adt.Fields) >= 2 {
-				x, _ := adt.Fields[0].(string)
-				y, _ := adt.Fields[1].(string)
+			if len(afields) >= 2 {
+				x, _ := afields[0].(string)
+				y, _ := afields[1].(string)
 				out.overflow[0] = x
 				out.overflow[1] = y
 				if x == "clip" {
@@ -2241,7 +2310,7 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		default:
 			// Unknown tag — likely a Std.Ui addition we haven't ported.
 			// Warn so users see a hint rather than silent breakage.
-			tuiWarn("attribute", fmt.Sprintf("unknown attribute tag %d (%s)", adt.Tag, adt.SkyName))
+			tuiWarn("attribute", fmt.Sprintf("unknown attribute tag %d (%s)", atag, aname))
 		}
 	}
 	return out
@@ -2259,16 +2328,16 @@ func intOf(v any) int {
 
 // colorOf reads a Std.Ui.Color value — Color = Rgba Int Int Int Float.
 func colorOf(v any) tuiColor {
-	adt, ok := v.(SkyADT)
+	_, tag, fields, ok := unwrapADTShape(v)
 	if !ok {
 		return tuiColor{}
 	}
-	if adt.Tag != 0 || len(adt.Fields) < 3 {
+	if tag != 0 || len(fields) < 3 {
 		return tuiColor{}
 	}
-	r, _ := adt.Fields[0].(int)
-	g, _ := adt.Fields[1].(int)
-	b, _ := adt.Fields[2].(int)
+	r, _ := fields[0].(int)
+	g, _ := fields[1].(int)
+	b, _ := fields[2].(int)
 	return tuiColor{set: true, r: uint8(r & 0xff), g: uint8(g & 0xff), b: uint8(b & 0xff)}
 }
 
@@ -2280,16 +2349,16 @@ func resolveLengthCells(v any, axis string, available int, ctx tuiLayoutCtx) (in
 	if v == nil {
 		return 0, false
 	}
-	adt, ok := v.(SkyADT)
+	_, tag, fields, ok := unwrapADTShape(v)
 	if !ok {
 		return 0, false
 	}
-	switch adt.Tag {
+	switch tag {
 	case 0: // Px Int
-		if len(adt.Fields) == 0 {
+		if len(fields) == 0 {
 			return 0, false
 		}
-		px, _ := adt.Fields[0].(int)
+		px, _ := fields[0].(int)
 		if axis == "x" {
 			return pxToCellsX(px, ctx), true
 		}
@@ -2301,9 +2370,9 @@ func resolveLengthCells(v any, axis string, available int, ctx tuiLayoutCtx) (in
 		// claims "as much as possible" if asked directly.
 		return available, true
 	case 3: // Min N Length
-		if len(adt.Fields) >= 2 {
-			minN, _ := adt.Fields[0].(int)
-			inner, hasExpl := resolveLengthCells(adt.Fields[1], axis, available, ctx)
+		if len(fields) >= 2 {
+			minN, _ := fields[0].(int)
+			inner, hasExpl := resolveLengthCells(fields[1], axis, available, ctx)
 			if !hasExpl {
 				return minN, true
 			}
@@ -2313,9 +2382,9 @@ func resolveLengthCells(v any, axis string, available int, ctx tuiLayoutCtx) (in
 			return inner, true
 		}
 	case 4: // Max N Length
-		if len(adt.Fields) >= 2 {
-			maxN, _ := adt.Fields[0].(int)
-			inner, hasExpl := resolveLengthCells(adt.Fields[1], axis, available, ctx)
+		if len(fields) >= 2 {
+			maxN, _ := fields[0].(int)
+			inner, hasExpl := resolveLengthCells(fields[1], axis, available, ctx)
 			if !hasExpl {
 				return available, true
 			}
@@ -2325,13 +2394,13 @@ func resolveLengthCells(v any, axis string, available int, ctx tuiLayoutCtx) (in
 			return inner, true
 		}
 	case 5: // Vh N (viewport-height percent)
-		if len(adt.Fields) > 0 {
-			pct, _ := adt.Fields[0].(int)
+		if len(fields) > 0 {
+			pct, _ := fields[0].(int)
 			return ctx.rows * pct / 100, true
 		}
 	case 6: // Vw N (viewport-width percent)
-		if len(adt.Fields) > 0 {
-			pct, _ := adt.Fields[0].(int)
+		if len(fields) > 0 {
+			pct, _ := fields[0].(int)
 			return ctx.cols * pct / 100, true
 		}
 	}
@@ -3016,26 +3085,26 @@ func paintNearby(grid [][]tuiCell, n nearbyEntry, hostCol, hostRow, hostW, hostH
 // content (concatenated). Used by paragraph / textColumn to flatten
 // styled inline children for word-wrap.
 func extractTextContent(elem any) string {
-	adt, ok := elem.(SkyADT)
+	_, tag, fields, ok := unwrapADTShape(elem)
 	if !ok {
 		return ""
 	}
-	switch adt.Tag {
+	switch tag {
 	case 0: // Empty
 		return ""
 	case 1: // Text s
-		if len(adt.Fields) > 0 {
-			if s, ok := adt.Fields[0].(string); ok {
+		if len(fields) > 0 {
+			if s, ok := fields[0].(string); ok {
 				return s
 			}
 		}
 	case 2, 3: // Node / TaggedNode — recurse into children
-		var fields []any = adt.Fields
-		if adt.Tag == 3 && len(fields) > 0 {
-			fields = fields[1:] // skip tag
+		childFields := fields
+		if tag == 3 && len(childFields) > 0 {
+			childFields = childFields[1:] // skip tag
 		}
-		if len(fields) >= 3 {
-			children := asList(fields[2])
+		if len(childFields) >= 3 {
+			children := asList(childFields[2])
 			parts := make([]string, 0, len(children))
 			for _, c := range children {
 				parts = append(parts, extractTextContent(c))

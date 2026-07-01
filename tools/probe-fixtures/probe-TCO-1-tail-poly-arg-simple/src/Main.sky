@@ -1,0 +1,18 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+loop : Int -> List a -> List a
+loop n acc =
+    case n of
+        0 ->
+            acc
+
+        _ ->
+            loop (n - 1) acc
+
+
+main =
+    println (String.fromInt (List.length (loop 3 [ 1, 2 ])))

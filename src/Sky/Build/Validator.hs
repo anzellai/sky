@@ -64,7 +64,6 @@ import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Reporting.Diagnostic as Diag
 import Sky.Build.EmbeddedRuntime (embeddedRuntime)
 import Data.Char (isAlphaNum)
-import Data.IORef
 import Data.List (isPrefixOf, isInfixOf, isSuffixOf, stripPrefix, foldl')
 import Data.Maybe (mapMaybe)
 import qualified System.Environment
@@ -101,8 +100,7 @@ envSkipValidator = unsafePerformIO $ do
 
 
 -- | v0.13 Stage 1 (issue #56) — set of every exported identifier in
--- the embedded Go runtime (`runtime-go/rt/*.go`). Populated once from
--- the embedded source on first access, cached in an IORef. Used by
+-- the embedded Go runtime (`runtime-go/rt/*.go`). Used by
 -- `patternUndefinedKernel` to catch `rt.X` references where `X` is
 -- not actually defined in the runtime — a class of bugs that previously
 -- type-checked fine in Sky but failed `go build` with `undefined:
@@ -113,19 +111,16 @@ envSkipValidator = unsafePerformIO $ do
 -- …)`) are matched on the bare name. Methods (`func (r *T) M(…)`) are
 -- skipped because Sky never references them via `rt.M` (always via
 -- a value of type `T`).
-{-# NOINLINE runtimeExportsRef #-}
-runtimeExportsRef :: IORef (Maybe (Set.Set String))
-runtimeExportsRef = unsafePerformIO (newIORef Nothing)
-
+--
+-- v0.17 iter 13 — IORef removed.  @scanEmbeddedRuntimeExports@ is
+-- pure (no IO; reads only from the TH-embedded @embeddedRuntime@
+-- bytestring list), so the cache was redundant: GHC memoises a CAF
+-- exactly once for the life of the process under the same lazy-
+-- evaluation discipline the previous @IORef (Maybe …)@ relied on,
+-- but without unsafePerformIO + writeIORef + read sequence.
 runtimeExports :: Set.Set String
-runtimeExports = unsafePerformIO $ do
-    cached <- readIORef runtimeExportsRef
-    case cached of
-        Just s  -> return s
-        Nothing -> do
-            let s = scanEmbeddedRuntimeExports
-            writeIORef runtimeExportsRef (Just s)
-            return s
+runtimeExports = scanEmbeddedRuntimeExports
+{-# NOINLINE runtimeExports #-}
 
 scanEmbeddedRuntimeExports :: Set.Set String
 scanEmbeddedRuntimeExports =

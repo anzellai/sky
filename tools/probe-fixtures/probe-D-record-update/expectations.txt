@@ -1,0 +1,17 @@
+# Cause D — record-update over typed base
+#
+# v0.17 C5 closed the typed fast path conditioned on
+# `goExprGoType` returning a concrete record-alias Go type for the
+# base expression.  For the simple `f : Person -> Person; f p = {p|...}`
+# shape, goExprGoType today returns Nothing for VarLocal "p" (Phase
+# γ closes this via the new typed pipeline + GoSig registry).  So
+# this fixture still routes through rt.RecordUpdate.
+#
+# probe-D-record-update-typed (next commit) locks the cases that
+# DO fire the typed path today: struct-literal base, let-bound
+# typed call result.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN Person_R
+MUST_NOT_PANIC_AT_RUNTIME

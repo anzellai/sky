@@ -1,3 +1,4 @@
+-- | Std.Html — the typed HTML element surface (Layer 3 Sky source).
 module Std.Html exposing (..)
 
 -- | Std.Html — the typed HTML element surface.

@@ -8,14 +8,22 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ${{ matrix.os }}
+    # `runs-on` uses `matrix.runner` (the actual GHA runner label) while
+    # step-guards below stay on `matrix.os` (the stable logical name).
+    # 2026-07-01: tried bumping macOS to `-xlarge` for speed — the run
+    # failed at scheduling with a billing-required error in 2 s. Larger
+    # macOS runners are NOT in the free tier for public repos on the
+    # personal free plan, so we're back on `macos-latest`.
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            runner: ubuntu-latest
             artifact: sky-linux-x64
           - os: macos-latest
+            runner: macos-latest
             artifact: sky-darwin-arm64
 
     steps:

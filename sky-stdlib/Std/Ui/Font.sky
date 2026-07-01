@@ -1,3 +1,14 @@
+-- | Std.Ui.Font — typed typography attribute helpers for `Std.Ui`.
+--
+-- `color / family / size / weight / bold / semiBold / regular /
+-- light / extraBold / black / italic / underline / noDecoration /
+-- letterSpacing / wordSpacing / alignLeft / alignRight / alignCenter
+-- / justify / sansSerif / serif / monospace` build typed
+-- `Attribute msg` values the renderer translates into inline
+-- `style="font-..."` / `style="text-..."` CSS.  Pseudo-class
+-- variants (`hoverColor`, `focusColor`, `activeColor`,
+-- `disabledColor`, `hoverSize`) emit sky-id-scoped `<style>` blocks
+-- so transitions work without JavaScript.
 module Std.Ui.Font exposing
     ( color
     , size

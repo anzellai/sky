@@ -69,7 +69,7 @@ borderMedium = hex "cbd5e1"
 globalStyles =
     stylesheet
         [ rule "*, *::before, *::after"
-              [ property "box-sizing" "border-box" , margin (zero ()) , padding (zero ()) ]
+              [ property "box-sizing" "border-box" , margin zero , padding zero ]
         -- Layout
         , rule "body"
               [ fontFamily
@@ -89,18 +89,18 @@ globalStyles =
         , rule "a:hover" [ textDecoration Underline ]
         -- Idea list
         , rule ".container"
-              [ maxWidth (px 960) , margin2 (zero ()) (auto ()) , padding2 (zero ()) (px 20) ]
+              [ maxWidth (px 960) , margin2 zero auto , padding2 zero (px 20) ]
         -- Toolbar
         , rule ".header"
               [ backgroundColor bgCard
         -- Page title
               , borderBottom ("1px solid " ++ colorToString borderLight)
         -- Detail page
-              , padding2 (px 16) (zero ())
+              , padding2 (px 16) zero
         -- Comments
               , property "position" "sticky"
         -- Auth pages
-              , top (zero ())
+              , top zero
         -- About & Roadmap
               , zIndex 100
               ]
@@ -108,9 +108,9 @@ globalStyles =
         , rule ".header-inner"
               [ maxWidth (px 960)
         -- Stats
-              , margin2 (zero ()) (auto ())
+              , margin2 zero auto
         -- Empty state
-              , padding2 (zero ()) (px 20)
+              , padding2 zero (px 20)
         -- Notification
               , display Flex
         -- Responsive
@@ -291,7 +291,7 @@ globalStyles =
               , fontSize (px 16)
               , fontWeight (Weight 600)
               , color textPrimary
-              , padding (zero ())
+              , padding zero
               ]
         , rule ".idea-desc"
               [ fontSize (px 14)
@@ -395,8 +395,8 @@ globalStyles =
         , rule ".comment-form" [ property "margin-top" "16px" ]
         , rule ".auth-container"
               [ maxWidth (px 420)
-              , margin2 (px 60) (auto ())
-              , padding2 (zero ()) (px 20)
+              , margin2 (px 60) auto
+              , padding2 zero (px 20)
               ]
         , rule ".auth-card"
               [ backgroundColor bgCard
@@ -418,8 +418,8 @@ globalStyles =
               ]
         , rule ".content-page"
               [ maxWidth (px 720)
-              , margin2 (px 40) (auto ())
-              , padding2 (zero ()) (px 20)
+              , margin2 (px 40) auto
+              , padding2 zero (px 20)
               ]
         , rule ".content-page h1"
               [ fontSize (px 32)
@@ -490,7 +490,7 @@ globalStyles =
               , fontSize (px 14)
               , fontWeight (Weight 600)
               , color textPrimary
-              , padding (zero ())
+              , padding zero
               , property "margin-bottom" "4px"
               ]
         , rule ".roadmap-count"
@@ -570,7 +570,7 @@ globalStyles =
               , property "margin-top" "32px"
               ]
         , rule ".submit-container"
-              [ maxWidth (px 640) , margin2 (px 32) (auto ()) ]
+              [ maxWidth (px 640) , margin2 (px 32) auto ]
         , rule ".auth-btn-full" [ width (pct 100) , justifyContent Center ]
         , rule ".auth-prompt" [ textAlign AlignCenter , padding (px 20) ]
         , rule ".auth-nav"

@@ -1,3 +1,4 @@
+-- | Std.Ui.Responsive — device-class detection + breakpoint helpers for `Std.Ui`.
 module Std.Ui.Responsive exposing (DeviceClass, classifyDevice, deviceClassToString, mobile, tablet, desktop, bigDesktop)
 
 -- Std.Ui.Responsive — device-class detection + breakpoint helpers.

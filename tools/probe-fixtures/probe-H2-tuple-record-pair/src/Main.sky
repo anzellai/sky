@@ -1,0 +1,35 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Cfg msg =
+    { onPress : msg
+    , label : String
+    }
+
+
+type alias Model =
+    { count : Int
+    }
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+makePair : (Cfg Msg, Model)
+makePair =
+    ( { onPress = Increment, label = "+" }
+    , { count = 0 }
+    )
+
+
+main =
+    let
+        ( cfg, model ) =
+            makePair
+    in
+    println (cfg.label ++ " count=" ++ String.fromInt model.count)

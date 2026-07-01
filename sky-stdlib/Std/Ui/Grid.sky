@@ -1,3 +1,11 @@
+-- | Std.Ui.Grid — explicit CSS-grid track lists for `Std.Ui` (v0.15.57+).
+--
+-- Typed `Track` ADT (`fr / px / auto / minContent / maxContent /
+-- minmax / repeat / repeatAutoFit / repeatAutoFill`) + `columns`
+-- / `rows` / `tracks` attribute builders.  Use when `Ui.gridColumns
+-- N` (auto-fill) is too coarse — sidebar layouts (`[fr 1, px 200,
+-- fr 1]`), content-aware columns (`[auto, fr 1]`), responsive card
+-- grids (`[repeatAutoFit (minmax (px 240) (fr 1))]`).
 module Std.Ui.Grid exposing
     ( Track
     , fr

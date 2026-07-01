@@ -1,0 +1,26 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Person =
+    { name : String
+    , age : Int
+    }
+
+
+-- Record update — Cause D surface.  Today routes through
+-- rt.RecordUpdate (reflect-backed map narrowing); C5 emits a
+-- typed `func() T { _u := base; _u.Field = v; return _u }()`
+-- closure when baseGo's static type is known.
+celebrateBirthday : Person -> Person
+celebrateBirthday p =
+    { p | age = p.age + 1 }
+
+
+main =
+    let alice = { name = "Alice", age = 30 }
+        olderAlice = celebrateBirthday alice
+    in
+    println (olderAlice.name ++ " is now " ++ String.fromInt olderAlice.age)

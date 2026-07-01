@@ -93,7 +93,7 @@ spec = do
             -- guards against an accidental revert to the IORef era.
             src <- readFile "src/Sky/Build/Compile.hs"
             -- The new pure shape.
-            ("letBindingType :: Solve.SolvedTypes -> String -> Can.Expr"
+            ("letBindingType :: EmitCompileCtx -> Solve.SolvedTypes -> String -> Can.Expr"
                 `List.isInfixOf` src) `shouldBe` True
             -- The old IORef-coupled shape is gone.
             ("letBindingType :: LC.LowerCtx" `List.isInfixOf` src)

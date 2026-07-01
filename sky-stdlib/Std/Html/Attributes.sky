@@ -1,3 +1,4 @@
+-- | Std.Html.Attributes — the typed attribute surface for Std.Html (Layer 3 Sky source).
 module Std.Html.Attributes exposing (..)
 
 -- | Std.Html.Attributes — the typed attribute surface for Std.Html.

@@ -3,6 +3,7 @@
 module Sky.Type.Constrain.Module
     ( constrainModule
     , constrainModuleWithExternals
+    , constrainModuleWithFfi
     )
     where
 
@@ -26,3 +27,19 @@ constrainModuleWithExternals
     -> Can.Module
     -> IO T.Constraint
 constrainModuleWithExternals = ConstrainExpr.constrainModuleWithExternals
+
+
+-- | v0.17 close P1 step 4 — FFI-aware variant: takes BOTH the
+-- cross-module externals AND the FFI-kernel signature map
+-- (from @LoadedFfiTables._lft_kernelTypes@) and threads them
+-- through a per-call 'Env' record's @_envFfiKernelTypes@
+-- field, replacing the legacy module-level IORef read at the
+-- @Can.VarKernel@ arm.
+constrainModuleWithFfi
+    :: Map.Map (String, String) T.Annotation
+    -- ^ cross-module externals
+    -> Map.Map (String, String) T.Annotation
+    -- ^ FFI-kernel signatures
+    -> Can.Module
+    -> IO T.Constraint
+constrainModuleWithFfi = ConstrainExpr.constrainModuleWithFfi

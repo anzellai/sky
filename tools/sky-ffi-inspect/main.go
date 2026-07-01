@@ -72,8 +72,18 @@ type Param struct {
 	// `type Direction int`): SkyType collapses to the basic name
 	// so HM treats them as String / Int / Bool. Empty when SkyType
 	// equals Type — Haskell side defaults to Type when empty.
-	SkyType string     `json:"skyType,omitempty"`
-	GoType  types.Type `json:"-"` // unexported; used for interface-implements checks
+	SkyType string `json:"skyType,omitempty"`
+	// SkyTypeQualified — v0.17 C17a foundation for FFI opaque
+	// distinctness (Cause G).  Populated only when the underlying
+	// Go type is an opaque named struct/interface (NOT a basic-
+	// alias): emits the fully-qualified Sky-name + Go package path
+	// in `Name@pkgPath` form (e.g. `Customer@github.com/stripe/stripe-go/v84`).
+	// Existing Haskell parser ignores unknown JSON fields → safe
+	// additive change; C17b extends the parser to consume it.
+	// When the type isn't an opaque named struct, this is empty
+	// and consumers fall back to SkyType.
+	SkyTypeQualified string     `json:"skyTypeQualified,omitempty"`
+	GoType           types.Type `json:"-"` // unexported; used for interface-implements checks
 }
 
 type Function struct {
@@ -101,7 +111,47 @@ type PackageInfo struct {
 	Pkg       string     `json:"pkg"`
 	Name      string     `json:"name"`
 	Functions []Function `json:"functions"`
-	Errors    []string   `json:"errors"`
+	// v0.17 PR-9 — Implements registry: maps the qualified name of
+	// each concrete named type in THIS package to the list of
+	// qualified interface names it satisfies. Format of both names:
+	// `Name@github.com/pkg/path`.
+	//
+	// Built by iterating every exported *types.Named in this
+	// package's scope against the global interface inventory
+	// gathered across every loaded package. Parameterised interfaces
+	// (Go 1.18+) are skipped at inventory time — types.Implements
+	// requires fully-instantiated interfaces, and Sky's HM can't
+	// unify against them (CLAUDE.md Limitation #1).
+	//
+	// Pointer-receiver retry mirrors implementsError (line 763):
+	// if T does not implement I, *T is tried too — Go convention is
+	// pointer receivers on most interface implementations.
+	//
+	// Consumed by the Haskell side (PR-21) for FFI interface
+	// satisfaction lookups. Existing parsers ignore the field —
+	// additive change.
+	Implements map[string][]string `json:"implements,omitempty"`
+	// v0.17 PR-9 — PkgAlias registry: maps every Go import path
+	// referenced by this package's types or methods to a canonical
+	// safe-identifier alias (e.g.
+	// "github.com/stripe/stripe-go/v84" → "stripe_go_v84"). Self-
+	// path also included as a self-alias (canonicalised same way).
+	//
+	// Used by hand-coded sigs / cross-package implementation lookups
+	// downstream. Aliases derived via pathToAlias (last segment,
+	// sanitised; "v\d+" version segments fold into the prior segment).
+	// Sky-side wrappers consume this so cross-pkg references stay
+	// stable across compilations.
+	PkgAlias map[string]string `json:"pkgAlias,omitempty"`
+	Errors   []string          `json:"errors"`
+}
+
+// namedInterface — one entry in the global interface inventory built
+// at main() time before walkPackage runs. Captures everything needed
+// to call types.Implements for each concrete named type later.
+type namedInterface struct {
+	QualifiedName string
+	Iface         *types.Interface
 }
 
 func main() {
@@ -157,23 +207,235 @@ func main() {
 	// If the loader skipped some (rare — usually means a typo'd path),
 	// we synthesise an empty PackageInfo so the array stays aligned.
 	results := make([]PackageInfo, 0, len(pkgPaths))
-	loadedByPath := make(map[string]*packages.Package, len(pkgs))
-	for _, pkg := range pkgs {
-		loadedByPath[pkg.PkgPath] = pkg
-	}
+	loadedByPath := make(map[string]*packages.Package)
+	// v0.17 PR-21b prereq — walk roots + transitive deps so the
+	// interface inventory covers ALL packages loaded by go/packages,
+	// not just the explicit roots.  Pre-fix, fyne.io/fyne/v2/widget
+	// alone produced an empty `implements` map because the parent
+	// fyne.io/fyne/v2 (where CanvasObject lives) was a transitive
+	// dep, not a root — so buildInterfaceInventory only walked widget's
+	// scope and missed every cross-package interface.
+	//
+	// packages.Visit walks the import graph in post-order with cycle
+	// guarding built in.  Cheaper + safer than a hand-rolled recursive
+	// flood.
+	packages.Visit(pkgs, func(pkg *packages.Package) bool {
+		if pkg != nil && pkg.PkgPath != "" {
+			loadedByPath[pkg.PkgPath] = pkg
+		}
+		return true
+	}, nil)
+
+	// v0.17 PR-9 — build the global interface inventory across every
+	// LOADED package (roots + transitive deps). Each requested package's
+	// `Implements` field is then populated by checking its concrete
+	// named types against this inventory. One inventory, O(K) total
+	// build cost where K = total interfaces in the loaded set.
+	allInterfaces := buildInterfaceInventory(loadedByPath)
+
 	for _, requested := range pkgPaths {
 		pkg, ok := loadedByPath[requested]
 		if !ok {
 			results = append(results, PackageInfo{
-				Pkg: requested,
+				Pkg:    requested,
 				Errors: []string{"no package loaded for " + requested},
 			})
 			continue
 		}
-		results = append(results, walkPackage(requested, pkg))
+		info := walkPackage(requested, pkg)
+		info.Implements = computeImplements(pkg, allInterfaces)
+		info.PkgAlias = computePkgAlias(pkg)
+		results = append(results, info)
 	}
 
 	emitInfoOrArray(results, len(pkgPaths) > 1)
+}
+
+// buildInterfaceInventory walks every loaded package's scope and
+// collects every exported, non-parameterised interface type. The
+// resulting slice is consumed by computeImplements during walkPackage.
+//
+// Parameterised interfaces (Go 1.18+) are skipped because
+// types.Implements requires a fully-instantiated interface and Sky's
+// HM has no higher-kinded support (CLAUDE.md Limitation #1).
+func buildInterfaceInventory(loaded map[string]*packages.Package) []namedInterface {
+	var out []namedInterface
+	for path, pkg := range loaded {
+		if pkg.Types == nil {
+			continue
+		}
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if obj == nil || !obj.Exported() {
+				continue
+			}
+			tn, ok := obj.(*types.TypeName)
+			if !ok {
+				continue
+			}
+			named, ok := tn.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			// Skip parameterised interfaces.
+			if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+				continue
+			}
+			iface, ok := named.Underlying().(*types.Interface)
+			if !ok {
+				continue
+			}
+			out = append(out, namedInterface{
+				QualifiedName: name + "@" + path,
+				Iface:         iface,
+			})
+		}
+	}
+	return out
+}
+
+// computeImplements walks pkg's scope, finds every exported
+// concrete (non-interface) named type, and probes each against the
+// global interface inventory.
+//
+// Pointer-receiver retry mirrors implementsError: if T does not
+// implement I, *T is tried — Go convention is pointer receivers on
+// most interface methods.
+//
+// Returns nil when the package surfaces no implementations (which
+// keeps the JSON field omitted via the `omitempty` tag).
+func computeImplements(pkg *packages.Package, allInterfaces []namedInterface) map[string][]string {
+	if pkg.Types == nil || len(allInterfaces) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	scope := pkg.Types.Scope()
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		if obj == nil || !obj.Exported() {
+			continue
+		}
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		// Skip the type itself if its underlying is an interface
+		// (interfaces don't "implement" other interfaces here; that
+		// semantic is captured separately if needed).
+		if _, isIface := named.Underlying().(*types.Interface); isIface {
+			continue
+		}
+		// Skip parameterised types — Sky can't instantiate them.
+		if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+			continue
+		}
+		var satisfies []string
+		for _, ni := range allInterfaces {
+			if implementsIface(named, ni.Iface) {
+				satisfies = append(satisfies, ni.QualifiedName)
+			}
+		}
+		if len(satisfies) > 0 {
+			qn := name + "@" + pkg.PkgPath
+			out[qn] = satisfies
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// implementsIface checks whether T or *T satisfies the given
+// interface. Mirrors implementsError's *T retry shape.
+func implementsIface(t types.Type, iface *types.Interface) bool {
+	if types.Implements(t, iface) {
+		return true
+	}
+	if _, isPtr := t.(*types.Pointer); !isPtr {
+		return types.Implements(types.NewPointer(t), iface)
+	}
+	return false
+}
+
+// computePkgAlias builds the import-path → canonical-alias mapping
+// for pkg. Includes self under its own path and every direct import
+// returned by packages.Package.Imports.
+//
+// Alias derivation: last path segment, sanitised to a valid Go ident.
+// Versioned packages (path ending in /v\d+) fold the version segment
+// onto the previous one. E.g.:
+//   "github.com/stripe/stripe-go/v84" → "stripe_go_v84"
+//   "github.com/google/go-cmp/cmp"    → "cmp"
+//   "net/http"                        → "http"
+func computePkgAlias(pkg *packages.Package) map[string]string {
+	if pkg == nil {
+		return nil
+	}
+	out := make(map[string]string)
+	out[pkg.PkgPath] = pathToCanonicalAlias(pkg.PkgPath)
+	for path := range pkg.Imports {
+		out[path] = pathToCanonicalAlias(path)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// pathToCanonicalAlias derives a stable Go-ident alias from an import
+// path. Mirrors FfiGen.hs's `pathToAlias` shape so Sky-side and
+// Inspector-side strings agree.
+func pathToCanonicalAlias(path string) string {
+	if path == "" {
+		return ""
+	}
+	segs := strings.Split(path, "/")
+	// Fold trailing version segment back into the previous one.
+	if n := len(segs); n >= 2 && isVersionSegment(segs[n-1]) {
+		segs[n-2] = segs[n-2] + "_" + segs[n-1]
+		segs = segs[:n-1]
+	}
+	last := segs[len(segs)-1]
+	return sanitiseIdent(last)
+}
+
+// isVersionSegment matches "v" followed by 1+ digits, ASCII only.
+func isVersionSegment(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitiseIdent replaces non-ident chars with underscores.
+func sanitiseIdent(s string) string {
+	if s == "" {
+		return ""
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '_' {
+			out = append(out, c)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
 }
 
 
@@ -367,7 +629,7 @@ func addPointerMethods(info *PackageInfo, mset *types.MethodSet, typeName string
 		}
 		info.Functions = append(info.Functions, Function{
 			Name:     name,
-			Params:   append([]Param{{Name: "recv", Type: types.NewPointer(named.Obj().Type()).String()}}, paramsOf(sig)...),
+			Params:   append([]Param{paramForReceiver(types.NewPointer(named.Obj().Type()))}, paramsOf(sig)...),
 			Results:  resultsOf(sig),
 			Variadic: sig.Variadic(),
 			Effect:   classifyEffect(resultsOf(sig)),
@@ -404,10 +666,99 @@ func resultsOf(sig *types.Signature) []Param {
 func paramFor(t types.Type) Param {
 	gt := t.String()
 	st := skyTypeOf(t)
+	sq := skyTypeQualifiedOf(t)
 	if st == gt {
-		return Param{Type: gt}
+		return Param{Type: gt, SkyTypeQualified: sq}
 	}
-	return Param{Type: gt, SkyType: st}
+	return Param{Type: gt, SkyType: st, SkyTypeQualified: sq}
+}
+
+// skyTypeQualifiedOf — v0.17 C17a — emits a fully-qualified opaque
+// marker for opaque named types (NOT basic-aliases). Format:
+// `Name@pkgPath` (e.g. `Customer@github.com/stripe/stripe-go/v84`).
+//
+// Returns "" when the type is a basic, basic-alias, pointer/slice/
+// map/array container, or interface{} — anything where Sky's
+// current routing already produces a distinct surface form.
+//
+// Used by the Haskell side (C17b+) to keep opaque FFI types
+// distinct from each other.  Today every opaque named struct
+// collapses to (Canonical "") "Value" so `stripe.Customer` and
+// `aws.Account` unify even though they're distinct Go types.
+//
+// Recursive through containers: a `*Customer` returns
+// `*Customer@github.com/stripe/stripe-go/v84` so callers can split
+// pointer-of-opaque safely.
+func skyTypeQualifiedOf(t types.Type) string {
+	switch tt := t.(type) {
+	case *types.Pointer:
+		inner := skyTypeQualifiedOf(tt.Elem())
+		if inner == "" {
+			return ""
+		}
+		return "*" + inner
+	case *types.Slice:
+		inner := skyTypeQualifiedOf(tt.Elem())
+		if inner == "" {
+			return ""
+		}
+		return "[]" + inner
+	case *types.Map:
+		// Maps with opaque key OR value get qualified;
+		// callers split on the first `@`.  This keeps the grammar
+		// extensible without forcing a regex parser later.
+		k := skyTypeQualifiedOf(tt.Key())
+		v := skyTypeQualifiedOf(tt.Elem())
+		if k == "" && v == "" {
+			return ""
+		}
+		if k == "" {
+			k = skyTypeOf(tt.Key())
+		}
+		if v == "" {
+			v = skyTypeOf(tt.Elem())
+		}
+		return "map[" + k + "]" + v
+	case *types.Named:
+		// Basic-aliases (Stripe enum-strings) intentionally don't
+		// emit a qualified marker — they collapse to their basic
+		// underlying via SkyType.
+		if _, ok := tt.Underlying().(*types.Basic); ok {
+			return ""
+		}
+		obj := tt.Obj()
+		if obj == nil {
+			return ""
+		}
+		name := obj.Name()
+		// Builtin types (`error`) have a nil Pkg — skip qualification.
+		pkg := obj.Pkg()
+		if pkg == nil {
+			return ""
+		}
+		return name + "@" + pkg.Path()
+	default:
+		return ""
+	}
+}
+
+// paramForReceiver — v0.17 (audit #1) — receiver positions need
+// the same SkyType + SkyTypeQualified treatment as regular params.
+// Before this fix, every method's `recv` was constructed manually
+// as `Param{Name: "recv", Type: recvType.String()}` which bypassed
+// `paramFor` entirely and left SkyType / SkyTypeQualified empty —
+// so the function-level skyType string emitted by FfiGen's
+// wrapperSkyType saw the receiver as a bare unqualified
+// `CustomerListParams` while other Stripe sigs emitted the
+// qualified form, causing HM mismatches at cross-FFI composition
+// (`Variable 'listParams' type mismatch: Value vs
+// CustomerListParams_at_github_com_stripe_stripe_go_v84`).
+// Closes the inspector completeness audit recommended by
+// `docs/v0.17-c17c-asymmetry.md` (Option A).
+func paramForReceiver(t types.Type) Param {
+	p := paramFor(t)
+	p.Name = "recv"
+	return p
 }
 
 func paramForNamed(name string, t types.Type) Param {
@@ -461,7 +812,7 @@ func skyTypeOf(t types.Type) string {
 }
 
 func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvType types.Type) Function {
-	params := []Param{{Name: "recv", Type: recvType.String()}}
+	params := []Param{paramForReceiver(recvType)}
 	params = append(params, paramsOf(sig)...)
 	return Function{
 		Name:       typeName + fn.Name(),
@@ -525,7 +876,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 	for _, f := range info.Functions {
 		seen[f.Name] = true
 	}
-	recvType := types.NewPointer(named.Obj().Type()).String()
+	recvTypeT := types.NewPointer(named.Obj().Type())
 	for i := 0; i < s.NumFields(); i++ {
 		f := s.Field(i)
 		if !f.Exported() {
@@ -535,7 +886,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 		if !seen[getterName] {
 			info.Functions = append(info.Functions, Function{
 				Name:       getterName,
-				Params:     []Param{{Name: "recv", Type: recvType}},
+				Params:     []Param{paramForReceiver(recvTypeT)},
 				Results:    []Param{paramFor(f.Type())},
 				Effect:     "pure",
 				Exported:   true,
@@ -552,9 +903,9 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 				// value-first, receiver second — matches Sky pipeline idiom.
 				Params: []Param{
 					paramForNamed("value", f.Type()),
-					{Name: "recv", Type: recvType},
+					paramForReceiver(recvTypeT),
 				},
-				Results:    []Param{{Type: recvType}},
+				Results:    []Param{paramFor(recvTypeT)},
 				Effect:     "pure",
 				Exported:   true,
 				RecvType:   typeName,

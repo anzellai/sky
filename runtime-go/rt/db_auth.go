@@ -1260,6 +1260,24 @@ type appliedMigration struct {
 //	SKY_DB_OP=status   print applied / pending / drifted, exit 0
 //	SKY_DB_OP=migrate  apply pending, print summary, exit 0 (1 on error)
 //	unset              normal Task behaviour (apply, return Ok/Err)
+//
+// Tenant-gate bypass (by design): Db_migrateApply INTENTIONALLY
+// runs UNSCOPED — it does NOT route through the v0.16.6
+// HubStoreReaderWithTenant tenant-prefix WHERE gate. Schema
+// changes (CREATE TABLE / ALTER TABLE / index DDL) are GLOBAL by
+// design: they alter the shared physical schema all tenants read
+// from, so they cannot be scoped to one tenant prefix.
+//
+// Operational contract:
+//
+//   - Only call Std.Db.migrate from a SINGLE deployment-time entry
+//     point (server startup main / one-shot `sky db migrate` CLI).
+//   - NEVER call from a per-tenant runtime path (request handler,
+//     Sky.Live update, scheduled per-tenant fan-out job).
+//   - The tenant-prefix gate stays enforced for every other Db.*
+//     kernel (exec / query / queryDecode / findOneByField /
+//     findManyByField / findByConditions / unsafeFindWhere) —
+//     only this one kernel is exempt.
 func Db_migrateApply(dbA, pairsA any) any {
 	return func() any {
 		return WithDbSpan(dbSystemOf(dbA), "migrate", "schema migration", func() any {

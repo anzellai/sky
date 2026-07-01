@@ -197,6 +197,14 @@ typeE_RecordUpdateMismatch = DiagCode "E2005"
 typeE_FunctionArity      :: DiagCode
 typeE_FunctionArity      = DiagCode "E2006"
 
+-- | Strict-HM arity mismatch — emitted by the v0.17 arity gate
+-- (Limitation #7 close path). Distinct from `typeE_FunctionArity`
+-- because the gate's diagnostic includes the binding's declared
+-- arity D + the call site's supplied arity S, not the generic HM
+-- arity-mismatch unification error.
+typeE_ArityMismatch      :: DiagCode
+typeE_ArityMismatch      = DiagCode "E2007"
+
 
 -- | Exhaustiveness codes (E3000-E3999).
 exhaustE_NonExhaustive   :: DiagCode

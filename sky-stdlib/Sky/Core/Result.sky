@@ -15,7 +15,10 @@ module Sky.Core.Result exposing
     , map
     , andThen
     , mapError
-    , map2, map3, map4, map5
+    , map2
+    , map3
+    , map4
+    , map5
     , andMap
     , combine
     )
@@ -23,98 +26,203 @@ module Sky.Core.Result exposing
 
 withDefault def r =
     case r of
-        Ok x -> x
-        Err _ -> def
+
+        Ok x ->
+            x
+
+        Err _ ->
+            def
 
 
 map fn r =
     case r of
-        Ok x -> Ok (fn x)
-        Err e -> Err e
+
+        Ok x ->
+            Ok (fn x)
+
+        Err e ->
+            Err e
 
 
 andThen fn r =
     case r of
-        Ok x -> fn x
-        Err e -> Err e
+
+        Ok x ->
+            fn x
+
+        Err e ->
+            Err e
 
 
 mapError fn r =
     case r of
-        Ok x -> Ok x
-        Err e -> Err (fn e)
+
+        Ok x ->
+            Ok x
+
+        Err e ->
+            Err (fn e)
 
 
 map2 fn ra rb =
     case ra of
+
         Ok a ->
             case rb of
-                Ok b -> Ok (fn a b)
-                Err e -> Err e
-        Err e -> Err e
+
+                Ok b ->
+                    Ok (fn a b)
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
 
 
 map3 fn ra rb rc =
     case ra of
+
         Ok a ->
             case rb of
+
                 Ok b ->
                     case rc of
-                        Ok c -> Ok (fn a b c)
-                        Err e -> Err e
-                Err e -> Err e
-        Err e -> Err e
+
+                        Ok c ->
+                            Ok (fn a b c)
+
+                        Err e ->
+                            Err e
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
 
 
 map4 fn ra rb rc rd =
     case ra of
+
         Ok a ->
             case rb of
+
                 Ok b ->
                     case rc of
+
                         Ok c ->
                             case rd of
-                                Ok d -> Ok (fn a b c d)
-                                Err e -> Err e
-                        Err e -> Err e
-                Err e -> Err e
-        Err e -> Err e
+
+                                Ok d ->
+                                    Ok (fn a b c d)
+
+                                Err e ->
+                                    Err e
+
+                        Err e ->
+                            Err e
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
 
 
 map5 fn ra rb rc rd re =
     case ra of
+
         Ok a ->
             case rb of
+
                 Ok b ->
                     case rc of
+
                         Ok c ->
                             case rd of
+
                                 Ok d ->
                                     case re of
-                                        Ok e -> Ok (fn a b c d e)
-                                        Err err -> Err err
-                                Err err -> Err err
-                        Err err -> Err err
-                Err err -> Err err
-        Err err -> Err err
+
+                                        Ok e ->
+                                            Ok (fn a b c d e)
+
+                                        Err err ->
+                                            Err err
+
+                                Err err ->
+                                    Err err
+
+                        Err err ->
+                            Err err
+
+                Err err ->
+                    Err err
+
+        Err err ->
+            Err err
 
 
 andMap ra rfn =
     case rfn of
+
         Ok fn ->
             case ra of
-                Ok a -> Ok (fn a)
-                Err e -> Err e
-        Err e -> Err e
+
+                Ok a ->
+                    Ok (fn a)
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
 
 
+-- v0.17 step-7 CPS rewrite: was non-TCO O(N) Go-stack recursion
+-- (re-entered into combine for each cons element).  Now delegates
+-- to a private `combineHelp` accumulator that recurses in tail
+-- position with the Ok-payload accumulator, then reverses once on
+-- the [] base via the private `reverseHelp`.  Both helpers are
+-- inlined here (4-line `reverseHelp` duplication) instead of
+-- imported from Sky.Core.List because Result is a transitive dep
+-- of List (Sky.Core.List.foldr / etc. surface Result-valued
+-- callbacks): importing List back into Result would close a
+-- Result → List → Result cycle.  Same trade-off Sky.Core.Maybe
+-- documents in its `combine` rewrite (see Maybe.sky for the
+-- sibling decision).
+--
+-- DELEGATING binding — the CpsStackConstantBound regression spec
+-- checks the helper (`combineHelp`) for the auto-TCO for-continue
+-- gate, NOT the public `combine` shim itself.
 combine results =
+    combineHelp results []
+
+
+combineHelp results acc =
     case results of
-        [] -> Ok []
-        (r :: rest) ->
+
+        [] ->
+            Ok (reverseHelp acc [])
+
+        r :: rest ->
             case r of
+
                 Ok x ->
-                    case combine rest of
-                        Ok xs -> Ok (x :: xs)
-                        Err e -> Err e
-                Err e -> Err e
+                    combineHelp rest (x :: acc)
+
+                Err e ->
+                    Err e
+
+
+-- Inlined to avoid Result → List → Result import cycle; see
+-- the comment on `combine` above.
+reverseHelp list acc =
+    case list of
+
+        [] ->
+            acc
+
+        x :: rest ->
+            reverseHelp rest (x :: acc)

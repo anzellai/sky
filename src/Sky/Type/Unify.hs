@@ -9,6 +9,21 @@
 -- aliases, super types.
 module Sky.Type.Unify
     ( unify
+    , implementsInterface     -- v0.17 PR-21b — A <: I predicate
+    , isFfiInterfacePair      -- v0.17 PR-21b — symmetric implements check
+    , rowExtCounter           -- v0.17 #624 — reset per compile (in-process)
+    -- v0.17 close P1 step 3 — value-channel routing for FFI implements
+    -- registry (replaced @unsafePerformIO (readIORef ffiImplementsRef)@
+    -- inside @implementsInterface@).  Solve constructs a 'UnifyState'
+    -- once at entry and threads it through every recursive unify arm.
+    -- v0.17 close iter 6 — the legacy 'ffiImplementsRef' IORef has been
+    -- DELETED (was paired write-only mirror with
+    -- 'Sky.Canonicalise.Environment.ffiImplementsRef', written by
+    -- 'Sky.Build.Compile.loadAndSeedFfiRegistry' and never read in
+    -- non-comment code post-step-3).
+    , UnifyState (..)
+    , emptyUnifyState
+    , mkUnifyState
     )
     where
 
@@ -35,18 +50,126 @@ freshRowExtName = do
     return ("_rowext" ++ show n)
 
 
+-- v0.17 close iter 6 — the legacy 'ffiImplementsRef' IORef has been
+-- DELETED.  Was the paired write-only mirror of
+-- 'Sky.Canonicalise.Environment.ffiImplementsRef', written by
+-- 'Sky.Build.Compile.loadAndSeedFfiRegistry' and never read in
+-- non-comment code post-step-3.  The registry now flows purely via
+-- 'LoadedFfiTables._lft_implements' → 'CompileCtx._ctx_implements'
+-- → 'SolverState._ffiImplements' → 'UnifyState._us_ffiImplements',
+-- threaded through every recursive @unify@ arm.
+
+
+-- | v0.17 close P1 step 3 — threaded unifier state.
+--
+-- Carries the FFI interface-satisfaction registry that
+-- 'implementsInterface' previously read via
+-- @unsafePerformIO (readIORef ffiImplementsRef)@.  The constructor of
+-- the @SolverState@ in @Sky.Type.Solve@ projects its own
+-- @_ffiImplements@ field into a @UnifyState@ once per recursion entry
+-- and threads it through every unify arm.  Empty by default
+-- ('emptyUnifyState') — projects with no FFI deps OR test entry points
+-- that don't seed a registry still get strict-equality behaviour from
+-- 'unifyStructure'.
+--
+-- Future fields (UF table snapshot, occurs-check budget, etc.) belong
+-- here; for now @_us_ffiImplements@ is the sole carry-through value.
+data UnifyState = UnifyState
+    { _us_ffiImplements :: !(Map.Map String [String])
+        -- ^ Mirrors @SolvedTypes._stImplementsMap@ + the legacy
+        -- @ffiImplementsRef@ IORef.  Keys are qualified type names
+        -- (@"Label\@fyne.io/fyne/v2/widget"@ after mangling to
+        -- @"Label_at_fyne_io_fyne_v2_widget"@); values are the
+        -- qualified interfaces the key type satisfies.
+    }
+
+
+-- | Empty 'UnifyState' — no FFI implements registry.  Equivalent to
+-- the legacy IORef being empty: 'implementsInterface' returns 'False'
+-- for every pair, and 'unifyStructure' falls back to strict-equality
+-- nominal matching.
+emptyUnifyState :: UnifyState
+emptyUnifyState = UnifyState Map.empty
+
+
+-- | Build a 'UnifyState' from a pre-merged implements registry — the
+-- shape @Sky.Build.Compile.loadAndSeedFfiRegistry@ already produces in
+-- @LoadedFfiTables._lft_implements@.
+mkUnifyState :: Map.Map String [String] -> UnifyState
+mkUnifyState impls = UnifyState impls
+
+
+-- | v0.17 PR-21b — does the qualified type name @qname@ implement the
+-- qualified interface @iname@?  Threaded value-channel form (v0.17
+-- close P1 step 3): consults @_us_ffiImplements@ on the provided
+-- 'UnifyState' instead of @unsafePerformIO (readIORef
+-- ffiImplementsRef)@.  Returns 'False' when @qname@ has no entry
+-- (empty list).
+implementsInterface :: UnifyState -> String -> String -> Bool
+implementsInterface state qname iname =
+    let ifaces = Map.findWithDefault [] qname (_us_ffiImplements state)
+    in iname `elem` ifaces
+
+
+-- | v0.17 PR-21b — does either side of an @App1 ↔ App1@ pair satisfy
+-- the other via Go interface satisfaction?  One-way relation: @A@
+-- implementing @I@ does NOT mean @I@-typed values are @A@; the unifier
+-- treats both directions as widenings (preserving HM principal types
+-- via the merged opaque-shape outcome).
+isFfiInterfacePair :: UnifyState -> String -> String -> Bool
+isFfiInterfacePair state n1 n2 =
+    implementsInterface state n1 n2 || implementsInterface state n2 n1
+
+
+-- | v0.17 PR-21c — does this identifier carry the qualified-mangled
+-- @_at_@ marker (i.e. @Bare_at_pkgmangle@)?  Used by the
+-- @Value\@qualified bridge@ to recognise post-PR-21c-flip qualified
+-- FFI-opaque types vs ordinary user-defined ADT names.
+--
+-- Required shape: capital-prefixed bare name, no @_@ in the bare,
+-- followed by @_at_@, followed by lowercase-only suffix.  Identical
+-- pattern to @Sky.Build.Compile.splitGoMangledQualified@ — kept
+-- duplicated here to avoid a Compile↔Type cycle.
+hasQualifiedMarker :: String -> Bool
+hasQualifiedMarker s = go s ""
+  where
+    go ('_' : 'a' : 't' : '_' : suffix) acc
+        | not (null acc)
+        , let bare = reverse acc
+        , let h = head bare
+        , h >= 'A' && h <= 'Z'
+        , all (\c -> (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')) bare
+        , not (null suffix)
+        , all (\c -> (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_') suffix
+        = True
+    go (c : rest) acc = go rest (c : acc)
+    go [] _ = False
+
+
 -- | Unify two type variables. Returns True on success, False on failure.
-unify :: T.Variable -> T.Variable -> IO Bool
-unify v1 v2 = do
+--
+-- v0.17 close P1 step 3 — takes a 'UnifyState' carrying the FFI
+-- interface-satisfaction registry as its first argument.  Pre-step-3,
+-- the registry was read on demand via
+-- @unsafePerformIO (readIORef ffiImplementsRef)@ inside
+-- 'implementsInterface'; now the value is threaded explicitly through
+-- every recursive arm.  Test entry points and LSP paths that don't
+-- seed a registry pass 'emptyUnifyState'.
+unify :: UnifyState -> T.Variable -> T.Variable -> IO Bool
+unify state v1 v2 = do
     eq <- UF.equivalent v1 v2
     if eq
         then return True  -- already unified
-        else actuallyUnify v1 v2
+        else actuallyUnify state v1 v2
 
 
 -- | Perform actual unification between two non-equivalent variables
-actuallyUnify :: T.Variable -> T.Variable -> IO Bool
-actuallyUnify v1 v2 = do
+actuallyUnify :: UnifyState -> T.Variable -> T.Variable -> IO Bool
+actuallyUnify state v1 v2 = do
     d1 <- UF.get v1
     d2 <- UF.get v2
     case (T._content d1, T._content d2) of
@@ -145,7 +268,7 @@ actuallyUnify v1 v2 = do
 
         -- Structure-Structure: structural unification
         (T.Structure flat1, T.Structure flat2) ->
-            unifyStructure v1 v2 flat1 flat2
+            unifyStructure state v1 v2 flat1 flat2
 
         -- App1 ↔ Alias with same name + arity: unfold and match.
         -- This case arises with recursive parametric aliases: the
@@ -161,7 +284,7 @@ actuallyUnify v1 v2 = do
             | (home1 == home2 || nullHome home1 || nullHome home2)
             , name1 == name2
             , length args1 == length pairs2 -> do
-                results <- mapM (uncurry unify)
+                results <- mapM (uncurry (unify state))
                     (zip args1 (map snd pairs2))
                 if and results
                     then do
@@ -175,7 +298,7 @@ actuallyUnify v1 v2 = do
             | (home1 == home2 || nullHome home1 || nullHome home2)
             , name1 == name2
             , length pairs1 == length args2 -> do
-                results <- mapM (uncurry unify)
+                results <- mapM (uncurry (unify state))
                     (zip (map snd pairs1) args2)
                 if and results
                     then do
@@ -186,10 +309,10 @@ actuallyUnify v1 v2 = do
 
         -- Alias: unwrap and unify
         (T.Alias _ _ _ realVar, _) ->
-            unify realVar v2
+            unify state realVar v2
 
         (_, T.Alias _ _ _ realVar) ->
-            unify v1 realVar
+            unify state v1 realVar
 
 
 -- | Empty-home sentinel test used by both the App1-vs-App1 same-name
@@ -201,8 +324,8 @@ nullHome h = null (ModuleName.toString h)
 
 
 -- | Unify two type structures
-unifyStructure :: T.Variable -> T.Variable -> T.FlatType -> T.FlatType -> IO Bool
-unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
+unifyStructure :: UnifyState -> T.Variable -> T.Variable -> T.FlatType -> T.FlatType -> IO Bool
+unifyStructure state v1 v2 flat1 flat2 = case (flat1, flat2) of
 
     (T.App1 home1 name1 args1, T.App1 home2 name2 args2) ->
         -- Homes agree when they match exactly, OR when either side is
@@ -219,15 +342,47 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
             homesAgree = home1 == home2 || home1 == emptyCan || home2 == emptyCan
         in if homesAgree && name1 == name2 && length args1 == length args2
             then do
-                results <- mapM (uncurry unify) (zip args1 args2)
+                results <- mapM (uncurry (unify state)) (zip args1 args2)
                 if and results
                     then do merge v1 v2 (T.Structure flat1); return True
                     else return False
+            -- v0.17 PR-21b — FFI interface-satisfaction axiom.  When
+            -- both sides are nullary (qualified-mangled FFI types
+            -- never carry HM args), names differ, AND the inspector
+            -- registry says one side implements the other (Go-side
+            -- structural interface satisfaction), allow the unification
+            -- as a widening.  Closes the canonical Fyne
+            -- @Label\@fyne.io/fyne/v2/widget@ ↔
+            -- @CanvasObject\@fyne.io/fyne/v2@ case + every analogous
+            -- cross-package FFI pair.
+            else if null args1 && null args2 && isFfiInterfacePair state name1 name2
+                then do merge v1 v2 (T.Structure flat1); return True
+            -- v0.17 PR-21c — Value↔qualified bridge.  Hand-coded
+            -- kernel signatures (e.g. @Context.background@ at
+            -- @Sky.Type.Constrain.Expression.lookupKernelType@) still
+            -- return the legacy @Value@ sentinel because they pre-date
+            -- the inspector's qualified-marker emission.  Post-PR-21c
+            -- resolver flip, the call sites expect a qualified type
+            -- (@Context_at_context@, @CustomerListParams_at_...@, etc).
+            -- This bridge allows @Value@ to flow into any qualified
+            -- nullary slot transparently, mirroring the legacy
+            -- collapse-to-Value behaviour without requiring every
+            -- hand-coded sig to be migrated atomically.
+            --
+            -- One-way safety: the bridge only widens @Value <: Q@ when
+            -- the other side is a qualified-mangled identifier
+            -- (carries @_at_@).  A bare ADT @Color@ vs @Value@ still
+            -- fails strict-equality — only the FFI-opaque qualified
+            -- form bridges.
+            else if null args1 && null args2 &&
+                    ((name1 == "Value" && hasQualifiedMarker name2)
+                    || (name2 == "Value" && hasQualifiedMarker name1))
+                then do merge v1 v2 (T.Structure flat1); return True
             else return False
 
     (T.Fun1 arg1 res1, T.Fun1 arg2 res2) ->
-        do  argOk <- unify arg1 arg2
-            resOk <- unify res1 res2
+        do  argOk <- unify state arg1 arg2
+            resOk <- unify state res1 res2
             if argOk && resOk
                 then do merge v1 v2 (T.Structure flat1); return True
                 else return False
@@ -236,11 +391,11 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
         do merge v1 v2 (T.Structure T.Unit1); return True
 
     (T.Tuple1 a1 b1 mc1, T.Tuple1 a2 b2 mc2) ->
-        do  aOk <- unify a1 a2
-            bOk <- unify b1 b2
+        do  aOk <- unify state a1 a2
+            bOk <- unify state b1 b2
             cOk <- case (mc1, mc2) of
                 (Nothing, Nothing) -> return True
-                (Just c1, Just c2) -> unify c1 c2
+                (Just c1, Just c2) -> unify state c1 c2
                 _ -> return False
             if aOk && bOk && cOk
                 then do merge v1 v2 (T.Structure flat1); return True
@@ -250,7 +405,7 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
         do merge v1 v2 (T.Structure T.EmptyRecord1); return True
 
     (T.Record1 fields1 ext1, T.Record1 fields2 ext2) ->
-        unifyRecords v1 v2 fields1 ext1 fields2 ext2
+        unifyRecords state v1 v2 fields1 ext1 fields2 ext2
 
     -- An OPEN record pattern unifies with an FFI-opaque nominal type.
     -- `Can.Access` lowers `expr.field` to an open-row record
@@ -310,17 +465,17 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
 -- the `Map.null only1 && Map.null only2` branch). One side closed
 -- → other side's extra fields are illegal. Both open → row-poly
 -- merge as before.
-unifyRecords :: T.Variable -> T.Variable
+unifyRecords :: UnifyState -> T.Variable -> T.Variable
     -> Map.Map String T.Variable -> T.Variable
     -> Map.Map String T.Variable -> T.Variable
     -> IO Bool
-unifyRecords v1 v2 fields1 ext1 fields2 ext2 = do
+unifyRecords state v1 v2 fields1 ext1 fields2 ext2 = do
     let shared = Map.intersectionWith (,) fields1 fields2
         only1 = Map.difference fields1 fields2
         only2 = Map.difference fields2 fields1
 
     -- Unify shared fields
-    sharedOk <- mapM (uncurry unify) (Map.elems shared)
+    sharedOk <- mapM (uncurry (unify state)) (Map.elems shared)
     if not (and sharedOk)
         then return False
         else do
@@ -334,7 +489,7 @@ unifyRecords v1 v2 fields1 ext1 fields2 ext2 = do
                 then return False
                 else if Map.null only1 && Map.null only2
                     then do
-                        extOk <- unify ext1 ext2
+                        extOk <- unify state ext1 ext2
                         if extOk
                             then do merge v1 v2 (T.Structure (T.Record1 fields1 ext1)); return True
                             else return False

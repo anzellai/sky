@@ -1,0 +1,24 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Sky.Core.Task as Task
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+-- Today: lowers to `func update(msg any, count int) (int, rt.SkyCmd)`
+-- — Msg erased through SkyCmd (non-generic).  C15-runtime makes
+-- SkyCmd generic; C15-compiler emits `(int, rt.SkyCmd[Msg])`.
+update : Msg -> Int -> Int
+update msg count =
+    case msg of
+        Increment -> count + 1
+        Decrement -> count - 1
+
+
+main =
+    println (String.fromInt (update Increment 0))

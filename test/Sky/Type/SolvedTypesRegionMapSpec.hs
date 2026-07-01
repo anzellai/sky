@@ -84,6 +84,7 @@ spec = do
                         Map.empty
                         Map.empty
                         Nothing
+                        Map.empty
                 st1 = Solve.insertSolvedVar "x" tyString st0
             Solve.lookupSolvedVar "x" st1 `shouldBe` Just tyString
             -- Region map preserved bit-for-bit.
@@ -96,6 +97,7 @@ spec = do
                         Map.empty
                         Map.empty
                         Nothing
+                        Map.empty
                 additions = Map.fromList [("b", tyBool), ("c", tyInt)]
                 st1 = Solve.unionSolvedEnv additions st0
             Solve.lookupSolvedVar "a" st1 `shouldBe` Just tyInt

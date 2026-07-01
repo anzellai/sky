@@ -1,3 +1,12 @@
+-- | Std.Ui.Chart — typed chart primitives for `Std.Ui` (v0.16.0+).
+--
+-- `line / area / bar / sparkline / heatmap` accept typed `Series`
+-- records (`{ label, color, points : List Point }`) and render to
+-- inline-styled SVG.  Pair with `Ui.layoutWith` to embed in
+-- dashboards.  XSS-hardened: all axis ticks + tooltip labels
+-- HTML-escape through the same renderer as text content; no
+-- innerHTML, no `data-sky-eval`.  Used by the bundled Sky Console
+-- + `examples/26-ui-showcase`.
 module Std.Ui.Chart exposing
     ( Cfg
     , defaultCfg

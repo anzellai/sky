@@ -70,38 +70,94 @@ ftyToType _kernelName = go
     goApp :: String -> [Can.Type] -> Can.Type
     goApp name args = case lookup name builtinHome of
         Just home -> Can.TType home name args
-        Nothing   -> opaqueValue
+        -- v0.17 C17b — qualified opaque types (Cause G).
+        -- Inspector-emitted @Customer\@github.com/stripe/stripe-go/v84@
+        -- lands here.  C17b parses + carries the marker through;
+        -- the resolver currently STILL collapses to @Value@ for
+        -- backward compatibility (cross-FFI composition between
+        -- a qualified callee and a Value-typed argument breaks
+        -- otherwise — the canonical example is a hand-coded
+        -- kernel sig like Context.background returning Value
+        -- and a Stripe call expecting Customer\@stripe...).
+        -- C17c flips the switch once hand-coded kernel sigs
+        -- have migrated to the qualified form too.  Until then
+        -- the qualified path strips the marker before falling
+        -- into the legacy collapse so behaviour is byte-stable.
+        Nothing
+            | Just (bareName, pkgPath) <- splitQualified name ->
+                -- v0.17 PR-21c — SHIP POINT D activation.  The 3
+                -- failure modes that broke the 2026-06-13 third
+                -- attempt are now closed by safe scaffolding:
+                --   * PR-21a (codegen flatten) — solvedTypeToGo
+                --     short-circuits the mangled @_at_@ form to
+                --     @any@ at 5 renderer sites.  Closes the
+                --     @undefined: Router_at_...@ class.
+                --   * PR-21b (HM unify axiom) — Sky.Type.Unify's
+                --     App1 arm calls @isFfiInterfacePair@ when a
+                --     qualified↔qualified pair fails strict
+                --     equality.  Closes the Fyne
+                --     @Label@/@CanvasObject@ class via Go's
+                --     structural interface satisfaction.
+                --   * Registry-key mangle in loadAndSeedFfiRegistry
+                --     aligns the registry's @\@@-separated keys
+                --     with the @_at_@-separated names HM sees, so
+                --     the axiom actually fires on the qualified
+                --     form.
+                --
+                -- The flip emits the mangled qualified form
+                -- @Bare_at_<pkgmangle>@ as a nullary @Can.TType@
+                -- with the empty-home sentinel.  Downstream
+                -- consumers see a real qualified name (HM types it
+                -- as the qualified-mangled identifier; the
+                -- codegen-flatten short-circuit erases it to @any@
+                -- at Go emission).
+                Can.TType (ModuleName.Canonical "")
+                    (bareName ++ "_at_" ++ mangleGoIdent pkgPath)
+                    args
+            | otherwise -> opaqueValue
       where
         -- Drop @args@ for opaque types — anything generic at the
         -- Go side would have been filtered by isSkyParseable on
         -- the producer; the only remaining shapes are bare opaque
         -- type names and List/Dict/Maybe applied to them. The
-        -- latter still resolve to LIst (Value) etc. because we
+        -- latter still resolve to List (Value) etc. because we
         -- recurse through arg positions before reaching here.
         _used = name : map (const "_") args
 
-    -- Every opaque FFI type collapses to the @Value@ sentinel —
-    -- the same canonical that handcoded kernel sigs use for
-    -- Context.background, Fmt.sprint, and friends (see
-    -- lookupKernelType in Sky.Type.Constrain.Expression). This
-    -- gives every opaque-typed FFI surface a shared HM identity
-    -- so cross-kernel composition like
-    -- @Firestore.newClient (case Context.background () of Ok c -> c)@
-    -- type-checks: both sides see @Value@ at the boundary.
-    --
+    -- v0.17 C17b — split a qualified opaque marker (Cause G).
+    -- Format: @Name\@pkgPath@.  Returns @Just (name, pkgPath)@ on
+    -- match.  Tolerates leading '*' (pointer-of-opaque) — strips
+    -- the star before splitting so a pointer-of-Customer still
+    -- resolves to the Customer home, only the runtime wrapper
+    -- cares about the indirection.
+    splitQualified :: String -> Maybe (String, String)
+    splitQualified s = case dropWhile (== '*') s of
+        bare -> case break (== '@') bare of
+            (n, '@':pkg) | not (null n) && not (null pkg) ->
+                Just (n, pkg)
+            _ -> Nothing
+
+    -- v0.17 C17b — Go-identifier-mangle the package path.
+    -- '/' '.' '-' all map to '_' so the result is safe to splice
+    -- into any downstream Go identifier emission path. Collisions
+    -- between distinct paths are theoretical (would require a path
+    -- that differs only in separator chars) — fine for FFI surface.
+    mangleGoIdent :: String -> String
+    mangleGoIdent = map sanit
+      where
+        sanit c
+            | c == '/' || c == '.' || c == '-' = '_'
+            | otherwise                        = c
+
+    -- Unqualified opaque FFI types fall back to the @Value@
+    -- sentinel — kept as the safety net for older kernel.json
+    -- files (pre-C17a) that don't carry the qualified marker.
     -- The trust-boundary wrap (@Result Error _@) is what HM
-    -- actually enforces here. Per CLAUDE.md "every FFI call
-    -- returns Result Error T", that's the load-bearing
-    -- invariant. The opaque-type name itself is decorative — the
-    -- runtime wrapper still does the .(*pkg.X) assertion at the
-    -- Go boundary, so a wrong opaque mixed across packages
-    -- panics at the wrapper with ErrFfi (same failure mode as
-    -- before this work).
-    --
-    -- Future-work fix is for the inspector to emit fully-qualified
-    -- Go package paths in skyType so distinct opaque types
-    -- stay distinct at HM time. Tracked in the accompanying
-    -- commit message.
+    -- actually enforces here.  Per CLAUDE.md "every FFI call
+    -- returns Result Error T".  The opaque-type name itself is
+    -- decorative when unqualified — runtime wrapper still does the
+    -- .(*pkg.X) assertion at the Go boundary, so a wrong opaque
+    -- mixed across packages panics at the wrapper with ErrFfi.
     opaqueValue :: Can.Type
     opaqueValue = Can.TType (ModuleName.Canonical "") "Value" []
 

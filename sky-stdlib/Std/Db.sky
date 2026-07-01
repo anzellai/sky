@@ -31,6 +31,8 @@ module Std.Db exposing
     , getInt
     , getBool
     , Migration
+    , defaultMigration
+    , withSql
     , migrate
     -- v0.16.26 — typed SQL value binding (#582)
     , SqlValue(..)
@@ -236,6 +238,22 @@ type alias Migration =
     { name : String
     , sql : String
     }
+
+
+-- | `defaultMigration "0001_users"` — Migration named with empty SQL.
+-- Pair with `withSql` to populate the SQL body.  Builder chain stays
+-- source-compat when v0.17+ adds optional fields like `description`.
+defaultMigration : String -> Migration
+defaultMigration migrationName =
+    { name = migrationName, sql = "" }
+
+
+-- | `withSql sqlBody m` — replace the migration's SQL body.
+withSql : String -> Migration -> Migration
+withSql sqlBody m =
+    { m | sql = sqlBody }
+
+
 -- | Apply pending schema migrations, in list order.
 --
 -- Each migration whose `name` is not yet recorded runs in its own
@@ -256,8 +274,29 @@ type alias Migration =
 --
 --     Db.connect ()
 --         |> Task.andThen (\db -> Db.migrate db migrations)
-
-
+--
+-- ### Tenant-gate bypass (by design)
+--
+-- `migrate` INTENTIONALLY bypasses the v0.16.6 tenant-prefix WHERE
+-- gate (`HubStoreReaderWithTenant`). Schema changes are GLOBAL by
+-- design — `CREATE TABLE` / `ALTER TABLE` / index DDL cannot be
+-- scoped to a single tenant prefix because they alter the shared
+-- physical schema all tenants read from.
+--
+-- Operational contract:
+--
+--   * Call `migrate` from a SINGLE deployment-time entry point
+--     (`main` at server start-up, or a one-shot `sky db migrate`
+--     CLI run).
+--   * NEVER call `migrate` from a per-tenant runtime path (request
+--     handler, Sky.Live update, scheduled job that fans out per
+--     tenant). Doing so would let a tenant-bound code path issue
+--     unscoped DDL — the exact escalation the v0.16.6 tenant-prefix
+--     gate exists to prevent.
+--   * The tenant-prefix gate stays enforced for every other
+--     `Db.exec` / `Db.query` / `Db.queryDecode` / `Db.findOneByField`
+--     / `Db.findManyByField` / `Db.findByConditions` /
+--     `Db.unsafeFindWhere` call — only `migrate` is exempt.
 migrate : Db -> List Migration -> Task Error (List String)
 migrate db migrations =
     migrateApply db (List.map (\m -> ( m.name, m.sql )) migrations)
@@ -327,15 +366,15 @@ getBool =
 --         , fromMaybeTime maybePaidAt    -- nullable column
 --         ]
 type SqlValue
-    = SqlString String-- TEXT / VARCHAR / CHAR / UUID-as-text / JSON-as-text
-    | SqlInt Int-- INTEGER / SMALLINT / BIGINT / SERIAL
-    | SqlFloat Float-- REAL / DOUBLE PRECISION
-    | SqlBool Bool-- BOOLEAN
-    | SqlBytes String-- BLOB / BYTEA (Sky's Bytes is String alias)
-    | SqlDecimal Decimal-- NUMERIC / DECIMAL
-    | SqlTime Int-- TIMESTAMP / DATE / TIMETZ (Unix millis)
-    | SqlMoney Money-- TEXT as "ISO_CODE AMOUNT" (lossless round-trip)
-    | SqlNull SqlValue-- typed NULL via wrapped type-witness
+    = SqlString String
+    | SqlInt Int
+    | SqlFloat Float
+    | SqlBool Bool
+    | SqlBytes String
+    | SqlDecimal Decimal
+    | SqlTime Int
+    | SqlMoney Money
+    | SqlNull SqlValue
 
 
 -- ─── Maybe-lifting helpers ─────────────────────────────────────────

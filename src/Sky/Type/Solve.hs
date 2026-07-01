@@ -14,9 +14,22 @@ module Sky.Type.Solve
     , solveWithLocals
     , solveWithInstances
     , solveWithInstancesAndRegions   -- v0.15 Stage A
+    -- v0.17 close P1 step 3 — value-channel variants that seed
+    -- SolverState._ffiImplements from a caller-supplied map (typically
+    -- `LoadedFfiTables._lft_implements`).  Behaviour-equivalent to the
+    -- legacy variants when the map is empty.  Compile.hs's
+    -- continueCompile is the production caller; LSP / tests / single-
+    -- module entries keep the empty-impls variants.
+    , solveImpls
+    , solveWithLocalsImpls
+    , solveWithInstancesAndRegionsImpls
     , SolveResult(..)
     , SolvedTypes(..)
     , emptySolvedTypes               -- v0.15.x P37a
+    , Unresolved(..)                 -- v0.17 PR-10 sentinel scaffold
+    , unresolvedSentinel             -- v0.17 PR-10: typed sentinel constructor
+    , lookupUnresolved               -- v0.17 PR-10: typed sentinel inspector
+    , unresolvedTag                  -- v0.17 PR-10: String tag accessor
     , lookupSolvedVar                -- v0.15.x P37a
     , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
     , moduleForRegion                -- v0.16.7 PR #124 — region → defining module
@@ -27,6 +40,9 @@ module Sky.Type.Solve
     , withCurrentModule              -- v0.15.6 #365 — install per-dep module hint
     , withPerModuleRegions           -- v0.15.6 #365 — install per-module region maps
     , withPerModuleEnv               -- v0.15.6 #365 — install per-module env maps
+    , withImplementsMap              -- v0.17 PR-21b — install FFI implements registry
+    , lookupImplements               -- v0.17 PR-21b — qualified type → interfaces
+    , implementsInterface            -- v0.17 PR-21b — A <: I predicate
     , RegionTypes                    -- v0.15 Stage A
     , CallInstance(..)
     , CallSiteInstance(..)
@@ -147,6 +163,22 @@ data SolvedTypes = SolvedTypes
         -- when this hint is set, falling back to the flat map for
         -- entries that didn't make it into the per-module ledger
         -- (e.g. synthetic regions from monomorphisation).
+    , _stImplementsMap :: !(Map.Map String [String])
+        -- ^ v0.17 PR-21b — FFI interface satisfaction registry,
+        -- merged across every loaded @kernel.json@ FfiModule.  Keys
+        -- are qualified type names (e.g. @"Label@fyne.io/fyne/v2/widget"@);
+        -- values are lists of qualified interface names that the key
+        -- type satisfies (e.g. @["CanvasObject@fyne.io/fyne/v2",
+        -- "Widget@fyne.io/fyne/v2"]@).
+        --
+        -- Populated by @Compile.hs@ at HM-setup time from
+        -- @FfiRegistry._fm_implements@.  Consumed by @Sky.Type.Unify@'s
+        -- App1 arm in PR-21b proper for the @A <: I@ axiom — when
+        -- unifying a @TType _ name1 []@ with a @TType _ name2 []@,
+        -- consult @lookupImplements@ to see whether name1's qualified
+        -- form implements name2's qualified form (or vice versa).
+        -- Empty map for projects with no FFI deps OR older kernel.json
+        -- files that pre-date the inspector's @--implements@ emission.
     }
     deriving (Eq, Show)
 
@@ -155,7 +187,7 @@ data SolvedTypes = SolvedTypes
 -- errored before producing a usable map AND in tests that need a
 -- placeholder.
 emptySolvedTypes :: SolvedTypes
-emptySolvedTypes = SolvedTypes Map.empty Map.empty Map.empty Map.empty Nothing
+emptySolvedTypes = SolvedTypes Map.empty Map.empty Map.empty Map.empty Nothing Map.empty
 
 
 -- | Look up a top-level / let-bound name's HM-resolved type.
@@ -292,6 +324,33 @@ unionSolvedEnv additions st =
     st { _stEnv = Map.union additions (_stEnv st) }
 
 
+-- | v0.17 PR-21b — install the merged FFI implements registry.
+-- Called once at HM-setup time in 'Compile.hs' with the union of
+-- every loaded 'Sky.Build.FfiRegistry.FfiModule''s '_fm_implements'.
+-- Consumed by 'lookupImplements' / 'implementsInterface'.
+withImplementsMap :: Map.Map String [String] -> SolvedTypes -> SolvedTypes
+withImplementsMap impls st = st { _stImplementsMap = impls }
+
+
+-- | v0.17 PR-21b — look up the qualified interfaces that the given
+-- qualified type name satisfies.  Returns the empty list when the
+-- type isn't in the registry (which is the safe default — Sky.Type
+-- .Unify treats absence as \"no interface relation\" and falls back
+-- to the strict type-equality rule).
+lookupImplements :: String -> SolvedTypes -> [String]
+lookupImplements qname st =
+    Map.findWithDefault [] qname (_stImplementsMap st)
+
+
+-- | v0.17 PR-21b — does qualified type @qname@ implement qualified
+-- interface @iname@?  One-way relation (an @A@ that implements @I@
+-- does NOT mean an @I@-typed value is an @A@); HM consumers treat
+-- this as a @A <: I@ widening axiom.
+implementsInterface :: String -> String -> SolvedTypes -> Bool
+implementsInterface qname iname st =
+    iname `elem` lookupImplements qname st
+
+
 -- | v0.15 Stage A — per-region type map.  Every solved constraint's
 -- actual type, keyed by the constraint's source region.  Consumed
 -- by the typed-directed lowerer in v0.15 Stage B+ to look up the
@@ -299,11 +358,169 @@ unionSolvedEnv additions st =
 type RegionTypes = Map.Map A.Region T.Type
 
 
+-- | v0.17 PR-10 — typed Unresolved ADT scaffold.
+--
+-- Today the solver + constraint generator + codegen scatter
+-- magic-string sentinel TVars (`T.TVar "_lit"`, `T.TVar "_lambda_arg_*"`,
+-- `T.TVar "_unknown"`, `T.TVar "_ambig"`, etc.) through
+-- @inferExprType@ to mark positions where HM didn't resolve.
+-- Wide grep finds 35+ references across @Compile.hs@,
+-- @Type/Solve.hs@, and @Type/Constrain/Expression.hs@ with 18
+-- distinct strings — too scattered to migrate cleanly in a single
+-- 1.5-session PR.
+--
+-- This data type ships AS A SCAFFOLD for the eventual migration.
+-- Each constructor names one well-understood category. Consumers
+-- migrate sentinel-by-sentinel; each migration commit converts
+-- one writer site + its matching pattern-match readers in
+-- lockstep.
+--
+-- Doc + carry-forward plan: docs/v0.17-pr10-sentinel-cleanup-analysis.md
+data Unresolved
+    = UnresolvedLit
+      -- ^ Position where a literal's type couldn't be inferred — the
+      -- HM-solver returned a TVar that downstream codegen would
+      -- otherwise render as @any@. Carries no extra context today;
+      -- enriched per migration if specific consumers need source
+      -- locations.
+    | UnresolvedLambdaArg
+      -- ^ Lambda parameter not bound by an annotation; lookup falls
+      -- through the lambda-types ledger.
+    | UnresolvedUnknown
+      -- ^ Catch-all for the legacy `T.TVar "_unknown"` reverse-map
+      -- collapse. The Compile.hs `isWildcardSkyType` pattern-matches
+      -- on this exact string — migrating that consumer requires
+      -- a coordinated change in `Sky.Build.Compile.solvedTypeToGo`.
+    | UnresolvedAmbig
+      -- ^ Solver merge produced ambiguous types (e.g. cross-module
+      -- name collision); legacy code at line 1957/1966 etc. emits
+      -- this. Treated as "miss" by 'inferExprType' at
+      -- @Compile.hs:14125@.
+    | UnresolvedCycle
+      -- ^ Cycle detected during solving; legacy `T.TVar "_cycle"`.
+    | UnresolvedSuper
+      -- ^ FlexSuper variable; legacy `T.TVar "_super"`.
+    | UnresolvedError
+      -- ^ Internal solver error; legacy `T.TVar "_error"`.
+    | UnresolvedUnbound
+      -- ^ Name not present in _stEnv during a downstream lookup;
+      -- legacy `T.TVar "_unbound"`.
+    | UnresolvedCrossModule
+      -- ^ Cross-module name resolution returned EMPTY (no candidates
+      -- in any dep's @_stEnv@); legacy `T.TVar "_unresolved"`.
+      -- Distinct from 'UnresolvedAmbig' which is the MULTIPLE-
+      -- candidates case (ambiguity).
+    | UnresolvedNorm
+      -- ^ Marker emitted by 'normaliseType' to collapse named TVars
+      -- to a single canonical form; legacy `T.TVar "_norm"`.
+    | UnresolvedEmpty
+      -- ^ Empty-list element type placeholder; legacy `T.TVar "_empty"`.
+    | UnresolvedAccessor
+      -- ^ Accessor field type placeholder; legacy
+      -- `T.TVar "_accessor_placeholder"`.
+    | UnresolvedPatternRec
+      -- ^ Pattern-level record placeholder; legacy `T.TVar "_rec"`.
+    | UnresolvedPatternTup0
+      -- ^ Pattern-level 2-tuple first-slot placeholder; legacy
+      -- `T.TVar "_tup_0"`.
+    | UnresolvedPatternTup1
+      -- ^ Pattern-level 2-tuple second-slot placeholder; legacy
+      -- `T.TVar "_tup_1"`.
+    | UnresolvedPatternListElem
+      -- ^ Pattern-level list-element placeholder; legacy
+      -- `T.TVar "_list_elem"`.
+    | UnresolvedPatternConsElem
+      -- ^ Pattern-level cons-pattern element placeholder; legacy
+      -- `T.TVar "_cons_elem"`.
+    deriving (Eq, Show)
+
+
+-- | v0.17 PR-10 — typed constructor for sentinel TVars.  Replaces
+-- raw @T.TVar "_unresolved"@ / @T.TVar "_unbound"@ / @T.TVar "_ambig"@
+-- string literals at writer sites with a typed dispatch through the
+-- 'Unresolved' ADT.  Underlying representation stays a 'T.TVar' (so
+-- the 100+ downstream pattern-matchers on 'T.TVar' remain valid) —
+-- the typed surface prevents typo-class bugs at the writers and
+-- makes the sentinel set discoverable from the ADT definition.
+unresolvedSentinel :: Unresolved -> T.Type
+unresolvedSentinel u = T.TVar (unresolvedTag u)
+
+
+-- | The String tag for each 'Unresolved' constructor.  Kept in lockstep
+-- with 'unresolvedSentinel' so the underlying TVar string is the
+-- single source of truth.  Exposed separately so readers that need
+-- to construct/inspect tag strings directly can do so without
+-- inventing them inline.
+unresolvedTag :: Unresolved -> String
+unresolvedTag u = case u of
+    UnresolvedLit       -> "_lit"
+    UnresolvedLambdaArg -> "_lambda_arg"
+    UnresolvedUnknown   -> "_unknown"
+    UnresolvedAmbig     -> "_ambig"
+    UnresolvedCycle     -> "_cycle"
+    UnresolvedSuper     -> "_super"
+    UnresolvedError     -> "_error"
+    UnresolvedUnbound   -> "_unbound"
+    UnresolvedCrossModule -> "_unresolved"
+    UnresolvedNorm      -> "_norm"
+    UnresolvedEmpty     -> "_empty"
+    UnresolvedAccessor  -> "_accessor_placeholder"
+    UnresolvedPatternRec       -> "_rec"
+    UnresolvedPatternTup0      -> "_tup_0"
+    UnresolvedPatternTup1      -> "_tup_1"
+    UnresolvedPatternListElem  -> "_list_elem"
+    UnresolvedPatternConsElem  -> "_cons_elem"
+
+
+-- | Inverse of 'unresolvedSentinel' — pattern-matches a 'T.Type' as
+-- one of the typed 'Unresolved' tags.  Returns 'Nothing' for ordinary
+-- types AND for sentinel TVars not yet enrolled in the ADT (e.g.
+-- @_unresolved@ which doesn't map to a current constructor — kept as
+-- a raw sentinel for the cross-module ambiguity reader at
+-- @Compile.hs@'s @isSentinelTVar@ check until that migration lands).
+lookupUnresolved :: T.Type -> Maybe Unresolved
+lookupUnresolved (T.TVar s) = case s of
+    "_lit"        -> Just UnresolvedLit
+    "_lambda_arg" -> Just UnresolvedLambdaArg
+    "_unknown"    -> Just UnresolvedUnknown
+    "_ambig"      -> Just UnresolvedAmbig
+    "_cycle"      -> Just UnresolvedCycle
+    "_super"      -> Just UnresolvedSuper
+    "_error"      -> Just UnresolvedError
+    "_unbound"    -> Just UnresolvedUnbound
+    "_unresolved" -> Just UnresolvedCrossModule
+    "_norm"       -> Just UnresolvedNorm
+    "_empty"      -> Just UnresolvedEmpty
+    "_accessor_placeholder" -> Just UnresolvedAccessor
+    "_rec"        -> Just UnresolvedPatternRec
+    "_tup_0"      -> Just UnresolvedPatternTup0
+    "_tup_1"      -> Just UnresolvedPatternTup1
+    "_list_elem"  -> Just UnresolvedPatternListElem
+    "_cons_elem"  -> Just UnresolvedPatternConsElem
+    _             -> Nothing
+lookupUnresolved _ = Nothing
+
+
 -- | Solver state
 data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
     , _varCache :: !(IORef (Map.Map String T.Variable))  -- TVar name → shared UF variable
     , _rank     :: !Int
+    , _ffiImplements :: !(Map.Map String [String])
+      -- ^ v0.17 close P1 step 3 — FFI interface-satisfaction registry,
+      -- threaded into 'Sky.Type.Unify.UnifyState' at every @unify@
+      -- call site below.  Pre-step-3, Unify read this map via
+      -- @unsafePerformIO (readIORef Unify.ffiImplementsRef)@ inside
+      -- 'implementsInterface'; now the value is carried explicitly
+      -- through the solver state for the lifetime of each solve.
+      --
+      -- Defaults to 'Map.empty' from every entry point that doesn't
+      -- accept an explicit impls map (test entry, LSP); the
+      -- @solve*WithImpls@ variants seed the field from
+      -- @LoadedFfiTables._lft_implements@ at the Compile.hs call site.
+      -- Empty → 'isFfiInterfacePair' returns 'False' for every pair
+      -- and the legacy strict-equality nominal-matching path stays in
+      -- force.
     , _locals   :: !(IORef (Map.Map String [T.Variable]))
       -- Audit P2-2: store the FULL list of resolved types per
       -- binding name (one entry per CLet-capture firing). Inner
@@ -482,6 +699,7 @@ countConstraints = go
         T.CLocal _ _ _           -> 1
         T.CForeign _ _ _ _       -> 1
         T.CPattern _ _ _ _       -> 1
+        T.CArityMismatch _ _ _ _ -> 1
         T.CAnd cs                -> 1 + sum (map go cs)
         T.CLet { T._headerCon = h, T._bodyCon = b } ->
             1 + go h + go b
@@ -583,14 +801,22 @@ budgetExceededMsg budget = unlines
 
 -- | Solve a constraint tree.
 solve :: T.Constraint -> IO SolveResult
-solve constraint = do
+solve = solveImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solve' with a caller-supplied FFI
+-- implements registry seeded into 'SolverState._ffiImplements'.
+-- Threads through to 'Sky.Type.Unify.UnifyState' at every unify call
+-- site inside 'solveHelpBody'.
+solveImpls :: Map.Map String [String] -> T.Constraint -> IO SolveResult
+solveImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -617,7 +843,7 @@ solve constraint = do
             let pickType tys = case List.nub (filter (not . isUnboundTVar) tys) of
                     []  -> head tys  -- all unbound — keep first as-is
                     [t] -> t          -- all resolved types agree
-                    _   -> T.TVar "_ambig"  -- distinct concrete types — ambiguous
+                    _   -> unresolvedSentinel UnresolvedAmbig  -- v0.17 PR-10 typed sentinel  -- distinct concrete types — ambiguous
                 isUnboundTVar (T.TVar n) = "_" `List.isPrefixOf` n || null n
                 isUnboundTVar _ = False
                 localFirst = Map.map pickType (Map.filter (not . null) localTys)
@@ -631,7 +857,7 @@ solve constraint = do
             -- a complete SolvedTypes even though they don't yet
             -- consume the regions field.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing))
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing Map.empty))
         Just err -> return (SolveError err)
 
 
@@ -641,14 +867,23 @@ solve constraint = do
 -- P2-2: the returned map is `name → [types]` (ordered innermost-first)
 -- so shadowed locals don't collapse on hover.
 solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String [T.Type])
-solveWithLocals constraint = do
+solveWithLocals = solveWithLocalsImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solveWithLocals' with FFI implements
+-- registry threading.  See 'solveImpls' for context.
+solveWithLocalsImpls
+    :: Map.Map String [String]
+    -> T.Constraint
+    -> IO (SolveResult, Map.Map String [T.Type])
+solveWithLocalsImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)
     localTypes <- Map.traverseWithKey (\_ vars ->
@@ -658,7 +893,7 @@ solveWithLocals constraint = do
             envTypes <- readSolvedTypes (_env finalState)
             -- v0.15.x P37a — same freeze pattern as `solve` above.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes envTypes regionTys Map.empty Map.empty Nothing), localTypes)
+            return (SolveOk (SolvedTypes envTypes regionTys Map.empty Map.empty Nothing Map.empty), localTypes)
         Just err ->
             return (SolveError err, localTypes)
 
@@ -699,14 +934,28 @@ solveWithInstances constraint = do
 solveWithInstancesAndRegions
     :: T.Constraint
     -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
-solveWithInstancesAndRegions constraint = do
+solveWithInstancesAndRegions = solveWithInstancesAndRegionsImpls Map.empty
+
+
+-- | v0.17 close P1 step 3 — 'solveWithInstancesAndRegions' with FFI
+-- implements registry threading.  This is the production-path
+-- variant: Compile.hs seeds the registry from
+-- 'LoadedFfiTables._lft_implements' (returned by
+-- 'loadAndSeedFfiRegistry') so the @App1 \<-\> App1@ FFI interface-
+-- satisfaction axiom in Unify reads the value-channel instead of
+-- the legacy @unsafePerformIO (readIORef Unify.ffiImplementsRef)@.
+solveWithInstancesAndRegionsImpls
+    :: Map.Map String [String]
+    -> T.Constraint
+    -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
+solveWithInstancesAndRegionsImpls impls constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
     regions <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
+    let state0 = SolverState Map.empty cache 0 impls locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -717,7 +966,7 @@ solveWithInstancesAndRegions constraint = do
             let pickType tys = case List.nub (filter (not . isUnboundTVar) tys) of
                     []  -> head tys
                     [t] -> t
-                    _   -> T.TVar "_ambig"
+                    _   -> unresolvedSentinel UnresolvedAmbig  -- v0.17 PR-10 typed sentinel
                 isUnboundTVar (T.TVar n) = "_" `List.isPrefixOf` n || null n
                 isUnboundTVar _ = False
                 localFirst = Map.map pickType (Map.filter (not . null) localTys)
@@ -733,7 +982,7 @@ solveWithInstancesAndRegions constraint = do
             -- fourth tuple slot (`regionTys`) stays for backward
             -- compatibility — `Compile.hs` still threads it into
             -- `scopeStateRef._lc_regionTypes` directly today.
-            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing), ci, csi, regionTys)
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing Map.empty), ci, csi, regionTys)
         Just err -> do
             -- v0.13 Phase A4: even on error, return whatever
             -- call-site instances were captured BEFORE the error
@@ -992,10 +1241,30 @@ solveHelpBody state constraint = case constraint of
     T.CAnd constraints ->
         solveAll state constraints
 
+    T.CArityMismatch region name declared supplied -> do
+        -- v0.17 strict-HM gate (Limitation #7 close path) — PR-A
+        -- scaffolding arm.  No caller wires this up yet (PR-B-D
+        -- add gate emission at constrainCall + Can.VarKernel /
+        -- Can.VarTopLevel arms).  Returns Just msg to match the
+        -- short-circuit pattern of CEqual; later constraints stop
+        -- once the first error is reached (per existing solver
+        -- contract).  Stub message — polished diagnostic + Pure.*
+        -- migration hint land in PR-C.
+        let msg = posPrefix region
+                ++ "[E2007] Arity mismatch — `" ++ name
+                ++ "` declared as " ++ show declared
+                ++ "-arg, called with " ++ show supplied ++ " args."
+        return (Just msg, state)
+
     T.CEqual region _category actualType expected -> do
         actualVar <- typeToVar state actualType
         expectedVar <- expectedToVar state expected
-        ok <- Unify.unify actualVar expectedVar
+        -- v0.17 close P1 step 3 — thread FFI implements registry into
+        -- Unify via the new value-channel 'UnifyState' (was
+        -- @unsafePerformIO (readIORef Unify.ffiImplementsRef)@ inside
+        -- 'Unify.implementsInterface' pre-step-3).
+        let unifyState = Unify.mkUnifyState (_ffiImplements state)
+        ok <- Unify.unify unifyState actualVar expectedVar
         if ok
             then do
                 recordRegionVar state region actualVar
@@ -1032,7 +1301,9 @@ solveHelpBody state constraint = case constraint of
         case Map.lookup name (_env state) of
             Just var -> do
                 expectedVar <- expectedToVar state expected
-                ok <- Unify.unify var expectedVar
+                -- v0.17 close P1 step 3 — see CEqual arm above.
+                let unifyState = Unify.mkUnifyState (_ffiImplements state)
+                ok <- Unify.unify unifyState var expectedVar
                 if ok
                     then do
                         recordRegionVar state region var
@@ -1053,7 +1324,9 @@ solveHelpBody state constraint = case constraint of
     T.CForeign region name annot expected -> do
         (instVar, freshVars, quants) <- instantiateAnnotation state annot
         expectedVar <- expectedToVar state expected
-        ok <- Unify.unify instVar expectedVar
+        -- v0.17 close P1 step 3 — see CEqual arm above.
+        let unifyState = Unify.mkUnifyState (_ffiImplements state)
+        ok <- Unify.unify unifyState instVar expectedVar
         if ok
             then do
                 -- v0.13 Phase A1: capture this polymorphic reference for
@@ -1175,14 +1448,14 @@ variableToTypeSeen :: [T.Variable] -> T.Variable -> IO T.Type
 variableToTypeSeen seen var = do
     cyc <- anyEquivSeen seen var
     if cyc
-        then return (T.TVar "_cycle")
+        then return (unresolvedSentinel UnresolvedCycle)  -- v0.17 PR-10 step 3
         else do
             desc <- UF.get var
             case T._content desc of
                 T.FlexVar (Just name) -> return (T.TVar name)
                 T.FlexVar Nothing -> return (T.TVar "_")
                 T.FlexSuper T.Number _ -> return (T.TType ModuleName.basics "Int" [])
-                T.FlexSuper _ _ -> return (T.TVar "_super")
+                T.FlexSuper _ _ -> return (unresolvedSentinel UnresolvedSuper)  -- v0.17 PR-10 step 3
                 T.RigidVar name -> return (T.TVar name)
                 T.RigidSuper _ name -> return (T.TVar name)
                 T.Structure flat -> flatTypeToTypeSeen (var : seen) flat
@@ -1198,7 +1471,7 @@ variableToTypeSeen seen var = do
                                         pty <- variableToTypeSeen (var : seen) pv
                                         return (n, pty)) pairVars
                     return (T.TAlias home name pairTys (T.Filled inner))
-                T.Error -> return (T.TVar "_error")
+                T.Error -> return (unresolvedSentinel UnresolvedError)  -- v0.17 PR-10 step 3
 
 
 anyEquivSeen :: [T.Variable] -> T.Variable -> IO Bool

@@ -1,0 +1,9 @@
+# Cause A — same-module polymorphic re-instantiation
+#
+# wrap is polymorphic in `a`; called with String and Int in the
+# same module.  Must emit as `func wrap[T1 any](x T1) ...`.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN wrap[T1 any]
+MUST_NOT_PANIC_AT_RUNTIME

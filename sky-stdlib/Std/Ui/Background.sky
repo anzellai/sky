@@ -1,3 +1,12 @@
+-- | Std.Ui.Background — typed background-* attribute helpers for `Std.Ui`.
+--
+-- `color / image / linearGradient / gradient` build typed
+-- `Attribute msg` values that the layout renderer translates into
+-- inline `style="background-..."` CSS — no stylesheet authoring,
+-- no escape hatches.  Pseudo-class variants (`hoverColor`,
+-- `focusColor`, `activeColor`, `disabledColor`,
+-- `focusVisibleColor`) emit a sky-id-scoped `<style>` block so the
+-- transitions work without JavaScript.
 module Std.Ui.Background exposing
     ( color
     , image

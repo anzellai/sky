@@ -8,12 +8,26 @@ import SkyTiming (describeT)
 import qualified Sky.Build.CompileSpec
 import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
+import qualified Sky.Build.LowerPhaseGoSigMapDeletedSpec
+import qualified Sky.Build.EraseBandAidAbsentSpec
+import qualified Sky.Build.SealedIfaceCarveoutSpec
+import qualified Sky.Build.SealedIfaceEmissionSpec
+import qualified Sky.Build.SealedIfaceFlipAllowListSpec
+import qualified Sky.Build.SealedIfaceFlipParametricAllowListSpec
+import qualified Sky.Build.SealedIfaceMetadataSpec
+import qualified Sky.Build.SubjectIsSealedIfaceSpec
+import qualified Sky.Build.CaseToGoSealedIfaceSpec
+import qualified Sky.Build.AnonRecordWriterAuditSpec
+import qualified Sky.Build.ScopeStateRefAuditSpec
+import qualified Sky.Build.PanicClassGateSpec
+import qualified Sky.Build.PolyKernelCrossTVarRenameSpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
+import qualified Sky.Parse.NegativeLiteralArgSpec
 import qualified Sky.Parse.MultiLineExposingSpec
 import qualified Sky.Parse.MultiLineParenAppSpec
 import qualified Sky.Parse.MultiLineRecordFieldSpec
@@ -32,6 +46,14 @@ import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
+import qualified Sky.Type.StrictHmArityGateSpec
+import qualified Sky.Type.ArityMismatchScaffoldSpec
+import qualified Sky.Type.DeclaredArityHelperSpec
+import qualified Sky.Type.Limitation7CurrentLooseAcceptanceSpec
+import qualified Sky.Build.GoTypeAdtSpec
+import qualified Sky.Build.GoTypeRoundTripSpec
+import qualified Sky.Build.MappingContextSpec
+import qualified Sky.Build.RendererParitySpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiFillCssSpec
 import qualified Sky.Build.UiAlignSelfSpec
@@ -39,6 +61,9 @@ import qualified Sky.Build.UiMediaQuerySpec
 import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiAspectGridSpec
+import qualified Sky.Build.UiShowcaseRtCoerceClosedProofSpec
+import qualified Sky.Build.RtCoerceBudgetSpec
+import qualified Sky.Build.PhaseABaselineRegressionSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
@@ -46,6 +71,19 @@ import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
+import qualified Sky.Build.CpsStackConstantBound.MapBaselineSpec
+import qualified Sky.Build.CpsStackConstantBound.FilterSpec
+import qualified Sky.Build.CpsStackConstantBound.FoldrSpec
+import qualified Sky.Build.CpsStackConstantBound.ConcatSpec
+import qualified Sky.Build.CpsStackConstantBound.TakeSpec
+import qualified Sky.Build.CpsStackConstantBound.AppendSpec
+import qualified Sky.Build.CpsStackConstantBound.LengthSpec
+import qualified Sky.Build.CpsStackConstantBound.RangeSpec
+import qualified Sky.Build.CpsStackConstantBound.ZipSpec
+import qualified Sky.Build.CpsStackConstantBound.IndexedMapSpec
+import qualified Sky.Build.CpsStackConstantBound.ConcatMapSpec
+import qualified Sky.Build.CpsStackConstantBound.ResultCombineSpec
+import qualified Sky.Build.CpsStackConstantBound.MaybeCombineSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
@@ -62,6 +100,7 @@ import qualified Sky.Build.JsonPipelinePanic372Spec
 import qualified Sky.Build.DictSourceSpec
 import qualified Sky.Build.DbDecoderSpec
 import qualified Sky.Build.WebSocketSpec
+import qualified Sky.Build.WellTypedFuzzerSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -75,6 +114,9 @@ import qualified Sky.Build.LiveNavigationSpec
 import qualified Sky.Build.LiveInitRequestSpec
 import qualified Sky.Build.LiveInitRuntimeSpec
 import qualified Sky.Stdlib.RecordAliasBuilderConventionSpec
+import qualified Sky.Stdlib.MaybeLawsSpec
+import qualified Sky.Stdlib.ResultLawsSpec
+import qualified Sky.Stdlib.TaskLawsSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -88,16 +130,22 @@ import qualified Sky.Build.FfiGenMultiSpec
 import qualified Sky.Build.FfiTypeParserSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
+import qualified Sky.Build.Pr17bDepSymmetrySpec
+import qualified Sky.Build.NoT1LeakInEmittedGoSpec
+import qualified Sky.Build.NoT1LeakInNotesAppSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
 import qualified Sky.Build.PointFreePolyAliasSpec
+import qualified Sky.Build.IsRecordAliasTyParametricSpec
 import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.PartialUserHofSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CurriedLambdaStageCSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
+import qualified Sky.Build.AnonRecordEmissionGuaranteeSpec
+import qualified Sky.Build.AnonRecordSubprocessFixtureSpec
 import qualified Sky.Build.LiveApiHandlerShapeSpec
 import qualified Sky.Build.UnannotatedParametricCfgUserHelperSpec
 import qualified Sky.Build.IsPlainIdentSpec
@@ -105,11 +153,15 @@ import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.CrossModuleSetSpec
 import qualified Sky.Build.LowerCtxCascadeSpec
+import qualified Sky.Build.MsgDispatchSpec
 import qualified Sky.Build.LetBodyCascadeResumeSpec
 import qualified Sky.Build.SnapshotCallerCtxSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.CrossModuleLambdaCollisionC_Spec
+import qualified Sky.Build.DepSolvedTypesWiringSpec
+import qualified Sky.Build.DepCurrentModuleHintSpec
+import qualified Sky.Build.DepNarrowEnvSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.AuthUntypedBoundarySpec
 import qualified Sky.Build.Issue52Spec
@@ -125,6 +177,7 @@ import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.KernelStdlibCoverageSpec
 import qualified Sky.Build.PureModuleSpec
 import qualified Sky.Build.HeapBoundedHmSpec
+import qualified Sky.Build.RepoRootGuardSpec
 import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
@@ -176,6 +229,105 @@ allSpecs fastMode = do
     -- v0.15.5 PR 2/6 — regression gate for the retired per-scope
     -- IORef pair (mechanical string match on Compile.hs).
     describeT "Sky.Build.IORefBoundary"   Sky.Build.IORefBoundarySpec.spec
+    -- v0.17 PR-α step-5 (task #654) — regression gate for the
+    -- deleted 'globalGoSigMap' IORef.  Five sub-properties: no
+    -- def, no live reads, no live writes, no live modifies, and
+    -- sentinel '_globalGoSigMap_SHOULD_NOT_EXIST' present.
+    describeT "Sky.Build.LowerPhaseGoSigMapDeleted"
+        Sky.Build.LowerPhaseGoSigMapDeletedSpec.spec
+    -- v0.17 criterion #2 — `eraseUndeclaredTVarsInGoSource` Go-source
+    -- band-aid MUST stay deleted from src/. Forward-regression gate
+    -- — mechanical walk of every .hs file under src/, fails if the
+    -- legacy name reappears. Pairs with the live GoTypeAdt +
+    -- GoTypeRoundTrip parity specs below to close v0.17 criteria
+    -- #2 + #5 as MANDATORY cabal-test items.
+    describeT "Sky.Build.EraseBandAidAbsent" Sky.Build.EraseBandAidAbsentSpec.spec
+    -- v0.17 P3.3 — per-ADT sealed-iface carve-out decision function.
+    -- Audit gate: rtBuilderShadowList must match the explicit
+    -- empirically-verified enumeration (silent additions/removals
+    -- trip this spec). Decision function returns False by default
+    -- until P3.4 wires the real True-returning branch at the
+    -- generateUnion / generateUnionForDep call sites.
+    describeT "Sky.Build.SealedIfaceCarveout" Sky.Build.SealedIfaceCarveoutSpec.spec
+    -- v0.17 P3.4a — pure helper that emits the sealed-iface +
+    -- variant struct + factory + gob.Register shape. NOT WIRED
+    -- yet (generateUnion/generateUnionForDep still emit legacy
+    -- type X = rt.SkyADT until P3.4b/c flip per-ADT). Spec calls
+    -- helper directly with hand-built [Can.Ctor] and asserts the
+    -- returned GoDecl list matches the design's claimed shape.
+    describeT "Sky.Build.SealedIfaceEmission" Sky.Build.SealedIfaceEmissionSpec.spec
+    -- v0.17 P3.4d — per-ADT opt-in allowlist for sealed-iface
+    -- emission.  Empty under scaffolding ship; the spec locks the
+    -- empty state, the gate ordering invariants, and the carve-out /
+    -- allowlist disjointness so a future populated entry cannot
+    -- silently regress.
+    describeT "Sky.Build.SealedIfaceFlipAllowList"
+        Sky.Build.SealedIfaceFlipAllowListSpec.spec
+    -- v0.17 iter 88 — companion PARAMETRIC sealed-iface allowlist.
+    -- Separate Set from the monomorphic one (different default-reject
+    -- rule in 'shouldEmitSealedIface').  Empty at scaffolding ship.
+    -- The Phase-0 dual-grill identified an rt-side compatibility
+    -- blocker (HtmlToVNode / walkAttrs hard-cast to SkyADT) for the
+    -- canonical parametric targets (Std.Html.Html / Std.Ui.Element /
+    -- Std.Ui.Attribute); populating this allowlist requires the iter
+    -- 89+ rt-side shim that admits both SkyADT and variant-struct
+    -- shapes through 'unwrapADTShape'.
+    describeT "Sky.Build.SealedIfaceFlipParametricAllowList"
+        Sky.Build.SealedIfaceFlipParametricAllowListSpec.spec
+    -- v0.17 P3.4c.0 — verify the metadata map population path
+    -- (Rec._cg_unionDetails + LC._lc_unionDetails).  Additive
+    -- scaffolding only; consumed by the upcoming
+    -- 'subjectIsSealedIface' predicate in P3.4c.1.
+    describeT "Sky.Build.SealedIfaceMetadata" Sky.Build.SealedIfaceMetadataSpec.spec
+    -- v0.17 P3.4c.1 — predicate decision tree across TVar / TRecord /
+    -- TTuple / TUnit / TLambda / monomorphic-TType / parametric-TType
+    -- / Enum / Unbox / carve-out / entry-vs-dep key shape / TAlias
+    -- peel (Filled, Hoisted, nested, circular). Pure unit tests
+    -- against hand-built LowerCtx + SolvedTypes; no compile
+    -- pipeline. P3.4c.3 wire-in (caseToGo dispatch) lands later.
+    describeT "Sky.Build.SubjectIsSealedIface" Sky.Build.SubjectIsSealedIfaceSpec.spec
+    -- v0.17 P3.4c.2 — verify caseToGoSealedIface bails to Nothing
+    -- for out-of-scope patterns AND emits a valid GoTypeSwitch
+    -- (with default arm post-P3.4c.2a IR extension) for in-scope
+    -- shapes.  Includes a Builder round-trip that asserts the
+    -- rendered Go contains `switch __subject := ...(type)` +
+    -- per-variant `case Mod_Color_<Ctor>_V:` arms + `default:`
+    -- (NOT `case default:`).
+    describeT "Sky.Build.CaseToGoSealedIface" Sky.Build.CaseToGoSealedIfaceSpec.spec
+    -- v0.17 PR-7 / adversary-2 #8 — discovery + invariant gate for the
+    -- 'globalAnonRecords' IORef writer audit. Pairs with the
+    -- documentation block above 'generateAnonRecordDecls' in
+    -- Sky.Build.Compile that enumerates the legitimate writers.
+    -- Trips if a future PR introduces a new write site without
+    -- updating the audit; protects the emission-time read at
+    -- generateAnonRecordDecls from silent shape loss
+    -- (the failure mode is 'go build' -> "undefined: Anon_R_…").
+    describeT "Sky.Build.AnonRecordWriterAudit" Sky.Build.AnonRecordWriterAuditSpec.spec
+    -- v0.17 criterion #3 contract gate — audits scopeStateRef
+    -- writer counts (Class A bracket-scoped + Class B monotonic
+    -- accumulating) against the documented contract at
+    -- 'scopeStateRef' in "Sky.Build.Compile".  An unaccounted
+    -- writer is a regression that would silently leak scope or
+    -- overwrite pipeline state.
+    describeT "Sky.Build.ScopeStateRefAudit" Sky.Build.ScopeStateRefAuditSpec.spec
+    -- v0.17 release Phase 3 — the third leg of the soundness stool.
+    -- Per-panic-class emission-time regression locks proving
+    -- that well-typed Sky code does NOT emit raw panic-prone Go
+    -- ops AND that the synchronous-panic gate (defer
+    -- rt.LogPanicAndExit()) is wired at every emitted main entry.
+    -- Pairs with runtime-go/rt/panic_recover_test.go (Go-side
+    -- classification) and the example sweep / fuzzer (real-world
+    -- runtime gates).
+    describeT "Sky.Build.PanicClassGate" Sky.Build.PanicClassGateSpec.spec
+    -- v0.17 iter 27: regression for the cross-fn TVar-name collision
+    -- class in coerceCallArgsAt's FALLBACK arm.  Pre-fix
+    -- `Sky_Core_List_indexedMapHelp`'s `[]` arm emitted
+    -- `rt.AsListT[T1](acc)` — the callee `reverseHelp`'s T1 leaked
+    -- through into the caller's enclosing-tvar scope (which also has
+    -- its own T1), surviving substituteOnly's scope-erase fallback.
+    -- The α-rename hoists callee TVars to a high-numbered private
+    -- space so the erase fires and emits `rt.AsListT[any]` instead.
+    describeT "Sky.Build.PolyKernelCrossTVarRename" Sky.Build.PolyKernelCrossTVarRenameSpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).
@@ -185,6 +337,11 @@ allSpecs fastMode = do
     -- like rt.AsBool: expected bool, got rt.SkyResult[…].
     describeT "Sky.Build.ForeignFatal"    Sky.Build.ForeignFatalSpec.spec
     describeT "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
+    -- #632 / Limitation #4: negative literal in application-arg
+    -- position. `add 10 -5` now parses as `add 10 (-5)` instead of
+    -- `(add 10) - 5`. Binary subtract with explicit whitespace
+    -- (`n - m`) remains binary.
+    describeT "Sky.Parse.NegativeLiteralArg" Sky.Parse.NegativeLiteralArgSpec.spec
     -- Multi-line `module/import ... exposing (…)` parser fix +
     -- parse-error-is-fatal regression fence (compiler bug #1).
     describeT "Sky.Parse.MultiLineExposing" Sky.Parse.MultiLineExposingSpec.spec
@@ -288,6 +445,14 @@ allSpecs fastMode = do
     -- regardless of parent flex-direction. In a column parent every
     -- child marked `width: fill` then competed for vertical space,
     -- breaking the typical header/main/footer layout.
+    -- v0.17 C1: typed Go-type ADT (Sky.Generate.Go.Type.GoType) +
+    -- renderGoType + RenderEnv. Foundation for the 28-commit
+    -- fully-typed-codegen refactor (docs/v0.17-fully-typed-codegen-v5-plan.md).
+    -- Unit test only — no callers migrated yet.
+    describeT "Sky.Build.GoTypeAdt"       Sky.Build.GoTypeAdtSpec.spec
+    describeT "Sky.Build.GoTypeRoundTrip" Sky.Build.GoTypeRoundTripSpec.spec
+    describeT "Sky.Build.MappingContext"  Sky.Build.MappingContextSpec.spec
+    describeT "Sky.Build.RendererParity"  Sky.Build.RendererParitySpec.spec
     describeT "Sky.Build.UiFillCascade"   Sky.Build.UiFillCascadeSpec.spec
     -- v0.15.55 F1 + v0.15.56 F4: cross-axis fill CSS emission.
     -- F1 (v0.15.55) — drop `height: 100%` from cross-axis HEIGHT fill
@@ -336,6 +501,29 @@ allSpecs fastMode = do
     -- (no new injection pass needed) — verified by the visual gates
     -- in scripts/verify-ui-showcase.mjs.
     describeT "Sky.Build.UiAspectGrid"  Sky.Build.UiAspectGridSpec.spec
+    -- v0.17 step-8 (#644) — rt.Coerce closed-proof gate.
+    -- Rebuilds 26-ui-showcase and asserts every rt.Coerce site
+    -- in the emitted main.go carries a // PROOF: <category>: ...
+    -- comment.  Closed proof, not a soft floor — zero unproven
+    -- sites permitted.
+    describeT "Sky.Build.UiShowcaseRtCoerceClosedProofSpec" Sky.Build.UiShowcaseRtCoerceClosedProofSpec.spec
+    -- v0.17 step-5 (#644) — rt.Coerce* per-cluster ratchet-down gate.
+    -- Counts the same rt.Coerce* emission-site clusters by category
+    -- (rt.Coerce[ / rt.CoerceInt / rt.CoerceString / rt.CoerceBool /
+    -- rt.CoerceFloat / rt.TaskCoerceT / rt.ResultCoerce /
+    -- rt.MaybeCoerce / rt.AsListT) against a hardcoded baseline that
+    -- can only ratchet DOWN.  Sibling of the closed-proof gate above:
+    -- this one is the quantitative budget, that one is the qualitative
+    -- "every site carries a proof comment" check.
+    describeT "Sky.Build.RtCoerceBudget" Sky.Build.RtCoerceBudgetSpec.spec
+    -- v0.17 Phase A ratchet gate (cgEnv reshape iter-0 baseline).
+    -- Pins iter-0 measurements (rt.Coerce / rt.AsListT in two examples,
+    -- IORef count + getCgEnvFromScope reader count in Compile.hs) and
+    -- asserts monotone non-increasing at every build.  Secondary safety
+    -- net for the iter-9 IORef DELETE that vacates SKY_CGENV_DIFF=1.
+    -- Design doc: docs/v0.17-roadmap/phase-A-cgenv-reshape.md
+    describeT "Sky.Build.PhaseABaselineRegression"
+        Sky.Build.PhaseABaselineRegressionSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix
@@ -354,6 +542,162 @@ allSpecs fastMode = do
     describeT "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
     describeT "Sky.Build.RtFieldAdtBug342" Sky.Build.RtFieldAdtBug342Spec.spec
     describeT "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
+    -- v0.17 step-0b: CPS stack-constant-bound umbrella spec
+    -- infrastructure (Limitation #8 close). MapBaselineSpec
+    -- re-encodes step-8's (commit 8e5dbd4f) assertions as a
+    -- cabal-test regression gate using the four Shared.hs
+    -- combinators (assertHelperEmitted /
+    -- assertNoKernelFallback / assertForContinueInHelper /
+    -- assertConstantStack1M). Each subsequent CPS rewrite
+    -- (filter / foldr / length / concat / take / append /
+    -- range / zip / concatMap / indexedMap / Maybe.combine /
+    -- Result.combine) ships its own <Op>Spec.hs sibling that
+    -- reuses the same helpers.
+    describeT "Sky.Build.CpsStackConstantBound.MapBaseline"
+        Sky.Build.CpsStackConstantBound.MapBaselineSpec.spec
+    -- v0.17 step-1 of CPS rewrite umbrella: filter (sibling of
+    -- map). Gates 4 combinators including assertConstantStack1M
+    -- at a 1M-element fixture (List.range 1 1000000, even-number
+    -- predicate, expected length 500000).
+    describeT "Sky.Build.CpsStackConstantBound.Filter"
+        Sky.Build.CpsStackConstantBound.FilterSpec.spec
+    -- v0.17 step-2 of CPS rewrite umbrella: foldr (delegating
+    -- binding — pre-reverses then folds-left). Gates 6 examples
+    -- including assertConstantStack1M at the 1M-target runtime
+    -- gate AND three handcrafted non-commutative non-associative
+    -- fixtures to prove fold direction is preserved (a backwards
+    -- fold would silently pass an `(+)`-only test).
+    describeT "Sky.Build.CpsStackConstantBound.Foldr"
+        Sky.Build.CpsStackConstantBound.FoldrSpec.spec
+    -- v0.17 step-3 of CPS rewrite umbrella: concat (delegating
+    -- binding to TWO private helpers — concatHelp + appendReverseOnto).
+    -- Independent of step-5's `append` rewrite: concat uses ONLY
+    -- the private appendReverseOnto, never the public append.
+    -- Gates 5 examples including assertConstantStack1M at a
+    -- 1k-outer × 2-inner = 2k flat-output runtime fixture.
+    describeT "Sky.Build.CpsStackConstantBound.Concat"
+        Sky.Build.CpsStackConstantBound.ConcatSpec.spec
+    -- v0.17 step-4 / Limitation #8 CPS rewrite: List.take.
+    -- Same CPS-helper shape as map / filter — public `take` is a
+    -- shim that calls `takeHelp n list []`; the auto-TCO loop
+    -- lives inside takeHelp's emitted Go body. Edge gates assert
+    -- take 0 / take negative / take from [] all yield [] (the
+    -- backwards-rewrite smoking gun).
+    describeT "Sky.Build.CpsStackConstantBound.Take"
+        Sky.Build.CpsStackConstantBound.TakeSpec.spec
+    -- v0.17 step-5 / Limitation #8 CPS rewrite: List.append.
+    -- Delegating-binding shape calling TWO helpers in sequence:
+    -- reverseHelp (already-existing) flips the prefix, then
+    -- appendHelp cons-walks the reversed prefix onto ys.
+    -- Independent of step-3's concat rewrite: concat uses ONLY
+    -- the private appendReverseOnto, never the public append.
+    -- Gates 4 examples including assertConstantStack1M at a 10k
+    -- combined-output runtime fixture.
+    describeT "Sky.Build.CpsStackConstantBound.Append"
+        Sky.Build.CpsStackConstantBound.AppendSpec.spec
+    -- v0.17 step-9 / Limitation #8 CPS rewrite: List.length.
+    -- CPS-helper binding shape (sibling of List.filter / List.map
+    -- / List.take) — public `length` is a thin shim that calls
+    -- `lengthHelp list 0`; the auto-TCO for-continue loop lives
+    -- inside Sky_Core_List_lengthHelp's emitted Go body.
+    -- Pre-rewrite shape `1 + length rest` blew Go's maxstacksize
+    -- on 1M-element inputs.  Gates 4 examples.
+    describeT "Sky.Build.CpsStackConstantBound.Length"
+        Sky.Build.CpsStackConstantBound.LengthSpec.spec
+    -- v0.17 step-10 / Limitation #8 CPS rewrite: List.range.
+    -- Delegating-binding shape (sibling of List.append / List.foldr)
+    -- — public `range` is a thin shim that calls `rangeHelp lo hi
+    -- []`; rangeHelp cons'es each value onto acc in REVERSE order,
+    -- then `reverseHelp acc []` flips the accumulator once at the
+    -- base for the final ascending left-to-right output.  Pre-
+    -- rewrite shape `lo :: range (lo + 1) hi` blew Go's
+    -- maxstacksize on 1M-element ranges (cons runs AFTER the
+    -- recursive call returns — non-tail position).  Gates 4
+    -- examples including a 10k-element runtime fixture
+    -- (range 1 10000 → length 10000).
+    describeT "Sky.Build.CpsStackConstantBound.Range"
+        Sky.Build.CpsStackConstantBound.RangeSpec.spec
+    -- v0.17 step-11 / Limitation #8 CPS rewrite: List.zip.
+    -- Delegating-binding shape (sibling of List.range / List.append
+    -- / List.foldr) — public `zip` is a thin shim that calls
+    -- `zipHelp xs ys []`; zipHelp cons'es each (x, y) pair onto
+    -- acc in REVERSE order, then `reverseHelp acc []` flips the
+    -- accumulator once at the base for the final left-to-right
+    -- output.  Pre-rewrite shape `(x, y) :: zip xRest yRest` blew
+    -- Go's maxstacksize on 1M-element zips (cons runs AFTER the
+    -- recursive call returns — non-tail position).  CRITICAL: the
+    -- explicit signature on zipHelp's tuple-typed accumulator
+    -- (`List (a, b)`) is load-bearing for typed-codegen — without
+    -- it the HM solver infers `List any` and the typed-lowerer
+    -- routes through `rt.AsList[any]`, defeating the rt.Coerce
+    -- retreat.  Gates 5 examples: 4 standard CPS gates + a
+    -- tuple-typed accumulator gate verifying `rt.T2[` emission
+    -- inside zipHelp body.
+    describeT "Sky.Build.CpsStackConstantBound.Zip"
+        Sky.Build.CpsStackConstantBound.ZipSpec.spec
+    -- v0.17 step-13 / Limitation #8 CPS rewrite: List.indexedMap.
+    -- Delegating-binding shape (sibling of List.zip / List.range
+    -- / List.append) — public `indexedMap` is a thin shim that
+    -- calls `indexedMapHelp fn 0 list []`; indexedMapHelp conses
+    -- each `fn i x` result onto acc in REVERSE order, then
+    -- `reverseHelp acc []` flips the accumulator once at the base
+    -- for the final left-to-right output.  Pre-rewrite shape
+    -- `fn i x :: indexedMapHelp fn (i + 1) rest` blew Go's
+    -- maxstacksize on 1M-element inputs (cons runs AFTER the
+    -- recursive call returns — non-tail position).  CRITICAL:
+    -- the indexedMapHelp PUBLIC SYMBOL NAME is preserved
+    -- (NOT renamed to indexedMapAcc) because the bundled
+    -- console_app references Sky_Core_List_indexedMapHelp.  Only
+    -- the body changes — from non-tail-cons to
+    -- accumulator-then-reverse — and an explicit signature is
+    -- added for typed-codegen soundness.  Gates 5 examples: 4
+    -- standard CPS gates + a typed-record-returning callback
+    -- accumulator gate (the edge case the prior 8 ops haven't
+    -- exercised; verifies ZERO rt.Coerce in the indexedMapHelp
+    -- body when accumulating a typed record).
+    describeT "Sky.Build.CpsStackConstantBound.IndexedMap"
+        Sky.Build.CpsStackConstantBound.IndexedMapSpec.spec
+    -- v0.17 step-12 / Limitation #8 CPS rewrite: List.concatMap.
+    -- Delegating-binding shape — public `concatMap` is a thin shim
+    -- that calls `reverseHelp (concatMapHelp fn list []) []`;
+    -- concatMapHelp walks the input left-to-right, prepending each
+    -- `fn x` chunk in REVERSE order via `reverseHelp (fn x) acc`,
+    -- then the outer `reverseHelp acc []` flips the final
+    -- accumulator once at the base.  Pre-rewrite shape
+    -- `append (fn x) (concatMap fn rest)` blew Go's maxstacksize on
+    -- large inputs (append runs AFTER the recursive call returns —
+    -- non-tail position).  The natural delegation
+    -- `concatMap fn list = concat (map fn list)` triggers HM
+    -- cross-module over-unification on the polymorphic `map`
+    -- instances (round-9 investigation), so the direct accumulator
+    -- pattern is the correct fix.  Gates 4 examples.
+    describeT "Sky.Build.CpsStackConstantBound.ConcatMap"
+        Sky.Build.CpsStackConstantBound.ConcatMapSpec.spec
+    -- v0.17 step-7 / Limitation #8 CPS rewrite: Result.combine.
+    -- Delegating-binding shape (sibling of List.foldr) — public
+    -- `combine` is a thin shim that calls `combineHelp results
+    -- []`; the auto-TCO for-continue loop lives inside
+    -- Sky_Core_Result_combineHelp's emitted Go body.  Reuses an
+    -- inlined private `reverseHelp` (avoids Result -> List ->
+    -- Result import cycle; same duplication smell that
+    -- Sky.Core.Maybe.combine documents).  Gates 4 examples
+    -- including the Err short-circuit at midpoint 5000.
+    describeT "Sky.Build.CpsStackConstantBound.ResultCombine"
+        Sky.Build.CpsStackConstantBound.ResultCombineSpec.spec
+    -- v0.17 step-6 / Limitation #8 CPS rewrite: Maybe.combine.
+    -- Delegating-binding shape (sibling of List.foldr +
+    -- Result.combine) — public `combine` is a thin shim that
+    -- calls `combineHelp maybes []`; the auto-TCO for-continue
+    -- loop lives inside Sky_Core_Maybe_combineHelp's emitted Go
+    -- body.  Reuses an inlined private `reverseHelp` (avoids
+    -- Maybe -> List -> Maybe import cycle; same duplication smell
+    -- documented in the module header — future extraction to
+    -- Sky.Core.Internal noted as out-of-batch scope).  Gates 5
+    -- examples: helper-emitted, public shim emitted, for-continue
+    -- inside helper, all-Just constant-stack run, Nothing
+    -- short-circuit at midpoint 5000.
+    describeT "Sky.Build.CpsStackConstantBound.MaybeCombine"
+        Sky.Build.CpsStackConstantBound.MaybeCombineSpec.spec
     describeT "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describeT "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describeT "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
@@ -415,6 +759,10 @@ allSpecs fastMode = do
     -- v0.15.46 — Sky.Core.WebSocket + Sky.Http.Server.WebSocket
     -- kernel routing + Sky-side type-checking.
     describeT "Sky.Build.WebSocket" Sky.Build.WebSocketSpec.spec
+    -- v0.17 step-6 — Well-typed Sky program fuzzer (subprocess-isolated).
+    -- Default tier: 100 iters dev gate. Milestone tier: SKY_FUZZ_FULL=1
+    -- → 10,000 iters per gap-4 of v0.17 close umbrella (#644).
+    describeT "Sky.Build.WellTypedFuzzer" Sky.Build.WellTypedFuzzerSpec.spec
     describeT "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describeT "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec
@@ -452,6 +800,17 @@ allSpecs fastMode = do
     -- v0.16.10 #393(d) — typed record alias builder convention
     describeT "Sky.Stdlib.RecordAliasBuilderConvention"
         Sky.Stdlib.RecordAliasBuilderConventionSpec.spec
+    -- v0.17 G1 (sky-stdlib-correctness §8.1) — Functor/Monad
+    -- algebraic law runtime regression gates for Maybe / Result /
+    -- Task.  Promotes "verified by inspection" to a measurable
+    -- gate via Sky fixtures that assert the law equations at
+    -- runtime against representative values.
+    describeT "Sky.Stdlib.MaybeLaws"
+        Sky.Stdlib.MaybeLawsSpec.spec
+    describeT "Sky.Stdlib.ResultLaws"
+        Sky.Stdlib.ResultLawsSpec.spec
+    describeT "Sky.Stdlib.TaskLaws"
+        Sky.Stdlib.TaskLawsSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now
@@ -467,6 +826,49 @@ allSpecs fastMode = do
     -- panicked at runtime; Ui.fill 1 likewise).
     describeT "Sky.Type.RecordFieldExactness"
                                          Sky.Type.RecordFieldExactnessSpec.spec
+    -- v0.17 closure plan / step-3 — strict HM arity gate POST-FIX
+    -- regression contract. 8 fixtures (k-a / k-b / u-a / u-b
+    -- negative; h-a / p-a / wp-a / wa-a positive) all ship pending
+    -- here; step-4 implements the gate in Sky.Type and flips the
+    -- pendings to live assertions (CompileErr / CompileOk).
+    describeT "Sky.Type.StrictHmArityGate"
+                                         Sky.Type.StrictHmArityGateSpec.spec
+    -- v0.17 PR-A scaffolding regression: CArityMismatch constructor
+    -- + solveHelpBody arm + countConstraints arm are wired
+    -- end-to-end at the solver layer.  No callers wire the gate
+    -- yet (PR-B-D follow per
+    -- docs/v0.17-roadmap/strict-hm-arity-gate-design.md); this
+    -- spec proves the constructor is reachable + the diagnostic
+    -- carries the binding name + declared/supplied arities + the
+    -- [E2007] code prefix.  Load-bearing because the cabal file
+    -- enables `-Wno-incomplete-patterns` — without this spec, a
+    -- missing arm in either solver consumer becomes a runtime
+    -- `Non-exhaustive patterns` exception under PR-B-D's
+    -- caller wiring.
+    describeT "Sky.Type.ArityMismatchScaffold"
+                                         Sky.Type.ArityMismatchScaffoldSpec.spec
+    -- v0.17 PR-B (iter 30) — pure declaredArity helper for the
+    -- strict-HM arity gate.  Locks the structural T.Annotation
+    -- → Int walk that PR-C/PR-D will read.  No solver interaction
+    -- — pure structural unit tests.
+    describeT "Sky.Type.DeclaredArityHelper"
+                                         Sky.Type.DeclaredArityHelperSpec.spec
+    -- v0.17 Limitation #7 closure / step-1 — "red-then-green"
+    -- reproduction gate.  Six fixtures: four NEGATIVE cases
+    -- (loose-shape applications currently accepted by Sky lowering —
+    -- (k-a) `Uuid.v4 ()` against `: Task Error String`; (k-b) bare
+    -- `Time.now` against `: () -> Task Error Int`; (u-a) user
+    -- TypedDef `: String` called with `()`; (u-b) user TypedDef
+    -- `: () -> String` used as a `String` value) plus two POSITIVE
+    -- controls that MUST stay compiling clean throughout (HeadAlias
+    -- `myHandler : Handler` per PR #123 / Limitation #5; Pure.*
+    -- `Pure.uuidV4 ()` per v0.15.50 Pure.* mitigation).  Step-4 of
+    -- the closure plan inverts the four negative cases to assert
+    -- CompileErr with diagnostic-text checks — the positive controls
+    -- stay PASS as the discriminator that the gate tightens ONLY
+    -- the loose shape.
+    describeT "Sky.Type.Limitation7CurrentLooseAcceptance"
+                                         Sky.Type.Limitation7CurrentLooseAcceptanceSpec.spec
     describeT "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     -- Sky function names that match Go reserved words must sanitise
     -- at the CALL site too, not only at the definition site (see
@@ -540,6 +942,25 @@ allSpecs fastMode = do
     -- code paths end-to-end. v0.16.14.
     unless fastMode $
         describeT "Sky.Build.CheckIsBuild" Sky.Build.CheckIsBuildSpec.spec
+    -- v0.17 PR-17b — dep-module emission symmetry regression. The
+    -- T1 leak class is closed by eager render-to-GoRaw of every dep
+    -- decl's body. Compiles the dual-decl fixture clean and asserts
+    -- no unbound T-var sneaks into a non-generic dep decl's body.
+    describeT "Sky.Build.Pr17bDepSymmetry"
+        Sky.Build.Pr17bDepSymmetrySpec.spec
+    -- v0.17 step-6 (#660): regression gate proving the late-stage
+    -- Go-source band-aid (`eraseUndeclaredTVarsInGoSource`) is safe
+    -- to delete.  Walks `examples/*/sky-out/main.go` (when present)
+    -- + builds the iter-20 fixture, asserts no T<N> or Anon_R_*
+    -- leak reaches emitted Go.
+    describeT "Sky.Build.NoT1LeakInEmittedGoSpec"
+        Sky.Build.NoT1LeakInEmittedGoSpec.spec
+    -- v0.17 Wave 3 step-3: existence-based regression gate for the
+    -- T1/T2/T3 dep-emission leak shape from notes-app
+    -- (Lib.Db.exec/query wrappers).  3 it-blocks (Task/Result/Maybe
+    -- coercer families); tightens monotonically.
+    describeT "Sky.Build.NoT1LeakInNotesApp"
+        Sky.Build.NoT1LeakInNotesAppSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describeT "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
     -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
@@ -555,6 +976,12 @@ allSpecs fastMode = do
     -- function. Pre-fix, `tickle = String.toUpper` emitted a
     -- 0-arity Go thunk wrapper; call sites failed `go build`.
     describeT "Sky.Build.PointFreePolyAlias" Sky.Build.PointFreePolyAliasSpec.spec
+    -- #631: isRecordAliasTy used to require literal `_R` suffix and
+    -- silently dropped parametric instantiations like `Cfg_R[Msg]` or
+    -- `RetryPolicy_R[Error]`, routing them through the panicking
+    -- `any(X).(Target)` cast instead of `rt.Coerce[Target](X)`.
+    describeT "Sky.Build.IsRecordAliasTyParametric"
+                                            Sky.Build.IsRecordAliasTyParametricSpec.spec
     -- #463 + #465: partial application of a typed FFI kernel used to
     -- route the under-arity call to the typed companion (e.g.
     -- `rt.Regex_replaceT("-", "_")` with 2 args against a 3-arg
@@ -601,6 +1028,25 @@ allSpecs fastMode = do
     -- path in src/Sky/Build/Compile.hs.
     describeT "Sky.Build.UnannotatedParametricCfgView"
                                             Sky.Build.UnannotatedParametricCfgViewSpec.spec
+    -- v0.17 step-1 gap-3 — anon-record emission survives the
+    -- SKY_GOSIG_DIFF differential gate.  Pre-fix, the in-thunk
+    -- 'atomicWriteIORef globalAnonRecords Map.empty' could fire
+    -- AFTER decl-render registrations under a lazy ordering that
+    -- only manifested when the GOSIG diff probe forced specific
+    -- chains.  Closed by removing the redundant in-thunk reset —
+    -- 'resetCompileState' at continueCompile entry is the single
+    -- authoritative reset point.
+    describeT "Sky.Build.AnonRecordEmissionGuarantee"
+                                            Sky.Build.AnonRecordEmissionGuaranteeSpec.spec
+    -- v0.17 step-2 — anon-record subprocess fixture reproduction.
+    -- Adversary-1 #5: class closure, not fixture closure — TWO
+    -- fixtures cover the leak class (iter-18 cross-module HOF
+    -- with anon-record callback arg, iter-20 dep-module returns
+    -- anon-record).  Adversary-2 #6: subprocess fork reproduces
+    -- the race that in-process compile silently masks.  Initially
+    -- RED on the iter-18 shape; gates step-3.
+    describeT "Sky.Build.AnonRecordSubprocessFixture"
+                                            Sky.Build.AnonRecordSubprocessFixtureSpec.spec
     -- Task #545 — Sky.Live.api now has a strongly-typed kernel sig
     -- (`String -> (Dict String any -> Response) -> Route`).  This
     -- spec exercises both shapes: Dict-shaped passes, Task-shaped
@@ -661,6 +1107,12 @@ allSpecs fastMode = do
     -- Lock fires on the constructor surface + the byte-identical
     -- compile contract for a four-slot exercise.
     describeT "Sky.Build.LowerCtxCascade"    Sky.Build.LowerCtxCascadeSpec.spec
+    -- v0.17 Phase 4 Stage 1 — per-Msg typed dispatch foundation.
+    -- Locks the variant enumeration + Stage 1 emission shape
+    -- ('rt.RegisterMsgUpdate' / 'rt.RegisterMsgVariant') so
+    -- downstream Phase 4 stages (typed update arms, dispatch
+    -- tables, wire decoders) consume one source of truth.
+    describeT "Sky.Build.MsgDispatch"        Sky.Build.MsgDispatchSpec.spec
     -- v0.15.x hardening / Cycle 3 P37b — LowerCtx cascade Phase 3
     -- resume.  `letBindingType` is now pure; the three slots P6
     -- deferred (record-field init / list element / let body) now
@@ -692,6 +1144,18 @@ allSpecs fastMode = do
     describeT "Sky.Build.AnonLambda"         Sky.Build.AnonLambdaSpec.spec
     -- v0.15.6 #365 — cross-module local lambda collision.
     describeT "Sky.Build.CrossModuleLambdaCollisionC" Sky.Build.CrossModuleLambdaCollisionC_Spec.spec
+    -- v0.17 Wave 3 / step-1 — dep-emission SolvedTypes wiring +
+    -- per-dep _stCurrentModule hint + narrowed dep ctx env.  Three
+    -- regression specs land together with the impl.  See memory
+    -- notes v017_wave3_solved_types_dep_emission and
+    -- v017_wave3_scope_install_too_aggressive for the
+    -- architectural diagnosis.
+    describeT "Sky.Build.DepSolvedTypesWiring"
+                                            Sky.Build.DepSolvedTypesWiringSpec.spec
+    describeT "Sky.Build.DepCurrentModuleHint"
+                                            Sky.Build.DepCurrentModuleHintSpec.spec
+    describeT "Sky.Build.DepNarrowEnv"
+                                            Sky.Build.DepNarrowEnvSpec.spec
     -- v0.13 E regression: synthAnonRecordName registers shapes
     -- into globalAnonRecords; generateAnonRecordDecls emits
     -- `type Anon_R_<hash> = struct{...}` so the typed Go name
@@ -765,6 +1229,7 @@ allSpecs fastMode = do
     -- the same compilation paths end-to-end). v0.16.14.
     unless fastMode $
         describeT "Sky.Build.HeapBoundedHm" Sky.Build.HeapBoundedHmSpec.spec
+    describeT "Sky.Build.RepoRootGuard" Sky.Build.RepoRootGuardSpec.spec
     -- Limitation #17 hardening: defensive bound on the HM solver.
     -- Caps total solveHelp invocations per `solve` call; trips
     -- with TYPE ERROR before unbounded heap consumption can OOM

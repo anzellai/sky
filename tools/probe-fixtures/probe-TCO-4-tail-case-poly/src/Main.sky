@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+choose : Int -> Maybe a -> a -> Maybe a
+choose n m fallback =
+    case n of
+        0 ->
+            m
+
+        _ ->
+            choose (n - 1) (Just fallback) fallback
+
+
+main =
+    case choose 3 Nothing 42 of
+        Just v ->
+            println (String.fromInt v)
+
+        Nothing ->
+            println "none"

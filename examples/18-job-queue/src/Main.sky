@@ -372,7 +372,21 @@ viewHistory model =
         p [] [text "No snapshots yet — click Save then Load."]
 
     else
-        ul [] (List.map viewSnapshot model.history)
+        ul
+            []
+            (List.map
+                (\s ->
+                    let
+                        sokStr = String.fromInt s.ok
+                        sfailStr = String.fromInt s.failed
+                        stotalStr = String.fromInt s.total
+                        stsStr = String.fromInt s.ts
+                    in
+                        li
+                            []
+                            [text
+                                """[{{stsStr}}] ok={{sokStr}} fail={{sfailStr}} total={{stotalStr}}"""])
+                model.history)
 
 
 view model =
@@ -400,7 +414,25 @@ view model =
                   , button [onClick RunBatch] [text "Batch (3 jobs)"]
                   , button [onClick ClearDone] [text "Clear Finished"]
                   ]
-            , div [] (List.map viewJob (List.reverse model.jobs))
+            , div
+                  []
+                  (List.map
+                      (\j ->
+                          let
+                              jstatus =
+                                  if j.running then
+                                      "[running]"
+
+                                  else
+                                      j.result
+                              jjid = String.fromInt j.id
+                              jjname = j.name
+                          in
+                              div
+                                  []
+                                  [text
+                                      """#{{jjid}} {{jjname}} - {{jstatus}}"""])
+                      (List.reverse model.jobs))
             , h2 [] [text "Persistence (Result/Task bridges)"]
             , p
                   []

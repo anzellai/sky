@@ -123,7 +123,11 @@ addOrBump product items =
 
 
 -- "12.50" → 1250 cents. Anything unparseable → 0 (treated as "no
--- cap"). Used by MaxPriceChanged from the slider's String payload.
+-- cap").  Used by MaxPriceChanged from the slider's String payload —
+-- per Std.Ui.Input.slider's docstring, range inputs round-trip
+-- through the DOM as text; the v0.17 runtime stringifies the wire
+-- Float to its decimal representation before calling the user's
+-- String-typed Msg ctor (narrowMsgArg in runtime-go/rt/live.go).
 parsePriceCents : String -> Int
 parsePriceCents raw =
     case String.toInt raw of

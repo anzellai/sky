@@ -59,7 +59,7 @@ trap cleanup EXIT INT TERM
 # 1) Start the hub.  --port 8025 + --data-dir for the SQLite hot
 #    store.  Hub also needs SKY_CONSOLE_HUB_TOKEN env so the
 #    incoming POSTs from the apps validate.
-HUB_DATA_DIR="$(mktemp -d -t sky-hub-demo)"
+HUB_DATA_DIR="$(mktemp -d -t sky-hub-demo.XXXXXX)"
 echo "==> starting hub on :8025 (data dir: $HUB_DATA_DIR)"
 SKY_CONSOLE_HUB_TOKEN="$SKY_CONSOLE_HUB_TOKEN" \
     SKY_CONSOLE_AUTH="${SKY_CONSOLE_AUTH:-token}" \

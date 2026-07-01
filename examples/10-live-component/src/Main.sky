@@ -113,8 +113,8 @@ pageStyles =
         [ rule
               "*, *::before, *::after"
               [ property "box-sizing" "border-box"
-              , margin (zero ())
-              , padding (zero ())
+              , margin zero
+              , padding zero
               ]
         , rule
               "body"
@@ -126,7 +126,7 @@ pageStyles =
         , rule
               ".app"
               [ maxWidth (px 500)
-              , margin2 (rem 2.0) (auto ())
+              , margin2 (rem 2.0) auto
               , padding (rem 2.0)
               ]
         , rule ".app h1" [property "margin-bottom" "0.5rem"]
@@ -137,14 +137,14 @@ pageStyles =
               , borderRadius (px 12)
               , padding (rem 1.5)
               , property "box-shadow" "0 2px 8px rgba(0,0,0,0.1)"
-              , margin2 (rem 1.0) (zero ())
+              , margin2 (rem 1.0) zero
               ]
         , rule
               ".counter-component h3"
               [ property "margin-bottom" "1rem", color (hex "333") ]
         , rule
               ".counter-display"
-              [ textAlign AlignCenter, margin2 (rem 1.0) (zero ()) ]
+              [ textAlign AlignCenter, margin2 (rem 1.0) zero ]
         , rule
               ".count"
               [ fontSize (rem 3.0), fontWeight Bold, color (hex "2563eb") ]

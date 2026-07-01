@@ -1,3 +1,4 @@
+-- | Std.Css — the typed stylesheet DSL (Layer 3 Sky source).
 module Std.Css exposing (..)
 
 -- | Std.Css — the typed stylesheet DSL.
@@ -365,17 +366,18 @@ num n =
     Num n
 
 
--- Bare keyword length values.  Take `()` so they sidestep the
--- zero-arity-memoisation interaction with Go's `init()` ordering
--- (CLAUDE.md Limitation #13) and stay consistent with the old
--- kernel surface (`Css.zero ()`).
-zero : () -> Length
-zero _ =
+-- v0.17 Limitation #9 close — bare-value constants.  Pre-v0.17
+-- these took `()` to dodge a Go init() ordering issue; the
+-- v0.17 canonicaliser tightening (PR-19) closed that class so
+-- pure-literal constants can ship as bare values.  Old call
+-- sites `Css.zero ()` are migrated in the same commit.
+zero : Length
+zero =
     LenZero
 
 
-auto : () -> Length
-auto _ =
+auto : Length
+auto =
     LenAuto
 
 
@@ -422,13 +424,13 @@ hsla h s l a =
     Hsla h s l a
 
 
-transparent : () -> Color
-transparent _ =
+transparent : Color
+transparent =
     ColorTransparent
 
 
-currentColor : () -> Color
-currentColor _ =
+currentColor : Color
+currentColor =
     ColorCurrent
 
 
@@ -513,13 +515,13 @@ shadow offsetX offsetY blur c =
 -- String-valued property slots (`border (none ())`, `fontFamily
 -- (systemFont ())`).
 
-none : () -> String
-none _ =
+none : String
+none =
     "none"
 
 
-systemFont : () -> String
-systemFont _ =
+systemFont : String
+systemFont =
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
 
 

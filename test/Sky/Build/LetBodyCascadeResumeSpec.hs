@@ -178,7 +178,7 @@ spec = do
             -- the build-time effect (the fixture compiles).
             src <- readFile "src/Sky/Build/Compile.hs"
             -- Pure shape post-P37b:
-            ("letBindingType :: Solve.SolvedTypes -> String -> Can.Expr"
+            ("letBindingType :: EmitCompileCtx -> Solve.SolvedTypes -> String -> Can.Expr"
                 `isInfixOf` src) `shouldBe` True
             -- The function calls Solve.lookupSolvedRegion (pure
             -- projection over SolvedTypes) NOT the deleted

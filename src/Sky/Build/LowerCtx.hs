@@ -35,6 +35,7 @@ module Sky.Build.LowerCtx
     , buildLowerCtx
     , lookupLambdaType
     , lookupLambdaGoStr
+    , lookupLambdaGoType
     , memberLambdaType
     , lookupAlias
     , lookupAnnotation
@@ -42,14 +43,31 @@ module Sky.Build.LowerCtx
     , lookupEnclosingTypeParam
     , withLambdaTypes
     , withLambdaGoStrs
+    , withLambdaGoTypes
     , withEnclosingTypeParams
+    , withCurrentDepModule
+    , lookupCurrentDepModule
+    , withKernelAlias
+    , lookupKernelAlias
+    , withAliases
+    , withFieldIdx
+    , withUnionNames
+    , withUnionDetails
+    , withFfiTypedWrapperNames
+    , withFfiTypedWrapperParams
+    , withCgEnv
+    , lookupCgEnv
+    , modifyCgEnv
     ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import qualified Sky.AST.Canonical as Can
+import qualified Sky.Build.Dce as Dce
+import qualified Sky.Build.Monomorphise as Mono
 import qualified Sky.Generate.Go.Record as Rec
+import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
@@ -87,6 +105,18 @@ data LowerCtx = LowerCtx
         -- ^ Lambda-scope Go-type strings for function-typed
         -- parameters in scope.  Replaces `globalLambdaGoStrings`.
         -- Updated via `withLambdaGoStrs`.
+    , _lc_lambdaGoTypes :: !(Map.Map String GoType.GoType)
+        -- ^ v0.17 PR-11 — structural Go-type registry for typed
+        -- lambda params.  Populated at `lowerTypedLambda`'s writer
+        -- via `parseGoType` directly (no lossy String→T.Type round
+        -- trip via the now-deleted `inferTypeFromGoString`).  Readers
+        -- that previously consumed the wildcard `TVar "_"` from the
+        -- T.Type registry (sites 1, 3, 5 in `goExprGoType` /
+        -- `operandIsStaticallyTyped` / `isMaybeOrResultIdent`) now
+        -- consult this map directly and use `renderGoType` for the
+        -- Go-string they want.  Sibling to `_lc_lambdaTypes` — both
+        -- coexist until every consumer migrates off the T.Type
+        -- channel.
     , _lc_aliases     :: !(Map.Map String Can.Alias)
         -- ^ Entry + dep merged alias map.  Snapshotted from
         -- `globalAllAliases`.  Read by parametric-alias generic-args
@@ -100,6 +130,16 @@ data LowerCtx = LowerCtx
         -- ^ Union-name set.  Snapshotted from `globalUnionNames`.
         -- Read by `typeStrWithAliasesReg` while emitting dep-function
         -- sigs to discriminate union-typed args.
+    , _lc_unionDetails :: !(Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor]))
+        -- ^ v0.17 P3.4c.0 — per-union metadata for the sealed-iface
+        -- emission gate.  Mirror of 'Rec._cg_unionDetails'; threaded
+        -- so the @scopeStateRef@ cascade path reads the same map the
+        -- 'Rec.CodegenEnv' carries.  Keys: same convention as
+        -- '_lc_unionNames' (entry-keyed by bare type name; dep-keyed
+        -- by prefixed name).  Value carries the originating
+        -- 'ModuleName.Canonical' so consumers can rebuild the
+        -- qualified Go name without parsing it back from the key.
+        -- Read by 'subjectIsSealedIface' (P3.4c.1; NOT WIRED yet).
     , _lc_aliasMap    :: !(Map.Map String String)
         -- ^ Reserved for a future module-prefix → unprefixed alias
         -- shortcut map.  Empty today; populated in PR 2 when the
@@ -120,6 +160,76 @@ data LowerCtx = LowerCtx
         -- Closes Issue #521 and forecloses the entire
         -- `Cfg_R[any]`-cast-panic class for parametric record
         -- aliases (#261/#262/#263/#461/#463/#465/#467).
+    , _lc_currentDepModule :: !(Maybe String)
+        -- ^ v0.17 PR-α — dep-vs-entry emission mode hint.  Set to
+        -- `Just modName` while @generateDeclsForDepScoped@'s dep is
+        -- being rendered; `Nothing` while the entry module is
+        -- being rendered.  Replaces the `globalCurrentDepModule`
+        -- IORef whose lazy-CAF caching pathology required the
+        -- sentinel-bracket pattern at @Compile.hs:3371-3376@.
+        -- See @docs/v0.17-pr-alpha-renderer-state-threading-design.md@
+        -- for the full migration plan.  Migration sites (read at
+        -- @Compile.hs:7730@; write at @generateDeclsForDepScoped@)
+        -- thread through PR-α subsequent sessions.  Today: scaffolding
+        -- only — `Nothing` matches the IORef's default; no behavior
+        -- change.
+    , _lc_reachableSet :: !Mono.ReachableSet
+        -- ^ v0.17 PR-α S2 — whole-program reachable-instance set
+        -- (snapshot of @globalReachableSet@).  Populated at
+        -- 'buildLowerCtx' after the solver runs.  Read by
+        -- 'instanceMangledName' via the @scopeStateRef@ channel
+        -- (which carries the entire @LowerCtx@), replacing the
+        -- direct IORef read.  Written ONCE per compile; never
+        -- mutates after.
+    , _lc_reachableProgram :: !(Set.Set Dce.Ref)
+        -- ^ v0.17 PR-α S2 — whole-program DCE reachable-ref set
+        -- (snapshot of @globalReachableProgram@).  Populated at
+        -- 'buildLowerCtx'.  Threaded explicitly to
+        -- 'generateDeclsForDep' (which previously read the IORef)
+        -- + read inline from the LC value at sites that already
+        -- accept a 'LowerCtx'.  Same write-once-at-solver-done
+        -- semantics as '_lc_reachableSet'.
+    , _lc_kernelAlias :: !(Map.Map (ModuleName.Canonical, String) (String, String))
+        -- ^ v0.17 iter 17 (task #654) — kernel-alias registry
+        -- (snapshot of @globalKernelAlias@).  Maps a Sky-source
+        -- (home, name) pair to the matching (kernelMod, kernelName)
+        -- so codegen rewrites @Can.VarTopLevel home name@ to
+        -- @Can.VarKernel kMod kFn@ when the source binding is a
+        -- @Ffi.kernel "K_n"@ alias.  Written once after solvePhase
+        -- (via @LC.withKernelAlias@ on 'scopeStateRef') so the
+        -- transitional @ctxFromIORef ()@ bridges see it on the
+        -- next read.  Replaces the @lookupKernelAlias@ IORef hop
+        -- inside @exprToGo@'s @Can.VarTopLevel@ + @Can.Call@ arms.
+    , _lc_ffiTypedWrapperNames :: !(Set.Set String)
+        -- ^ Set of typed-FFI wrapper Go-function names emitted by
+        -- @FfiGen@ (each named @<Kernel>_<fn>T@).  Read at @exprToGo@'s
+        -- @Can.VarKernel@ arms (zero-arg + N-arg FFI dispatch) +
+        -- @caseToGo@'s @isTypedFfiCall@ recogniser to decide whether
+        -- the typed wrapper exists for a given call site.  Populated
+        -- by @loadAndSeedFfiRegistry@ → @LoadedFfiTables@ →
+        -- 'generateGoMulti' at codegen entry; default 'Set.empty' for
+        -- bootstrap.  v0.17 close iter 5 (Phase 7 IORef defusing):
+        -- single source of truth — the legacy
+        -- @Env.ffiTypedWrapperNamesRef@ IORef has been deleted.
+    , _lc_ffiTypedWrapperParams :: !(Map.Map String [String])
+        -- ^ Mapping each @<Kernel>_<fn>T@ wrapper to its declared Go
+        -- param-type strings.  Read at @exprToGo@'s @Can.VarKernel@
+        -- N-arg arm to coerce arguments to the wrapper's declared
+        -- param types.  Same population path as
+        -- '_lc_ffiTypedWrapperNames'; default 'Map.empty'.  v0.17 close
+        -- iter 5: single source of truth — the legacy
+        -- @Env.ffiTypedWrapperParamsRef@ IORef has been deleted.
+    , _lc_cgEnv :: !(Maybe Rec.CodegenEnv)
+        -- ^ v0.17 close criterion 3 — globalCgEnv migration
+        -- (staged S1, iter 34).  Bridge field that future reader
+        -- migration (S4) consults instead of the
+        -- 'Sky.Build.Compile.getCgEnv' CAF.  'Nothing' means the
+        -- LowerCtx was built before the C10 cgEnv finalisation;
+        -- consumers fall through to the legacy CAF in that case
+        -- (during S2-S3 transitional staging).  Populated by S3 at
+        -- the post-@importsForced \`seq\`@ install site.
+        --
+        -- See @docs/v0.17-roadmap/globalCgEnv-close-plan.md@ §S1.
     }
 
 
@@ -131,12 +241,21 @@ emptyLowerCtx home = LowerCtx
     , _lc_solved      = Solve.emptySolvedTypes
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
+    , _lc_lambdaGoTypes = Map.empty
     , _lc_aliases     = Map.empty
     , _lc_fieldIdx    = Map.empty
     , _lc_unionNames  = Set.empty
+    , _lc_unionDetails = Map.empty
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = Map.empty
     , _lc_enclosingTypeParams = Set.empty
+    , _lc_currentDepModule = Nothing
+    , _lc_reachableSet = Set.empty
+    , _lc_reachableProgram = Set.empty
+    , _lc_kernelAlias = Map.empty
+    , _lc_ffiTypedWrapperNames = Set.empty
+    , _lc_ffiTypedWrapperParams = Map.empty
+    , _lc_cgEnv      = Nothing
     }
 
 
@@ -159,18 +278,29 @@ buildLowerCtx
     -> Rec.RecordRegistry
     -> Set.Set String
     -> Map.Map String T.Annotation
+    -> Mono.ReachableSet
+    -> Set.Set Dce.Ref
     -> LowerCtx
-buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
+buildLowerCtx home solved aliases fieldIdx unions annots reached reachedProg = LowerCtx
     { _lc_module      = home
     , _lc_solved      = solved
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
+    , _lc_lambdaGoTypes = Map.empty
     , _lc_aliases     = aliases
     , _lc_fieldIdx    = fieldIdx
     , _lc_unionNames  = unions
+    , _lc_unionDetails = Map.empty
     , _lc_aliasMap    = Map.empty
     , _lc_annotMap    = annots
     , _lc_enclosingTypeParams = Set.empty
+    , _lc_currentDepModule = Nothing
+    , _lc_reachableSet = reached
+    , _lc_reachableProgram = reachedProg
+    , _lc_kernelAlias = Map.empty
+    , _lc_ffiTypedWrapperNames = Set.empty
+    , _lc_ffiTypedWrapperParams = Map.empty
+    , _lc_cgEnv      = Nothing
     }
 
 
@@ -186,6 +316,16 @@ lookupLambdaType ctx k = Map.lookup k (_lc_lambdaTypes ctx)
 -- `Compile.lookupLambdaGoStr`.
 lookupLambdaGoStr :: LowerCtx -> String -> Maybe String
 lookupLambdaGoStr ctx k = Map.lookup k (_lc_lambdaGoStr ctx)
+
+
+-- | v0.17 PR-11 — structural Go-type lookup for typed lambda params.
+-- Returns the 'GoType' registered at @lowerTypedLambda@'s writer
+-- without any String → T.Type round trip (the deleted
+-- @inferTypeFromGoString@'s job).  Consumers route through
+-- 'renderGoType' when they need the legacy Go-string they previously
+-- got via @solvedTypeToGo@.
+lookupLambdaGoType :: LowerCtx -> String -> Maybe GoType.GoType
+lookupLambdaGoType ctx k = Map.lookup k (_lc_lambdaGoTypes ctx)
 
 
 -- | Membership-only sister of `lookupLambdaType`.  Pure substitute
@@ -242,6 +382,16 @@ withLambdaGoStrs additions ctx =
     ctx { _lc_lambdaGoStr = Map.union additions (_lc_lambdaGoStr ctx) }
 
 
+-- | v0.17 PR-11 — extend the structural Go-type lambda-scope.
+-- Mirror of 'withLambdaTypes' for the new 'GoType'-typed registry.
+-- Populated at @lowerTypedLambda@'s writer; consumed by
+-- @goExprGoType@ / @isMaybeOrResultIdent@ /
+-- @operandIsStaticallyTyped@.
+withLambdaGoTypes :: Map.Map String GoType.GoType -> LowerCtx -> LowerCtx
+withLambdaGoTypes additions ctx =
+    ctx { _lc_lambdaGoTypes = Map.union additions (_lc_lambdaGoTypes ctx) }
+
+
 -- | Membership test against the enclosing-Go-function's type-param
 -- scope.  Used by the arg-coercion `eraseTypeParams` guard in
 -- `Compile.hs` to pin in-scope TVars (`T2`) instead of erasing to
@@ -260,3 +410,168 @@ withEnclosingTypeParams :: [String] -> LowerCtx -> LowerCtx
 withEnclosingTypeParams additions ctx =
     ctx { _lc_enclosingTypeParams =
             Set.union (Set.fromList additions) (_lc_enclosingTypeParams ctx) }
+
+
+-- | v0.17 PR-α — set the dep-mode hint.  Returns a NEW ctx so the
+-- entry-mode parent stays untouched while dep emission threads its
+-- own copy down.  @Nothing@ marks entry-mode (the @generateMainGo@
+-- path); @Just modName@ marks dep-mode (the
+-- @generateDeclsForDepScoped@ path).
+withCurrentDepModule :: Maybe String -> LowerCtx -> LowerCtx
+withCurrentDepModule modHint ctx =
+    ctx { _lc_currentDepModule = modHint }
+
+
+-- | v0.17 PR-α — read the dep-mode hint.  Pure substitute for
+-- @readIORef globalCurrentDepModule@ at the consumer (renderer)
+-- side once threading reaches the consumer.  Today: scaffolding
+-- only — no consumer migrated to call this yet.
+lookupCurrentDepModule :: LowerCtx -> Maybe String
+lookupCurrentDepModule ctx = _lc_currentDepModule ctx
+
+
+-- | v0.17 iter 17 (task #654) — replace 'globalKernelAlias' IORef
+-- with a 'LowerCtx'-threaded map.  Caller (continueCompile) sets
+-- this once on 'scopeStateRef' immediately after the solve-phase
+-- destructures @kernelAliasMap@ from 'SolveOutputs'; subsequent
+-- transitional 'ctxFromIORef ()' bridges in
+-- 'Sky.Build.Compile' read the populated map without a separate
+-- IORef hop.  Direct 'LowerCtx' callers (e.g. @exprToGo@) read
+-- via 'lookupKernelAlias' below.
+withKernelAlias
+    :: Map.Map (ModuleName.Canonical, String) (String, String)
+    -> LowerCtx
+    -> LowerCtx
+withKernelAlias aliases ctx =
+    ctx { _lc_kernelAlias = aliases }
+
+
+-- | v0.17 iter 17 (task #654) — pure kernel-alias lookup against
+-- the threaded 'LowerCtx'.  Replaces the @lookupKernelAlias :: ...
+-- -> Maybe (String, String)@ IORef-reading helper formerly at
+-- 'Sky.Build.Compile.lookupKernelAlias'.  Returns @Nothing@ when
+-- the (home, name) pair is not a Sky-source @Ffi.kernel "K_n"@
+-- alias — codegen continues with the original Sky-source binding.
+lookupKernelAlias
+    :: LowerCtx
+    -> ModuleName.Canonical
+    -> String
+    -> Maybe (String, String)
+lookupKernelAlias ctx home name =
+    Map.lookup (home, name) (_lc_kernelAlias ctx)
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S2).  Setter
+-- for the LowerCtx-threaded 'Rec.CodegenEnv'.  Writers
+-- (resetCompileState / seedEarlyCgEnv / generateDeclsForDep C10 /
+-- solvePhase C9 / generateGoMulti imports thunk / generateGo
+-- entry C10) install via @modifyIORef scopeStateRef
+-- (LC.withCgEnv newEnv)@ immediately after the corresponding
+-- legacy @writeIORef globalCgEnv@ / @modifyIORef globalCgEnv@.
+-- Shadow path during S2/S3 transitional; readers fall through to
+-- the legacy 'getCgEnv' CAF until S4.
+withCgEnv :: Rec.CodegenEnv -> LowerCtx -> LowerCtx
+withCgEnv newEnv ctx = ctx { _lc_cgEnv = Just newEnv }
+
+
+-- | v0.17 close criterion 3 — globalCgEnv migration (S2).  Pure
+-- lookup of the threaded 'Rec.CodegenEnv'.  Returns 'Nothing' when
+-- the LowerCtx pre-dates the S2 writer install (or in the
+-- 'emptyLowerCtx' / 'buildLowerCtx' bootstrap shapes); S4 readers
+-- fall through to the legacy 'getCgEnv' CAF on 'Nothing'.
+lookupCgEnv :: LowerCtx -> Maybe Rec.CodegenEnv
+lookupCgEnv = _lc_cgEnv
+
+
+-- | v0.17 iter 44 S5 v3 — pure-functional cgEnv mutation. Reads the
+-- current @_lc_cgEnv@ (must be installed by a prior writer), applies
+-- f, and writes the updated env back. Use with @modifyIORef
+-- scopeStateRef (LC.modifyCgEnv f)@ to replace the legacy
+-- @modifyIORef globalCgEnv f@ pattern (the globalCgEnv IORef was
+-- deleted at S5).
+modifyCgEnv :: (Rec.CodegenEnv -> Rec.CodegenEnv) -> LowerCtx -> LowerCtx
+modifyCgEnv f ctx = case _lc_cgEnv ctx of
+    Just env -> ctx { _lc_cgEnv = Just (f env) }
+    Nothing  -> error "BUG: LC.modifyCgEnv on ctx with uninstalled _lc_cgEnv"
+
+
+-- | v0.17 iter 18 (task #654) — install the merged record-alias
+-- map.  Replaces 'globalAllAliases' IORef write at codegen entry.
+-- continueCompile calls this once on 'scopeStateRef' after
+-- 'seedEarlyCgEnv' returns the map; subsequent transitional
+-- 'ctxFromIORef ()' bridges (used by @lookupAliasDecl@) see the
+-- populated map without a separate IORef hop.
+withAliases
+    :: Map.Map String Can.Alias
+    -> LowerCtx
+    -> LowerCtx
+withAliases aliases ctx =
+    ctx { _lc_aliases = aliases }
+
+
+-- | v0.17 iter 18 (task #654) — install the merged record-field
+-- index.  Replaces 'globalAllFieldIdx' IORef write at codegen
+-- entry.  Same write-once-via-scopeStateRef contract as
+-- 'withAliases'; read by @tvarsInEmitted@ via 'ctxFromIORef ()'.
+withFieldIdx
+    :: Rec.RecordRegistry
+    -> LowerCtx
+    -> LowerCtx
+withFieldIdx fieldIdx ctx =
+    ctx { _lc_fieldIdx = fieldIdx }
+
+
+-- | v0.17 iter 19 (task #654) — install the merged union-names
+-- registry.  Replaces 'globalUnionNames' IORef writes.  Unlike
+-- 'withAliases'/'withFieldIdx' (single-write at codegen entry),
+-- this is called at THREE cascade points in 'continueCompile':
+-- C9 entry-mod seed (writes 'depUnionNames'), C10 dep-mod update
+-- (writes 'cgEnv._cg_unionNames' after dep-imports finish), and
+-- the post-sig-emit refresh.  Each replaces a 'writeIORef
+-- globalUnionNames $!' call.  Read by the renderer chains via
+-- 'readIORefNoCse scopeStateRef' + '_lc_unionNames' projection.
+withUnionNames
+    :: Set.Set String
+    -> LowerCtx
+    -> LowerCtx
+withUnionNames unions ctx =
+    ctx { _lc_unionNames = unions }
+
+
+-- | v0.17 P3.4c.0 — install the merged per-union metadata map.
+-- Mirror of 'Rec.withUnionDetails'; sibling of 'withUnionNames' on
+-- the LowerCtx-threaded path.  Called at the same cascade points
+-- so '_lc_unionDetails' stays in lock-step with '_lc_unionNames'.
+-- Pure no-op until 'subjectIsSealedIface' / 'shouldEmitSealedIface'
+-- read it (P3.4c.1 onward).
+withUnionDetails
+    :: Map.Map String (ModuleName.Canonical, Can.CtorOpts, [String], [Can.Ctor])
+    -> LowerCtx
+    -> LowerCtx
+withUnionDetails details ctx =
+    ctx { _lc_unionDetails = details }
+
+
+-- | Install the typed-FFI wrapper name set on the LowerCtx so the
+-- lowerer's @Can.VarKernel@ arms read it structurally.  Populated from
+-- 'LoadedFfiTables._lft_typedWrapperNames' at codegen entry
+-- ('generateGoMulti').  v0.17 close iter 5 (Phase 7 IORef defusing):
+-- the legacy @Env.ffiTypedWrapperNamesRef@ IORef has been deleted; this
+-- is the only path the registry can flow through.
+withFfiTypedWrapperNames
+    :: Set.Set String
+    -> LowerCtx
+    -> LowerCtx
+withFfiTypedWrapperNames names ctx =
+    ctx { _lc_ffiTypedWrapperNames = names }
+
+
+-- | v0.17 close P1 step 2/8 — install the typed-FFI wrapper param-type
+-- map on the LowerCtx.  Sibling of 'withFfiTypedWrapperNames';
+-- read by the N-arg FFI dispatch arm to coerce arguments.
+withFfiTypedWrapperParams
+    :: Map.Map String [String]
+    -> LowerCtx
+    -> LowerCtx
+withFfiTypedWrapperParams params ctx =
+    ctx { _lc_ffiTypedWrapperParams = params }

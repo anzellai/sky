@@ -1,0 +1,11 @@
+# probe-H6: (Int, String, Bool) — 3-tuple primitive arity dispatch.
+# Closes by: PR-17.
+#
+# Strategy-C PRs 1-3 plumbed rt.T3; primitive 3-tuples likely
+# already route through it today. Cause-H Step 4 closes the
+# remaining consumer-side destructure paths.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+
+# AT PR-17 — refine to assert typed projection on destructure.

@@ -561,6 +561,52 @@ func coerceInner[T any](v any) T {
 			return rv.Convert(zt).Interface().(T)
 		}
 	}
+	// v0.17 Cause H Step 4 — typed-tuple narrowing for coerceInner.
+	// Mirror of the rt.Coerce branch (sibling fix at line 5094): Sky's
+	// codegen emits `rt.SkyTuple2 = T2[any, any]` (and SkyTuple3) for
+	// untyped tuple literals in slots that the slot-shape inference
+	// can't reach. Go's nominal generics reject the raw `.(T2[A, B])`
+	// type assertion when the dynamic type is `T2[any, any]`. Walk
+	// V0/V1 (and V2) fields and Coerce each into the target element
+	// type so a `Just (k, v)` flowing into a `Maybe (T2[string,
+	// string])` slot via MaybeCoerce[T2[string, string]] survives.
+	// MUST come BEFORE narrowStructToStruct (which skips T2/T3 by
+	// design — it's meant for record aliases).
+	if rv.Kind() == reflect.Struct {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Struct {
+			ztStr := zt.String()
+			if strings.HasPrefix(ztStr, "rt.T2[") && rv.NumField() >= 2 && zt.NumField() >= 2 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(ztStr, "rt.T3[") && rv.NumField() >= 3 && zt.NumField() >= 3 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				v2Ty := zt.Field(2).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
+	}
 	// v0.15.44 — struct→struct cross-shape narrowing.  Sky-declared
 	// `type alias`es emit as `main.Foo_R` Go structs; runtime FFI
 	// often returns a parallel struct (`rt.HttpResponse`,
@@ -1469,6 +1515,68 @@ func AsTuple3(v any) SkyTuple3 {
 func Basics_fstAnyT(t SkyTuple2) any { return t.V0 }
 func Basics_sndAnyT(t SkyTuple2) any { return t.V1 }
 
+// AsTuple2T — narrow `v` (typically `any` or `SkyTuple2 = T2[any,any]`)
+// to a typed `T2[A, B]` instantiation.  Field-wise coerces V0 → A and
+// V1 → B via `Coerce[A]` / `Coerce[B]`.  Closes the boundary gap that
+// Go's nominal generics open: a value of static type `T2[any, any]`
+// CANNOT be type-asserted to `T2[float64, float64]` (`.(T2[float64,
+// float64])` panics).  This helper is the analogue of `AsListT[T]` /
+// `AsMapT[V]` for tuples.
+//
+// v0.17 Cause H Step 4 — emitted by `coerceToFieldType` when the slot
+// is a typed `T2[A, B]` and the source has boundary-untyped shape
+// (e.g., a `SkyTuple2` literal from a code path the Sky.Type slot-
+// inference can't reach yet).  Long-term, when every tuple literal
+// is statically typed at construction, this widener becomes a no-op
+// fast-path.
+func AsTuple2T[A any, B any](v any) T2[A, B] {
+	if t, ok := v.(T2[A, B]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple2); ok {
+		return T2[A, B]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T2[A, B]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 2 {
+		return T2[A, B]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+		}
+	}
+	return T2[A, B]{}
+}
+
+// AsTuple3T — arity-3 sibling of `AsTuple2T`.
+func AsTuple3T[A any, B any, C any](v any) T3[A, B, C] {
+	if t, ok := v.(T3[A, B, C]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple3); ok {
+		return T3[A, B, C]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1), V2: Coerce[C](t.V2)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T3[A, B, C]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 3 {
+		return T3[A, B, C]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+			V2: Coerce[C](rv.Field(2).Interface()),
+		}
+	}
+	return T3[A, B, C]{}
+}
+
 // Basics_clampT — common enough to deserve a typed shortcut. Integer
 // version only; Sky's Float clamp is rarely called with literal args.
 func Basics_clampT(lo, hi, n int) int {
@@ -1870,6 +1978,9 @@ func AdtTag(v any) int {
 	if v == nil {
 		return -1
 	}
+	if sv, ok := v.(SkyVariant); ok {
+		return sv.SkyVariantTag()
+	}
 	if a, ok := v.(SkyADT); ok {
 		return a.Tag
 	}
@@ -1888,6 +1999,17 @@ func AdtTag(v any) int {
 // any-typed (came from rt.ResultOk / rt.ResultErr / rt.MaybeJust).
 func AdtField(v any, idx int) any {
 	if v == nil {
+		return nil
+	}
+	if _, ok := v.(SkyVariant); ok {
+		// Variant structs have NAMED typed fields in declaration order
+		// (V0, V1, ...). Reflect.Field(idx) returns the idx-th field.
+		// No SkyName / Tag / Fields wrapper — variant payload IS the
+		// struct's fields directly.
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Struct && idx >= 0 && idx < rv.NumField() {
+			return rv.Field(idx).Interface()
+		}
 		return nil
 	}
 	if a, ok := v.(SkyADT); ok {
@@ -3337,12 +3459,63 @@ type T5[A, B, C, D, E any] struct {
 	V4 E
 }
 
+// v0.17 PR-17 SHIP POINT B — extend typed tuple aliases to arity 9.
+// Sky's parser accepts arbitrary-arity tuple literals; the master plan
+// caps the typed-instantiation at arity 9 (consistent with what
+// real-world Sky idioms produce — beyond ~6, a record alias is
+// idiomatic anyway).  Arity >9 stays on the slice-backed `SkyTupleN`
+// fallback below.
+type T6[A, B, C, D, E, F any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+}
+type T7[A, B, C, D, E, F, G any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+}
+type T8[A, B, C, D, E, F, G, H any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+}
+type T9[A, B, C, D, E, F, G, H, I any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+	V8 I
+}
+
 // Back-compat aliases. Literal codegen (`Can.Tuple`) still produces
 // `SkyTuple2{V0:..., V1:...}` — with these aliases the same value also
 // types as `rt.T2[any, any]`, so solvedTypeToGo's typed emission and
 // literal emission interop without churn.
 type SkyTuple2 = T2[any, any]
 type SkyTuple3 = T3[any, any, any]
+type SkyTuple4 = T4[any, any, any, any]
+type SkyTuple5 = T5[any, any, any, any, any]
+type SkyTuple6 = T6[any, any, any, any, any, any]
+type SkyTuple7 = T7[any, any, any, any, any, any, any]
+type SkyTuple8 = T8[any, any, any, any, any, any, any, any]
+type SkyTuple9 = T9[any, any, any, any, any, any, any, any, any]
 
 // SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
 // access in generated code is `t.Vs[i]`.
@@ -3548,6 +3721,37 @@ func Ffi_kernel(name any) any {
 }
 
 // SkyADT: runtime type for ADT case-match dispatch.
+// ═══════════════════════════════════════════════════════════
+// SkyVariant — sealed-interface ADT marker (v0.17 close)
+// ═══════════════════════════════════════════════════════════
+//
+// v0.17 architectural close: Sky ADTs migrate from the universal
+// `type X = rt.SkyADT` alias (`Fields []any` shape) to per-variant
+// concrete Go structs satisfying a sealed interface — closes the
+// rt.Coerce surface on Element / Attribute / Html / user-defined
+// ADTs by making producer + consumer types match natively via Go
+// structural subtyping.
+//
+// Each codegen-emitted variant struct implements SkyVariant:
+//
+//	type Mod_X_Foo_V struct { V0 int; V1 string }
+//	func (Mod_X_Foo_V) SkyVariantTag() int     { return 0 }
+//	func (Mod_X_Foo_V) SkyVariantName() string { return "Foo" }
+//
+// rt-side dispatch helpers (AdtTag / AdtField / EnumTagIs) check
+// SkyVariant FIRST, then legacy SkyADT, then reflect — so variant-
+// emitted code paths are typed end-to-end while existing rt-side
+// builders (Sky.Core.Error / wire-decoded __sky_send / FFI shims)
+// keep working unchanged until they migrate in later phases.
+//
+// Methods are EXPORTED (capital S) because codegen emits them
+// from the user's main package — interface methods with unexported
+// names are unimplementable from outside the rt package.
+type SkyVariant interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+}
+
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
 // can be pattern-matched via integer Tag comparison.
 // SkyADT is the canonical runtime shape for every Sky-side ADT. Field
@@ -3623,6 +3827,9 @@ type skyErrorAdt = SkyADT
 // branches so both representations flow cleanly through user
 // pattern matches.
 func EnumTagIs(subject any, tag int) bool {
+	if sv, ok := subject.(SkyVariant); ok {
+		return sv.SkyVariantTag() == tag
+	}
 	if adt, ok := subject.(SkyADT); ok {
 		return adt.Tag == tag
 	}
@@ -5022,6 +5229,44 @@ func Coerce[T any](v any) T {
 		// the typed-codegen wrap is `Coerce[Sky_Http_Server_Response_R]`.
 		// narrowStructToStruct already exists and is gated against ADT
 		// + tuple shapes, so this is a safe minimal-blast-radius fix.
+		// v0.17 Cause H Step 4 — typed tuple narrowing.  Sky's tuple
+		// literals + value-side fallbacks emit `rt.SkyTuple2 = T2[any, any]`
+		// (see emitTypedTuple2's Nothing arm in Compile.hs).  Go's nominal
+		// generics reject the raw `.(T2[float64, float64])` assertion when
+		// the dynamic type is `T2[any, any]`.  Walk the source's V0/V1/V2
+		// fields and Coerce each into the target element type.  Mirror of
+		// the slice / map narrowing arms above.
+		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
+			tStr := targetTy.String()
+			if strings.HasPrefix(tStr, "rt.T2[") && rv.NumField() >= 2 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(tStr, "rt.T3[") && rv.NumField() >= 3 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				v2Ty := targetTy.Field(2).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
 		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
 			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
 				return narrowed.Interface().(T)
@@ -5343,30 +5588,74 @@ func Task_sequence(tasks any) any {
 	}
 }
 
-// Task_parallel: goroutine-backed fan-out; preserves input order; first err wins.
+// Task_parallel: goroutine-backed fan-out; preserves input order;
+// short-circuits on the FIRST error (in launch order). Match the
+// documented Task.parallel semantics: any task returning Err
+// triggers context cancellation so already-running goroutines can
+// observe it (cooperatively, via runWithRecover's panic shield
+// + the result channel select); the function returns as soon as
+// the first error is observed without blocking on every sibling
+// task's natural completion.
+//
+// Important semantic notes:
+//   - Tasks are dispatched eagerly (SkyTask thunks have no input
+//     ctx parameter), so cooperative cancel only helps siblings
+//     that finish before we observe the first Err — the remaining
+//     siblings are best-effort drained in the background via a
+//     detached goroutine that swallows their results.
+//   - Result order is preserved by index: results[i] holds task i's
+//     OkValue when the function returns Ok with the full collected
+//     slice.
+//   - When multiple tasks Err concurrently, the FIRST Err observed
+//     on the channel wins; this matches "first error short-circuits"
+//     in the docstring (declaration order is best-effort given
+//     concurrent dispatch; tie-broken by goroutine scheduling).
 func Task_parallel(tasks any) any {
 	return func() any {
 		xs := AsList(tasks)
 		n := len(xs)
+		if n == 0 {
+			return Ok[any, any]([]any{})
+		}
 		results := make([]any, n)
-		errs := make([]any, n)
-		var wg sync.WaitGroup
+		type item struct {
+			idx int
+			tag int
+			ok  any
+			err any
+		}
+		ch := make(chan item, n)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		for i, t := range xs {
-			wg.Add(1)
 			go func(i int, t any) {
-				defer wg.Done()
 				tag, okV, errV := anyResultView(SkyCall(t))
-				if tag == 0 {
-					results[i] = okV
-				} else {
-					errs[i] = errV
+				// Non-blocking send: if ctx is already cancelled
+				// (someone else won the race), discard so the
+				// goroutine exits cleanly without leaking.
+				select {
+				case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
+				case <-ctx.Done():
 				}
 			}(i, t)
 		}
-		wg.Wait()
-		for _, e := range errs {
-			if e != nil {
-				return Err[any, any](e)
+		received := 0
+		for received < n {
+			select {
+			case it := <-ch:
+				received++
+				if it.tag != 0 {
+					// First error short-circuits — cancel ctx to
+					// release any sibling goroutines whose work
+					// has finished but couldn't send. Remaining
+					// siblings continue running in the background
+					// (best-effort; SkyTask has no ctx-aware API),
+					// but their results are discarded via the
+					// ctx.Done branch in the sender select.
+					cancel()
+					return Err[any, any](it.err)
+				}
+				results[it.idx] = it.ok
 			}
 		}
 		return Ok[any, any](results)
@@ -6850,6 +7139,7 @@ func Math_phi() any                    { return math.Phi }
 func Math_sqrt2() any                  { return math.Sqrt2 }
 func Math_inf() any                    { return math.Inf(1) }
 func Math_nan() any                    { return math.NaN() }
+func Math_isNaN(x any) any             { return math.IsNaN(AsFloat(x)) }
 
 // Typed companions for the new entries
 func Math_asinT(n float64) float64         { return math.Asin(n) }
@@ -6875,6 +7165,7 @@ func Math_phiT() float64                   { return math.Phi }
 func Math_sqrt2T() float64                 { return math.Sqrt2 }
 func Math_infT() float64                   { return math.Inf(1) }
 func Math_nanT() float64                   { return math.NaN() }
+func Math_isNaNT(x float64) bool           { return math.IsNaN(x) }
 
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
@@ -8424,6 +8715,108 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 			// v0.16.3 #468 — anyTaskInvoke handles typed SkyTask[E, A]
 			// via reflect-fallback; raw `task.(func() any)()` panicked
 			// on typed handlers.
+			task := SkyCall(handler, req)
+			return any(anyTaskInvoke(task))
+		}
+	}
+}
+
+// Middleware.withCsrf : Handler -> Handler
+//
+// task #663 — CSRF protection via the double-submit cookie pattern.
+// See sky-stdlib/Sky/Http/Middleware.sky's `withCsrf` docstring for
+// the full contract.  Defaults (cookie name `__Host-sky_csrf`,
+// header `X-Csrf-Token`, form field `_csrf`) are baked in; a future
+// config-record overload can ship if real apps demand it.
+//
+// Token gen: 32 bytes from crypto/rand → base64-URL (no padding).
+// Token compare: subtle.ConstantTimeCompare (no timing leak).
+// Cookie attrs: Path=/; Secure; SameSite=Lax.  `securifyCookieAttrs`
+// strips Secure in dev mode if the user is testing without TLS.
+func Middleware_withCsrf(handler any) any {
+	const (
+		csrfCookie    = "__Host-sky_csrf"
+		csrfHeader    = "X-Csrf-Token"
+		csrfFormField = "_csrf"
+	)
+	return func(req any) any {
+		return func() any {
+			r, ok := asSkyRequest(req)
+			if !ok {
+				// Non-request shape: defer to handler.
+				task := SkyCall(handler, req)
+				return any(anyTaskInvoke(task))
+			}
+			method := strings.ToUpper(r.Method)
+			isSafe := method == "GET" || method == "HEAD" || method == "OPTIONS"
+
+			if isSafe {
+				// Safe method — pass through; ensure cookie is set
+				// if not already present so the next unsafe request
+				// can supply the matching token.
+				task := SkyCall(handler, req)
+				var resp any = anyTaskInvoke(task)
+				if _, hasCookie := r.Cookies[csrfCookie]; !hasCookie {
+					b := make([]byte, 32)
+					if _, err := cryptorand.Read(b); err == nil {
+						token := base64.RawURLEncoding.EncodeToString(b)
+						// anyTaskInvoke returns the handler's payload —
+						// commonly Ok[any, any](SkyResponse{...}). Unwrap
+						// the SkyResponse so the Set-Cookie header lands
+						// on the response struct, then re-wrap.
+						cookieHeader := fmt.Sprintf("%s=%s; %s",
+							csrfCookie, token,
+							securifyCookieAttrs("Path=/; Secure; SameSite=Lax"))
+						if okResult, isResult := resp.(SkyResult[any, any]); isResult && okResult.Tag == 0 {
+							if sr, isResp := okResult.OkValue.(SkyResponse); isResp {
+								if sr.Headers == nil {
+									sr.Headers = map[string]string{}
+								}
+								sr.Headers["Set-Cookie"] = cookieHeader
+								return Ok[any, any](any(sr))
+							}
+						}
+						// Fallback for handlers that return a bare
+						// SkyResponse rather than Ok-wrapped.
+						resp = setCookieHeader(resp, csrfCookie, token, "Path=/; Secure; SameSite=Lax")
+					}
+				}
+				return resp
+			}
+
+			// Unsafe method — validate.
+			cookieToken, hasCookie := r.Cookies[csrfCookie]
+			if !hasCookie || cookieToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token cookie. Submit the form after first loading a safe (GET) page.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Header takes precedence over form field.
+			var providedToken string
+			if v, ok := r.Headers[csrfHeader].(string); ok && v != "" {
+				providedToken = v
+			} else if r.Form != nil {
+				if v, ok := r.Form[csrfFormField]; ok {
+					providedToken = v
+				}
+			}
+			if providedToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token in request. Include the token via X-Csrf-Token header or _csrf form field.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(providedToken)) != 1 {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: token mismatch. Re-load the form and re-submit.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Validated — defer to handler.
 			task := SkyCall(handler, req)
 			return any(anyTaskInvoke(task))
 		}

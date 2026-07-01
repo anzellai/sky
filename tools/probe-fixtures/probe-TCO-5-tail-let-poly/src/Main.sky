@@ -1,0 +1,22 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+walk : List a -> Int -> Int
+walk xs n =
+    let
+        helper ys acc =
+            case ys of
+                [] ->
+                    acc
+
+                _ :: rest ->
+                    helper rest (acc + 1)
+    in
+    helper xs n
+
+
+main =
+    println (String.fromInt (walk [ 1, 2, 3 ] 0))

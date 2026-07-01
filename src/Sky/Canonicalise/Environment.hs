@@ -21,6 +21,14 @@ data Env = Env
     , _qualTypes  :: !(Map.Map String (Map.Map String TypeHome))
     , _qualCtors  :: !(Map.Map String (Map.Map String CtorHome))
     , _importAliases :: !(Map.Map String ModuleName.Canonical)  -- alias → full module name
+    , _kernelMods :: !(Map.Map String String)
+        -- ^ v0.17 close P1 step 6b — merged static + FFI kernel modules
+        --   map (mirrors @kernelModules ()@ but on the value channel).
+        --   Populated by 'Sky.Canonicalise.Module.canonicaliseWithDeps'
+        --   at entry; read by 'Canonicalise.Expression.resolveQualVar'
+        --   to resolve unqualified-import kernel qualifier references.
+        --   Empty for LSP single-module path where no FFI loader is
+        --   in scope (kernel resolution falls back to static surface).
     }
     deriving (Show)
 
@@ -68,7 +76,13 @@ data AliasInfo = AliasInfo
 -- CONSTRUCTION
 -- ═══════════════════════════════════════════════════════════
 
--- | Create a base environment with Sky's built-in types and constructors
+-- | Create a base environment with Sky's built-in types and constructors.
+--
+-- 'initialEnv' leaves '_kernelMods' empty by default — the LSP single-
+-- module path uses this shape directly.  'canonicaliseWithDeps' replaces
+-- the field with the merged static + FFI kernel-modules map per build
+-- so kernel-name resolution reads the value channel instead of the
+-- legacy @kernelModules ()@ IORef.
 initialEnv :: ModuleName.Canonical -> Env
 initialEnv home = Env
     { _home      = home
@@ -80,6 +94,7 @@ initialEnv home = Env
     , _qualTypes = Map.empty
     , _qualCtors = Map.empty
     , _importAliases = Map.empty
+    , _kernelMods = Map.empty
     }
 
 
@@ -260,91 +275,74 @@ builtinCtors =
     ]
 
 
--- | Dynamic kernel-module extensions (populated from ffi/*.kernel.json by
--- Sky.Build.Compile before canonicalisation begins). Looked up via
--- unsafePerformIO so downstream callers see a merged static ∪ dynamic map
--- with no threading churn.
-{-# NOINLINE ffiKernelModulesRef #-}
-ffiKernelModulesRef :: IORef (Map.Map String String)
-ffiKernelModulesRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 7 (Phase 7 IORef defusing) — the legacy
+-- 'ffiKernelModulesRef' + 'ffiKernelFunctionsRef' + 'ffiKernelTypeRef'
+-- IORefs (Sky import path → kernel name; kernel name → function names;
+-- per-(kernel, fn) Sky annotation) have been deleted. All three values
+-- flow purely via 'Sky.Build.Compile.LoadedFfiTables._lft_kernel{Modules,
+-- Functions,Types}' → 'Sky.Build.CompileCtx._ctx_kernel{Modules,
+-- Functions,Types}', threaded through 'canonPhase' + 'solvePhase' from
+-- the v0.17 P1 step 6 land. All three IORefs were paired-mirror writes
+-- (3 'writeIORef' calls in 'loadAndSeedFfiRegistry'; ZERO 'readIORef'
+-- callsites in non-comment code) before deletion — the threaded value
+-- channel had already landed for every reader site (kernelFunctions
+-- merge in 'Canonicalise.Module', kernel-name resolution via 'Env._kernelMods'
+-- in 'Canonicalise.Expression', kernel-type lookup via 'Constrain.Expression'
+-- which now reads from threaded CompileCtx).
 
 
-{-# NOINLINE ffiKernelFunctionsRef #-}
-ffiKernelFunctionsRef :: IORef (Map.Map String [String])
-ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 9 (Phase 7 IORef defusing) — the legacy
+-- 'ffiKernelArityRef' IORef (per-FFI-function arity, populated by
+-- 'Sky.Build.Compile.loadAndSeedFfiRegistry') has been DELETED.
+-- It was WRITE-ONLY: exactly one 'writeIORef' callsite, ZERO
+-- 'readIORef' callsites in non-comment code.  The historical
+-- type-checker-synthesised default-sig fallback never reached the
+-- IORef because every active call site is HM-annotated through the
+-- value channel (LoadedFfiTables._lft_kernelArity → CompileCtx._ctx_kernelArity).
+-- The pure-channel mirror is preserved in CompileCtx for any future
+-- reader that needs the arity map without re-importing the
+-- Sky.Build.FfiRegistry surface; today it has zero consumers.
 
 
--- | Per-FFI-function arity, keyed by `(kernelName, funcName)`. Lets
--- the type checker synthesise a default sig
--- `(t0 -> ... -> tN-1 -> Result Error r)` for unknown Go_* kernels
--- so FFI return-shape mismatches at call sites become HM errors
--- (instead of silently degrading to `any` and panicking at runtime
--- with `rt.AsBool: expected bool, got rt.SkyResult[…]`). Populated
--- from FfiRegistry in `Sky.Build.Compile.loadAndSeedFfiRegistry`.
-{-# NOINLINE ffiKernelArityRef #-}
-ffiKernelArityRef :: IORef (Map.Map (String, String) Int)
-ffiKernelArityRef = unsafePerformIO (newIORef Map.empty)
+-- v0.17 close iter 6 (Phase 7 IORef defusing) — the legacy
+-- 'ffiImplementsRef' + 'ffiPkgAliasRef' IORefs (PR-21b FFI
+-- interface-satisfaction registry + Go import-path alias registry)
+-- have been deleted. The values flow purely via
+-- 'Sky.Build.Compile.LoadedFfiTables._lft_{implements,pkgAlias}' →
+-- 'Sky.Build.CompileCtx._ctx_{implements,pkgAlias}' threaded into
+-- 'Sky.Type.Solve.SolverState._ffiImplements' (via
+-- 'Solve.withImplementsMap') and 'Sky.Type.Unify.UnifyState._us_ffiImplements'
+-- (via 'Unify.mkUnifyState'). Both IORefs were write-only (3
+-- 'writeIORef' calls in 'loadAndSeedFfiRegistry'; ZERO 'readIORef'
+-- callsites in non-comment code) before deletion — paired mirror
+-- IORefs that became dead when the threaded value channel landed in
+-- v0.17 P1 step 3.
 
 
--- | Phase C: per-FFI-function Sky-side type, populated from the
--- @skyType@ field in @.skycache/ffi/<slug>.kernel.json@. Keyed by
--- @(kernelName, funcName)@. Sky.Type.Constrain.Expression's
--- @Can.VarKernel@ arm consults this when @lookupKernelType@
--- (the stdlib-kernel sig table) returns Nothing — turning every
--- typed FFI symbol into a load-bearing constraint at the call
--- site instead of the previous polymorphic-any fallthrough.
+-- v0.17 close iter 5 (Phase 7 IORef defusing) — the legacy
+-- 'ffiTypedWrapperNamesRef' + 'ffiTypedWrapperParamsRef' IORefs
+-- (P7 typed-FFI wrapper registry; populated by 'seedTypedFfiNames'
+-- from .skycache/go/*.go) have been deleted. The value flows purely
+-- via 'Sky.Build.Compile.LoadedFfiTables._lft_typedWrapper{Names,Params}'
+-- → 'Sky.Build.CompileCtx._ctx_typedWrapper{Names,Params}' →
+-- 'Sky.Build.LowerCtx._lc_ffiTypedWrapper{Names,Params}', threaded
+-- through every codegen entry point. All 4 reader sites in
+-- 'Sky.Build.Compile' consult the threaded LowerCtx.
+
+
+-- v0.17 close iter 7 — the legacy 'kernelModules ()' wrapper has been
+-- deleted alongside 'ffiKernelModulesRef'. The merged static + FFI map
+-- now lives on the value channel as 'Env._kernelMods', populated by
+-- 'Sky.Canonicalise.Module.canonicaliseWithDeps' from the threaded
+-- 'CompileCtx._ctx_kernelModules'. The bare 'staticKernelModules' export
+-- remains for the LSP single-module path (no FFI loader; static-only).
 --
--- Empty unless seeded by 'Sky.Build.Compile.loadAndSeedFfiRegistry';
--- the empty map keeps existing behaviour for FFI symbols whose
--- kernel.json has no @skyType@ field (legacy files / pathological
--- shapes filtered by 'isSkyParseable' in FfiGen).
-{-# NOINLINE ffiKernelTypeRef #-}
-ffiKernelTypeRef :: IORef (Map.Map (String, String) Can.Annotation)
-ffiKernelTypeRef = unsafePerformIO (newIORef Map.empty)
-
-
--- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
--- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
--- been emitted by FfiGen. Call-site codegen consults this set to
--- decide whether to emit the typed variant directly.
---
--- Populated by `Sky.Build.Compile.seedTypedFfiNames`, which scans
--- the examples' ffi/*.go files and records every `^func Go_X_yT(`
--- definition. Empty unless seeded, in which case the fallback is the
--- any/any wrapper (safe default — Go build will surface a missing
--- T name if the caller wrongly assumes it exists).
-{-# NOINLINE ffiTypedWrapperNamesRef #-}
-ffiTypedWrapperNamesRef :: IORef (Set.Set String)
-ffiTypedWrapperNamesRef = unsafePerformIO (newIORef Set.empty)
-
-
--- | P7: per-typed-wrapper param Go types, for call-site coercion of
--- non-literal args. Keyed by the T-suffix wrapper name (e.g.
--- "Go_Uuid_parseT" → ["string"]). Populated by seedTypedFfiNames
--- alongside ffiTypedWrapperNamesRef.
-{-# NOINLINE ffiTypedWrapperParamsRef #-}
-ffiTypedWrapperParamsRef :: IORef (Map.Map String [String])
-ffiTypedWrapperParamsRef = unsafePerformIO (newIORef Map.empty)
-
-
--- | Kernel module mappings: Sky import path → kernel module name.
--- Merged on every read so FFI-registered modules resolve the same way as
--- stdlib kernel modules (Sky.Core.String etc.).
---
--- Precedence: `Map.union` is left-biased, so static Sky kernels
--- still win on key collision. The disambiguation strategy for the
--- sky-log shape (user wants Go FFI `os` package, not Sky kernel
--- `Os`) is to rename the Sky kernel into a non-colliding namespace
--- — `Os` was renamed to `System` in 2026-04-24, and the bare `Os`
--- alias was dropped from `staticKernelModules` so the FFI binding
--- has uncontested ownership. Same pattern applies to any future
--- name collision: rename the Sky kernel rather than flipping the
--- union direction (which broke `import Log.Slog` for projects that
--- also added the `log/slog` FFI — the kernel API was the documented
--- one and the flip silently hijacked them onto FFI bindings).
-{-# NOINLINE kernelModules #-}
-kernelModules :: () -> Map.Map String String
-kernelModules () = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
+-- Historical precedence note: 'Map.union' was left-biased so static Sky
+-- kernels won on key collision. The disambiguation strategy for the
+-- sky-log shape (user wants Go FFI `os` package, not Sky kernel `Os`)
+-- is to rename the Sky kernel into a non-colliding namespace — `Os` was
+-- renamed to `System` in 2026-04-24. The same merge semantics are
+-- preserved at the call site that populates 'Env._kernelMods'.
 
 
 staticKernelModules :: Map.Map String String

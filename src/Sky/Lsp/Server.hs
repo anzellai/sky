@@ -1274,7 +1274,10 @@ runPipelineSt st path src = case Parse.parseModule src of
         let depInfo = case eidx of
                 Right idx -> Idx.depInfoFromIndex idx
                 Left _    -> Map.empty
-        case Canonicalise.canonicaliseWithDeps depInfo srcMod of
+        -- v0.17 close P1 step 6a + 6b — LSP path doesn't have an
+        -- FFI loader in scope; pass 'Map.empty' for both
+        -- ffiKernelFns and ffiKernelMods.
+        case Canonicalise.canonicaliseWithDeps depInfo Map.empty Map.empty srcMod of
             Left err ->
                 return [ LspR.renderLspDiagnostic
                            (Canonicalise.legacyToDiag path err) ]

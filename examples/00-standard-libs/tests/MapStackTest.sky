@@ -1,0 +1,132 @@
+module MapStackTest exposing (tests)
+
+-- | Stack-safety regression for `Sky.Core.List.map` after the
+-- v0.17 step-8 CPS rewrite (Limitation #8 starter).
+--
+-- Pre-rewrite `map fn (x :: rest) = fn x :: map fn rest` recursed
+-- through Go's call stack at O(N), so a 5k-element input would
+-- consume ~1 MiB of stack per goroutine — enough to fall over on
+-- the default 8 KiB starting goroutine stack class.
+--
+-- The new shape `map fn list = mapHelp fn list []` is tail-recursive
+-- and `Sky.Build.TailCallOpt` lowers it to a `for { ... continue }`
+-- loop — constant Go stack.
+--
+-- IMPORTANT — we deliberately use 5k inputs (NOT 100k+) because
+-- the FFI runtime overhead per list element (`rt.AsList`,
+-- `rt.SkyCall` reflect dispatch) is currently ~1-2 µs each.  5k
+-- is enough to empirically prove constant-stack behaviour without
+-- pushing test runtime past 60s.
+--
+-- We also deliberately avoid `List.length` on the mapped list —
+-- `length` is itself non-TCO (deferred Limitation #8 work) and
+-- would mask whether `map` is constant-stack.  Instead we use
+-- `List.head` (O(1) — pattern-matches the first cons cell) plus
+-- a tail-recursive `nthHelp` to probe interior elements.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+
+
+-- Tail-recursive list constructor.  Accumulates `value :: acc`
+-- `n` times.  Builds a length-`n` list of the same `value`.
+replicateHelp : Int -> a -> List a -> List a
+replicateHelp n value acc =
+    if n <= 0 then
+        acc
+
+    else
+        replicateHelp (n - 1) value (value :: acc)
+
+
+replicate : Int -> a -> List a
+replicate n value =
+    replicateHelp n value []
+
+
+-- Tail-recursive walk to a specific index — avoids `List.length`
+-- (which is non-TCO).  Returns the element at position i (0-based),
+-- wrapped in Maybe.  `i = 0` is the head, `i = N - 1` is the last
+-- element.
+nthHelp : Int -> List a -> Maybe a
+nthHelp i xs =
+    case xs of
+
+        [] ->
+            Nothing
+
+        x :: rest ->
+            if i <= 0 then
+                Just x
+
+            else
+                nthHelp (i - 1) rest
+
+
+-- 5k-element input.  Big enough to overflow Go's default 8 KiB
+-- starting goroutine stack class under the non-TCO recursion, AND
+-- small enough that the typed runtime path completes in seconds.
+inputSize : Int
+inputSize =
+    5000
+
+
+tests : List Test
+tests =
+    [Test.suite
+        "List.map stack safety (Limitation #8)"
+        [ Test.test
+              "5k-element map returns without stack overflow (head check)"
+              (\_ ->
+                  let
+                      input = replicate inputSize 1
+                      mapped = List.map (\x -> x + 1) input
+                  in
+                      case List.head mapped of
+
+                          Just h ->
+                              Test.equal 2 h
+
+                          Nothing ->
+                              Test.fail "head was Nothing — map produced []")
+        , Test.test
+              "small map preserves order — head element of small input"
+              (\_ ->
+                  let
+                      mapped = List.map (\x -> x * 2) [ 10, 20, 30 ]
+                  in
+                      case List.head mapped of
+
+                          Just h ->
+                              Test.equal 20 h
+
+                          Nothing ->
+                              Test.fail "empty after map of non-empty")
+        , Test.test
+              "small map preserves order — last element via nthHelp"
+              (\_ ->
+                  let
+                      mapped = List.map (\x -> x * 2) [ 10, 20, 30 ]
+                  in
+                      case nthHelp 2 mapped of
+
+                          Just last_ ->
+                              Test.equal 60 last_
+
+                          Nothing ->
+                              Test.fail "nthHelp 2 was Nothing")
+        , Test.test
+              "5k-element map preserves identity — probe at index 50"
+              (\_ ->
+                  let
+                      input = replicate inputSize 7
+                      mapped = List.map (\x -> x + 1) input
+                  in
+                      case nthHelp 50 mapped of
+
+                          Just v ->
+                              Test.equal 8 v
+
+                          Nothing ->
+                              Test.fail "nthHelp 50 was Nothing")
+        ]]

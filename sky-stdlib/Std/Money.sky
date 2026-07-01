@@ -1,3 +1,18 @@
+-- | Std.Money — currency-typed Money on `Std.Decimal` (Layer 3 Sky source).
+--
+-- `Money` carries both magnitude and ISO-4217 currency code in one
+-- typed value.  Arithmetic is total within a currency; cross-currency
+-- operations require explicit `convert` with a rate.
+--
+-- 50+ ISO-4217 codes baked in (USD, EUR, GBP, JPY, AUD, …) plus
+-- crypto (BTC, ETH).  `allocate` splits amounts fairly so rounding
+-- residue lands deterministically on the first allocator (handles
+-- the classic "split $1.00 three ways" problem without losing or
+-- inventing cents).
+--
+-- Serialise as `"ISO_CODE AMOUNT"` TEXT for DB / wire — `Std.Db.Sql`
+-- ships `SqlMoney` + `Db.Decode.money` for round-trip without manual
+-- formatting.
 module Std.Money exposing
     ( Money(..), Currency(..)
     , fromMinor, fromMajor, fromString

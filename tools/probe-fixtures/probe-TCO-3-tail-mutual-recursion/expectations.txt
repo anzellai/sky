@@ -1,0 +1,14 @@
+# probe-TCO-3: mutual recursion over List a.
+# Closes by: PR-13 (parity must hold).
+#
+# Sky's TCO rewriter only handles SELF-recursion, so parityEven /
+# parityOdd compile as ordinary recursive functions. That means the
+# polymorphic `xs : List a` arg passes through coerceArg at each
+# cross-function call. PR-13's structural σ migration MUST preserve
+# this — if `xs` widens to `any`, every cons destructure hits
+# rt.AsList(any) reflect path.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN func parityEven
+MUST_CONTAIN func parityOdd

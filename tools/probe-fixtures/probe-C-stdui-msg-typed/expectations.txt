@@ -1,0 +1,22 @@
+# Cause C — Std.Ui kernel-sig polymorphism erased
+#
+# view : Int -> Element Msg routes Msg through Std.Ui's
+# callback slots.  Today kernel sigs are non-generic
+# (Std_Ui_button takes `cfg any`); C13 introduces generic
+# kernel sigs.
+
+MUST_BUILD
+MUST_CONTAIN package main
+# v0.17 C13 dual-alias deliverable — typed sibling alias must
+# exist for every polymorphic union.
+MUST_CONTAIN type Std_Ui_Element_T[T1 any] = rt.SkyADT
+MUST_CONTAIN type Std_Ui_Attribute_T[T1 any] = rt.SkyADT
+# v0.17 C14 typed call-site emission — `view : Int -> Element Msg`
+# must emit the typed sibling at the return-type slot because
+# Msg is concrete (not a TVar).  Kernel `Std_Ui_row` STAYS bare
+# (its sig has TVar `msg` → no C14 flip — locked by the example
+# sweep, would break Go's "cannot infer T1" otherwise).
+MUST_CONTAIN func view(count int) Std_Ui_Element_T[Msg]
+# Runtime check skipped — fixture validates view signature shape
+# in lowered Go, not actual rendering (no Sky.Live entry).
+

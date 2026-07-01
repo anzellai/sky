@@ -1,0 +1,15 @@
+# Baseline: a counter app must always build cleanly.
+# This is the "framework smoke test" — if this fixture fails,
+# the probe sweep itself is broken, not the compiler.
+#
+# Entry-module bindings emit without the <Mod>_ prefix (the
+# prefix is for cross-module disambiguation; `func main` is
+# special-cased; sibling bindings like `update` emit as-is).
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_CONTAIN func main()
+MUST_CONTAIN func update(msg Msg, count int) int
+MUST_CONTAIN rt.EnumTagIs
+MUST_NOT_CONTAIN func update(msg any, count any) any
+MUST_NOT_PANIC_AT_RUNTIME

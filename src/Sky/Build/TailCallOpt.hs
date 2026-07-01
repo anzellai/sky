@@ -28,6 +28,14 @@ module Sky.Build.TailCallOpt
     , rewriteTailCalls
     , tcoMarker
     , tcoMarkerParams
+    -- v0.17 PR-5 — region enumeration at tail positions.  Required
+    -- by 'Sky.Build.RendererParitySpec' (pre-mortem lesson 2) so the
+    -- foundation parity property gates against the exact regions
+    -- the lowerer touches when emitting the @continue@-block
+    -- reassignment.  Without this coverage, PR-13's structural
+    -- σ-migration silently breaks tail-recursive functions and the
+    -- bisection lands at PR-13 instead of here.
+    , tailPositionRegions
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -269,3 +277,49 @@ countNonTailSelfCalls home name arity = walk True
     walkDef (Can.DestructDef _ body) = walk False body
 
     walkFieldUpdate (Can.FieldUpdate _ e) = walk False e
+
+
+-- | Enumerate every 'A.Region' that sits at a tail position in @body@.
+--
+-- Tail-position propagators (walking with @inTail = True@):
+--
+--   * 'Can.Case' branches
+--   * 'Can.If' branches AND else expression
+--   * 'Can.Let' / 'Can.LetRec' / 'Can.LetDestruct' bodies
+--
+-- Every other expression breaks tail context — its sub-expressions are
+-- walked with @inTail = False@ and their regions are NOT collected.
+--
+-- Used by 'test/Sky/Build/RendererParitySpec.hs' (pre-mortem lesson 2)
+-- to gate the foundation parity property on the EXACT regions
+-- 'rewriteTailCalls' will later rewrite into @continue@-block
+-- reassignments. Without this coverage, PR-13's structural σ
+-- migration silently breaks TCO and the bisection trail leads back
+-- here, not there.
+--
+-- Returns regions in source-order (left-to-right, depth-first).
+tailPositionRegions :: Can.Expr -> [A.Region]
+tailPositionRegions = walk True
+  where
+    walk :: Bool -> Can.Expr -> [A.Region]
+    walk inTail (A.At r e) =
+        let here = if inTail then [r] else []
+        in case e of
+            Can.Case _ branches | inTail ->
+                here ++ concat [walk True b | Can.CaseBranch _ b <- branches]
+            Can.If branches elseExpr | inTail ->
+                here
+                    ++ concat [walk True b | (_, b) <- branches]
+                    ++ walk True elseExpr
+            Can.Let _ body | inTail ->
+                here ++ walk True body
+            Can.LetRec _ body | inTail ->
+                here ++ walk True body
+            Can.LetDestruct _ _ body | inTail ->
+                here ++ walk True body
+            -- Leaf / non-propagator at tail position — record just here.
+            _ | inTail -> here
+            -- Non-tail — don't collect, don't recurse (the tail set is
+            -- purely about regions the TCO rewriter rewrites; arg
+            -- positions of a non-tail call site are out of scope).
+            _ -> []

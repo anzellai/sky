@@ -1,0 +1,14 @@
+# probe-TCO-1: tail-recursive self-call with polymorphic accumulator.
+# Closes by: PR-13 — but parity MUST hold at every PR through.
+#
+# This is the direct pre-mortem PR-13 reproducer. Sky.Build.TailCallOpt
+# rewrites the self-call into a `continue` block; the structural σ
+# migration must preserve `acc : List a`'s polymorphic shape without
+# wrapping the reassignment in rt.Coerce.
+#
+# Pre-mortem lesson 4: any 2-byte diff in the `continue` block is a
+# REAL bug, NOT a formatter quirk. Investigate before allow-listing.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue

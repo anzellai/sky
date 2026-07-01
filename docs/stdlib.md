@@ -77,11 +77,15 @@ evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 
 `map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
 
-> `foldl` is auto-TCO'd (constant stack) along with `find` /
-> `any` / `all` / `member` / `drop` / `reverse`. The remaining
-> entries recurse O(N) on the Go stack — fine for typical UI
-> lists; for million-entry inputs prefer `foldl` with an
-> accumulator. See [Limitation 12](../CLAUDE.md#active-limitations).
+> v0.17 closed Limitation #8 — all 13 list ops in scope now run
+> on constant Go stack. `foldl` / `find` / `any` / `all` /
+> `member` / `drop` / `reverse` plus `length` / `range` / `zip` /
+> `concatMap` / `indexedMap` are auto-TCO'd (tail-recursive
+> helper compiled to `for { ... continue }`). `map` / `filter` /
+> `foldr` / `concat` / `take` / `append` / `Maybe.combine` /
+> `Result.combine` were CPS-rewritten in v0.17 to delegate
+> through the same constant-stack form. Million-entry lists are
+> safe across the surface.
 
 ### `Dict` — key-value maps
 
@@ -1211,6 +1215,43 @@ reload — fine for the typical case (head depends on page identity,
 which changes via sky-nav navigation that already does a full-body
 fetch + history push).
 
+### `Std.Webview` — desktop UI backend (v0.16+)
+
+The cross-backend mirror of `Live.app` and `Tui.app` — same TEA shape
+(init / update / view / subscriptions), `view : model -> Html` returns
+a post-`Ui.layout` Element tree, and the runtime opens a native window
+(WKWebView on macOS in v0.1; Linux + Windows in v0.2). No HTTP server,
+no SSE, no session store — the bridge is in-process `Bind` + `Eval`
+via `webview_go`.
+
+```elm
+import Std.Webview as Webview
+
+main =
+    Webview.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , window =
+            Webview.defaultWindow
+                |> Webview.withTitle "Sky Stopwatch"
+                |> Webview.withSize 800 600
+        }
+        |> Task.run
+```
+
+`WindowCfg` v0.1 is `{ title : String, size : (Int, Int) }`; v0.2
+reopens for `alwaysOnTop` / `transparent` / `decorated` + adds tray
+icons, native file dialogs, global hotkeys, and Linux + Windows smoke
+validation.  Build it via `defaultWindow` + `withTitle` + `withSize`
+builders so future field additions stay source-compat.
+
+`sky build` auto-detects Sky.Webview projects and flips `CGO_ENABLED=1`
+on the first build pass; the stub `runtime-go/rt/webview_stub.go`
+covers `!cgo || !darwin` so non-macOS builds link cleanly and surface
+a runtime `Err Error` on call.  Example: `examples/31-webview-stopwatch-ui`.
+
 ### `Event` — typed DOM event bindings (`Std.Html.Events`)
 
 v0.13: `Std.Html.Events` (renamed from `Std.Live.Events`). Each builder
@@ -1306,6 +1347,11 @@ Sub-modules:
 - **`Std.Ui.Lazy`** — `lazy / lazy2..lazy5` (no-op wrappers today; runtime memo deferred)
 - **`Std.Ui.Keyed`** — `keyed` (emits `sky-key` for diff identity)
 - **`Std.Ui.Responsive`** — `classifyDevice / adapt {phone, tablet, desktop}`
+- **`Std.Ui.Chart`** — typed chart primitives (v0.16.0). `line / area / bar / sparkline / heatmap` accept typed `Series` records ({label, color, points : List Point}) and render to inline-styled SVG. Pair with `Ui.layoutWith` to embed in dashboards (used by the bundled Sky Console + `examples/26-ui-showcase`). XSS-hardened: all axis ticks + tooltip labels HTML-escape through the same renderer as text content; no innerHTML, no `data-sky-eval`.
+- **`Std.Ui.Animation`** — typed CSS keyframe animation DSL (v0.15.57). Build via `defaultSpec "fadeIn" |> withDuration 500 |> withEasing easeOut |> withKeyframes [(0, [Transform.opacity 0.0]), (100, [Transform.opacity 1.0])]` + `Animation.attribute spec`.  Auto-wrapped in `@media (prefers-reduced-motion: no-preference)` by default; opt out via `withRespectReducedMotion False` only when motion is semantically required (loading spinner, progress indicator).
+- **`Std.Ui.Transition`** — typed CSS transitions (v0.15.57). `Transition.attribute [property "background-color", duration 200, easing easeOut]` pairs with `Background.hoverColor` so the browser animates between base + `:hover` states.  Also auto-wrapped in the reduced-motion guard.  Use `attributeUnsafe` to opt out.
+- **`Std.Ui.Transform`** — typed `transform:` property helpers used by Animation/Transition (`translateX / translateY / translate / scale / scaleXY / rotate / skewX / skewY / opacity`).  All `transform`-shaped helpers join into ONE `transform:` shorthand per keyframe; `opacity` emits standalone.
+- **`Std.Ui.Grid`** — explicit CSS-grid track lists (v0.15.57). Typed `Track` ADT (`fr / px / auto / minContent / maxContent / minmax / repeat / repeatAutoFit / repeatAutoFill`) + `Grid.columns / Grid.rows / Grid.tracks`.  Use when `Ui.gridColumns N` (auto-fill) is too coarse — e.g. sidebar layouts (`[fr 1, px 200, fr 1]`), content-aware columns (`[auto, fr 1]`), responsive card grids (`[repeatAutoFit (minmax (px 240) (fr 1))]`).
 
 **Best-practice for forms with sensitive inputs (passwords, API keys):** wrap inputs in `Ui.form` and dispatch on `onSubmit DoSignIn` with a typed record. Do NOT wire `onInput` on the password field — that would dispatch the secret on every keystroke into Model and through every session-store write. See [Sky.Ui overview](skyui/overview.md#forms--the-password-best-practice-pattern) for the full pattern.
 

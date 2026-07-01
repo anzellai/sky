@@ -1,7 +1,16 @@
+-- | Std.Ui.Animation — typed CSS keyframe animations for `Std.Ui` (v0.15.57+).
 module Std.Ui.Animation exposing
     ( Iterations
     , FillMode
     , Spec
+    , defaultSpec
+    , withDuration
+    , withEasing
+    , withDelay
+    , withIterations
+    , withFillMode
+    , withRespectReducedMotion
+    , withKeyframes
     , once
     , infinite
     , times
@@ -229,6 +238,68 @@ type alias Spec =
     , respectReducedMotion : Bool
     , keyframes : List ( Int, List Prop )
     }
+
+
+-- | `defaultSpec "fadeIn"` — Spec with sensible defaults: 300ms
+-- linear easing, no delay, plays once, no fill mode, respects
+-- prefers-reduced-motion (a11y safe).  Empty `keyframes` list — the
+-- spec animates nothing until `withKeyframes` populates it.
+defaultSpec : String -> Spec
+defaultSpec animName =
+    { name = animName
+    , duration = 300
+    , easing = linear
+    , delay = 0
+    , iterations = once
+    , fillMode = none
+    , respectReducedMotion = True
+    , keyframes = []
+    }
+
+
+-- | `withDuration 500 spec` — replace the duration in milliseconds.
+withDuration : Int -> Spec -> Spec
+withDuration ms spec =
+    { spec | duration = ms }
+
+
+-- | `withEasing easeOut spec` — replace the easing curve.
+withEasing : Easing -> Spec -> Spec
+withEasing e spec =
+    { spec | easing = e }
+
+
+-- | `withDelay 100 spec` — replace the delay before animation starts.
+withDelay : Int -> Spec -> Spec
+withDelay ms spec =
+    { spec | delay = ms }
+
+
+-- | `withIterations infinite spec` — replace the iteration count.
+withIterations : Iterations -> Spec -> Spec
+withIterations iter spec =
+    { spec | iterations = iter }
+
+
+-- | `withFillMode forwards spec` — replace the post-animation state.
+withFillMode : FillMode -> Spec -> Spec
+withFillMode fm spec =
+    { spec | fillMode = fm }
+
+
+-- | `withRespectReducedMotion False spec` — opt out of the prefers-
+-- reduced-motion a11y wrapper.  Use ONLY when motion is semantically
+-- required (loading spinner, progress indicator).
+withRespectReducedMotion : Bool -> Spec -> Spec
+withRespectReducedMotion respect spec =
+    { spec | respectReducedMotion = respect }
+
+
+-- | `withKeyframes [(0, [Transform.opacity 0.0]), (100, [Transform.opacity 1.0])] spec`
+-- — replace the entire keyframe list.
+withKeyframes : List ( Int, List Prop ) -> Spec -> Spec
+withKeyframes frames spec =
+    { spec | keyframes = frames }
 
 
 -- Build the animation shorthand WITHOUT the leading name token:

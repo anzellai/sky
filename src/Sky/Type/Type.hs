@@ -101,6 +101,14 @@ data Constraint
     | CForeign !Region !String !Annotation !(Expected Type) -- imported value
     | CPattern !Region !PCategory !Type !(PExpected Type)   -- pattern constraint
     | CAnd [Constraint]                                  -- conjunction
+    | CArityMismatch !Region !String !Int !Int
+        -- v0.17 strict-HM gate (Limitation #7 close path).
+        -- Fields: source region; binding name (for diagnostic);
+        -- declared arity D; supplied arity S. Emitted by the
+        -- gate when a call site's arity disagrees with the
+        -- declared binding shape (e.g. `Uuid.v4 ()` when
+        -- `Uuid.v4 : String` — D=0, S=1). PR-A scaffolds the
+        -- constructor + solver arm + count; PR-B-D wire callers.
     | CLet                                               -- let binding
         { _rigidVars  :: [Variable]
         , _flexVars   :: [Variable]

@@ -1,3 +1,4 @@
+-- | Std.Live.Head — typed `<head>` helpers for Sky.Live per-page injection (v0.15.58+).
 module Std.Live.Head exposing
     ( title
     , meta

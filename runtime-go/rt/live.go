@@ -107,37 +107,37 @@ func HtmlToVNode(node any) VNode {
 	if vn, ok := node.(VNode); ok {
 		return vn
 	}
-	adt, ok := node.(SkyADT)
+	name, _, fields, ok := unwrapADTShape(node)
 	if !ok {
 		// Defensive: a non-Html value reached the converter — render
 		// it as text rather than panicking.
 		return vtext(fmt.Sprintf("%v", node))
 	}
-	switch adt.SkyName {
+	switch name {
 	case "HText":
-		if len(adt.Fields) > 0 {
-			return vtext(AsString(adt.Fields[0]))
+		if len(fields) > 0 {
+			return vtext(AsString(fields[0]))
 		}
 		return vtext("")
 	case "HRaw":
-		if len(adt.Fields) > 0 {
-			return VNode{Kind: "raw", Text: AsString(adt.Fields[0])}
+		if len(fields) > 0 {
+			return VNode{Kind: "raw", Text: AsString(fields[0])}
 		}
 		return VNode{Kind: "raw"}
 	case "HElement":
-		if len(adt.Fields) < 3 {
+		if len(fields) < 3 {
 			return vtext("")
 		}
 		vn := VNode{
 			Kind:   "element",
-			Tag:    AsString(adt.Fields[0]),
+			Tag:    AsString(fields[0]),
 			Attrs:  map[string]string{},
 			Events: map[string]any{},
 		}
-		for _, a := range asList(adt.Fields[1]) {
+		for _, a := range asList(fields[1]) {
 			applyHtmlAttr(&vn, a)
 		}
-		for _, c := range asList(adt.Fields[2]) {
+		for _, c := range asList(fields[2]) {
 			vn.Children = append(vn.Children, HtmlToVNode(c))
 		}
 		return vn
@@ -149,15 +149,15 @@ func HtmlToVNode(node any) VNode {
 // applyHtmlAttr folds one Sky `Attribute` ADT value into a VNode.
 func applyHtmlAttr(vn *VNode, a any) {
 	a = unwrapAny(a)
-	adt, ok := a.(SkyADT)
+	name, _, fields, ok := unwrapADTShape(a)
 	if !ok {
 		return
 	}
-	switch adt.SkyName {
+	switch name {
 	case "Attr":
-		if len(adt.Fields) >= 2 {
-			k := AsString(adt.Fields[0])
-			v := AsString(adt.Fields[1])
+		if len(fields) >= 2 {
+			k := AsString(fields[0])
+			v := AsString(fields[1])
 			// `class` and `style` are HTML's space- and
 			// semicolon-separated multi-valued attributes — multiple
 			// `class "foo bar"` + `class "baz"` calls on the same
@@ -185,17 +185,17 @@ func applyHtmlAttr(vn *VNode, a any) {
 			vn.Attrs[k] = v
 		}
 	case "BoolAttr":
-		if len(adt.Fields) >= 2 && AsBool(adt.Fields[1]) {
-			k := AsString(adt.Fields[0])
+		if len(fields) >= 2 && AsBool(fields[1]) {
+			k := AsString(fields[0])
 			vn.Attrs[k] = k
 		}
 	case "EventAttr":
-		if len(adt.Fields) >= 1 {
-			ev := unwrapAny(adt.Fields[0])
-			if evADT, ok := ev.(SkyADT); ok && len(evADT.Fields) >= 2 {
+		if len(fields) >= 1 {
+			ev := unwrapAny(fields[0])
+			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
 				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.Events[AsString(evADT.Fields[0])] = evADT.Fields[1]
+				vn.Events[AsString(evFields[0])] = evFields[1]
 			}
 		}
 	case "NoAttr":
@@ -270,19 +270,19 @@ func init() {
 			return ""
 		}
 		a := unwrapAny(args[0])
-		adt, ok := a.(SkyADT)
+		name, _, fields, ok := unwrapADTShape(a)
 		if !ok {
 			return ""
 		}
-		switch adt.SkyName {
+		switch name {
 		case "Attr":
-			if len(adt.Fields) >= 2 {
-				return AsString(adt.Fields[0]) + "=\"" +
-					htmlEscapeAttr(AsString(adt.Fields[1])) + "\""
+			if len(fields) >= 2 {
+				return AsString(fields[0]) + "=\"" +
+					htmlEscapeAttr(AsString(fields[1])) + "\""
 			}
 		case "BoolAttr":
-			if len(adt.Fields) >= 2 && AsBool(adt.Fields[1]) {
-				return AsString(adt.Fields[0])
+			if len(fields) >= 2 && AsBool(fields[1]) {
+				return AsString(fields[0])
 			}
 		}
 		return ""
@@ -481,6 +481,14 @@ func copyAttrs(src map[string]string) map[string]string {
 func msgDisplayName(msg any) string {
 	if msg == nil {
 		return ""
+	}
+	// v0.17 sealed-iface ADT: variant structs have a SkyVariantName()
+	// method instead of a SkyName field. Check the SkyVariant interface
+	// FIRST so codegen-emitted variants resolve cleanly. Falls through
+	// to legacy SkyADT.SkyName + reflect-based FieldByName for rt-side
+	// builders and pre-v0.17 codegen.
+	if sv, ok := msg.(SkyVariant); ok {
+		return sv.SkyVariantName()
 	}
 	rv := reflect.ValueOf(msg)
 	if rv.Kind() == reflect.Struct {
@@ -1466,6 +1474,15 @@ type cmdT struct {
 // SkyCmd is the public type for Sky's Cmd msg type.
 type SkyCmd = cmdT
 
+// SkyCmd_T is the v0.17 C15 dual-alias for Sky's Cmd msg type.
+// Transparent at runtime (same underlying cmdT), but lets the
+// compiler emit `rt.SkyCmd_T[Msg]` at Sky-side typed call sites
+// (`update : Msg -> Model -> (Model, Cmd Msg)`) instead of bare
+// `rt.SkyCmd` — Sky source becomes more legible without changing
+// any runtime code.  Matches the C13/C14 pattern for Std.Ui's
+// Element/Attribute dual-alias.
+type SkyCmd_T[T any] = cmdT
+
 type subT struct {
 	// kind values:
 	//   "none"            — Sub.none — no subscription
@@ -1494,6 +1511,11 @@ type subT struct {
 
 // SkySub is the public type for Sky's Sub msg type.
 type SkySub = subT
+
+// SkySub_T is the v0.17 C15 dual-alias for Sky's Sub msg type.
+// Same shape as SkyCmd_T — transparent at runtime, lets the
+// compiler emit `rt.SkySub_T[Msg]` at typed call sites.
+type SkySub_T[T any] = subT
 
 func Cmd_none() SkyCmd                { return cmdT{kind: "none"} }
 func Cmd_batch(list any) SkyCmd       { return cmdT{kind: "batch", batch: asList(list)} }
@@ -1778,7 +1800,36 @@ func narrowMsgArg(fn any, arg any) any {
 	// fallback in narrowReflectValue — that would silently turn a
 	// wrong-type radio bool into the string "true" and pass it to a
 	// String-typed Msg constructor.
+	//
+	// EXCEPTION (v0.17 #4 fix): Number→String IS coerced via
+	// strconv.FormatFloat / strconv.FormatInt. Range/number inputs
+	// (Input.slider, type=number) send their values as wire Float per
+	// the documented wire-event shape; the matching stdlib Input.slider
+	// declares `onChange : String -> msg` because it round-trips
+	// through the DOM as text.  Stringifying Float→String here closes
+	// the contract gap without forcing every range-using app to
+	// declare a Float-typed Msg ctor.  Bool→String stays rejected
+	// (the radio "[true] into String" case in the comment above) —
+	// only numeric types coerce.
 	switch {
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Float64 ||
+		srcV.Kind() == reflect.Float32):
+		f := srcV.Float()
+		// Integer-valued floats print without trailing ".0" (matches
+		// browser behaviour and Sky's ToString.fromInt convention) —
+		// "55" not "55.0".
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Int ||
+		srcV.Kind() == reflect.Int8 || srcV.Kind() == reflect.Int16 ||
+		srcV.Kind() == reflect.Int32 || srcV.Kind() == reflect.Int64):
+		return strconv.FormatInt(srcV.Int(), 10)
+	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Uint ||
+		srcV.Kind() == reflect.Uint8 || srcV.Kind() == reflect.Uint16 ||
+		srcV.Kind() == reflect.Uint32 || srcV.Kind() == reflect.Uint64):
+		return strconv.FormatUint(srcV.Uint(), 10)
 	case paramT.Kind() == reflect.Map && srcV.Kind() == reflect.Map:
 		out := coerceMapValue(srcV, paramT)
 		if out.IsValid() {
@@ -3985,19 +4036,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// directly from the constructor name and arguments instead of
 		// looking up a render-time handler closure.
 		//
-		// Tag resolution: look up the global ADT tag registry (populated
-		// by codegen's init() block), then fall back to the per-app cache
-		// built during previous dispatches.
-		tag := -1
-		if t, ok := LookupAdtTag(req.Msg); ok {
-			tag = t
-		} else {
-			app.msgTagsMu.Lock()
-			if t2, ok2 := app.msgTags[req.Msg]; ok2 {
-				tag = t2
-			}
-			app.msgTagsMu.Unlock()
+		// v0.17 sealed-iface dispatch: BuildAdtFromWire tries the
+		// variant factory registry first (typed payload via
+		// RegisterAdtVariant), then falls back to the legacy SkyADT
+		// path (LookupAdtTag + Fields:[]any).
+		localTag := -1
+		app.msgTagsMu.Lock()
+		if t2, ok2 := app.msgTags[req.Msg]; ok2 {
+			localTag = t2
 		}
+		app.msgTagsMu.Unlock()
+		built, found := BuildAdtFromWire(req.Msg, req.Args, localTag)
 		// Unknown Msg name: refuse to dispatch instead of building a
 		// SkyADT with Tag=-1 and letting the user's `case` fall
 		// through to the exhaustiveness `Unreachable`. Caller gets a
@@ -4006,7 +4055,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// liveness probe sent by the client) are silently accepted as
 		// no-ops so they don't pollute the log; the client only cares
 		// about session-existence (404 vs anything else).
-		if tag < 0 {
+		if !found {
 			sess.mu.Unlock()
 			w.Header().Set("X-Sky-Live", "1")
 			if strings.HasPrefix(req.Msg, "__sky") {
@@ -4017,14 +4066,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown Msg constructor: "+req.Msg, 400)
 			return
 		}
-		var fields []any
-		for _, raw := range req.Args {
-			var v any
-			if err := json.Unmarshal(raw, &v); err == nil {
-				fields = append(fields, v)
-			}
-		}
-		msg = SkyADT{Tag: tag, SkyName: req.Msg, Fields: fields}
+		msg = built
 		ok = true
 	}
 	if !ok {
@@ -4036,7 +4078,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// onSubmit / onKeyDown etc.) apply each incoming arg in order to
 	// produce a concrete Msg ADT value. Falls through to the legacy
 	// single-value form when only `value` was sent.
-	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+	if !IsFinalisedAdt(msg) {
 		msg = applyMsgArgs(msg, req.Args, req.Value)
 	}
 	// Reconcile the client's view of dirty inputs into sess.inputSeqs
@@ -4169,42 +4211,33 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	}
 	msg, ok := sess.handlers[ev.HandlerID]
 	if !ok && ev.Msg != "" && ev.HandlerID == "" {
-		tag := -1
-		if t, found := LookupAdtTag(ev.Msg); found {
-			tag = t
-		} else {
-			app.msgTagsMu.Lock()
-			if t2, ok2 := app.msgTags[ev.Msg]; ok2 {
-				tag = t2
-			}
-			app.msgTagsMu.Unlock()
+		// v0.17 sealed-iface dispatch (mirrors handleEvent above).
+		localTag := -1
+		app.msgTagsMu.Lock()
+		if t2, ok2 := app.msgTags[ev.Msg]; ok2 {
+			localTag = t2
 		}
+		app.msgTagsMu.Unlock()
+		built, found := BuildAdtFromWire(ev.Msg, ev.Args, localTag)
 		// Unknown Msg name — same defence as the single-event path
 		// above. Silently drop (this is the batched/tab-unload path
 		// so there's no response channel to surface the error).
 		// `__sky*` sentinels are silently accepted as no-ops too.
-		if tag < 0 {
+		if !found {
 			sess.mu.Unlock()
 			if !strings.HasPrefix(ev.Msg, "__sky") {
 				fmt.Fprintf(os.Stderr, "[sky.live] unknown Msg constructor %q (batched); dropping event\n", ev.Msg)
 			}
 			return
 		}
-		var fields []any
-		for _, raw := range ev.Args {
-			var v any
-			if err := json.Unmarshal(raw, &v); err == nil {
-				fields = append(fields, v)
-			}
-		}
-		msg = SkyADT{Tag: tag, SkyName: ev.Msg, Fields: fields}
+		msg = built
 		ok = true
 	}
 	if !ok {
 		sess.mu.Unlock()
 		return
 	}
-	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+	if !IsFinalisedAdt(msg) {
 		msg = applyMsgArgs(msg, ev.Args, ev.Value)
 	}
 	// Capture lastShippedBody BEFORE dispatch so we can suppress a
@@ -4378,9 +4411,12 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// direct-send events (__sky_send) can construct correctly-tagged
 	// ADTs at runtime. Normal handler-dispatched events always carry
 	// the codegen-assigned tag; direct-send events arrive with Tag -1.
-	if adt, ok := msg.(SkyADT); ok && adt.Tag >= 0 {
+	// v0.17 sealed-iface ADT: variant structs carry tag + name via
+	// methods, NOT fields — `unwrapADTShape` returns the right pair
+	// for either the SkyVariant interface or the legacy SkyADT struct.
+	if name, tag, _, ok := unwrapADTShape(msg); ok && tag >= 0 {
 		app.msgTagsMu.Lock()
-		app.msgTags[adt.SkyName] = adt.Tag
+		app.msgTags[name] = tag
 		app.msgTagsMu.Unlock()
 	}
 	// Tier 1 auto-trace: wrap the TEA update in a Msg span. This is
@@ -4503,9 +4539,9 @@ func (app *liveApp) safeViewCall(model any) (VNode, bool) {
 				// immediately (no Task wrap) since we're already inside
 				// the deferred recover.
 				logEmit(logLevelError, "error", "sky.live.view.panic",
-					[]any{
-						"reason", reason,
-						"stack_head", firstLines(stack, 8),
+					map[string]any{
+						"reason":     reason,
+						"stack_head": firstLines(stack, 40),
 					},
 				)
 				vn = renderViewPanicFallback(reason)
@@ -7913,20 +7949,77 @@ func sky_call(f any, arg any) any {
 }
 
 func sky_call2(f any, a, b any) any {
+	// v0.17 Phase 4 Stage 6 — typed-arm CONSUMPTION at sky_call2.
+	//
+	// Stage 5 shipped a pure probe (lookup + counters; always fell
+	// through).  Stage 6 makes the fast-path observation actionable:
+	// when 'a' is a registered SkyADT message AND the dispatch
+	// table exists, we KNOW the Msg parameter is already a typed
+	// SkyADT struct value — no map→struct narrowing, no struct→
+	// struct field copy is needed at coerceReflectArg time.  The
+	// model param ('b') still goes through coerceReflectArg in case
+	// the call site passed an untyped map (e.g. session restore).
+	//
+	// Why this is correctness-safe (no rt.Coerce regression):
+	//   * The eligibility predicate ('table != nil' for the SkyADT's
+	//     ADT name) is checked structurally — any SkyADT whose
+	//     SkyName is registered.  Pre-Stage-6 every such call went
+	//     through coerceReflectArg(av, rv.Type().In(0)) which, for
+	//     a SkyADT value vs an interface-typed In(0), already takes
+	//     the AssignableTo fast-path (line 7811).  Skipping the
+	//     coerceReflectArg call for 'a' when av is already a typed
+	//     SkyADT therefore produces a byte-identical reflect.Value
+	//     to what coerceReflectArg returned — zero behaviour change
+	//     beyond bypassing the 4-branch check.
+	//   * The model 'b' still routes through coerceReflectArg so
+	//     map-restored sessions (Cmd.perform completion + sub-app
+	//     model rehydration) keep their map→struct narrowing path.
+	//
+	// rt.Coerce drop expectation: Stage 6 is a runtime perf lever
+	// (fewer reflect operations on the steady-state event loop) and
+	// does NOT directly drop rt.Coerce wrap emission in codegen.
+	// The user-facing rt.Coerce count is dominated by view-side
+	// typed-record returns + record-field initialisation; Msg
+	// dispatch contributes negligibly.  Stage 7+ (typed UPDATE arms
+	// per case-arm) is the lever that would let us replace the
+	// reflect.Call entirely on the steady-state event loop AND let
+	// codegen drop wraps around Msg-routing call sites.  Stage 6
+	// is the necessary CONSUMER scaffold for that future close.
+	_, fastPathOk := tryFastPathMsgUpdate(a)
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		return f
 	}
 	if rv.Type().NumIn() == 2 {
-		av := reflect.ValueOf(a)
-		bv := reflect.ValueOf(b)
-		if !av.IsValid() {
-			av = reflect.Zero(rv.Type().In(0))
+		var av reflect.Value
+		if fastPathOk {
+			// Typed SkyADT — bypass coerceReflectArg's branch chain.
+			// 'a' is already the concrete struct value, so its
+			// reflect.Value is directly assignable to the function's
+			// In(0) (which is rt.SkyADT or any).  Symmetric with the
+			// AssignableTo / Interface-target fast paths inside
+			// coerceReflectArg.
+			av = reflect.ValueOf(a)
+			if !av.IsValid() {
+				av = reflect.Zero(rv.Type().In(0))
+			} else if want := rv.Type().In(0); want.Kind() != reflect.Interface &&
+				!av.Type().AssignableTo(want) {
+				// Defensive fallback: assignability mismatch (e.g.
+				// generic SkyADT_T[Msg] vs SkyADT) — route through
+				// the full coerce path so we don't regress correctness.
+				av = coerceReflectArg(av, want)
+			}
+		} else {
+			av = reflect.ValueOf(a)
+			if !av.IsValid() {
+				av = reflect.Zero(rv.Type().In(0))
+			}
+			av = coerceReflectArg(av, rv.Type().In(0))
 		}
+		bv := reflect.ValueOf(b)
 		if !bv.IsValid() {
 			bv = reflect.Zero(rv.Type().In(1))
 		}
-		av = coerceReflectArg(av, rv.Type().In(0))
 		bv = coerceReflectArg(bv, rv.Type().In(1))
 		out := rv.Call([]reflect.Value{av, bv})
 		if len(out) > 0 {

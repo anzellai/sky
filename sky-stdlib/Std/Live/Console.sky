@@ -1,5 +1,22 @@
+-- | Std.Live.Console — types exposed for the optional `consoleAuth`
+-- field on `Live.app` cfg (v0.16.0+).
+--
+-- The `consoleAuth` callback is row-polymorphic, optional, and has
+-- shape `Request -> Task Error (Maybe Identity)`.  When the framework
+-- gates `/_sky/console` in `app`-mode (env `SKY_CONSOLE_AUTH=app`),
+-- it invokes the callback per request, BEFORE mounting console
+-- routes.  `Nothing` → 403 + structured `console.auth.denied` audit
+-- log.  `Just identity` → request continues; the identity rides on
+-- the same `__Host-sky_console` session cookie + is attached to
+-- subsequent telemetry for audit.
+--
+-- Use this when the app already has an SSO / multi-tenant session
+-- middleware: thread it into `consoleAuth` and the embedded console
+-- inherits the same auth surface — no second token to provision.
 module Std.Live.Console exposing
     ( Identity
+    , defaultIdentity
+    , withEmail, withClaim, withClaims
     )
 
 -- | Std.Live.Console — types exposed for the optional `consoleAuth`
@@ -57,7 +74,7 @@ module Std.Live.Console exposing
 
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Dict exposing (Dict)
+import Sky.Core.Dict as Dict exposing (Dict)
 
 
 -- | Identity returned by the `consoleAuth` callback when access is
@@ -70,3 +87,32 @@ type alias Identity =
     , email : String
     , claims : Dict String String
     }
+
+
+-- | `defaultIdentity "user-42"` — Identity with empty email + claims.
+-- Builder chain stays source-compat when v0.16.5+ adds optional fields.
+defaultIdentity : String -> Identity
+defaultIdentity subject =
+    { subject = subject
+    , email = ""
+    , claims = Dict.empty
+    }
+
+
+-- | `withEmail "alice@example.com" id` — replace the audit email.
+withEmail : String -> Identity -> Identity
+withEmail email id =
+    { id | email = email }
+
+
+-- | `withClaim "role" "admin" id` — add a single RBAC claim.
+withClaim : String -> String -> Identity -> Identity
+withClaim key value id =
+    { id | claims = Dict.insert key value id.claims }
+
+
+-- | `withClaims (Dict.fromList [("role", "admin"), ("tier", "pro")]) id`
+-- — replace the entire claims Dict at once.
+withClaims : Dict String String -> Identity -> Identity
+withClaims claims id =
+    { id | claims = claims }

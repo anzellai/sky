@@ -122,6 +122,8 @@ registry = Map.fromList
     , (("Middleware", "withRateLimit"),   KernelInfo "rt.Middleware_withRateLimit" 4 False)
     -- audit P1-2: simple per-IP fixed-window rate limit
     , (("Middleware", "rateLimit"),        KernelInfo "rt.Middleware_rateLimit" 2 False)
+    -- task #663 — CSRF protection (double-submit cookie pattern)
+    , (("Middleware", "withCsrf"),         KernelInfo "rt.Middleware_withCsrf" 1 False)
 
     -- Sky.Ffi — name-based dispatch to user-supplied Go bindings
     , (("Ffi", "call"),           KernelInfo "rt.Ffi_call" 2 False)
@@ -433,6 +435,9 @@ registry = Map.fromList
     , (("Math", "sqrt2"),         KernelInfo "rt.Math_sqrt2" 0 False)
     , (("Math", "inf"),           KernelInfo "rt.Math_inf" 0 False)
     , (("Math", "nan"),           KernelInfo "rt.Math_nan" 0 False)
+    -- v0.17 G3 — NaN guard. `Math.isNaN x` returns True iff x is
+    -- IEEE 754 NaN (because `nan == nan` is False by IEEE rules).
+    , (("Math", "isNaN"),         KernelInfo "rt.Math_isNaN" 1 False)
 
     , (("Server", "listen"),      KernelInfo "rt.Server_listen" 2 False)
     , (("Server", "get"),         KernelInfo "rt.Server_get" 2 False)

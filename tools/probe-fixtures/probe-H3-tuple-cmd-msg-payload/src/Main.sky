@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+
+
+type alias Model =
+    { count : Int
+    }
+
+
+type Msg
+    = Tick
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+main =
+    let
+        ( model, _ ) =
+            init ()
+    in
+    println ("count=" ++ String.fromInt model.count)

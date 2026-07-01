@@ -1,0 +1,32 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+
+
+type Msg
+    = Tick
+
+
+seed : Cmd Msg
+seed =
+    Cmd.none
+
+
+build : Int -> Cmd msg -> Cmd msg
+build n acc =
+    case n of
+        0 ->
+            acc
+
+        _ ->
+            build (n - 1) (Cmd.batch [ acc, Cmd.none ])
+
+
+main =
+    let
+        _ =
+            build 3 seed
+    in
+    println "ok"

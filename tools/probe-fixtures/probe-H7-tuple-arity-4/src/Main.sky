@@ -1,0 +1,25 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+quad : ( Int, String, Bool, Float )
+quad =
+    ( 1, "two", True, 3.14 )
+
+
+main =
+    let
+        ( n, s, b, f ) =
+            quad
+    in
+    println
+        (s
+            ++ " "
+            ++ String.fromInt n
+            ++ " "
+            ++ (if b then "yes" else "no")
+            ++ " "
+            ++ String.fromFloat f
+        )

@@ -1,0 +1,13 @@
+# Cause G — FFI opaque collapse.
+#
+# Placeholder fixture.  Today no FFI usage = no opaque collapse
+# surface to probe.  When C17 ships, replace with a cross-package
+# opaque fixture (e.g. Sky module that wraps Stripe.Customer +
+# Aws.Account and asserts the build rejects cross-assignment).
+#
+# Until then, this just builds + runs cleanly to verify the probe
+# sweep framework handles missing-FFI Sky programs.
+
+MUST_BUILD
+MUST_CONTAIN package main
+MUST_NOT_PANIC_AT_RUNTIME

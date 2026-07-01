@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Item =
+    { id : Int
+    , name : String
+    }
+
+
+makeIt : ( Int, List Item )
+makeIt =
+    ( 2
+    , [ { id = 1, name = "a" }
+      , { id = 2, name = "b" }
+      ]
+    )
+
+
+main =
+    let
+        ( count, items ) =
+            makeIt
+    in
+    println (String.fromInt count ++ " items, " ++ String.fromInt (List.length items) ++ " populated")

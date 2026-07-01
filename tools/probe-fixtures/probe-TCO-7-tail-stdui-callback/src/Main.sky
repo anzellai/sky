@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Ui as Ui
+
+
+type Msg
+    = Nope
+
+
+build : Int -> Ui.Element msg -> Ui.Element msg
+build n el =
+    case n of
+        0 ->
+            el
+
+        _ ->
+            build (n - 1) (Ui.column [] [ el ])
+
+
+main =
+    let
+        _ =
+            build 3 (Ui.text "hi")
+    in
+    println "ok"

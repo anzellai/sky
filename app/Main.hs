@@ -1269,34 +1269,52 @@ runCommand cmd = case cmd of
         return (Right ())
 
     Build path -> do
-        -- Read sky.toml if it exists
-        hasToml <- doesFileExist "sky.toml"
-        config <- if hasToml
-            then Toml.parseSkyToml <$> readFile "sky.toml"
-            else return Toml.defaultConfig
-        let outDir = "sky-out"
-        createDirectoryIfMissing True outDir
-        -- Auto-regen missing Go FFI bindings before compile. Idempotent:
-        -- skips deps whose .kernel.json is already present.
-        let goDeps = Toml._goDeps config
-        when (not (null goDeps)) $ do
-            hasGoMod <- doesFileExist "sky-out/go.mod"
-            when (not hasGoMod) $ do
-                hasRt <- doesFileExist "runtime-go/go.mod"
-                if hasRt
-                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
-                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
-            regenMissingBindings goDeps
-        result <- Compile.compile config path outDir
-        case result of
-            Left err -> return (Left err)
-            Right goPath -> do
-                putStrLn "Running go build..."
-                runGoBuildWithDiagnostics outDir (Toml._binName config) goPath
-                -- v0.15.42 (audit §3.4): see Run-path comment.
-                putStrLn "Compilation successful"
-                putStrLn $ "Build complete: " ++ outDir ++ "/" ++ Toml._binName config
-                return (Right ())
+        -- task #662 — `sky build` from the compiler repo root would
+        -- overwrite the compiler binary at sky-out/sky (outDir =
+        -- "sky-out").  CLAUDE.md documents this as a hard contract
+        -- ("Never run `sky build` from the repo root"); enforce it
+        -- here with a clear diagnostic.  The compiler repo has a
+        -- unique signal (sky-compiler.cabal at root); user projects
+        -- never have one.
+        inRepoRoot <- doesFileExist "sky-compiler.cabal"
+        if inRepoRoot
+            then return (Left
+                ( "sky build: refusing to run from the Sky compiler "
+                ++ "repo root.\n\nThis directory contains "
+                ++ "`sky-compiler.cabal`; running `sky build` here "
+                ++ "would overwrite the compiler binary at sky-out/sky.\n\n"
+                ++ "cd into an example or user project first:\n"
+                ++ "  cd examples/01-hello-world\n"
+                ++ "  sky build src/Main.sky" ))
+            else do
+                -- Read sky.toml if it exists
+                hasToml <- doesFileExist "sky.toml"
+                config <- if hasToml
+                    then Toml.parseSkyToml <$> readFile "sky.toml"
+                    else return Toml.defaultConfig
+                let outDir = "sky-out"
+                createDirectoryIfMissing True outDir
+                -- Auto-regen missing Go FFI bindings before compile. Idempotent:
+                -- skips deps whose .kernel.json is already present.
+                let goDeps = Toml._goDeps config
+                when (not (null goDeps)) $ do
+                    hasGoMod <- doesFileExist "sky-out/go.mod"
+                    when (not hasGoMod) $ do
+                        hasRt <- doesFileExist "runtime-go/go.mod"
+                        if hasRt
+                            then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                            else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+                    regenMissingBindings goDeps
+                result <- Compile.compile config path outDir
+                case result of
+                    Left err -> return (Left err)
+                    Right goPath -> do
+                        putStrLn "Running go build..."
+                        runGoBuildWithDiagnostics outDir (Toml._binName config) goPath
+                        -- v0.15.42 (audit §3.4): see Run-path comment.
+                        putStrLn "Compilation successful"
+                        putStrLn $ "Build complete: " ++ outDir ++ "/" ++ Toml._binName config
+                        return (Right ())
 
     Run path -> runProject path
 

@@ -133,16 +133,16 @@ appStyles _ =
     Css.stylesheet
         [ Css.rule
               "*"
-              [ Css.margin (Css.zero ())
+              [ Css.margin (Css.zero)
               -- Layout
-              , Css.padding (Css.zero ())
+              , Css.padding (Css.zero)
               -- Navigation
               , Css.boxSizing Css.BorderBox
               ]
               -- Buttons
         , Css.rule
               "body"
-              [ Css.fontFamily (Css.systemFont ())
+              [ Css.fontFamily (Css.systemFont)
               -- Forms
               , Css.backgroundColor (pageBg ())
               -- Alerts
@@ -155,7 +155,7 @@ appStyles _ =
               ".container"
               [ Css.maxWidth (Css.px 800)
               -- Hero
-              , Css.margin2 (Css.zero ()) (Css.auto ())
+              , Css.margin2 (Css.zero) (Css.auto)
               -- Features grid
               , Css.padding (sp 6)
               ]
@@ -178,7 +178,7 @@ appStyles _ =
         , Css.rule
               ".nav-inner"
               [ Css.maxWidth (Css.px 800)
-              , Css.margin2 (Css.zero ()) (Css.auto ())
+              , Css.margin2 (Css.zero) (Css.auto)
               , Css.display Css.Flex
               , Css.justifyContent Css.SpaceBetween
               , Css.alignItems Css.Center
@@ -195,7 +195,7 @@ appStyles _ =
               ".nav-brand"
               [ Css.fontWeight (Css.Weight 700)
               , Css.fontSize (Css.em 1.2)
-              , Css.marginLeft (Css.zero ())
+              , Css.marginLeft (Css.zero)
               ]
         , Css.rule
               ".btn"
@@ -203,7 +203,7 @@ appStyles _ =
               , Css.padding2 (sp 2) (sp 6)
               , Css.backgroundColor (primaryColor ())
               , Css.color (Css.hex "fff")
-              , Css.border (Css.none ())
+              , Css.border (Css.none)
               , Css.borderRadius (radius ())
               , Css.cursor Css.Pointer
               , Css.fontSize (Css.px 14)
@@ -214,7 +214,7 @@ appStyles _ =
         , Css.rule ".btn:hover" [Css.backgroundColor (primaryDark ())]
         , Css.rule
               ".btn-outline"
-              [ Css.backgroundColor (Css.transparent ())
+              [ Css.backgroundColor (Css.transparent)
               , Css.border ("2px solid " ++ Css.colorToString (primaryColor ()))
               , Css.color (primaryColor ())
               ]
@@ -240,7 +240,7 @@ appStyles _ =
               ]
         , Css.rule
               "input:focus,textarea:focus"
-              [ Css.outline (Css.none ())
+              [ Css.outline (Css.none)
               , Css.borderColor (primaryColor ())
               , Css.boxShadow ("0 0 0 3px " ++ Css.colorToString (Css.rgba 37 99 235 0.1))
               ]
@@ -388,7 +388,7 @@ appStyles _ =
               ]
         , Css.rule
               ".md h1,.md h2,.md h3"
-              [ Css.margin4 (sp 4) (Css.zero ()) (sp 2) (Css.zero ())
+              [ Css.margin4 (sp 4) (Css.zero) (sp 2) (Css.zero)
               , Css.color (textColor ())
               ]
         , Css.rule
@@ -419,8 +419,8 @@ appStyles _ =
               ]
         , Css.rule
               ".md pre code"
-              [ Css.backgroundColor (Css.transparent ())
-              , Css.padding (Css.zero ())
+              [ Css.backgroundColor (Css.transparent)
+              , Css.padding (Css.zero)
               , Css.color (Css.colorRaw "inherit")
               ]
         , Css.rule
@@ -441,9 +441,9 @@ appStyles _ =
         , Css.rule ".md a" [Css.color (primaryColor ())]
         , Css.rule
               ".md hr"
-              [ Css.border (Css.none ())
+              [ Css.border (Css.none)
               , Css.borderTop ("1px solid " ++ Css.colorToString (borderColor ()))
-              , Css.margin2 (sp 6) (Css.zero ())
+              , Css.margin2 (sp 6) (Css.zero)
               ]
         , Css.rule
               ".md table"
@@ -463,7 +463,7 @@ appStyles _ =
         , Css.rule
               ".auth-card"
               [ Css.maxWidth (Css.px 420)
-              , Css.margin2 (Css.px 40) (Css.auto ())
+              , Css.margin2 (Css.px 40) (Css.auto)
               ]
         , Css.rule
               ".auth-footer"
@@ -472,7 +472,7 @@ appStyles _ =
               , Css.fontSize (Css.px 14)
               , Css.color (textMuted ())
               ]
-        , Css.rule ".auth-footer a" [Css.margin2 (Css.zero ()) (Css.px 4)]
+        , Css.rule ".auth-footer a" [Css.margin2 (Css.zero) (Css.px 4)]
         , Css.rule
               ".header-row"
               [ Css.display Css.Flex
@@ -977,9 +977,9 @@ noteViewPage email note =
                 , hr
                       [Attr.style
                           (Css.styles
-                              [ Css.border (Css.none ())
+                              [ Css.border (Css.none)
                               , Css.borderTop ("1px solid " ++ Css.colorToString (borderColor ()))
-                              , Css.margin2 (sp 5) (Css.zero ())
+                              , Css.margin2 (sp 5) (Css.zero)
                               ])]
                 , textarea
                       [ Attr.id "raw-md"

@@ -1,0 +1,10 @@
+# probe-TCO-4: case-arm tail-position polymorphic-arg branches.
+# Closes by: PR-13 + PR-14 (coerceArg + coerceReturnExprT).
+#
+# Each case arm of `choose` is in tail position; one arm returns
+# polymorphic `m` directly, the other recurses with Just fallback.
+# The lowerer must NOT wrap either return in rt.Coerce[Maybe_any].
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN continue

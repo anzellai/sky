@@ -9,6 +9,20 @@ module Sky.Build.FfiRegistry
     , loadRegistry
     , emptyRegistry
     , lookupFunction
+    -- v0.17 close P1 — pure derived projections.
+    -- These mirror the shape of legacy FFI IORefs in
+    -- Sky.Canonicalise.Environment (ffiKernelModulesRef,
+    -- ffiKernelFunctionsRef, ffiKernelArityRef, ffiImplementsRef,
+    -- ffiPkgAliasRef) and the typed-FtyAst stored under
+    -- ffiKernelTypeRef before the Compile.hs Can.Annotation
+    -- conversion. Threading these as pure values via CompileCtx
+    -- (P2+) deletes the IORefs (criterion #3).
+    , kernelModulesMap
+    , kernelFunctionsMap
+    , kernelArityMap
+    , kernelTypeFtyMap
+    , implementsMap
+    , pkgAliasMap
     ) where
 
 import qualified Data.Aeson as A
@@ -44,6 +58,14 @@ data FfiModule = FfiModule
     , _fm_kernelName :: !String  -- e.g. "Uuid"
     , _fm_package    :: !String  -- e.g. "github.com/google/uuid"
     , _fm_functions  :: ![FfiFunction]
+    , _fm_implements :: !(Map.Map String [String])
+        -- ^ v0.17 PR-21b — qualified-name → list of satisfied
+        -- qualified interface names.  Populated by the inspector
+        -- (PR-9 + the 2026-06-15 transitive-deps fix); empty for
+        -- older kernel.json files.
+    , _fm_pkgAlias :: !(Map.Map String String)
+        -- ^ v0.17 PR-21b — Go import-path → canonical alias.
+        -- Empty for older kernel.json files.
     }
     deriving (Show, Eq)
 
@@ -69,6 +91,93 @@ lookupFunction reg kname fname =
 
 
 -- ═══════════════════════════════════════════════════════════
+-- v0.17 close P1 — pure derived projections over _fr_modules
+-- ═══════════════════════════════════════════════════════════
+--
+-- Each function mirrors the shape of one legacy FFI IORef so the
+-- caller-side rewrite in P3+ is mechanical: instead of
+-- @readIORef ffiKernelArityRef >>= ...@, the caller does
+-- @kernelArityMap _ctx_ffi >>= ...@.  All projections are O(N)
+-- pure folds; Compile.hs computes them once at load-time and
+-- threads the result through CompileCtx (P2).
+--
+-- The cycle constraint at Unify.hs:45-47 forbids FfiRegistry from
+-- importing Sky.AST.Canonical / Sky.Type.Type, so the Can.Annotation
+-- map under @ffiKernelTypeRef@ is NOT projected here — Compile.hs
+-- materialises that via its existing @ftyToAnnotation@ converter at
+-- load time and threads the resulting map alongside the registry.
+-- The 2 typed-wrapper sets (typedWrapperNames, typedWrapperParams)
+-- are populated by Compile.seedTypedFfiNames from disk-scanning
+-- ffi/*.go (not from _fr_modules), so they thread alongside the
+-- registry via LoadedFfiTables → CompileCtx → LowerCtx (v0.17 close
+-- iter 5 — Phase 7 IORef defusing; the legacy backing IORefs have
+-- been deleted).
+
+
+-- | Sky import path → kernel module name.  Mirrors
+-- @ffiKernelModulesRef@.
+kernelModulesMap :: FfiRegistry -> Map.Map String String
+kernelModulesMap reg = Map.fromList
+    [ (_fm_moduleName m, _fm_kernelName m)
+    | m <- _fr_modules reg
+    ]
+
+
+-- | kernel module name → list of exported func names.  Mirrors
+-- @ffiKernelFunctionsRef@.
+kernelFunctionsMap :: FfiRegistry -> Map.Map String [String]
+kernelFunctionsMap reg = Map.fromListWith (++)
+    [ (_fm_kernelName m, [_ffn_name f])
+    | m <- _fr_modules reg
+    , f <- _fm_functions m
+    ]
+
+
+-- | (kernelName, funcName) → arity.  Mirrors @ffiKernelArityRef@.
+kernelArityMap :: FfiRegistry -> Map.Map (String, String) Int
+kernelArityMap reg = Map.fromList
+    [ ((_fm_kernelName m, _ffn_name f), _ffn_arity f)
+    | m <- _fr_modules reg
+    , f <- _fm_functions m
+    ]
+
+
+-- | (kernelName, funcName) → parsed Sky-side @FtyAst@.  Compile.hs
+-- maps this through @ftyToAnnotation@ to obtain the
+-- @Can.Annotation@ form previously stored in @ffiKernelTypeRef@.
+-- Entries are omitted when the kernel.json @skyType@ field is
+-- absent (matches the pre-existing 'Nothing' fall-through at
+-- consumer sites).
+kernelTypeFtyMap :: FfiRegistry -> Map.Map (String, String) FtyAst
+kernelTypeFtyMap reg = Map.fromList
+    [ ((_fm_kernelName m, _ffn_name f), fty)
+    | m <- _fr_modules reg
+    , f <- _fm_functions m
+    , Just fty <- [_ffn_skyType f]
+    ]
+
+
+-- | qualified type name → list of qualified interfaces satisfied.
+-- Mirrors @ffiImplementsRef@ (and its
+-- @Sky.Type.Unify.ffiImplementsRef@ mirror).  Concatenates lists
+-- across modules so a type implementing interfaces in multiple
+-- kernel.json files surfaces every interface.
+implementsMap :: FfiRegistry -> Map.Map String [String]
+implementsMap reg = Map.unionsWith (++)
+    [ _fm_implements m | m <- _fr_modules reg ]
+
+
+-- | Go import-path → canonical alias.  Mirrors @ffiPkgAliasRef@.
+-- Module order in @_fr_modules@ determines collision resolution
+-- (last write wins per @Map.unions@ semantics — matches the
+-- pre-existing @writeIORef@ + merge order in
+-- @Compile.loadAndSeedFfiRegistry@).
+pkgAliasMap :: FfiRegistry -> Map.Map String String
+pkgAliasMap reg = Map.unions
+    [ _fm_pkgAlias m | m <- _fr_modules reg ]
+
+
+-- ═══════════════════════════════════════════════════════════
 -- JSON decoding
 -- ═══════════════════════════════════════════════════════════
 
@@ -87,7 +196,9 @@ instance A.FromJSON FfiModule where
         k  <- o .: "kernelName"
         p  <- o .:? "package" .!= ""
         fs <- o .:? "functions" .!= []
-        return (FfiModule m k p fs)
+        impl <- o .:? "implements" .!= Map.empty
+        alias <- o .:? "pkgAlias" .!= Map.empty
+        return (FfiModule m k p fs impl alias)
 
 
 -- ═══════════════════════════════════════════════════════════

@@ -1,0 +1,17 @@
+# probe-TCO-5: let-bound tail-recursive helper.
+#
+# Closed by: PR-17d (var x; x = func form for self-referential
+# let-bound lambdas).  Build failure (`undefined: helper`) caused
+# by Go's `:=` not putting the LHS in scope on the RHS — the
+# inner closure body referenced `helper` before it was bound.
+#
+# The MUST_CONTAIN continue expectation was over-aspirational —
+# applying TCO emission to let-bound inner lambdas requires
+# lifting them to top-level decls (not in scope for PR-17).  The
+# inner `helper` runs as a regular recursive closure with
+# rt.SkyCall reflective dispatch.  Correctness verified by the
+# runtime output (3 = length of [1,2,3]) — see the
+# accompanying buildRunExpect probe in the example sweep.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME

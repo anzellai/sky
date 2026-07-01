@@ -1,0 +1,19 @@
+# probe-H1: typed primitive (String, Int) tuple — the headline.
+# Closes by: PR-17 (Ship Point B — v0.17.0 tag).
+#
+# Today's emission (verified 2026-06-14):
+#   func pair() rt.T2[string, int] { ... }           -- producer typed ✅
+#   __destruct__ := pair()
+#   s := rt.AsTuple2(__destruct__).V0                 -- consumer LEAKS via rt.AsTuple2
+#   n := rt.AsTuple2(__destruct__).V1
+#
+# Strategy-C PRs 1-3 closed the producer-side primitive whitelist.
+# Cause-H Step 4 closes the consumer-side typed destructure.
+# Target (PR-17): `s := __destruct__.V0` direct typed projection;
+# `rt.AsTuple2` disappears for any well-typed tuple.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN rt.T2[string, int]
+# AT PR-17 — destructure becomes typed projection:
+# MUST_NOT_CONTAIN rt.AsTuple2

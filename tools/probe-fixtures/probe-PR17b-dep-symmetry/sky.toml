@@ -1,0 +1,6 @@
+name = "probe-PR17b-dep-symmetry"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

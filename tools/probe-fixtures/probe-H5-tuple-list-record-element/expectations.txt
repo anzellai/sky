@@ -1,0 +1,12 @@
+# probe-H5: (Int, List Item) — list-of-records as tuple element.
+# Closes by: PR-17 + PR-15 (lowerRecordLiteralTo + pattern-side).
+#
+# Entry-module type alias `Item` lowers to unprefixed `Item_R`.
+
+MUST_BUILD
+MUST_NOT_PANIC_AT_RUNTIME
+MUST_CONTAIN Item_R
+
+# AT PR-17 + PR-15:
+# MUST_CONTAIN rt.T2[int, []Item_R]
+# MUST_NOT_CONTAIN rt.SkyTuple2

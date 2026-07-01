@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+makeIt : ( Int, { name : String } )
+makeIt =
+    ( 42, { name = "Alice" } )
+
+
+main =
+    let
+        ( n, r ) =
+            makeIt
+    in
+    println (r.name ++ " #" ++ String.fromInt n)

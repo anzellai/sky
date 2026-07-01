@@ -5,29 +5,128 @@
 module Sky.Type.Constrain.Expression
     ( constrainModule
     , constrainModuleWithExternals
+    , constrainModuleWithFfi
     , lookupKernelType
-    , Env
+    , Env (..)
+    , emptyEnv
+    , envInsert
+    , envLookup
     , intType
     , floatType
     , stringType
     , boolType
     , charType
+    , declaredArity
     )
     where
 
 import Control.Monad (forM)
 import Data.IORef
 import qualified Data.Map.Strict as Map
-import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
+import qualified Sky.Type.Solve as Solve
 import qualified Sky.Sky.ModuleName as ModuleName
-import qualified Sky.Canonicalise.Environment as Env
+-- v0.17 close P1 step 4 — 'Env.ffiKernelTypeRef' module-level
+-- IORef no longer consulted from this module.  The value
+-- channel runs through the per-call 'Env' record's
+-- '_envFfiKernelTypes' field, populated by
+-- 'constrainModuleWithFfi'.  The Canonicalise.Environment
+-- module still owns the IORef as a back-compat shim for
+-- callers we haven't migrated yet (P1 step 7 owns deletion).
 
 
--- | Type environment: maps variable names to their type schemes
-type Env = Map.Map String T.Annotation
+-- | Type environment carrying the per-binding type schemes plus
+-- the FFI-kernel signatures harvested at FFI-discovery time.
+--
+-- v0.17 close P1 step 4 — Env was a bare @Map.Map String
+-- T.Annotation@ until this iteration.  Threading a new value
+-- parameter through every @constrain*@ helper would have
+-- ballooned the diff; promoting Env to a record keeps every
+-- existing helper signature identical (still @Env -> …@) AND
+-- gives the @Can.VarKernel@ arm a clean value-channel to read
+-- the FFI-kernel signature table from — replacing a
+-- @readIORef Env.ffiKernelTypeRef@ that previously read the
+-- legacy module-level IORef in 'Sky.Canonicalise.Environment'.
+--
+-- @_envVars@ is consulted everywhere the OLD @Map.lookup name
+-- env@ pattern fired (via 'envLookup' below).  Insert + bulk-
+-- build call sites use 'envInsert' / 'envInsertMany' so the
+-- per-arm bookkeeping reads identically to the OLD code.
+--
+-- @_envFfiKernelTypes@ is consulted at exactly one site
+-- (constrain @ Can.VarKernel) — the legacy IORef shim is kept
+-- alive for the LSP entry point ('constrainModule') which has
+-- no FFI loader; it sees an empty FFI map (behavior-equivalent
+-- to the pre-v0.17 LSP path).  The compiler driver
+-- ('Sky.Build.Compile.solvePhase') threads the value via the
+-- new 'constrainModuleWithFfi' entry point.
+data Env = Env
+    { _envVars            :: !(Map.Map String T.Annotation)
+    , _envFfiKernelTypes  :: !(Map.Map (String, String) T.Annotation)
+    -- v0.17 close iter 10 — IORef defusing batch.  Three additional
+    -- per-compile value channels migrated from the module-level
+    -- 'globalExternals' / 'globalSameModAnnots' / 'globalCurrentModule'
+    -- IORefs.  Populated once at 'constrainModuleWithFfi' entry and
+    -- read at three sites (VarTopLevel arm + arityGateForTopLevel +
+    -- valueSlotGateForTopLevel).
+    , _envExternals       :: !(Map.Map (String, String) T.Annotation)
+    , _envSameModAnnots   :: !(Map.Map String T.Annotation)
+    , _envCurrentModule   :: !String
+    }
+
+
+-- | The empty Env (no bindings, no FFI seed).
+emptyEnv :: Env
+emptyEnv = Env Map.empty Map.empty Map.empty Map.empty ""
+
+
+-- | Insert a binding into Env (keeps the FFI seed unchanged).
+envInsert :: String -> T.Annotation -> Env -> Env
+envInsert k v e = e { _envVars = Map.insert k v (_envVars e) }
+
+
+-- | Bulk-insert bindings (right-to-left like the original @foldr@
+-- over @Map.insert@ patterns).
+envInsertMany :: [(String, T.Annotation)] -> Env -> Env
+envInsertMany kvs e =
+    e { _envVars = foldr (\(n, ann) m -> Map.insert n ann m) (_envVars e) kvs }
+
+
+-- | Lookup a binding in Env (drops to the underlying @_envVars@
+-- map — the FFI seed only fires from the @Can.VarKernel@ arm).
+envLookup :: String -> Env -> Maybe T.Annotation
+envLookup k e = Map.lookup k (_envVars e)
+
+
+-- | Build an Env carrying both an initial binding map AND the
+-- FFI-kernel signature seed.  Used by 'constrainModuleWithFfi'.
+envWithFfi
+    :: Map.Map String T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -> Env
+envWithFfi vars ffi = Env vars ffi Map.empty Map.empty ""
+
+
+-- | v0.17 close iter 10 — primary entry point used by
+-- 'constrainModuleWithFfi' that seeds ALL per-compile channels
+-- (FFI kernel types + cross-module externals + same-module
+-- annotations + current-module name).  The previous
+-- 'envWithFfi' helper is kept for completeness and the test
+-- harness path; the compiler driver uses this variant.
+envWithFfiAndMods
+    :: Map.Map String T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -> Map.Map (String, String) T.Annotation
+    -- ^ cross-module externals
+    -> Map.Map String T.Annotation
+    -- ^ same-module annotated TypedDef annotations
+    -> String
+    -- ^ current module name (ModuleName.toString form)
+    -> Env
+envWithFfiAndMods vars ffi externals sameModAnnots curMod =
+    Env vars ffi externals sameModAnnots curMod
 
 
 -- | Fresh name counter
@@ -56,15 +155,53 @@ constrainModuleWithExternals
     :: Map.Map (String, String) T.Annotation
     -> Can.Module
     -> IO T.Constraint
-constrainModuleWithExternals externals canMod = do
+constrainModuleWithExternals externals canMod =
+    -- v0.17 close P1 step 4 — legacy entry point preserved for
+    -- the LSP path (no FFI loader at single-module mode).  The
+    -- LSP-only path sees an empty FFI seed; that's
+    -- behaviour-equivalent to the pre-v0.17 single-module flow
+    -- where the LSP never populated 'Env.ffiKernelTypeRef' from
+    -- a full FFI scan.  The compiler driver uses
+    -- 'constrainModuleWithFfi' below.
+    constrainModuleWithFfi externals Map.empty canMod
+
+
+-- | v0.17 close P1 step 4 — primary entry point used by the
+-- compiler driver ('Sky.Build.Compile.solvePhase').
+--
+-- Takes the cross-module externals map AND the FFI-kernel
+-- signature map (sourced from
+-- @LoadedFfiTables._lft_kernelTypes@) and threads BOTH through
+-- the per-binding Env.  This replaces the
+-- @readIORef Env.ffiKernelTypeRef@ inside the @Can.VarKernel@
+-- arm with a strict value-channel read of @_envFfiKernelTypes@
+-- — there is no module-level IORef on this path.
+--
+-- The legacy 'Env.ffiKernelTypeRef' module-level IORef stays
+-- alive temporarily as a back-compat shim for callers that
+-- pre-date this entry point.  P1 step 7 owns its deletion.
+constrainModuleWithFfi
+    :: Map.Map (String, String) T.Annotation
+    -- ^ cross-module externals
+    -> Map.Map (String, String) T.Annotation
+    -- ^ FFI-kernel signatures (from
+    --   'LoadedFfiTables._lft_kernelTypes')
+    -> Can.Module
+    -> IO T.Constraint
+constrainModuleWithFfi externals ffiKernelTypes canMod = do
     counter <- newIORef 0
-    writeIORef globalExternals externals
-    writeIORef globalCurrentModule
-        (ModuleName.toString (Can._name canMod))
-    -- v0.15.1 — register same-module annotated TypedDef annotations
-    -- for fresh-instantiation at sibling call sites.
-    writeIORef globalSameModAnnots (collectSameModAnnots canMod)
-    constrainDecls counter Map.empty (Can._decls canMod)
+    -- v0.17 close iter 10 — defuse globalExternals /
+    -- globalCurrentModule / globalSameModAnnots IORefs.  These
+    -- three module-level values now flow as fields on the per-
+    -- compile Env, populated once here and read at the three
+    -- consumer sites (VarTopLevel arm + arityGateForTopLevel +
+    -- valueSlotGateForTopLevel).
+    let curModStr     = ModuleName.toString (Can._name canMod)
+        sameModAnnots = collectSameModAnnots canMod
+    constrainDecls counter
+                   (envWithFfiAndMods Map.empty ffiKernelTypes
+                                      externals sameModAnnots curModStr)
+                   (Can._decls canMod)
 
 
 -- | v0.15.1 — collect annotations from a module's TypedDef
@@ -89,46 +226,16 @@ collectSameModAnnots canMod =
         _ -> []
 
 
--- | Thread the external signature map through a global IORef so the
--- VarTopLevel handler in constrain can reach it without extending
--- every helper's signature.
---
--- NOT THREAD-SAFE for concurrent calls to constrainModuleWithExternals
--- with different externals. Compile.hs must either serialise those
--- calls or ensure all concurrent modules share the same externals.
-globalExternals :: IORef (Map.Map (String, String) T.Annotation)
-{-# NOINLINE globalExternals #-}
-globalExternals = unsafePerformIO (newIORef Map.empty)
-
-
--- | The module currently being solved. Set by
--- `constrainModuleWithExternals` alongside `globalExternals`.
---
--- VarTopLevel references whose `home` equals this previously emitted
--- `CLocal` regardless — to avoid breaking within-module mutual
--- recursion through stale dep-fixpoint annotations.  Per v0.15.1,
--- references to ANNOTATED TypedDefs in the current module instead
--- emit `CForeign` against the user's annotation (which alpha-renames
--- fresh per call site, fixing the same-module polymorphic-call
--- limitation).  Unannotated same-module refs still emit `CLocal`.
-globalCurrentModule :: IORef String
-{-# NOINLINE globalCurrentModule #-}
-
-
--- | v0.15.1 — same-module annotated TypedDef annotations.  Populated
--- by `constrainModule`/`constrainModuleWithExternals` from the
--- module's own `Can.TypedDef` entries.  Consumed by the
--- `Can.VarTopLevel` arm so same-module references to annotated
--- functions emit `CForeign` (alpha-rename fresh per call site) AND
--- the polymorphic helper handles multiple concrete instantiations
--- in the same module without pinning to the first call's type args.
---
--- Unannotated same-module references still emit `CLocal` to
--- preserve mutual-recursion guarantees (per the comment above).
-globalSameModAnnots :: IORef (Map.Map String T.Annotation)
-{-# NOINLINE globalSameModAnnots #-}
-globalSameModAnnots = unsafePerformIO (newIORef Map.empty)
-globalCurrentModule = unsafePerformIO (newIORef "")
+-- v0.17 close iter 10 — the legacy module-level IORefs
+-- 'globalExternals' / 'globalCurrentModule' / 'globalSameModAnnots'
+-- have all been DELETED.  Their value channels now flow as fields
+-- on the per-compile 'Env' record ('_envExternals' /
+-- '_envCurrentModule' / '_envSameModAnnots'), populated once by
+-- 'constrainModuleWithFfi' at module entry and read at three
+-- consumer sites: the 'Can.VarTopLevel' arm of 'constrain',
+-- 'arityGateForTopLevel', and 'valueSlotGateForTopLevel'.
+-- See criterion #3 ratchet in 'docs/v0.17.x-fully-typed-codegen/'
+-- for the IORef-defusing rationale.
 
 
 -- | Constrain a whole module's declarations.
@@ -160,7 +267,7 @@ constrainDecls counter env decls = do
     let allDefs = flattenDecls decls
         unannotated = [d | d@(Can.Def _ _ _) <- allDefs]
     unannInfos <- mapM (defTypeInfoIO counter) unannotated
-    let preEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env unannInfos
+    let preEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- unannInfos] env
         knownTypes = Map.fromList [(n, t) | (n, t, _) <- unannInfos]
         outerHeader = Map.fromList [ (n, (A.one, t)) | (n, t, _) <- unannInfos ]
     innerCon <- walkDecls counter preEnv knownTypes decls
@@ -183,14 +290,14 @@ walkDecls counter env known (Can.Declare def rest) = do
             c <- constrainDefWithKnownType counter env def t
             return (c, n, t)
         _ -> constrainDefWithType counter env def
-    let env' = Map.insert name (T.Forall [] defType) env
+    let env' = envInsert name (T.Forall [] defType) env
     restCon <- walkDecls counter env' known rest
     let header = Map.singleton name (A.one, defType)
     return $ T.CLet [] [] header defCon restCon
 walkDecls counter env known (Can.DeclareRec def defs rest) = do
     let allDefs = def : defs
     defInfos <- mapM (defTypeInfoIO counter) allDefs
-    let recEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env defInfos
+    let recEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- defInfos] env
     defCons <- mapM (\(_, ty, rdef) -> constrainDefWithKnownType counter recEnv rdef ty) defInfos
     restCon <- walkDecls counter recEnv known rest
     return $ T.CAnd (defCons ++ [restCon])
@@ -208,16 +315,158 @@ constrain counter env (A.At region expr) expected = case expr of
         return $ T.CLocal region name expected
 
     Can.VarTopLevel home name -> do
+        -- v0.17 PR-D (iter 32) — strict-HM value-slot gate.
+        -- Compute the gate constraint BEFORE the existing
+        -- CForeign / CLocal decision so the targeted [E2007]
+        -- diagnostic fires first via 'T.CAnd' composition (the
+        -- existing chain still runs alongside; the solver
+        -- short-circuits on first error per the CEqual contract).
+        -- v0.17 close iter 10 — valueSlotGateForTopLevel now reads
+        -- from Env (per-compile value channel) and is pure.
+        let valueSlotCon = valueSlotGateForTopLevel env region home name expected
+        -- ═══════════════════════════════════════════════════════
+        -- STRICT-HM ARITY GATE — surface 2 of 3 (cross-module
+        -- externals + same-module annotated TypedDefs)
+        -- ═══════════════════════════════════════════════════════
+        --
+        -- Design contract (shared with VarKernel + constrainCall —
+        -- search "STRICT-HM ARITY GATE" for the other two surfaces):
+        --
+        -- (1) THREE surfaces must gate to fully close Limitation #7
+        --     (calling a `: T` binding with `()` is silently
+        --     accepted, then codegen mis-applies and emits a
+        --     wrong-arity Go call):
+        --
+        --       * Can.VarKernel     — kernel-bound via
+        --                             lookupKernelType / ffiKernelTypeRef
+        --       * Can.VarTopLevel   — THIS arm:
+        --                             cross-module externals
+        --                             OR same-module annotated TypedDefs
+        --       * Can.VarLocal      — Env-bound bindings (let / lambda
+        --                             params / pattern destructure)
+        --
+        -- (2) Declared-arity computation MUST HeadAlias-unfold the
+        --     annotation BEFORE peeling TLambda chain.  Without
+        --     unfold, an aliased function shape like
+        --
+        --         type alias Handler = Request -> Task Error Response
+        --         myHandler : Handler
+        --
+        --     reads as nominal TType "Handler" — arity 0 — and the
+        --     gate would WRONGLY reject `myHandler req`.  Reuse the
+        --     existing 'unfoldHeadAlias' in
+        --     'Sky.Canonicalise.Module' (re-exported through a small
+        --     `Can.Type -> Can.Type` helper so we don't pull a
+        --     Canonicalise → Type layering cycle).  Once unfolded,
+        --     peel TLambda chain (cf.
+        --     'Sky.Build.Compile.splitFuncType' at line 6618 + the
+        --     'arrowArity' pattern at Compile.hs:6192) to count the
+        --     declared arity.  At the T.Type level (post-
+        --     Instantiate.fromAnnotation), the same peel uses
+        --     T.TLambda — see 'collectFuncParams' at Compile.hs:6082.
+        --
+        -- (3) Wildcard-`any` predicate — match the existing
+        --     polymorphism gate below (line ~224):
+        --
+        --         T.Forall freeVars _ | any (/= "any") freeVars
+        --
+        --     Real polymorphic bindings (Forall containing at least
+        --     ONE non-`any` var) MUST stay on the current CForeign
+        --     per-call-site re-instantiation path so the v0.15.1
+        --     same-module polymorphic re-instantiation behaviour
+        --     keeps working AND the head-alias Handler shape (#123)
+        --     keeps working.  Wildcard-only sigs and non-polymorphic
+        --     sigs are the gate's target — for those, declared arity
+        --     is FIXED by the annotation and a supplied-arity mismatch
+        --     is a soundness violation.
+        --
+        -- (4) Gate fires in TWO positions:
+        --
+        --     (a) constrainCall caller side — when the function head
+        --         resolves to an annotated binding with declared
+        --         arity D and the call supplies arity S where D ≠ S
+        --         in the leading-TUnit-vs-empty direction:
+        --
+        --           * D=0 (annotation `f : T`) called with S=1 unit-
+        --             arg `f ()` — Limitation #7's canonical shape.
+        --           * D=1 unit-arg (annotation `f : () -> T`) called
+        --             with S=0 args (`f` bare).
+        --
+        --         A simple unit-leading mismatch.  The gate REJECTS
+        --         with a clear E2xxx-style diagnostic ("`f` is
+        --         declared `: T` — drop the `()`" / "drop the bare
+        --         and write `f ()`").
+        --
+        --     (b) VAR-arm value-slot face — when a bare reference
+        --         to a `() -> T` declared binding flows into a slot
+        --         that expects non-arrow T.  This is the
+        --         partial-application-as-value mistake (`route =
+        --         someTask` where `someTask : () -> Task Error a`
+        --         and the route expects `Task Error a`).  Today
+        --         this surfaces as a Go-side mismatch much later.
+        --         Strict-HM rejects at the Var arm by checking the
+        --         'Expected T.Type' against the unfolded declared
+        --         shape.
+        --
+        -- (5) Codegen-side audit — leave it alone:
+        --
+        --     'Sky.Build.Compile.hs' has TWO `arity == 0` branches:
+        --
+        --       * line ~5629 (`generateCtorFunc`) — ADT
+        --         constructors like `Nothing` / `Empty` emit as a
+        --         value-shape Go decl (`var X = StructLit{...}`).
+        --         This is the CORRECT, declared shape for nullary
+        --         ADT ctors and has no relation to function-arity.
+        --         STAYS.
+        --
+        --       * line ~4736 (poly-union ctor emission) — sibling
+        --         path for parametric ADT ctors; same semantics
+        --         (value-shape Go decl when ctor takes no args).
+        --         STAYS.
+        --
+        --     Programs that pass strict-HM never reach codegen
+        --     with a declared-arity vs supplied-arity mismatch,
+        --     so no codegen change is needed once the HM gate is
+        --     in place.  Documenting here so future readers
+        --     understand: HM-only is sufficient; codegen carries
+        --     no defensive coverage for the rejected shape.
+        --
+        -- (6) Migration sequence for future PRs (not done in this
+        --     comment-only step):
+        --
+        --       * PR-A: add the declared-arity helper
+        --         (`declaredArity :: AliasMap -> Can.Type -> Int`)
+        --         to a shared module — likely
+        --         `Sky.Type.AnnotationShape` — and unit-test it.
+        --       * PR-B: thread an AliasMap into the constrain
+        --         pipeline (today Constrain doesn't read aliases
+        --         directly; threading mirrors the existing
+        --         externals + sameModAnnots IORef channel via
+        --         `globalAliasMap :: IORef (Map AliasMap)`).
+        --       * PR-C: install the gate at each of the THREE
+        --         surfaces; add the regression spec
+        --         `Sky.Type.Limitation7CurrentLooseAcceptance`
+        --         that pins the CURRENT loose acceptance, then
+        --         flip the assertion when the gate ships.
+        --       * PR-D: surface the `Sky.Core.Pure` migration hint
+        --         in the diagnostic so AI-written code is steered
+        --         to the v0.15.50 uniform `() -> Task Error a`
+        --         companion surface.
+        --
+        -- ═══════════════════════════════════════════════════════
+        --
         -- Cross-module channel: emit CForeign so the solver
         -- instantiates fresh vars at this call site.  Same-module
         -- references emit CForeign when the target is an ANNOTATED
         -- TypedDef (v0.15.1 — fixes the same-module polymorphic-
         -- call limitation), and CLocal otherwise (preserves mutual-
         -- recursion through shared env vars).
-        externals <- readIORef globalExternals
-        currentModule <- readIORef globalCurrentModule
-        sameModAnnots <- readIORef globalSameModAnnots
-        let homeStr = ModuleName.toString home
+        -- v0.17 close iter 10 — read from Env (per-compile value
+        -- channel) instead of module-level IORefs.
+        let externals     = _envExternals env
+            currentModule = _envCurrentModule env
+            sameModAnnots = _envSameModAnnots env
+            homeStr       = ModuleName.toString home
         if homeStr == currentModule
             then case Map.lookup name sameModAnnots of
                 Just annot@(T.Forall freeVars _) | any (/= "any") freeVars ->
@@ -253,24 +502,86 @@ constrain counter env (A.At region expr) expected = case expr of
                     -- — both NewAppForm refs need to share their
                     -- inner Record1 var via the env's shared CLocal
                     -- path, not via fresh per-call TAlias UF vars).
-                    return $ T.CForeign region
-                        (homeStr ++ "." ++ name) annot expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CForeign region (homeStr ++ "." ++ name) annot expected
+                        ]
                 _ ->
                     -- Unannotated OR non-polymorphic-only-wildcard
                     -- same-module ref: shared env var.
-                    return $ T.CLocal region name expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CLocal region name expected
+                        ]
             else case Map.lookup (homeStr, name) externals of
                 Just annot ->
-                    return $ T.CForeign region (homeStr ++ "." ++ name) annot expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CForeign region (homeStr ++ "." ++ name) annot expected
+                        ]
                 Nothing ->
-                    return $ T.CLocal region name expected
+                    return $ T.CAnd
+                        [ valueSlotCon
+                        , T.CLocal region name expected
+                        ]
 
     Can.VarKernel modName funcName -> do
+        -- v0.17 PR-D (iter 32) — strict-HM value-slot gate.
+        -- Computed before the existing kernel CForeign / fallback
+        -- decision so the gate's [E2007] diagnostic short-circuits
+        -- the legacy CEqual via the CAnd composition.
+        let valueSlotCon = valueSlotGateForKernel env region modName funcName expected
+        -- ═══════════════════════════════════════════════════════
+        -- STRICT-HM ARITY GATE — surface 1 of 3 (kernel-bound)
+        -- ═══════════════════════════════════════════════════════
+        --
+        -- See the full design note above the Can.VarTopLevel arm
+        -- (search "STRICT-HM ARITY GATE — surface 2 of 3" — that
+        -- block carries the (1)-(6) contract this surface
+        -- participates in).  Highlights for the kernel surface:
+        --
+        --   * Kernel annotations come from `lookupKernelType` (hand-
+        --     coded in `Sky.Type.Kernel`) AND `ffiKernelTypeRef`
+        --     (Sky-side type seeded by the FFI registry).  Both
+        --     channels write a 'T.Forall' — the gate's
+        --     declared-arity computation should be uniform across
+        --     them.
+        --
+        --   * Limitation #7 originated AT this surface — calling
+        --     `Uuid.v4` (declared `: String`) with `()` codegen-
+        --     applied the unit thunk and emitted `Uuid_v4()()`
+        --     against a `func() any` Go shape.  Today the v0.17
+        --     PR-23 codegen tightening rejects this Go-side, but
+        --     the HM type-checker still loosely accepts it.
+        --
+        --   * v0.15.50 shipped 'Sky.Core.Pure' as a uniform
+        --     `() -> Task Error a` companion surface
+        --     (Pure.uuidV4 () / Pure.timeNow () / etc.) so AI-
+        --     written code can target a single arity convention
+        --     without renaming existing kernels.  When the gate
+        --     fires here, the diagnostic SHOULD steer users to
+        --     `Sky.Core.Pure` for the bindings that have a Pure.*
+        --     companion (audit `sky-stdlib/Sky/Core/Pure.sky` for
+        --     the canonical list).
+        --
+        --   * Kernel sigs are wildcard-aware (e.g.
+        --     `Db.exec : Db -> String -> List any -> Task Error ()`
+        --     binds wildcard `any` at the param slot).  Per the
+        --     wildcard-`any` predicate in (3), kernel sigs whose
+        --     ONLY free vars are `any` MUST gate (their declared
+        --     arity is fixed); kernel sigs with at least one non-
+        --     `any` free var (e.g. `Maybe.map : (a -> b) -> Maybe
+        --     a -> Maybe b`) are real polymorphic and keep
+        --     CForeign per-call-site instantiation.
+        --
         -- Stdlib kernel sigs (handcoded in lookupKernelType) take
         -- precedence — they're the most carefully audited surface.
         case lookupKernelType modName funcName of
             Just annot ->
-                return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+                return $ T.CAnd
+                    [ valueSlotCon
+                    , T.CForeign region (modName ++ "." ++ funcName) annot expected
+                    ]
             Nothing -> do
                 -- Per-FFI-function Sky-side type seeded by
                 -- 'Sky.Build.Compile.loadAndSeedFfiRegistry' from
@@ -286,11 +597,26 @@ constrain counter env (A.At region expr) expected = case expr of
                 -- — bare-using a Result-wrapped FFI return is now
                 -- a TYPE ERROR with a hint pointing at
                 -- @case ... of Ok v -> ...@ or @Result.andThen@.
-                ffiTypes <- readIORef Env.ffiKernelTypeRef
+                -- v0.17 close P1 step 4 — strict value-channel
+                -- read of the FFI-kernel signature map from the
+                -- Env record's _envFfiKernelTypes field.  The
+                -- compiler driver seeds this via
+                -- 'constrainModuleWithFfi' (called from
+                -- 'Sky.Build.Compile.solvePhase' with
+                -- @_lft_kernelTypes loadedFfi@); the legacy LSP
+                -- entry point 'constrainModule' /
+                -- 'constrainModuleWithExternals' supplies an
+                -- empty map, behaviour-equivalent to the
+                -- pre-v0.17 single-module LSP path where the
+                -- module-level IORef was never populated.
+                let ffiTypes = _envFfiKernelTypes env
                 case Map.lookup (modName, funcName) ffiTypes of
                     Just annot ->
-                        return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
-                    Nothing -> return T.CTrue
+                        return $ T.CAnd
+                            [ valueSlotCon
+                            , T.CForeign region (modName ++ "." ++ funcName) annot expected
+                            ]
+                    Nothing -> return (T.CAnd [valueSlotCon, T.CTrue])
 
     Can.VarCtor _opts _home _typeName ctorName annot ->
         return $ T.CForeign region ctorName annot expected
@@ -613,7 +939,7 @@ constrainLambda counter env region params body expected = do
     perParam <- mapM (uncurry (patternBindingsIO counter)) (zip params paramTypes)
     let paramBindings = concatMap fst perParam
         structuralCons = concatMap snd perParam
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+        bodyEnv = envInsertMany paramBindings env
     bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
     -- Wrap body in CLet so param names are scoped. Without this the solver's
     -- runtime _env leaks lambda params (or pattern names) into whatever
@@ -630,9 +956,79 @@ constrainLambda counter env region params body expected = do
 -- ═══════════════════════════════════════════════════════════
 -- CALL
 -- ═══════════════════════════════════════════════════════════
+--
+-- ───────────────────────────────────────────────────────────
+-- STRICT-HM ARITY GATE — surface 3 of 3 (call site)
+-- ───────────────────────────────────────────────────────────
+--
+-- See the full design note above the Can.VarTopLevel arm
+-- (search "STRICT-HM ARITY GATE — surface 2 of 3").  This is
+-- the gate's PRIMARY firing surface: position (4)(a) — when
+-- the function head resolves to an annotated binding and the
+-- call supplies arity ≠ declared arity in the leading-TUnit-
+-- vs-empty direction.
+--
+-- Today this function emits CForeign / CLocal via the Var arm
+-- AND a CApp constraint pinning `foldr T.TLambda resultType
+-- argTypes` against `funcType`.  HM unifies the synthesised
+-- TLambda chain (one arrow per supplied arg) against the
+-- annotation; the wildcard-`any` arm of the unifier accepts
+-- mismatches that would otherwise be type errors.
+--
+-- The strict-HM gate's call-site responsibility:
+--
+--   (a) Resolve the func head's declared shape — when func is
+--       a 'Can.VarTopLevel' / 'Can.VarKernel' / 'Can.VarLocal'
+--       and an annotation is available, HeadAlias-unfold +
+--       Instantiate.fromAnnotation + peel TLambda chain to
+--       compute declared arity D.
+--
+--   (b) Compute supplied arity S = length args.
+--
+--   (c) Reject when (D, S) is in the Limitation #7 mismatch
+--       set:
+--
+--         * D = 0 (declared `: T`) AND S ≥ 1 with the first
+--           arg being 'Can.Unit'  →  "calling `: T` with `()`"
+--         * D ≥ 1 with leading TLambda TUnit (declared
+--           `: () -> ...`) AND S = 0  →  "bare reference,
+--           drop into call shape `f ()`"
+--
+--   (d) When the func head is a polymorphic Forall containing
+--       at least one non-`any` var, SKIP the gate — real
+--       polymorphism preserves the v0.15.1 same-mod
+--       re-instantiation behaviour AND the head-alias Handler
+--       shape (#123).
+--
+--   (e) When the func head doesn't resolve to an annotation
+--       (lambda head, complex expression head), SKIP the gate
+--       — the existing CApp unification handles those cleanly
+--       (no Limitation #7 risk because there's no declared
+--       shape to violate).
+--
+-- Codegen-side audit: see (5) in the design note above
+-- Can.VarTopLevel.  Programs rejected by this gate never
+-- reach codegen, so the `arity == 0` ADT-ctor emission paths
+-- at Compile.hs:5629 + 4736 are unaffected — they handle the
+-- DIFFERENT case of nullary ADT constructors emitting as
+-- value-shape Go decls.
+--
+-- This step adds the design note only; the gate implementation
+-- lands in subsequent PRs (see (6) migration sequence).
+--
+-- ═══════════════════════════════════════════════════════════
 
 constrainCall :: Counter -> Env -> T.Region -> Can.Expr -> [Can.Expr] -> T.Expected T.Type -> IO T.Constraint
 constrainCall counter env region func args expected = do
+    -- v0.17 PR-C (Limitation #7 close, iter 31) — strict-HM arity
+    -- gate.  Build the arity constraint BEFORE the existing chain
+    -- so the diagnostic fires first (solver short-circuits on first
+    -- error per the CEqual contract).  See
+    -- docs/v0.17-roadmap/strict-hm-arity-gate-design.md for the
+    -- full plan; PR-C covers the k-a + u-a shapes (D=0, S=1, head
+    -- arg is Can.Unit).  PR-D extends to the value-slot k-b + u-b
+    -- shapes at the Var arm.
+    arityGateCon <- arityGateCall env region func args
     resultName <- freshName counter "_cres"
     argNames <- mapM (\_ -> freshName counter "_carg") args
     let resultType = T.TVar resultName
@@ -642,7 +1038,216 @@ constrainCall counter env region func args expected = do
     argCons <- zipWithM (\argType arg ->
         constrain counter env arg (T.FromContext region (T.CallArg "f" 0) argType))
         argTypes args
-    return $ T.CAnd (funcCon : argCons ++ [T.CEqual region T.CApp resultType expected])
+    return $ T.CAnd (arityGateCon : funcCon : argCons ++ [T.CEqual region T.CApp resultType expected])
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-C — Strict-HM arity gate (call-site surface).
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- Peeks the immediate function head and emits 'T.CArityMismatch'
+-- when:
+--   * the head resolves to a 'Can.VarKernel' or 'Can.VarTopLevel'
+--     binding with an available annotation,
+--   * the annotation is NOT real-polymorphic
+--     (per 'any (/= "any") freeVars' — wildcard-only and
+--     monomorphic are gate targets; real polymorphism stays
+--     on CForeign per the v0.15.1 contract),
+--   * the declared arity D = 0 AND the supplied arity S = 1
+--     AND the head arg is exactly 'Can.Unit' (the
+--     Limitation #7 k-a + u-a shape).
+--
+-- Returns 'T.CTrue' otherwise — the existing CApp constraint chain
+-- still runs unchanged.  Compose with the existing chain at the
+-- call site via 'T.CAnd'.
+--
+-- See above 'constrainCall' for the (1)-(6) contract this surface
+-- participates in.
+arityGateCall :: Env -> T.Region -> Can.Expr -> [Can.Expr] -> IO T.Constraint
+arityGateCall env region func args =
+    case A.toValue func of
+        Can.VarKernel modName funcName ->
+            return (arityGateForKernel env region modName funcName args)
+        Can.VarTopLevel home funcName ->
+            -- v0.17 close iter 10 — arityGateForTopLevel now reads
+            -- via Env (per-compile value channel) and is pure.
+            return (arityGateForTopLevel env region home funcName args)
+        _ -> return T.CTrue
+
+
+-- | Lookup the kernel's annotation via the two-channel kernel
+-- registry (handcoded 'lookupKernelType' takes precedence; FFI
+-- registry's @_envFfiKernelTypes@ is the fallback per the existing
+-- 'Can.VarKernel' arm at line ~504).  Then dispatch through the
+-- shared 'maybeEmitArityMismatch' decision.
+arityGateForKernel :: Env -> T.Region -> String -> String -> [Can.Expr] -> T.Constraint
+arityGateForKernel env region modName funcName args =
+    let annotMb = case lookupKernelType modName funcName of
+            Just a  -> Just a
+            Nothing -> Map.lookup (modName, funcName) (_envFfiKernelTypes env)
+    in maybeEmitArityMismatch region (modName ++ "." ++ funcName) annotMb args
+
+
+-- | Lookup the top-level binding's annotation.  Same-module reads
+-- 'globalSameModAnnots'; cross-module reads 'globalExternals'.
+-- Both are POST-canonicalisation (head-alias unfolded per PR #123
+-- / PR-B step 2's externals trace).
+--
+-- v0.17 close iter 10 — now reads from the per-compile 'Env'
+-- value-channel (no module-level IORef).  Returns a pure
+-- 'T.Constraint' since the IO side-effect is gone.
+arityGateForTopLevel
+    :: Env -> T.Region -> ModuleName.Canonical -> String -> [Can.Expr] -> T.Constraint
+arityGateForTopLevel env region home name args =
+    let currentModule = _envCurrentModule env
+        homeStr       = ModuleName.toString home
+        annotMb =
+            if homeStr == currentModule
+                then Map.lookup name (_envSameModAnnots env)
+                else Map.lookup (homeStr, name) (_envExternals env)
+    in maybeEmitArityMismatch region (homeStr ++ "." ++ name) annotMb args
+
+
+-- | Decide whether to emit a 'CArityMismatch' constraint given an
+-- annotation candidate.  The decision applies the wildcard-`any`
+-- gate then the (D = 0, S = 1, head = Unit) shape match.
+maybeEmitArityMismatch
+    :: T.Region -> String -> Maybe T.Annotation -> [Can.Expr] -> T.Constraint
+maybeEmitArityMismatch _region _name Nothing _args = T.CTrue
+maybeEmitArityMismatch region name (Just annot@(Can.Forall freeVars _)) args
+    -- Real polymorphism — per the v0.15.1 same-mod CForeign
+    -- contract + the wildcard-`any` rule (CLAUDE.md), free vars
+    -- containing at least one non-`any` name keep the existing
+    -- per-call-site instantiation behaviour unchanged.
+    | any (/= "any") freeVars = T.CTrue
+    | otherwise =
+        let d = declaredArity annot
+            s = length args
+            headIsUnit = case args of
+                (A.At _ Can.Unit : _) -> True
+                _                     -> False
+        in if d == 0 && s == 1 && headIsUnit
+            then T.CArityMismatch region name 0 1
+            else T.CTrue
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-D — Strict-HM arity gate (Var-arm value-slot surface).
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- The Var-arm twin of 'arityGateCall'.  Fires when a bare
+-- reference to a binding declared `: () -> X` (or `: A -> B -> ...`,
+-- any D >= 1 shape) flows into a non-arrow value slot.  Limitation
+-- #7's k-b + u-b shapes:
+--
+--     doNow : Task Error Int   -- value slot — non-arrow
+--     doNow = Time.now         -- Time.now : () -> Task Error Int
+--
+--     msg : String             -- value slot — non-arrow
+--     msg = bar                -- bar : () -> String
+--
+-- The decision logic mirrors 'maybeEmitArityMismatch' but reads
+-- the slot's expected type instead of the supplied args.  Skip
+-- when:
+--   * no annotation found (Nothing — fall back to legacy path)
+--   * real polymorphism (any (/= "any") freeVars)
+--   * D = 0 (already covered by PR-C's call-site gate)
+--   * expected is a TVar (unknown shape — let CEqual decide later
+--     so we don't false-fire on let-bindings with no LHS
+--     annotation, where 'constrain' synthesises a fresh TVar)
+--   * expected's unfolded shape is a function (TLambda or TAlias
+--     unfolding to TLambda — caller wants a function and our
+--     declared `: () -> X` satisfies)
+--
+-- Emit 'T.CArityMismatch region name D 0' otherwise — supplied
+-- arity = 0 (no Call wrapping; bare reference at value slot).
+--
+-- Wired at both 'Can.VarKernel' (kernel-bound) and
+-- 'Can.VarTopLevel' (same-module via globalSameModAnnots,
+-- cross-module via globalExternals).  'Can.VarLocal' is
+-- intentionally NOT gated — local bindings carry no separate
+-- annotation channel and the existing 'CLocal' / 'CForeign'
+-- chain handles them via the standard env-var path.
+valueSlotGateForKernel
+    :: Env -> T.Region -> String -> String -> T.Expected T.Type -> T.Constraint
+valueSlotGateForKernel env region modName funcName expected =
+    let annotMb = case lookupKernelType modName funcName of
+            Just a  -> Just a
+            Nothing -> Map.lookup (modName, funcName) (_envFfiKernelTypes env)
+    in maybeEmitValueSlotMismatch region (modName ++ "." ++ funcName) annotMb expected
+
+
+--
+-- v0.17 close iter 10 — reads from per-compile 'Env' value-channel
+-- (no module-level IORef).  Returns a pure 'T.Constraint'.
+valueSlotGateForTopLevel
+    :: Env -> T.Region -> ModuleName.Canonical -> String -> T.Expected T.Type -> T.Constraint
+valueSlotGateForTopLevel env region home name expected =
+    let currentModule = _envCurrentModule env
+        homeStr       = ModuleName.toString home
+        annotMb =
+            if homeStr == currentModule
+                then Map.lookup name (_envSameModAnnots env)
+                else Map.lookup (homeStr, name) (_envExternals env)
+    in maybeEmitValueSlotMismatch region (homeStr ++ "." ++ name) annotMb expected
+
+
+-- | Decide whether to emit a 'CArityMismatch' constraint for the
+-- value-slot case.
+maybeEmitValueSlotMismatch
+    :: T.Region -> String -> Maybe T.Annotation -> T.Expected T.Type -> T.Constraint
+maybeEmitValueSlotMismatch _region _name Nothing _expected = T.CTrue
+maybeEmitValueSlotMismatch region name (Just annot@(Can.Forall freeVars _)) expected
+    | any (/= "any") freeVars = T.CTrue
+    | otherwise =
+        let d = declaredArity annot
+            slotShape = expectedSlotShape (expectedTypeOf expected)
+        in case slotShape of
+            SlotShapeValue
+                | d >= 1 -> T.CArityMismatch region name d 0
+            _ -> T.CTrue
+
+
+-- | Extract the 'Type' payload from an 'Expected' wrapper.
+expectedTypeOf :: T.Expected T.Type -> Can.Type
+expectedTypeOf (T.NoExpectation t)         = t
+expectedTypeOf (T.FromContext _ _ t)       = t
+expectedTypeOf (T.FromAnnotation _ _ _ t)  = t
+
+
+-- | Classify the structural shape of an expected slot type so the
+-- value-slot gate can decide.
+--
+--   SlotShapeUnknown — the expected type is a fresh UF var (TVar);
+--                      we don't know what shape the slot expects
+--                      yet; defer to CEqual.
+--   SlotShapeArrow   — the expected type is a TLambda (peeled
+--                      through head-aliases); the slot wants a
+--                      function; our `: () -> X` declared shape
+--                      satisfies the slot; no gate fire.
+--   SlotShapeValue   — the expected type is a concrete non-arrow
+--                      structured type (TType / TRecord / TTuple /
+--                      TUnit); the slot wants a VALUE; our
+--                      `: () -> X` is a function — gate fires when
+--                      D >= 1.
+data SlotShape = SlotShapeUnknown | SlotShapeArrow | SlotShapeValue
+
+
+expectedSlotShape :: Can.Type -> SlotShape
+expectedSlotShape ty = case ty of
+    Can.TVar _              -> SlotShapeUnknown
+    Can.TLambda _ _         -> SlotShapeArrow
+    Can.TAlias _ _ _ aliasT -> expectedSlotShape (aliasInnerType aliasT)
+    Can.TType _ _ _         -> SlotShapeValue
+    Can.TRecord _ _         -> SlotShapeValue
+    Can.TTuple _ _ _        -> SlotShapeValue
+    Can.TUnit               -> SlotShapeValue
+
+
+-- | Extract the alias's filled / hoisted body for structural peel.
+aliasInnerType :: Can.AliasType -> Can.Type
+aliasInnerType (Can.Hoisted t) = t
+aliasInnerType (Can.Filled t)  = t
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -672,7 +1277,7 @@ constrainIf counter env region branches elseExpr expected = do
 constrainLet :: Counter -> Env -> Can.Def -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
 constrainLet counter env def body expected = do
     (defCon, name, defType) <- constrainDefWithType counter env def
-    let bodyEnv = Map.insert name (T.Forall [] defType) env
+    let bodyEnv = envInsert name (T.Forall [] defType) env
     bodyCon <- constrain counter bodyEnv body expected
     -- Wrap with CLet so the bound name has proper lexical scope in the
     -- solver's runtime env — otherwise `let x = ... in ...` leaks `x`
@@ -687,7 +1292,7 @@ constrainLetRec counter env defs body expected = do
     -- `defTypeInfoIO` returns the (alpha-renamed) def whose body is
     -- constrained against the SAME type that went into recEnv.
     defInfos <- mapM (defTypeInfoIO counter) defs
-    let recEnv = foldr (\(n, t, _) e -> Map.insert n (T.Forall [] t) e) env defInfos
+    let recEnv = envInsertMany [(n, T.Forall [] t) | (n, t, _) <- defInfos] env
     defCons <- mapM (\(_, ty, rdef) -> constrainDefWithKnownType counter recEnv rdef ty) defInfos
     bodyCon <- constrain counter recEnv body expected
     let header = Map.fromList [(n, (A.one, t)) | (n, t, _) <- defInfos]
@@ -700,7 +1305,7 @@ constrainLetDestruct counter env pat valExpr body expected = do
     let valType = T.TVar vName
     valCon <- constrain counter env valExpr (T.NoExpectation valType)
     let bindings = patternBindings (pat, valType)
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
+        bodyEnv = envInsertMany bindings env
     bodyCon <- constrain counter bodyEnv body expected
     let header = Map.fromList
             [ (n, (A.one, t))
@@ -718,7 +1323,7 @@ constrainDefWithType counter env def = case def of
         let paramTypes = map T.TVar paramNames
             resultType = T.TVar resultName
             paramBindings = concatMap patternBindings (zip params paramTypes)
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
             funcType = foldr T.TLambda resultType paramTypes
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
         -- Wrap body in CLet that introduces parameter bindings into solver env
@@ -743,7 +1348,7 @@ constrainDefWithType counter env def = case def of
             typedPats' = [ (pat, renameT ty) | (pat, ty) <- typedPats ]
             retType' = renameT retType
             paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats'
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
             funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType' typedPats'
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType')
         -- Wrap body in CLet so param bindings flow into the solver's
@@ -775,7 +1380,7 @@ constrainDefWithKnownType counter env def knownType = case def of
     Can.Def (A.At _region _name) params body -> do
         let (paramTypes, resultType) = splitFuncTypeN (length params) knownType
             paramBindings = concatMap patternBindings (zip params paramTypes)
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
         -- Wrap body in CLet so param names are scoped in the solver's
         -- runtime env — without this, sibling defs' param vars leak
@@ -787,7 +1392,7 @@ constrainDefWithKnownType counter env def knownType = case def of
 
     Can.TypedDef (A.At _region _name) _freeVars typedPats body retType -> do
         let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
-            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            bodyEnv = envInsertMany paramBindings env
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
         let paramHeader = Map.fromList
                 [ (pname, (A.one, ptype))
@@ -838,7 +1443,7 @@ constrainBranch counter env region subjectType resultType branchIdx (Can.CaseBra
     -- ADT argTypes fall back to raw `TVar "a"` from the union definition,
     -- and multiple pattern matches end up sharing the same stale "a".
     (bindings, ctorEqs) <- instantiatePattern counter pat subjectType
-    let branchEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
+    let branchEnv = envInsertMany bindings env
     bodyCon <- constrain counter branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
     let patHeader = Map.fromList
             [ (pname, (A.one, ptype))
@@ -971,7 +1576,7 @@ substTypeVars subst ct = case ct of
     Can.TUnit        -> T.TUnit
     Can.TTuple a b cs -> T.TTuple (substTypeVars subst a) (substTypeVars subst b)
                                   (map (substTypeVars subst) cs)
-    Can.TRecord _ _ -> T.TVar "_rec"  -- records at pattern level not supported
+    Can.TRecord _ _ -> Solve.unresolvedSentinel Solve.UnresolvedPatternRec  -- v0.17 PR-10 step 4
     Can.TAlias h n pairs aliasType ->
         T.TAlias h n
             [(k, substTypeVars subst t) | (k, t) <- pairs]
@@ -992,15 +1597,16 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PRecord fields -> map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields
     Can.PUnit -> []
     Can.PTuple a b more ->
+        -- v0.17 PR-10 step 4: typed pattern-side sentinels.
         concat $
-            patternBindings (a, T.TVar "_tup_0")
-            : patternBindings (b, T.TVar "_tup_1")
+            patternBindings (a, Solve.unresolvedSentinel Solve.UnresolvedPatternTup0)
+            : patternBindings (b, Solve.unresolvedSentinel Solve.UnresolvedPatternTup1)
             : zipWith (\i p -> patternBindings (p, T.TVar ("_tup_" ++ show (i :: Int))))
                       [2 ..] more
     Can.PList items ->
-        concatMap (\item -> patternBindings (item, T.TVar "_list_elem")) items
+        concatMap (\item -> patternBindings (item, Solve.unresolvedSentinel Solve.UnresolvedPatternListElem)) items
     Can.PCons h t ->
-        let elemType = T.TVar "_cons_elem"
+        let elemType = Solve.unresolvedSentinel Solve.UnresolvedPatternConsElem
             listType = T.TType ModuleName.list "List" [elemType]
         in patternBindings (h, elemType) ++ patternBindings (t, listType)
     Can.PBool _ -> []
@@ -3460,3 +4066,66 @@ subTypeOfMsg = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
 -- the user imports from.
 decoderOf :: T.Type -> T.Type
 decoderOf inner = T.TType (ModuleName.Canonical "") "Decoder" [inner]
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v0.17 PR-B — Strict-HM arity gate, pure helper
+-- (paired design spec: docs/v0.17-roadmap/strict-hm-arity-gate-design.md)
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- 'declaredArity ann' counts the leading 'T.TLambda' arrows in
+-- @ann@'s body — i.e. how many parameters the annotation declares
+-- the binding takes.  Pure structural walk.  No fresh UF vars; no
+-- 'Instantiate.fromAnnotation' (which returns a 'T.Variable', not
+-- a 'T.Type', and would force us into the solver before we knew the
+-- arity).
+--
+-- Examples (Sky-side annotation → declaredArity):
+--
+--     Uuid.v4    : String                            → 0
+--     Time.now   : () -> Task Error Int              → 1
+--     Server.get : String -> Handler -> Server.Route → 2
+--     myHandler  : Handler                           → see below
+--
+-- The "myHandler : Handler" case is the verification anchor for
+-- PR-B step 2 (cross-module HeadAlias safety).  By the time the
+-- annotation reaches 'globalExternals' / 'globalSameModAnnots',
+-- canonicalisation (Sky.Canonicalise.Module's 'arrowResultN' +
+-- 'arrowArgs' helpers; v0.16.4 PR #123) has UNFOLDED the head
+-- 'TAlias' so the body the gate walks is already
+-- @TLambda Request (TType "Task" [...])@ — declaredArity returns
+-- 1 (one arg, 'Request') and the gate behaves correctly when a
+-- user writes @myHandler req@.  This is preserved across
+-- cross-module reads because 'buildCrossModuleExternalsWithMods'
+-- at 'Sky.Build.Compile.hs:7866' wraps the dep solver's
+-- 'T.Type' (already post-canonicalisation, head-alias-unfolded)
+-- via 'generaliseToAnnotation'.  See the design spec for the
+-- full trace.
+--
+-- USAGE GATE — wildcard-`any` filter MUST gate calls to
+-- declaredArity:
+--
+--     case envLookup name env of
+--         Just ann@(T.Forall freeVars _)
+--             | any (/= "any") freeVars ->
+--                 -- Real polymorphism — fresh per-call-site
+--                 -- instantiation handles arity flexibly via
+--                 -- CForeign.  Do NOT use declaredArity here;
+--                 -- v0.15.1's same-module polymorphic
+--                 -- re-instantiation depends on it.
+--                 polymorphicArm ann
+--         Just ann ->
+--             -- Wildcard-only OR monomorphic.  declaredArity is
+--             -- the load-bearing shape.  Use the strict gate.
+--             strictArm (declaredArity ann)
+--
+-- The above caller wiring is PR-C (iter 31).  This helper ships
+-- in PR-B (iter 30) so 'Sky.Type.StrictHmArityGateSpec' /
+-- 'Sky.Type.Limitation7CurrentLooseAcceptanceSpec' can be
+-- exercised against it without a behaviour change in
+-- 'constrainCall'.
+declaredArity :: T.Annotation -> Int
+declaredArity (Can.Forall _ ty) = go (0 :: Int) ty
+  where
+    go n (Can.TLambda _ to) = let n' = n + 1 in n' `seq` go n' to
+    go n _                  = n

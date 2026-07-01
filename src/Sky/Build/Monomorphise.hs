@@ -412,7 +412,7 @@ collectCallSitesDef def = case def of
 reachableInstances
     :: Map.Map String Can.Def
     -> Map.Map String Can.Annotation
-    -> Map.Map (Int, Int) Solve.CallInstance
+    -> Map.Map (String, Int, Int) Solve.CallInstance
     -> [Instance]
     -> ReachableSet
 reachableInstances defMap annotMap csiMap entries = go Set.empty entries
@@ -429,9 +429,25 @@ reachableInstances defMap annotMap csiMap entries = go Set.empty entries
                 bodyCalls = case Map.lookup qName defMap of
                         Just d  -> collectCallSitesDef d
                         Nothing -> []
+                -- v0.17 C24 — derive the (modName, line, col) key.
+                -- The csiMap key is "" for write-side when
+                -- SKY_CSI_WIDEN_KEY is unset.  We can't read env
+                -- vars from this pure function — instead probe the
+                -- csiMap's first key to decide whether to use "".
+                -- This keeps Mono in sync with Compile.hs without
+                -- threading the flag through every call.
+                firstKey = case Map.keys csiMap of
+                    (k:_) -> k
+                    _ -> ("", 0, 0)
+                wideningOn = case firstKey of (m, _, _) -> not (null m)
+                hostMod = if not wideningOn then "" else
+                    case reverse (List.findIndices (== '.') qName) of
+                        (i : _) -> take i qName
+                        []      -> ""
                 newCalls = mapMaybe
                     (\(region, callee) ->
-                        let key = ( A._line (A._start region)
+                        let key = ( hostMod
+                                  , A._line (A._start region)
                                   , A._col  (A._start region) )
                             siteTypes = case Map.lookup key csiMap of
                                 Just (Solve.CallInstance _ tys _) -> tys
@@ -549,10 +565,11 @@ specialiseFuncDecl mangledName σ originalName func =
         Ir.GoSwitch e branches ->
             Ir.GoSwitch (substExpr e)
                 [(substExpr v, map substStmt body) | (v, body) <- branches]
-        Ir.GoTypeSwitch n e branches ->
+        Ir.GoTypeSwitch n e branches mDefault ->
             Ir.GoTypeSwitch n (substExpr e)
                 [(substTypeParamsInString σ t, map substStmt body)
                 | (t, body) <- branches]
+                (fmap (map substStmt) mDefault)
         Ir.GoFor n e body ->
             Ir.GoFor n (substExpr e) (map substStmt body)
         Ir.GoForever body ->

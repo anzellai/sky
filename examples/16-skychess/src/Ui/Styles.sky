@@ -70,7 +70,7 @@ sqLastDark = hex "aba23a"
 globalStyles =
     stylesheet
         [ rule "*, *::before, *::after"
-              [ property "box-sizing" "border-box" , margin (zero ()) , padding (zero ()) ]
+              [ property "box-sizing" "border-box" , margin zero , padding zero ]
         , rule "body"
               [ fontFamily
                     "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif"
@@ -82,19 +82,19 @@ globalStyles =
         , rule "a" [ color primary , textDecoration NoDecoration ]
         , rule "a:hover" [ textDecoration Underline ]
         , rule ".container"
-              [ maxWidth (px 1100) , margin2 (zero ()) (auto ()) , padding2 (zero ()) (px 20) ]
+              [ maxWidth (px 1100) , margin2 zero auto , padding2 zero (px 20) ]
         , rule ".header"
               [ backgroundColor bgCard
               , borderBottom ("1px solid " ++ colorToString borderLight)
-              , padding2 (px 16) (zero ())
+              , padding2 (px 16) zero
               , property "position" "sticky"
-              , top (zero ())
+              , top zero
               , zIndex 100
               ]
         , rule ".header-inner"
               [ maxWidth (px 1100)
-              , margin2 (zero ()) (auto ())
-              , padding2 (zero ()) (px 20)
+              , margin2 zero auto
+              , padding2 zero (px 20)
               , display Flex
               , justifyContent SpaceBetween
               , alignItems Center
@@ -145,7 +145,7 @@ globalStyles =
               , padding (px 24)
               ]
         -- Home page
-        , rule ".home-container" [ maxWidth (px 600) , margin2 (px 40) (auto ()) ]
+        , rule ".home-container" [ maxWidth (px 600) , margin2 (px 40) auto ]
         , rule ".home-title"
               [ fontSize (px 36)
               , fontWeight (Weight 700)
@@ -256,7 +256,7 @@ globalStyles =
               , fontSize (px 44)
               , cursor Pointer
               , position Relative
-              , padding (zero ())
+              , padding zero
               , lineHeight (num 1.0)
               ]
         , rule ".sq-light" [ backgroundColor sqLight ]
@@ -297,7 +297,7 @@ globalStyles =
               , fontSize (px 13)
               , fontWeight (Weight 600)
               , color textMuted
-              , padding2 (px 4) (zero ())
+              , padding2 (px 4) zero
               ]
         -- Status bar
         , rule ".status-bar"
