@@ -194,9 +194,16 @@ import qualified Data.Map.Strict as Map
 -- `rt.CoerceString(x)` / `rt.MaybeCoerce(x)` / `rt.AsListT[T](x)`
 -- typed-fast-path equivalent.  No new untyped path is
 -- introduced.  Ratchet baselines to the new floor.
+-- 2026-07-01 (v0.17 Gap 1): sealed-iface classifier arm added
+-- to Compile.hs routes previously-raw `.(SealedIface)` sites
+-- through `rt.Coerce[<iface>]` — direct CLAUDE.md §8
+-- non-regression enforcement. All new sites are Class 1
+-- documented residual per docs/v0.17/rt-coerce-residual-surface.md
+-- (sealed-interface ctor narrowing; sound by construction via
+-- Rec._cg_sealedIfaceNames registry). 84 → 151 (+67 sites).
 rtCoerceBaseline :: Map String Int
 rtCoerceBaseline = Map.fromList
-    [ ("rt.Coerce["     , 84)
+    [ ("rt.Coerce["     , 151)
     , ("rt.CoerceInt"   , 20)
     , ("rt.CoerceString", 93)
     , ("rt.CoerceBool"  , 11)
@@ -234,8 +241,14 @@ rtCoerceBaseline = Map.fromList
 -- rt.Coerce[ cluster (Element-msg slots now structurally
 -- satisfy the sealed iface).  See rtCoerceBaseline above for
 -- sub-cluster redistribution justification.
+-- 2026-07-01 (v0.17 Gap 1): 184 → 229 (+45). Same rationale as
+-- rt.Coerce[ cluster bump above — sealed-iface classifier arm
+-- routes 82 raw `.(T)` sites through `rt.Coerce[T]` for CLAUDE.md
+-- §8 compliance; net cluster total delta is +67 but the shared
+-- rt.Coerce[ substring double-counts against sub-cluster
+-- contributions, so the total ratchet is +45.
 rtCoerceTotalBudget :: Int
-rtCoerceTotalBudget = 184
+rtCoerceTotalBudget = 229
 
 
 -- | Resolve the example's main.go path. Cabal-test runs with the
