@@ -135,8 +135,24 @@ import Test.Hspec
 -- reflect path which handles field-mismatch gracefully).  Future
 -- compiler-level reductions (struct→struct elision when source +
 -- target structural-equal) can ratchet this back down.
+--
+-- Bumped 177 → 229 (2026-07-01): v0.17 Gap 1 close — CLAUDE.md §8
+-- non-regression rule ("no raw `.(T)` assertions on any-typed
+-- thunks"). Added `CoerceSealedIface` classifier arm to
+-- `classifyCoerceTarget` (Compile.hs:15165) plus parallel guards in
+-- `coerceArg` (:17497), `coerceSubject` (:19343), and `legacyTcoCase`
+-- (:19670) so sealed-iface targets ROUTE THROUGH `rt.Coerce[<iface>]`
+-- instead of a raw `any(x).(SealedIface)` assertion. +52 rt.Coerce
+-- calls is the price of removing 52 raw `.(T)` sites on Std_Ui_*
+-- sealed-iface types (Std_Ui_Attribute, Std_Ui_Element, etc.) —
+-- direct §8 compliance. All added sites are Class 1 residual per
+-- `docs/v0.17/rt-coerce-residual-surface.md` (sealed-interface ctor
+-- narrowing; sound by construction via `_cg_sealedIfaceNames`
+-- registry). Future sealed-iface flip iterations (per iters 63-72
+-- pattern in `sealedIfaceFlipAllowList`) elide these via
+-- direct-ctor-body detection.
 baseline26UiShowcaseRtCoerce :: Int
-baseline26UiShowcaseRtCoerce = 177
+baseline26UiShowcaseRtCoerce = 229
 
 
 -- | Baseline `rt.Coerce` matching-line count for
@@ -161,8 +177,16 @@ baseline26UiShowcaseRtCoerce = 177
 -- correct direction for v0.17 (tighter type fidelity); a future
 -- pass can elide the residual bridge once the bridged callee is
 -- also widened to consume the typed shape.
+--
+-- Bumped 125 → 127 (2026-07-01): v0.17 Gap 1 close — same commit as
+-- 26-ui-showcase 177 → 229 bump. Sky.Test.TestResult IS in
+-- `sealedIfaceFlipAllowList` so the new `CoerceSealedIface` arm fires
+-- on case-subject / coerceArg sites here too. +2 rt.Coerce calls
+-- represent 2 raw `any(x).(Sky_Test_TestResult)` sites that now route
+-- through `rt.Coerce[Sky_Test_TestResult]`. Class 1 residual (see doc
+-- referenced above).
 baseline00StandardLibsRtCoerce :: Int
-baseline00StandardLibsRtCoerce = 125
+baseline00StandardLibsRtCoerce = 127
 
 
 -- | Baseline `rt.AsListT` matching-line count for

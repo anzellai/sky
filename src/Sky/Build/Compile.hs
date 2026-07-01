@@ -15111,12 +15111,28 @@ data CoerceTarget
     | CoerceTuple3T   String String String   -- ^ rt.T3[A, B, C] (Cause H)
     | CoerceFunc                -- ^ func(…) … (1 arg or N args)
     | CoerceRecordAlias String  -- ^ Foo_R (record-alias struct)
+    -- v0.17 Gap 1 — sealed-interface targets route through
+    -- `rt.Coerce[<iface>]` so the CLAUDE.md §8 non-regression rule
+    -- ("No raw `.(T)` assertions on any-typed thunks") is honoured
+    -- for the Std_Ui_Color / Std_Ui_Attribute / Std_Ui_LayoutContext
+    -- class of sites.  Runtime identity by construction: sealed-iface
+    -- ctor emission (`Rec._cg_sealedIfaceNames` registry) guarantees
+    -- every ctor value's dynamic Go type implements the parent iface,
+    -- so `rt.Coerce[T]`'s `v.(T)` fast-path always succeeds under
+    -- well-typed Sky input.  Mirrors `CoerceRecordAlias`'s
+    -- rt.Coerce-routing shape but sourced from a different registry.
+    | CoerceSealedIface String  -- ^ sealed-iface target (rt.Coerce[T])
     | CoerceAny                 -- ^ targetTy erases to \"any\"
     | CoerceTypeAssert String   -- ^ fallthrough: plain `any(e).(T)`
 
 
-classifyCoerceTarget :: String -> CoerceTarget
-classifyCoerceTarget targetTy
+-- v0.17 Gap 1 — takes 'LC.LowerCtx' so the sealed-interface guard
+-- can consult `Rec._cg_sealedIfaceNames` for the registry check.
+-- Threading the ctx here closes 82+ raw `any(v).(T)` sites in
+-- 26-ui-showcase that were previously falling through to
+-- `CoerceTypeAssert` (§8 non-regression violation).
+classifyCoerceTarget :: LC.LowerCtx -> String -> CoerceTarget
+classifyCoerceTarget ctx targetTy
     | targetTy == "any" || null targetTy = CoerceSkipPassThrough
     | Just inner <- stripParametric "rt.SkyResult" targetTy = CoerceSkyResultT inner
     | Just inner <- stripParametric "rt.SkyMaybe"  targetTy = CoerceSkyMaybe  inner
@@ -15137,9 +15153,28 @@ classifyCoerceTarget targetTy
     | "func(" `List.isPrefixOf` erasedTy = CoerceFunc
     | erasedTy == "any"                  = CoerceAny
     | isRecordAliasTy erasedTy           = CoerceRecordAlias erasedTy
+    -- v0.17 Gap 1 — sealed-interface targets route through
+    -- `rt.Coerce[<iface>]` per docs/v0.17/rt-coerce-residual-surface.md
+    -- Class 1 + CLAUDE.md §8 ("No raw `.(T)` assertions on any-typed
+    -- thunks — route via `rt.Coerce[T]`").  Registry: same shape as
+    -- the isSealedIfaceTypeStr helper at Compile.hs:6975-6979 —
+    -- membership check + last-`_`-segment fallback for cross-module
+    -- bare-name matches.  Placed BEFORE the CoerceTypeAssert fallthrough
+    -- so the arm fires on registered sealed ifaces; non-sealed types
+    -- (ADT variant structs, FFI opaque types) still fall through.
+    | isSealedIfaceInCtx erasedTy        = CoerceSealedIface erasedTy
     | otherwise                          = CoerceTypeAssert erasedTy
   where
     erasedTy = eraseTypeParams targetTy
+    isSealedIfaceInCtx s = case LC.lookupCgEnv ctx of
+        Just cgEnv ->
+            let sealedSet = Rec._cg_sealedIfaceNames cgEnv
+            in Set.member s sealedSet
+               -- Mirror Compile.hs:6975-6979 last-`_`-segment fallback
+               -- so cross-module bare-name shapes (e.g. dep emits
+               -- `Element` but registry has `Std_Ui_Element`) also match.
+               || Set.member (reverse (takeWhile (/= '_') (reverse s))) sealedSet
+        Nothing -> False
 
 
 -- | Recognise `rt.T2[A, B]` and split into element type strings.
@@ -15275,7 +15310,7 @@ coerceToFieldTypeMSrc ctx mSrc targetTy e
     -- parameter, not the scopeStateRef IORef.
     | otherwise =
         let eraseScoped = eraseScopedCtx ctx
-        in case classifyCoerceTarget targetTy of
+        in case classifyCoerceTarget ctx targetTy of
             CoerceSkipPassThrough -> e
             CoerceSkyResultT inner ->
                 GoIr.GoCall (GoIr.GoIdent
@@ -15323,6 +15358,16 @@ coerceToFieldTypeMSrc ctx mSrc targetTy e
                 -- (Db.query rows, Firestore snapshots, JSON-decoded blobs)
                 -- narrows to the typed struct via the map→struct field
                 -- builder in Coerce.
+                GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+            CoerceSealedIface erasedTy ->
+                -- v0.17 Gap 1 — sealed-interface targets route through
+                -- `rt.Coerce[<iface>]`.  Runtime identity by construction
+                -- (sealed-iface ctors always implement the parent iface
+                -- per `Rec._cg_sealedIfaceNames` emission contract), so
+                -- `rt.Coerce`'s `v.(T)` fast-path succeeds under
+                -- well-typed Sky input.  Closes the CLAUDE.md §8
+                -- non-regression violation on 82+ raw `any(v).(T)` sites
+                -- in 26-ui-showcase.
                 GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
             CoerceFunc ->
                 -- Function-typed targets: nominal in BOTH params and
@@ -17438,16 +17483,40 @@ coerceArg phaseACtxD ctx mSrc e ty
                   -- v0.13.x #158: record-alias targets route through
                   -- `rt.Coerce[T]` so a `map[string]any` source narrows
                   -- to the typed struct via Coerce's map→struct field
-                  -- builder. ADT names + FFI opaque types still use
+                  -- builder.
+                  -- v0.17 Gap 1 — sealed-interface targets route
+                  -- through `rt.Coerce[<iface>]` (CLAUDE.md §8
+                  -- non-regression rule + Class 1 residual doc).
+                  -- Registry check mirrors classifyCoerceTarget's
+                  -- isSealedIfaceInCtx helper.  Non-sealed ADT
+                  -- variant structs + FFI opaque types still use
                   -- direct assertion (no map-source panic class).
                   else if isRecordAliasTy erasedTy
                        then GoIr.GoCall
                             (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
-                       else GoIr.GoTypeAssert
-                            (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+                       else if isSealedIfaceInCoerceArgCtx ctx erasedTy
+                            then GoIr.GoCall
+                                 (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+                            else GoIr.GoTypeAssert
+                                 (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
 isGenericTypeParam _ = False
+
+
+-- v0.17 Gap 1 — sealed-iface predicate used by `coerceArg`'s
+-- raw-`.(T)`-fallthrough guard.  Mirrors `classifyCoerceTarget`'s
+-- local `isSealedIfaceInCtx` (Compile.hs:15168-15174) so both raw-
+-- TypeAssert emission sites (coerceToFieldTypeMSrc + coerceArg)
+-- route sealed-iface targets through `rt.Coerce[<iface>]` uniformly.
+-- CLAUDE.md §8 non-regression rule; Class 1 residual doc alignment.
+isSealedIfaceInCoerceArgCtx :: LC.LowerCtx -> String -> Bool
+isSealedIfaceInCoerceArgCtx ctx s = case LC.lookupCgEnv ctx of
+    Just cgEnv ->
+        let sealedSet = Rec._cg_sealedIfaceNames cgEnv
+        in Set.member s sealedSet
+           || Set.member (reverse (takeWhile (/= '_') (reverse s))) sealedSet
+    Nothing -> False
 
 -- | v0.17 iter 27 (HIGH-confidence locator close) — α-rename a
 -- callee's Go-typevar names (`T1`, `T2`, …) into a high-numbered
@@ -19271,6 +19340,16 @@ caseToGoLegacy ctx mExpectedGo subject branches =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+            | isSealedIfaceInCoerceArgCtx ctx typeName =
+                -- v0.17 Gap 1 close (CLAUDE.md §8 non-regression):
+                -- sealed-iface case-subject targets route through
+                -- rt.Coerce[T] (reflection-backed reshape of the
+                -- Tag+Fields shape) instead of a raw `.(T)` assertion.
+                -- Raw assertion fails when the value was packed as a
+                -- structurally-equal but nominally-different concrete
+                -- ADT type; rt.Coerce succeeds via reflect and
+                -- classifies the panic if the shape is genuinely wrong.
+                GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ typeName ++ "]")) [e]
             | otherwise =
                 -- Strict assertion: case-on-ADT subjects must be the
                 -- expected SkyADT type. If a non-ADT (e.g. a function
@@ -19591,6 +19670,13 @@ tcoBodyStmts ctx home fnName arity paramNames paramGoTys goRetType = lowerTail
                         GoIr.GoCall
                             (GoIr.GoIdent "rt.ResultCoerce[any, any]")
                             [rawSubjExpr]
+                    | isSealedIfaceInCoerceArgCtx ctx typeName ->
+                        -- v0.17 Gap 1 close (CLAUDE.md §8 non-regression):
+                        -- TCO-path case-subject sealed-iface targets
+                        -- route through rt.Coerce[T] (reflection-backed
+                        -- reshape) instead of a raw `.(T)` assertion.
+                        -- See coerceSubject at :19352 for the rationale.
+                        GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ typeName ++ "]")) [rawSubjExpr]
                     | otherwise ->
                         GoIr.GoTypeAssert (anyWrap rawSubjExpr) typeName
             subjStmt = GoIr.GoShortDecl subjectName subjExpr
