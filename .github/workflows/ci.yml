@@ -8,14 +8,25 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ${{ matrix.os }}
+    # `runs-on` uses `matrix.runner` (the actual GHA runner label) while
+    # step-guards below stay on `matrix.os` (the stable logical name).
+    # This lets us swap in larger runners (e.g. macos-latest-xlarge) for
+    # speed without rewriting every `if: matrix.os == 'macos-latest'`.
+    # 2026-07-01: bumped macOS to `-xlarge` (6-core M1 Max, 14 GB RAM) —
+    # the standard `macos-latest` (3-core M1, 7 GB) runs ~3× slower than
+    # ubuntu-latest on cabal + example sweep, blocking CI signal. Revert
+    # to `macos-latest` if billing rejects (larger macOS runners aren't
+    # included in the free tier even for public repos).
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            runner: ubuntu-latest
             artifact: sky-linux-x64
           - os: macos-latest
+            runner: macos-latest-xlarge
             artifact: sky-darwin-arm64
 
     steps:
