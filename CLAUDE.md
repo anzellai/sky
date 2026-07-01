@@ -31,6 +31,7 @@
 | rt.Coerce residual surface documented across 8 safety classes | ✅ shipped — v0.17.0 — `docs/v0.17/rt-coerce-residual-surface.md` |
 | `scopeStateRef` IORef contract + machine-verified audit spec | ✅ shipped — v0.17.0 — `Compile.hs:496-595` + `Sky.Build.ScopeStateRefAuditSpec` |
 | Per-panic-class emission-time regression locks | ✅ shipped — v0.17.0 — `Sky.Build.PanicClassGateSpec` |
+| Sealed-iface classifier arm — raw `.(SealedIface)` routes via `rt.Coerce[T]` (§8 non-regression) | ✅ shipped — v0.17.0 — `Compile.hs` `classifyCoerceTarget` + `coerceArg` + `coerceSubject` + `legacyTcoCase` |
 | 39-example sweep + 410+ cabal specs | ✅ green |
 
 ## When users ask for an app — the architecture decision matrix
