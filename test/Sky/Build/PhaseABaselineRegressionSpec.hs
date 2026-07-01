@@ -185,8 +185,15 @@ baseline26UiShowcaseRtCoerce = 229
 -- represent 2 raw `any(x).(Sky_Test_TestResult)` sites that now route
 -- through `rt.Coerce[Sky_Test_TestResult]`. Class 1 residual (see doc
 -- referenced above).
+--
+-- Bumped 127 → 128 (2026-07-01, v0.17.1 PR #136): Math.min/max
+-- Float-truncation fix routes these kernels through the polymorphic
+-- rt.Math_min / rt.Math_max path (skyLessThan comparator) instead of
+-- the typed-int rt.Math_minT / rt.Math_maxT + rt.AsInt args path.
+-- Same emission delta as the 26-ui-showcase CoerceFloat +1 bump —
+-- one extra rt.Coerce site where the AsInt path had none.
 baseline00StandardLibsRtCoerce :: Int
-baseline00StandardLibsRtCoerce = 127
+baseline00StandardLibsRtCoerce = 128
 
 
 -- | Baseline `rt.AsListT` matching-line count for

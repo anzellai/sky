@@ -201,17 +201,31 @@ import qualified Data.Map.Strict as Map
 -- documented residual per docs/v0.17/rt-coerce-residual-surface.md
 -- (sealed-interface ctor narrowing; sound by construction via
 -- Rec._cg_sealedIfaceNames registry). 84 → 151 (+67 sites).
+--
+-- 2026-07-01 (v0.17.1 PR #136): Math.min/Math.max Float truncation
+-- fix. The typed-int path (`rt.Math_minT(rt.AsInt(x), rt.AsInt(y))`)
+-- silently truncated Float args, collapsing Chart heatmap /
+-- sparkline scales; the polymorphic fallback (`rt.Math_min` via
+-- skyLessThan) is now used for these two kernels. Direct consequence
+-- for the showcase's `Std_Ui_Chart_x/yRangeHelp`:
+--   * rt.CoerceFloat 22 → 23 (+1) — the new fully-typed emit adds
+--     one CoerceFloat wrap where the AsInt path had none.
+--   * rt.AsListT     193 → 189 (-4)
+--   * rt.CoerceBool  11  → 10  (-1)
+--   * rt.CoerceString 93 → 90  (-3)
+--   Down-ratchets flow from the same fix (removing typed-int
+--   coercions that the polymorphic path never needed).
 rtCoerceBaseline :: Map String Int
 rtCoerceBaseline = Map.fromList
     [ ("rt.Coerce["     , 151)
     , ("rt.CoerceInt"   , 20)
-    , ("rt.CoerceString", 93)
-    , ("rt.CoerceBool"  , 11)
-    , ("rt.CoerceFloat" , 22)
+    , ("rt.CoerceString", 90)
+    , ("rt.CoerceBool"  , 10)
+    , ("rt.CoerceFloat" , 23)
     , ("rt.TaskCoerceT" , 0)
     , ("rt.ResultCoerce", 0)
     , ("rt.MaybeCoerce" , 27)
-    , ("rt.AsListT"     , 193)
+    , ("rt.AsListT"     , 189)
     ]
 
 
