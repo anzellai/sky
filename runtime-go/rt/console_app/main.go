@@ -387,12 +387,12 @@ func Sky_Core_String_slice(_skyEta_p0 int, _skyEta_p1 int, _skyEta_p2 string) st
 
 func Sky_Core_Math_min_[T1 any](_skyEta_p0 T1, _skyEta_p1 T1) T1 {
 	// PROOF: FFI: generic type-param widening (T-var slot)
-	return rt.Coerce[T1](rt.Math_minT(rt.AsInt(_skyEta_p0), rt.AsInt(_skyEta_p1)))
+	return rt.Coerce[T1](rt.Math_min( /* PROOF: FFI: generic type-param widening (T-var slot) */ rt.Coerce[T1](_skyEta_p0) /* PROOF: FFI: generic type-param widening (T-var slot) */, rt.Coerce[T1](_skyEta_p1)))
 }
 
 func Sky_Core_Math_max_[T1 any](_skyEta_p0 T1, _skyEta_p1 T1) T1 {
 	// PROOF: FFI: generic type-param widening (T-var slot)
-	return rt.Coerce[T1](rt.Math_maxT(rt.AsInt(_skyEta_p0), rt.AsInt(_skyEta_p1)))
+	return rt.Coerce[T1](rt.Math_max( /* PROOF: FFI: generic type-param widening (T-var slot) */ rt.Coerce[T1](_skyEta_p0) /* PROOF: FFI: generic type-param widening (T-var slot) */, rt.Coerce[T1](_skyEta_p1)))
 }
 
 type Std_Html_Attributes_Attribute interface {
@@ -6049,8 +6049,8 @@ func Std_Ui_Chart_xRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 			_ = rt.AsTuple2(__sky_h___tco_subject).V1
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(x))
-			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(x))
+			__tco_t0 := rt.Math_min(lo, x)
+			__tco_t1 := rt.Math_max(hi, x)
 			__tco_t2 := rest
 			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)
@@ -6103,8 +6103,8 @@ func Std_Ui_Chart_yRangeHelp(lo float64, hi float64, pts []rt.T2[float64, float6
 			_ = y
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(y))
-			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(y))
+			__tco_t0 := rt.Math_min(lo, y)
+			__tco_t1 := rt.Math_max(hi, y)
 			__tco_t2 := rest
 			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)
@@ -6166,7 +6166,7 @@ func Std_Ui_Chart_xRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 					_ = blo
 					bhi := rt.AsTuple2(__destruct__).V1
 					_ = bhi
-					return Std_Ui_Chart_xRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
+					return Std_Ui_Chart_xRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_min(alo, blo), V1: rt.Math_max(ahi, bhi)}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
 				}())
 			}()
 		}
@@ -6223,7 +6223,7 @@ func Std_Ui_Chart_yRangeAllHelp(acc rt.T2[float64, float64], seriesList []Std_Ui
 					_ = blo
 					bhi := rt.AsTuple2(__destruct__).V1
 					_ = bhi
-					return Std_Ui_Chart_yRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_minT(rt.AsInt(alo), rt.AsInt(blo)), V1: rt.Math_maxT(rt.AsInt(ahi), rt.AsInt(bhi))}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
+					return Std_Ui_Chart_yRangeAllHelp(rt.AsTuple2T[float64, float64](rt.SkyTuple2{V0: rt.Math_min(alo, blo), V1: rt.Math_max(ahi, bhi)}), rt.AsListT[Std_Ui_Chart_Series_R](rest))
 				}())
 			}()
 		}
@@ -6269,7 +6269,7 @@ func Std_Ui_Chart_effectiveYRange(cfg Std_Ui_Chart_Cfg_R, seriesList []Std_Ui_Ch
 				hi := rt.AsTuple2(__destruct__).V1
 				_ = hi
 				return /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.Coerce[rt.T2[float64, float64]](func() any {
-					lo2 := rt.Math_minT(rt.AsInt(lo), 0.0)
+					lo2 := rt.Math_min( /* PROOF: FFI: typed tuple narrowing (rt.T2/T3) */ rt.CoerceFloat(lo), 0.0)
 					_ = lo2
 					return func() any {
 						pad := rt.Mul(rt.Sub(hi, lo2), 5.0e-2)
@@ -6722,7 +6722,7 @@ func Std_Ui_Chart_sparkline(cfg Std_Ui_Chart_Cfg_R, values []float64) Std_Ui_Ele
 								ySpan := rt.Sub(yMax, yMin)
 								_ = ySpan
 								return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
-									nF := Std_Ui_Chart_intToFloat(rt.Math_maxT(1, rt.AsInt(rt.Sub(n, 1))))
+									nF := Std_Ui_Chart_intToFloat( /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.CoerceInt(rt.Math_max(1 /* PROOF: FFI: stdlib ADT constructor → typed alias */, rt.CoerceInt(rt.Sub(n, 1)))))
 									_ = nF
 									return /* PROOF: FFI: stdlib ADT constructor → typed alias */ rt.Coerce[Std_Ui_Element](func() Std_Ui_Element {
 										projected := Sky_Core_List_indexedMap(func(_lp_i int) func(any) any {
@@ -6801,8 +6801,8 @@ func Std_Ui_Chart_yRangeOfFloatsHelp(lo float64, hi float64, vals []float64) rt.
 			_ = v
 			rest := any(rt.AsList(__tco_subject)[1:])
 			_ = rest
-			__tco_t0 := rt.Math_minT(rt.AsInt(lo), rt.AsInt(v))
-			__tco_t1 := rt.Math_maxT(rt.AsInt(hi), rt.AsInt(v))
+			__tco_t0 := rt.Math_min(lo, v)
+			__tco_t1 := rt.Math_max(hi, v)
 			__tco_t2 := rest
 			// PROOF: FFI: primitive narrowing (typed slot)
 			lo = rt.CoerceFloat(__tco_t0)

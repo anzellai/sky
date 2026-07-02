@@ -4877,14 +4877,18 @@ func Math_abs(n any) any {
 	}
 	return x
 }
+// Math.min / Math.max are polymorphic (`a -> a -> a`, "any comparable type" —
+// Sky.Core.Math). Compare via skyLessThan, NOT AsInt: AsInt truncates Floats to
+// Int (so `Math.min` over `[0.4 … 1.3]` collapsed the range to 0..1, mis-scaling
+// every Std.Ui.Chart sparkline/heatmap) and is meaningless for Strings.
 func Math_min(a any, b any) any {
-	if AsInt(a) < AsInt(b) {
+	if skyLessThan(a, b) {
 		return a
 	}
 	return b
 }
 func Math_max(a any, b any) any {
-	if AsInt(a) > AsInt(b) {
+	if skyLessThan(b, a) {
 		return a
 	}
 	return b
@@ -7426,6 +7430,21 @@ func List_sortBy(keyFn any, list any) any {
 		a := SkyCall(keyFn, result[i])
 		b := SkyCall(keyFn, result[j])
 		return skyLessThan(a, b)
+	})
+	return result
+}
+
+// List_sortWith(cmp, xs) — stable sort by a custom comparator (Elm's
+// List.sortWith). `cmp a b : Int` returns < 0 when a precedes b, > 0 when it
+// follows, 0 when equal — the same contract as the kernel's type signature
+// (`(a -> a -> Int) -> List a -> List a`) in Sky.Type.Constrain.Expression.
+// SliceStable preserves input order for equal keys (matches List_sortBy).
+func List_sortWith(cmp any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		return AsInt(SkyCall(cmp, result[i], result[j])) < 0
 	})
 	return result
 }
