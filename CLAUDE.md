@@ -2,17 +2,20 @@
 
 > **Quick orientation.** Sky is an Elm-family functional language
 > compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
-> release is **v0.17.0** — typed-emit fix closes the wrong-typed
-> wrap class; documented rt.Coerce residual surface across 8 sound
-> safety classes; `scopeStateRef` IORef contract + audit spec; per-
-> panic-class emission-time regression locks. v0.15 type-directed
-> lowering, Go generics on parametric record aliases, same-module
-> polymorphic re-instantiation, and the wildcard-`any` soundness
-> gate all carry forward as baseline. The verification sweep (39
-> examples + Sky.Test assertions + 410+ cabal specs) is the source
-> of truth — green-everywhere is a hard release gate.
+> release is **v0.17.2** — coerceCallArgsAt identity-recovery gate
+> closes the α-renamed T9000-space synth-var leak; v0.17.1 security
+> + List.sortWith + Math.min/max Float fix carry forward; v0.17.0
+> typed-emit fix, documented rt.Coerce residual surface across 8
+> sound safety classes, `scopeStateRef` IORef contract + audit
+> spec, and per-panic-class emission-time regression locks stay
+> baseline. v0.15 type-directed lowering, Go generics on parametric
+> record aliases, same-module polymorphic re-instantiation, and the
+> wildcard-`any` soundness gate all carry forward as baseline. The
+> verification sweep (39 examples + Sky.Test assertions + 410+
+> cabal specs) is the source of truth — green-everywhere is a hard
+> release gate.
 
-## Current state (v0.17.0)
+## Current state (v0.17.2)
 
 | Surface | Status |
 |---|---|
@@ -32,6 +35,7 @@
 | `scopeStateRef` IORef contract + machine-verified audit spec | ✅ shipped — v0.17.0 — `Compile.hs:496-595` + `Sky.Build.ScopeStateRefAuditSpec` |
 | Per-panic-class emission-time regression locks | ✅ shipped — v0.17.0 — `Sky.Build.PanicClassGateSpec` |
 | Sealed-iface classifier arm — raw `.(SealedIface)` routes via `rt.Coerce[T]` (§8 non-regression) | ✅ shipped — v0.17.0 — `Compile.hs` `classifyCoerceTarget` + `coerceArg` + `coerceSubject` + `legacyTcoCase` |
+| coerceCallArgsAt identity-recovery gate — α-renamed T9000-space synth-vars fall through to erase-scoped `any` widening | ✅ shipped — v0.17.2 — `Compile.hs:16743` + `Sky.Build.TVarSubstitutionLeakSpec` — closes `undefined: T9001` blocker for polymorphic `Cfg msg` view functions with let-bound field access |
 | 39-example sweep + 410+ cabal specs | ✅ green |
 
 ## When users ask for an app — the architecture decision matrix
@@ -2434,6 +2438,48 @@ verified against HEAD.
     `freshLine + checkIndent + "->"` when the arrow doesn't appear
     on the current line.  No workaround needed.
 ### Closed in v0.17 (kept here for grep)
+
+- ~~**α-renamed T9000-space synth-vars leak into `rt.Coerce[T9001]`
+  slots — `go build` rejects with `undefined: T9001` for polymorphic
+  `Cfg msg` view functions that let-bind an `msg`-typed field.**~~
+  — CLOSED in v0.17.2 (`38cde3e6` on `fix/v0.17.2-tvar-substitution-leak`).
+  Root cause: `identityRecovered` in `coerceCallArgsAt`'s fallback
+  arm (`Compile.hs:16712-16721`) — added in v0.16.13 #530 for
+  parametric-record-alias args — self-pinned every tvar in the
+  α-renamed paramType to itself. When `alphaRenameCalleeTVars`
+  (Compile.hs:16657) had moved the callee's T1/T2 into fake
+  9000-space (T1 → T9001) for caller-scope isolation, identity
+  recovery re-anchored T9001 to itself, `substituteOnly` treated
+  it as "bound", the erase-scoped fallback (which would have
+  widened to `any`) was skipped, and the raw `T9001` shipped into
+  the emitted Go. Fix: one filter clause on `identityRecovered` at
+  `Compile.hs:16743` —
+
+  ```haskell
+  , enclosingTypeParamInScopeCtx ctx tv
+  ```
+
+  Identity is only sound when Monomorphise's
+  `substTypeParamsInString` has a live caller tvar to rewrite.
+  α-renamed synth-vars (never in caller scope) fall through to
+  `substituteOnly`'s `outOfScope → eraseScopedCtx` widening to
+  `any`. Go's call-site inference then pins the callee's generic
+  consistently across sibling args. Sibling recovery arms
+  (`bareRecovered` / `structuralRecovered`) already had strong
+  pinning guards; the identity branch was the outlier.
+
+  Non-regression: Issue #521 fixture (`docs/v0.16.x-console/parametric-cfg-repro/`)
+  still preserves `Widget_Cfg_R[T2]` casts through Monomorphise's
+  `Widget_view__Msg_Msg_...(cfg Widget_Cfg_R[Msg])` specialisation.
+  Companion specs `UnannotatedParametricCfgView` +
+  `UnannotatedParametricCfgUserHelper` still PASS.
+
+  Regression spec: `Sky.Build.TVarSubstitutionLeakSpec` (3
+  examples — build-clean fixture, no 4-digit T leak, runtime
+  output correct). Verification: 981 cabal examples / 0 failures
+  / 6 pending; 26/26 example sweep; skydeploy control-plane
+  Editor_view (the shape that blocked v0.17.1 → skydeploy) builds
+  clean.
 
 - ~~**Zero-arg calls follow the binding's declared type, not its
   FFI-vs-kernel origin.**~~ — CLOSED in v0.17 (Limitation #7,
