@@ -144,6 +144,7 @@ import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CurriedLambdaStageCSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.UnannotatedParametricCfgViewSpec
+import qualified Sky.Build.TVarSubstitutionLeakSpec
 import qualified Sky.Build.AnonRecordEmissionGuaranteeSpec
 import qualified Sky.Build.AnonRecordSubprocessFixtureSpec
 import qualified Sky.Build.LiveApiHandlerShapeSpec
@@ -1028,6 +1029,19 @@ allSpecs fastMode = do
     -- path in src/Sky/Build/Compile.hs.
     describeT "Sky.Build.UnannotatedParametricCfgView"
                                             Sky.Build.UnannotatedParametricCfgViewSpec.spec
+    -- v0.17.2 T-var substitution-leak regression.  The α-rename
+    -- identity-recovery leak: alphaRenameCalleeTVars moved a
+    -- callee's declared T1/T2 into a fake 9000-space so the
+    -- enclosing-scope check erased them to `any`; the
+    -- identityRecovered branch then self-pinned the fake tvar
+    -- ({T9001 → T9001}), defeating the erasure and leaking a
+    -- `rt.Coerce[T9001](...)` into emitted Go.  Gated identity
+    -- recovery on `enclosingTypeParamInScopeCtx ctx tv` — identity
+    -- is only sound when Monomorphise's substTypeParamsInString
+    -- has a live caller tvar to rewrite.  See identityRecovered
+    -- in src/Sky/Build/Compile.hs (coerceCallArgsAt fallback arm).
+    describeT "Sky.Build.TVarSubstitutionLeak"
+                                            Sky.Build.TVarSubstitutionLeakSpec.spec
     -- v0.17 step-1 gap-3 — anon-record emission survives the
     -- SKY_GOSIG_DIFF differential gate.  Pre-fix, the in-thunk
     -- 'atomicWriteIORef globalAnonRecords Map.empty' could fire

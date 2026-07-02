@@ -16709,6 +16709,30 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                 -- but routes through HM (`aliasBaseFromCanExpr`)
                 -- instead of static-shape matching — so it works for
                 -- `VarLocal` refs where `goExprGoType` returns Nothing.
+                --
+                -- v0.17.2 T-var-substitution-leak fix — gate identity
+                -- recovery on `enclosingTypeParamInScopeCtx ctx tv`.
+                -- `paramTypes` at this site have been α-renamed by
+                -- `alphaRenameCalleeTVars` (T1 → T9001 etc.), so an
+                -- unconditional identity mapping self-pins the fake
+                -- T9NNN name and defeats the erase-scoped fallback
+                -- downstream (`substituteOnly` sees the tv in the
+                -- recovered map, treats it as bound, and emits the
+                -- undefined `T9NNN` token verbatim into the call
+                -- site).  Identity is only sound when the tv is
+                -- ACTUALLY in the caller's enclosing scope — that's
+                -- the only case where Monomorphise's
+                -- `substTypeParamsInString` has something to rewrite
+                -- it to.  For α-renamed tvars (not in caller scope),
+                -- fall through to `outOfScope` → `eraseScopedCtx` in
+                -- substituteOnly, which widens to `any` and lets Go's
+                -- call-site inference pin the callee's generic
+                -- consistently.  Reproduces via /tmp/tvarleak style
+                -- shape: a polymorphic view function passes a
+                -- record-alias arg AND a bare-tvar arg (let-bound
+                -- from a field access whose Go type registry entry is
+                -- missing) to a sibling helper; pre-fix the emit was
+                -- `rt.Coerce[T9001](onCheck)` with T9001 undefined.
                 identityRecovered = Map.fromList
                     [ (tv, tv)
                     | (pty, arg) <- zip paramTypes args
@@ -16716,6 +16740,7 @@ coerceCallArgsAt phaseACtxD ctx region qualName args =
                     , Just srcAlias <- [aliasBaseFromCanExpr phaseACtxD arg]
                     , srcAlias ++ "_R" == paramBase
                     , tv <- tvarsInGoTypeStr pty
+                    , enclosingTypeParamInScopeCtx ctx tv
                     , not (Map.member tv bareRecovered)
                     , not (Map.member tv structuralRecovered)
                     ]
