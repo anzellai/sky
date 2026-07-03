@@ -93,7 +93,7 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \        NoOp -> ( model, Cmd.none )\n\n\
         \subscriptions : Model -> Sub Msg\n\
         \subscriptions _ = Sub.none\n\n\
-        \view : Model -> Html Msg\n\
+        \view : Model -> Html\n\
         \view model =\n\
         \    Ui.layout [] (Ui.column [] [ Ui.text (String.fromInt model.count) ])\n\n\
         \main =\n\
@@ -125,7 +125,7 @@ spec = describe "Std.Webview.app (issue #356, v0.1 MVP)" $ do
         \update _ model = ( model, Cmd.none )\n\n\
         \subscriptions : Model -> Sub Msg\n\
         \subscriptions _ = Sub.none\n\n\
-        \view : Model -> Html Msg\n\
+        \view : Model -> Html\n\
         \view model = Ui.layout [] (Ui.text (String.fromInt model.count))\n\n\
         \main =\n\
         \    Webview.app\n\

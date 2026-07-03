@@ -72,7 +72,7 @@ withSize w h cfg =
 type alias AppCfg model msg =
     { init : () -> ( model, Cmd msg )
     , update : msg -> model -> ( model, Cmd msg )
-    , view : model -> Html msg
+    , view : model -> Html
     , subscriptions : model -> Sub msg
     , window : WindowCfg
     }

@@ -134,7 +134,7 @@ spec = describe "Sky.Webview loopback assets (bug #370)" $ do
         \        NoOp -> ( model, Cmd.none )\n\n\
         \subscriptions : Model -> Sub Msg\n\
         \subscriptions _ = Sub.none\n\n\
-        \view : Model -> Html Msg\n\
+        \view : Model -> Html\n\
         \view model =\n\
         \    Ui.layout [] (Ui.column [] [ Ui.text (String.fromInt model.count) ])\n\n\
         \main =\n\
