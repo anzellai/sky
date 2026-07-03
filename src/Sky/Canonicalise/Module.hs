@@ -888,16 +888,41 @@ detectImportAliasCollisions kernelMods imps =
             (_, firstRegion, _) = head sorted
             leader = case firstRegion of
                 A.Region (A.Position r c) _ -> show r ++ ":" ++ show c ++ ": "
-            -- Suggest aliasing the LAST imported colliding module (so
-            -- the user's intent — first import "owns" the qualifier —
-            -- is preserved). Pick a unique alias by camelCasing the
-            -- full canonical path.
+            -- Pick the LAST offending path as the default fix target
+            -- (preserves the user's intent that the first import owns
+            -- the qualifier).
             lastPath = case reverse sorted of
                 ((_, _, p):_) -> p
                 _             -> "Other.Mod"
-            suggestedAlias = camelCasePath lastPath
-            suggestion = "Add `as <Alias>` to one of them, e.g. `import "
-                ++ lastPath ++ " as " ++ suggestedAlias ++ "`."
+            -- The offender's canonical import path. If ANOTHER import
+            -- of the same path already exists with an explicit alias,
+            -- the correct fix is to merge the `exposing` list into
+            -- THAT line, not to add a fresh alias — two lines
+            -- importing the same module each contribute a qualifier
+            -- binding, which is what caused the collision. Check the
+            -- LAST offender first, then the first, so the more
+            -- actionable of the two suggestions wins when both sides
+            -- have pre-existing aliases.
+            existingAliasHit = case reverse sorted of
+                ((_, _, p):_) -> case findExistingAlias p of
+                    Just hit -> Just (p, hit)
+                    Nothing  -> case sorted of
+                        ((_, _, p'):_) -> fmap (\h -> (p', h)) (findExistingAlias p')
+                        _ -> Nothing
+                _ -> Nothing
+            suggestion = case existingAliasHit of
+                Just (path, (alias, aliasRegion)) ->
+                    "You already have `import " ++ path ++ " as " ++ alias
+                    ++ "` at " ++ formatPos aliasRegion ++ " — merge the "
+                    ++ "`exposing` list into that line "
+                    ++ "(`import " ++ path ++ " as " ++ alias
+                    ++ " exposing (...)`).  A bare `import " ++ path
+                    ++ " exposing (...)` re-registers `" ++ qualifier
+                    ++ "` as an alias for `" ++ path
+                    ++ "` even when an `as` line exists elsewhere."
+                Nothing ->
+                    "Add `as <Alias>` to one of them, e.g. `import "
+                    ++ lastPath ++ " as " ++ camelCasePath lastPath ++ "`."
             body = "Import error: two imports both bind the qualifier `"
                 ++ qualifier ++ "`:\n"
                 ++ concat
@@ -907,6 +932,36 @@ detectImportAliasCollisions kernelMods imps =
                     ]
                 ++ "  " ++ suggestion
         in leader ++ body
+
+    -- | Look for an import of `targetPath` in the full import list
+    -- that carries an explicit `as X` alias. Used by `formatClash`
+    -- to detect the 3+-import shape:
+    --
+    --     import Std.Db as Db
+    --     import Lib.Db as LibDb      -- ← existing alias for Lib.Db
+    --     import Lib.Db exposing (conn) -- offender that trips D5
+    --
+    -- The user's mental model is often "the second line resolves the
+    -- collision" but Sky's auto-qualifier from the last segment still
+    -- fires on the bare `import Lib.Db exposing (…)`, so the third
+    -- line re-collides with `Std.Db as Db`. Surfacing the pre-existing
+    -- alias in the diagnostic points them straight at the fix.
+    findExistingAlias :: String -> Maybe (String, A.Region)
+    findExistingAlias targetPath =
+        let hits =
+                [ (alias, aliasRegion)
+                | imp <- imps
+                , Just alias <- [Src._importAlias imp]
+                , let A.At aliasRegion segs = Src._importName imp
+                      importPath = ModuleName.joinWith "." segs
+                , importPath == targetPath
+                ]
+        in case hits of
+            (h:_) -> Just h
+            _     -> Nothing
+
+    formatPos :: A.Region -> String
+    formatPos (A.Region (A.Position r c) _) = show r ++ ":" ++ show c
 
     -- "App.State" → "AppState"; "Lib.Internal.Foo" → "LibInternalFoo".
     -- Keeps the alias unique against the dangling last-segment qualifier
