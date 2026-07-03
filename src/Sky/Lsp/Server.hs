@@ -64,6 +64,7 @@ import qualified Sky.Reporting.Lsp as LspR
 import qualified Sky.Format.Format as Fmt
 import qualified Sky.Lsp.Index as Idx
 import qualified Sky.Lsp.Diag as Diag
+import qualified Sky.Build.Compile as Compile
 import qualified System.Directory as Dir
 import System.FilePath (takeDirectory, (</>), makeRelative, isAbsolute)
 import qualified System.Process as Proc
@@ -96,6 +97,24 @@ data ServerState = ServerState
       -- `window/showMessage` per file per session — without this
       -- the editor would get a popup on every keystroke after the
       -- first timeout, which would be obnoxious.
+    , ssFfiFns   :: !(IORef.IORef (Map.Map String [String]))
+      -- v0.17.3 (fix/lsp-ffi-alias-false-positive): FFI kernel
+      -- functions map (kernel name → func names).  Sourced from
+      -- 'Compile.loadAndSeedFfiRegistry' — populated LAZILY on
+      -- first per-file diagnostic pass (see 'ensureFfiSeed').
+      -- Threaded into 'Canonicalise.canonicaliseWithDeps' so
+      -- Go-FFI qualified calls (e.g. @Option.withCredentialsFile@)
+      -- resolve to 'VarKernel' entries in @Env._qualVars@ instead
+      -- of falling through to the "Undefined name" false positive
+      -- 'collectUnboundNameErrors' emits when the FFI seed is
+      -- absent.  Load-once + cache — the FFI surface only
+      -- changes on 'sky add' / 'sky install'.
+    , ssFfiMods  :: !(IORef.IORef (Map.Map String String))
+      -- Companion to 'ssFfiFns' — Sky import path → kernel name
+      -- (e.g. @"Google.Golang.Org.Api.Option" -> "Go_Option"@).
+    , ssFfiLoaded :: !(IORef.IORef Bool)
+      -- Guard so 'ensureFfiSeed' only runs 'loadAndSeedFfiRegistry'
+      -- once per session.
     }
 
 
@@ -111,11 +130,17 @@ runLsp = do
     idx      <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
     shutdown <- IORef.newIORef False
     timedOut <- IORef.newIORef (Set.empty :: Set.Set FilePath)
+    ffiFns   <- IORef.newIORef (Map.empty :: Map.Map String [String])
+    ffiMods  <- IORef.newIORef (Map.empty :: Map.Map String String)
+    ffiLoaded <- IORef.newIORef False
     let st = ServerState
             { ssDocs = docs
             , ssIndex = idx
             , ssShutdown = shutdown
             , ssTimedOutFiles = timedOut
+            , ssFfiFns = ffiFns
+            , ssFfiMods = ffiMods
+            , ssFfiLoaded = ffiLoaded
             }
     forever $ do
         r <- try (handleOne st) :: IO (Either SomeException ())
@@ -1146,6 +1171,35 @@ handleDidClose docs req = do
 
 -- ─── Diagnostics ───────────────────────────────────────────────────────
 
+-- | v0.17.3: load-once helper for FFI kernel maps consumed by the
+-- diagnostic pass in 'runPipelineSt'.  Guarded by 'ssFfiLoaded' so
+-- 'Compile.loadAndSeedFfiRegistry' (which scans every
+-- @.skycache/ffi/*.kernel.json@) fires at most once per session.
+ensureFfiSeed :: ServerState -> IO (Map.Map String [String], Map.Map String String)
+ensureFfiSeed st = do
+    loaded <- IORef.readIORef (ssFfiLoaded st)
+    if loaded
+        then do
+            fns  <- IORef.readIORef (ssFfiFns st)
+            mods <- IORef.readIORef (ssFfiMods st)
+            return (fns, mods)
+        else do
+            eLoaded <- try (Compile.loadAndSeedFfiRegistry) :: IO (Either SomeException Compile.LoadedFfiTables)
+            case eLoaded of
+                Left _ -> do
+                    -- Missing / malformed FFI cache — fall back to empty
+                    -- (matches pre-fix behaviour so no regression).
+                    IORef.writeIORef (ssFfiLoaded st) True
+                    return (Map.empty, Map.empty)
+                Right tables -> do
+                    let fns  = Compile._lft_kernelFunctions tables
+                        mods = Compile._lft_kernelModules tables
+                    IORef.writeIORef (ssFfiFns st) fns
+                    IORef.writeIORef (ssFfiMods st) mods
+                    IORef.writeIORef (ssFfiLoaded st) True
+                    return (fns, mods)
+
+
 publishDiagnostics :: T.Text -> T.Text -> IO ()
 publishDiagnostics uri text = publishDiagnosticsSt Nothing uri text
 
@@ -1274,10 +1328,15 @@ runPipelineSt st path src = case Parse.parseModule src of
         let depInfo = case eidx of
                 Right idx -> Idx.depInfoFromIndex idx
                 Left _    -> Map.empty
-        -- v0.17 close P1 step 6a + 6b — LSP path doesn't have an
-        -- FFI loader in scope; pass 'Map.empty' for both
-        -- ffiKernelFns and ffiKernelMods.
-        case Canonicalise.canonicaliseWithDeps depInfo Map.empty Map.empty srcMod of
+        -- v0.17.3: seed FFI kernel maps from the same 'loadAndSeedFfiRegistry'
+        -- path 'sky check' uses.  Without this, 'Env._qualVars["<FfiAlias>"]'
+        -- is empty during 'collectUnboundNameErrors' and every Go-FFI call
+        -- (e.g. @Option.withCredentialsFile@ under
+        -- @import Google.Golang.Org.Api.Option as Option@) surfaces as
+        -- "Undefined name" — a false positive the CLI never emits.
+        -- Cache-load once per session.
+        (ffiFns, ffiMods) <- ensureFfiSeed st
+        case Canonicalise.canonicaliseWithDeps depInfo ffiFns ffiMods srcMod of
             Left err ->
                 return [ LspR.renderLspDiagnostic
                            (Canonicalise.legacyToDiag path err) ]
