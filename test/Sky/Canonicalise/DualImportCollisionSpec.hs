@@ -169,6 +169,52 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
 
 
+    it "diagnostic recognises a pre-existing alias line + suggests merging" $ do
+        -- Real-world 3-import shape hit by a downstream project during
+        -- the v0.17.3 upgrade: the user tries to resolve the collision
+        -- by adding a middle `import Lib.Db as LibDb` line, but the
+        -- last bare `import Lib.Db exposing (conn)` still auto-binds
+        -- `Db` from the last-segment default. Pre-fix diagnostic told
+        -- them to "Add `as <Alias>` to one of them, e.g. `import
+        -- Lib.Db as LibDb`" — which is what they thought they had
+        -- already done. Post-fix diagnostic recognises the existing
+        -- `as LibDb` line and points them at the merge fix.
+        let mainSrc = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , "import Std.Db as Db"
+                , "import Lib.Db as LibDb"
+                , "import Lib.Db exposing (conn)"
+                , ""
+                , "main = let _ = LibDb.dummy in println conn"
+                ]
+            libDbModule = unlines
+                [ "module Lib.Db exposing (conn, dummy)"
+                , ""
+                , "conn : String"
+                , "conn = \"local://\""
+                , ""
+                , "dummy : Int"
+                , "dummy = 0"
+                ]
+        result <- compileInProcessMulti
+            [ ("src/Main.sky", mainSrc)
+            , ("src/Lib/Db.sky", libDbModule)
+            ]
+        case result of
+            CompileOk _ -> expectationFailure "expected dual-import qualifier collision to be rejected"
+            CompileErr e -> do
+                -- Still detected as a collision.
+                e `shouldSatisfy` ("two imports both bind the qualifier" `isInfixOf`)
+                -- Merge suggestion surfaces the pre-existing alias line.
+                e `shouldSatisfy` ("import Lib.Db as LibDb exposing" `isInfixOf`)
+                e `shouldSatisfy` ("You already have" `isInfixOf`)
+                -- Falls through to explaining WHY the workaround failed.
+                e `shouldSatisfy` ("re-registers" `isInfixOf`)
+
+
     it "does NOT flag kernel imports that share a kernel pseudo-module" $ do
         -- `Sky.Core.Time` and `Std.Time` both alias to the `Time`
         -- kernel pseudo-module — they route to the same kernel

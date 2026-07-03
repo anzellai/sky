@@ -583,6 +583,78 @@ spec = do
                             let msgs = diagnosticMessages payload
                             msgs `shouldBe` []
 
+        it "dual-import qualifier collision surfaces with merge-into-alias fix-it" $ do
+            -- PR follow-up to task #347 (D5). The canonicaliser diagnostic for
+            -- E1001 dual-import collisions was updated to detect a pre-existing
+            -- `import M as X` line for one of the colliding modules and suggest
+            -- MERGING the exposing list into that line, instead of naively
+            -- proposing another alias. This test pins the improved wording at
+            -- the LSP layer — publishDiagnostics is a straight string pipe from
+            -- canonicaliser errors, so a future refactor that truncates or
+            -- filters diagnostic bodies would silently drop the fix-it hint.
+            --
+            -- Real-world context: a downstream project committed the exact
+            -- 3-import shape below during a v0.17.3 upgrade, misled by the
+            -- pre-fix diagnostic's generic "Add `as <Alias>`" suggestion
+            -- (which is what they already had on line 6). The new hint
+            -- surfaces the existing alias line + the reason a bare
+            -- `exposing (…)` still trips E1001.
+            sky <- findSky
+            let libDbSrc = unlines
+                    [ "module Lib.Db exposing (conn, dummy)"
+                    , ""
+                    , "conn : String"
+                    , "conn = \"local://\""
+                    , ""
+                    , "dummy : Int"
+                    , "dummy = 0"
+                    ]
+                mainSrc = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Std.Log exposing (println)"
+                    , "import Std.Db as Db"
+                    , "import Lib.Db as LibDb"
+                    , "import Lib.Db exposing (conn)"
+                    , ""
+                    , "main = let _ = LibDb.dummy in println conn"
+                    ]
+            withSystemTempDirectory "sky-lsp-dual-import" $ \dir -> do
+                let srcDir = dir </> "src"
+                createDirectoryIfMissing True (srcDir </> "Lib")
+                writeFile (dir </> "sky.toml")
+                    "name = \"lsp-dual-import\"\nentry = \"src/Main.sky\"\n"
+                writeFile (srcDir </> "Lib" </> "Db.sky") libDbSrc
+                let mainPath = srcDir </> "Main.sky"
+                writeFile mainPath mainSrc
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin mainPath mainSrc
+                    result <- awaitNotification hout
+                        "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics on 3-import shape"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                                codes = diagnosticCodes payload
+                            -- Base E1001 collision surfaces.
+                            anyMatch "E1001" codes `shouldBe` True
+                            anyMatch "two imports both bind the qualifier" msgs
+                                `shouldBe` True
+                            -- The improved fix-it recognises the existing
+                            -- `import Lib.Db as LibDb` line and points the
+                            -- user at the merge shape.
+                            anyMatch "You already have" msgs `shouldBe` True
+                            anyMatch "import Lib.Db as LibDb exposing" msgs
+                                `shouldBe` True
+                            -- And explains WHY the bare exposing still
+                            -- collides — protects the reasoning from being
+                            -- silently truncated in a future refactor.
+                            anyMatch "re-registers" msgs `shouldBe` True
+
+
     describe "v0.13 Layer 4 — LSP carries stable diagnostic codes" $ do
 
         it "type-mismatch publishDiagnostics includes code E2001" $ do
