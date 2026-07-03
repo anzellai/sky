@@ -6259,7 +6259,18 @@ typecheckWorkspace config entryPath = do
             d  -> d
     -- v0.17 close P1 — value channel for the future threaded path
     -- (P3+P4 consume + delete the IORefs); IORefs stay live as shim.
-    _ <- loadAndSeedFfiRegistry
+    --
+    -- v0.17.3: capture the returned tables so the LSP canonicaliser
+    -- gets the same FFI seed the CLI has.  Prior to this, the LSP
+    -- path called 'canonicaliseWithDeps' with empty ffiKernelFns +
+    -- ffiKernelMods, leaving @Env._qualVars["Option"]@ empty even
+    -- though @loadFfiSymbols@ knew all the exports.  Result: LSP
+    -- flagged every Go-FFI qualified call (e.g. @Option.withCredentialsFile@)
+    -- as \"module imported but does not export\" — a false positive
+    -- the CLI never emitted because it seeds the maps here.
+    loadedFfi <- loadAndSeedFfiRegistry
+    let lspFfiFns  = _lft_kernelFunctions loadedFfi
+        lspFfiMods = _lft_kernelModules loadedFfi
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
     -- Materialise stdlib inside `.skycache/` so it lives in the already-
     -- gitignored cache dir instead of polluting `src/`. LSP goto-def can
@@ -6362,12 +6373,20 @@ typecheckWorkspace config entryPath = do
     -- `layout`, `text`, `el`, etc. all missing).
     perMod <- Async.forConcurrently okParsed $ \(n, path, src, srcMod) ->
         -- v0.17 close P1 step 6a + 6b — collapse to single
-        -- 'canonicaliseWithDeps' entry point.  This LSP-driven
-        -- path doesn't have an FFI loader in scope; pass
-        -- 'Map.empty' for both ffiKernelFns + ffiKernelMods
-        -- (kernel surface stays at the static baseline, matching
-        -- pre-v0.17 behaviour).
-        case Canonicalise.canonicaliseWithDeps depInfoMap Map.empty Map.empty srcMod of
+        -- 'canonicaliseWithDeps' entry point.
+        --
+        -- v0.17.3: thread the FFI kernel maps captured from
+        -- 'loadAndSeedFfiRegistry' above so 'Env._qualVars' picks
+        -- up FFI exports (e.g. @Option.withCredentialsFile@).
+        -- Previously we passed @Map.empty Map.empty@ here — the
+        -- comment claimed "no FFI loader in scope", but 6262 above
+        -- had already loaded them and discarded the result.  With
+        -- the seed threaded, the LSP's 'collectUnboundDiagnostics'
+        -- pass matches CLI 'sky check' semantics: qualified FFI
+        -- calls resolve against 'kernelVarsFor'-populated entries
+        -- (kernel.json stores lower-first names via 'FfiGen.emitKernelJson'),
+        -- and real Sky-source typos still surface.
+        case Canonicalise.canonicaliseWithDeps depInfoMap lspFfiFns lspFfiMods srcMod of
             Left err -> return (n, Left err, srcMod, path, src)
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
