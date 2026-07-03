@@ -2,20 +2,23 @@
 
 > **Quick orientation.** Sky is an Elm-family functional language
 > compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
-> release is **v0.17.2** — coerceCallArgsAt identity-recovery gate
-> closes the α-renamed T9000-space synth-var leak; v0.17.1 security
-> + List.sortWith + Math.min/max Float fix carry forward; v0.17.0
+> release is **v0.17.3** — LSP FFI-alias false-positive fix +
+> 5-round bounded canonicalise+solve fixpoint in `typecheckWorkspace`
+> closes the cross-module externals gap that surfaced `Type mismatch:`
+> false positives on `Db.exec` / `AppCfg` shapes; v0.17.2 T-var
+> identity-recovery gate carries forward; v0.17.1 security +
+> List.sortWith + Math.min/max Float fix carry forward; v0.17.0
 > typed-emit fix, documented rt.Coerce residual surface across 8
 > sound safety classes, `scopeStateRef` IORef contract + audit
 > spec, and per-panic-class emission-time regression locks stay
 > baseline. v0.15 type-directed lowering, Go generics on parametric
 > record aliases, same-module polymorphic re-instantiation, and the
 > wildcard-`any` soundness gate all carry forward as baseline. The
-> verification sweep (39 examples + Sky.Test assertions + 410+
-> cabal specs) is the source of truth — green-everywhere is a hard
-> release gate.
+> verification sweep (40 examples + Sky.Test assertions + 410+
+> cabal specs + 17/17 Neovim LSP integration tests) is the source of
+> truth — green-everywhere is a hard release gate.
 
-## Current state (v0.17.2)
+## Current state (v0.17.3)
 
 | Surface | Status |
 |---|---|
@@ -36,7 +39,10 @@
 | Per-panic-class emission-time regression locks | ✅ shipped — v0.17.0 — `Sky.Build.PanicClassGateSpec` |
 | Sealed-iface classifier arm — raw `.(SealedIface)` routes via `rt.Coerce[T]` (§8 non-regression) | ✅ shipped — v0.17.0 — `Compile.hs` `classifyCoerceTarget` + `coerceArg` + `coerceSubject` + `legacyTcoCase` |
 | coerceCallArgsAt identity-recovery gate — α-renamed T9000-space synth-vars fall through to erase-scoped `any` widening | ✅ shipped — v0.17.2 — `Compile.hs:16743` + `Sky.Build.TVarSubstitutionLeakSpec` — closes `undefined: T9001` blocker for polymorphic `Cfg msg` view functions with let-bound field access |
-| 39-example sweep + 410+ cabal specs | ✅ green |
+| LSP Go-FFI alias diagnostic false-positive close — `runPipelineSt` seeds FFI kernel maps from `LoadedFfiTables` (cached via `ServerState.ssFfiFns`/`ssFfiMods`) | ✅ shipped — v0.17.3 — `src/Sky/Lsp/Server.hs` + `src/Sky/Build/Compile.hs` — closes `Undefined name: <FfiAlias>.<name>` LSP false positive that CLI never emitted |
+| LSP cross-module externals gap close — `typecheckWorkspace` 5-round bounded canonicalise+solve fixpoint threading `buildCrossModuleExternalsWithMods` output round-to-round | ✅ shipped — v0.17.3 — `src/Sky/Build/Compile.hs` — closes unannotated wrapper HM-inferred-as-fully-polymorphic (`Lib.Db.exec`) + cross-module alias body expansion (`AppCfg`) false positives |
+| Neovim LSP integration suite gate — 17/17 hover/completion/goto-def tests | ✅ green — v0.17.3 — `scripts/lsp-test-nvim.sh` — hover on kernel calls/fields/type names/functions/constructors/lambda params/case patterns, completion on qualified insert-text/field/let-binding, goto-def on type names/functions/constructors/let bindings/lambda params/fields |
+| 40-example sweep + 981 cabal specs + 17 LSP integration tests | ✅ green |
 
 ## When users ask for an app — the architecture decision matrix
 
