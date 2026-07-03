@@ -205,8 +205,8 @@ one piece at a time.
 
 ### Driving use case
 
-`agent-service`'s `/generate` endpoint streams LLM tokens to the
-SkyDeploy dashboard.  Before `Server.Stream` existed, every Sky
+An LLM-tokens `/generate` endpoint streams model output to a
+dashboard client.  Before `Server.Stream` existed, every Sky
 HTTP handler buffered its whole body (`SkyResponse.Body string`)
 — the client waited for the entire completion before seeing
 anything.  Now the handler emits each upstream chunk as it

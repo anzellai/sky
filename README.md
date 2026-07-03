@@ -1,6 +1,6 @@
 # Sky
 
-[sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/) · [SkyDeploy](https://skydeploy.app)
+[sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/)
 
 > **Status: v0.17.x release candidate.** Public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
@@ -56,9 +56,8 @@ sky init hello && cd hello && sky run src/Main.sky
   AI assistant the load-bearing context to scaffold production
   apps directly.
 - **One binary out the back.** Every project compiles to a
-  static Go binary. Deploy with `scp`, with Docker, with
-  [SkyDeploy](https://skydeploy.app), or as a CLI you `brew
-  install`.
+  static Go binary. Deploy with `scp`, with Docker, or as a CLI
+  you `brew install`.
 
 ## Hello, Sky
 
@@ -235,9 +234,9 @@ The production gate is `ENV` (then `SKY_ENV` fallback). Unset
 or `dev` / `development` / `local` → dev mode. Anything else
 locks down the dev console, banner, and metrics endpoint.
 
-Deploy to GCP Cloud Run with one command via
-[SkyDeploy](https://skydeploy.app), or `scp` the binary and run
-it under your favourite supervisor.
+Deploy with `scp` + your favourite supervisor, drop the binary
+into a Docker `FROM scratch` image, or run it directly on any
+platform with a Go 1.22+ runtime.
 
 ## Documentation
 
