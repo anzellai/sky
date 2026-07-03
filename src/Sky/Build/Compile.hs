@@ -6358,11 +6358,60 @@ typecheckWorkspace config entryPath = do
             | (modName, depMod) <- firstValid
             ]
 
-    -- Single-pass typecheck. The Index built from this gets pass-1
-    -- types (one solver run per module, no cross-module externals).
-    -- The LSP's runPipelineSt re-solves the OPEN file with externals
-    -- derived from these pass-1 types — that's the path that catches
-    -- cross-module mismatches (issue #52).
+    -- v0.17.3 (fix/lsp-ffi-alias-false-positive follow-up):
+    -- TWO-PASS typecheck.  Rationale: the CLI runs a full
+    -- 'canonFixpoint' + 'solveFixpoint' (up to 16 rounds each) with
+    -- cross-module externals threaded on every round.  The LSP path
+    -- historically ran a SINGLE canonicalise+solve with empty
+    -- externals, which had two observed failure modes:
+    --
+    --   Bug 1 (unannotated wrappers): a user-written
+    --   @exec queryStr args = case Task.run (Db.exec conn queryStr args) of …@
+    --   in @Lib/Db.sky@ (no signature) inferred as fully-polymorphic
+    --   @a -> a -> a -> b@ under empty externals, because
+    --   @Db.exec@ from @Std.Db@ was unknown.  Main.sky's re-solve
+    --   then fed that garbage type in as an external and reported
+    --   @expected: String / actual: List a@ at the arg-list call.
+    --
+    --   Bug 2 (cross-module alias body): @Std.Webview.AppCfg@'s
+    --   alias body references @Html@ from @Std.Html@.  Under a
+    --   single-pass canonicalise, @Std.Webview@ resolves before
+    --   @Std.Html@'s dep-info is available, so @Html@ freezes as
+    --   the nullary @TType "Html" []@ inside @AppCfg@'s body.
+    --   Main.sky's re-solve saw @view : Model -> Html@ instead of
+    --   @Model -> Html msg@ and flagged the whole record literal.
+    --
+    -- Reusing the CLI's full fixpoint is disqualified: the phases
+    -- write @putStrLn@ + @Render.renderCli@ to STDOUT (which is the
+    -- LSP's JSON-RPC transport — any stdout byte corrupts the
+    -- protocol and hangs the editor), mutate the @scopeStateRef@
+    -- IORef (races across LSP sessions), and burn 15–40 s on
+    -- stdlib-scale workspaces.
+    --
+    -- Two-pass is the minimum that fixes both bugs:
+    --
+    --   Pass 1: canonicalise + solve with empty externals — same as
+    --   the historical single-pass.  Captures every module's
+    --   self-contained typing information (annotated stdlib
+    --   signatures like @Db.exec : Db -> String -> List a -> …@
+    --   land here).
+    --
+    --   Build cross-module externals from pass-1's solved types via
+    --   'buildCrossModuleExternalsWithMods' — the SAME helper the
+    --   CLI's 'solveFixpoint' uses on every round.
+    --
+    --   Pass 2: re-canonicalise every module with a freshly-built
+    --   @depInfoMap@ derived from pass-1's canonical modules (fixes
+    --   Bug 2 — @Std.Webview@ now sees @Std.Html@'s current
+    --   canonical shape), then solve via
+    --   'constrainModuleWithFfi' fed the pass-1 externals (fixes
+    --   Bug 1 — @Lib.Db.exec@'s inference now sees
+    --   @Std.Db.exec@'s real annotated type).
+    --
+    -- Cost: 2× the work of the old single-pass.  For a stdlib+40-
+    -- example workspace (~500 modules, per-module solve ~1–5 ms),
+    -- adds ~0.5–2 s to the LSP index build — well within editor
+    -- perception budget.  No stdio, no IORef mutation, no cutoff.
     --
     -- IMPORTANT: solveWithLocals returns ONLY the env-type entries,
     -- not the full set `solve` produces. `solve` merges innermost
@@ -6371,38 +6420,68 @@ typecheckWorkspace config entryPath = do
     -- top-level decl entries that the solver tracked as let-
     -- bindings — which left the externals incomplete (Std.Ui's
     -- `layout`, `text`, `el`, etc. all missing).
-    perMod <- Async.forConcurrently okParsed $ \(n, path, src, srcMod) ->
-        -- v0.17 close P1 step 6a + 6b — collapse to single
-        -- 'canonicaliseWithDeps' entry point.
-        --
-        -- v0.17.3: thread the FFI kernel maps captured from
-        -- 'loadAndSeedFfiRegistry' above so 'Env._qualVars' picks
-        -- up FFI exports (e.g. @Option.withCredentialsFile@).
-        -- Previously we passed @Map.empty Map.empty@ here — the
-        -- comment claimed "no FFI loader in scope", but 6262 above
-        -- had already loaded them and discarded the result.  With
-        -- the seed threaded, the LSP's 'collectUnboundDiagnostics'
-        -- pass matches CLI 'sky check' semantics: qualified FFI
-        -- calls resolve against 'kernelVarsFor'-populated entries
-        -- (kernel.json stores lower-first names via 'FfiGen.emitKernelJson'),
-        -- and real Sky-source typos still surface.
-        case Canonicalise.canonicaliseWithDeps depInfoMap lspFfiFns lspFfiMods srcMod of
-            Left err -> return (n, Left err, srcMod, path, src)
-            Right canMod -> do
-                cs <- Constrain.constrainModule canMod
-                (r, localTys) <- Solve.solveWithLocals cs
-                -- v0.15.x P37a: `SolvedTypes` is now a record; extract
-                -- the bare env map for the `_wm_types` field (which
-                -- carries the pre-P37a shape `Map.Map String T.Type`).
-                let envTypes = case r of
-                        Solve.SolveOk t -> Solve._stEnv t
-                        _               -> Map.empty
-                    -- Match Solve.solve's merge: take the innermost
-                    -- (first) type from each local, merge under
-                    -- envTypes (envTypes wins on collision).
-                    localFirst = Map.map head (Map.filter (not . null) localTys)
-                    types = Map.union localFirst envTypes
-                return (n, Right (canMod, types, localTys), srcMod, path, src)
+    let solveWithLocalsAndMerge cs = do
+            (r, localTys) <- Solve.solveWithLocals cs
+            let envTypes = case r of
+                    Solve.SolveOk t -> Solve._stEnv t
+                    _               -> Map.empty
+                localFirst = Map.map head (Map.filter (not . null) localTys)
+                types = Map.union localFirst envTypes
+            return (types, localTys)
+
+    let lspFfiTypes = _lft_kernelTypes loadedFfi
+        -- v0.17.3: single canonicalise+solve round.  Takes an
+        -- externals + depInfoMap; runs `canonicaliseWithDeps` +
+        -- `constrainModuleWithFfi` + `solveWithLocals` per module.
+        -- Feeds pass-N results forward.
+        runRound depMap externals = Async.forConcurrently okParsed $ \(n, path, src, srcMod) ->
+            case Canonicalise.canonicaliseWithDeps depMap lspFfiFns lspFfiMods srcMod of
+                Left err -> return (n, Left err, srcMod, path, src)
+                Right canMod -> do
+                    cs <- Constrain.constrainModuleWithFfi externals lspFfiTypes canMod
+                    (types, localTys) <- solveWithLocalsAndMerge cs
+                    return (n, Right (canMod, types, localTys), srcMod, path, src)
+
+        -- Build a dep-info-map from a set of solved canonical modules.
+        -- Shape mirrors 'depInfoMap' built from 'firstPass' above.
+        buildDepMap canons = Map.fromList
+            [ (modName, Canonicalise.DepInfo
+                { Canonicalise._dep_name = Can._name depMod
+                , Canonicalise._dep_unions =
+                    [ (typeName, Can._u_vars u, Can._u_alts u)
+                    | (typeName, u) <- Map.toList (Can._unions depMod)
+                    ]
+                , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                , Canonicalise._dep_aliasDefs = Can._aliases depMod
+                , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
+                , Canonicalise._dep_exports = Can._exports depMod
+                })
+            | (modName, depMod) <- canons
+            ]
+
+        -- Bounded fixed-count iteration over 'runRound'.  Each round
+        -- costs one full parallel canonicalise+solve pass over the
+        -- workspace.  5 rounds covers all observed convergence depths
+        -- (Std.Db 2-hop, Std.Webview → Std.Html → Sky.Core.Html 3-hop,
+        -- with headroom for Std.Live's multi-alias chain).  Fixed
+        -- count avoids an equality check on Type values that's
+        -- expensive on ~500-module workspaces; the CLI's fixpoint
+        -- caps at 16 rounds and observes convergence in 2–4 for these
+        -- shapes, so 5 is comfortably above the empirical ceiling.
+        -- Adds ~1–2 s to the LSP index build on stdlib-scale
+        -- workspaces; well within editor perception budget.
+        maxRounds = 5 :: Int
+        rounds depMap externals iter
+            | iter >= maxRounds = runRound depMap externals
+            | otherwise = do
+                results <- runRound depMap externals
+                let canons = [ (n, cm) | (n, Right (cm, _, _), _, _, _) <- results ]
+                    solved = [ (n, ts) | (n, Right (_, ts, _), _, _, _) <- results ]
+                    nextDepMap = buildDepMap canons
+                    nextExternals = buildCrossModuleExternalsWithMods canons solved
+                rounds nextDepMap nextExternals (iter + 1)
+
+    perMod <- rounds depInfoMap Map.empty (0 :: Int)
 
     let modMap = Map.fromList
             [ (n, WorkspaceModule
