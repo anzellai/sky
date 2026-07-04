@@ -96,6 +96,90 @@ func TestMountConsoleEndpoints_RegistersHTMLShellWhenInlineMissing(t *testing.T)
 	}
 }
 
+// TestMountConsoleEndpoints_DeclinesUnderProductionUnsetAuth (issue
+// #142) covers the security-critical case: when ENV=production AND
+// SKY_CONSOLE_AUTH is unset, the LEGACY HTML shell (this function)
+// must decline just like the inline path
+// (consoleAuthModeUnsetProd) — otherwise the inline path declines
+// and the legacy shell fills the vacuum, serving the console UI to
+// any anon visitor. Pre-fix this test returned 200 (repro) even
+// with ENV=production because MountConsoleEndpoints did not honour
+// productionFromEnv().
+func TestMountConsoleEndpoints_DeclinesUnderProductionUnsetAuth(t *testing.T) {
+	resetReadiness(t)
+	withServerlessEnv(t, nil)
+	ResetConsoleHealthFlagsForTesting()
+	t.Cleanup(ResetConsoleHealthFlagsForTesting)
+
+	// Simulate the vulnerable deploy shape: production gate set,
+	// SKY_CONSOLE_AUTH intentionally unset.  Also clear SKY_ENV so
+	// productionFromEnv reads ENV.
+	t.Setenv("ENV", "production")
+	t.Setenv("SKY_ENV", "")
+	t.Setenv("SKY_CONSOLE_AUTH", "")
+
+	mux := http.NewServeMux()
+	MountConsoleEndpoints(mux)
+
+	if LegacyConsoleHealthy() {
+		t.Fatalf("legacyConsoleHealthy must NOT flip under production + unset auth")
+	}
+	// /_sky/console must decline (404 — nothing registered).
+	req := httptest.NewRequest(http.MethodGet, "/_sky/console", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("/_sky/console: expected 404 under production + unset auth, got %d", w.Code)
+	}
+	// The JSON API endpoints must ALSO decline — under this class
+	// the console is fully off, matching the SKY_CONSOLE_AUTH=off
+	// behaviour.  A leak here would surface logs/traces/metrics
+	// unauthenticated.
+	for _, path := range []string{
+		"/_sky/console/api/overview",
+		"/_sky/console/api/logs",
+		"/_sky/console/api/metrics-summary",
+		"/_sky/console/api/traces",
+		"/_sky/console/api/errors",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404 under production + unset auth, got %d", path, w.Code)
+		}
+	}
+}
+
+// TestMountConsoleEndpoints_MountsInDevWhenAuthUnset covers the
+// converse: dev mode (ENV unset) + SKY_CONSOLE_AUTH unset should
+// STILL mount the legacy shell.  Guards against a regression where
+// the production gate accidentally over-fires in dev.
+func TestMountConsoleEndpoints_MountsInDevWhenAuthUnset(t *testing.T) {
+	resetReadiness(t)
+	withServerlessEnv(t, nil)
+	ResetConsoleHealthFlagsForTesting()
+	t.Cleanup(ResetConsoleHealthFlagsForTesting)
+
+	// Explicit dev shape: no ENV, no SKY_ENV, no SKY_CONSOLE_AUTH.
+	t.Setenv("ENV", "")
+	t.Setenv("SKY_ENV", "")
+	t.Setenv("SKY_CONSOLE_AUTH", "")
+
+	mux := http.NewServeMux()
+	MountConsoleEndpoints(mux)
+
+	if !LegacyConsoleHealthy() {
+		t.Fatalf("legacyConsoleHealthy must flip in dev mode with unset auth (inline unavailable path)")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/_sky/console", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/_sky/console: expected 200 from legacy HandleConsole in dev, got %d", w.Code)
+	}
+}
+
 // ─── shouldHaveConsole reflects the env-var triple gate ─────────
 
 func TestShouldHaveConsole_OffWhenAuthUnset(t *testing.T) {

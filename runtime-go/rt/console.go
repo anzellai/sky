@@ -201,6 +201,22 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	if v := os.Getenv("SKY_CONSOLE_AUTH"); v == "off" {
 		return
 	}
+	// v0.17.6 (issue #142): honour the production+unset gate the same
+	// way MountEmbeddedConsole does.  Before this check, when
+	// productionFromEnv() was true AND SKY_CONSOLE_AUTH was unset,
+	// MountEmbeddedConsole correctly declined (consoleAuthModeUnsetProd
+	// arm at console.go:278) but the legacy shell here filled the
+	// vacuum, serving the full Sky Console HTML unauthenticated to any
+	// visitor. The documented contract — "Production (ENV !=
+	// dev/development/local) AND unset → mount declines" — was only
+	// held for the inline path; the legacy fallback silently violated
+	// it. Mirror the same decline semantics here so both mount paths
+	// honour the same gate contract.
+	if productionFromEnv() && strings.TrimSpace(os.Getenv("SKY_CONSOLE_AUTH")) == "" {
+		fmt.Fprintln(os.Stderr, "[sky.console] legacy console skipped reason=auth-unset (production mode requires SKY_CONSOLE_AUTH; see docs/v0.16.x-console/EMBEDDED.md)")
+		logStructured("warn", "console.disabled", "reason", "auth-unset", "path", "legacy")
+		return
+	}
 	// PR 2 (v0.16.1): skip the legacy HTML shell registration when
 	// the inline console (MountEmbeddedConsole, called first from
 	// the boot path) already claimed `/_sky/console`. Previously
