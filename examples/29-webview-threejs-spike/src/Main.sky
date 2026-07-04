@@ -147,4 +147,3 @@ main =
         , subscriptions = subscriptions
         , window = { title = "Sky.Webview spike - three.js", size = ( 1024, 720 ) }
         }
-        |> Task.run
