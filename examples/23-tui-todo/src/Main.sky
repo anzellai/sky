@@ -295,4 +295,3 @@ main =
         , subscriptions = subscriptions
         , onKey = onKey
         }
-        |> Task.run

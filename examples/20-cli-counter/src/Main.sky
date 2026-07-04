@@ -100,4 +100,3 @@ main =
         , subscriptions = subscriptions
         , onLine = onLine
         }
-        |> Task.run

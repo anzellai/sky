@@ -502,7 +502,6 @@ main =
                 , routes = [ Live.route "/" KitchenSink ]
                 , notFound = KitchenSink
                 }
-                |> Task.run
 
         _ ->
             Tui.app
@@ -514,4 +513,3 @@ main =
                 , routes = []
                 , notFound = ()
                 }
-                |> Task.run

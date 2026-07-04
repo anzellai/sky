@@ -155,4 +155,3 @@ main =
         , subscriptions = subscriptions
         , window = { title = "Sky Webview Stopwatch", size = ( 800, 500 ) }
         }
-        |> Task.run
