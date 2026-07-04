@@ -25,11 +25,15 @@ import qualified Sky.Reporting.Annotation as A
 -- giving `sky fmt` proper round-trip preservation without the
 -- text-heuristic post-pass that used to live in app/Main.hs.
 --
--- Each comment's `A.Located String` contains the raw text *without*
--- the leading `--` / `{-` or trailing `-}` — the formatter adds the
--- delimiters back. This keeps the stored form normalised so
--- downstream consumers (LSP hover-over-comment, future docgen)
--- don't re-parse the delimiters.
+-- v0.17.8 (#144 rewrite): each comment now carries structured
+-- metadata (`ParsedComment`) so downstream consumers can
+-- discriminate line-vs-block comments and own-line-vs-trailing
+-- position without re-tokenising. `_commentText` is the raw body
+-- without delimiters (`--` / `{-` / `-}`); the formatter adds
+-- them back on emit. Leading whitespace on line comments is
+-- preserved (previous `trimStart` was destructive for round-trip).
+-- See `docs/v0.17-roadmap/fmt-ast-comments.md` for the full
+-- Phase 1-4 rollout.
 data Module = Module
     { _name     :: Maybe (A.Located [String])  -- module name segments
     , _exports  :: A.Located Exposing
@@ -39,7 +43,48 @@ data Module = Module
     , _unions   :: [A.Located Union]
     , _aliases  :: [A.Located Alias]
     , _binops   :: [A.Located Infix]
-    , _comments :: [A.Located String]  -- audit P2-1
+    , _comments :: [A.Located ParsedComment]  -- audit P2-1 / v0.17.8 #144
+    }
+    deriving (Show)
+
+
+-- | Line comment (`--`) vs block comment (`{- ... -}`).
+-- Populated at parse time so the formatter can re-emit the right
+-- delimiters without inferring from the body's shape. A single-line
+-- block (`{- foo -}`) is indistinguishable from a line (`-- foo`)
+-- at the region level alone; this tag is load-bearing for
+-- round-trip correctness.
+data CommentKind
+    = CommentLine
+    | CommentBlock
+    deriving (Show, Eq)
+
+
+-- | Position class within its source row.
+-- Own-line: only whitespace precedes the comment on its row.
+-- Trailing: non-whitespace code precedes the comment on its row
+-- (e.g. `x = 1  -- inline`). The formatter uses this to decide
+-- whether to append the comment to a preceding expression's line
+-- or emit it as its own line above the following node.
+data CommentPos
+    = CommentOwnLine
+    | CommentTrailing
+    deriving (Show, Eq)
+
+
+-- | A parsed comment carried by `_comments`.
+--
+-- `_commentText` is the raw body verbatim (no delimiter, no
+-- whitespace trimming — the formatter can normalise the leading
+-- space if desired, but the raw form is what enables round-trip).
+-- `_commentCol` is the 1-based source start column (`_start._col`
+-- from the containing `Region`) — used to recover indentation
+-- when the enclosing AST node's indent doesn't match.
+data ParsedComment = ParsedComment
+    { _commentKind :: !CommentKind
+    , _commentPos  :: !CommentPos
+    , _commentText :: !String
+    , _commentCol  :: !Int
     }
     deriving (Show)
 
