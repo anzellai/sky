@@ -1508,9 +1508,34 @@ runCommand cmd = case cmd of
                     Right srcMod -> do
                         let baseOut = T.pack (Format.formatModule srcMod)
                             withComments = preserveTopLevelComments src baseOut
-                        case fmtSafetyCheck src withComments of
-                            Just msg -> return (Left msg)
-                            Nothing -> do
+                        -- v0.17.7 (#144): the escape hatch that the
+                        -- refusal message documents (`SKY_FMT_FORCE=1`)
+                        -- was only wired up in the `--stdin` mode
+                        -- below.  In file mode we ignored the env var
+                        -- entirely, so users hitting the safety guard
+                        -- had NO way to write the formatted output —
+                        -- the message told them to re-run with
+                        -- `SKY_FMT_FORCE=1` but the re-run refused
+                        -- identically.  Now file mode honours the same
+                        -- contract: force=set → write anyway; force=
+                        -- unset → refuse + exit 1 as before.
+                        force <- System.Environment.lookupEnv "SKY_FMT_FORCE"
+                        case (force, fmtSafetyCheck src withComments) of
+                            (Nothing, Just msg) ->
+                                return (Left msg)
+                            (Just _, Just _) -> do
+                                TIO.writeFile path withComments
+                                -- Loud on stderr so the user knows the
+                                -- forced write dropped comments; keep
+                                -- exit 0 so CI gates like
+                                -- `SKY_FMT_FORCE=1 sky fmt … &&
+                                -- git diff --exit-code` still work.
+                                hPutStrLn stderr $
+                                    fmtForceMessage src withComments
+                                putStrLn $ "Formatted " ++ path
+                                    ++ " (forced)"
+                                return (Right ())
+                            (_, Nothing) -> do
                                 TIO.writeFile path withComments
                                 putStrLn $ "Formatted " ++ path
                                 return (Right ())
@@ -2319,27 +2344,56 @@ detectPlatform = do
 -- restacking can collapse a trailing comment onto an earlier line
 -- (e.g. two-line `case ... of\n    -- doc` becoming `case ... of  -- doc`)
 -- which legitimately reduces the per-line count.
+-- | Counts of source vs formatted-output comment lines, plus the
+-- computed slack threshold.  Callers (safety guard, force-write,
+-- test) use the raw counts to build their own messages instead of
+-- hard-coding a "re-run" hint into one message that fires in every
+-- code path.
+data FmtCommentTally = FmtCommentTally
+    { fctInput  :: !Int
+    , fctOutput :: !Int
+    , fctSlack  :: !Int  -- ^ max 1 or 5% of input, whichever's higher
+    }
+
+fmtCommentTally :: T.Text -> T.Text -> FmtCommentTally
+fmtCommentTally srcIn srcOut =
+    let ci = countComments srcIn
+        co = countComments srcOut
+    in FmtCommentTally { fctInput = ci, fctOutput = co, fctSlack = max 1 (ci `div` 20) }
+  where
+    countComments t =
+        length [l | l <- map T.strip (T.lines t)
+                  , T.pack "--" `T.isPrefixOf` l || T.pack "{-" `T.isPrefixOf` l]
+
 fmtSafetyCheck :: T.Text -> T.Text -> Maybe String
 fmtSafetyCheck srcIn srcOut =
-    let commentsBefore = countComments srcIn
-        commentsAfter  = countComments srcOut
-        threshold      = max 1 (commentsBefore `div` 20)  -- ~5% slack
-    in if commentsBefore > commentsAfter + threshold
+    let t = fmtCommentTally srcIn srcOut
+    in if fctInput t > fctOutput t + fctSlack t
          then Just $ unlines
-             [ "refusing to format: " ++ show commentsBefore
+             [ "refusing to format: " ++ show (fctInput t)
                  ++ " comment line(s) in input but only "
-                 ++ show commentsAfter ++ " in output (dropped "
-                 ++ show (commentsBefore - commentsAfter) ++ ", threshold "
-                 ++ show threshold ++ ")."
+                 ++ show (fctOutput t) ++ " in output (dropped "
+                 ++ show (fctInput t - fctOutput t) ++ ", threshold "
+                 ++ show (fctSlack t) ++ ")."
              , "This is a sky fmt bug — please report at"
              , "https://github.com/anzellai/sky/issues with the source file."
              , "To format anyway, re-run with SKY_FMT_FORCE=1."
              ]
        else Nothing
-  where
-    countComments t =
-        length [l | l <- map T.strip (T.lines t)
-                  , T.pack "--" `T.isPrefixOf` l || T.pack "{-" `T.isPrefixOf` l]
+
+-- | The counterpart message for the SKY_FMT_FORCE=1 path: user
+-- already opted in, so the "re-run" hint from `fmtSafetyCheck`
+-- would be confusing.  Reports the same counts but frames it as
+-- "wrote despite drops" rather than "refusing".
+fmtForceMessage :: T.Text -> T.Text -> String
+fmtForceMessage srcIn srcOut =
+    let t = fmtCommentTally srcIn srcOut
+    in "SKY_FMT_FORCE=1: wrote formatted output despite the safety guard ("
+        ++ show (fctInput t) ++ " comment line(s) in input but only "
+        ++ show (fctOutput t) ++ " in output — dropped "
+        ++ show (fctInput t - fctOutput t) ++ ", threshold "
+        ++ show (fctSlack t) ++ "). Please still consider reporting the "
+        ++ "underlying formatter bug at https://github.com/anzellai/sky/issues."
 
 -- ─── Comment preservation across sky fmt ─────────────────────────
 -- The parser discards comments before they reach the AST, so
