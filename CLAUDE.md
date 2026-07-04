@@ -2,23 +2,69 @@
 
 > **Quick orientation.** Sky is an Elm-family functional language
 > compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
-> release is **v0.17.3** — LSP FFI-alias false-positive fix +
-> 5-round bounded canonicalise+solve fixpoint in `typecheckWorkspace`
-> closes the cross-module externals gap that surfaced `Type mismatch:`
-> false positives on `Db.exec` / `AppCfg` shapes; v0.17.2 T-var
-> identity-recovery gate carries forward; v0.17.1 security +
-> List.sortWith + Math.min/max Float fix carry forward; v0.17.0
-> typed-emit fix, documented rt.Coerce residual surface across 8
-> sound safety classes, `scopeStateRef` IORef contract + audit
-> spec, and per-panic-class emission-time regression locks stay
-> baseline. v0.15 type-directed lowering, Go generics on parametric
-> record aliases, same-module polymorphic re-instantiation, and the
-> wildcard-`any` soundness gate all carry forward as baseline. The
-> verification sweep (40 examples + Sky.Test assertions + 410+
-> cabal specs + 17/17 Neovim LSP integration tests) is the source of
-> truth — green-everywhere is a hard release gate.
+> release is **v0.17.5** — canonicaliser's explicit-alias-wins rule
+> silently resolves the historical dual-import friction (`import
+> Std.Db as Db` + `import Lib.Db exposing (conn)` now compiles with
+> the explicit alias winning) and every `main` entry-point sheds its
+> redundant trailing `|> Task.run` (runtime auto-forces Task-typed
+> main); v0.17.4 diagnostic wording carries forward; v0.17.3 LSP
+> FFI-alias false-positive + 5-round canonicalise+solve fixpoint in
+> `typecheckWorkspace`; v0.17.2 T-var identity-recovery gate;
+> v0.17.1 security + List.sortWith + Math.min/max Float fix;
+> v0.17.0 typed-emit fix, documented rt.Coerce residual surface
+> across 8 sound safety classes, `scopeStateRef` IORef contract +
+> audit spec, and per-panic-class emission-time regression locks
+> stay baseline. v0.15 type-directed lowering, Go generics on
+> parametric record aliases, same-module polymorphic
+> re-instantiation, and the wildcard-`any` soundness gate all carry
+> forward as baseline. The verification sweep (40 examples +
+> Sky.Test assertions + 410+ cabal specs + 17/17 Neovim LSP
+> integration tests) is the source of truth — green-everywhere is a
+> hard release gate.
 
-## Current state (v0.17.3)
+## Import qualifier rules (v0.17.5+)
+
+Every non-aliased `import M exposing (…)` also registers `M`'s
+last segment as an auto-qualifier — `import Sky.Core.Prelude
+exposing (..)` binds `Prelude.<name>` too.  Two imports MAY both
+try to bind the same qualifier.  Sky resolves that at
+canonicalisation time:
+
+* **Explicit alias wins.**  Given `import Std.Db as Db` and a bare
+  `import Lib.Db exposing (conn)` in the same file, `Db.<x>`
+  resolves to `Std.Db` and `conn` (unqualified) resolves to
+  `Lib.Db`.  The bare import's `Db` auto-qualifier is suppressed
+  silently — you get what you wrote.  Same-module double imports
+  (`Std.Ui as Ui` + `Std.Ui exposing (Element)`) are always fine
+  because both bindings resolve to the same canonical module.
+* **Two bare, different modules — E1001.**  `import State` +
+  `import App.State` both auto-register `State` for DIFFERENT
+  modules.  There's no explicit alias to break the tie, so the
+  compiler emits `[E1001] Import error: two imports both bind the
+  qualifier "State"` with a fix-it suggesting `import App.State
+  as AppState`.
+* **Two explicit `as X` aliases for different modules — E1001.**
+  User error; no way to disambiguate.
+
+Rationale + gate: see `Sky.Canonicalise.Module`'s
+`effectiveQualifier` + `detectImportAliasCollisions`.  Regression
+spec: `Sky.Canonicalise.DualImportCollisionSpec`.
+
+## `main` entry points (v0.17.5+)
+
+The runtime auto-forces a Task-typed `main` — the generated Go
+`func main()` wraps the entry expression in `rt.AnyTaskRun`
+unconditionally.  So `main = Cli.program cfg`, `main = Tui.app
+cfg`, `main = Webview.app cfg`, and `main = Live.app cfg` all run
+their tasks with no trailing `|> Task.run`.
+
+The trailing `|> Task.run` is a no-op at the program entry.
+Module-level `Task.run` at a top-level binding (`apiKey =
+System.getenv "K" |> Task.run |> Result.withDefault ""`) is still
+load-bearing — that runs at binding-init time before `main` is
+entered.
+
+## Current state (v0.17.5)
 
 | Surface | Status |
 |---|---|
