@@ -169,16 +169,53 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
 
 
-    it "diagnostic recognises a pre-existing alias line + suggests merging" $ do
-        -- Real-world 3-import shape hit by a downstream project during
-        -- the v0.17.3 upgrade: the user tries to resolve the collision
-        -- by adding a middle `import Lib.Db as LibDb` line, but the
-        -- last bare `import Lib.Db exposing (conn)` still auto-binds
-        -- `Db` from the last-segment default. Pre-fix diagnostic told
-        -- them to "Add `as <Alias>` to one of them, e.g. `import
-        -- Lib.Db as LibDb`" — which is what they thought they had
-        -- already done. Post-fix diagnostic recognises the existing
-        -- `as LibDb` line and points them at the merge fix.
+    it "explicit alias suppresses a bare import's auto-qualifier (2-line shape)" $ do
+        -- v0.17.5 explicit-alias-wins rule.  When one import gives an
+        -- EXPLICIT `as X` and another bare import's last-segment
+        -- default would ALSO auto-register `X` for a different module,
+        -- the bare's auto-qualifier is suppressed silently.  The
+        -- explicit binding is unambiguous; the user gets what they
+        -- wrote.  Pre-v0.17.5 this shape was E1001.
+        let mainSrc = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , "import Std.Db as Db"
+                , "import Lib.Db exposing (conn)"
+                , ""
+                -- `conn` reaches Lib.Db (unqualified exposing).
+                -- `Db.<x>` would resolve to Std.Db (explicit alias wins).
+                , "main = println conn"
+                ]
+            libDbModule = unlines
+                [ "module Lib.Db exposing (conn, dummy)"
+                , ""
+                , "conn : String"
+                , "conn = \"local://\""
+                , ""
+                , "dummy : Int"
+                , "dummy = 0"
+                ]
+        result <- compileInProcessMulti
+            [ ("src/Main.sky", mainSrc)
+            , ("src/Lib/Db.sky", libDbModule)
+            ]
+        case result of
+            CompileOk _ -> return ()
+            CompileErr e -> do
+                -- The collision gate must NOT fire — explicit wins.
+                e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
+                expectationFailure ("expected clean build; got: " ++ e)
+
+
+    it "explicit alias suppresses a bare import's auto-qualifier (3-line shape)" $ do
+        -- Same rule applied to the historical ringfence 3-import
+        -- workaround shape.  Under v0.17.5 the extra `import Lib.Db
+        -- as LibDb` line is optional — the bare `import Lib.Db
+        -- exposing (conn)` no longer collides with `Std.Db as Db`
+        -- either way.  This case documents that the workaround
+        -- continues to compile identically to the 2-line shape above.
         let mainSrc = unlines
                 [ "module Main exposing (main)"
                 , ""
@@ -204,15 +241,37 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
             , ("src/Lib/Db.sky", libDbModule)
             ]
         case result of
-            CompileOk _ -> expectationFailure "expected dual-import qualifier collision to be rejected"
+            CompileOk _ -> return ()
             CompileErr e -> do
-                -- Still detected as a collision.
+                e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
+                expectationFailure ("expected clean build; got: " ++ e)
+
+
+    it "two bare imports auto-registering same qualifier still trip E1001" $ do
+        -- The explicit-alias-wins rule only fires when there IS an
+        -- explicit alias to break the tie.  When BOTH sides are bare,
+        -- the qualifier is genuinely ambiguous and the collision gate
+        -- must still fire (silent miscompile prevention, task #347).
+        let mainSrc = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , "import State"
+                , "import App.State"
+                , ""
+                , "main = println \"x\""
+                ]
+        result <- compileInProcessMulti
+            [ ("src/Main.sky", mainSrc)
+            , ("src/State.sky", stateModule)
+            , ("src/App/State.sky", appStateModule)
+            ]
+        case result of
+            CompileOk _ -> expectationFailure "two bare imports must still trip E1001"
+            CompileErr e -> do
                 e `shouldSatisfy` ("two imports both bind the qualifier" `isInfixOf`)
-                -- Merge suggestion surfaces the pre-existing alias line.
-                e `shouldSatisfy` ("import Lib.Db as LibDb exposing" `isInfixOf`)
-                e `shouldSatisfy` ("You already have" `isInfixOf`)
-                -- Falls through to explaining WHY the workaround failed.
-                e `shouldSatisfy` ("re-registers" `isInfixOf`)
+                e `shouldSatisfy` ("`State`" `isInfixOf`)
 
 
     it "does NOT flag kernel imports that share a kernel pseudo-module" $ do
