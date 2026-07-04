@@ -260,25 +260,11 @@ canonicaliseImpl deps ffiKernelFns kernelMods srcMod =
         -- v0.17 close P1 step 5 — thread FFI kernel functions
         -- map into 'processImport' so 'kernelVarsFor' reads the
         -- value channel instead of the legacy IORef.
-        -- v0.17.5 — explicit-alias-wins rule.  Collect every import
-        -- whose qualifier is an EXPLICIT `as X` alias (paired with
-        -- the canonical import path it aliases).  A bare
-        -- `import M exposing (…)` whose last-segment default matches
-        -- an explicit alias for a DIFFERENT module suppresses its
-        -- own auto-qualifier registration (the explicit alias wins).
-        -- Unqualified `exposing` names still land in scope; only the
-        -- last-segment shortcut is dropped.  Same-module double
-        -- imports (e.g. `Std.Ui as Ui` + `Std.Ui exposing (Element)`)
-        -- are unaffected because their explicit + implicit qualifiers
-        -- resolve to the SAME canonical module.
-        explicitAliasClaims :: Map.Map String String
-        explicitAliasClaims = Map.fromList
-            [ (alias, path)
-            | imp <- Src._imports srcMod
-            , Just alias <- [Src._importAlias imp]
-            , let segs = case Src._importName imp of A.At _ s -> s
-                  path = ModuleName.joinWith "." segs
-            ]
+        -- v0.17.5 — explicit-alias-wins rule.  Shared with
+        -- 'detectImportAliasCollisions' so the gate + the binding
+        -- pass agree on which qualifiers are actually bound.  See
+        -- 'buildExplicitAliasClaims' + 'effectiveQualifier'.
+        explicitAliasClaims = buildExplicitAliasClaims (Src._imports srcMod)
 
         env1 = foldl (processImport ffiKernelFns kernelMods deps modName
                                     explicitAliasClaims)
@@ -500,10 +486,10 @@ processImport
     -> Map.Map String DepInfo
     -> ModuleName.Canonical
     -> Map.Map String String
-    -- ^ v0.17.5 — {explicit-alias → aliased-canonical-path} across
-    -- the whole file.  Used to suppress an auto-qualifier when a
-    -- bare `import M exposing (…)`'s last-segment default collides
-    -- with an explicit `as X` binding for a DIFFERENT module.
+    -- ^ v0.17.5 — file-wide `alias → canonical-path` claim map,
+    -- built via 'buildExplicitAliasClaims'.  Consulted by
+    -- 'effectiveQualifier' to decide whether this import's
+    -- auto-qualifier should be suppressed.
     -> Env.Env
     -> Src.Import
     -> Env.Env
@@ -513,19 +499,14 @@ processImport ffiKernelFns kernelMods deps _home explicitAliasClaims env imp =
         importPath = ModuleName.joinWith "." importSegs
         importMod = ModuleName.Canonical importPath
 
-        (qualifier, suppressAutoQualifier) = case Src._importAlias imp of
-            Just alias -> (alias, False)
-            Nothing ->
-                let lastSeg = last importSegs
-                in case Map.lookup lastSeg explicitAliasClaims of
-                    -- Another explicit alias claims this last-segment
-                    -- default AND it points at a different module.
-                    -- Suppress the auto-qualifier — the explicit alias
-                    -- wins.  The bare import's exposing list still
-                    -- flows through unchanged.
-                    Just claimedPath | claimedPath /= importPath ->
-                        (lastSeg, True)
-                    _ -> (lastSeg, False)
+        -- v0.17.5 explicit-alias-wins.  See 'effectiveQualifier' for
+        -- the shared rule.  Unqualified 'exposing' names still flow
+        -- through 'envWithExposed' below when suppressed — only the
+        -- last-segment shortcut is dropped.
+        (qualifier, suppressAutoQualifier) = case effectiveQualifier
+                                                    explicitAliasClaims imp of
+            Just q  -> (q, False)
+            Nothing -> (last importSegs, True)
 
         -- FFI-over-kernel precedence (2026-04-24): when an import
         -- path matches BOTH a Sky kernel module and a Go FFI dep,
@@ -879,59 +860,85 @@ detectPreludeShadowing (ModuleName.Canonical home) unions =
             _ -> []
 
 
+-- | v0.17.5 — collect every EXPLICIT `import M as X` binding as
+-- `X → canonical(M)`.  Shared between 'processImport' (binding
+-- pass) and 'detectImportAliasCollisions' (gate pass) so both
+-- agree on which qualifier claims are live.
+buildExplicitAliasClaims :: [Src.Import] -> Map.Map String String
+buildExplicitAliasClaims imps = Map.fromList
+    [ (alias, ModuleName.joinWith "." segs)
+    | imp <- imps
+    , Just alias <- [Src._importAlias imp]
+    , let A.At _ segs = Src._importName imp
+    ]
+
+
+-- | v0.17.5 explicit-alias-wins rule.  Given the file's explicit
+-- alias claims, decide what qualifier this import contributes to
+-- the environment.
+--
+--   * `Just qualifier`  — the import binds `qualifier` to its
+--     canonical module (either the user's explicit `as X`, or the
+--     bare last-segment default when no explicit claim collides).
+--   * `Nothing`         — a bare import whose last-segment default
+--     collides with an EXPLICIT alias for a DIFFERENT module.
+--     The auto-qualifier is suppressed; the explicit alias line
+--     wins.  Unqualified `exposing` names still land in scope; only
+--     the last-segment shortcut is dropped.
+--
+-- Same-module double imports (`Std.Ui as Ui` + `Std.Ui exposing
+-- (Element)`) never suppress because the claimed path equals the
+-- bare import's path — both bindings resolve to the same canonical
+-- module and are harmless.
+effectiveQualifier :: Map.Map String String -> Src.Import -> Maybe String
+effectiveQualifier claims imp =
+    case Src._importAlias imp of
+        Just alias -> Just alias
+        Nothing ->
+            case segs of
+                [] -> Just importPath  -- defensive; parser shouldn't allow
+                _  ->
+                    let lastSeg = last segs
+                    in case Map.lookup lastSeg claims of
+                        Just claimedPath | claimedPath /= importPath ->
+                            Nothing
+                        _ -> Just lastSeg
+  where
+    A.At _ segs = Src._importName imp
+    importPath = ModuleName.joinWith "." segs
+
+
 detectImportAliasCollisions
     :: Map.Map String String
     -- ^ v0.17 close P1 step 6b — merged kernel-modules map.
     -> [Src.Import] -> [String]
 detectImportAliasCollisions kernelMods imps =
     let -- v0.17.5 — mirror the explicit-alias-wins rule from
-        -- processImport.  A bare import whose last-segment default
-        -- collides with an EXPLICIT alias binding for a different
-        -- module is suppressed at binding time, so it must not count
-        -- toward a collision either.  The gate now fires only on
-        -- genuinely ambiguous shapes:
+        -- processImport by consulting the same 'effectiveQualifier'
+        -- oracle.  Suppressed imports produce 'Nothing' here and
+        -- contribute no entry to the collision groups.  Post-fix the
+        -- gate fires only on genuinely ambiguous shapes:
         --   * two bare imports auto-registering the SAME
         --     last-segment for different modules (no explicit alias
         --     to break the tie)
         --   * two explicit `as X` aliases both pointing at that
         --     same `X` for different modules (user error)
-        explicitAliasClaims :: Map.Map String String
-        explicitAliasClaims = Map.fromList
-            [ (alias, path)
-            | imp <- imps
-            , Just alias <- [Src._importAlias imp]
-            , let segs = case Src._importName imp of A.At _ s -> s
-                  path = ModuleName.joinWith "." segs
-            ]
+        explicitAliasClaims = buildExplicitAliasClaims imps
 
-        -- For each import, derive (qualifier, canonical-source, region, importPath).
-        -- canonical-source folds kernel modules onto their pseudo-module
-        -- name so multiple kernel paths to the same dispatch table don't
-        -- count as a collision.
+        -- For each import that actually binds a qualifier, derive
+        -- (qualifier, canonical-source, region, importPath).  The
+        -- canonical-source folds kernel modules onto their pseudo-
+        -- module name so multiple kernel paths to the same dispatch
+        -- table don't count as a collision.
         entries :: [(String, String, A.Region, String)]
         entries =
             [ (qualifier, src, region, importPath)
             | imp <- imps
+            , Just qualifier <- [effectiveQualifier explicitAliasClaims imp]
             , let segs = case Src._importName imp of A.At _ s -> s
                   region = case Src._importName imp of A.At r _ -> r
                   importPath = ModuleName.joinWith "." segs
                   src = Map.findWithDefault importPath importPath kernelMods
-            , (qualifier, isBoundQualifier) <- case Src._importAlias imp of
-                  Just alias -> [(alias, True)]
-                  Nothing    -> case segs of
-                      [] -> [(importPath, True)]  -- defensive
-                      _  ->
-                          let lastSeg = last segs
-                          in case Map.lookup lastSeg explicitAliasClaims of
-                              Just claimedPath | claimedPath /= importPath ->
-                                  -- Auto-qualifier suppressed — the
-                                  -- explicit-alias binding wins.  This
-                                  -- import contributes no qualifier
-                                  -- binding, so cannot participate in
-                                  -- a collision.
-                                  []
-                              _ -> [(lastSeg, True)]
-            , isBoundQualifier
             ]
 
         -- Group entries by qualifier. Earliest-region first per group so

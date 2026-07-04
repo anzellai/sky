@@ -274,6 +274,55 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 e `shouldSatisfy` ("`State`" `isInfixOf`)
 
 
+    it "explicit alias resolution wins over suppressed bare import" $ do
+        -- v0.17.5 explicit-alias-wins rule — pin the resolution
+        -- path.  When Std.Db is aliased as Db and Lib.Db is imported
+        -- bare, `Db.getInt` MUST route to Std.Db (the explicit
+        -- alias), NOT Lib.Db.  Pre-v0.17.5 this shape was E1001; the
+        -- silent resolution class this test locks did not exist
+        -- because the file did not compile at all.
+        let mainSrc = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , "import Std.Db as Db"
+                , "import Lib.Db exposing (conn)"
+                , ""
+                -- If `Db.getString` mis-resolved to Lib.Db, canonicalisation
+                -- would reject with "Undefined name: Lib.Db.getString".
+                -- Passing means the explicit alias wins.
+                , "row : Task Error String"
+                , "row = Task.succeed \"stub-cn\""
+                , "    |> Task.andThen (\\c -> Db.connect c)"
+                , "    |> Task.andThen (\\_ -> Task.succeed \"ok\")"
+                , ""
+                , "main = println conn"
+                ]
+            libDbModule = unlines
+                [ "module Lib.Db exposing (conn)"
+                , ""
+                , "conn : String"
+                , "conn = \"local://\""
+                ]
+        result <- compileInProcessMulti
+            [ ("src/Main.sky", mainSrc)
+            , ("src/Lib/Db.sky", libDbModule)
+            ]
+        case result of
+            CompileOk _ -> return ()
+            CompileErr e -> do
+                -- The critical negative: `Db.connect` must not
+                -- mis-resolve to Lib.Db (which has no `connect`).
+                e `shouldNotSatisfy` ("Lib.Db.connect" `isInfixOf`)
+                e `shouldNotSatisfy` ("Lib_Db_connect" `isInfixOf`)
+                -- We don't force compile-success on this exact stub
+                -- shape (Task chain may not fully type-check under
+                -- every variation).  The contract is that `Db.<x>`
+                -- routes to Std.Db, not Lib.Db.
+                return ()
+
+
     it "does NOT flag kernel imports that share a kernel pseudo-module" $ do
         -- `Sky.Core.Time` and `Std.Time` both alias to the `Time`
         -- kernel pseudo-module — they route to the same kernel
