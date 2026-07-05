@@ -262,3 +262,78 @@ spec = do
             once <- fmtStdin src
             twice <- fmtStdin once
             twice `shouldBe` once
+
+    -- Phase 2 rewrite (#144) — AST-driven drain at Lambda body
+    -- + top-decl boundaries.  Locks the invariant that:
+    --   1. Lambda-body own-line comments now survive fmt.
+    --   2. Existing top-decl header comments still single-emit
+    --      (no double-inject from AST-drain + legacy anchor).
+    --   3. Block comments preserved once with `{- ... -}` shape.
+    --   4. Sentinel `\x03AST\x03` NEVER leaks to user output.
+    describe "AST-driven comment placement (v0.17.8 #144 Phase 2)" $ do
+
+        it "issue #144 — comment inside lambda body survives fmt" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , ""
+                    , "handler ="
+                    , "    \\event ->"
+                    , "        -- routing decision"
+                    , "        case event of"
+                    , "            Click -> 1"
+                    , "            Hover -> 2"
+                    ]
+            out <- fmtStdin src
+            countOccurrences "-- routing decision" out `shouldBe` 1
+
+        it "issue #144 — lambda-body comment is idempotent across two fmt passes" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , ""
+                    , "handler ="
+                    , "    \\event ->"
+                    , "        -- routing decision"
+                    , "        case event of"
+                    , "            Click -> 1"
+                    , "            Hover -> 2"
+                    ]
+            once  <- fmtStdin src
+            twice <- fmtStdin once
+            twice `shouldBe` once
+            countOccurrences "-- routing decision" twice `shouldBe` 1
+
+        it "top-level `-- doc` still single-emits after Phase 2 drain" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "-- doc for fn"
+                    , "fn = 42"
+                    ]
+            out <- fmtStdin src
+            countOccurrences "-- doc for fn" out `shouldBe` 1
+
+        it "block comment above decl preserved exactly once" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "{- header block -}"
+                    , "fn = 42"
+                    ]
+            out <- fmtStdin src
+            countOccurrences "{- header block -}" out `shouldBe` 1
+
+        it "AST sentinel `\\x03AST\\x03` never leaks to output" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "-- top-level"
+                    , "fn ="
+                    , "    \\_ ->"
+                    , "        -- lambda-inner"
+                    , "        1"
+                    ]
+            out <- fmtStdin src
+            countOccurrences "\x03" out `shouldBe` 0
+            countOccurrences "AST\x03" out `shouldBe` 0

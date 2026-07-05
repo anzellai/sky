@@ -77,47 +77,94 @@ parseModule src =
         Right m -> Right m { Src._comments = collectComments src }
 
 
--- Walk the source text row-by-row, emitting one A.Located String per
--- line/block comment. Block comments span multiple rows and are
+-- Walk the source text row-by-row, emitting one A.Located ParsedComment
+-- per line/block comment. Block comments span multiple rows and are
 -- emitted with a Region covering the full start..end span. Contents
 -- are stored WITHOUT the `--`, `{-`, `-}` delimiters — the formatter
 -- re-inserts them on emit.
-collectComments :: T.Text -> [A.Located String]
-collectComments src = go 1 1 (T.unpack src) []
+--
+-- v0.17.8 (#144): each comment is tagged at collect time with
+-- `CommentKind` (Line vs Block, from the opening delimiter) and
+-- `CommentPos` (Own-line vs Trailing, derived from whether any
+-- non-whitespace code has been seen on the current row before the
+-- comment starts). The walker carries a `sawCode :: Bool` state
+-- that resets on `\n` and flips true on any non-space/tab char
+-- (including inside code — comments themselves are not "code" for
+-- this purpose since they take the rest of the line, but string
+-- content is). Own-line comments are indented by their source col
+-- so a subsequent formatter phase can recover indent when the
+-- containing AST node's indent no longer matches.
+--
+-- Line comment leading whitespace (`--   foo` vs `-- foo`) is now
+-- PRESERVED verbatim; the old `trimStart` normalisation was
+-- destructive for round-trip and made `--   arg1` style alignment
+-- silently mutate to `--   arg1` on second pass. See
+-- `docs/v0.17-roadmap/fmt-ast-comments.md` for the full plan.
+collectComments :: T.Text -> [A.Located Src.ParsedComment]
+collectComments src = go 1 1 False (T.unpack src) []
   where
-    go _ _ []            acc = reverse acc
-    go r _ ('\n':xs)     acc = go (r + 1) 1 xs acc
-    go r c ('-':'-':xs)  acc =
+    -- (row, col, sawCode-on-row, remaining, acc-reversed)
+    go _ _ _  []               acc = reverse acc
+    go r _ _  ('\n':xs)        acc = go (r + 1) 1 False xs acc
+    go r c sc ('-':'-':xs)     acc =
         let (body, rest) = span (/= '\n') xs
             endCol       = c + 2 + length body
             region       = A.Region (A.Position r c) (A.Position r endCol)
-        in go r endCol rest (A.At region (trimStart body) : acc)
-    go r c ('{':'-':xs)  acc =
+            cmt          = Src.ParsedComment
+                             { Src._commentKind = Src.CommentLine
+                             , Src._commentPos  = posFrom sc
+                             , Src._commentText = body
+                             , Src._commentCol  = c
+                             }
+        -- After a `--` comment we're at end-of-line; the next
+        -- iteration will hit '\n' and reset sawCode. Threading
+        -- True through here is fine — comment counts as code.
+        in go r endCol True rest (A.At region cmt : acc)
+    go r c sc ('{':'-':xs)     acc =
         let (body, rest, r', c', consumed) = takeBlockBody xs r (c + 2) 1
             region = A.Region (A.Position r c) (A.Position r' c')
+            cmt    = Src.ParsedComment
+                       { Src._commentKind = Src.CommentBlock
+                       , Src._commentPos  = posFrom sc
+                       , Src._commentText = body
+                       , Src._commentCol  = c
+                       }
+            -- Block ended on row r'; sawCode on row r' should be
+            -- True (the block is "code" from a trailing-comment
+            -- POV — a following `-- foo` on the same row IS
+            -- trailing). If the block spans multiple rows
+            -- (r' > r) then sawCode-on-row is True on r' because
+            -- the closing `-}` is non-whitespace-code on that row.
         in if consumed
-             then go r' c' rest (A.At region body : acc)
+             then go r' c' True rest (A.At region cmt : acc)
              else reverse acc   -- unclosed block; stop scanning to avoid run-on
-    go r c ('"':'"':'"':xs) acc = skipTriple r (c + 3) xs acc
-    go r c ('"':xs)      acc = skipString r (c + 1) xs acc
-    go r c (_:xs)        acc = go r (c + 1) xs acc
+    go r c _  ('"':'"':'"':xs) acc = skipTriple r (c + 3) xs acc
+    go r c _  ('"':xs)         acc = skipString r (c + 1) xs acc
+    -- Whitespace does NOT set sawCode; any other char does.
+    go r c sc (' ':xs)         acc = go r (c + 1) sc xs acc
+    go r c sc ('\t':xs)        acc = go r (c + 1) sc xs acc
+    go r c _  (_:xs)           acc = go r (c + 1) True xs acc
+
+    posFrom True  = Src.CommentTrailing
+    posFrom False = Src.CommentOwnLine
 
     -- Skip a Sky double-quoted string literal so a `--` inside a
     -- string isn't treated as a line comment. A raw newline ends
-    -- recovery — single-quoted strings cannot span lines.
-    skipString r c []            acc = reverse acc
-    skipString r _ ('\n':xs)     acc = go (r + 1) 1 xs acc
-    skipString r c ('\\':_:xs)   acc = skipString r (c + 2) xs acc
-    skipString r c ('"':xs)      acc = go r (c + 1) xs acc
-    skipString r c (_:xs)        acc = skipString r (c + 1) xs acc
+    -- recovery — single-quoted strings cannot span lines. After
+    -- resuming `go`, sawCode is True because the string is "code"
+    -- for trailing-comment purposes.
+    skipString _ _ []          acc = reverse acc
+    skipString r _ ('\n':xs)   acc = go (r + 1) 1 False xs acc
+    skipString r c ('\\':_:xs) acc = skipString r (c + 2) xs acc
+    skipString r c ('"':xs)    acc = go r (c + 1) True xs acc
+    skipString r c (_:xs)      acc = skipString r (c + 1) xs acc
 
     -- Skip a triple-quoted multiline string. Newlines are legal
     -- content here, so the scanner tracks rows and only ends on a
-    -- closing `"""` — otherwise a `--`-prefixed line inside the
-    -- string would be mis-collected as a comment (and then
-    -- duplicated on every `sky fmt` round-trip).
-    skipTriple r c []               acc = reverse acc
-    skipTriple r c ('"':'"':'"':xs) acc = go r (c + 3) xs acc
+    -- closing `"""`. When we resume `go`, sawCode is True on the
+    -- final row (the closing `"""` is non-whitespace code there).
+    skipTriple _ _ []               acc = reverse acc
+    skipTriple r c ('"':'"':'"':xs) acc = go r (c + 3) True xs acc
     skipTriple r _ ('\n':xs)        acc = skipTriple (r + 1) 1 xs acc
     skipTriple r c (_:xs)           acc = skipTriple r (c + 1) xs acc
 
@@ -138,8 +185,6 @@ collectComments src = go 1 1 (T.unpack src) []
     takeBlockBody (x:rest)       r c d    =
         let (b, rr, rrr, rc, ok) = takeBlockBody rest r (c + 1) d
         in (x:b, rr, rrr, rc, ok)
-
-    trimStart = dropWhile (== ' ')
 
 
 moduleParser :: Parser ModuleError Src.Module
