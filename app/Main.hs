@@ -2395,6 +2395,67 @@ fmtForceMessage srcIn srcOut =
         ++ show (fctSlack t) ++ "). Please still consider reporting the "
         ++ "underlying formatter bug at https://github.com/anzellai/sky/issues."
 
+-- ─── AST-drain sentinel handling (v0.17.8 #144 Phase 2) ─────────
+--
+-- `Sky.Format.Format` prefixes each AST-drained comment line with
+-- the sentinel `\x03AST\x03`.  Helpers here extract the emitted
+-- bodies (so the legacy anchor path skips them) and strip the
+-- sentinel from the final output.
+astMarkerText :: T.Text
+astMarkerText = T.pack Format.astMarker
+
+-- Bodies of comments the AST-drain already emitted.  Each entry
+-- is the normalised body (delimiter- and whitespace-stripped) so
+-- source blocks can be matched irrespective of leading indent.
+extractAstEmittedBodies :: T.Text -> Set.Set T.Text
+extractAstEmittedBodies formatted =
+    Set.fromList
+      [ normalizeCommentBody withoutMarker
+      | ln <- T.lines formatted
+      , astMarkerText `T.isInfixOf` ln
+      , let (_, rest) = T.breakOn astMarkerText ln
+      , let withoutMarker = T.drop (T.length astMarkerText) rest
+      , not (T.null (T.strip withoutMarker))
+      ]
+
+-- Strip delimiters (`--` or `{- -}`) then trim so two forms of
+-- the same comment body compare equal.
+normalizeCommentBody :: T.Text -> T.Text
+normalizeCommentBody raw =
+    let s = T.strip raw
+        inner
+          | T.pack "--" `T.isPrefixOf` s = T.strip (T.drop 2 s)
+          | T.pack "{-" `T.isPrefixOf` s && T.pack "-}" `T.isSuffixOf` s =
+              T.strip (T.dropEnd 2 (T.drop 2 s))
+          | otherwise = s
+    in inner
+
+-- Remove any AST-emitted comment lines from a source-collected
+-- block (per-line filter).  Blocks whose only non-blank content
+-- was AST-emitted get dropped entirely so the legacy path does
+-- not inject a phantom blank-only block.
+filterAstEmittedBlocks
+    :: Set.Set T.Text
+    -> [([T.Text], T.Text, Maybe T.Text, Bool)]
+    -> [([T.Text], T.Text, Maybe T.Text, Bool)]
+filterAstEmittedBlocks emitted blocks
+    | Set.null emitted = blocks
+    | otherwise = [ (cs', p, n, h)
+                  | (cs, p, n, h) <- blocks
+                  , let cs' = filter (not . isEmitted) cs
+                  , any (not . T.null . T.strip) cs' ]
+  where
+    isEmitted ln =
+        let stripped = T.strip ln
+        in (not . T.null) stripped
+           && Set.member (normalizeCommentBody stripped) emitted
+
+-- Final pass: remove the sentinel prefix from every marker line.
+-- Reduces to identity if the input has no sentinels.
+stripAstMarkers :: T.Text -> T.Text
+stripAstMarkers = T.replace astMarkerText T.empty
+
+
 -- ─── Comment preservation across sky fmt ─────────────────────────
 -- The parser discards comments before they reach the AST, so
 -- Format.formatModule emits output without them. This post-pass
@@ -2417,12 +2478,26 @@ fmtForceMessage srcIn srcOut =
 -- needing per-node AST position tracking.
 preserveTopLevelComments :: T.Text -> T.Text -> T.Text
 preserveTopLevelComments source formatted =
-    let -- Assign each body block a stable id; the maps then carry
+    let -- v0.17.8 #144 Phase 2: Format.hs now drains own-line
+        -- comments at AST hook points (top-level decl boundaries
+        -- + lambda bodies), tagging each emitted line with the
+        -- `astMarker` sentinel.  We extract the emitted bodies
+        -- here so the legacy string-anchor path below skips
+        -- re-emitting them (avoids double-emission when both the
+        -- AST drain and a legacy header/anchor match).  The
+        -- sentinel itself is stripped as a final pass.
+        emittedBodies  = extractAstEmittedBodies formatted
+        -- Assign each body block a stable id; the maps then carry
         -- the id only, and a shared blocks-by-id table holds the
         -- actual comment text. Consumption by either prev- or
         -- next-anchor deletes the id from the table so the other
         -- anchor can't re-emit the same block (#353).
-        srcBlocks      = collectCommentBlocks source
+        rawSrcBlocks   = collectCommentBlocks source
+        -- Filter out any block whose comments are ALL AST-emitted
+        -- already; drop individual matching lines from mixed
+        -- blocks so residual (non-AST-emitted) comments still flow
+        -- through the legacy anchor path.
+        srcBlocks      = filterAstEmittedBlocks emittedBodies rawSrcBlocks
         bodyBlocks     = [(i, cs)
                          | (i, (cs, _, _, isH)) <- zip [0::Int ..] srcBlocks
                          , not isH]
@@ -2437,7 +2512,7 @@ preserveTopLevelComments source formatted =
         withTrailing   = map (reattachTrailing trailingMap) outLines
         injected       = injectComments headerMap prevAnchorMap nextAnchorMap
                                         bodyTable withTrailing
-    in T.unlines injected
+    in stripAstMarkers (T.unlines injected)
   where
     -- Walk source; for each run of comment/blank lines, produce a
     -- block carrying THREE keys:

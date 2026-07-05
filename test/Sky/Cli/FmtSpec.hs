@@ -112,3 +112,47 @@ spec = do
                     `shouldBe` True
                 after2 <- readFile path
                 (after2 /= original) `shouldBe` True
+
+        -- Phase 2 (#144) — file-mode idempotency on the shape
+        -- that previously dropped lambda-body comments. Prior to
+        -- Phase 2 this test would either FAIL on second pass
+        -- (comments drift) or produce a diff. Now both passes
+        -- must produce byte-identical output AND retain all
+        -- comments.
+        it "issue #144 fixture is idempotent in file mode" $ do
+            sky <- findSky
+            withSystemTempDirectory "sky-fmt-144" $ \tmp -> do
+                createDirectoryIfMissing True (tmp </> "src")
+                let path = tmp </> "src" </> "Main.sky"
+                writeFile path $ unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , ""
+                    , "route ="
+                    , "    \\event ->"
+                    , "        -- decision point"
+                    , "        case event of"
+                    , "            -- click branch"
+                    , "            Click -> 1"
+                    , "            _ -> 0"
+                    , ""
+                    , ""
+                    , "main ="
+                    , "    route Click"
+                    ]
+                (ec1, _, _) <- readCreateProcessWithExitCode
+                    (proc sky ["fmt", path]) ""
+                ec1 `shouldBe` ExitSuccess
+                pass1 <- readFile path
+                (ec2, _, _) <- readCreateProcessWithExitCode
+                    (proc sky ["fmt", path]) ""
+                ec2 `shouldBe` ExitSuccess
+                pass2 <- readFile path
+                pass2 `shouldBe` pass1
+                -- decision-point survives at least the first pass.
+                ("-- decision point" `isInfixOf'` pass1) `shouldBe` True
+  where
+    isInfixOf' needle haystack =
+        let ns = length needle
+        in ns == 0 || any (\i -> take ns (drop i haystack) == needle)
+                          [0 .. length haystack - ns]
