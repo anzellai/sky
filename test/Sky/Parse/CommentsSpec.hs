@@ -5,11 +5,12 @@ module Sky.Parse.CommentsSpec (spec) where
 -- that source with comments at various positions round-trips:
 -- every comment in the input must be present in the output.
 --
--- The exact emission layout is still handled by the preserveTopLevelComments
--- post-pass in app/Main.hs (follow-up work will retire it entirely
--- once Format.hs grows per-declaration comment slots); this spec
--- locks the invariant "comments are not dropped" regardless of
--- which stage places them.
+-- v0.17.8 Phase 3 (#144) migrated the ~500 LOC string-anchor post-
+-- pass (`preserveTopLevelComments`) into AST-driven drain hooks in
+-- `Sky.Format.Format`.  These specs are now the round-trip
+-- coverage for the AST-driven placement — they don't care whether
+-- the comments are placed by AST drain or a post-pass, only that
+-- they land correctly.
 
 import Test.Hspec
 import System.Directory (getCurrentDirectory, doesFileExist)

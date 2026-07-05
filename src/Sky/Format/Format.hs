@@ -6,15 +6,20 @@
 -- newlines at the correct absolute position. The golden rule is
 -- "one line or each on its own line" — never mix.
 --
--- v0.17.8 (#144): the fmt cascade also threads a comment-stream
--- (`CS`) so per-node arms can drain own-line comments above the
--- node they belong to. Phase 2 wires drain at two hook points —
--- top-level decl boundaries and lambda bodies — the latter being
--- the shape that #144 exercises. Emitted comments carry the ASCII
--- sentinel `astMarker`; the post-processor in `app/Main.hs`
--- suppresses source-side re-emission of any already-drained
--- comment and strips markers before returning.
-module Sky.Format.Format (formatModule, astMarker) where
+-- v0.17.8 Phase 3 (#144): the fmt cascade threads a comment-stream
+-- (`CS`) so per-node arms drain own-line comments above the node
+-- they belong to. Phase 3 installed drain hooks at EVERY semantic
+-- boundary — top-decl / value body / let-def / case-arm / record
+-- field / list element / tuple element / record-update field / if
+-- else — so the entire ~500 LOC string-anchor post-pass that used
+-- to live in `app/Main.hs`'s `preserveTopLevelComments` is now
+-- redundant and deleted.
+--
+-- Trailing comments (`x = y  -- inline`) are silently dropped —
+-- the same behaviour as the pre-Phase 3 string-anchor path.  Only
+-- own-line comments (whitespace-only preceding the `--` / `{-`)
+-- round-trip through `sky fmt`.
+module Sky.Format.Format (formatModule) where
 
 import Data.List (intercalate, sortOn, partition)
 import qualified Sky.AST.Source as Src
@@ -22,51 +27,34 @@ import qualified Sky.Reporting.Annotation as A
 
 
 -- ═══════════════════════════════════════════════════════════
--- AST-driven comment placement (v0.17.8 / issue #144)
+-- AST-driven comment placement (v0.17.8 / issue #144 Phase 3)
 --
 -- `CS` is the pending-comment stream (sorted by source line at
 -- entry). Every fmt* helper threads `CS -> a -> (CS, String)` so a
--- consumer arm can `drainBefore` at a semantic drain point (top-
--- level decl boundaries, lambda bodies) and emit the drained
--- comments above the node with an ASCII sentinel `astMarker`.
+-- consumer arm can `drainBefore` at a semantic drain point.
 --
--- The sentinel is stripped by `app/Main.hs`'s
--- `preserveTopLevelComments` final pass; that same post-processor
--- also detects marker lines to skip re-emitting the same source
--- comment through its legacy anchor path (avoids double-emission).
---
--- Phase 2 hooks: TopDecl boundaries + Lambda body only. Every
--- other constructor threads CS through without draining, so
--- comments outside the two hooks fall through to the legacy
--- string-level path unchanged.
+-- Two draining shapes:
+--   * `drainBefore indent nodeLine cs` — drain own-line comments
+--     with `_line < nodeLine` AND `_commentCol == indent + 1`.
+--     Used at header positions where a comment sits at the same
+--     indent as the node it precedes.
+--   * `drainInnerUntil nextLine cs` — drain remaining own-line
+--     comments with `_line < nextLine` AND `_commentCol > 1`
+--     (INNER-indent only, so top-level headers stay routed to
+--     the next decl's start-of-decl drain). Each comment renders
+--     at its OWN source column.
 -- ═══════════════════════════════════════════════════════════
 
 type CS = [A.Located Src.ParsedComment]
 
 
--- Sentinel prefix (three ASCII control bytes) emitted on each
--- AST-drained comment line so downstream post-processing can find
--- + strip. Chosen so no legitimate Sky source contains it.
-astMarker :: String
-astMarker = "\x03AST\x03"
-
-
 -- Peel own-line comments whose source line is strictly less than
 -- `nodeLine` AND whose source column matches the node's indent
--- level (so a body-trailing comment inside a preceding decl does
--- not get lifted up to the next top-level decl).  Render at
--- column `indent` with the AST sentinel and return the remaining
--- stream.  Trailing comments and mismatched-indent own-line
--- comments are left in place — the legacy anchor path handles
--- those.
+-- level. Trailing comments and mismatched-indent own-line comments
+-- are left in place (the enclosing / next-decl drain picks them up).
 --
--- CRITICAL BUG FIX from the initial R2 draft: an earlier version
--- partitioned into (own, trailing) and returned `trailing ++ after`,
--- silently dropping trailings from later drains. The correct form
--- filters only drainable comments and returns EVERYTHING else.
---
--- Column semantics: `_commentCol` is 1-based (parser stores the
--- `Region._start._col`).  `indent` is a 0-based space count.  A
+-- Column semantics: `_commentCol` is 1-based (parser stores
+-- `Region._start._col`). `indent` is a 0-based space count. A
 -- comment matches this indent when `_commentCol == indent + 1`.
 drainBefore :: Int -> Int -> CS -> (String, CS)
 drainBefore indent nodeLine cs =
@@ -80,25 +68,95 @@ drainBefore indent nodeLine cs =
       && Src._commentCol pc == indent + 1
 
 
--- Render a single comment at the given indent, prefixed with the
--- AST sentinel. Delimiters are reattached (parser stored the raw
--- body only). For line comments the parser preserved leading body
--- whitespace, so `--` + body reconstructs the source form.
+-- Permissive variant: drains ANY own-line comment above `nodeLine`
+-- regardless of source column. Used where the AST re-indents the
+-- child (typically Lambda body — the lambda re-columns its body
+-- to `col + step` which rarely matches the source column). CS
+-- threading guarantees no cross-contamination: outer-scope drains
+-- fire first, so this only sees comments that no outer scope
+-- claimed.  Emit at target `indent`.
+drainAnyBefore :: Int -> Int -> CS -> (String, CS)
+drainAnyBefore indent nodeLine cs =
+    let (drainable, kept) = partition drainCond cs
+        rendered = concatMap (renderComment indent) drainable
+    in (rendered, kept)
+  where
+    drainCond (A.At r pc) =
+         Src._commentPos pc == Src.CommentOwnLine
+      && A._line (A._start r) < nodeLine
+
+
+-- End-of-decl mop-up: drain remaining OWN-LINE comments whose
+-- source line falls before `nextLine`, using each comment's OWN
+-- source column for indent. This catches "body-trailer" comments
+-- that sit below the last emitted node but before the next top-
+-- level decl (FormatSpec's "preserves trailing body comments in
+-- tail position" regression). Filters `_commentCol > 1` so top-
+-- level comments still route to the next decl's start-of-decl
+-- drain (regression: "header comment stays above the definition,
+-- not a call site").
+drainInnerUntil :: Int -> CS -> (String, CS)
+drainInnerUntil nextLine cs =
+    let (drainable, kept) = partition drainCond cs
+        rendered = concatMap renderAtOwnCol drainable
+    in (rendered, kept)
+  where
+    drainCond (A.At r pc) =
+         Src._commentPos pc == Src.CommentOwnLine
+      && A._line (A._start r) < nextLine
+      && Src._commentCol pc > 1
+    renderAtOwnCol c@(A.At _ pc) =
+        renderComment (Src._commentCol pc - 1) c
+
+
+-- Drain ALL remaining own-line comments (line unbounded), each
+-- rendered at its own source column. Called once at end of
+-- formatModule to catch stragglers below the last decl.
+drainRemaining :: CS -> (String, CS)
+drainRemaining cs =
+    let (drainable, kept) = partition drainCond cs
+        rendered = concatMap renderAtOwnCol drainable
+    in (rendered, kept)
+  where
+    drainCond (A.At _ pc) = Src._commentPos pc == Src.CommentOwnLine
+    renderAtOwnCol c@(A.At _ pc) =
+        renderComment (Src._commentCol pc - 1) c
+
+
+-- Render a single comment at the given indent. Delimiters are
+-- reattached (parser stored the raw body only). For line comments
+-- the parser preserved leading body whitespace, so `--` + body
+-- reconstructs the source form. Each rendered comment ends with a
+-- newline; callers rely on this to concat cleanly.
 renderComment :: Int -> A.Located Src.ParsedComment -> String
 renderComment indent (A.At _ pc) =
-    let prefix = ind indent ++ astMarker
-    in case Src._commentKind pc of
-         Src.CommentLine  -> prefix ++ "--" ++ Src._commentText pc ++ "\n"
-         Src.CommentBlock -> prefix ++ "{-" ++ Src._commentText pc ++ "-}\n"
+    case Src._commentKind pc of
+         Src.CommentLine  -> ind indent ++ "--" ++ Src._commentText pc ++ "\n"
+         Src.CommentBlock -> ind indent ++ "{-" ++ Src._commentText pc ++ "-}\n"
+
+
+-- | Strip trailing newlines from a String.
+dropTrailingNL :: String -> String
+dropTrailingNL s = case reverse s of
+    '\n':rs -> dropTrailingNL (reverse rs)
+    _       -> s
 
 
 -- Threaded state-monad-in-disguise. Given a per-item renderer that
 -- threads CS, fold across a list producing (finalCS, [rendered]).
 mapAccumStr :: (CS -> a -> (CS, String)) -> CS -> [a] -> (CS, [String])
-mapAccumStr _ cs []     = (cs, [])
-mapAccumStr f cs (x:xs) =
+mapAccumStr = mapAccumCS
+
+-- Polymorphic variant used by the collection rendering (list /
+-- tuple / record / record-update): each element produces a pair
+-- `(drainedString, itemString)` so the outer arm can decide multi-
+-- line vs single-line based on whether ANY element has drained
+-- comments.
+mapAccumCS :: (CS -> a -> (CS, b)) -> CS -> [a] -> (CS, [b])
+mapAccumCS _ cs []     = (cs, [])
+mapAccumCS f cs (x:xs) =
     let (cs',  s)  = f cs x
-        (cs'', ss) = mapAccumStr f cs' xs
+        (cs'', ss) = mapAccumCS f cs' xs
     in (cs'', s : ss)
 
 
@@ -128,26 +186,28 @@ topDeclLine (DValue (A.At r _)) = A._line (A._start r)
 -- that matches the *kind* of that decl, which is why each variant
 -- carries its own leading-separator string.
 --
--- Phase 2: drain any own-line comments above this decl's start
--- line at column 0 (top-level indent). The sentinel-tagged output
--- is then deduplicated against the legacy string-anchor path in
--- `app/Main.hs`'s `preserveTopLevelComments`.
-fmtTopDecl :: CS -> TopDecl -> (CS, String)
-fmtTopDecl cs td =
-    let nodeLine = topDeclLine td
+-- Phase 3: drain own-line comments matching col 0 above this decl
+-- at the start (header comments) AND drain any remaining inner-
+-- indent own-line comments below the body but before `mNextLine`
+-- (body-trailer comments) at their source column.
+fmtTopDeclWithNext :: CS -> (TopDecl, Maybe Int) -> (CS, String)
+fmtTopDeclWithNext cs (td, mNextLine) =
+    let nodeLine       = topDeclLine td
         (drained, cs1) = drainBefore 0 nodeLine cs
         (cs2, sep, body) = fmtBody cs1 td
-    -- Separator FIRST, then drained comments, then body.  The
-    -- separator lifts the decl to its own block; the drained
-    -- comment sits directly above the decl header on the next
-    -- line (matches the legacy header-anchor placement).
-    in (cs2, sep ++ drained ++ body)
+        (postDrained0, cs3) = case mNextLine of
+            Just n  -> drainInnerUntil n cs2
+            Nothing -> ("", cs2)
+        postDrained    = dropTrailingNL postDrained0
+        bodyPlus       = if null postDrained then body else body ++ "\n" ++ postDrained
+    in (cs3, sep ++ drained ++ bodyPlus)
   where
     fmtBody cs' (DAlias a) = (cs', "\n",   fmtAlias (A.toValue a))
     fmtBody cs' (DUnion u) = (cs', "\n",   fmtUnion (A.toValue u))
     fmtBody cs' (DValue v) =
         let (cs'', vs) = fmtValue cs' (A.toValue v)
         in (cs'', "\n\n", vs)
+
 
 formatModule :: Src.Module -> String
 formatModule m =
@@ -164,10 +224,21 @@ formatModule m =
         -- line-window filter is stable per node.
         cs0 = sortOn (A._line . A._start . A.toRegion) (Src._comments m)
         sortedDecls = sortOn topDeclLine tagged
-        (_csFinal, orderedDecls) = mapAccumStr fmtTopDecl cs0 sortedDecls
+        -- Pair each decl with the next decl's start line (Nothing
+        -- for the last). Used by end-of-decl inner-indent drain
+        -- to bound how far below-body comments should carry.
+        nextLines = drop 1 (map (Just . topDeclLine) sortedDecls) ++ [Nothing]
+        pairs = zip sortedDecls nextLines
+        (csAfterDecls, orderedDecls) = mapAccumStr fmtTopDeclWithNext cs0 pairs
+        -- Any comments left after the last decl land here — emit at
+        -- their own source column so file-trailing comments survive.
+        (trailingBlock0, _csFinal) = drainRemaining csAfterDecls
+        trailingBlock = dropTrailingNL trailingBlock0
+        trailingSection = if null trailingBlock then [] else ["\n" ++ trailingBlock]
         sections = filter (not . null) [header] ++
                    (if null imports then [] else ["\n" ++ intercalate "\n" imports]) ++
-                   orderedDecls
+                   orderedDecls ++
+                   trailingSection
     in intercalate "\n" sections ++ "\n"
 
 
@@ -282,8 +353,16 @@ fmtValue cs v =
             Nothing -> ""
         params = map fmtPattern (Src._valuePatterns v)
         paramsStr = if null params then "" else " " ++ unwords params
-        (cs', body) = fmtE 4 cs (Src._valueBody v)
-    in (cs', annotStr ++ name ++ paramsStr ++ " =\n    " ++ body)
+        -- Phase 3: drain before body at indent 4 catches an own-line
+        -- comment sitting between `foo x =` and the body expression.
+        bodyLine = A._line (A._start (A.toRegion (Src._valueBody v)))
+        (drained, cs1) = drainBefore 4 bodyLine cs
+        (cs2, body) = fmtE 4 cs1 (Src._valueBody v)
+        header = annotStr ++ name ++ paramsStr ++ " =\n"
+        bodyBlock = if null drained
+                    then ind 4 ++ body
+                    else drained ++ ind 4 ++ body
+    in (cs2, header ++ bodyBlock)
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -427,38 +506,95 @@ fmt _ cs (Src.Accessor f) = (cs, "." ++ f)
 fmt col cs (Src.Access e (A.At _ f)) =
     let (cs', s) = fmtE col cs e in (cs', s ++ "." ++ f)
 
--- Lists
+-- Lists — Phase 3: drain BEFORE each element in multi-line mode so
+-- own-line comments between list elements (#572) route to the AST
+-- side instead of the deleted string-anchor path.
 fmt _   cs (Src.List []) = (cs, "[]")
-fmt col cs (Src.List [x]) =
-    let (cs', s) = fmtE col cs x in (cs', "[" ++ s ++ "]")
 fmt col cs (Src.List xs) =
-    let (cs', items) = mapAccumStr (\c e -> fmtE (col + 2) c e) cs xs
-    in (cs', fmtCollection col "[ " ", " "]" items)
+    let elemCol = col + 2
+        renderElem c e =
+            let eLine = A._line (A._start (A.toRegion e))
+                (drained, c1) = drainBefore col eLine c
+                (c2, s) = fmtE elemCol c1 e
+            in (c2, (drained, s))
+        (cs', pairs) = mapAccumCS renderElem cs xs
+        anyDrained = any (not . null . fst) pairs
+        items = map snd pairs
+        oneLine = "[ " ++ intercalate ", " items ++ " ]"
+        singleFits = not anyDrained
+                  && col + length oneLine <= 80
+                  && not (any (elem '\n') items)
+    in if singleFits
+       then (cs', oneLine)
+       else (cs', renderCollectionWithDrains col "[ " ", " "]" pairs)
 
 -- Tuples
 fmt col cs (Src.Tuple a b rest) =
-    let (cs', items) = mapAccumStr (\c e -> fmtE (col + 2) c e) cs (a:b:rest)
-    in (cs', fmtCollection col "( " ", " ")" items)
+    let elemCol = col + 2
+        allElems = a:b:rest
+        renderElem c e =
+            let eLine = A._line (A._start (A.toRegion e))
+                (drained, c1) = drainBefore col eLine c
+                (c2, s) = fmtE elemCol c1 e
+            in (c2, (drained, s))
+        (cs', pairs) = mapAccumCS renderElem cs allElems
+        anyDrained = any (not . null . fst) pairs
+        items = map snd pairs
+        oneLine = "( " ++ intercalate ", " items ++ " )"
+        singleFits = not anyDrained
+                  && col + length oneLine <= 80
+                  && not (any (elem '\n') items)
+    in if singleFits
+       then (cs', oneLine)
+       else (cs', renderCollectionWithDrains col "( " ", " ")" pairs)
 
 -- Records
 fmt _   cs (Src.Record []) = (cs, "{}")
 fmt col cs (Src.Record fs) =
-    let renderField c (A.At _ n, e) =
-            let (c', s) = fmtE (col + 2) c e in (c', n ++ " = " ++ s)
-        (cs', items) = mapAccumStr renderField cs fs
-    in (cs', fmtCollection col "{ " ", " "}" items)
+    let elemCol = col + 2
+        renderField c (A.At r n, e) =
+            let fLine = A._line (A._start r)
+                (drained, c1) = drainBefore col fLine c
+                (c2, s) = fmtE elemCol c1 e
+            in (c2, (drained, n ++ " = " ++ s))
+        (cs', pairs) = mapAccumCS renderField cs fs
+        anyDrained = any (not . null . fst) pairs
+        items = map snd pairs
+        oneLine = "{ " ++ intercalate ", " items ++ " }"
+        singleFits = not anyDrained
+                  && col + length oneLine <= 80
+                  && not (any (elem '\n') items)
+    in if singleFits
+       then (cs', oneLine)
+       else (cs', renderCollectionWithDrains col "{ " ", " "}" pairs)
 
 -- Record update
 fmt col cs (Src.Update (A.At _ n) fs) =
-    let renderField c (A.At _ fn, e) =
-            let (c', s) = fmtE (col + 2) c e in (c', fn ++ " = " ++ s)
-        (cs', items) = mapAccumStr renderField cs fs
+    let elemCol = col + 2
+        renderField c (A.At r fn, e) =
+            let fLine = A._line (A._start r)
+                (drained, c1) = drainBefore col fLine c
+                (c2, s) = fmtE elemCol c1 e
+            in (c2, (drained, fn ++ " = " ++ s))
+        (cs', pairs) = mapAccumCS renderField cs fs
+        anyDrained = any (not . null . fst) pairs
+        items = map snd pairs
         oneLine = "{ " ++ n ++ " | " ++ intercalate ", " items ++ " }"
-    in (cs', if col + length oneLine <= 80
-             then oneLine
-             else "{ " ++ n ++ " | " ++ head items
-                  ++ concatMap (\i -> "\n" ++ ind col ++ ", " ++ i) (tail items)
-                  ++ "\n" ++ ind col ++ "}")
+        singleFits = not anyDrained && col + length oneLine <= 80
+    in if singleFits
+       then (cs', oneLine)
+       else
+         let (d0, i0) = head pairs
+             openStr = "{ " ++ n ++ " | "
+             fstBlock = if null d0
+                         then openStr ++ i0
+                         else stripLeadingIndent col d0
+                              ++ ind col ++ openStr ++ i0
+             restBlocks = concatMap
+                 (\(d, i) -> "\n" ++ d ++ ind col ++ ", " ++ i)
+                 (tail pairs)
+             closer = "\n" ++ ind col ++ "}"
+         in (cs', fstBlock ++ restBlocks ++ closer)
 
 -- Function calls
 fmt col cs (Src.Call f args) =
@@ -506,16 +642,20 @@ fmt col cs (Src.Binops segs tail_) =
                   fmtLast = "\n" ++ ind opCol ++ lastOp ++ " " ++ tailStr
               in (cs3, fmtFirst ++ concat restStrs ++ fmtLast)
 
--- Lambda — THE Phase 2 drain hook. Own-line comments whose source
--- line is above the body's start line get emitted between `\... ->`
--- and the body's rendered form. If any drained, the output is
--- forced to multi-line so the comments have somewhere to sit.
+-- Lambda — Phase 2 drain hook, Phase 3 permissive-column widening.
+-- Own-line comments whose source line is above the body's start
+-- line get emitted between `\... ->` and the body's rendered form.
+-- If any drained, the output is forced to multi-line so the
+-- comments have somewhere to sit.  Uses `drainAnyBefore` (no col
+-- filter) because the lambda body may re-indent to a column that
+-- doesn't match the source col (common when the lambda is nested
+-- inside a call arg — `fmtArg` wraps in parens, shifting bodyCol).
 fmt col cs (Src.Lambda pats body) =
     let paramsStr = unwords (map fmtPattern pats)
         bodyRegion = A.toRegion body
         bodyLine = A._line (A._start bodyRegion)
         bodyCol = col + step
-        (drained, cs1) = drainBefore bodyCol bodyLine cs
+        (drained, cs1) = drainAnyBefore bodyCol bodyLine cs
         (cs2, bodyStr) = fmtE bodyCol cs1 body
         oneLine = "\\" ++ paramsStr ++ " -> " ++ bodyStr
         multiLine = "\\" ++ paramsStr ++ " ->\n" ++ drained ++ ind bodyCol ++ bodyStr
@@ -523,7 +663,7 @@ fmt col cs (Src.Lambda pats body) =
              then oneLine
              else multiLine)
 
--- If/then/else
+-- If/then/else — Phase 3: drain before elseE at col+step.
 fmt col cs (Src.If branches elseE) =
     let renderBranch c (cond, body) =
             let (c1, condStr) = fmtE col c cond
@@ -531,45 +671,110 @@ fmt col cs (Src.If branches elseE) =
             in (c2, "if " ++ condStr ++ " then\n"
                  ++ ind (col + step) ++ bodyStr)
         (cs1, branchStrs) = mapAccumStr renderBranch cs branches
-        (cs2, elseBody) = fmtE (col + step) cs1 elseE
-        elseStr = "else\n" ++ ind (col + step) ++ elseBody
+        elseLine = A._line (A._start (A.toRegion elseE))
+        (elseDrained, cs1a) = drainBefore (col + step) elseLine cs1
+        (cs2, elseBody) = fmtE (col + step) cs1a elseE
+        elseStr = "else\n" ++ elseDrained ++ ind (col + step) ++ elseBody
     in (cs2, intercalate ("\n\n" ++ ind col ++ "else ") branchStrs
              ++ "\n\n" ++ ind col ++ elseStr)
 
--- Let/in
+-- Let/in — Phase 3: drain BEFORE each Def at col+step and BEFORE
+-- the body. Handles the "body comment above let-binding survives
+-- reflow" case (#353) purely on the AST side.
 fmt col cs (Src.Let defs body) =
-    let renderDef c d =
-            let (c', s) = fmtDef (col + step) c (A.toValue d) in (c', s)
+    let defCol = col + step
+        renderDef c d =
+            let defLine = A._line (A._start (A.toRegion d))
+                (drained, c1) = drainBefore defCol defLine c
+                (c2, s) = fmtDef defCol c1 (A.toValue d)
+            in (c2, drained ++ ind defCol ++ s ++ "\n")
         (cs1, defStrs) = mapAccumStr renderDef cs defs
-        (cs2, bodyStr) = fmtE (col + step) cs1 body
+        bodyLine = A._line (A._start (A.toRegion body))
+        (bodyDrained, cs1a) = drainBefore defCol bodyLine cs1
+        (cs2, bodyStr) = fmtE defCol cs1a body
     in (cs2, "let\n"
-             ++ concatMap (\d -> ind (col + step) ++ d ++ "\n") defStrs
+             ++ concat defStrs
+             ++ bodyDrained
              ++ ind col ++ "in\n"
-             ++ ind (col + step) ++ bodyStr)
+             ++ ind defCol ++ bodyStr)
 
--- Case — subject formatted at col+5 (after "case "), "of" on same line
+-- Case — Phase 3: drain BEFORE each branch's pattern at col+step.
+-- Handles `case … of \n -- click branch \n Click -> 1` (#144).
 fmt col cs (Src.Case subj branches) =
     let subjCol = col + 5
+        branchCol = col + step
         (cs1, subjStr) = fmtE subjCol cs subj
-        (cs2, branchStrs) = mapAccumStr (fmtCaseBranch (col + step)) cs1 branches
+        renderBranch c (pat, body) =
+            let patLine = A._line (A._start (A.toRegion pat))
+                (drained, c1) = drainBefore branchCol patLine c
+                (c2, br) = fmtCaseBranch branchCol c1 (pat, body)
+            in (c2, drained ++ ind branchCol ++ br)
+        (cs2, branchStrs) = mapAccumStr renderBranch cs1 branches
     in (cs2, "case " ++ subjStr ++ " of"
-             ++ concatMap (\b -> "\n\n" ++ ind (col + step) ++ b) branchStrs)
+             ++ concatMap (\b -> "\n\n" ++ b) branchStrs)
 
 
 -- ═══════════════════════════════════════════════════════════
 -- Helpers
 -- ═══════════════════════════════════════════════════════════
 
--- | Format a collection (list, tuple, record) with leading commas.
--- Short: `[ a, b, c ]`  Long: `[ a\n, b\n, c\n]`
-fmtCollection :: Int -> String -> String -> String -> [String] -> String
-fmtCollection col open sep close items =
-    let oneLine = open ++ intercalate sep items ++ " " ++ close
-    in if col + length oneLine <= 80
-       then oneLine
-       else open ++ head items
-            ++ concatMap (\i -> "\n" ++ ind col ++ sep ++ i) (tail items)
-            ++ "\n" ++ ind col ++ close
+-- | Multi-line collection render with per-element drain block.
+-- Each `pair` is `(drained-string, item-string)`.  `drained` is
+-- pre-rendered with `<indent col>` prefix + trailing newline per
+-- line (see `renderComment`).
+--
+-- Convention: the caller has already positioned the cursor at
+-- `col`. So the FIRST character of our output should be `open`
+-- (or the first drain line MINUS its leading `<col>` prefix, since
+-- the caller already emitted `<col>`). Subsequent lines in the
+-- output carry their own `\n<col>` indent.
+--
+-- Layout when `d0` is empty:
+--
+--     <open><item0>
+--     <col>[<d1>]<sep><item1>
+--     ...
+--     <col><close>
+--
+-- Layout when `d0` is non-empty (first-line-indent stripped so it
+-- lands at the caller-provided `col`):
+--
+--     <d0-line-1-body>
+--     <col><d0-line-2>...
+--     <col><open><item0>
+--     <col><d1><col><sep><item1>
+--     ...
+--     <col><close>
+renderCollectionWithDrains
+    :: Int -> String -> String -> String
+    -> [(String, String)] -> String
+renderCollectionWithDrains col open sep close pairs =
+    let (d0, i0) = head pairs
+        firstBlock =
+            if null d0
+              then open ++ i0
+              else stripLeadingIndent col d0
+                    ++ ind col ++ open ++ i0
+        restBlocks = concatMap
+            (\(d, i) -> "\n" ++ d ++ ind col ++ sep ++ i)
+            (tail pairs)
+        closer = "\n" ++ ind col ++ close
+    in firstBlock ++ restBlocks ++ closer
+
+
+-- | Strip `col` leading space characters from the string.  Used to
+-- align a `renderComment`-emitted first line with the caller-
+-- provided col prefix (see `renderCollectionWithDrains`).  If the
+-- first `col` chars are not all spaces, returns the input unchanged
+-- (defensive — should not fire under our own callers, but avoids
+-- silent misalignment if a caller passes a string with a different
+-- shape).
+stripLeadingIndent :: Int -> String -> String
+stripLeadingIndent col s =
+    let (leader, rest) = splitAt col s
+    in if all (== ' ') leader && length leader == col
+         then rest
+         else s
 
 
 -- | Format a function argument — parens around complex expressions
