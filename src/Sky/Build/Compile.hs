@@ -6518,22 +6518,63 @@ typecheckWorkspace config entryPath = do
 -- destination, used by the LSP path which mirrors stdlib next to the
 -- project source so jumps land on stable, user-visible paths.
 --
--- Like `writeEmbeddedSkyStdlib`, clears the destination first so a
--- stdlib file dropped from the embed (a module deleted / renamed
--- between compiler builds) doesn't linger on disk and get
--- discovered as a phantom module.
+-- v0.17.9 (D5): idempotent — writes a `.stdlib-marker` file
+-- summarising the embedded stdlib's shape (file count + total byte
+-- length).  Subsequent calls short-circuit when the marker matches
+-- the current in-binary embed, avoiding a wasteful
+-- @removeDirectoryRecursive@ + full rewrite on every LSP
+-- 'buildIndex' / CLI 'sky check'.  A drift (compiler upgrade adds
+-- / removes / resizes any stdlib file) invalidates the marker and
+-- forces a clean rewrite — same non-regression as the pre-v0.17.9
+-- unconditional wipe.
+--
+-- Marker-based instead of per-file mtime because the embedded
+-- stdlib comes from a TH-generated in-binary tree; on-disk mtimes
+-- have no natural relationship to the embed. Content hashing every
+-- file per call would defeat the point (that's what the wipe was
+-- doing implicitly).
 writeStdlibTo :: FilePath -> IO FilePath
 writeStdlibTo root = do
-    exists <- doesDirectoryExist root
-    when exists (System.Directory.removeDirectoryRecursive root)
-    createDirectoryIfMissing True root
-    mapM_ (writeOne root) embeddedSkyStdlib
-    return root
+    let markerPath = root </> ".stdlib-marker"
+        expected = stdlibMarker
+    existingMarker <- E.try (readFile' markerPath)
+                        :: IO (Either E.SomeException String)
+    let cached = case existingMarker of
+            Right s | trimSpace s == expected -> True
+            _                                 -> False
+    if cached
+        then return root
+        else do
+            exists <- doesDirectoryExist root
+            when exists (System.Directory.removeDirectoryRecursive root)
+            createDirectoryIfMissing True root
+            mapM_ (writeOne root) embeddedSkyStdlib
+            -- Marker written LAST so a mid-rewrite crash (disk full,
+            -- interrupted) leaves the directory without a marker and
+            -- the next call redoes the full wipe+rewrite.
+            writeFile (root </> ".stdlib-marker") expected
+            return root
   where
     writeOne base (relPath, bytes) = do
         let dst = base </> relPath
         createDirectoryIfMissing True (takeDirectory dst)
         BS.writeFile dst bytes
+
+
+-- | Signature of the current in-binary embedded stdlib.  Encodes
+-- \"<file-count>-<total-byte-length>\" — a compiler build that
+-- adds / removes / resizes ANY stdlib file changes this string.
+-- Used as an on-disk cache-invalidation marker by 'writeStdlibTo'.
+stdlibMarker :: String
+stdlibMarker =
+    show (length embeddedSkyStdlib)
+    ++ "-"
+    ++ show (sum [BS.length b | (_, b) <- embeddedSkyStdlib])
+
+
+trimSpace :: String -> String
+trimSpace = f . f
+  where f = reverse . dropWhile (`elem` (" \t\r\n" :: String))
 
 
 -- | Materialise the embedded Sky stdlib (Sky.Core.Error,
