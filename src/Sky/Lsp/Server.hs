@@ -1348,8 +1348,14 @@ runPipeline src = case Parse.parseModule src of
     Right srcMod ->
         case Canonicalise.canonicalise srcMod of
             Left err ->
-                return [ LspR.renderLspDiagnostic
-                           (Canonicalise.legacyToDiag "<buffer>" err) ]
+                -- v0.17.9 (D7 close): 'canonicaliseWithDeps' packs
+                -- multi-error runs into a single String; split so
+                -- each undefined name gets its own Diagnostic.
+                return
+                    [ LspR.renderLspDiagnostic
+                        (Canonicalise.legacyToDiag "<buffer>" e)
+                    | e <- Canonicalise.splitMultiError err
+                    ]
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
@@ -1414,8 +1420,15 @@ runPipelineSt st path src = case Parse.parseModule src of
         (ffiFns, ffiMods) <- ensureFfiSeed st
         case Canonicalise.canonicaliseWithDeps depInfo ffiFns ffiMods srcMod of
             Left err ->
-                return [ LspR.renderLspDiagnostic
-                           (Canonicalise.legacyToDiag path err) ]
+                -- v0.17.9 (D7 close): each unbound-name error gets
+                -- its own Diagnostic instead of the pre-fix single
+                -- diagnostic that hid the tail behind a whack-a-mole
+                -- edit loop.
+                return
+                    [ LspR.renderLspDiagnostic
+                        (Canonicalise.legacyToDiag path e)
+                    | e <- Canonicalise.splitMultiError err
+                    ]
             Right canMod -> do
                 externals <- getExternalsForFile st path srcMod canMod
                 cs <- Constrain.constrainModuleWithExternals externals canMod

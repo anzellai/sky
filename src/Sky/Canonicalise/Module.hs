@@ -6,12 +6,14 @@ module Sky.Canonicalise.Module
     , canonicaliseWithDiagnostics
     , collectUnboundDiagnostics
     , legacyToDiag
+    , splitMultiError
     , DepInfo(..)
     )
     where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.List (intercalate)
 import Data.Maybe (isJust)
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -101,7 +103,41 @@ canonicaliseWithDiagnostics path deps srcMod =
     -- 'Map.empty' (kernel surface remains the static fallback).
     case canonicaliseWithDeps deps Map.empty Map.empty srcMod of
         Right canMod -> Right canMod
-        Left err     -> Left [legacyToDiag path err]
+        -- v0.17.9 (D7 close): 'canonicaliseWithDeps' packs every
+        -- unbound-name error into a single String separated by
+        -- 'multiErrorSeparator'.  Split here so the LSP surfaces
+        -- ONE Diagnostic per offending identifier instead of the
+        -- historical whack-a-mole (fix one → next appears).
+        Left err     -> Left (map (legacyToDiag path)
+                                  (splitMultiError err))
+
+
+-- | Delimiter 'canonicaliseWithDeps' uses to pack multiple unbound-
+-- name errors into a single String.  The NUL byte guarantees no
+-- natural error text can collide with the separator.  Kept as a
+-- single-source-of-truth constant so producer + consumer stay in
+-- sync.
+multiErrorSeparator :: String
+multiErrorSeparator = "\n\n\NUL---SKY_DIAG_SEP---\NUL\n\n"
+
+
+-- | Split a multi-error String back into per-error pieces.  Preserves
+-- pre-v0.17.9 behaviour for single-error inputs (returns @[msg]@).
+splitMultiError :: String -> [String]
+splitMultiError = splitOnStr multiErrorSeparator
+  where
+    splitOnStr sep = go
+      where
+        go [] = [""]
+        go s@(c:cs)
+            | sep `isPrefixOf'` s =
+                "" : go (drop (length sep) s)
+            | otherwise =
+                let (h:t) = go cs
+                in (c:h) : t
+    isPrefixOf' []     _      = True
+    isPrefixOf' _      []     = False
+    isPrefixOf' (x:xs) (y:ys) = x == y && isPrefixOf' xs ys
 
 
 -- | Lift a legacy String error into a Diagnostic for back-compat
@@ -111,12 +147,51 @@ legacyToDiag :: FilePath -> String -> Diag.Diagnostic
 legacyToDiag path msg =
     let -- Try to extract a leading "LINE:COL:" from the legacy
         -- format; otherwise use a synthetic region at line 1 col 1.
+        --
+        -- v0.17.9 (D6 close): compute the range's END column from
+        -- the identifier's length parsed out of the "Undefined name:
+        -- <IDENT>" body so editors underline the offending token
+        -- instead of a zero-width point in the wrong column.  Falls
+        -- back to a zero-width range when the identifier can't be
+        -- recovered (unknown message shape).
         region = case parseLeadingLineCol msg of
-            Just (l, c) -> A.Region (A.Position l c) (A.Position l c)
+            Just (l, c) ->
+                let identLen = case identFromUndefinedMsg msg of
+                        Just n  -> length n
+                        Nothing -> 0
+                in A.Region (A.Position l c)
+                            (A.Position l (c + identLen))
             Nothing     -> A.Region (A.Position 1 1) (A.Position 1 1)
     in Diag.mkError path region Diag.CatCanonical
         Diag.canonE_UndefinedName  -- generic placeholder until full migration
         (stripLeadingLineCol msg)
+
+
+-- | Recover the offending identifier from an "Undefined name: X" or
+-- "Undefined name: q.n" body so 'legacyToDiag' can size the range.
+-- Returns Nothing when the message doesn't match either shape.
+identFromUndefinedMsg :: String -> Maybe String
+identFromUndefinedMsg msg =
+    let marker = "Undefined name: "
+    in case dropUntil marker msg of
+        Just rest ->
+            let ident = takeWhile isIdentChar rest
+            in if null ident then Nothing else Just ident
+        Nothing   -> Nothing
+  where
+    isIdentChar ch =
+           (ch >= 'A' && ch <= 'Z')
+        || (ch >= 'a' && ch <= 'z')
+        || (ch >= '0' && ch <= '9')
+        || ch == '_'
+        || ch == '.'  -- keep qualified names contiguous (Std.Log.foo)
+    dropUntil _   [] = Nothing
+    dropUntil pfx s@(_:rest)
+        | pfx `matches` s = Just (drop (length pfx) s)
+        | otherwise       = dropUntil pfx rest
+    matches []     _      = True
+    matches _      []     = False
+    matches (x:xs) (y:ys) = x == y && matches xs ys
 
 
 parseLeadingLineCol :: String -> Maybe (Int, Int)
@@ -319,7 +394,15 @@ canonicaliseImpl deps ffiKernelFns kernelMods srcMod =
         (_, err:_, _, _, _) -> Left err
         (_, _, err:_, _, _) -> Left err
         (_, _, _, Just err, _) -> Left err
-        (_, _, _, _, err:_) -> Left err
+        -- v0.17.9 (D7 close): pack every unbound-name error into a
+        -- single String separated by 'multiErrorSeparator' so
+        -- 'canonicaliseWithDiagnostics' can split them back out and
+        -- surface ONE Diagnostic per offending identifier.
+        -- 'legacyToDiag' downstream doesn't care about the join, and
+        -- the standalone String-only path (used by the CLI when a
+        -- run fails) already displays these as separate lines because
+        -- each carries its own "line:col:" prefix + newline.
+        (_, _, _, _, errs@(_:_)) -> Left (intercalate multiErrorSeparator errs)
         _ -> Right $ expandModuleAliases depAliasMap Can.Module
             { Can._name    = modName
             , Can._exports = exports
