@@ -13495,59 +13495,26 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
 -- `ctxFromIORef`-bridge half of CLAUDE.md §0.3 rule 1's
 -- locked criterion #3 wording for site `:13391-13392`.
 -- The remaining `scopeStateRef` bracket-scope readers
--- (`phaseAFallback`, `phaseAFallbackFromCtx`,
--- `lookupLambdaType`, `lookupLambdaGoType`,
--- `lookupLambdaGoStr`, `withScopedLambdaGoStrings`) carry
--- the contract+spec gate that satisfies the second clause
--- (see `Sky.Build.ScopeStateRefAuditSpec`).
+-- (`phaseAFallbackFromCtx`, `lookupLambdaType`,
+-- `lookupLambdaGoType`, `lookupLambdaGoStr`,
+-- `withScopedLambdaGoStrings`) carry the contract+spec
+-- gate that satisfies the second clause (see
+-- `Sky.Build.ScopeStateRefAuditSpec`).
 
 
--- | v0.17 Phase A iter 6d — read-through fallback synthesising a REAL
--- 'EmitCompileCtx' from 'scopeStateRef' + 'AnonRec.readAnonRecords'
--- at the call site.  Previously (iter 5v2-a) this returned an empty
--- ctx, which left 17 external Class A call sites feeding the widened
--- helpers a ctx whose '_cc_cgEnv' was always 'emptyCgEnv'.  Iter 6c's
--- per-dep ctx rebuild proved the snapshot-vs-mutating-ioref hypothesis
--- wrong (gates failed unchanged); iter 6b's instrumentation captured
--- empty stubs, not stale snapshots.  The root cause is the empty ctx
--- itself.
---
--- This iter is a TRANSITIONAL bridge: it re-introduces an IORef hop
--- at 'phaseAFallback' synthesis so each call site captures the
--- up-to-date 'scopeStateRef' state.  Subsequent iters (6e/7) widen
--- the call sites to receive a properly-threaded ctx through their
--- argument lists; once all callers are migrated 'phaseAFallback'
--- can be deleted and the IORef coupling removed via the criterion
--- #3 plan.
---
--- The 'Nothing' fallback for 'lookupCgEnv' preserves pre-iter-6d
--- behaviour for entry points (tests / LSP) that never installed a
--- cgEnv on 'scopeStateRef'.
---
--- NOINLINE prevents GHC from CSE-merging multiple call sites onto a
--- single shared IORef read; each call site MUST observe a fresh
--- snapshot.
-{-# NOINLINE phaseAFallback #-}
-phaseAFallback :: LC.LowerCtx -> EmitCompileCtx
-phaseAFallback lc = unsafePerformIO $ do
-    scopeSnap     <- readIORef scopeStateRef
-    anonRecsSnap  <- AnonRec.readAnonRecords
-    let home = LC._lc_module lc
-        cgEnv = case LC.lookupCgEnv scopeSnap of
-            Just env -> env
-            Nothing  -> emptyCgEnv
-    return $! buildEmitCompileCtx
-        home
-        cgEnv
-        (LC._lc_solved lc)
-        (LC._lc_kernelAlias lc)
-        (LC._lc_unionDetails lc)
-        anonRecsSnap
-        (LC._lc_aliases lc)
-        (LC._lc_fieldIdx lc)
-        (LC._lc_unionNames lc)
-        (LC._lc_ffiTypedWrapperNames lc)
-        (LC._lc_ffiTypedWrapperParams lc)
+-- v0.17.9 crit3 close — `phaseAFallback` (impure `LC.LowerCtx ->
+-- EmitCompileCtx` reader that snapshotted `scopeStateRef` +
+-- `AnonRec.readAnonRecords` via `unsafePerformIO`) is DELETED.
+-- Was the iter-6d transitional bridge introduced to unblock
+-- iters 7-17b's Class A reader migration.  All 141 downstream
+-- call sites now route via `phaseAFallbackFromCtx` (the pure
+-- variant below) which resolves cgEnv through the threaded
+-- `LC.lookupCgEnv lc` value channel rather than an IORef hop.
+-- Removing the impure sibling closes the last cgEnv-reader
+-- impurity on the codegen path.  The residual bracket-scope
+-- readers (`phaseAFallbackFromCtx` for the AnonRec channel;
+-- `lookupLambda*` helpers) remain sanctioned under the
+-- `Sky.Build.ScopeStateRefAuditSpec` contract-and-spec gate.
 
 
 -- | v0.17 Phase A iter 7 — pure-cgEnv variant of 'phaseAFallback'
