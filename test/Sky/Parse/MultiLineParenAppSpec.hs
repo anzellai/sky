@@ -1,3 +1,11 @@
+-- GHC 9.4.8 + macOS ld64 workaround: this spec transitively pulls
+-- Sky.Build.Compile via Sky.Build.Helpers.InProcessCompile.  With -O2
+-- GHC emits one closure-info reloc with an EMPTY string_name (nm -u
+-- shows a blank line), which ld64 then rejects as
+-- `Undefined symbols for architecture arm64: ""`.  Ubuntu ld does not
+-- care.  Compiling this spec at -O0 skips the offending codegen path
+-- entirely — spec is data-driven at runtime, no perf loss.
+{-# OPTIONS_GHC -O0 #-}
 module Sky.Parse.MultiLineParenAppSpec (spec) where
 
 -- Regression fence for "multi-line function application inside grouping parens".
