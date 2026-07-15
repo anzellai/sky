@@ -2832,8 +2832,16 @@ data LoadedFfiTables = LoadedFfiTables
 -- caller has the same data as a returned 'LoadedFfiTables' value, so
 -- the IORef reads can be progressively replaced phase-by-phase.
 loadAndSeedFfiRegistry :: IO LoadedFfiTables
-loadAndSeedFfiRegistry = do
-    reg <- FfiReg.loadRegistry
+loadAndSeedFfiRegistry = loadAndSeedFfiRegistryFrom "."
+
+
+-- | Same as 'loadAndSeedFfiRegistry' but reads
+-- @<projectRoot>/.skycache/ffi/*.kernel.json@ instead of the
+-- CWD-relative path.  Load-bearing for the LSP — see the note on
+-- 'FfiReg.loadRegistryFrom' for the workspace-root motivation.
+loadAndSeedFfiRegistryFrom :: FilePath -> IO LoadedFfiTables
+loadAndSeedFfiRegistryFrom projectRoot = do
+    reg <- FfiReg.loadRegistryFrom projectRoot
     let mods = FfiReg._fr_modules reg
         moduleMap =
             Map.fromList [ (FfiReg._fm_moduleName m, FfiReg._fm_kernelName m) | m <- mods ]
