@@ -2832,8 +2832,16 @@ data LoadedFfiTables = LoadedFfiTables
 -- caller has the same data as a returned 'LoadedFfiTables' value, so
 -- the IORef reads can be progressively replaced phase-by-phase.
 loadAndSeedFfiRegistry :: IO LoadedFfiTables
-loadAndSeedFfiRegistry = do
-    reg <- FfiReg.loadRegistry
+loadAndSeedFfiRegistry = loadAndSeedFfiRegistryFrom "."
+
+
+-- | Same as 'loadAndSeedFfiRegistry' but reads
+-- @<projectRoot>/.skycache/ffi/*.kernel.json@ instead of the
+-- CWD-relative path.  Load-bearing for the LSP — see the note on
+-- 'FfiReg.loadRegistryFrom' for the workspace-root motivation.
+loadAndSeedFfiRegistryFrom :: FilePath -> IO LoadedFfiTables
+loadAndSeedFfiRegistryFrom projectRoot = do
+    reg <- FfiReg.loadRegistryFrom projectRoot
     let mods = FfiReg._fr_modules reg
         moduleMap =
             Map.fromList [ (FfiReg._fm_moduleName m, FfiReg._fm_kernelName m) | m <- mods ]
@@ -6268,7 +6276,15 @@ typecheckWorkspace config entryPath = do
     -- flagged every Go-FFI qualified call (e.g. @Option.withCredentialsFile@)
     -- as \"module imported but does not export\" — a false positive
     -- the CLI never emitted because it seeds the maps here.
-    loadedFfi <- loadAndSeedFfiRegistry
+    --
+    -- v0.17.9 (D2/D3 close): honour @projectRoot@ instead of CWD.
+    -- Without this, LSP hover + goto-def on FFI-touching files fall
+    -- back to bare identifiers when the editor launches @sky lsp@
+    -- from any directory other than the project root — because
+    -- @typecheckWorkspace@ (called by @Sky.Lsp.Index.buildIndex@)
+    -- silently loaded the empty FFI registry from CWD.  CLI callers
+    -- always run from project root so their behaviour is unchanged.
+    loadedFfi <- loadAndSeedFfiRegistryFrom projectRoot
     let lspFfiFns  = _lft_kernelFunctions loadedFfi
         lspFfiMods = _lft_kernelModules loadedFfi
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
@@ -6510,22 +6526,63 @@ typecheckWorkspace config entryPath = do
 -- destination, used by the LSP path which mirrors stdlib next to the
 -- project source so jumps land on stable, user-visible paths.
 --
--- Like `writeEmbeddedSkyStdlib`, clears the destination first so a
--- stdlib file dropped from the embed (a module deleted / renamed
--- between compiler builds) doesn't linger on disk and get
--- discovered as a phantom module.
+-- v0.17.9 (D5): idempotent — writes a `.stdlib-marker` file
+-- summarising the embedded stdlib's shape (file count + total byte
+-- length).  Subsequent calls short-circuit when the marker matches
+-- the current in-binary embed, avoiding a wasteful
+-- @removeDirectoryRecursive@ + full rewrite on every LSP
+-- 'buildIndex' / CLI 'sky check'.  A drift (compiler upgrade adds
+-- / removes / resizes any stdlib file) invalidates the marker and
+-- forces a clean rewrite — same non-regression as the pre-v0.17.9
+-- unconditional wipe.
+--
+-- Marker-based instead of per-file mtime because the embedded
+-- stdlib comes from a TH-generated in-binary tree; on-disk mtimes
+-- have no natural relationship to the embed. Content hashing every
+-- file per call would defeat the point (that's what the wipe was
+-- doing implicitly).
 writeStdlibTo :: FilePath -> IO FilePath
 writeStdlibTo root = do
-    exists <- doesDirectoryExist root
-    when exists (System.Directory.removeDirectoryRecursive root)
-    createDirectoryIfMissing True root
-    mapM_ (writeOne root) embeddedSkyStdlib
-    return root
+    let markerPath = root </> ".stdlib-marker"
+        expected = stdlibMarker
+    existingMarker <- E.try (readFile' markerPath)
+                        :: IO (Either E.SomeException String)
+    let cached = case existingMarker of
+            Right s | trimSpace s == expected -> True
+            _                                 -> False
+    if cached
+        then return root
+        else do
+            exists <- doesDirectoryExist root
+            when exists (System.Directory.removeDirectoryRecursive root)
+            createDirectoryIfMissing True root
+            mapM_ (writeOne root) embeddedSkyStdlib
+            -- Marker written LAST so a mid-rewrite crash (disk full,
+            -- interrupted) leaves the directory without a marker and
+            -- the next call redoes the full wipe+rewrite.
+            writeFile (root </> ".stdlib-marker") expected
+            return root
   where
     writeOne base (relPath, bytes) = do
         let dst = base </> relPath
         createDirectoryIfMissing True (takeDirectory dst)
         BS.writeFile dst bytes
+
+
+-- | Signature of the current in-binary embedded stdlib.  Encodes
+-- \"<file-count>-<total-byte-length>\" — a compiler build that
+-- adds / removes / resizes ANY stdlib file changes this string.
+-- Used as an on-disk cache-invalidation marker by 'writeStdlibTo'.
+stdlibMarker :: String
+stdlibMarker =
+    show (length embeddedSkyStdlib)
+    ++ "-"
+    ++ show (sum [BS.length b | (_, b) <- embeddedSkyStdlib])
+
+
+trimSpace :: String -> String
+trimSpace = f . f
+  where f = reverse . dropWhile (`elem` (" \t\r\n" :: String))
 
 
 -- | Materialise the embedded Sky stdlib (Sky.Core.Error,
@@ -13495,59 +13552,26 @@ lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
 -- `ctxFromIORef`-bridge half of CLAUDE.md §0.3 rule 1's
 -- locked criterion #3 wording for site `:13391-13392`.
 -- The remaining `scopeStateRef` bracket-scope readers
--- (`phaseAFallback`, `phaseAFallbackFromCtx`,
--- `lookupLambdaType`, `lookupLambdaGoType`,
--- `lookupLambdaGoStr`, `withScopedLambdaGoStrings`) carry
--- the contract+spec gate that satisfies the second clause
--- (see `Sky.Build.ScopeStateRefAuditSpec`).
+-- (`phaseAFallbackFromCtx`, `lookupLambdaType`,
+-- `lookupLambdaGoType`, `lookupLambdaGoStr`,
+-- `withScopedLambdaGoStrings`) carry the contract+spec
+-- gate that satisfies the second clause (see
+-- `Sky.Build.ScopeStateRefAuditSpec`).
 
 
--- | v0.17 Phase A iter 6d — read-through fallback synthesising a REAL
--- 'EmitCompileCtx' from 'scopeStateRef' + 'AnonRec.readAnonRecords'
--- at the call site.  Previously (iter 5v2-a) this returned an empty
--- ctx, which left 17 external Class A call sites feeding the widened
--- helpers a ctx whose '_cc_cgEnv' was always 'emptyCgEnv'.  Iter 6c's
--- per-dep ctx rebuild proved the snapshot-vs-mutating-ioref hypothesis
--- wrong (gates failed unchanged); iter 6b's instrumentation captured
--- empty stubs, not stale snapshots.  The root cause is the empty ctx
--- itself.
---
--- This iter is a TRANSITIONAL bridge: it re-introduces an IORef hop
--- at 'phaseAFallback' synthesis so each call site captures the
--- up-to-date 'scopeStateRef' state.  Subsequent iters (6e/7) widen
--- the call sites to receive a properly-threaded ctx through their
--- argument lists; once all callers are migrated 'phaseAFallback'
--- can be deleted and the IORef coupling removed via the criterion
--- #3 plan.
---
--- The 'Nothing' fallback for 'lookupCgEnv' preserves pre-iter-6d
--- behaviour for entry points (tests / LSP) that never installed a
--- cgEnv on 'scopeStateRef'.
---
--- NOINLINE prevents GHC from CSE-merging multiple call sites onto a
--- single shared IORef read; each call site MUST observe a fresh
--- snapshot.
-{-# NOINLINE phaseAFallback #-}
-phaseAFallback :: LC.LowerCtx -> EmitCompileCtx
-phaseAFallback lc = unsafePerformIO $ do
-    scopeSnap     <- readIORef scopeStateRef
-    anonRecsSnap  <- AnonRec.readAnonRecords
-    let home = LC._lc_module lc
-        cgEnv = case LC.lookupCgEnv scopeSnap of
-            Just env -> env
-            Nothing  -> emptyCgEnv
-    return $! buildEmitCompileCtx
-        home
-        cgEnv
-        (LC._lc_solved lc)
-        (LC._lc_kernelAlias lc)
-        (LC._lc_unionDetails lc)
-        anonRecsSnap
-        (LC._lc_aliases lc)
-        (LC._lc_fieldIdx lc)
-        (LC._lc_unionNames lc)
-        (LC._lc_ffiTypedWrapperNames lc)
-        (LC._lc_ffiTypedWrapperParams lc)
+-- v0.17.9 crit3 close — `phaseAFallback` (impure `LC.LowerCtx ->
+-- EmitCompileCtx` reader that snapshotted `scopeStateRef` +
+-- `AnonRec.readAnonRecords` via `unsafePerformIO`) is DELETED.
+-- Was the iter-6d transitional bridge introduced to unblock
+-- iters 7-17b's Class A reader migration.  All 141 downstream
+-- call sites now route via `phaseAFallbackFromCtx` (the pure
+-- variant below) which resolves cgEnv through the threaded
+-- `LC.lookupCgEnv lc` value channel rather than an IORef hop.
+-- Removing the impure sibling closes the last cgEnv-reader
+-- impurity on the codegen path.  The residual bracket-scope
+-- readers (`phaseAFallbackFromCtx` for the AnonRec channel;
+-- `lookupLambda*` helpers) remain sanctioned under the
+-- `Sky.Build.ScopeStateRefAuditSpec` contract-and-spec gate.
 
 
 -- | v0.17 Phase A iter 7 — pure-cgEnv variant of 'phaseAFallback'

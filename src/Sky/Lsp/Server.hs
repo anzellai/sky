@@ -115,6 +115,16 @@ data ServerState = ServerState
     , ssFfiLoaded :: !(IORef.IORef Bool)
       -- Guard so 'ensureFfiSeed' only runs 'loadAndSeedFfiRegistry'
       -- once per session.
+    , ssRootPath :: !(IORef.IORef FilePath)
+      -- Workspace root parsed from @initialize.params.rootUri@ (or
+      -- 'rootPath', the deprecated field, or CWD as final fallback).
+      -- Load-bearing: @loadAndSeedFfiRegistry@ + stdlib-cache lookup
+      -- both scan @<root>/.skycache/@ subdirectories, and the LSP
+      -- process CWD is not guaranteed to be the project root (VS
+      -- Code workspace folders, MCP integrations, Neovim opened at
+      -- a parent all launch @sky lsp@ from elsewhere).  Without
+      -- this, every Go-FFI qualified call becomes a false-positive
+      -- @E1001 Undefined name@ diagnostic.
     }
 
 
@@ -133,6 +143,12 @@ runLsp = do
     ffiFns   <- IORef.newIORef (Map.empty :: Map.Map String [String])
     ffiMods  <- IORef.newIORef (Map.empty :: Map.Map String String)
     ffiLoaded <- IORef.newIORef False
+    -- Seed root-path with CWD; the 'initialize' handler overwrites
+    -- with the parsed rootUri when the client sends it.  Falling
+    -- back to CWD preserves the pre-v0.17.9 behaviour when the
+    -- editor launches @sky lsp@ from the project directory.
+    cwd <- Dir.getCurrentDirectory
+    rootPath <- IORef.newIORef cwd
     let st = ServerState
             { ssDocs = docs
             , ssIndex = idx
@@ -141,6 +157,7 @@ runLsp = do
             , ssFfiFns = ffiFns
             , ssFfiMods = ffiMods
             , ssFfiLoaded = ffiLoaded
+            , ssRootPath = rootPath
             }
     forever $ do
         r <- try (handleOne st) :: IO (Either SomeException ())
@@ -230,7 +247,13 @@ dispatch st req = do
         method = jsonStr "method" req
         reqId  = KM.lookup "id" =<< asObj req
     case method of
-        "initialize"                  -> sendReply reqId initializeResult
+        "initialize"                  -> do
+            -- v0.17.9: capture workspace root from the client's
+            -- rootUri / rootPath params.  Deferred to a helper for
+            -- readability; falls through to a no-op if the client
+            -- omits both (CWD default from 'runLsp' stays in effect).
+            captureInitializeRoot st req
+            sendReply reqId initializeResult
         "initialized"                 -> return ()
         "shutdown"                    -> do
             IORef.writeIORef (ssShutdown st) True
@@ -1175,6 +1198,53 @@ handleDidClose docs req = do
 -- diagnostic pass in 'runPipelineSt'.  Guarded by 'ssFfiLoaded' so
 -- 'Compile.loadAndSeedFfiRegistry' (which scans every
 -- @.skycache/ffi/*.kernel.json@) fires at most once per session.
+-- | Parse the workspace root from an @initialize@ request and
+-- persist it on 'ssRootPath'.  LSP clients pass one of:
+--   * @params.rootUri@   — @file://@ URI (LSP 3.6+, preferred)
+--   * @params.rootPath@  — bare filesystem path (deprecated but still
+--                           sent by older clients + Neovim's default)
+--   * both missing        — headless / single-file mode; keep CWD
+--
+-- We check @rootUri@ first, fall back to @rootPath@, then leave the
+-- CWD default that 'runLsp' seeded.  This closes the FFI E1001
+-- false-positive class when @sky lsp@ is spawned from any dir other
+-- than the project root (VS Code workspace folders, MCP integrations,
+-- Neovim opened at a parent, IDE launcher scripts).
+captureInitializeRoot :: ServerState -> A.Value -> IO ()
+captureInitializeRoot st req = do
+    let params = KM.lookup "params" =<< asObj req
+    case params >>= asObj of
+        Nothing -> return ()
+        Just p  -> do
+            let uri  = jsonStrKM "rootUri"  p
+                path = jsonStrKM "rootPath" p
+            case (uri, path) of
+                ("", "") -> return ()
+                (u, _) | not (null u) ->
+                    IORef.writeIORef (ssRootPath st) (uriToPath u)
+                (_, pth) ->
+                    IORef.writeIORef (ssRootPath st) pth
+  where
+    -- Best-effort @file://@ URI → path decode.  Anything else stays
+    -- as-is; the FfiRegistry loader silently returns empty on a
+    -- missing directory so a malformed URI degrades to the pre-fix
+    -- "no FFI" behaviour rather than crashing the LSP.
+    uriToPath :: String -> FilePath
+    uriToPath u
+        | "file://" `isPrefixOf` u = drop (length ("file://" :: String)) u
+        | otherwise                = u
+
+    isPrefixOf :: String -> String -> Bool
+    isPrefixOf []     _      = True
+    isPrefixOf _      []     = False
+    isPrefixOf (x:xs) (y:ys) = x == y && isPrefixOf xs ys
+
+    jsonStrKM :: KM.Key -> KM.KeyMap A.Value -> String
+    jsonStrKM k o = case KM.lookup k o of
+        Just (A.String s) -> T.unpack s
+        _                 -> ""
+
+
 ensureFfiSeed :: ServerState -> IO (Map.Map String [String], Map.Map String String)
 ensureFfiSeed st = do
     loaded <- IORef.readIORef (ssFfiLoaded st)
@@ -1184,7 +1254,13 @@ ensureFfiSeed st = do
             mods <- IORef.readIORef (ssFfiMods st)
             return (fns, mods)
         else do
-            eLoaded <- try (Compile.loadAndSeedFfiRegistry) :: IO (Either SomeException Compile.LoadedFfiTables)
+            -- v0.17.9: honour @ssRootPath@ (parsed from
+            -- @initialize.params.rootUri@) instead of the LSP process
+            -- CWD.  Fixes the E1001 false positive on Go-FFI qualified
+            -- names when the editor launches @sky lsp@ from any
+            -- directory other than the project root.
+            root <- IORef.readIORef (ssRootPath st)
+            eLoaded <- try (Compile.loadAndSeedFfiRegistryFrom root) :: IO (Either SomeException Compile.LoadedFfiTables)
             case eLoaded of
                 Left _ -> do
                     -- Missing / malformed FFI cache — fall back to empty
@@ -1272,8 +1348,14 @@ runPipeline src = case Parse.parseModule src of
     Right srcMod ->
         case Canonicalise.canonicalise srcMod of
             Left err ->
-                return [ LspR.renderLspDiagnostic
-                           (Canonicalise.legacyToDiag "<buffer>" err) ]
+                -- v0.17.9 (D7 close): 'canonicaliseWithDeps' packs
+                -- multi-error runs into a single String; split so
+                -- each undefined name gets its own Diagnostic.
+                return
+                    [ LspR.renderLspDiagnostic
+                        (Canonicalise.legacyToDiag "<buffer>" e)
+                    | e <- Canonicalise.splitMultiError err
+                    ]
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
@@ -1338,8 +1420,15 @@ runPipelineSt st path src = case Parse.parseModule src of
         (ffiFns, ffiMods) <- ensureFfiSeed st
         case Canonicalise.canonicaliseWithDeps depInfo ffiFns ffiMods srcMod of
             Left err ->
-                return [ LspR.renderLspDiagnostic
-                           (Canonicalise.legacyToDiag path err) ]
+                -- v0.17.9 (D7 close): each unbound-name error gets
+                -- its own Diagnostic instead of the pre-fix single
+                -- diagnostic that hid the tail behind a whack-a-mole
+                -- edit loop.
+                return
+                    [ LspR.renderLspDiagnostic
+                        (Canonicalise.legacyToDiag path e)
+                    | e <- Canonicalise.splitMultiError err
+                    ]
             Right canMod -> do
                 externals <- getExternalsForFile st path srcMod canMod
                 cs <- Constrain.constrainModuleWithExternals externals canMod

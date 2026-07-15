@@ -7,6 +7,7 @@ module Sky.Build.FfiRegistry
     , FfiModule(..)
     , FfiFunction(..)
     , loadRegistry
+    , loadRegistryFrom
     , emptyRegistry
     , lookupFunction
     -- v0.17 close P1 — pure derived projections.
@@ -205,13 +206,31 @@ instance A.FromJSON FfiModule where
 -- Disk scanning
 -- ═══════════════════════════════════════════════════════════
 
--- | Load the FfiRegistry from `.skycache/ffi/*.kernel.json` in the current
--- working directory. Silently returns an empty registry if the cache
--- directory is absent — this is the common case for projects with no
--- FFI deps.
+-- | Load the FfiRegistry from `<projectRoot>/.skycache/ffi/*.kernel.json`.
+-- Silently returns an empty registry if the cache directory is absent —
+-- the common case for projects with no FFI deps.
+--
+-- The LSP calls 'loadRegistryFrom' with the workspace root parsed out
+-- of @initialize.params.rootUri@ so hover / goto-def / diagnostics on
+-- Go-FFI qualified names resolve regardless of what CWD the editor
+-- started the LSP process from.  CLI callers keep the CWD-relative
+-- default via 'loadRegistry' (which is just @loadRegistryFrom "."@)
+-- because @sky check@ / @sky build@ are always invoked from inside the
+-- project.
 loadRegistry :: IO FfiRegistry
-loadRegistry = do
-    let ffiDir = ".skycache/ffi"
+loadRegistry = loadRegistryFrom "."
+
+
+-- | Same as 'loadRegistry' but reads @<projectRoot>/.skycache/ffi/@
+-- instead of the CWD-relative path.  Load-bearing for the LSP: when
+-- an editor launches @sky lsp@ from a directory other than the
+-- project root (VS Code workspace folders, MCP clients, Neovim opened
+-- at a parent) the CWD-relative loader silently returns an empty
+-- registry and every Go-FFI qualified call site becomes an "undefined
+-- name" false positive.
+loadRegistryFrom :: FilePath -> IO FfiRegistry
+loadRegistryFrom projectRoot = do
+    let ffiDir = projectRoot </> ".skycache" </> "ffi"
     exists <- doesDirectoryExist ffiDir
     if not exists
         then return emptyRegistry
