@@ -6276,7 +6276,15 @@ typecheckWorkspace config entryPath = do
     -- flagged every Go-FFI qualified call (e.g. @Option.withCredentialsFile@)
     -- as \"module imported but does not export\" — a false positive
     -- the CLI never emitted because it seeds the maps here.
-    loadedFfi <- loadAndSeedFfiRegistry
+    --
+    -- v0.17.9 (D2/D3 close): honour @projectRoot@ instead of CWD.
+    -- Without this, LSP hover + goto-def on FFI-touching files fall
+    -- back to bare identifiers when the editor launches @sky lsp@
+    -- from any directory other than the project root — because
+    -- @typecheckWorkspace@ (called by @Sky.Lsp.Index.buildIndex@)
+    -- silently loaded the empty FFI registry from CWD.  CLI callers
+    -- always run from project root so their behaviour is unchanged.
+    loadedFfi <- loadAndSeedFfiRegistryFrom projectRoot
     let lspFfiFns  = _lft_kernelFunctions loadedFfi
         lspFfiMods = _lft_kernelModules loadedFfi
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
