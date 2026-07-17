@@ -6907,10 +6907,41 @@ function __skyApplyPatches(patches) {
   // unaffected. See Bug 3 in docs/skylive/architecture.md.
   var openSel = (document.activeElement && document.activeElement.tagName === "SELECT")
       ? document.activeElement : null;
+  // Track patches whose target sky-id isn't in the DOM. Old code
+  // silently dropped these (continue), which produced the
+  // "stuck at loading" UX class (issue triaged 2026-07-17,
+  // sky-diagram): server emits a text-patch at r.3#div.5#p for a
+  // conditionally-rendered element that arrived via a prior HTML
+  // patch. If the client applies patches in a race with the
+  // preceding HTML swap — or if the two views' child-count
+  // shape drifted from the server's expectation — the sky-id
+  // never materialised, and the completion Msg silently vanished.
+  //
+  // Distinguishing "legit skip" (patch[0] replaced patch[1]'s
+  // target within the same batch — safe) from "real desync"
+  // (server thinks element exists, client's DOM says otherwise —
+  // NOT safe) can't be done inside the loop. But at end-of-batch
+  // we know: any patch that missed is either race-safe (server
+  // will send another update soon) or a genuine desync that
+  // needs recovery. Rather than pick one, take the "soft-resync"
+  // path: force-reopen SSE, which re-fetches the full body under
+  // the existing session cookie. Cheap (bounded by SKY_LIVE_
+  // RETRY_MAX_ATTEMPTS) + idempotent — if the server agrees the
+  // client is fine, next full body confirms it; if state really
+  // drifted, the full body corrects it. Users never see a UI that
+  // silently ignores a completion.
+  var missedTarget = 0;
   for (var i = 0; i < patches.length; i++) {
     var p = patches[i];
     var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
-    if (!el) continue;
+    if (!el) {
+      missedTarget++;
+      if (window.console && console.warn) {
+        console.warn("[sky.live] patch target not found:", p.id,
+            "(op=" + (p.text !== undefined ? "text" : p.html !== undefined ? "html" : "attrs") + ")");
+      }
+      continue;
+    }
     if (openSel && (el === openSel || el.contains(openSel) || openSel.contains(el))) {
       // Skip: any mutation here would close the dropdown mid-pick.
       continue;
@@ -7000,6 +7031,16 @@ function __skyApplyPatches(patches) {
       }
     }
     if (p.remove) el.remove();
+  }
+  // Any patch whose target sky-id wasn't in the DOM signals a
+  // client/server view-shape drift. Force-reopen the SSE stream so
+  // the server ships a fresh full body; state converges. Skipping
+  // the resync leaves the user staring at a stale UI (e.g. a
+  // stuck loading indicator when the completion patch went nowhere).
+  // Bounded by SKY_LIVE_RETRY_MAX_ATTEMPTS so a repeated drift
+  // eventually surfaces as the offline banner instead of a busy loop.
+  if (missedTarget > 0) {
+    __skyForceReopenSSE();
   }
   // Any new sky-* attribute in the patched DOM needs a listener.
   __skyBindEvents(document);
