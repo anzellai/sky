@@ -178,6 +178,60 @@ func Db_connect(path any) any {
 		if err := conn.Ping(); err != nil {
 			return Err[any, any](ErrIo("db ping: " + err.Error()))
 		}
+		// v0.17.10 — SQLite concurrency defaults. Without these, any
+		// Sky.Live app whose update() loop runs multiple Cmd.perform
+		// Task goroutines against the same DB hits SQLITE_BUSY under
+		// even mild contention (a background TTL prune racing a user
+		// click, two visitors clicking within the same second). The
+		// runtime already applies the same three-part config to its
+		// own SQLite files (`live_store.go` for the session store,
+		// `exporter_spool.go` for the telemetry spool) — extending
+		// it to user-facing Db.connect closes the gap.
+		//
+		//   MaxOpenConns=1 — SQLite has a global writer lock. Go's
+		//   database/sql pool serializes on a single conn without
+		//   the multi-conn contention that fires SQLITE_BUSY.
+		//   Readers still get fine-grained concurrency inside SQLite
+		//   under WAL — see the PRAGMA below.
+		//
+		//   journal_mode=WAL — writers don't block readers. Commits
+		//   are ~10× cheaper than rollback-journal mode. Safe with
+		//   local-disk sqlite; unsafe on network-mounted FS (NFS,
+		//   SMB) where WAL semantics are undefined. Set via PRAGMA,
+		//   which returns the applied mode; check that WAL took to
+		//   surface unsupported-FS setups as an early error rather
+		//   than silent write corruption.
+		//
+		//   busy_timeout=5000 — even with MaxOpenConns=1 a background
+		//   goroutine can hold a transaction open; busy_timeout lets
+		//   the next writer wait up to 5s for the lock instead of
+		//   returning SQLITE_BUSY immediately. Human-click cadence
+		//   never comes close to 5s of contention.
+		//
+		//   synchronous=NORMAL — safe under WAL per SQLite docs.
+		//   Skips one fsync per commit; big write-perf win on the
+		//   Sky.Live update-per-msg path.
+		//
+		// Postgres/MySQL fall through the switch — their connection
+		// pool defaults are already sane, and multi-conn concurrency
+		// on those backends does not fire the SQLite-BUSY class.
+		if driver == "sqlite" {
+			conn.SetMaxOpenConns(1)
+			conn.SetMaxIdleConns(1)
+			for _, pragma := range []string{
+				"PRAGMA journal_mode=WAL",
+				"PRAGMA busy_timeout=5000",
+				"PRAGMA synchronous=NORMAL",
+			} {
+				if _, pErr := conn.Exec(pragma); pErr != nil {
+					// PRAGMA failures shouldn't abort connect (e.g.
+					// :memory: DB rejects some PRAGMAs, and NFS-mounted
+					// paths reject WAL). Emit a warn via Std.Log —
+					// visible in dev + prod but doesn't break.
+					Log_warn("db.connect: " + pragma + " failed: " + pErr.Error())
+				}
+			}
+		}
 		db := &SkyDb{conn: conn, name: p, driver: driver}
 		dbRegistry[p] = db
 		return Ok[any, any](db)
