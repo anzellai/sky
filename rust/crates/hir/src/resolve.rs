@@ -50,6 +50,54 @@ pub struct ClassB {
     pub kind: RefKind,
 }
 
+/// An LSP reference occurrence: an identifier span and what it resolved to,
+/// tagged with the enclosing top-level def (so a `Res::Local` hover can look up
+/// its type in the owning body's inference table). Populated additively for the
+/// tooling layer (doc 10 §"resolve_at"); ignored by lowering + typecheck.
+#[derive(Clone, Debug)]
+pub struct RefOcc {
+    pub span: Span,
+    pub res: Res,
+    pub owner: DefId,
+}
+
+/// A `<receiver>.field` occurrence — the field-name span, the receiver expr id
+/// within `owner`'s body, and the field name. Hover/goto resolve the receiver's
+/// inferred record type to find the field's type + declaration (doc 10).
+#[derive(Clone, Debug)]
+pub struct FieldOcc {
+    pub span: Span,
+    pub receiver: ExprId,
+    pub field: Name,
+    pub owner: DefId,
+}
+
+/// A type-name reference occurrence → its type constructor `DefId` (goto/hover
+/// on a type name in an annotation or ctor-arg position).
+#[derive(Clone, Debug)]
+pub struct TypeOcc {
+    pub span: Span,
+    pub con: DefId,
+    pub name: Name,
+}
+
+/// A local binder definition site (lambda param / let binding / case-pattern
+/// binder) — the goto-def target for a `Res::Local` use.
+#[derive(Clone, Debug)]
+pub struct BinderDef {
+    pub owner: DefId,
+    pub local: LocalId,
+    pub span: Span,
+}
+
+/// A record-alias field declaration — the goto-def target for a field access.
+#[derive(Clone, Debug)]
+pub struct FieldDecl {
+    pub field: Name,
+    pub siblings: Vec<Name>,
+    pub span: Span,
+}
+
 /// The result of resolving one module (doc 05 §1).
 #[derive(Default)]
 pub struct ResolveResult {
@@ -58,7 +106,21 @@ pub struct ResolveResult {
     pub diagnostics: Vec<Diagnostic>,
     pub class_a: Vec<ClassA>,
     pub class_b: Vec<ClassB>,
-    pub occurrences: Vec<(Span, Res)>,
+    // ---- LSP index (doc 10) — additive; empty of consequence to build/check ----
+    /// Value/ctor/kernel reference occurrences, span-keyed (resolve_at).
+    pub ref_occs: Vec<RefOcc>,
+    /// `receiver.field` occurrences.
+    pub field_occs: Vec<FieldOcc>,
+    /// Type-name reference occurrences.
+    pub type_occs: Vec<TypeOcc>,
+    /// Local binder definition sites.
+    pub binders: Vec<BinderDef>,
+    /// Declaration id → its name-token span (value / type-con / alias / ctor).
+    pub def_spans: Vec<(DefId, Span)>,
+    /// Record-alias field declarations.
+    pub field_decls: Vec<FieldDecl>,
+    /// Import qualifier → source module (for qualified completion `M.`).
+    pub qualifiers: HashMap<String, ImportSource>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -101,6 +163,10 @@ struct Resolver<'a> {
     /// which the oracle never rejects — doc 03 §1.6).
     quiet: u32,
 
+    /// The DefId of the top-level def whose body is currently being walked —
+    /// tags LSP occurrences so a local hover can find the owning body's types.
+    current_owner: Option<DefId>,
+
     body: Body,
     result: ResolveResult,
 }
@@ -132,8 +198,57 @@ impl<'a> Resolver<'a> {
             next_local: 0,
             reuse_binders: false,
             quiet: 0,
+            current_owner: None,
             body: Body::default(),
             result: ResolveResult::default(),
+        }
+    }
+
+    // ---- LSP occurrence recording (doc 10) — additive, no build/check effect -
+
+    #[inline]
+    fn span_of(&self, range: syntax::TextRange) -> Span {
+        Span::new(self.file, u32::from(range.start()), u32::from(range.end()))
+    }
+
+    fn owner(&self) -> DefId {
+        self.current_owner.unwrap_or(DefId(u32::MAX))
+    }
+
+    fn record_ref(&mut self, range: syntax::TextRange, res: Res) {
+        if self.quiet > 0 {
+            return;
+        }
+        let span = self.span_of(range);
+        let owner = self.owner();
+        self.result.ref_occs.push(RefOcc { span, res, owner });
+    }
+
+    fn record_binder(&mut self, range: syntax::TextRange, local: LocalId) {
+        if self.quiet > 0 {
+            return;
+        }
+        let span = self.span_of(range);
+        let owner = self.owner();
+        self.result.binders.push(BinderDef { owner, local, span });
+        // A binder is also a hoverable use-site of the local it introduces.
+        self.result.ref_occs.push(RefOcc {
+            span,
+            res: Res::Local(local),
+            owner,
+        });
+    }
+
+    fn record_type_occ(&mut self, range: syntax::TextRange, name: &str) {
+        if self.quiet > 0 {
+            return;
+        }
+        if let Some(tr) = self.types.get(name).copied() {
+            self.result.type_occs.push(TypeOcc {
+                span: self.span_of(range),
+                con: tr.con,
+                name: Name::new(name),
+            });
         }
     }
 
@@ -198,6 +313,9 @@ impl<'a> Resolver<'a> {
 
         // 3. local declarations (after imports → local shadows import, C7)
         self.register_locals(&tree);
+        // LSP: publish import qualifiers so `M.` completion can enumerate the
+        // target module's exports.
+        self.result.qualifiers = self.import_aliases.clone();
     }
 
     fn process_import(&mut self, imp: &ast::Import, claims: &HashMap<String, String>) {
@@ -414,6 +532,13 @@ impl<'a> Resolver<'a> {
                         if n.kind() == SyntaxKind::LowerIdent {
                             let d = self.def(self.module, n.text(), DefKind::Value);
                             self.vars.insert(n.text().to_string(), Res::Def(d));
+                            // LSP: a value's goto-def target is its name span. A
+                            // `foo : T` annotation + `foo = …` value share one
+                            // DefId; keep the first span seen (the annotation).
+                            let span = self.span_of(n.text_range());
+                            if !self.result.def_spans.iter().any(|(id, _)| *id == d) {
+                                self.result.def_spans.push((d, span));
+                            }
                         }
                     }
                 }
@@ -425,12 +550,22 @@ impl<'a> Resolver<'a> {
                     let type_ = self.def(self.module, &tn, DefKind::TypeCon);
                     self.types
                         .insert(tn.clone(), TypeRes { con: type_, arity });
+                    if let Some(t) = u.name() {
+                        self.result
+                            .def_spans
+                            .push((type_, self.span_of(t.text_range())));
+                    }
                     for (i, var) in u.variants().iter().enumerate() {
                         let Some(cn) = var.name().map(|t| t.text().to_string()) else {
                             continue;
                         };
                         let cargs = cst::child_types(var.syntax()).len() as u16;
                         let d = self.def(self.module, &cn, DefKind::Ctor);
+                        if let Some(t) = var.name() {
+                            self.result
+                                .def_spans
+                                .push((d, self.span_of(t.text_range())));
+                        }
                         self.ctors.insert(
                             cn,
                             CtorRef {
@@ -454,7 +589,35 @@ impl<'a> Resolver<'a> {
                     let con = self.def(self.module, &an, DefKind::TypeAlias);
                     self.types
                         .insert(an.clone(), TypeRes { con, arity });
+                    if let Some(t) = a.name() {
+                        self.result
+                            .def_spans
+                            .push((con, self.span_of(t.text_range())));
+                    }
+                    // LSP: record each record-alias field's declaration span so a
+                    // field access can goto-def into the alias body.
                     if is_record {
+                        if let Some(ast::Type::Record(r)) = a.ty() {
+                            let field_names: Vec<Name> = r
+                                .syntax()
+                                .children()
+                                .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+                                .filter_map(|f| cst::first_lower(&f).map(|n| Name::new(&n)))
+                                .collect();
+                            for f in r
+                                .syntax()
+                                .children()
+                                .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+                            {
+                                if let Some(fname) = cst::first_lower(&f) {
+                                    self.result.field_decls.push(FieldDecl {
+                                        field: Name::new(&fname),
+                                        siblings: field_names.clone(),
+                                        span: self.span_of(f.text_range()),
+                                    });
+                                }
+                            }
+                        }
                         let d = self.def(self.module, &an, DefKind::Value);
                         self.vars.insert(an, Res::Def(d));
                     }
@@ -505,6 +668,12 @@ impl<'a> Resolver<'a> {
         self.body = Body::default();
         self.scopes.clear();
         self.next_local = 0;
+        // LSP: tag occurrences in this body with the value's DefId (same intern
+        // key register_locals used) so a local hover finds the body's types.
+        self.current_owner = v
+            .name()
+            .filter(|n| n.kind() == SyntaxKind::LowerIdent)
+            .map(|n| self.def(self.module, n.text(), DefKind::Value));
         self.push_scope();
         let mut params = Vec::new();
         if let Some(pl) = v.params() {
@@ -696,11 +865,15 @@ impl<'a> Resolver<'a> {
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
                 let res = self.resolve_var(&name);
+                if let Some(t) = r.name() {
+                    self.record_ref(t.text_range(), res.clone());
+                }
                 self.body.expr(Expr::Var(res))
             }
             ast::Expr::QualRef(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
                 let res = self.resolve_qual_var(&qual, &name);
+                self.record_ref(q.syntax().text_range(), res.clone());
                 self.body.expr(Expr::Var(res))
             }
             ast::Expr::Accessor(a) => {
@@ -714,6 +887,25 @@ impl<'a> Resolver<'a> {
                     None => self.body.expr(Expr::Error),
                 };
                 let field = cst::first_lower(fa.syntax()).unwrap_or_default();
+                // LSP: record the field-name span → (receiver expr, field). The
+                // last LowerIdent token of the field-access node is the field.
+                if self.quiet == 0 {
+                    if let Some(tok) = fa
+                        .syntax()
+                        .children_with_tokens()
+                        .filter_map(|e| e.into_token())
+                        .filter(|t| t.kind() == SyntaxKind::LowerIdent)
+                        .last()
+                    {
+                        let owner = self.owner();
+                        self.result.field_occs.push(FieldOcc {
+                            span: self.span_of(tok.text_range()),
+                            receiver: base_id,
+                            field: Name::new(&field),
+                            owner,
+                        });
+                    }
+                }
                 self.body.expr(Expr::Access(base_id, Name::new(&field)))
             }
             ast::Expr::List(l) => {
@@ -743,6 +935,14 @@ impl<'a> Resolver<'a> {
             ast::Expr::RecordUpdate(ru) => {
                 let base_name = cst::first_lower(ru.syntax()).unwrap_or_default();
                 let res = self.resolve_var(&base_name);
+                if let Some(tok) = ru
+                    .syntax()
+                    .children_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .find(|t| t.kind() == SyntaxKind::LowerIdent)
+                {
+                    self.record_ref(tok.text_range(), res.clone());
+                }
                 let base_id = self.body.expr(Expr::Var(res));
                 let mut fields = Vec::new();
                 for f in ru.fields() {
@@ -846,7 +1046,11 @@ impl<'a> Resolver<'a> {
         let mut binder_ids: Vec<Option<LocalId>> = Vec::with_capacity(bindings.len());
         for b in &bindings {
             match b.name() {
-                Some(n) => binder_ids.push(Some(self.bind_local(n.text()))),
+                Some(n) => {
+                    let id = self.bind_local(n.text());
+                    self.record_binder(n.text_range(), id);
+                    binder_ids.push(Some(id));
+                }
                 None => binder_ids.push(None),
             }
         }
@@ -1027,6 +1231,7 @@ impl<'a> Resolver<'a> {
             ast::Pattern::Var(v) => {
                 let n = cst::first_lower(v.syntax()).unwrap_or_default();
                 let id = self.bind_local(&n);
+                self.record_binder(v.syntax().text_range(), id);
                 self.body.pat(Pattern::Var(id))
             }
             ast::Pattern::Unit(_) => self.body.pat(Pattern::Unit),
@@ -1150,6 +1355,7 @@ impl<'a> Resolver<'a> {
             }
             ast::Type::Con(c) => {
                 let name = cst::first_upper(c.syntax()).unwrap_or_default();
+                self.record_type_occ(c.syntax().text_range(), &name);
                 self.type_con(&name, Vec::new())
             }
             ast::Type::Qual(q) => {
@@ -1165,6 +1371,7 @@ impl<'a> Resolver<'a> {
                 match head {
                     ast::Type::Con(c) => {
                         let name = cst::first_upper(c.syntax()).unwrap_or_default();
+                        self.record_type_occ(c.syntax().text_range(), &name);
                         self.type_con(&name, args)
                     }
                     ast::Type::Qual(q) => {

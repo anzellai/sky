@@ -79,6 +79,25 @@ impl<'a> Typer<'a> {
         }
     }
 
+    /// Like [`Typer::body_types`], but additionally seeds param/local types from
+    /// the def's declared signature (the annotation). Used by the tooling layer
+    /// (hover / completion) so a param reflects `f : Int -> Int` rather than the
+    /// body-only-inferred `number`. Kept SEPARATE from `body_types` so the
+    /// lowerer's typed table — and therefore codegen — is byte-for-byte
+    /// unchanged (the LSP is additive).
+    pub fn body_types_annotated(&self, def: DefId, body: &Body) -> BodyTypes {
+        let mut infer = Infer::new(&self.world, self.db)
+            .with_self_def(Some(def))
+            .with_inferred(true)
+            .with_expected(self.world.value_sigs.get(&def).cloned());
+        let (result, exprs, locals) = infer.infer_def_typed(body);
+        BodyTypes {
+            result,
+            exprs,
+            locals,
+        }
+    }
+
     /// The declared/derived scheme for a top-level value def, if known.
     pub fn value_sig(&self, def: DefId) -> Option<&Scheme> {
         self.world.value_sigs.get(&def)
@@ -87,6 +106,19 @@ impl<'a> Typer<'a> {
     /// The scheme for a constructor by its own DefId (union member).
     pub fn ctor_sig_by_def(&self, def: DefId) -> Option<&Scheme> {
         self.world.ctors_by_def.get(&def)
+    }
+
+    /// A kernel function's scheme, keyed as `Res::Kernel { module, func }` is
+    /// (pseudo-module, func) — the tooling layer's hover on a stdlib call.
+    pub fn kernel_sig(&self, module: &str, func: &str) -> Option<&Scheme> {
+        self.world
+            .kernel_sigs
+            .get(&(module.to_string(), func.to_string()))
+    }
+
+    /// The pass-3 inferred scheme for an unannotated stdlib combinator, if any.
+    pub fn inferred_sig(&self, def: DefId) -> Option<&Scheme> {
+        self.world.inferred_sigs.get(&def)
     }
 }
 

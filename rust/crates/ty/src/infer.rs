@@ -72,6 +72,12 @@ pub struct Infer<'a> {
     /// combinator's precise inferred sig never flags a latent mismatch the
     /// oracle accepts leniently (`Result.withDefault "" (loadEnv-shaped `()`)`).
     use_inferred: bool,
+    /// The def's DECLARED scheme, if any — set by the tooling layer's typed
+    /// query so `infer_def_typed` unifies the full function type against the
+    /// annotation, seeding param types from the signature (so a hover on a
+    /// param reflects `f : Int -> Int`, not the body-inferred `number`). Not
+    /// set on the M3 accept-parity path, whose behaviour is unchanged.
+    expected: Option<Scheme>,
 }
 
 impl<'a> Infer<'a> {
@@ -87,7 +93,15 @@ impl<'a> Infer<'a> {
             local_vars: Vec::new(),
             self_def: None,
             use_inferred: false,
+            expected: None,
         }
+    }
+
+    /// Provide the def's declared scheme so `infer_def_typed` seeds param types
+    /// from the annotation (tooling/hover path — see [`Infer::expected`]).
+    pub fn with_expected(mut self, scheme: Option<Scheme>) -> Self {
+        self.expected = scheme;
+        self
     }
 
     /// Mark the def being inferred so its own body treats a recursive
@@ -133,10 +147,43 @@ impl<'a> Infer<'a> {
         // Type + bind the top-level params first, so references in the body pick
         // up the same type-var and the locals table carries their inferred type.
         let param_pats: Vec<PatId> = body.params.clone();
-        for p in param_pats {
-            let _ = self.infer_pat_fresh(body, p);
+        let param_vars: Vec<TyVarId> = param_pats
+            .iter()
+            .map(|&p| self.infer_pat_fresh(body, p))
+            .collect();
+        // Seed param types from the declared signature BEFORE inferring the body
+        // (tooling path). The annotation is the source of truth for a param's
+        // type, so it must win over a loose body-inferred one — e.g. `m : Model`
+        // used as `String.fromInt m` (an incomplete edit) must still hover/field
+        // -complete as `Model`, not the `Int` the misuse would infer. Peel one
+        // arg per top-level param; the tail is the expected result, unified with
+        // the body's type afterwards. Clashes are non-fatal (tooling only).
+        let mut expected_result: Option<TyVarId> = None;
+        if let Some(scheme) = self.expected.take() {
+            let mut sub: HashMap<String, TyVarId> = HashMap::new();
+            for name in &scheme.vars {
+                if name.as_str() != "any" {
+                    let fresh = self.uf.fresh_flex();
+                    sub.insert(name.as_str().to_string(), fresh);
+                }
+            }
+            let mut cur = scheme.ty.clone();
+            for &pv in &param_vars {
+                match cur {
+                    Ty::Fun(a, b) => {
+                        let av = self.ty_to_var(&a, &mut sub);
+                        self.unify(pv, av);
+                        cur = *b;
+                    }
+                    _ => break,
+                }
+            }
+            expected_result = Some(self.ty_to_var(&cur, &mut sub));
         }
         let v = self.infer_expr(body, root);
+        if let Some(ev) = expected_result {
+            self.unify(v, ev);
+        }
         let result = self.read_back(v);
         let mut exprs = std::collections::HashMap::new();
         let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);

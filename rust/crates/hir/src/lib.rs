@@ -24,7 +24,10 @@ pub use hir::{
 };
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED};
-pub use resolve::{resolve, ClassA, ClassB, RefKind, ResolveResult};
+pub use resolve::{
+    resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, RefKind, RefOcc, ResolveResult,
+    TypeOcc,
+};
 
 #[cfg(test)]
 mod tests {

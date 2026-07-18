@@ -10,8 +10,20 @@ workspace = true
 name = "sky-lsp"
 path = "src/main.rs"
 
+[lib]
+name = "sky_lsp"
+path = "src/lib.rs"
+
 [dependencies]
-skydb = { path = "../skydb" }
+base = { path = "../base" }
+syntax = { path = "../syntax" }
+hir = { path = "../hir" }
 ty = { path = "../ty" }
+skydb = { path = "../skydb" }
 project = { path = "../project" }
+diagnostics = { path = "../diagnostics" }
 tower-lsp.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"] }
+
+[dev-dependencies]
+serde_json.workspace = true
