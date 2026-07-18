@@ -205,6 +205,16 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // subject/expected type pins the union — the bare-name `ctor_owner` map
     // collides and picks whichever union interned last.
     let mut ctor_in_union: HashMap<(String, String), (NominalKind, usize)> = HashMap::new();
+    // (owning Go type, ctor name) → value-argument count. Parallel to
+    // `ctor_in_union`. The bare-name `ctor_arity` map collides when a ctor name
+    // is shared across two nominals — most sharply when a record alias's
+    // positional-ctor name equals a nullary ADT ctor (`type Tab = Overview | …`
+    // + `type alias Overview = { …12 fields… }`, example 25): whichever interns
+    // last overwrites, so a value-position `Overview` (the Tab ctor, arity 0)
+    // wrongly reads the record's arity 12 and eta-expands into a 12-param
+    // closure that then fails `rt.Coerce[Tab]` at runtime. Pin resolves the
+    // arity against the SAME nominal the owner is pinned to.
+    let mut ctor_arity_in_union: HashMap<(String, String), usize> = HashMap::new();
     for d in &type_decls {
         match &d.kind {
             TypeDeclKind::Iota(vs) => {
@@ -213,6 +223,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
                     ctor_arity.insert(v.clone(), 0);
                     ctor_in_union
                         .insert((d.go_name.clone(), v.clone()), (NominalKind::Iota, i));
+                    ctor_arity_in_union.insert((d.go_name.clone(), v.clone()), 0);
                 }
             }
             TypeDeclKind::Adt(vs) => {
@@ -222,6 +233,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
                     ctor_arity.insert(cn.clone(), args.len());
                     ctor_in_union
                         .insert((d.go_name.clone(), cn.clone()), (NominalKind::Adt, i));
+                    ctor_arity_in_union.insert((d.go_name.clone(), cn.clone()), args.len());
                 }
             }
             TypeDeclKind::Record(fields) => {
@@ -229,6 +241,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 ctor_arity.insert(d.name.clone(), fields.len());
                 ctor_in_union
                     .insert((d.go_name.clone(), d.name.clone()), (NominalKind::Record, 0));
+                ctor_arity_in_union.insert((d.go_name.clone(), d.name.clone()), fields.len());
             }
         }
     }
@@ -354,6 +367,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             ctor_tag: &ctor_tag,
             ctor_arity: &ctor_arity,
             ctor_in_union: &ctor_in_union,
+            ctor_arity_in_union: &ctor_arity_in_union,
             def_param_tys: &def_param_tys,
             def_result_tys: &def_result_tys,
             body: &e.body,
@@ -773,6 +787,7 @@ struct Ctx<'a> {
     ctor_tag: &'a HashMap<String, usize>,
     ctor_arity: &'a HashMap<String, usize>,
     ctor_in_union: &'a HashMap<(String, String), (NominalKind, usize)>,
+    ctor_arity_in_union: &'a HashMap<(String, String), usize>,
     def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
     def_result_tys: &'a HashMap<DefId, Ty>,
     body: &'a Body,
@@ -1444,7 +1459,7 @@ impl<'a> Ctx<'a> {
         // eta-expand into a closure that applies the ctor to its params.
         let loc = self.db.defs().borrow().loc(def);
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
-        let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
+        let arity = self.ctor_arity_pinned(&cname, pin.as_deref());
         if arity == 0 {
             let (_, expr) = self.ctor_call(def, &[], actual, pin);
             return expr;
@@ -1505,7 +1520,7 @@ impl<'a> Ctx<'a> {
         // no currying, so a direct under-applied call is "not enough arguments in
         // call to <Ctor>" (examples 16/18). Builtin container ctors keep their
         // fixed arity handling in `ctor_emit`.
-        let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
+        let arity = self.ctor_arity_pinned(&cname, pin.as_deref());
         let builtin = matches!(cname.as_str(), "Ok" | "Err" | "Just" | "Nothing" | "True" | "False");
         if !builtin && args.len() < arity {
             return (true, self.ctor_partial(&cname, args, arity, actual, pin));
@@ -1656,6 +1671,22 @@ impl<'a> Ctx<'a> {
             }
         }
         self.ctor_union_go(cname)
+    }
+
+    /// The value-argument count for a ctor, disambiguated by the pinned owning
+    /// union (same discipline as `ctor_union_go_pinned`). The bare-name
+    /// `ctor_arity` map collides when a record alias's positional-ctor name
+    /// equals a nullary ADT ctor (example 25 `Overview`); pin picks the arity
+    /// belonging to the SAME nominal the value reference resolved to. Falls back
+    /// to the bare map when no pin is available (record-alias ctors resolved as
+    /// `Res::Def` carry no union pin).
+    fn ctor_arity_pinned(&self, cname: &str, pin: Option<&str>) -> usize {
+        if let Some(gt) = pin {
+            if let Some(a) = self.ctor_arity_in_union.get(&(gt.to_string(), cname.to_string())) {
+                return *a;
+            }
+        }
+        self.ctor_arity.get(cname).copied().unwrap_or(0)
     }
 
     /// Build the owning-union Go name (`Std_Css_TextAlign`) from a union's
