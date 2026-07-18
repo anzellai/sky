@@ -452,11 +452,20 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
                     }
                     let go_name = format!("{prefix}_{tname}");
                     let kind = if all_nullary {
+                        // Phantom opaque-handle detection: a single-variant
+                        // iota enum whose sole constructor is `<Name>_OPAQUE`
+                        // (stdlib convention for `Route`/`Server`/`Cookie`).
+                        // Its runtime value is a kernel struct handle, so it
+                        // resolves to `any` in `sky_ty_to_go` — never the `int`
+                        // the placeholder decl aliases.
+                        let opaque = variants.len() == 1
+                            && variants[0].0.ends_with("_OPAQUE");
                         nominal.insert(
                             tname.clone(),
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Iota,
+                                opaque,
                             },
                         );
                         TypeDeclKind::Iota(variants.into_iter().map(|(n, _)| n).collect())
@@ -466,6 +475,7 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Adt,
+                                opaque: false,
                             },
                         );
                         TypeDeclKind::Adt(variants)
@@ -487,6 +497,7 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Record,
+                                opaque: false,
                             },
                         );
                         decls.push(TypeDecl {

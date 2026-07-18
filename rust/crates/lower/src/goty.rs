@@ -13,6 +13,16 @@ pub struct Nominal {
     /// `Main_Msg`, `Sky_Core_Error_Error`.
     pub go_name: String,
     pub kind: NominalKind,
+    /// A phantom opaque-handle type: a single-variant iota enum whose sole
+    /// constructor follows the stdlib `<Name>_OPAQUE` convention (`Route`,
+    /// `Server`, `Cookie`). The Go type decl renders as `type X = int` (a
+    /// placeholder), but the *runtime value* is a kernel struct handle
+    /// (`rt.SkyRoute`, …) produced by an FFI kernel — never an `int`. So at a
+    /// value/type position these resolve to `any`, exactly like the other
+    /// kernel-opaque handles (`Decoder`, `Value`, `Cmd`, `Sub`). Coercing the
+    /// handle to the `int` alias would panic (`rt.Coerce: expected int, got
+    /// rt.SkyRoute`).
+    pub opaque: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -132,6 +142,14 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv) -> GoTy {
         ("Value", _) => GoTy::Any,
         _ => {
             if let Some(n) = env.nominal.get(name) {
+                // Phantom opaque-handle types (`Route`/`Server`/`Cookie`):
+                // the runtime value is a kernel struct handle, not the `int`
+                // the placeholder decl aliases. Resolve to `any` so lists of
+                // them emit `[]any` and FFI-return elements aren't coerced to
+                // `int` (which panics at runtime).
+                if n.opaque {
+                    return GoTy::Any;
+                }
                 // User nominal types are emitted NON-generic in the M4 runtime
                 // representation: sealed ADT → `rt.SkyADT` bag (`Fields []any`),
                 // iota enum → `int`, record alias → a plain (non-parametric)
