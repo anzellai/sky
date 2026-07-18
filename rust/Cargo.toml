@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/base",
+    "crates/diagnostics",
+    "crates/syntax",
+    "crates/hir",
+    "crates/ty",
+    "crates/skydb",
+    "crates/lower",
+    "crates/codegen",
+    "crates/ffi",
+    "crates/project",
+    "crates/fmt",
+    "crates/testrunner",
+    "crates/sky-cli",
+    "crates/sky-lsp",
+    "crates/xtask",
+]
+
+# Shared external dependency pins. Individual crates opt in via
+# `<dep>.workspace = true`. Versions chosen from crates.io HEAD at M0
+# (2026-07) and de-risked by the salsa 0.28 probe (see M0 report).
+[workspace.dependencies]
+# base — interning, ids, arenas (doc 02)
+la-arena = "0.3"
+smol_str = "0.3"
+indexmap = "2"
+# diagnostics — Elm-style rendering (doc 02, L7)
+annotate-snippets = "0.12"
+# syntax — lossless CST + lexer (doc 02, L8)
+rowan = "0.16"
+logos = "0.16"
+# skydb — the salsa query engine (doc 01, L1/L2)
+salsa = "0.28"
+# ffi — pinned .skyi surface (de)serialisation (doc 09)
+serde = { version = "1", features = ["derive"] }
+# sky-lsp — async LSP scaffolding (doc 10)
+tower-lsp = "0.20"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+# Deterministic, debuggable release builds for the reproducibility gate (L4).
+debug = 1

@@ -1,0 +1,12 @@
+[package]
+name = "base"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+la-arena.workspace = true
+smol_str.workspace = true
+indexmap.workspace = true

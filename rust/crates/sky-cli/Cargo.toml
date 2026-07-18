@@ -1,0 +1,16 @@
+[package]
+name = "sky-cli"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sky"
+path = "src/main.rs"
+
+[dependencies]
+project = { path = "../project" }
+fmt = { path = "../fmt" }
+testrunner = { path = "../testrunner" }

@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+# Standalone dev-automation crate (doc 02). Depends on nothing in the DAG so it
+# can orchestrate the whole build from the outside (differential-test vs the
+# Haskell oracle, reproducibility gate — docs 11, 12).
+[dependencies]

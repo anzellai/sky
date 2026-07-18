@@ -1,0 +1,17 @@
+[package]
+name = "sky-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sky-lsp"
+path = "src/main.rs"
+
+[dependencies]
+skydb = { path = "../skydb" }
+ty = { path = "../ty" }
+project = { path = "../project" }
+tower-lsp.workspace = true

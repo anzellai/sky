@@ -1,0 +1,12 @@
+[package]
+name = "lower"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+base = { path = "../base" }
+ty = { path = "../ty" }
+skydb = { path = "../skydb" }
