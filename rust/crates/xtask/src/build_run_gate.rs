@@ -97,7 +97,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 
         // oracle comparison
         let oracle_match = if do_oracle && rep.go_build_ok && rep.run_ok == Some(true) {
-            compare_oracle(&dir, name, rep.run_stdout.as_deref().unwrap_or(""))
+            compare_oracle(&dir, name, rep.run_stdout.as_deref().unwrap_or(""), stdin_for(name))
         } else {
             None
         };
@@ -131,13 +131,31 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     }
 }
 
-fn compare_oracle(dir: &Path, _name: &str, rust_stdout: &str) -> Option<bool> {
+fn compare_oracle(dir: &Path, _name: &str, rust_stdout: &str, stdin: Option<String>) -> Option<bool> {
     // run the oracle-produced binary (examples/NAME/sky-out/app) if present.
+    // Feed it the SAME stdin the Rust binary received (line-oriented TEA apps
+    // read stdin — an oracle run with no stdin sees immediate EOF and diverges
+    // spuriously).
     let app = dir.join("sky-out").join("app");
     if !app.exists() {
         return None;
     }
-    let out = Command::new(&app).current_dir(dir.join("sky-out")).output().ok()?;
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut cmd = Command::new(&app);
+    cmd.current_dir(dir.join("sky-out"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    if let Some(data) = &stdin {
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(data.as_bytes());
+        }
+    } else {
+        drop(child.stdin.take());
+    }
+    let out = child.wait_with_output().ok()?;
     let oracle_stdout = String::from_utf8_lossy(&out.stdout).to_string();
     Some(normalise(&oracle_stdout) == normalise(rust_stdout))
 }

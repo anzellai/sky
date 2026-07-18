@@ -118,21 +118,40 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // ctor name → (owning Go type name, kind) reverse index + declaration-order tag.
     let mut ctor_owner: HashMap<String, (String, NominalKind)> = HashMap::new();
     let mut ctor_tag: HashMap<String, usize> = HashMap::new();
+    // ctor name → value-argument count (for eta-expanding a bare constructor
+    // reference used as a function value — `onInput UpdateDraft` where
+    // `UpdateDraft : String -> Msg`).
+    let mut ctor_arity: HashMap<String, usize> = HashMap::new();
+    // (owning Go type, ctor name) → (kind, declaration tag). Keyed by the OWNING
+    // union so a ctor name shared across two unions (`AlignLeft` lives in both
+    // `Std.Ui.HAlign` and `Std.Css.TextAlign`) resolves correctly when the
+    // subject/expected type pins the union — the bare-name `ctor_owner` map
+    // collides and picks whichever union interned last.
+    let mut ctor_in_union: HashMap<(String, String), (NominalKind, usize)> = HashMap::new();
     for d in &type_decls {
         match &d.kind {
             TypeDeclKind::Iota(vs) => {
-                for v in vs {
+                for (i, v) in vs.iter().enumerate() {
                     ctor_owner.insert(v.clone(), (d.go_name.clone(), NominalKind::Iota));
+                    ctor_arity.insert(v.clone(), 0);
+                    ctor_in_union
+                        .insert((d.go_name.clone(), v.clone()), (NominalKind::Iota, i));
                 }
             }
             TypeDeclKind::Adt(vs) => {
-                for (i, (cn, _)) in vs.iter().enumerate() {
+                for (i, (cn, args)) in vs.iter().enumerate() {
                     ctor_owner.insert(cn.clone(), (d.go_name.clone(), NominalKind::Adt));
                     ctor_tag.insert(cn.clone(), i);
+                    ctor_arity.insert(cn.clone(), args.len());
+                    ctor_in_union
+                        .insert((d.go_name.clone(), cn.clone()), (NominalKind::Adt, i));
                 }
             }
-            TypeDeclKind::Record(_) => {
+            TypeDeclKind::Record(fields) => {
                 ctor_owner.insert(d.name.clone(), (d.go_name.clone(), NominalKind::Record));
+                ctor_arity.insert(d.name.clone(), fields.len());
+                ctor_in_union
+                    .insert((d.go_name.clone(), d.name.clone()), (NominalKind::Record, 0));
             }
         }
     }
@@ -235,6 +254,8 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             record_fields: &record_fields,
             ctor_owner: &ctor_owner,
             ctor_tag: &ctor_tag,
+            ctor_arity: &ctor_arity,
+            ctor_in_union: &ctor_in_union,
             def_param_tys: &def_param_tys,
             def_result_tys: &def_result_tys,
             body: &e.body,
@@ -607,6 +628,8 @@ struct Ctx<'a> {
     record_fields: &'a HashMap<String, Vec<(String, Ty)>>,
     ctor_owner: &'a HashMap<String, (String, NominalKind)>,
     ctor_tag: &'a HashMap<String, usize>,
+    ctor_arity: &'a HashMap<String, usize>,
+    ctor_in_union: &'a HashMap<(String, String), (NominalKind, usize)>,
     def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
     def_result_tys: &'a HashMap<DefId, Ty>,
     body: &'a Body,
@@ -839,7 +862,15 @@ impl<'a> Ctx<'a> {
             let ty = self.expr_ty(d.body);
             let lowered = self.lower_expr(d.body, &ty);
             self.local_tys.insert(lid, lowered.ty.clone());
-            out.push(GoStmt::Short(gname, lowered));
+            out.push(GoStmt::Short(gname.clone(), lowered));
+            // `_ = name` so a let binding the body ignores does not trip Go's
+            // "declared and not used" (matches the oracle's per-binding discard).
+            if gname != "_" {
+                out.push(GoStmt::Expr(GoExpr::new(
+                    GoExprKind::Ident(format!("_ = {gname}")),
+                    GoTy::Unit,
+                )));
+            }
         }
     }
 
@@ -936,7 +967,11 @@ impl<'a> Ctx<'a> {
                     .local_names
                     .get(&id)
                     .cloned()
-                    .unwrap_or_else(|| format!("v{}", id.0));
+                    // Fallback must match `fresh_local_named`'s default-hint
+                    // format (`v_<id>`), NOT `v<id>` — else a reference lowered
+                    // before its binder registered (`undefined: v4`) diverges
+                    // from the eventual `v_4` declaration.
+                    .unwrap_or_else(|| format!("v_{}", id.0));
                 // Use the local's DECLARED Go type, not the caller's expected
                 // slot type — the outer `lower_expr` coerces to `expected`. A
                 // param declared `RetryPolicy_R` must not report itself as a
@@ -990,8 +1025,41 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy) -> GoExpr {
-        let (_, expr) = self.ctor_call(def, &[], actual);
-        expr
+        // A bare constructor reference used as a VALUE. For a nullary ctor this
+        // is just the constructed value. For a ctor of arity ≥ 1 used as a
+        // function value (`onInput UpdateDraft`, `onClick (Select room)` after
+        // spine flattening leaves a partial), Sky curries but Go does not — so
+        // eta-expand into a closure that applies the ctor to its params.
+        let loc = self.db.defs().borrow().loc(def);
+        let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
+        let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
+        if arity == 0 {
+            let (_, expr) = self.ctor_call(def, &[], actual);
+            return expr;
+        }
+        // Match the expected function shape when known; else `any` params.
+        let (param_tys, ret): (Vec<GoTy>, GoTy) = match actual {
+            GoTy::Func(ps, r) if ps.len() == arity => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; arity], GoTy::Any),
+        };
+        let mut gparams: Vec<GoParam> = Vec::new();
+        let mut arg_exprs: Vec<GoExpr> = Vec::new();
+        for pty in param_tys.iter().take(arity) {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+            // ADT/iota ctor params are the untyped `Fields []any` bag; record
+            // ctor params are typed. `ctor_emit` widens/coerces per kind, so
+            // hand it the raw typed ident and let it decide.
+            arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
+        }
+        let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret);
+        let body = self.coerce_if_needed(ctor_val, &ret);
+        let fn_ty = GoTy::Func(param_tys, Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+            fn_ty,
+        )
     }
 
     /// Lower a constructor application (0+ args). Handles builtin Ok/Err/Just/
@@ -1001,6 +1069,13 @@ impl<'a> Ctx<'a> {
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
         let lowered_args: Vec<GoExpr> =
             args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
+        let expr = self.ctor_emit(&cname, lowered_args, actual);
+        (true, expr)
+    }
+
+    /// Emit a constructor call from already-lowered argument expressions.
+    fn ctor_emit(&mut self, cname: &str, lowered_args: Vec<GoExpr>, actual: &GoTy) -> GoExpr {
+        let cname = cname.to_string();
         // type args for the generic container constructors (Go can't infer the
         // unused type param, e.g. `E` in `Ok`).
         let (res_ea, maybe_a) = match actual {
@@ -1052,7 +1127,7 @@ impl<'a> Ctx<'a> {
                 }
             }
         };
-        (true, expr)
+        expr
     }
 
     fn ctor_union_go(&self, cname: &str) -> Option<(String, NominalKind)> {
@@ -1266,7 +1341,14 @@ impl<'a> Ctx<'a> {
                         ">>" | "<<" => "rt.Compose",
                         _ => "rt.Add",
                     };
-                    call_rt(rtname, vec![widen(l), widen(r)], actual.clone())
+                    // These runtime helpers all return Go `any` (they type-switch
+                    // on their `any` operands). Typing the node as its TRUE Go
+                    // static type (`any`) rather than the Sky-inferred `actual`
+                    // lets `coerce_if_needed` narrow it (`rt.CoerceInt(...)`) at
+                    // the use site — matching the oracle. Typing it `actual`
+                    // (e.g. `int`) is a lie: Go's `:=` infers `any` and the value
+                    // then fails to satisfy an `int` slot.
+                    call_rt(rtname, vec![widen(l), widen(r)], GoTy::Any)
                 }
             }
         }
@@ -1301,6 +1383,15 @@ impl<'a> Ctx<'a> {
 
     fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
         let defs = defs.to_vec();
+        // Pre-register every binder's Go name BEFORE lowering any body, so a
+        // forward reference (`let a = b + 1; b = 5 in a` — Sky allows these)
+        // resolves to the SAME name the binder will emit, instead of the
+        // `undefined: v_<id>` fallback.
+        for d in &defs {
+            if let Some((bn, lid)) = d.binders.first() {
+                let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+            }
+        }
         let mut stmts: Vec<GoStmt> = Vec::new();
         for d in &defs {
             self.lower_let_def(d, &mut stmts);
@@ -1313,22 +1404,27 @@ impl<'a> Ctx<'a> {
     fn lower_record(&mut self, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
         // resolve the struct name from `actual` (Named(...)); order fields by the
         // Go struct's field order via capitalisation match.
-        let go_name = match actual {
-            GoTy::Named(n, _) => n.clone(),
-            _ => {
-                self.warnings.push("record literal with unknown type".into());
-                "struct{}".to_string()
-            }
-        };
+        //
+        // When `actual` is NOT a nominal `_R` record (e.g. an anonymous record
+        // flowing into an `any`-typed kernel slot — the TEA cfg record passed to
+        // `rt.Cli_program`/`Tui_app`/`Live_app`/`Webview_app`), there is no
+        // declared struct type to key the composite literal against. The oracle
+        // emits an *anonymous* Go struct with every field typed `any`
+        // (`struct{ Init any; Update any; … }{Init: …, …}`); the runtime
+        // reflect-dispatches those fields. Reproduce that exactly.
+        let nominal = matches!(actual, GoTy::Named(_, _));
         if let GoTy::Named(n, _) = actual {
             self.used_types.insert(n.clone());
         }
         // declared field types for this record `_R`, if known.
-        let field_tys: HashMap<String, Ty> = self
-            .record_fields
-            .get(&go_name)
-            .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
-            .unwrap_or_default();
+        let field_tys: HashMap<String, Ty> = match actual {
+            GoTy::Named(n, _) => self
+                .record_fields
+                .get(n)
+                .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
+                .unwrap_or_default(),
+            _ => HashMap::new(),
+        };
         let fs: Vec<(String, GoExpr)> = fields
             .iter()
             .map(|(n, v)| {
@@ -1338,6 +1434,24 @@ impl<'a> Ctx<'a> {
                 (cap, lowered)
             })
             .collect();
+        let go_name = if nominal {
+            match actual {
+                GoTy::Named(n, _) => n.clone(),
+                _ => unreachable!(),
+            }
+        } else {
+            // Anonymous struct type with every field `any`, field names sorted
+            // (L4 deterministic emission). Keyed composite-literal order is
+            // independent of the type decl's field order, so sorting is safe.
+            let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
+            names.sort();
+            let decls = names
+                .iter()
+                .map(|c| format!("{c} any"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("struct{{ {decls} }}")
+        };
         GoExpr::new(GoExprKind::StructLit(go_name, fs), actual.clone())
     }
 
@@ -1508,7 +1622,13 @@ impl<'a> Ctx<'a> {
         out: &mut Vec<GoStmt>,
     ) {
         let (cond, binds) = self.pattern_test(subj, subj_ty, br.pat);
+        // Discard every pattern-bound name (`_ = v`) so an arm that ignores its
+        // binding (`Just _ -> …` bound as `v := _subj.JustValue`) does not trip
+        // Go's "declared and not used". `_ = v` is always legal — harmless when
+        // the var IS used. Mirrors the oracle's per-binding discard.
+        let discards = discard_binds(&binds);
         let mut then: Vec<GoStmt> = binds;
+        then.extend(discards);
         let body = self.lower_expr(br.body, actual);
         then.push(GoStmt::Return(Some(body)));
         match cond {
@@ -1729,11 +1849,14 @@ impl<'a> Ctx<'a> {
         };
         match cname {
             "Ok" | "Just" => {
-                let cond = tag_eq(subj, 0);
                 let field = if cname == "Ok" { "OkValue" } else { "JustValue" };
-                (Some(cond), self.bind_field(subj, &args, field, &a_ty))
+                let (subc, binds) = self.bind_field_pat(subj, &args, field, &a_ty);
+                (and_opt(Some(tag_eq(subj, 0)), subc), binds)
             }
-            "Err" => (Some(tag_eq(subj, 1)), self.bind_field(subj, &args, "ErrValue", &e_ty)),
+            "Err" => {
+                let (subc, binds) = self.bind_field_pat(subj, &args, "ErrValue", &e_ty);
+                (and_opt(Some(tag_eq(subj, 1)), subc), binds)
+            }
             "Nothing" => (Some(tag_eq(subj, 1)), vec![]),
             "True" => (Some(subj.clone()), vec![]),
             "False" => (
@@ -1748,7 +1871,18 @@ impl<'a> Ctx<'a> {
                 vec![],
             ),
             _ => {
-                let owner = self.ctor_owner.get(cname).cloned();
+                // Disambiguate the owning union by the subject's nominal type
+                // when known (`_subj_ty = Named(gt,_)`) — the bare-name
+                // `ctor_owner` map collides for a ctor name shared across two
+                // unions (`AlignLeft`). Fall back to the bare lookup otherwise.
+                let owner: Option<(String, NominalKind)> = match _subj_ty {
+                    GoTy::Named(gt, _) => self
+                        .ctor_in_union
+                        .get(&(gt.clone(), cname.to_string()))
+                        .map(|(k, _)| (gt.clone(), *k))
+                        .or_else(|| self.ctor_owner.get(cname).cloned()),
+                    _ => self.ctor_owner.get(cname).cloned(),
+                };
                 if let Some((go, NominalKind::Iota)) = &owner {
                     let cond = GoExpr::new(
                         GoExprKind::Binary(
@@ -1764,68 +1898,104 @@ impl<'a> Ctx<'a> {
                     return (Some(cond), vec![]);
                 }
                 // sealed ADT: match by declaration-order tag; bind Fields[i].
-                let tag = self.ctor_tag.get(cname).copied().unwrap_or(0);
-                let cond = tag_eq(subj, tag);
+                // Prefer the union-scoped tag when the subject pins the union.
+                let tag = match _subj_ty {
+                    GoTy::Named(gt, _) => self
+                        .ctor_in_union
+                        .get(&(gt.clone(), cname.to_string()))
+                        .map(|(_, t)| *t)
+                        .or_else(|| self.ctor_tag.get(cname).copied())
+                        .unwrap_or(0),
+                    _ => self.ctor_tag.get(cname).copied().unwrap_or(0),
+                };
+                let mut cond = Some(tag_eq(subj, tag));
                 let mut binds = Vec::new();
                 for (i, a) in args.iter().enumerate() {
-                    if let Pattern::Var(id) = &self.body.pats[*a] {
-                        let vty = self.local_ty(*id);
-                        let name = self.fresh_local_named(*id, None);
-                        let field = GoExpr::new(
-                            GoExprKind::Index(
-                                Box::new(GoExpr::new(
-                                    GoExprKind::Selector(Box::new(subj.clone()), "Fields".into()),
-                                    GoTy::Slice(Box::new(GoTy::Any)),
-                                )),
-                                Box::new(GoExpr::new(
-                                    GoExprKind::IntLit(i as i64),
-                                    GoTy::Bare(Prim::Int),
-                                )),
-                            ),
-                            GoTy::Any,
-                        );
-                        // Fields[i] is `any`; narrow to the bound var's type.
-                        let bound = if vty == GoTy::Any {
-                            field
-                        } else {
-                            GoExpr::new(
-                                GoExprKind::Coerce {
-                                    inner: Box::new(field),
-                                    from: GoTy::Any,
-                                    to: vty.clone(),
-                                    reason: CoerceReason::GenericErase,
-                                },
-                                vty,
-                            )
-                        };
-                        binds.push(GoStmt::Short(name, bound));
-                    }
+                    // Field i's target type: a bound var carries its own type; a
+                    // nested pattern narrows through `any`.
+                    let vty = match &self.body.pats[*a] {
+                        Pattern::Var(id) => self.local_ty(*id),
+                        _ => GoTy::Any,
+                    };
+                    let field = GoExpr::new(
+                        GoExprKind::Index(
+                            Box::new(GoExpr::new(
+                                GoExprKind::Selector(Box::new(subj.clone()), "Fields".into()),
+                                GoTy::Slice(Box::new(GoTy::Any)),
+                            )),
+                            Box::new(GoExpr::new(
+                                GoExprKind::IntLit(i as i64),
+                                GoTy::Bare(Prim::Int),
+                            )),
+                        ),
+                        GoTy::Any,
+                    );
+                    // Fields[i] is `any`; narrow to the sub-pattern's type.
+                    let elem = if vty == GoTy::Any {
+                        field
+                    } else {
+                        GoExpr::new(
+                            GoExprKind::Coerce {
+                                inner: Box::new(field),
+                                from: GoTy::Any,
+                                to: vty.clone(),
+                                reason: CoerceReason::GenericErase,
+                            },
+                            vty.clone(),
+                        )
+                    };
+                    // Recurse so nested patterns (`Wrap (Just x)`, literal payload
+                    // matches) contribute their own guard + bindings, not just a
+                    // bare Var.
+                    let (c, b) = self.pattern_test(&elem, &vty, *a);
+                    cond = and_opt(cond, c);
+                    binds.extend(b);
                 }
-                (Some(cond), binds)
+                (cond, binds)
             }
         }
     }
 
-    fn bind_field(&mut self, subj: &GoExpr, args: &[PatId], field: &str, ty: &GoTy) -> Vec<GoStmt> {
-        let mut binds = Vec::new();
+    /// Extract a container payload field (`OkValue`/`JustValue`/`ErrValue`) and
+    /// match the sub-pattern against it, recursing so nested patterns
+    /// (`Ok (Just user)`, `Err (Custom msg)`) contribute their own guard +
+    /// bindings rather than being silently dropped.
+    fn bind_field_pat(
+        &mut self,
+        subj: &GoExpr,
+        args: &[PatId],
+        field: &str,
+        ty: &GoTy,
+    ) -> (Option<GoExpr>, Vec<GoStmt>) {
         if let Some(a) = args.first() {
-            if let Pattern::Var(id) = &self.body.pats[*a] {
-                let name = self.fresh_local_named(*id, None);
-                binds.push(GoStmt::Short(
-                    name,
-                    GoExpr::new(
-                        GoExprKind::Selector(Box::new(subj.clone()), field.into()),
-                        ty.clone(),
-                    ),
-                ));
-            }
+            let field_expr = GoExpr::new(
+                GoExprKind::Selector(Box::new(subj.clone()), field.into()),
+                ty.clone(),
+            );
+            return self.pattern_test(&field_expr, ty, *a);
         }
-        binds
+        (None, vec![])
     }
 }
 
 fn int_lit(n: i64) -> GoExpr {
     GoExpr::new(GoExprKind::IntLit(n), GoTy::Bare(Prim::Int))
+}
+
+/// For every `name := …` short-binding in `binds`, emit a `_ = name` discard
+/// statement, so a pattern arm that ignores its binding does not trip Go's
+/// "declared and not used". `_ = name` is always legal Go.
+fn discard_binds(binds: &[GoStmt]) -> Vec<GoStmt> {
+    binds
+        .iter()
+        .filter_map(|s| match s {
+            GoStmt::Short(name, _) if name != "_" => Some(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident(format!("_ = {name}")),
+                GoTy::Unit,
+            ))),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Combine two optional pattern-guard conditions with `&&` (identity: `None`).
