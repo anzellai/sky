@@ -300,6 +300,16 @@ impl World {
         }
     }
 
+    /// Public entry to transparent alias expansion (doc 07 §3). Used by the
+    /// lowerer to expand a record field's declared type — a field annotated
+    /// `List Point` where `type alias Point = (Float, Float)` must render the
+    /// tuple, not erase the un-expanded `Point` nominal to `any` (26-ui-showcase /
+    /// 37-composite-live-shop: the struct-field decl must agree with the function
+    /// signatures, which come pre-expanded from the sig world).
+    pub fn expand_ty(&self, ty: &Ty) -> Ty {
+        self.expand(ty, 0)
+    }
+
     /// Expand a type transparently through the alias table (record/function
     /// aliases). Guarded against runaway recursion (aliases are non-recursive in
     /// Sky, but a malformed corpus must not hang — L7).

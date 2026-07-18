@@ -499,6 +499,12 @@ fn collect_types(
     let mut nominal: HashMap<String, Nominal> = HashMap::new();
     let mut nominal_by_module: HashMap<(String, String), Nominal> = HashMap::new();
     let mut decls: Vec<TypeDecl> = Vec::new();
+    // Transparent-alias expander: a record field annotated `List Point` (where
+    // `type alias Point = (Float, Float)`) must expand `Point` to the tuple so the
+    // struct-field decl agrees with the pre-expanded function signatures. Without
+    // this the field erases to `[]any` while the param renders `[]rt.T2[…]` — the
+    // same Sky type, two incompatible Go types (26/37).
+    let world = ty::World::build(db);
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let prefix = module_prefix(&mname);
@@ -570,7 +576,10 @@ fn collect_types(
                     if let (Some(tname), Some(ast::Type::Record(_))) =
                         (a.name().map(|t| t.text().to_string()), a.ty())
                     {
-                        let fields = ty::record_alias_fields(a.syntax());
+                        let fields: Vec<(String, Ty)> = ty::record_alias_fields(a.syntax())
+                            .into_iter()
+                            .map(|(n, t)| (n, world.expand_ty(&t)))
+                            .collect();
                         let go_name = format!("{prefix}_{tname}_R");
                         reg!(
                             tname,
@@ -1098,7 +1107,28 @@ impl<'a> Ctx<'a> {
     // ---- expression lowering -------------------------------------------
 
     fn lower_expr(&mut self, e: ExprId, expected: &GoTy) -> GoExpr {
-        let actual = self.expr_ty(e);
+        let mut actual = self.expr_ty(e);
+        // Transparent control-flow (`if` / `case` / `let … in body`) has no value
+        // of its own — its arms/body flow DIRECTLY into the slot the whole
+        // expression occupies. When the caller's `expected` slot is more specific
+        // than this node's own (frequently type-erased) inferred type, thread the
+        // expected type down so each arm targets IT (doc 07 §2: lower children
+        // with their expected `GoTy`). This is what the oracle does — it types the
+        // emitted IIFE by the slot, not by an erased `List a` inference — and it
+        // makes a concrete arm value (`pawnTable() : []int`) land in a matching
+        // `func() []int` slot instead of a spurious `func() []any` (16-skychess).
+        // Guard on `expected != Any`: `Any` means "no constraint", so keep the
+        // node's own concrete inference (a concrete arm flowing into an `any` slot
+        // needs no per-arm widening).
+        if *expected != GoTy::Any
+            && actual != *expected
+            && matches!(
+                &self.body.exprs[e],
+                Expr::If { .. } | Expr::Case { .. } | Expr::Let { .. }
+            )
+        {
+            actual = expected.clone();
+        }
         let node = self.lower_expr_inner(e, &actual);
         self.coerce_if_needed(node, expected)
     }
@@ -1921,11 +1951,43 @@ impl<'a> Ctx<'a> {
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
+        // A concrete anonymous-struct slot: `actual` is a `GoTy::Struct` none of
+        // whose fields is a function or `any`. This is the JSON-decoder record
+        // whose enclosing lambda return type is `struct{ Done bool; Id int; Title
+        // string }` (06-json) — the field values must lower to their CONCRETE Go
+        // field types and the literal must render those same concrete types, so
+        // the rendered `struct{…}{…}` matches the claimed slot type (otherwise an
+        // all-`any` literal is claimed to be a `struct{…bool…}` and `go build`
+        // rejects it). Records with function fields (the TEA cfg passed to
+        // Live_app/Tui_app) DELIBERATELY stay all-`any` — the runtime
+        // reflect-dispatches them and the oracle emits all-`any` there.
+        let concrete_struct: Option<Vec<(String, GoTy)>> = match actual {
+            GoTy::Struct(fts)
+                if !fts.is_empty()
+                    && fts
+                        .iter()
+                        .all(|(_, t)| !matches!(t, GoTy::Func(_, _) | GoTy::Any)) =>
+            {
+                Some(
+                    fts.iter()
+                        .map(|(n, t)| (n.as_str().to_string(), t.clone()))
+                        .collect(),
+                )
+            }
+            _ => None,
+        };
         let fs: Vec<(String, GoExpr)> = fields
             .iter()
             .map(|(n, v)| {
                 let cap = capitalize(n.as_str());
-                let expected = field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+                let expected = if let Some(cs) = &concrete_struct {
+                    cs.iter()
+                        .find(|(fn_, _)| *fn_ == cap)
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or(GoTy::Any)
+                } else {
+                    field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any)
+                };
                 let lowered = self.lower_expr(*v, &expected);
                 (cap, lowered)
             })
@@ -1935,6 +1997,10 @@ impl<'a> Ctx<'a> {
                 GoTy::Named(n, _) => n.clone(),
                 _ => unreachable!(),
             }
+        } else if concrete_struct.is_some() {
+            // Render the concrete struct type so the literal's Go type equals the
+            // claimed `actual` (keyed-literal order is field-name independent).
+            render_goty(actual)
         } else {
             // Anonymous struct type with every field `any`, field names sorted
             // (L4 deterministic emission). Keyed composite-literal order is
