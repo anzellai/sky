@@ -511,6 +511,16 @@ func msgDisplayName(msg any) string {
 		if strings.HasPrefix(name, "reflect.") {
 			return ""
 		}
+		// An anonymous closure (Go names these `pkg.Outer.funcN`) is an
+		// eta-expanded handler (`onSubmit SendMessage` lowered to
+		// `func(p){ return Msg_SendMessage(p) }`). Its name is NOT a Msg
+		// name, so trimming it (`…SendMessage.func1` → "func1") would route a
+		// bogus name onto the wire and LookupAdtTag would fail silently. Fall
+		// back to the per-binding-site handlerId — same defence as the
+		// reflect.MakeFunc case above (#532).
+		if strings.Contains(name, ".func") {
+			return ""
+		}
 		// Trim main.Msg_UpdateEmail → UpdateEmail.
 		if idx := strings.LastIndex(name, "_"); idx >= 0 {
 			return name[idx+1:]

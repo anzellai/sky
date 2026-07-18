@@ -92,6 +92,11 @@ struct Resolver<'a> {
     // lexical scope
     scopes: Vec<HashMap<String, LocalId>>,
     next_local: u32,
+    /// When set, `bind_local` reuses an existing same-name binding in the
+    /// current scope instead of allocating a fresh id. Used when resolving a
+    /// destructure pattern whose binder names were already bound by the `let`
+    /// pre-pass — so the pattern's `Var` ids match the ids the body references.
+    reuse_binders: bool,
     /// Non-zero suppresses diagnostics/class tracking (interpolation interior,
     /// which the oracle never rejects — doc 03 §1.6).
     quiet: u32,
@@ -125,6 +130,7 @@ impl<'a> Resolver<'a> {
             foreign_open: None,
             scopes: Vec::new(),
             next_local: 0,
+            reuse_binders: false,
             quiet: 0,
             body: Body::default(),
             result: ResolveResult::default(),
@@ -544,6 +550,13 @@ impl<'a> Resolver<'a> {
         id
     }
     fn bind_local(&mut self, name: &str) -> LocalId {
+        if self.reuse_binders {
+            if let Some(scope) = self.scopes.last() {
+                if let Some(&id) = scope.get(name) {
+                    return id;
+                }
+            }
+        }
         let id = self.fresh_local();
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), id);
@@ -843,62 +856,80 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // resolve pass
+        // resolve pass — walk let children in SOURCE order so a destructure
+        // (`(gMin, gMax) = …`) whose binders a later binding captures inside a
+        // closure is emitted before that binding (Go rejects a closure that
+        // captures a not-yet-declared var — examples 26/37).
         let mut defs = Vec::new();
-        for (i, b) in bindings.iter().enumerate() {
-            let binders = match (b.name(), binder_ids.get(i).copied().flatten()) {
-                (Some(n), Some(id)) => vec![(Name::new(n.text()), id)],
-                _ => Vec::new(),
-            };
-            let params_node = b.syntax().children().find(|c| c.kind() == SyntaxKind::ParamList);
-            let has_body = b.body().is_some();
-            if let Some(pl) = params_node {
-                self.push_scope();
-                let mut params = Vec::new();
-                for p in ast::ParamList::cast(pl)
-                    .map(|pl| pl.params().collect::<Vec<_>>())
-                    .unwrap_or_default()
-                {
-                    params.push(self.resolve_pattern(&p));
+        let mut binding_ix = 0usize;
+        for child in l.syntax().children() {
+            match child.kind() {
+                SyntaxKind::LetBinding => {
+                    let Some(b) = ast::LetBinding::cast(child) else { continue };
+                    let i = binding_ix;
+                    binding_ix += 1;
+                    let binders = match (b.name(), binder_ids.get(i).copied().flatten()) {
+                        (Some(n), Some(id)) => vec![(Name::new(n.text()), id)],
+                        _ => Vec::new(),
+                    };
+                    let params_node =
+                        b.syntax().children().find(|c| c.kind() == SyntaxKind::ParamList);
+                    let has_body = b.body().is_some();
+                    if let Some(pl) = params_node {
+                        self.push_scope();
+                        let mut params = Vec::new();
+                        for p in ast::ParamList::cast(pl)
+                            .map(|pl| pl.params().collect::<Vec<_>>())
+                            .unwrap_or_default()
+                        {
+                            params.push(self.resolve_pattern(&p));
+                        }
+                        let body = match b.body() {
+                            Some(e) => self.resolve_expr(&e),
+                            None => self.body.expr(Expr::Error),
+                        };
+                        self.pop_scope();
+                        defs.push(LocalDef {
+                            binders,
+                            pat: None,
+                            params,
+                            body,
+                        });
+                    } else if has_body {
+                        let body = self.resolve_expr(&b.body().unwrap());
+                        defs.push(LocalDef {
+                            binders,
+                            pat: None,
+                            params: Vec::new(),
+                            body,
+                        });
+                    } else {
+                        // annotation-only binding: resolve its type
+                        if let Some(t) = b.syntax().children().find_map(ast::Type::cast) {
+                            let _ = self.resolve_type(&t);
+                        }
+                    }
                 }
-                let body = match b.body() {
-                    Some(e) => self.resolve_expr(&e),
-                    None => self.body.expr(Expr::Error),
-                };
-                self.pop_scope();
-                defs.push(LocalDef {
-                    binders,
-                    pat: None,
-                    params,
-                    body,
-                });
-            } else if has_body {
-                let body = self.resolve_expr(&b.body().unwrap());
-                defs.push(LocalDef {
-                    binders,
-                    pat: None,
-                    params: Vec::new(),
-                    body,
-                });
-            } else {
-                // annotation-only binding: resolve its type
-                if let Some(t) = b.syntax().children().find_map(ast::Type::cast) {
-                    let _ = self.resolve_type(&t);
+                SyntaxKind::DestructureBinding => {
+                    // The pre-pass already bound this destructure's binder names
+                    // for forward references; reuse those ids so the pattern's
+                    // `Var` ids match what sibling bindings + body point to.
+                    self.reuse_binders = true;
+                    let pat = cst::child_pats(&child).first().map(|p| self.resolve_pattern(p));
+                    self.reuse_binders = false;
+                    let val = cst::child_exprs(&child)
+                        .first()
+                        .map(|e| self.resolve_expr(e))
+                        .unwrap_or_else(|| self.body.expr(Expr::Error));
+                    defs.push(LocalDef {
+                        binders: Vec::new(),
+                        pat,
+                        params: Vec::new(),
+                        body: val,
+                    });
                 }
+                _ => {}
             }
-        }
-        for d in &destruct_nodes {
-            let pat = cst::child_pats(d).first().map(|p| self.resolve_pattern(p));
-            let val = cst::child_exprs(d)
-                .first()
-                .map(|e| self.resolve_expr(e))
-                .unwrap_or_else(|| self.body.expr(Expr::Error));
-            defs.push(LocalDef {
-                binders: Vec::new(),
-                pat,
-                params: Vec::new(),
-                body: val,
-            });
         }
 
         let body = match l.body() {

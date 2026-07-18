@@ -898,6 +898,51 @@ impl<'a> Ctx<'a> {
 
     fn lower_let_def(&mut self, d: &hir::LocalDef, out: &mut Vec<GoStmt>) {
         let is_task = self.expr_is_task(d.body);
+        // A destructuring let (`(gMin, gMax) = heatmapRange grid`,
+        // `{ x, y } = …`, `(Money d _) = …`): bind the RHS to a temp, then reuse
+        // `pattern_test` to emit each inner binder assignment. Without this the
+        // whole def collapsed to a `_ = rhs` discard and every destructured
+        // binder referenced later stayed an undefined `v_N` (examples 26/37).
+        if d.params.is_empty() {
+            if let Some(pat) = d.pat {
+                // Only genuine destructuring patterns route here. A `Var` is an
+                // ordinary `name = expr` (handled below); `Anything`/`Unit` are
+                // `let _ = TaskExpr` discards that MUST keep the auto-force
+                // (`AnyTaskRun`) path so their side effects fire (doc 08 §3).
+                if matches!(
+                    &self.body.pats[pat],
+                    Pattern::Tuple(_)
+                        | Pattern::Record(_)
+                        | Pattern::Ctor { .. }
+                        | Pattern::List(_)
+                        | Pattern::Cons(_, _)
+                        | Pattern::Alias(_, _)
+                ) {
+                    let ty = self.expr_ty(d.body);
+                    let lowered = self.lower_expr(d.body, &ty);
+                    let tmp = self.fresh_temp();
+                    let subj = GoExpr::new(GoExprKind::Ident(tmp.clone()), lowered.ty.clone());
+                    out.push(GoStmt::Short(tmp.clone(), lowered));
+                    let (_cond, binds) = self.pattern_test(&subj, &subj.ty, pat);
+                    out.push(GoStmt::Expr(GoExpr::new(
+                        GoExprKind::Ident(format!("_ = {tmp}")),
+                        GoTy::Unit,
+                    )));
+                    out.extend(binds);
+                    for (_bn, lid) in &d.binders {
+                        if let Some(name) = self.local_names.get(lid).cloned() {
+                            if name != "_" {
+                                out.push(GoStmt::Expr(GoExpr::new(
+                                    GoExprKind::Ident(format!("_ = {name}")),
+                                    GoTy::Unit,
+                                )));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+        }
         if d.binders.is_empty() {
             // discard `_ = expr` — auto-force a task side effect.
             let lowered = self.lower_expr(d.body, &GoTy::Any);
@@ -1061,6 +1106,12 @@ impl<'a> Ctx<'a> {
                 GoExpr::new(GoExprKind::Ident(name), ty)
             }
             Res::Def(d) => {
+                // A bare record-alias constructor used as a value/first-class
+                // function (`Result.map3 Profile …`, `List.map Piece …`): eta
+                // to a closure over its fields, same as a `Res::Ctor` value.
+                if self.record_ctor_name(d).is_some() {
+                    return self.lower_ctor_value(d, actual);
+                }
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
                     // A NULLARY kernel value (`Dict.empty = Ffi.kernel "Dict_empty"`,
@@ -1275,7 +1326,28 @@ impl<'a> Ctx<'a> {
                         NominalKind::Record => {
                             let ctor = go_type.trim_end_matches("_R").to_string();
                             self.used_types.insert(go_type.clone());
-                            call_rt(&ctor, lowered_args, GoTy::Named(go_type, vec![]))
+                            // Coerce each arg to the record's declared field Go
+                            // type (fields are in ctor-param order). A partial
+                            // application (`\p1 p2 … -> Overview p1 p2 …`) supplies
+                            // `any` rest-params that must narrow to the typed field
+                            // — else `Overview(_p1 any, …)` fails against a
+                            // `func(string, …)` signature (example 25).
+                            let ftys: Vec<GoTy> = self
+                                .record_fields
+                                .get(&go_type)
+                                .map(|fs| {
+                                    fs.iter().map(|(_, t)| sky_ty_to_go(t, self.env)).collect()
+                                })
+                                .unwrap_or_default();
+                            let coerced: Vec<GoExpr> = lowered_args
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, a)| match ftys.get(i) {
+                                    Some(t) => self.coerce_if_needed(a, t),
+                                    None => a,
+                                })
+                                .collect();
+                            call_rt(&ctor, coerced, GoTy::Named(go_type, vec![]))
                         }
                     }
                 } else {
@@ -1293,12 +1365,36 @@ impl<'a> Ctx<'a> {
 
     // ---- call / operator / control-flow lowering -----------------------
 
+    /// If `d` names a record-alias auto-constructor (`type alias Piece = { … }`
+    /// gives `Piece : Kind -> Colour -> Piece`), return its name. These resolve
+    /// to `Res::Def` (a bodyless synthesized def), NOT `Res::Ctor`, so the ctor
+    /// call/value paths must recognise them by name — otherwise `lower_var`
+    /// emits a zero-arg thunk `Piece()` and the args apply to its result
+    /// (`Piece()(kind, colour)` → "not enough arguments", example 16).
+    fn record_ctor_name(&self, d: DefId) -> Option<String> {
+        let loc = self.db.defs().borrow().loc(d);
+        let name = loc.map(|l| l.name.as_str().to_string())?;
+        match self.ctor_owner.get(&name) {
+            Some((_, NominalKind::Record)) => Some(name),
+            _ => None,
+        }
+    }
+
     fn lower_call(&mut self, callee: ExprId, args: &[ExprId], actual: &GoTy) -> GoExpr {
         // constructor application?
         if let Expr::Var(Res::Ctor(cr)) = &self.body.exprs[callee] {
             let cr = cr.clone();
             let (_, e) = self.ctor_call(cr.def, args, actual);
             return e;
+        }
+        // record-alias auto-constructor applied (resolves as `Res::Def`, see
+        // `record_ctor_name`): route through the arity-aware ctor path.
+        if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
+            let d = *d;
+            if self.record_ctor_name(d).is_some() {
+                let (_, e) = self.ctor_call(d, args, actual);
+                return e;
+            }
         }
         // kernel-alias direct call → uniform widen-args / coerce-return.
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
@@ -1579,7 +1675,10 @@ impl<'a> Ctx<'a> {
         // resolves to the SAME name the binder will emit, instead of the
         // `undefined: v_<id>` fallback.
         for d in &defs {
-            if let Some((bn, lid)) = d.binders.first() {
+            // Pre-register EVERY binder (a tuple/record destructure introduces
+            // several), so a forward reference to any of them resolves to the
+            // name its binding will emit.
+            for (bn, lid) in &d.binders {
                 let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
             }
         }
@@ -2143,6 +2242,15 @@ impl<'a> Ctx<'a> {
                     // nested pattern narrows through `any`.
                     let vty = match &self.body.pats[*a] {
                         Pattern::Var(id) => self.local_ty(*id),
+                        // A nested ctor pattern (`SendMessage (Ok result)`)
+                        // needs its payload field coerced from `any` to the
+                        // sub-pattern's own ADT type, else the recursive
+                        // `_subj.Fields[i].Tag` reads `.Tag` off `any` (27/28).
+                        p @ (Pattern::Ctor { .. }
+                        | Pattern::Tuple(_)
+                        | Pattern::Record(_)) => {
+                            self.pattern_nominal_ty(p).unwrap_or(GoTy::Any)
+                        }
                         _ => GoTy::Any,
                     };
                     let field = GoExpr::new(
@@ -2181,6 +2289,39 @@ impl<'a> Ctx<'a> {
                 }
                 (cond, binds)
             }
+        }
+    }
+
+    /// The nominal Go type a (sub-)pattern matches against, derived structurally
+    /// from its ctor head — so a payload extracted as `any` can be narrowed
+    /// before the recursive `pattern_test` reads `.Tag` / `.V{i}` off it.
+    fn pattern_nominal_ty(&self, p: &Pattern) -> Option<GoTy> {
+        match p {
+            Pattern::Ctor { name, .. } => match name.as_str() {
+                "Ok" | "Err" => Some(GoTy::Named(
+                    "rt.SkyResult".into(),
+                    vec![GoTy::Any, GoTy::Any],
+                )),
+                "Just" | "Nothing" => {
+                    Some(GoTy::Named("rt.SkyMaybe".into(), vec![GoTy::Any]))
+                }
+                "True" | "False" => Some(GoTy::Bare(Prim::Bool)),
+                other => self
+                    .ctor_owner
+                    .get(other)
+                    .map(|(go, _)| GoTy::Named(go.clone(), Vec::new())),
+            },
+            Pattern::Tuple(pats) => {
+                let elems = pats
+                    .iter()
+                    .map(|sp| {
+                        self.pattern_nominal_ty(&self.body.pats[*sp])
+                            .unwrap_or(GoTy::Any)
+                    })
+                    .collect();
+                Some(GoTy::Tuple(elems))
+            }
+            _ => None,
         }
     }
 
