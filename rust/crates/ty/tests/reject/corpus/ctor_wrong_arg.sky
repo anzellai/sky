@@ -1,0 +1,16 @@
+-- defect: constructor applied to a wrong-typed argument (Box wants Int, got String)
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Box = Box Int
+
+wrong : Box
+wrong =
+    Box "not an int"
+
+main =
+    let _ = wrong in
+    println "x"

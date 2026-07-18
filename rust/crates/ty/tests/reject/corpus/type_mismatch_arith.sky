@@ -1,0 +1,9 @@
+-- defect: type mismatch — `Int + String` in `1 + "x"`
+-- oracle: reject [E2001] (expected Int, actual String)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    println (String.fromInt (1 + "x"))

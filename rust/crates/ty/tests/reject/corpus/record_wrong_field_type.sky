@@ -1,0 +1,15 @@
+-- defect: record field with wrong type — `age` declared Int, given String
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias Person = { name : String, age : Int }
+
+bad : Person
+bad =
+    { name = "Ann", age = "thirty" }
+
+main =
+    println bad.name

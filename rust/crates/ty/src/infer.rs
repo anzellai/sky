@@ -47,6 +47,18 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
     }
 }
 
+/// Does `ty` contain a record anywhere in its structure? Gates the annotation
+/// gate's param seeding (see [`Infer::infer_def_against`]).
+fn ty_contains_record(ty: &Ty) -> bool {
+    match ty {
+        Ty::Record(..) => true,
+        Ty::Fun(a, b) => ty_contains_record(a) || ty_contains_record(b),
+        Ty::App(_, args) => args.iter().any(ty_contains_record),
+        Ty::Tuple(xs) => xs.iter().any(ty_contains_record),
+        Ty::Var(_) | Ty::Unit | Ty::Error => false,
+    }
+}
+
 pub struct Infer<'a> {
     world: &'a World,
     db: &'a SourceDb,
@@ -198,6 +210,121 @@ impl<'a> Infer<'a> {
             locals.insert(lid, t);
         }
         (Some(result), exprs, locals)
+    }
+
+    /// Enforce a top-level def's body against its DECLARED annotation (the
+    /// accept/reject checker's annotation gate — the M3 residual). Seeds each
+    /// param var from the annotation's arrow spine, infers the body, and unifies
+    /// the body's result type against the annotation's result. A def whose body
+    /// contradicts its own signature (`count : Int` / `count = "x"`, or
+    /// `grab : Int -> String` / `grab n = n.name`) is a genuine type error the
+    /// Haskell oracle rejects; the clash lands in `self.errors` (L7).
+    ///
+    /// Scoped by the CALLER to the modules under check (never the trusted
+    /// stdlib), so this only tightens app-code annotations. It never LOOSENS:
+    /// wildcard `any` is instantiated fresh-per-occurrence (so a signature that
+    /// widens to `any` still accepts a concrete body), and any unknown/kernel
+    /// reference in the body stays a fresh flex var — the enforcement adds
+    /// constraints only where both the annotation AND the body are concrete,
+    /// which is exactly the "unambiguous contradiction" the corpus targets.
+    pub fn infer_def_against(&mut self, body: &Body, scheme: &Scheme) {
+        let Some(root) = body.root else { return };
+        let param_pats: Vec<PatId> = body.params.clone();
+        let param_vars: Vec<TyVarId> = param_pats
+            .iter()
+            .map(|&p| self.infer_pat_fresh(body, p))
+            .collect();
+        // Instantiate the scheme's quantifiers to fresh flex vars (skip `any`,
+        // which is fresh-per-occurrence — mirrors `instantiate`).
+        let mut sub: HashMap<String, TyVarId> = HashMap::new();
+        for name in &scheme.vars {
+            if name.as_str() != "any" {
+                let fresh = self.uf.fresh_flex();
+                sub.insert(name.as_str().to_string(), fresh);
+            }
+        }
+        // Peel one arrow per top-level param, seeding the param's declared type.
+        // A param whose declared type CONTAINS a record is NOT seeded: pinning a
+        // record-alias param (`model : Model`) makes real TEA code's record
+        // updates / `List.map`-over-field threading clash on field-presence
+        // under this checker's record unification (which the full-HM oracle
+        // resolves) — a false positive on accepted code (19-skyforum). Seeding
+        // primitive / nominal / function params still catches the genuine
+        // non-record-vs-record misuse (`grab : Int -> String; grab n = n.name`).
+        let mut cur = scheme.ty.clone();
+        for &pv in &param_vars {
+            match cur {
+                Ty::Fun(a, b) => {
+                    if !ty_contains_record(&a) {
+                        let av = self.ty_to_var_open(&a, &mut sub);
+                        self.unify(pv, av);
+                    }
+                    cur = *b;
+                }
+                _ => break,
+            }
+        }
+        let expected_result = self.ty_to_var_open(&cur, &mut sub);
+        // Body inference stays STRICT (record-presence clashes inside the body —
+        // e.g. a call passing a record that lacks a required field — must still
+        // reject; that is exactly `record_missing_field` at its call site).
+        let v = self.infer_expr(body, root);
+        // Only the final body-vs-annotation unification is presence-lenient:
+        // a body result that structurally matches the declared type up to open
+        // rows is accepted, while a field-TYPE clash (age String vs Int) or a
+        // non-record-vs-record clash still lands in `errors`.
+        self.uf.lenient_record_presence = true;
+        self.unify(v, expected_result);
+        self.uf.lenient_record_presence = false;
+    }
+
+    /// Like [`Infer::ty_to_var`] but seeds every CLOSED record (`ext = None`)
+    /// with a fresh row variable, making it OPEN. Used only by the annotation
+    /// gate ([`Infer::infer_def_against`]): a declared record type constrains
+    /// the body's field TYPES and overall SHAPE, but must not force exact
+    /// field-presence parity — real TEA code threads models through record
+    /// updates / subset accesses that the lenient body checker models with open
+    /// rows, so a closed seed would false-positive "missing/extra field" on
+    /// accepted programs (accept-parity gate: 19-skyforum). Opening the seed
+    /// keeps the sound clashes (wrong field type, non-record vs record,
+    /// primitive vs primitive) while dropping the field-presence class that the
+    /// full-HM oracle resolves and this checker cannot match exactly.
+    fn ty_to_var_open(&mut self, ty: &Ty, sub: &mut HashMap<String, TyVarId>) -> TyVarId {
+        match ty {
+            Ty::Fun(a, b) => {
+                let va = self.ty_to_var_open(a, sub);
+                let vb = self.ty_to_var_open(b, sub);
+                self.fun(va, vb)
+            }
+            Ty::App(name, args) => {
+                let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var_open(a, sub)).collect();
+                self.uf
+                    .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
+            }
+            Ty::Tuple(xs) => {
+                let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var_open(x, sub)).collect();
+                self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
+            }
+            Ty::Record(fields, ext) => {
+                let mut map = std::collections::BTreeMap::new();
+                for (n, t) in fields {
+                    let v = self.ty_to_var_open(t, sub);
+                    map.insert(n.clone(), v);
+                }
+                // Force OPEN: reuse a named row var if present, else a fresh one.
+                let ext_var = match ext {
+                    Some(e) if e.as_str() != "any" => Some(
+                        *sub.entry(e.as_str().to_string())
+                            .or_insert_with(|| self.uf.fresh_flex()),
+                    ),
+                    _ => Some(self.uf.fresh_flex()),
+                };
+                self.uf
+                    .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
+            }
+            // vars / unit / error: identical to `ty_to_var`.
+            _ => self.ty_to_var(ty, sub),
+        }
     }
 
     /// Infer the FULL scheme of a (typically unannotated) top-level def:

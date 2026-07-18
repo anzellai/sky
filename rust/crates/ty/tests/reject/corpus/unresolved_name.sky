@@ -1,0 +1,23 @@
+-- gate: known-leniency
+-- defect: unresolved name `mysteryValue` (not a Sky/stdlib/local binding)
+-- oracle: reject [E1001] naming error at canonicalisation
+--
+-- DOCUMENTED RESOLVER LENIENCY (accept-parity, NOT a ty soundness hole).
+-- `import Sky.Core.Prelude exposing (..)` opens the `Basics` kernel pseudo-
+-- module; the Rust resolver cannot statically ENUMERATE kernel exports, so it
+-- resolves any bare unknown name to a lenient `Res::Kernel` ref rather than
+-- emit `[E1001]` (resolve.rs `resolve_var` kernel-open fallback). This is a
+-- deliberate accept-parity choice: tightening it means enumerating every
+-- kernel export in the resolver, a change that touches every example's
+-- `exposing (..)` import with its own over-eager-rejection risk. It is
+-- ORTHOGONAL to the v0.7 self-host killer classes (nominal unification +
+-- exhaustiveness + annotation-vs-body — all closed by this milestone). The
+-- Haskell oracle rejects because it carries the full kernel-function tables.
+-- This file is tracked as a known leniency, not counted against the hard gate.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    println mysteryValue

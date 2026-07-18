@@ -1,0 +1,13 @@
+-- defect: cons element clash — `Int :: List String`
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+joined : List String
+joined =
+    1 :: [ "a", "b" ]
+
+main =
+    println (String.fromInt (List.length joined))

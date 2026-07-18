@@ -76,11 +76,23 @@ impl Mismatch {
 #[derive(Default)]
 pub struct UnionFind {
     slots: Vec<Slot>,
+    /// When set, record unification treats a closed side that lacks the other's
+    /// fields as OK (skips the extra/missing-field error branches) but STILL
+    /// unifies shared fields (so wrong-field-type clashes survive). The
+    /// annotation gate ([`crate::infer::Infer::infer_def_against`]) flips this on
+    /// only while unifying a body result against its declared type, where
+    /// exact field-presence parity would false-positive on row-polymorphic TEA
+    /// code the full-HM oracle accepts (accept-parity, 19-skyforum). Field-type
+    /// and non-record-vs-record clashes are unaffected. Default `false`.
+    pub lenient_record_presence: bool,
 }
 
 impl UnionFind {
     pub fn new() -> Self {
-        UnionFind { slots: Vec::new() }
+        UnionFind {
+            slots: Vec::new(),
+            lenient_record_presence: false,
+        }
     }
 
     /// Allocate a fresh variable with the given content. Deterministic (L4):
@@ -344,12 +356,16 @@ impl UnionFind {
             .collect();
 
         // A closed side forbids the other side introducing extras it lacks.
-        // (extras1Illegal / extras2Illegal, Unify.hs:486)
-        if e1.is_none() && !only2.is_empty() {
-            return Err(Mismatch::new(record_extra_msg(&only2)));
-        }
-        if e2.is_none() && !only1.is_empty() {
-            return Err(Mismatch::new(record_extra_msg(&only1)));
+        // (extras1Illegal / extras2Illegal, Unify.hs:486). Suppressed under the
+        // annotation gate's presence-lenient mode — shared fields are still
+        // unified below, so field-TYPE clashes survive.
+        if !self.lenient_record_presence {
+            if e1.is_none() && !only2.is_empty() {
+                return Err(Mismatch::new(record_extra_msg(&only2)));
+            }
+            if e2.is_none() && !only1.is_empty() {
+                return Err(Mismatch::new(record_extra_msg(&only1)));
+            }
         }
 
         // resolved combined field set + extension
@@ -465,6 +481,22 @@ mod tests {
         let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
         let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
         assert!(uf.unify(int, s).is_err());
+    }
+
+    /// The v0.7 self-host killer guard (self-host §7 R1-D2): two DISTINCT
+    /// nominal/opaque types must NOT unify. The legacy `Unify.sky:99-100`
+    /// `isOpaqueFfiType a && isOpaqueFfiType b -> Ok emptySub` made every pair
+    /// of unrelated FFI types unify (`Customer` ≡ `Widget`). This unifier has NO
+    /// such rule — `App(n1,..)` unifies with `App(n2,..)` only when `n1 == n2`.
+    #[test]
+    fn distinct_nominal_types_do_not_unify() {
+        let mut uf = UnionFind::new();
+        let customer = uf.fresh(Content::Structure(FlatTy::App(Name::new("Customer"), vec![])));
+        let widget = uf.fresh(Content::Structure(FlatTy::App(Name::new("Widget"), vec![])));
+        assert!(
+            uf.unify(customer, widget).is_err(),
+            "distinct nominal types Customer and Widget must NOT unify (v0.7 hole)"
+        );
     }
 
     #[test]

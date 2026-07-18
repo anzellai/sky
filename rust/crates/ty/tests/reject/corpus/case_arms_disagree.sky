@@ -1,0 +1,15 @@
+-- defect: `case` branches disagree — one arm Int, one arm String
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+classify : Int -> Int
+classify n =
+    case n of
+        0 -> 100
+        _ -> "big"
+
+main =
+    println (String.fromInt (classify 3))

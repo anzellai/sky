@@ -35,6 +35,12 @@ pub struct CheckOutput {
     pub type_errors: usize,
     /// Exhaustiveness warnings (E3001) — NOT counted as type errors.
     pub exhaustiveness_warnings: usize,
+    /// Name-resolution errors (unresolved names — `[E1001]`-class) from
+    /// `hir::resolve` over the checked modules. Surfaced additively so the
+    /// accept/reject gate can treat an unresolved reference as a rejection
+    /// (the oracle rejects at canonicalisation) WITHOUT changing the M3
+    /// accept-parity `type_errors` count.
+    pub name_errors: usize,
     pub diagnostics: Vec<Diagnostic>,
     pub def_types: Vec<DefType>,
 }
@@ -131,6 +137,13 @@ pub fn check_modules(db: &SourceDb, to_check: &[ModuleId]) -> CheckOutput {
     for &mid in to_check {
         let mname = db.module_name(mid).to_string();
         let resolved = hir::resolve(db, mid);
+        // Surface unresolved-name diagnostics (additive — see `name_errors`).
+        for d in &resolved.diagnostics {
+            if d.severity == Severity::Error {
+                out.name_errors += 1;
+                out.diagnostics.push(d.clone());
+            }
+        }
         let names: HashMap<base::DefId, String> = resolved
             .top_defs
             .iter()
@@ -140,7 +153,20 @@ pub fn check_modules(db: &SourceDb, to_check: &[ModuleId]) -> CheckOutput {
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
             let mut infer = Infer::new(&world, db).with_self_def(Some(*def));
-            let inferred = infer.infer_def(body);
+            // Annotation gate (M3 residual): a def with a DECLARED signature is
+            // checked against it (params seeded + body result unified with the
+            // declared type), so a body that contradicts its own annotation is
+            // rejected. Unannotated defs keep the lenient body-only inference
+            // that preserves accept-parity. Scoped to `to_check` (never the
+            // trusted stdlib) so only app-code annotations are tightened.
+            let inferred = match world.value_sigs.get(def) {
+                Some(scheme) => {
+                    let scheme = scheme.clone();
+                    infer.infer_def_against(body, &scheme);
+                    None
+                }
+                None => infer.infer_def(body),
+            };
             for err in &infer.errors {
                 out.type_errors += 1;
                 out.diagnostics.push(Diagnostic {

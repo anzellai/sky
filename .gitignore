@@ -128,3 +128,7 @@ _verify/
 
 # Rust-compiler M4 build outputs (xtask build-run)
 examples/*/sky-out-rust/
+
+# Heavy generated FFI surfaces (Stripe 54MB, Fyne) — regenerate via sky install; too large to commit
+examples/13-skyshop/sky-ffi/
+examples/11-fyne-stopwatch/sky-ffi/
