@@ -19,7 +19,8 @@ mod infer;
 mod sig;
 mod unify;
 
-pub use check::{check_modules, CheckOutput, DefType, TypeErrorKind};
+pub use check::{check_modules, BodyTypes, CheckOutput, DefType, Typer, TypeErrorKind};
+pub use sig::{record_alias_fields, variant_arg_types};
 pub use unify::{SuperType, UnionFind};
 
 /// An arena-allocated type-variable id. Replaces `UF.Point` pointer identity

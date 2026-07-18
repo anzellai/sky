@@ -362,6 +362,36 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
     }
 }
 
+/// The argument types of a union variant (for the lowerer's ADT emission).
+pub fn variant_arg_types(variant_syntax: &SyntaxNode) -> Vec<Ty> {
+    child_types(variant_syntax).iter().map(ast_type_to_ty).collect()
+}
+
+/// The (field-name, field-type) pairs of a record alias in DECLARATION order
+/// (`_fieldIndex` order — the positional ctor's calling convention).
+pub fn record_alias_fields(alias_syntax: &SyntaxNode) -> Vec<(String, Ty)> {
+    // find the outermost record node (first node carrying TypeRecordField
+    // children) and take ITS direct fields — avoids picking up nested records.
+    let record = alias_syntax.descendants().find(|n| {
+        n.children().any(|c| c.kind() == SyntaxKind::TypeRecordField)
+    });
+    let mut out = Vec::new();
+    if let Some(record) = record {
+        for node in record
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+        {
+            let fname = first_lower(&node).unwrap_or_default();
+            let fty = child_types(&node)
+                .first()
+                .map(ast_type_to_ty)
+                .unwrap_or(Ty::Error);
+            out.push((fname, fty));
+        }
+    }
+    out
+}
+
 // ---- CST navigation (mirrors hir::cst; kept local so `ty` is self-contained) --
 
 fn child_types(n: &SyntaxNode) -> Vec<ast::Type> {

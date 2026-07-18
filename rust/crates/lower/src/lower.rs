@@ -1,0 +1,1605 @@
+//! Type-directed lowering (doc 07 §2): resolved HIR + the `ty` per-expression
+//! type table → the typed Go-IR. Whole-program: DCE from `main`, kernel
+//! dispatch, ADT/record type-decl emission. Scoped to the M4 CLI-family subset;
+//! server/TUI/webview backends are reported as out of scope.
+
+use crate::goty::{sky_ty_to_go, Nominal, NominalKind, TypeEnv};
+use crate::ir::*;
+use crate::kernel::{alias_go_name, kernel_go_name};
+use base::{DefId, ModuleId, Name};
+use hir::{Body, CaseBranch, Expr, ExprId, LocalId, Pattern, PatId, Res, SourceDb};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use ty::{BodyTypes, Ty, Typer};
+
+pub struct LowerOutput {
+    pub items: Vec<GoItem>,
+    pub warnings: Vec<String>,
+    /// True when `main` was found + lowered; false → nothing to build.
+    pub entry_ok: bool,
+}
+
+struct DefEntry {
+    module_name: String,
+    name: String,
+    body: Body,
+    types: BodyTypes,
+    /// The declared/derived scheme type (peeled for param types), if any.
+    sig: Option<Ty>,
+}
+
+/// A collected type declaration (union or record alias) awaiting emission.
+struct TypeDecl {
+    name: String,
+    go_name: String,
+    kind: TypeDeclKind,
+}
+
+enum TypeDeclKind {
+    /// iota enum: nullary variants in declaration order.
+    Iota(Vec<String>),
+    /// sealed ADT: variants with their arg Sky types (declaration order).
+    Adt(Vec<(String, Vec<Ty>)>),
+    /// record alias: (field name, field Sky type) in declaration order.
+    Record(Vec<(String, Ty)>),
+}
+
+pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
+    let typer = Typer::new(db);
+    let mut warnings = Vec::new();
+
+    // ---- collect all value defs (bodies) across modules ----
+    let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
+    for m in db.module_ids() {
+        let mname = db.module_name(m).to_string();
+        let resolved = hir::resolve(db, m);
+        for td in &resolved.top_defs {
+            if let Some(body) = resolved.bodies.get(&td.def) {
+                let types = typer.body_types(body);
+                let sig = typer.value_sig(td.def).map(|s| s.ty.clone());
+                defs.insert(
+                    td.def,
+                    DefEntry {
+                        module_name: mname.clone(),
+                        name: td.name.as_str().to_string(),
+                        body: body.clone(),
+                        types,
+                        sig,
+                    },
+                );
+            }
+        }
+    }
+
+    // ---- collect type declarations + the nominal name map ----
+    let (nominal, type_decls) = collect_types(db);
+
+    // record field-set → `_R` alias index (structural → nominal resolution).
+    let mut record_fieldsets: HashMap<Vec<String>, String> = HashMap::new();
+    for d in &type_decls {
+        if let TypeDeclKind::Record(fields) = &d.kind {
+            let mut names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+            names.sort();
+            record_fieldsets.entry(names).or_insert_with(|| d.go_name.clone());
+        }
+    }
+    let env = TypeEnv {
+        nominal,
+        record_fieldsets,
+    };
+
+    // record `_R` go-name → declared field (Go-name, Sky type) list, for typing
+    // record-literal field values to the struct's declared field types.
+    let mut record_fields: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
+    for d in &type_decls {
+        if let TypeDeclKind::Record(fields) = &d.kind {
+            record_fields.insert(
+                d.go_name.clone(),
+                fields.iter().map(|(n, t)| (capitalize(n), t.clone())).collect(),
+            );
+        }
+    }
+
+    // ctor name → (owning Go type name, kind) reverse index + declaration-order tag.
+    let mut ctor_owner: HashMap<String, (String, NominalKind)> = HashMap::new();
+    let mut ctor_tag: HashMap<String, usize> = HashMap::new();
+    for d in &type_decls {
+        match &d.kind {
+            TypeDeclKind::Iota(vs) => {
+                for v in vs {
+                    ctor_owner.insert(v.clone(), (d.go_name.clone(), NominalKind::Iota));
+                }
+            }
+            TypeDeclKind::Adt(vs) => {
+                for (i, (cn, _)) in vs.iter().enumerate() {
+                    ctor_owner.insert(cn.clone(), (d.go_name.clone(), NominalKind::Adt));
+                    ctor_tag.insert(cn.clone(), i);
+                }
+            }
+            TypeDeclKind::Record(_) => {
+                ctor_owner.insert(d.name.clone(), (d.go_name.clone(), NominalKind::Record));
+            }
+        }
+    }
+
+    // ---- per-def inferred parameter types (for arg→param coercion) ----
+    // Independent per-def inference gives a callee's params a precise type
+    // (e.g. `Result Error String`) that a caller's argument (`Result any String`)
+    // must be coerced to at the call site (the cross-def unification the global
+    // solver would do — recovered here as an explicit boundary coercion).
+    let mut def_param_tys: HashMap<DefId, Vec<Ty>> = HashMap::new();
+    for (d, e) in &defs {
+        let mut ptys = Vec::new();
+        for p in &e.body.params {
+            let t = match &e.body.pats[*p] {
+                Pattern::Var(lid) => e.types.locals.get(lid).cloned().unwrap_or(Ty::Var(Name::new("any"))),
+                _ => Ty::Var(Name::new("any")),
+            };
+            ptys.push(t);
+        }
+        def_param_tys.insert(*d, ptys);
+    }
+    // per-def result type — used to detect a Task-returning call for auto-force
+    // even when the caller inferred the (unannotated) call as a flex var.
+    let mut def_result_tys: HashMap<DefId, Ty> = HashMap::new();
+    for (d, e) in &defs {
+        if let Some(r) = &e.types.result {
+            def_result_tys.insert(*d, r.clone());
+        }
+    }
+
+    // ---- kernel-alias map (defs whose body is `Ffi.kernel "X"`) ----
+    let mut kernel_alias: HashMap<DefId, String> = HashMap::new();
+    for (d, e) in &defs {
+        if let Some(raw) = detect_kernel_alias(&e.body) {
+            kernel_alias.insert(*d, raw);
+        }
+    }
+
+    // ---- find `main` in the entry module ----
+    let main_def = defs.iter().find_map(|(d, e)| {
+        if e.name == "main" && module_prefix(&e.module_name) == module_prefix(db.module_name(entry))
+        {
+            Some(*d)
+        } else {
+            None
+        }
+    });
+    let Some(main_def) = main_def else {
+        return LowerOutput {
+            items: Vec::new(),
+            warnings: vec!["no `main` in entry module".into()],
+            entry_ok: false,
+        };
+    };
+
+    // ---- DCE: lower reachable defs, discovering refs as we go ----
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut work: Vec<DefId> = vec![main_def];
+    let mut funcs: Vec<GoItem> = Vec::new();
+    let mut used_go_types: HashSet<String> = HashSet::new();
+
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let Some(e) = defs.get(&d) else {
+            continue; // an aliased/foreign def with no body — skip
+        };
+        if kernel_alias.contains_key(&d) && d != main_def {
+            // kernel-alias def called directly is inlined at the call site; only
+            // a value-reference would need a wrapper (tracked when it happens).
+            continue;
+        }
+        let mut cx = Ctx {
+            db,
+            defs: &defs,
+            kernel_alias: &kernel_alias,
+            env: &env,
+            record_fields: &record_fields,
+            ctor_owner: &ctor_owner,
+            ctor_tag: &ctor_tag,
+            def_param_tys: &def_param_tys,
+            def_result_tys: &def_result_tys,
+            body: &e.body,
+            types: &e.types,
+            local_names: HashMap::new(),
+            local_counter: 0,
+            discovered: Vec::new(),
+            used_types: HashSet::new(),
+            warnings: Vec::new(),
+        };
+        let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
+        for r in cx.discovered {
+            if !seen.contains(&r) {
+                work.push(r);
+            }
+        }
+        for t in cx.used_types {
+            used_go_types.insert(t);
+        }
+        warnings.extend(cx.warnings);
+        funcs.push(item);
+    }
+
+    // ---- type-decl reachability: BFS over Go type names used in emitted code ----
+    let type_by_go: HashMap<String, &TypeDecl> =
+        type_decls.iter().map(|t| (t.go_name.clone(), t)).collect();
+    let mut type_items: Vec<(String, Vec<GoItem>)> = Vec::new();
+    let mut seen_types: HashSet<String> = HashSet::new();
+    let mut tqueue: Vec<String> = used_go_types.into_iter().collect();
+    tqueue.sort();
+    while let Some(gn) = tqueue.pop() {
+        if !seen_types.insert(gn.clone()) {
+            continue;
+        }
+        // record type names carry the `_R` suffix in Go usage.
+        let decl = type_by_go.get(&gn).or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
+        if let Some(decl) = decl {
+            let (items, more) = emit_type_decl(decl, &env);
+            for m in more {
+                if !seen_types.contains(&m) {
+                    tqueue.push(m);
+                }
+            }
+            type_items.push((decl.go_name.clone(), items));
+        }
+    }
+    // deterministic: sort type groups by module then name (declaration proxy).
+    type_items.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // ---- assemble the module ----
+    let mut items = Vec::new();
+    items.push(prologue_init());
+    for (_, group) in type_items {
+        items.extend(group);
+    }
+    items.extend(funcs);
+
+    LowerOutput {
+        items,
+        warnings,
+        entry_ok: true,
+    }
+}
+
+/// The bootstrap `init()` every emitted program opens with (doc 08 §3).
+fn prologue_init() -> GoItem {
+    let call = |name: &str, args: &[&str]| {
+        GoStmt::Expr(GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(name.into()), GoTy::Any)),
+                args.iter()
+                    .map(|a| GoExpr::new(GoExprKind::StrLit((*a).into()), GoTy::Bare(Prim::Str)))
+                    .collect(),
+            ),
+            GoTy::Unit,
+        ))
+    };
+    GoItem::Init(vec![
+        call("rt.SetPortDefault", &["8000"]),
+        call("rt.SetSkyDefault", &["LIVE_TTL", "1800"]),
+        call("rt.SetSkyDefault", &["AUTH_TOKEN_TTL", "86400"]),
+        call("rt.SetSkyDefault", &["AUTH_COOKIE", "sky_auth"]),
+        call("rt.SetSkyDefault", &["AUTH_DRIVER", "jwt"]),
+    ])
+}
+
+// ---- module / name mangling (doc 08 §5) --------------------------------
+
+fn module_prefix(module: &str) -> String {
+    module.replace('.', "_")
+}
+
+fn top_go_name(module: &str, name: &str) -> String {
+    format!("{}_{}", module_prefix(module), reserved_rewrite(name))
+}
+
+const RESERVED: &[&str] = &[
+    "init", "string", "error", "any", "bool", "byte", "rune", "int", "int8", "int16", "int32",
+    "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "true", "false",
+    "nil", "iota", "len", "cap", "make", "new", "append", "copy", "delete", "panic", "recover",
+    "print", "println", "close", "min", "max", "complex", "real", "imag", "clear", "for", "func",
+    "type", "range", "return", "if", "else", "switch", "case", "default", "var", "const", "map",
+    "struct", "interface", "chan", "go", "select", "package", "import", "goto", "break", "continue",
+    "fallthrough", "defer",
+];
+
+fn reserved_rewrite(name: &str) -> String {
+    if RESERVED.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_string()
+    }
+}
+
+// ---- kernel-alias detection --------------------------------------------
+
+/// Detect a `name = Ffi.kernel "Raw"` body — the resolved shape is
+/// `Call(Var(Res::Kernel{func:"kernel"}), [Str raw])`.
+fn detect_kernel_alias(body: &Body) -> Option<String> {
+    let root = body.root?;
+    if let Expr::Call(callee, args) = &body.exprs[root] {
+        if args.len() == 1 {
+            if let Expr::Var(Res::Kernel { func, .. }) = &body.exprs[*callee] {
+                if func.as_str() == "kernel" {
+                    if let Expr::Str(raw) = &body.exprs[args[0]] {
+                        return Some(raw.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---- type declaration collection ---------------------------------------
+
+fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
+    use syntax::ast::{self, AstNode};
+    let mut nominal: HashMap<String, Nominal> = HashMap::new();
+    let mut decls: Vec<TypeDecl> = Vec::new();
+    for m in db.module_ids() {
+        let mname = db.module_name(m).to_string();
+        let prefix = module_prefix(&mname);
+        let tree = db.module_parse(m).tree();
+        for decl in tree.decls() {
+            match &decl {
+                ast::Decl::Union(u) => {
+                    let Some(tname) = u.name().map(|t| t.text().to_string()) else {
+                        continue;
+                    };
+                    let mut variants: Vec<(String, Vec<Ty>)> = Vec::new();
+                    let mut all_nullary = true;
+                    for var in u.variants() {
+                        let Some(cn) = var.name().map(|t| t.text().to_string()) else {
+                            continue;
+                        };
+                        let arg_tys: Vec<Ty> = ty::variant_arg_types(var.syntax());
+                        if !arg_tys.is_empty() {
+                            all_nullary = false;
+                        }
+                        variants.push((cn, arg_tys));
+                    }
+                    let go_name = format!("{prefix}_{tname}");
+                    let kind = if all_nullary {
+                        nominal.insert(
+                            tname.clone(),
+                            Nominal {
+                                go_name: go_name.clone(),
+                                kind: NominalKind::Iota,
+                            },
+                        );
+                        TypeDeclKind::Iota(variants.into_iter().map(|(n, _)| n).collect())
+                    } else {
+                        nominal.insert(
+                            tname.clone(),
+                            Nominal {
+                                go_name: go_name.clone(),
+                                kind: NominalKind::Adt,
+                            },
+                        );
+                        TypeDeclKind::Adt(variants)
+                    };
+                    decls.push(TypeDecl {
+                        name: tname,
+                        go_name,
+                        kind,
+                    });
+                }
+                ast::Decl::Alias(a) => {
+                    if let (Some(tname), Some(ast::Type::Record(_))) =
+                        (a.name().map(|t| t.text().to_string()), a.ty())
+                    {
+                        let fields = ty::record_alias_fields(a.syntax());
+                        let go_name = format!("{prefix}_{tname}_R");
+                        nominal.insert(
+                            tname.clone(),
+                            Nominal {
+                                go_name: go_name.clone(),
+                                kind: NominalKind::Record,
+                            },
+                        );
+                        decls.push(TypeDecl {
+                            name: tname,
+                            go_name,
+                            kind: TypeDeclKind::Record(fields),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (nominal, decls)
+}
+
+/// Emit a type declaration's Go items; return the further Go type names its
+/// fields/variants reference (for BFS reachability).
+fn emit_type_decl(decl: &TypeDecl, env: &TypeEnv) -> (Vec<GoItem>, Vec<String>) {
+    let mut more: Vec<String> = Vec::new();
+    let mut collect = |t: &Ty| {
+        let gt = sky_ty_to_go(t, env);
+        collect_named(&gt, &mut more);
+        gt
+    };
+    match &decl.kind {
+        TypeDeclKind::Iota(variants) => (
+            vec![GoItem::Type(
+                decl.go_name.clone(),
+                GoTypeDef::IotaEnum(variants.clone()),
+            )],
+            more,
+        ),
+        TypeDeclKind::Record(fields) => {
+            let go_fields: Vec<(String, GoTy)> = fields
+                .iter()
+                .map(|(n, t)| (capitalize(n), collect(t)))
+                .collect();
+            let mut items = vec![GoItem::Type(
+                decl.go_name.clone(),
+                GoTypeDef::Struct(go_fields.clone()),
+            )];
+            // gob registration
+            items.push(GoItem::Raw(format!(
+                "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                decl.go_name
+            )));
+            // positional constructor `Prefix_Name(p0, …) Prefix_Name_R`
+            let ctor_name = decl.go_name.trim_end_matches("_R").to_string();
+            let params: Vec<String> = go_fields
+                .iter()
+                .enumerate()
+                .map(|(i, (_, t))| format!("p{i} {}", render_goty(t)))
+                .collect();
+            let assigns: Vec<String> = go_fields
+                .iter()
+                .enumerate()
+                .map(|(i, (f, _))| format!("{f}: p{i}"))
+                .collect();
+            items.push(GoItem::Raw(format!(
+                "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
+                params.join(", "),
+                decl.go_name,
+                decl.go_name,
+                assigns.join(", ")
+            )));
+            (items, more)
+        }
+        TypeDeclKind::Adt(variants) => {
+            let mut items = vec![GoItem::Type(decl.go_name.clone(), GoTypeDef::AdtAlias)];
+            let mut reg = String::from("func init() { ");
+            for (i, (cn, args)) in variants.iter().enumerate() {
+                let params: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, t)| format!("v{j} {}", render_goty(&collect(t))))
+                    .collect();
+                let fields: Vec<String> = (0..args.len()).map(|j| format!("v{j}")).collect();
+                // constructor
+                items.push(GoItem::Raw(format!(
+                    "func {}_{}({}) {} {{ return {}{{Tag: {i}, SkyName: \"{cn}\", Fields: []any{{{}}}}} }}",
+                    decl.go_name,
+                    cn,
+                    params.join(", "),
+                    decl.go_name,
+                    decl.go_name,
+                    fields.join(", ")
+                )));
+                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                reg.push_str(&format!(
+                    "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
+                    decl.go_name,
+                    args.len()
+                ));
+            }
+            reg.push('}');
+            items.push(GoItem::Raw(reg));
+            (items, more)
+        }
+    }
+}
+
+fn collect_named(t: &GoTy, out: &mut Vec<String>) {
+    match t {
+        GoTy::Named(n, args) => {
+            if !n.starts_with("rt.") {
+                out.push(n.clone());
+            }
+            for a in args {
+                collect_named(a, out);
+            }
+        }
+        GoTy::Slice(e) => collect_named(e, out),
+        GoTy::Map(k, v) => {
+            collect_named(k, out);
+            collect_named(v, out);
+        }
+        GoTy::Func(ps, r) => {
+            for p in ps {
+                collect_named(p, out);
+            }
+            collect_named(r, out);
+        }
+        GoTy::Tuple(xs) => {
+            for x in xs {
+                collect_named(x, out);
+            }
+        }
+        GoTy::Struct(fs) => {
+            for (_, ft) in fs {
+                collect_named(ft, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut cs = s.chars();
+    match cs.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + cs.as_str(),
+        None => String::new(),
+    }
+}
+
+// ---- per-def lowering context ------------------------------------------
+
+struct Ctx<'a> {
+    db: &'a SourceDb,
+    defs: &'a BTreeMap<DefId, DefEntry>,
+    kernel_alias: &'a HashMap<DefId, String>,
+    env: &'a TypeEnv,
+    record_fields: &'a HashMap<String, Vec<(String, Ty)>>,
+    ctor_owner: &'a HashMap<String, (String, NominalKind)>,
+    ctor_tag: &'a HashMap<String, usize>,
+    def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
+    def_result_tys: &'a HashMap<DefId, Ty>,
+    body: &'a Body,
+    types: &'a BodyTypes,
+    local_names: HashMap<LocalId, String>,
+    local_counter: u32,
+    discovered: Vec<DefId>,
+    used_types: HashSet<String>,
+    warnings: Vec<String>,
+}
+
+impl<'a> Ctx<'a> {
+    fn goty(&mut self, t: &Ty) -> GoTy {
+        let gt = sky_ty_to_go(t, self.env);
+        let mut names = Vec::new();
+        collect_named(&gt, &mut names);
+        for n in names {
+            self.used_types.insert(n);
+        }
+        gt
+    }
+
+    fn expr_ty(&mut self, e: ExprId) -> GoTy {
+        match self.types.exprs.get(&e).cloned() {
+            Some(t) => self.goty(&t),
+            None => GoTy::Any,
+        }
+    }
+
+    /// Is `e` a Task-typed expression? Checks the recorded type first, then —
+    /// for a call to an unannotated def whose result the caller inferred as a
+    /// flex var — the callee's own inferred result type.
+    fn expr_is_task(&self, e: ExprId) -> bool {
+        if let Some(Ty::App(n, _)) = self.types.exprs.get(&e) {
+            if n.as_str() == "Task" {
+                return true;
+            }
+        }
+        if let Expr::Call(callee, _) = &self.body.exprs[e] {
+            if let Expr::Var(Res::Def(d)) = &self.body.exprs[*callee] {
+                if let Some(Ty::App(n, _)) = self.def_result_tys.get(d) {
+                    return n.as_str() == "Task";
+                }
+            }
+        }
+        false
+    }
+
+    fn local_ty(&mut self, l: LocalId) -> GoTy {
+        match self.types.locals.get(&l).cloned() {
+            Some(t) => self.goty(&t),
+            None => GoTy::Any,
+        }
+    }
+
+    fn lower_def(
+        &mut self,
+        name: &str,
+        module: &str,
+        sig: Option<&Ty>,
+        is_main: bool,
+    ) -> GoItem {
+        // bind params
+        let param_pats: Vec<PatId> = self.body.params.clone();
+        let mut params = Vec::new();
+        let sig_params = sig.map(peel_params).unwrap_or_default();
+        for (i, p) in param_pats.iter().enumerate() {
+            let (pname, pty) = self.bind_param(*p, sig_params.get(i));
+            params.push(GoParam { name: pname, ty: pty });
+        }
+
+        if is_main {
+            return self.lower_main(name, module);
+        }
+
+        let go_name = top_go_name(module, name);
+        let ret_ty = match &self.types.result {
+            Some(t) => self.goty(t),
+            None => GoTy::Unit,
+        };
+        let root = self.body.root;
+        let body = match root {
+            Some(r) => {
+                let e = self.lower_expr(r, &ret_ty);
+                vec![GoStmt::Return(Some(e))]
+            }
+            None => vec![],
+        };
+        GoItem::Func(GoFuncDecl {
+            name: go_name,
+            type_params: Vec::new(),
+            params,
+            ret: ret_ty,
+            body,
+            doc: None,
+        })
+    }
+
+    fn bind_param(&mut self, p: PatId, sig_ty: Option<&Ty>) -> (String, GoTy) {
+        match &self.body.pats[p] {
+            Pattern::Var(id) => {
+                let id = *id;
+                let name = self.fresh_local_named(id, None);
+                let ty = match sig_ty {
+                    Some(t) => self.goty(t),
+                    None => self.local_ty(id),
+                };
+                (name, ty)
+            }
+            Pattern::Anything | Pattern::Unit => {
+                let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+                ("_".to_string(), ty)
+            }
+            _ => {
+                // destructured param — bind a temp (basic support).
+                let n = self.fresh_temp();
+                let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+                (n, ty)
+            }
+        }
+    }
+
+    fn fresh_temp(&mut self) -> String {
+        let n = format!("_t{}", self.local_counter);
+        self.local_counter += 1;
+        n
+    }
+
+    fn fresh_local_named(&mut self, id: LocalId, hint: Option<&str>) -> String {
+        let base = hint.unwrap_or("v");
+        // Uniquify by the (body-unique) LocalId so shadowing / same-named binders
+        // across arms don't collide in a single Go block (Go forbids redeclare).
+        let name = if base == "_" {
+            "_".to_string()
+        } else {
+            format!("{}_{}", reserved_rewrite(base), id.0)
+        };
+        self.local_names.insert(id, name.clone());
+        name
+    }
+
+    fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
+        let mut stmts = vec![GoStmt::Expr(GoExpr::new(
+            GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+            GoTy::Unit,
+        ))];
+        let root = self.body.root;
+        if let Some(r) = root {
+            self.lower_main_body(r, &mut stmts);
+        }
+        GoItem::Func(GoFuncDecl {
+            name: "main".into(),
+            type_params: Vec::new(),
+            params: Vec::new(),
+            ret: GoTy::Unit,
+            body: stmts,
+            doc: Some("SKY-ORIGIN: entry".into()),
+        })
+    }
+
+    /// Lower `main`'s body: a `let … in e` becomes stmts + a forced final; a bare
+    /// expr is force-run (the runtime auto-forces a Task-typed entry, doc 08 §3).
+    fn lower_main_body(&mut self, e: ExprId, out: &mut Vec<GoStmt>) {
+        if let Expr::Let { defs, body } = &self.body.exprs[e] {
+            let defs = defs.clone();
+            let body = *body;
+            for d in &defs {
+                self.lower_let_def(d, out);
+            }
+            self.lower_main_body(body, out);
+        } else {
+            let ty = self.types.exprs.get(&e).cloned();
+            let is_task = self.expr_is_task(e);
+            // A Unit `in ()` has already run its effects via the let-discards; a
+            // non-Unit entry is force-run (runtime auto-forces a Task-typed main).
+            let is_unit_only = matches!(&ty, Some(Ty::Unit)) && !is_task;
+            let lowered = self.lower_expr(e, &GoTy::Any);
+            if is_unit_only {
+                out.push(GoStmt::Discard(lowered));
+            } else {
+                out.push(GoStmt::Discard(any_task_run(lowered)));
+            }
+        }
+    }
+
+    fn lower_let_def(&mut self, d: &hir::LocalDef, out: &mut Vec<GoStmt>) {
+        let is_task = self.expr_is_task(d.body);
+        if d.binders.is_empty() {
+            // discard `_ = expr` — auto-force a task side effect.
+            let lowered = self.lower_expr(d.body, &GoTy::Any);
+            if is_task {
+                out.push(GoStmt::Discard(any_task_run(lowered)));
+            } else {
+                out.push(GoStmt::Discard(lowered));
+            }
+        } else {
+            // `name = expr` binding. The binding's type is the RHS expr's type
+            // (let-binders aren't in the per-local table); lower + `:=`.
+            let (bn, lid) = d.binders[0].clone();
+            let gname = self.fresh_local_named(lid, Some(bn.as_str()));
+            let ty = self.expr_ty(d.body);
+            let lowered = self.lower_expr(d.body, &ty);
+            out.push(GoStmt::Short(gname, lowered));
+        }
+    }
+
+    // ---- expression lowering -------------------------------------------
+
+    fn lower_expr(&mut self, e: ExprId, expected: &GoTy) -> GoExpr {
+        let actual = self.expr_ty(e);
+        let node = self.lower_expr_inner(e, &actual);
+        self.coerce_if_needed(node, expected)
+    }
+
+    fn coerce_if_needed(&mut self, x: GoExpr, expected: &GoTy) -> GoExpr {
+        // `expected == Any` is an implicit upcast in Go (concrete → any); skip.
+        // But `any → concrete` is a REAL narrowing (Go never auto-narrows), so we
+        // must NOT skip when the SOURCE is `any` (the 02/07 mismatch class).
+        if &x.ty == expected || *expected == GoTy::Any {
+            return x;
+        }
+        let reason = if x.ty == GoTy::Any {
+            CoerceReason::FfiReturn
+        } else {
+            CoerceReason::PrimitiveJoin
+        };
+        GoExpr::new(
+            GoExprKind::Coerce {
+                inner: Box::new(x.clone()),
+                from: x.ty.clone(),
+                to: expected.clone(),
+                reason,
+            },
+            expected.clone(),
+        )
+    }
+
+    fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy) -> GoExpr {
+        match &self.body.exprs[e] {
+            Expr::Int(n) => GoExpr::new(GoExprKind::IntLit(*n), actual.clone()),
+            Expr::Float(f) => GoExpr::new(GoExprKind::FloatLit(*f), GoTy::Bare(Prim::Float)),
+            Expr::Str(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
+            Expr::Bool(b) => GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool)),
+            Expr::Chr(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
+            Expr::Unit => GoExpr::new(
+                GoExprKind::Ident("struct{}{}".into()),
+                GoTy::Unit,
+            ),
+            Expr::Var(res) => self.lower_var(res.clone(), actual),
+            Expr::Call(callee, args) => self.lower_call(*callee, args, actual),
+            Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
+            Expr::Negate(inner) => {
+                let x = self.lower_expr(*inner, actual);
+                GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Sub,
+                        Box::new(GoExpr::new(GoExprKind::IntLit(0), x.ty.clone())),
+                        Box::new(x.clone()),
+                    ),
+                    x.ty,
+                )
+            }
+            Expr::If { arms, els } => self.lower_if(arms, *els, actual),
+            Expr::Let { defs, body } => self.lower_let_expr(defs, *body, actual),
+            Expr::Access(base, field) => {
+                let b = self.lower_expr(*base, &GoTy::Any);
+                GoExpr::new(
+                    GoExprKind::Selector(Box::new(b), capitalize(field.as_str())),
+                    actual.clone(),
+                )
+            }
+            Expr::Record(fields) => self.lower_record(fields, actual),
+            Expr::Update { base, fields } => self.lower_update(*base, fields, actual),
+            Expr::Tuple(elems) => self.lower_tuple(elems, actual),
+            Expr::List(elems) => self.lower_list(elems, actual),
+            Expr::Lambda { params, body } => self.lower_lambda(params, *body, actual),
+            Expr::Case { subject, branches } => self.lower_case(*subject, branches, actual),
+            Expr::Accessor(field) => {
+                // `.field` as a function value → func(x any) any { return x.Field }
+                let f = capitalize(field.as_str());
+                GoExpr::new(
+                    GoExprKind::Ident(format!("func(_r any) any {{ return rt.Field(_r, \"{f}\") }}")),
+                    GoTy::Any,
+                )
+            }
+            Expr::Error => {
+                self.warnings.push("lowered an Expr::Error recovery node".into());
+                GoExpr::new(GoExprKind::Nil, GoTy::Any)
+            }
+        }
+    }
+
+    fn lower_var(&mut self, res: Res, actual: &GoTy) -> GoExpr {
+        match res {
+            Res::Local(id) => {
+                let name = self
+                    .local_names
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("v{}", id.0));
+                GoExpr::new(GoExprKind::Ident(name), actual.clone())
+            }
+            Res::Def(d) => {
+                if let Some(raw) = self.kernel_alias.get(&d) {
+                    // value-reference to a kernel-alias: use the runtime symbol.
+                    GoExpr::new(GoExprKind::Ident(alias_go_name(raw)), actual.clone())
+                } else if let Some(e) = self.defs.get(&d) {
+                    self.discovered.push(d);
+                    GoExpr::new(
+                        GoExprKind::Ident(top_go_name(&e.module_name, &e.name)),
+                        actual.clone(),
+                    )
+                } else {
+                    GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
+                }
+            }
+            Res::Kernel { module, func } => GoExpr::new(
+                GoExprKind::Ident(kernel_go_name(module.as_str(), func.as_str())),
+                actual.clone(),
+            ),
+            Res::Ctor(cr) => self.lower_ctor_value(cr.def, actual),
+            Res::Foreign { package, name } => {
+                self.warnings
+                    .push(format!("foreign ref {}.{}", package.as_str(), name.as_str()));
+                GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
+            }
+            Res::Error => GoExpr::new(GoExprKind::Nil, GoTy::Any),
+        }
+    }
+
+    fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy) -> GoExpr {
+        let (_, expr) = self.ctor_call(def, &[], actual);
+        expr
+    }
+
+    /// Lower a constructor application (0+ args). Handles builtin Ok/Err/Just/
+    /// Nothing/True/False and user ADT/iota/record constructors.
+    fn ctor_call(&mut self, def: DefId, args: &[ExprId], actual: &GoTy) -> (bool, GoExpr) {
+        let loc = self.db.defs().borrow().loc(def);
+        let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
+        let lowered_args: Vec<GoExpr> =
+            args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
+        // type args for the generic container constructors (Go can't infer the
+        // unused type param, e.g. `E` in `Ok`).
+        let (res_ea, maybe_a) = match actual {
+            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => {
+                (format!("[{}, {}]", render_goty(&ts[0]), render_goty(&ts[1])), String::new())
+            }
+            GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
+                (String::new(), format!("[{}]", render_goty(&ts[0])))
+            }
+            _ => (String::new(), String::new()),
+        };
+        let expr = match cname.as_str() {
+            "Ok" => call_rt(&format!("rt.Ok{res_ea}"), lowered_args, actual.clone()),
+            "Err" => call_rt(&format!("rt.Err{res_ea}"), lowered_args, actual.clone()),
+            "Just" => call_rt(&format!("rt.Just{maybe_a}"), lowered_args, actual.clone()),
+            "Nothing" => {
+                let a = match actual {
+                    GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => render_goty(&ts[0]),
+                    _ => "any".to_string(),
+                };
+                GoExpr::new(GoExprKind::Ident(format!("rt.Nothing[{a}]()")), actual.clone())
+            }
+            "True" => GoExpr::new(GoExprKind::BoolLit(true), GoTy::Bare(Prim::Bool)),
+            "False" => GoExpr::new(GoExprKind::BoolLit(false), GoTy::Bare(Prim::Bool)),
+            _ => {
+                // user ctor: find its union go name via nominal + ctor union.
+                if let Some((go_type, kind)) = self.ctor_union_go(&cname) {
+                    match kind {
+                        NominalKind::Iota => {
+                            self.used_types.insert(go_type.clone());
+                            GoExpr::new(
+                                GoExprKind::Ident(format!("{go_type}_{cname}")),
+                                GoTy::Named(go_type, vec![]),
+                            )
+                        }
+                        NominalKind::Adt => {
+                            self.used_types.insert(go_type.clone());
+                            call_rt(&format!("{go_type}_{cname}"), lowered_args, GoTy::Named(go_type, vec![]))
+                        }
+                        NominalKind::Record => {
+                            let ctor = go_type.trim_end_matches("_R").to_string();
+                            self.used_types.insert(go_type.clone());
+                            call_rt(&ctor, lowered_args, GoTy::Named(go_type, vec![]))
+                        }
+                    }
+                } else {
+                    self.warnings.push(format!("unknown ctor {cname}"));
+                    GoExpr::new(GoExprKind::Nil, GoTy::Any)
+                }
+            }
+        };
+        (true, expr)
+    }
+
+    fn ctor_union_go(&self, cname: &str) -> Option<(String, NominalKind)> {
+        self.ctor_owner.get(cname).cloned()
+    }
+
+    // ---- call / operator / control-flow lowering -----------------------
+
+    fn lower_call(&mut self, callee: ExprId, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // constructor application?
+        if let Expr::Var(Res::Ctor(cr)) = &self.body.exprs[callee] {
+            let cr = cr.clone();
+            let (_, e) = self.ctor_call(cr.def, args, actual);
+            return e;
+        }
+        // kernel-alias direct call → uniform widen-args / coerce-return.
+        if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
+            if let Some(raw) = self.kernel_alias.get(d) {
+                let go = alias_go_name(raw);
+                return self.kernel_call(&go, args, actual);
+            }
+        }
+        // kernel direct call
+        if let Expr::Var(Res::Kernel { module, func }) = &self.body.exprs[callee] {
+            let go = kernel_go_name(module.as_str(), func.as_str());
+            return self.kernel_call(&go, args, actual);
+        }
+        // general call: lower callee + args, coercing each arg to the callee's
+        // inferred param type (cross-def boundary coercion). The call's Go type is
+        // the callee's DECLARED Go return type (which is `any` for a generic Sky
+        // def) — the outer `coerce_if_needed` then narrows it to the slot type.
+        let (param_gtys, ret_goty): (Option<Vec<GoTy>>, GoTy) =
+            if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
+                let d = *d;
+                let ps = self
+                    .def_param_tys
+                    .get(&d)
+                    .map(|ptys| ptys.iter().map(|t| self.goty(t)).collect::<Vec<_>>());
+                let ret = self
+                    .def_result_tys
+                    .get(&d)
+                    .cloned()
+                    .map(|t| self.goty(&t))
+                    .unwrap_or_else(|| actual.clone());
+                (ps, ret)
+            } else {
+                (None, actual.clone())
+            };
+        let c = self.lower_expr(callee, &GoTy::Any);
+        let largs: Vec<GoExpr> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let expected = param_gtys
+                    .as_ref()
+                    .and_then(|ps| ps.get(i))
+                    .cloned()
+                    .unwrap_or(GoTy::Any);
+                self.lower_expr(*a, &expected)
+            })
+            .collect();
+        GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
+    }
+
+    /// `func_e applied to value_e`, flattening a partial-application spine on
+    /// `func_e` so the emitted call carries the full argument list.
+    fn lower_pipe(&mut self, func_e: ExprId, value_e: ExprId, actual: &GoTy) -> GoExpr {
+        if let Expr::Call(g, gargs) = &self.body.exprs[func_e] {
+            let g = *g;
+            let mut full = gargs.clone();
+            full.push(value_e);
+            return self.lower_call(g, &full, actual);
+        }
+        let f = self.lower_expr(func_e, &GoTy::Any);
+        let a = self.lower_expr(value_e, &GoTy::Any);
+        GoExpr::new(GoExprKind::Call(Box::new(f), vec![a]), actual.clone())
+    }
+
+    /// The uniform kernel-call rule (doc 07 §6 FFI-return): every runtime kernel
+    /// is `any`-based, so widen each arg to `any`, call `go(…)` (result `any`),
+    /// then coerce the `any` result to the call's typed slot.
+    fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        let largs: Vec<GoExpr> = args
+            .iter()
+            .map(|a| {
+                let e = self.lower_expr(*a, &GoTy::Any);
+                widen(e)
+            })
+            .collect();
+        let call = GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                largs,
+            ),
+            GoTy::Any,
+        );
+        if *actual == GoTy::Any {
+            call
+        } else {
+            GoExpr::new(
+                GoExprKind::Coerce {
+                    inner: Box::new(call),
+                    from: GoTy::Any,
+                    to: actual.clone(),
+                    reason: CoerceReason::FfiReturn,
+                },
+                actual.clone(),
+            )
+        }
+    }
+
+    fn lower_binop(&mut self, op: &str, lhs: ExprId, rhs: ExprId, actual: &GoTy) -> GoExpr {
+        // string/appendable ++ → rt.Concat; :: → rt.List_cons; pipes desugar.
+        match op {
+            "++" => {
+                let l = self.lower_expr(lhs, &GoTy::Any);
+                let r = self.lower_expr(rhs, &GoTy::Any);
+                // string concat is the dominant case in the CLI corpus.
+                if actual == &GoTy::Bare(Prim::Str) || l.ty == GoTy::Bare(Prim::Str) {
+                    return GoExpr::new(
+                        GoExprKind::Binary(GoBin::Add, Box::new(l), Box::new(r)),
+                        GoTy::Bare(Prim::Str),
+                    );
+                }
+                call_rt("rt.Concat", vec![widen(l), widen(r)], actual.clone())
+            }
+            "::" => {
+                let elem = actual.elem_ty();
+                let l = self.lower_expr(lhs, &elem);
+                let r = self.lower_expr(rhs, actual);
+                // x :: xs  →  rt.List_cons(x, xs)
+                call_rt("rt.List_cons", vec![widen(l), widen(r)], actual.clone())
+            }
+            "|>" => {
+                // a |> f  ==  f a. Flatten when `f` is a partial application
+                // (`Result.withDefault "x"`) so kernels/Sky funcs (uncurried in
+                // Go) receive the full arg list: `f(partial…, a)`.
+                self.lower_pipe(rhs, lhs, actual)
+            }
+            "<|" => {
+                // f <| a  ==  f a. Flatten `f`'s spine similarly.
+                self.lower_pipe(lhs, rhs, actual)
+            }
+            _ => {
+                let l = self.lower_expr(lhs, &GoTy::Any);
+                let r = self.lower_expr(rhs, &GoTy::Any);
+                if let Some(b) = go_binop(op) {
+                    let ty = if is_cmp(op) { GoTy::Bare(Prim::Bool) } else { l.ty.clone() };
+                    GoExpr::new(GoExprKind::Binary(b, Box::new(l), Box::new(r)), ty)
+                } else {
+                    let rtname = match op {
+                        "//" => "rt.IntDiv",
+                        "%" => "rt.Rem",
+                        "/" => "rt.Div",
+                        "^" => "rt.Pow",
+                        ">>" | "<<" => "rt.Compose",
+                        _ => "rt.Add",
+                    };
+                    call_rt(rtname, vec![widen(l), widen(r)], actual.clone())
+                }
+            }
+        }
+    }
+
+    fn lower_if(&mut self, arms: &[(ExprId, ExprId)], els: ExprId, actual: &GoTy) -> GoExpr {
+        // build a typed IIFE with nested ifs (works as an expression).
+        let arms = arms.to_vec();
+        let mut stmts: Vec<GoStmt> = Vec::new();
+        self.build_if_chain(&arms, els, actual, &mut stmts);
+        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    fn build_if_chain(
+        &mut self,
+        arms: &[(ExprId, ExprId)],
+        els: ExprId,
+        actual: &GoTy,
+        out: &mut Vec<GoStmt>,
+    ) {
+        if let Some(((cond, then), rest)) = arms.split_first() {
+            let c = self.lower_expr(*cond, &GoTy::Bare(Prim::Bool));
+            let t = self.lower_expr(*then, actual);
+            let mut els_stmts: Vec<GoStmt> = Vec::new();
+            self.build_if_chain(rest, els, actual, &mut els_stmts);
+            out.push(GoStmt::If(c, vec![GoStmt::Return(Some(t))], els_stmts));
+        } else {
+            let e = self.lower_expr(els, actual);
+            out.push(GoStmt::Return(Some(e)));
+        }
+    }
+
+    fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
+        let defs = defs.to_vec();
+        let mut stmts: Vec<GoStmt> = Vec::new();
+        for d in &defs {
+            self.lower_let_def(d, &mut stmts);
+        }
+        let b = self.lower_expr(body, actual);
+        stmts.push(GoStmt::Return(Some(b)));
+        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    fn lower_record(&mut self, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
+        // resolve the struct name from `actual` (Named(...)); order fields by the
+        // Go struct's field order via capitalisation match.
+        let go_name = match actual {
+            GoTy::Named(n, _) => n.clone(),
+            _ => {
+                self.warnings.push("record literal with unknown type".into());
+                "struct{}".to_string()
+            }
+        };
+        if let GoTy::Named(n, _) = actual {
+            self.used_types.insert(n.clone());
+        }
+        // declared field types for this record `_R`, if known.
+        let field_tys: HashMap<String, Ty> = self
+            .record_fields
+            .get(&go_name)
+            .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
+            .unwrap_or_default();
+        let fs: Vec<(String, GoExpr)> = fields
+            .iter()
+            .map(|(n, v)| {
+                let cap = capitalize(n.as_str());
+                let expected = field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+                let lowered = self.lower_expr(*v, &expected);
+                (cap, lowered)
+            })
+            .collect();
+        GoExpr::new(GoExprKind::StructLit(go_name, fs), actual.clone())
+    }
+
+    fn lower_update(&mut self, base: ExprId, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
+        // { base | f = v } → func() T { _u := base; _u.F = v; return _u }()
+        let b = self.lower_expr(base, actual);
+        let mut stmts = vec![GoStmt::Short("_u".into(), b)];
+        let uref = GoExpr::new(GoExprKind::Ident("_u".into()), actual.clone());
+        for (n, v) in fields {
+            let lowered = self.lower_expr(*v, &GoTy::Any);
+            stmts.push(GoStmt::AssignField(
+                uref.clone(),
+                capitalize(n.as_str()),
+                lowered,
+            ));
+        }
+        stmts.push(GoStmt::Return(Some(uref)));
+        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    fn lower_tuple(&mut self, elems: &[ExprId], actual: &GoTy) -> GoExpr {
+        let tys: Vec<GoTy> = match actual {
+            GoTy::Tuple(ts) => ts.clone(),
+            _ => vec![GoTy::Any; elems.len()],
+        };
+        let args: Vec<GoExpr> = elems
+            .iter()
+            .enumerate()
+            .map(|(i, e)| self.lower_expr(*e, tys.get(i).unwrap_or(&GoTy::Any)))
+            .collect();
+        let ctor = match elems.len() {
+            2 => "rt.MkT2",
+            3 => "rt.MkT3",
+            _ => "rt.MkTupleN",
+        };
+        // rt.T2 literal is a struct; use the named struct literal form.
+        let go = format!("rt.T{}", elems.len());
+        if elems.len() == 2 || elems.len() == 3 {
+            let fields: Vec<(String, GoExpr)> = args
+                .into_iter()
+                .enumerate()
+                .map(|(i, a)| (format!("F{}", i + 1), a))
+                .collect();
+            let tname = GoTy::Tuple(tys);
+            return GoExpr::new(
+                GoExprKind::StructLit(format!("{go}{}", tuple_type_args(&tname)), fields),
+                actual.clone(),
+            );
+        }
+        call_rt(ctor, args, actual.clone())
+    }
+
+    fn lower_list(&mut self, elems: &[ExprId], actual: &GoTy) -> GoExpr {
+        let elem = actual.elem_ty();
+        let args: Vec<GoExpr> = elems.iter().map(|e| self.lower_expr(*e, &elem)).collect();
+        GoExpr::new(GoExprKind::SliceLit(elem, args), actual.clone())
+    }
+
+    fn lower_lambda(&mut self, params: &[PatId], body: ExprId, actual: &GoTy) -> GoExpr {
+        let params = params.to_vec();
+        let (pt, rt) = match actual {
+            GoTy::Func(ps, r) => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; params.len()], GoTy::Any),
+        };
+        let mut gparams = Vec::new();
+        for (i, p) in params.iter().enumerate() {
+            let ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
+            let name = match &self.body.pats[*p] {
+                Pattern::Var(id) => self.fresh_local_named(*id, None),
+                Pattern::Anything | Pattern::Unit => "_".to_string(),
+                _ => self.fresh_temp(),
+            };
+            gparams.push(GoParam { name, ty });
+        }
+        let b = self.lower_expr(body, &rt);
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, rt, vec![GoStmt::Return(Some(b))]),
+            actual.clone(),
+        )
+    }
+
+    fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
+        let branches = branches.to_vec();
+        let subj = self.lower_expr(subject, &GoTy::Any);
+        let subj_ty = self.expr_ty(subject);
+        let mut stmts = vec![GoStmt::Short("_subj".into(), subj)];
+        let subj_ref = GoExpr::new(GoExprKind::Ident("_subj".into()), subj_ty.clone());
+        for br in &branches {
+            self.lower_case_branch(&subj_ref, &subj_ty, br, actual, &mut stmts);
+        }
+        // fallthrough guard (exhaustiveness should prevent reaching here).
+        stmts.push(GoStmt::Expr(GoExpr::new(
+            GoExprKind::Ident("panic(rt.Unreachable(\"case\"))".into()),
+            GoTy::Unit,
+        )));
+        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    fn lower_case_branch(
+        &mut self,
+        subj: &GoExpr,
+        subj_ty: &GoTy,
+        br: &CaseBranch,
+        actual: &GoTy,
+        out: &mut Vec<GoStmt>,
+    ) {
+        let (cond, binds) = self.pattern_test(subj, subj_ty, br.pat);
+        let mut then: Vec<GoStmt> = binds;
+        let body = self.lower_expr(br.body, actual);
+        then.push(GoStmt::Return(Some(body)));
+        match cond {
+            Some(c) => out.push(GoStmt::If(c, then, vec![])),
+            None => out.extend(then),
+        }
+    }
+
+    /// Build a boolean test for a pattern against `subj`, plus the binding stmts
+    /// that run when it matches. `None` cond = irrefutable (wildcard/var).
+    fn pattern_test(
+        &mut self,
+        subj: &GoExpr,
+        subj_ty: &GoTy,
+        p: PatId,
+    ) -> (Option<GoExpr>, Vec<GoStmt>) {
+        match &self.body.pats[p] {
+            Pattern::Anything | Pattern::Unit => (None, vec![]),
+            Pattern::Var(id) => {
+                let name = self.fresh_local_named(*id, None);
+                (
+                    None,
+                    vec![GoStmt::Short(name, subj.clone())],
+                )
+            }
+            Pattern::Int(n) => (
+                Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(subj.clone()),
+                        Box::new(GoExpr::new(GoExprKind::IntLit(*n), GoTy::Bare(Prim::Int))),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                )),
+                vec![],
+            ),
+            Pattern::Str(s) => (
+                Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(subj.clone()),
+                        Box::new(GoExpr::new(
+                            GoExprKind::StrLit(s.to_string()),
+                            GoTy::Bare(Prim::Str),
+                        )),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                )),
+                vec![],
+            ),
+            Pattern::Bool(b) => (
+                Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(subj.clone()),
+                        Box::new(GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool))),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                )),
+                vec![],
+            ),
+            Pattern::Ctor { ctor, name, args } => {
+                self.ctor_pattern(subj, subj_ty, ctor.as_ref().map(|c| c.def), name.as_str(), args)
+            }
+            Pattern::Alias(inner, id) => {
+                let inner = *inner;
+                let name = self.fresh_local_named(*id, None);
+                let (c, mut binds) = self.pattern_test(subj, subj_ty, inner);
+                binds.insert(0, GoStmt::Short(name, subj.clone()));
+                (c, binds)
+            }
+            _ => {
+                self.warnings
+                    .push("unsupported pattern in case — treated as wildcard".into());
+                (None, vec![])
+            }
+        }
+    }
+
+    fn ctor_pattern(
+        &mut self,
+        subj: &GoExpr,
+        _subj_ty: &GoTy,
+        cdef: Option<DefId>,
+        cname: &str,
+        args: &[PatId],
+    ) -> (Option<GoExpr>, Vec<GoStmt>) {
+        let _ = cdef;
+        let args = args.to_vec();
+        // Payload types from the container's Go type (rt.SkyResult[E,A] etc.).
+        let (a_ty, e_ty) = match _subj_ty {
+            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => {
+                (ts[1].clone(), ts[0].clone())
+            }
+            GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => (ts[0].clone(), GoTy::Any),
+            _ => (GoTy::Any, GoTy::Any),
+        };
+        match cname {
+            "Ok" | "Just" => {
+                let cond = tag_eq(subj, 0);
+                let field = if cname == "Ok" { "OkValue" } else { "JustValue" };
+                (Some(cond), self.bind_field(subj, &args, field, &a_ty))
+            }
+            "Err" => (Some(tag_eq(subj, 1)), self.bind_field(subj, &args, "ErrValue", &e_ty)),
+            "Nothing" => (Some(tag_eq(subj, 1)), vec![]),
+            "True" => (Some(subj.clone()), vec![]),
+            "False" => (
+                Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(subj.clone()),
+                        Box::new(GoExpr::new(GoExprKind::BoolLit(false), GoTy::Bare(Prim::Bool))),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                )),
+                vec![],
+            ),
+            _ => {
+                let owner = self.ctor_owner.get(cname).cloned();
+                if let Some((go, NominalKind::Iota)) = &owner {
+                    let cond = GoExpr::new(
+                        GoExprKind::Binary(
+                            GoBin::Eq,
+                            Box::new(subj.clone()),
+                            Box::new(GoExpr::new(
+                                GoExprKind::Ident(format!("{go}_{cname}")),
+                                GoTy::Any,
+                            )),
+                        ),
+                        GoTy::Bare(Prim::Bool),
+                    );
+                    return (Some(cond), vec![]);
+                }
+                // sealed ADT: match by declaration-order tag; bind Fields[i].
+                let tag = self.ctor_tag.get(cname).copied().unwrap_or(0);
+                let cond = tag_eq(subj, tag);
+                let mut binds = Vec::new();
+                for (i, a) in args.iter().enumerate() {
+                    if let Pattern::Var(id) = &self.body.pats[*a] {
+                        let vty = self.local_ty(*id);
+                        let name = self.fresh_local_named(*id, None);
+                        let field = GoExpr::new(
+                            GoExprKind::Index(
+                                Box::new(GoExpr::new(
+                                    GoExprKind::Selector(Box::new(subj.clone()), "Fields".into()),
+                                    GoTy::Slice(Box::new(GoTy::Any)),
+                                )),
+                                Box::new(GoExpr::new(
+                                    GoExprKind::IntLit(i as i64),
+                                    GoTy::Bare(Prim::Int),
+                                )),
+                            ),
+                            GoTy::Any,
+                        );
+                        // Fields[i] is `any`; narrow to the bound var's type.
+                        let bound = if vty == GoTy::Any {
+                            field
+                        } else {
+                            GoExpr::new(
+                                GoExprKind::Coerce {
+                                    inner: Box::new(field),
+                                    from: GoTy::Any,
+                                    to: vty.clone(),
+                                    reason: CoerceReason::GenericErase,
+                                },
+                                vty,
+                            )
+                        };
+                        binds.push(GoStmt::Short(name, bound));
+                    }
+                }
+                (Some(cond), binds)
+            }
+        }
+    }
+
+    fn bind_field(&mut self, subj: &GoExpr, args: &[PatId], field: &str, ty: &GoTy) -> Vec<GoStmt> {
+        let mut binds = Vec::new();
+        if let Some(a) = args.first() {
+            if let Pattern::Var(id) = &self.body.pats[*a] {
+                let name = self.fresh_local_named(*id, None);
+                binds.push(GoStmt::Short(
+                    name,
+                    GoExpr::new(
+                        GoExprKind::Selector(Box::new(subj.clone()), field.into()),
+                        ty.clone(),
+                    ),
+                ));
+            }
+        }
+        binds
+    }
+}
+
+fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {
+    GoExpr::new(
+        GoExprKind::Binary(
+            GoBin::Eq,
+            Box::new(GoExpr::new(
+                GoExprKind::Selector(Box::new(subj.clone()), "Tag".into()),
+                GoTy::Bare(Prim::Int),
+            )),
+            Box::new(GoExpr::new(
+                GoExprKind::IntLit(tag as i64),
+                GoTy::Bare(Prim::Int),
+            )),
+        ),
+        GoTy::Bare(Prim::Bool),
+    )
+}
+
+// ---- free helpers -------------------------------------------------------
+
+fn peel_params(sig: &Ty) -> Vec<Ty> {
+    let mut out = Vec::new();
+    let mut cur = sig;
+    while let Ty::Fun(a, b) = cur {
+        out.push((**a).clone());
+        cur = b;
+    }
+    out
+}
+
+/// `rt.AnyTaskRun(expr)` — force a Task at an entry boundary (doc 08 §3).
+fn any_task_run(expr: GoExpr) -> GoExpr {
+    GoExpr::new(
+        GoExprKind::Call(
+            Box::new(GoExpr::new(GoExprKind::Ident("rt.AnyTaskRun".into()), GoTy::Any)),
+            vec![expr],
+        ),
+        GoTy::Any,
+    )
+}
+
+fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
+    GoExpr::new(
+        GoExprKind::Call(
+            Box::new(GoExpr::new(GoExprKind::Ident(name.into()), GoTy::Any)),
+            args,
+        ),
+        ty,
+    )
+}
+
+fn widen(e: GoExpr) -> GoExpr {
+    if e.ty == GoTy::Any {
+        e
+    } else {
+        GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
+    }
+}
+
+fn go_binop(op: &str) -> Option<GoBin> {
+    Some(match op {
+        "+" => GoBin::Add,
+        "-" => GoBin::Sub,
+        "*" => GoBin::Mul,
+        "==" => GoBin::Eq,
+        "/=" => GoBin::Ne,
+        "<" => GoBin::Lt,
+        ">" => GoBin::Gt,
+        "<=" => GoBin::Le,
+        ">=" => GoBin::Ge,
+        "&&" => GoBin::And,
+        "||" => GoBin::Or,
+        _ => return None,
+    })
+}
+
+fn is_cmp(op: &str) -> bool {
+    matches!(op, "==" | "/=" | "<" | ">" | "<=" | ">=")
+}
+
+fn tuple_type_args(t: &GoTy) -> String {
+    if let GoTy::Tuple(xs) = t {
+        let parts: Vec<String> = xs.iter().map(render_goty).collect();
+        format!("[{}]", parts.join(", "))
+    } else {
+        String::new()
+    }
+}
+
+/// A local Go-*type* renderer for the Raw ADT/record constructor strings. Types
+/// only — expressions are always proper IR nodes (keeps `codegen` a leaf, no
+/// crate cycle). Mirrors `codegen::render_ty`.
+fn render_goty(t: &GoTy) -> String {
+    match t {
+        GoTy::Bare(p) => p.go_name().to_string(),
+        GoTy::Unit => "struct{}".to_string(),
+        GoTy::Any => "any".to_string(),
+        GoTy::Named(n, args) if args.is_empty() => n.clone(),
+        GoTy::Named(n, args) => {
+            let a: Vec<String> = args.iter().map(render_goty).collect();
+            format!("{n}[{}]", a.join(", "))
+        }
+        GoTy::Slice(t) => format!("[]{}", render_goty(t)),
+        GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
+        GoTy::Func(ps, r) => {
+            let a: Vec<String> = ps.iter().map(render_goty).collect();
+            format!("func({}) {}", a.join(", "), render_goty(r))
+        }
+        GoTy::Tuple(xs) => match xs.len() {
+            2 | 3 => format!(
+                "rt.T{}[{}]",
+                xs.len(),
+                xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
+            ),
+            _ => "rt.SkyTupleN".to_string(),
+        },
+        GoTy::TyVar(n) => n.clone(),
+        GoTy::Struct(fs) => {
+            let parts: Vec<String> = fs
+                .iter()
+                .map(|(n, t)| format!("{} {}", n.as_str(), render_goty(t)))
+                .collect();
+            format!("struct{{ {} }}", parts.join("; "))
+        }
+    }
+}

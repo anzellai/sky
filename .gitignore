@@ -125,3 +125,6 @@ _verify/
 # next to the app for stable URLs across rebuilds. Per-machine,
 # never source.
 .sky/
+
+# Rust-compiler M4 build outputs (xtask build-run)
+examples/*/sky-out-rust/

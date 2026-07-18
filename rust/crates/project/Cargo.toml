@@ -9,4 +9,9 @@ workspace = true
 [dependencies]
 skydb = { path = "../skydb" }
 codegen = { path = "../codegen" }
+lower = { path = "../lower" }
+hir = { path = "../hir" }
+ty = { path = "../ty" }
+syntax = { path = "../syntax" }
+base = { path = "../base" }
 ffi = { path = "../ffi" }

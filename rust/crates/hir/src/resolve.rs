@@ -500,11 +500,13 @@ impl<'a> Resolver<'a> {
         self.scopes.clear();
         self.next_local = 0;
         self.push_scope();
+        let mut params = Vec::new();
         if let Some(pl) = v.params() {
             for p in pl.params() {
-                let _ = self.resolve_pattern(&p);
+                params.push(self.resolve_pattern(&p));
             }
         }
+        self.body.params = params;
         if let Some(b) = v.body() {
             let root = self.resolve_expr(&b);
             self.body.root = Some(root);

@@ -141,6 +141,9 @@ pub struct Body {
     pub root: Option<ExprId>,
     /// A resolved type annotation root, if the def carried one.
     pub anno: Option<TypeId>,
+    /// Top-level parameter patterns for `f x y = …` (M4: the lowerer needs these
+    /// to emit the Go function signature — resolve previously discarded them).
+    pub params: Vec<PatId>,
 }
 
 impl Body {

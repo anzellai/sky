@@ -53,6 +53,13 @@ pub struct Infer<'a> {
     pub uf: UnionFind,
     locals: HashMap<LocalId, TyVarId>,
     pub errors: Vec<TypeError>,
+    /// Per-expression type-var recording — enabled for the lowerer's typed
+    /// table (M4). Off by default so the M3 accept-parity path is unchanged.
+    record_exprs: bool,
+    expr_vars: Vec<(ExprId, TyVarId)>,
+    /// Per-local recording: which locals bound to which type-var (params of the
+    /// def + let/lambda binders). The lowerer reads these back for param types.
+    local_vars: Vec<(LocalId, TyVarId)>,
 }
 
 impl<'a> Infer<'a> {
@@ -63,6 +70,9 @@ impl<'a> Infer<'a> {
             uf: UnionFind::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
+            record_exprs: false,
+            expr_vars: Vec::new(),
+            local_vars: Vec::new(),
         }
     }
 
@@ -75,6 +85,46 @@ impl<'a> Infer<'a> {
         Some(self.read_back(v))
     }
 
+    /// Infer a body while recording a per-expression + per-local type table —
+    /// the input type-directed lowering (doc 07 §2) consumes. Keyed by `ExprId`
+    /// (the arena index): the stable per-expression identity in this HIR, a
+    /// cleaner key than a source span for an arena-based IR (see report).
+    pub fn infer_def_typed(
+        &mut self,
+        body: &Body,
+    ) -> (
+        Option<Ty>,
+        std::collections::HashMap<ExprId, Ty>,
+        std::collections::HashMap<LocalId, Ty>,
+    ) {
+        self.record_exprs = true;
+        let root = match body.root {
+            Some(r) => r,
+            None => return (None, Default::default(), Default::default()),
+        };
+        // Type + bind the top-level params first, so references in the body pick
+        // up the same type-var and the locals table carries their inferred type.
+        let param_pats: Vec<PatId> = body.params.clone();
+        for p in param_pats {
+            let _ = self.infer_pat_fresh(body, p);
+        }
+        let v = self.infer_expr(body, root);
+        let result = self.read_back(v);
+        let mut exprs = std::collections::HashMap::new();
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        for (e, tv) in recorded {
+            let t = self.read_back(tv);
+            exprs.insert(e, t);
+        }
+        let mut locals = std::collections::HashMap::new();
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        for (lid, tv) in recorded_locals {
+            let t = self.read_back(tv);
+            locals.insert(lid, t);
+        }
+        (Some(result), exprs, locals)
+    }
+
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         if let Err(m) = self.uf.unify(a, b) {
             self.errors.push(TypeError { message: m.message });
@@ -84,6 +134,14 @@ impl<'a> Infer<'a> {
     // ---- expressions ----------------------------------------------------
 
     fn infer_expr(&mut self, body: &Body, e: ExprId) -> TyVarId {
+        let tv = self.infer_expr_inner(body, e);
+        if self.record_exprs {
+            self.expr_vars.push((e, tv));
+        }
+        tv
+    }
+
+    fn infer_expr_inner(&mut self, body: &Body, e: ExprId) -> TyVarId {
         match &body.exprs[e] {
             Expr::Int(_) => self.uf.fresh(Content::FlexSuper(SuperType::Number)),
             Expr::Float(_) => self.con("Float", vec![]),
@@ -367,7 +425,7 @@ impl<'a> Infer<'a> {
             Pattern::Anything => {}
             Pattern::Var(id) => {
                 let id = *id;
-                self.locals.insert(id, expected);
+                self.locals.insert(id, expected); if self.record_exprs { self.local_vars.push((id, expected)); }
             }
             Pattern::Unit => {
                 let u = self.uf.fresh(Content::Structure(FlatTy::Unit));
@@ -397,7 +455,7 @@ impl<'a> Infer<'a> {
                 let mut map = std::collections::BTreeMap::new();
                 for (n, id) in binders {
                     let fv = self.uf.fresh_flex();
-                    self.locals.insert(*id, fv);
+                    self.locals.insert(*id, fv); if self.record_exprs { self.local_vars.push((*id, fv)); }
                     map.insert(n.clone(), fv);
                 }
                 let row = self.uf.fresh_flex();
@@ -407,7 +465,7 @@ impl<'a> Infer<'a> {
             Pattern::Alias(inner, id) => {
                 let inner = *inner;
                 let id = *id;
-                self.locals.insert(id, expected);
+                self.locals.insert(id, expected); if self.record_exprs { self.local_vars.push((id, expected)); }
                 self.infer_pat_against(body, inner, expected);
             }
             Pattern::Tuple(pats) => {

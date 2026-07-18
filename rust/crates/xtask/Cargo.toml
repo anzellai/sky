@@ -18,4 +18,5 @@ syntax = { path = "../syntax" }
 base = { path = "../base" }
 hir = { path = "../hir" }
 ty = { path = "../ty" }
+project = { path = "../project" }
 diagnostics = { path = "../diagnostics" }

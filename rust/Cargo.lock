@@ -627,7 +627,9 @@ name = "lower"
 version = "0.1.0"
 dependencies = [
  "base",
+ "hir",
  "skydb",
+ "syntax",
  "ty",
 ]
 
@@ -748,9 +750,14 @@ dependencies = [
 name = "project"
 version = "0.1.0"
 dependencies = [
+ "base",
  "codegen",
  "ffi",
+ "hir",
+ "lower",
  "skydb",
+ "syntax",
+ "ty",
 ]
 
 [[package]]
@@ -1288,6 +1295,7 @@ dependencies = [
  "base",
  "diagnostics",
  "hir",
+ "project",
  "syntax",
  "ty",
 ]

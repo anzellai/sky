@@ -5,10 +5,10 @@
 use crate::exhaustive;
 use crate::infer::Infer;
 use crate::sig::World;
-use crate::Ty;
-use base::{ModuleId, Span};
+use crate::{Scheme, Ty};
+use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
-use hir::SourceDb;
+use hir::{Body, ExprId, LocalId, SourceDb};
 use std::collections::HashMap;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
@@ -37,6 +37,53 @@ pub struct CheckOutput {
     pub exhaustiveness_warnings: usize,
     pub diagnostics: Vec<Diagnostic>,
     pub def_types: Vec<DefType>,
+}
+
+/// The per-body type table the lowerer (doc 07 §2) consumes: the def's result
+/// type, plus a per-expression and per-local type map keyed by arena id.
+#[derive(Default)]
+pub struct BodyTypes {
+    pub result: Option<Ty>,
+    pub exprs: HashMap<ExprId, Ty>,
+    pub locals: HashMap<LocalId, Ty>,
+}
+
+/// A reusable typed view of a whole program (stdlib + deps + entry). Built once;
+/// `body_types` re-infers a single def against the shared world. Lets the `lower`
+/// crate ask for per-expression types without rebuilding the world per def.
+pub struct Typer<'a> {
+    world: World,
+    db: &'a SourceDb,
+}
+
+impl<'a> Typer<'a> {
+    pub fn new(db: &'a SourceDb) -> Self {
+        Typer {
+            world: World::build(db),
+            db,
+        }
+    }
+
+    /// Infer `body`, returning the per-expression + per-local type table.
+    pub fn body_types(&self, body: &Body) -> BodyTypes {
+        let mut infer = Infer::new(&self.world, self.db);
+        let (result, exprs, locals) = infer.infer_def_typed(body);
+        BodyTypes {
+            result,
+            exprs,
+            locals,
+        }
+    }
+
+    /// The declared/derived scheme for a top-level value def, if known.
+    pub fn value_sig(&self, def: DefId) -> Option<&Scheme> {
+        self.world.value_sigs.get(&def)
+    }
+
+    /// The scheme for a constructor by its own DefId (union member).
+    pub fn ctor_sig_by_def(&self, def: DefId) -> Option<&Scheme> {
+        self.world.ctors_by_def.get(&def)
+    }
 }
 
 /// Typecheck `to_check` module ids against the world built from every module in

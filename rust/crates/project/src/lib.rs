@@ -5,6 +5,9 @@
 //! input and reads a query end-to-end — proving the CLI/LSP-shared engine wiring
 //! (doc 01). Real module discovery + `go build` land in M4/M5.
 
+mod build;
+pub use build::{build_example, BuildOptions, BuildReport};
+
 use skydb::{line_count, SkyDatabase, SourceFile};
 
 /// The build driver's project handle. Owns the salsa db — the single state

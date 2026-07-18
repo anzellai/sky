@@ -8,6 +8,7 @@
 //!   1. byte-exact round-trip: `reprint(green_tree) == source_bytes` (L8);
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
+mod build_run_gate;
 mod infer_gate;
 mod resolve_gate;
 
@@ -25,6 +26,7 @@ fn main() {
         Some("roundtrip") => roundtrip(&args[1..]),
         Some("resolve") => resolve_gate::run(&args[1..], &repo_root()),
         Some("infer") => infer_gate::run(&args[1..], &repo_root()),
+        Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
         Some("diff") => {
             println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");

@@ -9,4 +9,6 @@ workspace = true
 [dependencies]
 base = { path = "../base" }
 ty = { path = "../ty" }
+hir = { path = "../hir" }
+syntax = { path = "../syntax" }
 skydb = { path = "../skydb" }
