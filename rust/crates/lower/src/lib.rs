@@ -12,4 +12,6 @@ pub mod ir;
 pub mod kernel;
 mod lower;
 
-pub use lower::{lower_program, lower_program_cfg, LowerConfig, LowerOutput};
+pub use lower::{
+    lower_program, lower_program_cfg, FfiModInfo, FfiTable, LowerConfig, LowerOutput,
+};

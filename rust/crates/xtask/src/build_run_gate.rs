@@ -707,7 +707,43 @@ fn normalise_stdout(s: &str) -> String {
         .map(strip_leading_timestamp)
         .collect::<Vec<_>>()
         .join("\n");
-    strip_clock_times(&deiso).trim().to_string()
+    strip_uuids(&strip_clock_times(&deiso)).trim().to_string()
+}
+
+/// Replace any RFC-4122 UUID (`8-4-4-4-12` hex, hyphenated) with `<uuid>`.
+/// A freshly generated UUID (`Uuid.newString`, `Uuid.v4`) is volatile output
+/// like a timestamp — the structure is what a stdout/page compare should assert,
+/// not the random value.
+fn strip_uuids(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 36 <= chars.len() && looks_like_uuid(&chars[i..i + 36]) {
+            out.push_str("<uuid>");
+            i += 36;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn looks_like_uuid(c: &[char]) -> bool {
+    if c.len() != 36 {
+        return false;
+    }
+    for (i, ch) in c.iter().enumerate() {
+        let ok = match i {
+            8 | 13 | 18 | 23 => *ch == '-',
+            _ => ch.is_ascii_hexdigit(),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 /// Replace any `HH:MM:SS` run with `<time>` (structural; two-digit fields).
@@ -748,6 +784,7 @@ fn normalise_html(s: &str) -> String {
     out = strip_attr_prefix(&out, "data-sky-");
     out = strip_iso_timestamps(&out);
     out = strip_clock_times(&out);
+    out = strip_uuids(&out);
     out = strip_csrf(&out);
     // collapse runs of whitespace so cosmetic reflow doesn't diff.
     out.split_whitespace().collect::<Vec<_>>().join(" ")

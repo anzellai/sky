@@ -1364,6 +1364,21 @@ impl<'a> Resolver<'a> {
         if let Some(r) = self.qual_vars.get(qual).and_then(|m| m.get(name)) {
             return r.clone();
         }
+        // Explicit Go-FFI alias in THIS module wins over the ambient kernel
+        // pseudo-module (CLAUDE.md "explicit alias wins"): `import
+        // Github.Com.Google.Uuid as Uuid` makes `Uuid.newString` a Foreign FFI
+        // ref even though `Uuid` is ALSO a kernel pseudo (`Uuid.v4`/`v7`). Only
+        // the Foreign source is short-circuited here — Dep / Kernel imports keep
+        // their existing precedence (kernel_pseudo fallback below), so this
+        // cannot regress a stdlib-module qualifier that happens to shadow a
+        // kernel pseudo.
+        if let Some(ImportSource::Foreign(pkg)) = self.import_aliases.get(qual).cloned() {
+            self.track_class_b(pkg.clone(), Some(qual.to_string()), name, RefKind::Value);
+            return Res::Foreign {
+                package: Name::new(&pkg),
+                name: Name::new(name),
+            };
+        }
         if let Some(pseudo) = self.db.kernel_pseudo(qual) {
             return Res::Kernel {
                 module: Name::new(pseudo),

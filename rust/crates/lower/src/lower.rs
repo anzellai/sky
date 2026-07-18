@@ -8,7 +8,7 @@ use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
 use hir::{Body, CaseBranch, Expr, ExprId, LocalId, Pattern, PatId, Res, SourceDb};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ty::{BodyTypes, Ty, Typer};
 
 pub struct LowerOutput {
@@ -16,6 +16,45 @@ pub struct LowerOutput {
     pub warnings: Vec<String>,
     /// True when `main` was found + lowered; false → nothing to build.
     pub entry_ok: bool,
+    /// Sky module paths of the Go-FFI packages actually *called* by the emitted
+    /// program (doc 09) — the build driver materialises only these bindings into
+    /// `sky-out/rt/`, so an added-but-unused package never inflates the build.
+    pub ffi_used: BTreeSet<String>,
+}
+
+/// The pinned FFI surface, projected to exactly what lowering needs: for each
+/// imported Go package (keyed by its Sky module path) the kernel prefix + the
+/// set of wrapper symbols defined for it. Built by `project` from the loaded
+/// `ffi::FfiRegistry`; kept free of `serde`/`ffi` so `lower` stays decoupled.
+#[derive(Default, Clone)]
+pub struct FfiTable {
+    pub mods: BTreeMap<String, FfiModInfo>,
+}
+
+#[derive(Clone)]
+pub struct FfiModInfo {
+    /// The Go symbol prefix (`Go_Uuid`).
+    pub kernel_name: String,
+    /// The wrapper's defined `Go_*` symbols (`Go_Uuid_newStringT`, …).
+    pub go_symbols: BTreeSet<String>,
+}
+
+impl FfiTable {
+    /// The Go call symbol for `module.func`, preferring the typed `T` wrapper
+    /// (`Go_Uuid_newStringT`) over the untyped fallback (`Go_Uuid_future`).
+    /// `None` when the package isn't in the surface or defines no such symbol.
+    pub fn call_symbol(&self, module: &str, func: &str) -> Option<String> {
+        let m = self.mods.get(module)?;
+        let base = format!("{}_{}", m.kernel_name, func);
+        let typed = format!("{base}T");
+        if m.go_symbols.contains(&typed) {
+            Some(typed)
+        } else if m.go_symbols.contains(&base) {
+            Some(base)
+        } else {
+            None
+        }
+    }
 }
 
 struct DefEntry {
@@ -53,6 +92,9 @@ pub struct LowerConfig {
     /// "sqlite"), ("DB_PATH", "todos.db")]` from `[database]`. Emitted after the
     /// fixed defaults so a config value wins.
     pub extra_defaults: Vec<(String, String)>,
+    /// The pinned Go-FFI surface (doc 09) for this project — empty when the
+    /// project imports no Go packages.
+    pub ffi: FfiTable,
 }
 
 pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
@@ -248,6 +290,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             items: Vec::new(),
             warnings: vec!["no `main` in entry module".into()],
             entry_ok: false,
+            ffi_used: BTreeSet::new(),
         };
     };
 
@@ -256,6 +299,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let mut work: Vec<DefId> = vec![main_def];
     let mut funcs: Vec<GoItem> = Vec::new();
     let mut used_go_types: HashSet<String> = HashSet::new();
+    let mut ffi_used: BTreeSet<String> = BTreeSet::new();
 
     while let Some(d) = work.pop() {
         if !seen.insert(d) {
@@ -289,6 +333,8 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             discovered: Vec::new(),
             used_types: HashSet::new(),
             warnings: Vec::new(),
+            ffi: &cfg.ffi,
+            ffi_used: BTreeSet::new(),
         };
         let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         for r in cx.discovered {
@@ -298,6 +344,9 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
         for t in cx.used_types {
             used_go_types.insert(t);
+        }
+        for m in cx.ffi_used {
+            ffi_used.insert(m);
         }
         warnings.extend(cx.warnings);
         funcs.push(item);
@@ -341,6 +390,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         items,
         warnings,
         entry_ok: true,
+        ffi_used,
     }
 }
 
@@ -678,6 +728,9 @@ struct Ctx<'a> {
     discovered: Vec<DefId>,
     used_types: HashSet<String>,
     warnings: Vec<String>,
+    /// The pinned FFI surface (read-only) + the modules actually called here.
+    ffi: &'a FfiTable,
+    ffi_used: BTreeSet<String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -1408,6 +1461,18 @@ impl<'a> Ctx<'a> {
             let go = kernel_go_name(module.as_str(), func.as_str());
             return self.kernel_call(&go, args, actual);
         }
+        // Go-FFI direct call (doc 09): `Uuid.newString ()` → the typed wrapper
+        // `rt.Go_Uuid_newStringT(…)`. The wrapper drops Sky's `()` unit params
+        // (its Go signature takes zero args), so unit call-args are elided. The
+        // per-usage HM inference already gave the call its `SkyResult[…]` shape,
+        // so the enclosing `case`/coercion narrows the `any` return exactly as
+        // for a kernel call.
+        if let Expr::Var(Res::Foreign { package, name }) = &self.body.exprs[callee] {
+            if let Some(sym) = self.ffi.call_symbol(package.as_str(), name.as_str()) {
+                self.ffi_used.insert(package.as_str().to_string());
+                return self.ffi_call(&format!("rt.{sym}"), args, actual);
+            }
+        }
         // general call: lower callee + args, coercing each arg to the callee's
         // inferred param type (cross-def boundary coercion). The call's Go type is
         // the callee's DECLARED Go return type (which is `any` for a generic Sky
@@ -1510,6 +1575,20 @@ impl<'a> Ctx<'a> {
     /// The uniform kernel-call rule (doc 07 §6 FFI-return): every runtime kernel
     /// is `any`-based, so widen each arg to `any`, call `go(…)` (result `any`),
     /// then coerce the `any` result to the call's typed slot.
+    /// Lower a call to a Go-FFI wrapper. Like `kernel_call`, but Sky's `()` unit
+    /// call-args are dropped — the typed wrapper's Go signature has no parameter
+    /// for a Sky `Unit` (a `() -> R` binding lowers to a zero-arg Go func). Any
+    /// non-unit args are widened to `any` and passed through; the `any` return is
+    /// coerced to the call's typed slot (FFI-return coercion).
+    fn ffi_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        let non_unit: Vec<ExprId> = args
+            .iter()
+            .copied()
+            .filter(|a| !matches!(&self.body.exprs[*a], Expr::Unit))
+            .collect();
+        self.kernel_call(go, &non_unit, actual)
+    }
+
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
         let largs: Vec<GoExpr> = args
             .iter()

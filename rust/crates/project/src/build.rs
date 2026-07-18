@@ -63,7 +63,13 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     };
 
     // ---- lower + emit ----
-    let cfg = read_sky_toml_config(&opts.example_dir.join("sky.toml"));
+    let mut cfg = read_sky_toml_config(&opts.example_dir.join("sky.toml"));
+    // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
+    // directory is preferred; the oracle's gitignored `.skycache/` cache is the
+    // fallback so a project that hasn't yet migrated to the committed layout
+    // still builds. Absent both → an empty table (no FFI).
+    let registry = load_ffi_surface(&opts.example_dir);
+    cfg.ffi = build_ffi_table(&registry);
     let out = lower::lower_program_cfg(&db, entry, &cfg);
     report.warnings = out.warnings;
     if !out.entry_ok {
@@ -76,6 +82,12 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     let out_dir = opts.example_dir.join(&opts.out_dir_name);
     if let Err(e) = write_out(&opts.repo_root, &out_dir, &source) {
         report.note = format!("write failed: {e}");
+        return report;
+    }
+    // Materialise the Go wrapper for every FFI package the program actually
+    // calls into `sky-out/rt/` (package rt), so `rt.Go_<Pkg>_<fn>T` resolves.
+    if let Err(e) = materialise_ffi_bindings(&registry, &out.ffi_used, &out_dir) {
+        report.note = format!("ffi binding copy failed: {e}");
         return report;
     }
     report.emitted = true;
@@ -162,6 +174,65 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         }
     }
     cfg
+}
+
+// ---- FFI surface loading + binding materialisation (doc 09) --------------
+
+/// Locate the pinned FFI surface for an example: prefer the committed
+/// `sky-ffi/` layout (doc 09 §C.1); fall back to the oracle's `.skycache/`
+/// cache. Returns the loaded registry (empty when neither exists).
+fn load_ffi_surface(example_dir: &Path) -> ffi::FfiRegistry {
+    let pinned_ffi = example_dir.join("sky-ffi");
+    let pinned_go = pinned_ffi.join("go");
+    if pinned_ffi.is_dir() {
+        let reg = ffi::load_surface(&pinned_ffi, &pinned_go);
+        if !reg.is_empty() {
+            return reg;
+        }
+    }
+    let cache_ffi = example_dir.join(".skycache").join("ffi");
+    let cache_go = example_dir.join(".skycache").join("go");
+    ffi::load_surface(&cache_ffi, &cache_go)
+}
+
+/// Project the loaded registry to the `lower::FfiTable` the lowerer consumes.
+fn build_ffi_table(reg: &ffi::FfiRegistry) -> lower::FfiTable {
+    let mut table = lower::FfiTable::default();
+    for (module, pkg) in &reg.packages {
+        table.mods.insert(
+            module.clone(),
+            lower::FfiModInfo {
+                kernel_name: pkg.kernel_name.clone(),
+                go_symbols: pkg.go_symbols.clone(),
+            },
+        );
+    }
+    table
+}
+
+/// Copy the Go wrapper for each called FFI package into `<out_dir>/rt/`.
+fn materialise_ffi_bindings(
+    reg: &ffi::FfiRegistry,
+    used: &std::collections::BTreeSet<String>,
+    out_dir: &Path,
+) -> std::io::Result<()> {
+    if used.is_empty() {
+        return Ok(());
+    }
+    let rt_dir = out_dir.join("rt");
+    std::fs::create_dir_all(&rt_dir)?;
+    for module in used {
+        let Some(pkg) = reg.resolve(module) else {
+            continue;
+        };
+        let Some(src) = &pkg.binding_file else {
+            continue;
+        };
+        if let Some(name) = src.file_name() {
+            std::fs::copy(src, rt_dir.join(name))?;
+        }
+    }
+    Ok(())
 }
 
 fn write_out(repo_root: &Path, out_dir: &Path, source: &str) -> std::io::Result<()> {

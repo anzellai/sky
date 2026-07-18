@@ -9,3 +9,4 @@ workspace = true
 [dependencies]
 base = { path = "../base" }
 serde.workspace = true
+serde_json.workspace = true
