@@ -7,7 +7,6 @@
 
 use project::Project;
 use tower_lsp::lsp_types::ServerCapabilities;
-use ty::infer_stub;
 
 const VERSION: &str = "sky-lsp (rust bring-up) v0.0.0-m0";
 
@@ -15,7 +14,7 @@ fn main() {
     // Touch each downstream crate so the DAG is exercised (M0 wiring).
     let mut p = Project::new();
     let _ = p.analyze(0, "module Main\n");
-    let _ = infer_stub();
+    let _ = ty::Ty::Unit; // touch the `ty` crate (M3 replaced `infer_stub`)
     // The LSP shares the query db; capabilities are declared in M6.
     let _caps = ServerCapabilities::default();
 

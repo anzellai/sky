@@ -9,4 +9,5 @@ workspace = true
 [dependencies]
 base = { path = "../base" }
 hir = { path = "../hir" }
+syntax = { path = "../syntax" }
 diagnostics = { path = "../diagnostics" }

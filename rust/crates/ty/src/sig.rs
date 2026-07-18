@@ -1,0 +1,412 @@
+//! Signature extraction (doc 06 §"SIGNATURES SOURCE"). Stdlib + kernel function
+//! types come from their `name : Type` annotations (and `Ffi.kernel "K"` aliased
+//! sigs) declared in `sky-stdlib/**/*.sky`; constructor types come from union
+//! declarations; the four built-in super-typed operators come from a static
+//! table. All read straight off the **AST** (`syntax::ast::Type`) so the
+//! DefId-keyed body collision in `hir` is irrelevant here, and type aliases are
+//! expanded transparently (record aliases → records so field access unifies;
+//! function aliases like `Handler` → `Fun`).
+
+use crate::{Scheme, Ty};
+use base::{DefId, ModuleId, Name};
+use hir::{DefKind, SourceDb, KERNEL_MODULES};
+use std::collections::HashMap;
+use syntax::ast::{self, AstNode};
+use syntax::{SyntaxKind, SyntaxNode};
+
+/// One alias definition: its type parameters and its (unexpanded) body.
+#[derive(Clone)]
+struct AliasDef {
+    params: Vec<String>,
+    body: Ty,
+}
+
+/// The typed world: everything inference needs to look a name's scheme up.
+pub struct World {
+    /// Top-level value schemes, keyed by `DefId` (matches `Res::Def`).
+    pub value_sigs: HashMap<DefId, Scheme>,
+    /// Kernel function schemes, keyed by `(pseudo-module, func)`
+    /// (matches `Res::Kernel`).
+    pub kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
+    pub ctors: HashMap<String, Scheme>,
+    /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
+    /// same-named constructors in different unions (e.g. `Center` in both
+    /// `HAlign` and `TextAlign`). `Res::Ctor(cr)` carries `cr.def`.
+    pub ctors_by_def: HashMap<DefId, Scheme>,
+    /// Constructor name → the union type name it belongs to (exhaustiveness).
+    pub ctor_union: HashMap<String, String>,
+    /// Union type name → all its constructor names, in declaration order.
+    pub union_ctors: HashMap<String, Vec<String>>,
+    /// Union type `DefId` → its constructor names (disambiguates same-named
+    /// unions across modules, e.g. a `Msg` in each of several modules).
+    pub union_members_by_def: HashMap<DefId, Vec<String>>,
+    /// Whether a bare type name is a known nominal type (for opaque handling).
+    aliases: HashMap<String, AliasDef>,
+}
+
+impl World {
+    /// Build the world from every loaded module (stdlib + deps + entry).
+    pub fn build(db: &SourceDb) -> World {
+        let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
+
+        let mut world = World {
+            value_sigs: HashMap::new(),
+            kernel_sigs: HashMap::new(),
+            ctors: HashMap::new(),
+            ctors_by_def: HashMap::new(),
+            ctor_union: HashMap::new(),
+            union_ctors: HashMap::new(),
+            union_members_by_def: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+        world.seed_builtin_ctors();
+
+        // ---- pass 1: collect aliases + unions (so signatures can expand) ----
+        for m in db.module_ids() {
+            let tree = db.module_parse(m).tree();
+            for decl in tree.decls() {
+                if let ast::Decl::Alias(a) = &decl {
+                    if let Some(name) = a.name().map(|t| t.text().to_string()) {
+                        let params = decl_type_vars(a.syntax());
+                        let body = a
+                            .ty()
+                            .map(|t| ast_type_to_ty(&t))
+                            .unwrap_or(Ty::Error);
+                        world.aliases.insert(name, AliasDef { params, body });
+                    }
+                }
+            }
+        }
+
+        // ---- pass 2: signatures, kernel sigs, union ctors ----
+        for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
+            let pseudo = path_to_pseudo.get(mname.as_str()).map(|s| s.to_string());
+            let tree = db.module_parse(m).tree();
+            for decl in tree.decls() {
+                match &decl {
+                    ast::Decl::TypeAnno(a) => {
+                        let Some(name) = a.name().map(|t| t.text().to_string()) else {
+                            continue;
+                        };
+                        let Some(t) = a.ty() else { continue };
+                        let raw = ast_type_to_ty(&t);
+                        let expanded = world.expand(&raw, 0);
+                        let scheme = Scheme::generalize(expanded);
+                        let def = intern_value(db, m, &name);
+                        world.value_sigs.insert(def, scheme.clone());
+                        if let Some(p) = &pseudo {
+                            world
+                                .kernel_sigs
+                                .entry((p.clone(), name.clone()))
+                                .or_insert(scheme);
+                        }
+                    }
+                    ast::Decl::Union(u) => {
+                        world.record_union(db, m, u);
+                    }
+                    ast::Decl::Alias(a) => {
+                        // a record alias' name doubles as a positional ctor value.
+                        if let (Some(name), Some(ast::Type::Record(_))) =
+                            (a.name().map(|t| t.text().to_string()), a.ty())
+                        {
+                            let raw = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                            let expanded = world.expand(&raw, 0);
+                            let scheme = record_ctor_scheme(&expanded);
+                            let def = intern_value(db, m, &name);
+                            world.value_sigs.entry(def).or_insert(scheme.clone());
+                            // record-alias ctor is also reachable as Res::Ctor
+                            world.ctors.entry(name).or_insert(scheme);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        world
+    }
+
+    fn record_union(&mut self, db: &SourceDb, m: ModuleId, u: &ast::UnionDecl) {
+        let Some(tname) = u.name().map(|t| t.text().to_string()) else {
+            return;
+        };
+        let params = decl_type_vars(u.syntax());
+        let result = Ty::App(
+            Name::new(&tname),
+            params.iter().map(|p| Ty::var(p)).collect(),
+        );
+        let mut names = Vec::new();
+        for var in u.variants() {
+            let Some(cn) = var.name().map(|t| t.text().to_string()) else {
+                continue;
+            };
+            let arg_tys: Vec<Ty> = child_types(var.syntax())
+                .iter()
+                .map(|t| self.expand(&ast_type_to_ty(t), 0))
+                .collect();
+            let ty = arg_tys
+                .into_iter()
+                .rev()
+                .fold(result.clone(), |acc, a| Ty::Fun(Box::new(a), Box::new(acc)));
+            let scheme = Scheme::generalize(ty);
+            let cdef = db
+                .defs()
+                .borrow_mut()
+                .intern(m, &Name::new(&cn), hir::DefKind::Ctor);
+            self.ctors_by_def.insert(cdef, scheme.clone());
+            self.ctors.insert(cn.clone(), scheme);
+            self.ctor_union.insert(cn.clone(), tname.clone());
+            names.push(cn.clone());
+        }
+        let type_def = db
+            .defs()
+            .borrow_mut()
+            .intern(m, &Name::new(&tname), hir::DefKind::TypeCon);
+        self.union_members_by_def.insert(type_def, names.clone());
+        self.union_ctors.insert(tname, names);
+    }
+
+    fn seed_builtin_ctors(&mut self) {
+        let a = Ty::var("a");
+        let e = Ty::var("e");
+        let maybe_a = Ty::app("Maybe", vec![a.clone()]);
+        let result_ea = Ty::app("Result", vec![e.clone(), a.clone()]);
+        self.ctors.insert(
+            "Just".into(),
+            Scheme::generalize(Ty::Fun(Box::new(a.clone()), Box::new(maybe_a.clone()))),
+        );
+        self.ctors
+            .insert("Nothing".into(), Scheme::generalize(maybe_a));
+        self.ctors.insert(
+            "Ok".into(),
+            Scheme::generalize(Ty::Fun(Box::new(a.clone()), Box::new(result_ea.clone()))),
+        );
+        self.ctors.insert(
+            "Err".into(),
+            Scheme::generalize(Ty::Fun(Box::new(e), Box::new(result_ea))),
+        );
+        self.ctors
+            .insert("True".into(), Scheme::mono(Ty::app("Bool", vec![])));
+        self.ctors
+            .insert("False".into(), Scheme::mono(Ty::app("Bool", vec![])));
+        for (u, cs) in [
+            ("Bool", vec!["True", "False"]),
+            ("Maybe", vec!["Just", "Nothing"]),
+            ("Result", vec!["Ok", "Err"]),
+        ] {
+            self.union_ctors
+                .insert(u.into(), cs.iter().map(|s| s.to_string()).collect());
+            for c in cs {
+                self.ctor_union.insert(c.into(), u.into());
+            }
+        }
+    }
+
+    /// Expand a type transparently through the alias table (record/function
+    /// aliases). Guarded against runaway recursion (aliases are non-recursive in
+    /// Sky, but a malformed corpus must not hang — L7).
+    fn expand(&self, ty: &Ty, depth: u32) -> Ty {
+        if depth > 40 {
+            return ty.clone();
+        }
+        match ty {
+            Ty::App(name, args) => {
+                let args: Vec<Ty> = args.iter().map(|a| self.expand(a, depth + 1)).collect();
+                if let Some(def) = self.aliases.get(name.as_str()) {
+                    let mut sub: HashMap<String, Ty> = HashMap::new();
+                    for (p, arg) in def.params.iter().zip(args.iter()) {
+                        sub.insert(p.clone(), arg.clone());
+                    }
+                    let substituted = substitute(&def.body, &sub);
+                    return self.expand(&substituted, depth + 1);
+                }
+                Ty::App(name.clone(), args)
+            }
+            Ty::Fun(a, b) => Ty::Fun(
+                Box::new(self.expand(a, depth + 1)),
+                Box::new(self.expand(b, depth + 1)),
+            ),
+            Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| self.expand(x, depth + 1)).collect()),
+            Ty::Record(fs, ext) => Ty::Record(
+                fs.iter()
+                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1)))
+                    .collect(),
+                ext.clone(),
+            ),
+            other => other.clone(),
+        }
+    }
+}
+
+fn record_ctor_scheme(record: &Ty) -> Scheme {
+    // A record alias `type alias R a = { f : ft, ... }` gets a positional ctor
+    // `ft -> ... -> { f : ft, ... }` in _fieldIndex (declaration) order. The
+    // RESULT is the record itself (aliases are transparent — everything else
+    // expands `R` to the record too), so a constructed value unifies with any
+    // `R`-typed slot.
+    if let Ty::Record(fields, _) = record {
+        let ty = fields
+            .iter()
+            .rev()
+            .fold(record.clone(), |acc, (_, ft)| {
+                Ty::Fun(Box::new(ft.clone()), Box::new(acc))
+            });
+        Scheme::generalize(ty)
+    } else {
+        Scheme::generalize(record.clone())
+    }
+}
+
+fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
+    match ty {
+        Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| ty.clone()),
+        Ty::Fun(a, b) => Ty::Fun(
+            Box::new(substitute(a, sub)),
+            Box::new(substitute(b, sub)),
+        ),
+        Ty::App(n, args) => Ty::App(
+            n.clone(),
+            args.iter().map(|a| substitute(a, sub)).collect(),
+        ),
+        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| substitute(x, sub)).collect()),
+        Ty::Record(fs, ext) => Ty::Record(
+            fs.iter().map(|(n, t)| (n.clone(), substitute(t, sub))).collect(),
+            ext.clone(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn intern_value(db: &SourceDb, m: ModuleId, name: &str) -> DefId {
+    db.defs()
+        .borrow_mut()
+        .intern(m, &Name::new(name), DefKind::Value)
+}
+
+// ---- AST → Ty ------------------------------------------------------------
+
+/// Convert a `syntax::ast::Type` into a `Ty`. Qualified names collapse to their
+/// final segment (name-based nominal equality — accept-parity honesty note).
+pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
+    match t {
+        ast::Type::Var(v) => Ty::var(&first_lower(v.syntax()).unwrap_or_default()),
+        ast::Type::Con(c) => Ty::App(
+            Name::new(&first_upper(c.syntax()).unwrap_or_default()),
+            Vec::new(),
+        ),
+        ast::Type::Qual(q) => {
+            let (_, name) = dotted_parts(q.syntax());
+            Ty::App(Name::new(&name), Vec::new())
+        }
+        ast::Type::App(app) => {
+            let parts = child_types(app.syntax());
+            let Some((head, rest)) = parts.split_first() else {
+                return Ty::Error;
+            };
+            let args: Vec<Ty> = rest.iter().map(ast_type_to_ty).collect();
+            match head {
+                ast::Type::Con(c) => {
+                    Ty::App(Name::new(&first_upper(c.syntax()).unwrap_or_default()), args)
+                }
+                ast::Type::Qual(q) => {
+                    let (_, name) = dotted_parts(q.syntax());
+                    Ty::App(Name::new(&name), args)
+                }
+                ast::Type::Var(v) => {
+                    // higher-kinded var application (`f a`) — no HKT in Sky; keep
+                    // the var, drop args (won't matter for accept-parity).
+                    let _ = args;
+                    Ty::var(&first_lower(v.syntax()).unwrap_or_default())
+                }
+                other => ast_type_to_ty(other),
+            }
+        }
+        ast::Type::Fun(f) => {
+            let kids = child_types(f.syntax());
+            let from = kids.first().map(ast_type_to_ty).unwrap_or(Ty::Error);
+            let to = kids.get(1).map(ast_type_to_ty).unwrap_or(Ty::Error);
+            Ty::Fun(Box::new(from), Box::new(to))
+        }
+        ast::Type::Tuple(t) => Ty::Tuple(child_types(t.syntax()).iter().map(ast_type_to_ty).collect()),
+        ast::Type::Unit(_) => Ty::Unit,
+        ast::Type::Paren(p) => child_types(p.syntax())
+            .first()
+            .map(ast_type_to_ty)
+            .unwrap_or(Ty::Unit),
+        ast::Type::Record(r) => {
+            let mut fields = Vec::new();
+            for field in r
+                .syntax()
+                .children()
+                .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+            {
+                let fname = first_lower(&field).unwrap_or_default();
+                let fty = child_types(&field)
+                    .first()
+                    .map(ast_type_to_ty)
+                    .unwrap_or(Ty::Error);
+                fields.push((Name::new(&fname), fty));
+            }
+            // Keep DECLARATION order — the positional record-alias constructor
+            // binds args by `_fieldIndex`, not alphabetically. Unification sorts
+            // independently (FlatTy::Record is a BTreeMap).
+            let ext = r
+                .syntax()
+                .children()
+                .find(|c| c.kind() == SyntaxKind::RowVar)
+                .and_then(|rv| first_lower(&rv))
+                .map(|n| Name::new(&n));
+            Ty::Record(fields, ext)
+        }
+    }
+}
+
+// ---- CST navigation (mirrors hir::cst; kept local so `ty` is self-contained) --
+
+fn child_types(n: &SyntaxNode) -> Vec<ast::Type> {
+    n.children().filter_map(ast::Type::cast).collect()
+}
+
+fn first_lower(n: &SyntaxNode) -> Option<String> {
+    sig_token(n, SyntaxKind::LowerIdent)
+}
+
+fn first_upper(n: &SyntaxNode) -> Option<String> {
+    sig_token(n, SyntaxKind::UpperIdent)
+}
+
+fn sig_token(n: &SyntaxNode, kind: SyntaxKind) -> Option<String> {
+    n.children_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| !t.kind().is_trivia())
+        .find(|t| t.kind() == kind)
+        .map(|t| t.text().to_string())
+}
+
+fn dotted_parts(n: &SyntaxNode) -> (String, String) {
+    let idents: Vec<String> = n
+        .children_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| matches!(t.kind(), SyntaxKind::UpperIdent | SyntaxKind::LowerIdent))
+        .map(|t| t.text().to_string())
+        .collect();
+    match idents.split_last() {
+        Some((last, rest)) if !rest.is_empty() => (rest.join("."), last.clone()),
+        Some((last, _)) => (String::new(), last.clone()),
+        None => (String::new(), String::new()),
+    }
+}
+
+fn decl_type_vars(n: &SyntaxNode) -> Vec<String> {
+    n.children()
+        .find(|c| c.kind() == SyntaxKind::TypeVarList)
+        .map(|tvl| {
+            tvl.children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .filter(|t| t.kind() == SyntaxKind::LowerIdent)
+                .map(|t| t.text().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}

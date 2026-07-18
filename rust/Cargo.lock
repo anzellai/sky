@@ -1220,6 +1220,7 @@ dependencies = [
  "base",
  "diagnostics",
  "hir",
+ "syntax",
 ]
 
 [[package]]
@@ -1285,8 +1286,10 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "base",
+ "diagnostics",
  "hir",
  "syntax",
+ "ty",
 ]
 
 [[package]]

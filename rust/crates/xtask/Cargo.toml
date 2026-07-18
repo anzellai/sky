@@ -17,3 +17,5 @@ path = "src/main.rs"
 syntax = { path = "../syntax" }
 base = { path = "../base" }
 hir = { path = "../hir" }
+ty = { path = "../ty" }
+diagnostics = { path = "../diagnostics" }

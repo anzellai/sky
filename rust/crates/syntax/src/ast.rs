@@ -677,6 +677,12 @@ impl Literal {
             _ => None,
         }
     }
+
+    /// True when this literal is a single-quoted `CHAR` (distinct from a
+    /// double-quoted `String`) — the type checker needs the distinction.
+    pub fn is_char(&self) -> bool {
+        self.token().map(|t| t.kind() == Char).unwrap_or(false)
+    }
 }
 
 fn strip_delims(s: &str, delim: char) -> &str {

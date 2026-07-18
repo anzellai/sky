@@ -569,8 +569,12 @@ impl<'a> Resolver<'a> {
                 } else if let Some(b) = l.as_bool() {
                     Expr::Bool(b)
                 } else if let Some(s) = l.as_string() {
-                    // char vs string: char token is single-quoted; treat both as Str.
-                    Expr::Str(s.into_boxed_str())
+                    // char token is single-quoted → distinct type (`Char`).
+                    if l.is_char() {
+                        Expr::Chr(s.into_boxed_str())
+                    } else {
+                        Expr::Str(s.into_boxed_str())
+                    }
                 } else {
                     Expr::Error
                 };
@@ -741,10 +745,14 @@ impl<'a> Resolver<'a> {
             .filter(|c| c.kind() == SyntaxKind::DestructureBinding)
             .collect();
 
-        // pre-pass: bind all group binder names (forward references, C6)
+        // pre-pass: bind all group binder names (forward references, C6). The
+        // real LocalId is captured here (aligned to `bindings`) so `binders`
+        // carries the actual binding id — body references resolve to it.
+        let mut binder_ids: Vec<Option<LocalId>> = Vec::with_capacity(bindings.len());
         for b in &bindings {
-            if let Some(n) = b.name() {
-                self.bind_local(n.text());
+            match b.name() {
+                Some(n) => binder_ids.push(Some(self.bind_local(n.text()))),
+                None => binder_ids.push(None),
             }
         }
         for d in &destruct_nodes {
@@ -755,7 +763,11 @@ impl<'a> Resolver<'a> {
 
         // resolve pass
         let mut defs = Vec::new();
-        for b in &bindings {
+        for (i, b) in bindings.iter().enumerate() {
+            let binders = match (b.name(), binder_ids.get(i).copied().flatten()) {
+                (Some(n), Some(id)) => vec![(Name::new(n.text()), id)],
+                _ => Vec::new(),
+            };
             let params_node = b.syntax().children().find(|c| c.kind() == SyntaxKind::ParamList);
             let has_body = b.body().is_some();
             if let Some(pl) = params_node {
@@ -772,10 +784,6 @@ impl<'a> Resolver<'a> {
                     None => self.body.expr(Expr::Error),
                 };
                 self.pop_scope();
-                let binders = b
-                    .name()
-                    .map(|n| vec![(Name::new(n.text()), LocalId(0))])
-                    .unwrap_or_default();
                 defs.push(LocalDef {
                     binders,
                     pat: None,
@@ -784,10 +792,6 @@ impl<'a> Resolver<'a> {
                 });
             } else if has_body {
                 let body = self.resolve_expr(&b.body().unwrap());
-                let binders = b
-                    .name()
-                    .map(|n| vec![(Name::new(n.text()), LocalId(0))])
-                    .unwrap_or_default();
                 defs.push(LocalDef {
                     binders,
                     pat: None,
