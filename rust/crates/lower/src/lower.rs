@@ -724,19 +724,37 @@ impl<'a> Ctx<'a> {
         // (function) type. Only used when concrete (a bare type variable adds
         // nothing over the inferred type and erases to `any` anyway).
         let sig_ret = sig.map(|s| sig_result_after(s, param_pats.len()));
-        let ret_ty = match sig_ret {
-            Some(t) if !matches!(t, Ty::Var(_)) => self.goty(&t),
+        // A CONCRETE declared/inferred return type — used both as the body's
+        // expected slot and the emitted Go return type. `None` when neither the
+        // sig nor per-def inference pinned it to something better than `any`.
+        let declared_ret: Option<GoTy> = match sig_ret {
+            Some(t) if !matches!(t, Ty::Var(_)) => Some(self.goty(&t)),
             _ => match &self.types.result {
-                Some(t) => self.goty(t),
-                None => GoTy::Unit,
+                Some(t) => {
+                    let gt = self.goty(t);
+                    (gt != GoTy::Any).then_some(gt)
+                }
+                None => Some(GoTy::Unit),
             },
         };
         let root = self.body.root;
         let mut body = param_destructure;
-        if let Some(r) = root {
-            let e = self.lower_expr(r, &ret_ty);
-            body.push(GoStmt::Return(Some(e)));
-        }
+        // When the return type is otherwise `any`, recover it from the body's own
+        // lowered actual type. An unannotated def whose body is e.g. a `case`
+        // yielding `rt.SkyResult[…]` must emit that concrete return type — a bare
+        // `any` breaks a caller that case-analyses the result (`_subj.Tag` on
+        // `any`, doc 07 §2). A concrete return is strictly more precise: it stays
+        // assignable to any caller slot that expected `any`.
+        let ret_ty = match root {
+            Some(r) => {
+                let expected = declared_ret.clone().unwrap_or(GoTy::Any);
+                let e = self.lower_expr(r, &expected);
+                let bt = e.ty.clone();
+                body.push(GoStmt::Return(Some(e)));
+                declared_ret.unwrap_or(bt)
+            }
+            None => declared_ret.unwrap_or(GoTy::Unit),
+        };
         GoItem::Func(GoFuncDecl {
             name: go_name,
             type_params: Vec::new(),
@@ -859,8 +877,16 @@ impl<'a> Ctx<'a> {
             // (let-binders aren't in the per-local table); lower + `:=`.
             let (bn, lid) = d.binders[0].clone();
             let gname = self.fresh_local_named(lid, Some(bn.as_str()));
-            let ty = self.expr_ty(d.body);
-            let lowered = self.lower_expr(d.body, &ty);
+            // A PARAMETERISED let-binding (`selectRecent db = Db.query db …`) is
+            // a local function — emit a Go closure. Inlining the body instead
+            // (the previous behaviour) leaves each param referenced as an
+            // undefined `v_N` ident (`undefined: v_2`, examples 18/36/37).
+            let lowered = if d.params.is_empty() {
+                let ty = self.expr_ty(d.body);
+                self.lower_expr(d.body, &ty)
+            } else {
+                self.lower_local_fn(&d.params, d.body)
+            };
             self.local_tys.insert(lid, lowered.ty.clone());
             out.push(GoStmt::Short(gname.clone(), lowered));
             // `_ = name` so a let binding the body ignores does not trip Go's
@@ -872,6 +898,27 @@ impl<'a> Ctx<'a> {
                 )));
             }
         }
+    }
+
+    /// Lower a parameterised local binding (`f x y = body`) into a Go closure
+    /// `func(x, y) R { <destructure>; return body }`. Mirrors `lower_def`'s
+    /// param binding; used for `let`-bound helper functions.
+    fn lower_local_fn(&mut self, params: &[PatId], body: ExprId) -> GoExpr {
+        let mut gparams: Vec<GoParam> = Vec::new();
+        let mut destructure: Vec<GoStmt> = Vec::new();
+        let mut ptys: Vec<GoTy> = Vec::new();
+        for p in params {
+            let (pname, pty, binds) = self.bind_param(*p, None);
+            ptys.push(pty.clone());
+            gparams.push(GoParam { name: pname, ty: pty });
+            destructure.extend(binds);
+        }
+        let ret_ty = self.expr_ty(body);
+        let b = self.lower_expr(body, &ret_ty);
+        let mut stmts = destructure;
+        stmts.push(GoStmt::Return(Some(b)));
+        let fn_ty = GoTy::Func(ptys, Box::new(ret_ty.clone()));
+        GoExpr::new(GoExprKind::FuncLit(gparams, ret_ty, stmts), fn_ty)
     }
 
     // ---- expression lowering -------------------------------------------
@@ -1067,10 +1114,53 @@ impl<'a> Ctx<'a> {
     fn ctor_call(&mut self, def: DefId, args: &[ExprId], actual: &GoTy) -> (bool, GoExpr) {
         let loc = self.db.defs().borrow().loc(def);
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
+        // Partial application of a multi-arg constructor (`JobDone jid` where
+        // `JobDone : Int -> Result … -> Msg`, `Piece kind` for a record ctor) is
+        // a function VALUE — eta-expand the missing params into a closure. Go has
+        // no currying, so a direct under-applied call is "not enough arguments in
+        // call to <Ctor>" (examples 16/18). Builtin container ctors keep their
+        // fixed arity handling in `ctor_emit`.
+        let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
+        let builtin = matches!(cname.as_str(), "Ok" | "Err" | "Just" | "Nothing" | "True" | "False");
+        if !builtin && args.len() < arity {
+            return (true, self.ctor_partial(&cname, args, arity, actual));
+        }
         let lowered_args: Vec<GoExpr> =
             args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
         let expr = self.ctor_emit(&cname, lowered_args, actual);
         (true, expr)
+    }
+
+    /// Eta-expand a partially-applied constructor into a Go closure that applies
+    /// the ctor to the supplied args plus fresh params for the missing ones.
+    fn ctor_partial(
+        &mut self,
+        cname: &str,
+        given: &[ExprId],
+        arity: usize,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let mut arg_exprs: Vec<GoExpr> =
+            given.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
+        let n_rest = arity - given.len();
+        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
+            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
+        };
+        let mut gparams: Vec<GoParam> = Vec::new();
+        for pty in &rest_tys {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+            arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
+        }
+        let ctor_val = self.ctor_emit(cname, arg_exprs, &ret);
+        let body = self.coerce_if_needed(ctor_val, &ret);
+        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+            fn_ty,
+        )
     }
 
     /// Emit a constructor call from already-lowered argument expressions.
@@ -1330,8 +1420,42 @@ impl<'a> Ctx<'a> {
                 let l = self.lower_expr(lhs, &GoTy::Any);
                 let r = self.lower_expr(rhs, &GoTy::Any);
                 if let Some(b) = go_binop(op) {
-                    let ty = if is_cmp(op) { GoTy::Bare(Prim::Bool) } else { l.ty.clone() };
-                    GoExpr::new(GoExprKind::Binary(b, Box::new(l), Box::new(r)), ty)
+                    // Both operands statically a MATCHING primitive → Go's native
+                    // operator (`count + 1`, `n < 10`, `s == "q"`). Otherwise an
+                    // operand is `any` (a kernel / `rt.IntDiv` return, a case
+                    // binder that stayed flex): Go rejects `int + any` / `any >
+                    // any`, so route through the runtime's any-based helper
+                    // (`rt.Add`/`rt.Lte`/…) — result `any`, narrowed at the use
+                    // slot. Matches the oracle (`rt.Sub(7, rt.IntDiv(sq, 8))`).
+                    let both_prim = matches!(l.ty, GoTy::Bare(_))
+                        && matches!(r.ty, GoTy::Bare(_))
+                        && l.ty == r.ty;
+                    if both_prim {
+                        let ty = if is_cmp(op) { GoTy::Bare(Prim::Bool) } else { l.ty.clone() };
+                        return GoExpr::new(GoExprKind::Binary(b, Box::new(l), Box::new(r)), ty);
+                    }
+                    if op == "&&" || op == "||" {
+                        // Logical ops need bool operands; coerce, keep the Go op.
+                        let lb = self.coerce_if_needed(l, &GoTy::Bare(Prim::Bool));
+                        let rb = self.coerce_if_needed(r, &GoTy::Bare(Prim::Bool));
+                        return GoExpr::new(
+                            GoExprKind::Binary(b, Box::new(lb), Box::new(rb)),
+                            GoTy::Bare(Prim::Bool),
+                        );
+                    }
+                    let helper = match op {
+                        "+" => "rt.Add",
+                        "-" => "rt.Sub",
+                        "*" => "rt.Mul",
+                        "==" => "rt.Eq",
+                        "/=" => "rt.NotEq",
+                        "<" => "rt.Lt",
+                        ">" => "rt.Gt",
+                        "<=" => "rt.Lte",
+                        ">=" => "rt.Gte",
+                        _ => "rt.Add",
+                    };
+                    call_rt(helper, vec![widen(l), widen(r)], GoTy::Any)
                 } else {
                     let rtname = match op {
                         "//" => "rt.IntDiv",
@@ -1464,15 +1588,25 @@ impl<'a> Ctx<'a> {
         // `lower_expr` coerces the block to the caller's `expected` if needed.
         let b = self.lower_expr(base, &GoTy::Any);
         let uty = b.ty.clone();
+        // Declared field types of the base record `_R` — so each updated field's
+        // value lowers with its Go field type as `expected` (a kernel `any`
+        // return like `rt.Basics_not(...)` is then coerced to the field's `bool`,
+        // not fed raw into a typed struct field — `go build` rejects the latter).
+        let field_tys: HashMap<String, Ty> = match &uty {
+            GoTy::Named(n, _) => self
+                .record_fields
+                .get(n)
+                .map(|fs| fs.iter().map(|(fn_, t)| (fn_.clone(), t.clone())).collect())
+                .unwrap_or_default(),
+            _ => HashMap::new(),
+        };
         let mut stmts = vec![GoStmt::Short("_u".into(), b)];
         let uref = GoExpr::new(GoExprKind::Ident("_u".into()), uty.clone());
         for (n, v) in fields {
-            let lowered = self.lower_expr(*v, &GoTy::Any);
-            stmts.push(GoStmt::AssignField(
-                uref.clone(),
-                capitalize(n.as_str()),
-                lowered,
-            ));
+            let cap = capitalize(n.as_str());
+            let expected = field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+            let lowered = self.lower_expr(*v, &expected);
+            stmts.push(GoStmt::AssignField(uref.clone(), cap, lowered));
         }
         stmts.push(GoStmt::Return(Some(uref)));
         // Return the block typed as the base record; the caller's `lower_expr`
@@ -1565,7 +1699,19 @@ impl<'a> Ctx<'a> {
     fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
         let branches = branches.to_vec();
         let subj = self.lower_expr(subject, &GoTy::Any);
-        let mut subj_ty = self.expr_ty(subject);
+        // `_subj := subj` binds `_subj` to EXACTLY the lowered subject's Go type,
+        // so that is the authoritative type for payload extraction — it can be
+        // more concrete than the caller's recorded inference (a callee whose
+        // recovered return is `SkyResult[E, []map]` while the call site inferred
+        // `SkyResult[E, []any]`). Trusting the recorded type there mislabels the
+        // `Ok rows` binder `[]any` and `return rows` skips its `[]map → []any`
+        // coercion (example 17). Fall back to the recorded type only when the
+        // lowered subject is itself `any`.
+        let mut subj_ty = if subj.ty != GoTy::Any {
+            subj.ty.clone()
+        } else {
+            self.expr_ty(subject)
+        };
         // When the subject's Go type is `any` (a record field / FFI value the
         // per-def inference couldn't pin) but the branches match a USER ADT /
         // iota constructor, `_subj.Tag` / `_subj == Iota_Const` fail to compile
@@ -1649,12 +1795,27 @@ impl<'a> Ctx<'a> {
             Pattern::Anything | Pattern::Unit => (None, vec![]),
             Pattern::Var(id) => {
                 let name = self.fresh_local_named(*id, None);
-                // Register the bound var's REAL Go type (the subject's), so a
-                // later reference coerces to its use-slot rather than trusting
-                // the slot type. Critical for cons tails bound from
-                // `rt.SkyTailSlice` (`[]any`) that flow into a `[]T` param.
-                self.local_tys.insert(*id, subj.ty.clone());
-                (None, vec![GoStmt::Short(name, subj.clone())])
+                // When the payload is extracted as `any` (a container of
+                // `SkyResult[any,any]`/`SkyMaybe[any]` whose element inference
+                // stayed flex) but the binder's OWN inferred type is concrete
+                // (`Ok profile` used as `profile.Name` → `profile : Profile`),
+                // coerce the extracted value to the binder's type so field /
+                // ctor access type-checks. Narrowing-only: guarded on the
+                // subject being `any`, so typed containers keep their exact
+                // element type (and the coercion elides via `from == to`).
+                let recorded = self.types.locals.get(id).cloned().map(|t| self.goty(&t));
+                let bound = match recorded {
+                    Some(rt) if subj.ty == GoTy::Any && rt != GoTy::Any => {
+                        self.coerce_if_needed(subj.clone(), &rt)
+                    }
+                    _ => subj.clone(),
+                };
+                // Register the bound var's REAL Go type, so a later reference
+                // coerces to its use-slot rather than trusting the slot type.
+                // Critical for cons tails bound from `rt.SkyTailSlice` (`[]any`)
+                // that flow into a `[]T` param.
+                self.local_tys.insert(*id, bound.ty.clone());
+                (None, vec![GoStmt::Short(name, bound)])
             }
             Pattern::Int(n) => (
                 Some(GoExpr::new(
