@@ -56,6 +56,22 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec![".".into()]),
                     ..Default::default()
                 }),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                document_symbol_provider: Some(OneOf::Left(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: sky_lsp::semantic_legend(),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            range: Some(false),
+                            work_done_progress_options: Default::default(),
+                        },
+                    ),
+                ),
                 ..Default::default()
             },
         })
@@ -111,6 +127,44 @@ impl LanguageServer for Backend {
         let a = self.analysis.lock().await;
         let items = a.completion(&p.text_document.uri, p.position);
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let p = params.text_document_position;
+        let include_decl = params.context.include_declaration;
+        let a = self.analysis.lock().await;
+        Ok(Some(a.references(&p.text_document.uri, p.position, include_decl)))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let a = self.analysis.lock().await;
+        Ok(a.prepare_rename(&params.text_document.uri, params.position))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let p = params.text_document_position;
+        let a = self.analysis.lock().await;
+        Ok(a.rename(&p.text_document.uri, p.position, &params.new_name))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let a = self.analysis.lock().await;
+        let syms = a.document_symbols(&params.text_document.uri);
+        Ok(Some(DocumentSymbolResponse::Nested(syms)))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let a = self.analysis.lock().await;
+        Ok(a.semantic_tokens(&params.text_document.uri))
     }
 }
 

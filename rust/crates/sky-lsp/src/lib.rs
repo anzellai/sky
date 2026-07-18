@@ -17,14 +17,17 @@
 //! integration-tested directly; `main.rs` is the thin async transport wrapper.
 
 use base::{DefId, FileId, ModuleId, Span};
-use hir::{FieldOcc, ImportSource, RefOcc, Res, ResolveResult, SourceDb, TypeOcc};
-use std::collections::{HashMap, HashSet};
+use hir::{DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SourceDb, TypeOcc};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use syntax::SyntaxKind;
 use ty::{Ty, Typer};
 
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, Hover, HoverContents,
-    Location, MarkupContent, MarkupKind, Position, Range, Url,
+    CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, DocumentSymbol, Hover,
+    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
+    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
+    SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 /// One loaded document: its module name, parsed tree, source text, and url.
@@ -371,6 +374,569 @@ impl Analysis {
         let checked = ty::check_modules(&db, &[module]);
         out.extend(checked.diagnostics);
         out.into_iter().map(|d| to_lsp_diag(text, &d)).collect()
+    }
+
+    // ---- references / rename target resolution -------------------------
+
+    /// Resolve the cursor to a rename/reference target plus the *name* span at
+    /// the cursor (already narrowed to the identifier token, so a qualified
+    /// `M.foo` reports only `foo`). Reuses the same occurrence index + candidate
+    /// selection hover/goto use — no new index (doc 10 §references/rename).
+    fn resolve_target(&self, resolved: &ResolveResult, off: u32) -> Option<(Target, Span)> {
+        let cand = best_candidate(resolved, off)?;
+        match cand {
+            Cand::Ref(o) => {
+                let name_span = self.narrow_to_name(o.span);
+                let t = match &o.res {
+                    Res::Def(d) => Target::Global(*d),
+                    Res::Ctor(cr) => Target::Global(cr.def),
+                    Res::Local(l) => Target::Local {
+                        owner: o.owner,
+                        local: *l,
+                    },
+                    Res::Kernel { module, func } => Target::Kernel {
+                        module: module.as_str().to_string(),
+                        func: func.as_str().to_string(),
+                    },
+                    Res::Foreign { .. } | Res::Error => return None,
+                };
+                Some((t, name_span))
+            }
+            Cand::Type(o) => Some((Target::Global(o.con), o.span)),
+            Cand::Field(o) => Some((Target::Field(o.field.as_str().to_string()), o.span)),
+        }
+    }
+
+    /// The kind of a `DefId` (value / type / ctor), for rename validation +
+    /// symbol classification. `None` when the def is a builtin (Prelude) — those
+    /// are not renameable.
+    fn def_kind(&self, db: &SourceDb, d: DefId) -> Option<DefKind> {
+        let loc = db.defs().borrow().loc(d)?;
+        if loc.module.index() == u32::MAX {
+            return None; // builtin/Prelude — no rename
+        }
+        Some(loc.kind)
+    }
+
+    /// Narrow an occurrence span down to its trailing identifier token, so a
+    /// qualified reference (`M.foo`, recorded as the whole `QualRefExpr` node)
+    /// yields just the `foo` token's span. Simple references already are the
+    /// bare token, so we only pay the tree walk when the span text contains `.`.
+    fn narrow_to_name(&self, span: Span) -> Span {
+        if !self.slice(span).contains('.') {
+            return span;
+        }
+        let mi = span.file.index() as usize;
+        let Some(doc) = self.docs.get(mi) else {
+            return span;
+        };
+        let mut best = span;
+        for el in doc.parse.syntax().descendants_with_tokens() {
+            if let Some(t) = el.as_token() {
+                if matches!(t.kind(), SyntaxKind::LowerIdent | SyntaxKind::UpperIdent) {
+                    let r = t.text_range();
+                    let (s, e) = (u32::from(r.start()), u32::from(r.end()));
+                    if s >= span.range.0 && e <= span.range.1 {
+                        best = Span::new(span.file, s, e); // last one within wins
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    /// Every occurrence span of `target` across the workspace. Declarations are
+    /// included iff `include_decl`. Deterministic order: (file, start) sorted,
+    /// deduplicated (L4).
+    fn collect_occurrences(&self, db: &SourceDb, target: &Target, include_decl: bool) -> Vec<Span> {
+        let mut out: Vec<Span> = Vec::new();
+        match target {
+            Target::Local { owner, local } => {
+                // Locals never escape their body → resolve only the owner's
+                // module. The binder site is itself a `ref_occs` entry
+                // (`record_binder`), so all uses + the declaration are covered.
+                // NB: bind the module out of the borrow BEFORE calling
+                // `hir::resolve` (which takes `defs().borrow_mut()`), else the
+                // if-let temporary keeps the shared borrow alive across it.
+                let owner_mod = db.defs().borrow().loc(*owner).map(|l| l.module);
+                if let Some(m) = owner_mod {
+                    let r = hir::resolve(db, m);
+                    for o in &r.ref_occs {
+                        if o.owner == *owner {
+                            if let Res::Local(l) = &o.res {
+                                if l == local {
+                                    out.push(o.span);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Target::Global(d) => {
+                for mi in 0..self.docs.len() {
+                    let m = ModuleId(mi as u32);
+                    let r = hir::resolve(db, m);
+                    for o in &r.ref_occs {
+                        if res_is_def(&o.res, *d) {
+                            out.push(self.narrow_to_name(o.span));
+                        }
+                    }
+                    for t in &r.type_occs {
+                        if t.con == *d {
+                            out.push(t.span);
+                        }
+                    }
+                    if include_decl {
+                        for (id, s) in &r.def_spans {
+                            if id == d {
+                                out.push(*s);
+                            }
+                        }
+                        // A `foo : T` annotation name shares the def's identity
+                        // but is a separate top-level decl not in `def_spans`;
+                        // add it so rename touches the signature too.
+                        for s in self.annotation_name_spans(db, m, *d) {
+                            out.push(s);
+                        }
+                    }
+                }
+            }
+            Target::Kernel { module, func } => {
+                for mi in 0..self.docs.len() {
+                    let m = ModuleId(mi as u32);
+                    let r = hir::resolve(db, m);
+                    for o in &r.ref_occs {
+                        if let Res::Kernel { module: km, func: kf } = &o.res {
+                            if km.as_str() == module && kf.as_str() == func {
+                                out.push(self.narrow_to_name(o.span));
+                            }
+                        }
+                    }
+                }
+            }
+            Target::Field(name) => {
+                for mi in 0..self.docs.len() {
+                    let m = ModuleId(mi as u32);
+                    let r = hir::resolve(db, m);
+                    for o in &r.field_occs {
+                        if o.field.as_str() == name {
+                            out.push(o.span);
+                        }
+                    }
+                    if include_decl {
+                        for f in &r.field_decls {
+                            if f.field.as_str() == name {
+                                out.push(f.span);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|s| (s.file.index(), s.range.0, s.range.1));
+        out.dedup_by_key(|s| (s.file.index(), s.range.0, s.range.1));
+        out
+    }
+
+    /// Top-level `name : T` annotation-name spans in module `m` whose identifier
+    /// matches def `d`'s name — recovers the signature occurrence the resolver's
+    /// `def_spans` (which records the `name =` value site) does not carry.
+    fn annotation_name_spans(&self, db: &SourceDb, m: ModuleId, d: DefId) -> Vec<Span> {
+        let Some(loc) = db.defs().borrow().loc(d) else {
+            return Vec::new();
+        };
+        if loc.module != m || loc.kind != DefKind::Value {
+            return Vec::new();
+        }
+        let name = loc.name.as_str().to_string();
+        let mut out = Vec::new();
+        for node in db.module_parse(m).syntax().children() {
+            if node.kind() == SyntaxKind::TypeAnnoDecl {
+                if let Some(tok) = node
+                    .children_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .find(|t| t.kind() == SyntaxKind::LowerIdent)
+                {
+                    if tok.text() == name {
+                        let r = tok.text_range();
+                        out.push(Span::new(
+                            FileId(m.index()),
+                            u32::from(r.start()),
+                            u32::from(r.end()),
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // ---- textDocument/references ---------------------------------------
+
+    pub fn references(&self, url: &Url, pos: Position, include_decl: bool) -> Vec<Location> {
+        let Some(idx) = self.index_of(url) else {
+            return Vec::new();
+        };
+        let text = &self.docs[idx].text;
+        let Some(off) = offset_of(text, pos) else {
+            return Vec::new();
+        };
+        let db = self.build_db();
+        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let Some((target, _)) = self.resolve_target(&resolved, off) else {
+            return Vec::new();
+        };
+        self.collect_occurrences(&db, &target, include_decl)
+            .into_iter()
+            .filter_map(|s| self.location(s))
+            .collect()
+    }
+
+    // ---- textDocument/prepareRename ------------------------------------
+
+    pub fn prepare_rename(&self, url: &Url, pos: Position) -> Option<PrepareRenameResponse> {
+        let idx = self.index_of(url)?;
+        let text = &self.docs[idx].text;
+        let off = offset_of(text, pos)?;
+        let db = self.build_db();
+        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let (target, span) = self.resolve_target(&resolved, off)?;
+        if !self.is_renameable(&db, &target) {
+            return None;
+        }
+        Some(PrepareRenameResponse::Range(span_to_range(text, span)))
+    }
+
+    fn is_renameable(&self, db: &SourceDb, target: &Target) -> bool {
+        match target {
+            Target::Local { .. } => true,
+            Target::Global(d) => self.def_kind(db, *d).is_some(),
+            // A kernel/builtin function has no Sky definition site; a field
+            // rename would need whole-program record-shape analysis to be safe.
+            Target::Kernel { .. } | Target::Field(_) => false,
+        }
+    }
+
+    // ---- textDocument/rename -------------------------------------------
+
+    pub fn rename(&self, url: &Url, pos: Position, new_name: &str) -> Option<WorkspaceEdit> {
+        let idx = self.index_of(url)?;
+        let text = &self.docs[idx].text;
+        let off = offset_of(text, pos)?;
+        let db = self.build_db();
+        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let (target, _) = self.resolve_target(&resolved, off)?;
+        if !self.is_renameable(&db, &target) {
+            return None;
+        }
+        // The new name must match the lexical class of what it replaces: values
+        // + locals are lower-ident; types + constructors are upper-ident.
+        let upper = match &target {
+            Target::Global(d) => matches!(
+                self.def_kind(&db, *d),
+                Some(DefKind::TypeCon | DefKind::TypeAlias | DefKind::Ctor)
+            ),
+            _ => false,
+        };
+        if !is_valid_ident(new_name, upper) {
+            return None;
+        }
+        let spans = self.collect_occurrences(&db, &target, true);
+        if spans.is_empty() {
+            return None;
+        }
+        // Group by document, sorted edits per file (deterministic — L4).
+        let mut by_url: BTreeMap<String, (Url, Vec<TextEdit>)> = BTreeMap::new();
+        for s in spans {
+            let Some(doc) = self.docs.get(s.file.index() as usize) else {
+                continue;
+            };
+            let range = span_to_range(&doc.text, s);
+            let entry = by_url
+                .entry(doc.url.to_string())
+                .or_insert_with(|| (doc.url.clone(), Vec::new()));
+            entry.1.push(TextEdit {
+                range,
+                new_text: new_name.to_string(),
+            });
+        }
+        let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        for (_, (u, mut edits)) in by_url {
+            edits.sort_by_key(|e| (e.range.start.line, e.range.start.character));
+            changes.insert(u, edits);
+        }
+        Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        })
+    }
+
+    // ---- textDocument/documentSymbol -----------------------------------
+
+    pub fn document_symbols(&self, url: &Url) -> Vec<DocumentSymbol> {
+        let Some(idx) = self.index_of(url) else {
+            return Vec::new();
+        };
+        let text = &self.docs[idx].text.clone();
+        let db = self.build_db();
+        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let mut out = Vec::new();
+        for (d, span) in &resolved.def_spans {
+            let Some(loc) = db.defs().borrow().loc(*d) else {
+                continue;
+            };
+            let (kind, keep) = match loc.kind {
+                DefKind::Value => (SymbolKind::FUNCTION, true),
+                DefKind::TypeCon => (SymbolKind::ENUM, true),
+                DefKind::TypeAlias => (SymbolKind::STRUCT, true),
+                DefKind::Ctor => (SymbolKind::ENUM_MEMBER, false), // nested under types
+            };
+            if !keep {
+                continue;
+            }
+            let range = span_to_range(text, *span);
+            #[allow(deprecated)]
+            out.push(DocumentSymbol {
+                name: loc.name.as_str().to_string(),
+                detail: None,
+                kind,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            });
+        }
+        out
+    }
+
+    // ---- textDocument/semanticTokens/full ------------------------------
+
+    pub fn semantic_tokens(&self, url: &Url) -> Option<SemanticTokensResult> {
+        let idx = self.index_of(url)?;
+        let text = self.docs[idx].text.clone();
+        let db = self.build_db();
+        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+
+        // Span-keyed classification from the occurrence index. First writer wins
+        // (type/field beat the coarser ref span at the same key).
+        let mut exact: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut ref_ranges: Vec<(u32, u32, u32)> = Vec::new();
+        for o in &resolved.type_occs {
+            exact.entry(o.span.range).or_insert(TOK_TYPE);
+        }
+        for o in &resolved.field_occs {
+            exact.entry(o.span.range).or_insert(TOK_PROPERTY);
+        }
+        for o in &resolved.ref_occs {
+            let tt = classify_res(&o.res);
+            exact.entry(o.span.range).or_insert(tt);
+            ref_ranges.push((o.span.range.0, o.span.range.1, tt));
+        }
+        for b in &resolved.binders {
+            exact.entry(b.span.range).or_insert(TOK_PARAMETER);
+        }
+        for (d, s) in &resolved.def_spans {
+            let tt = match db.defs().borrow().loc(*d).map(|l| l.kind) {
+                Some(DefKind::Value) => TOK_FUNCTION,
+                Some(DefKind::TypeCon) | Some(DefKind::TypeAlias) => TOK_TYPE,
+                Some(DefKind::Ctor) => TOK_ENUM_MEMBER,
+                None => TOK_TYPE,
+            };
+            exact.entry(s.range).or_insert(tt);
+        }
+
+        let tokens: Vec<syntax::SyntaxToken> = resolved_tokens(&db, ModuleId(idx as u32));
+        let mut data: Vec<SemanticToken> = Vec::new();
+        let (mut prev_line, mut prev_char) = (0u32, 0u32);
+        for (i, t) in tokens.iter().enumerate() {
+            let Some(tt) = classify_token(t, &tokens, i, &exact, &ref_ranges) else {
+                continue;
+            };
+            let ttext = t.text();
+            if ttext.contains('\n') {
+                continue; // LSP tokens must not span lines
+            }
+            let r = t.text_range();
+            let start = u32::from(r.start());
+            let pos = position_at(&text, start);
+            let length: u32 = ttext.chars().map(|c| c.len_utf16() as u32).sum();
+            if length == 0 {
+                continue;
+            }
+            let delta_line = pos.line - prev_line;
+            let delta_start = if delta_line == 0 {
+                pos.character - prev_char
+            } else {
+                pos.character
+            };
+            data.push(SemanticToken {
+                delta_line,
+                delta_start,
+                length,
+                token_type: tt,
+                token_modifiers_bitset: 0,
+            });
+            prev_line = pos.line;
+            prev_char = pos.character;
+        }
+        Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        }))
+    }
+}
+
+// ---- references / rename / semantic-token support ---------------------
+
+/// What a cursor resolves to for references + rename (doc 10). `Global` folds
+/// value / constructor / type into one `DefId` — equality alone identifies the
+/// symbol (distinct `DefKind`s never share an id).
+enum Target {
+    Global(DefId),
+    Local { owner: DefId, local: LocalId },
+    Kernel { module: String, func: String },
+    Field(String),
+}
+
+/// Does resolution `res` name top-level def `d` (value or constructor)?
+fn res_is_def(res: &Res, d: DefId) -> bool {
+    match res {
+        Res::Def(x) => *x == d,
+        Res::Ctor(cr) => cr.def == d,
+        _ => false,
+    }
+}
+
+/// A legal Sky identifier for rename: lower-ident for values/locals, upper-ident
+/// for types/constructors. First char sets the class; the rest is `[A-Za-z0-9_]`;
+/// keywords are rejected.
+fn is_valid_ident(name: &str, upper: bool) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    let head_ok = if upper {
+        first.is_ascii_uppercase()
+    } else {
+        first.is_ascii_lowercase() || first == '_'
+    };
+    if !head_ok {
+        return false;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    !matches!(
+        name,
+        "module" | "import" | "exposing" | "as" | "type" | "alias" | "foreign" | "if" | "then"
+            | "else" | "case" | "of" | "let" | "in" | "True" | "False"
+    )
+}
+
+// Semantic-token legend indices (doc 10 §semantic tokens — 12 types, frozen).
+const TOK_NAMESPACE: u32 = 0;
+const TOK_TYPE: u32 = 1;
+const TOK_FUNCTION: u32 = 2;
+const TOK_PARAMETER: u32 = 3;
+const TOK_VARIABLE: u32 = 4;
+const TOK_ENUM_MEMBER: u32 = 5;
+const TOK_KEYWORD: u32 = 6;
+const TOK_STRING: u32 = 7;
+const TOK_NUMBER: u32 = 8;
+const TOK_OPERATOR: u32 = 9;
+const TOK_COMMENT: u32 = 10;
+const TOK_PROPERTY: u32 = 11;
+
+/// The 12-type semantic-token legend, in index order (matches `TOK_*`).
+pub fn semantic_legend() -> SemanticTokensLegend {
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::NAMESPACE,
+            SemanticTokenType::TYPE,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::PARAMETER,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::ENUM_MEMBER,
+            SemanticTokenType::KEYWORD,
+            SemanticTokenType::STRING,
+            SemanticTokenType::NUMBER,
+            SemanticTokenType::OPERATOR,
+            SemanticTokenType::COMMENT,
+            SemanticTokenType::PROPERTY,
+        ],
+        token_modifiers: vec![],
+    }
+}
+
+fn classify_res(res: &Res) -> u32 {
+    match res {
+        Res::Local(_) => TOK_PARAMETER,
+        Res::Def(_) | Res::Kernel { .. } | Res::Foreign { .. } => TOK_FUNCTION,
+        Res::Ctor(_) => TOK_ENUM_MEMBER,
+        Res::Error => TOK_VARIABLE,
+    }
+}
+
+/// Every token of module `m` in document order (trivia included — comments carry
+/// a semantic-token class).
+fn resolved_tokens(db: &SourceDb, m: ModuleId) -> Vec<syntax::SyntaxToken> {
+    db.module_parse(m)
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .collect()
+}
+
+/// The next non-trivia token after index `i`.
+fn next_significant(tokens: &[syntax::SyntaxToken], i: usize) -> Option<&syntax::SyntaxToken> {
+    tokens[i + 1..].iter().find(|t| !t.kind().is_trivia())
+}
+
+fn classify_token(
+    t: &syntax::SyntaxToken,
+    tokens: &[syntax::SyntaxToken],
+    i: usize,
+    exact: &HashMap<(u32, u32), u32>,
+    ref_ranges: &[(u32, u32, u32)],
+) -> Option<u32> {
+    use SyntaxKind::*;
+    match t.kind() {
+        Whitespace | Newline => None,
+        LineComment | BlockComment => Some(TOK_COMMENT),
+        String | MultilineString | Char | StringChunk => Some(TOK_STRING),
+        Int | HexInt | Float => Some(TOK_NUMBER),
+        ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw | ForeignKw | IfKw | ThenKw
+        | ElseKw | CaseKw | OfKw | LetKw | InKw | TrueKw | FalseKw => Some(TOK_KEYWORD),
+        Op | Arrow | Backslash | Pipe | DotDot | Eq | Colon | Colon2 => Some(TOK_OPERATOR),
+        LowerIdent | UpperIdent => {
+            // A module qualifier (`M.`) is a namespace, not the thing after it.
+            if t.kind() == UpperIdent
+                && next_significant(tokens, i).map(|n| n.kind() == Dot).unwrap_or(false)
+            {
+                return Some(TOK_NAMESPACE);
+            }
+            let r = t.text_range();
+            let key = (u32::from(r.start()), u32::from(r.end()));
+            if let Some(tt) = exact.get(&key) {
+                return Some(*tt);
+            }
+            // Fall back to the smallest containing ref occurrence (a qualified
+            // ref's tail identifier lives inside the whole-`QualRef` span).
+            if let Some((_, _, tt)) = ref_ranges
+                .iter()
+                .filter(|(s, e, _)| *s <= key.0 && key.1 <= *e)
+                .min_by_key(|(s, e, _)| e - s)
+            {
+                return Some(*tt);
+            }
+            Some(if t.kind() == UpperIdent {
+                TOK_TYPE
+            } else {
+                TOK_VARIABLE
+            })
+        }
+        _ => None,
     }
 }
 

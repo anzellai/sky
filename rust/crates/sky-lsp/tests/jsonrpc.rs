@@ -226,6 +226,93 @@ impl Client {
             .collect()
     }
 
+    fn reference_lines(&mut self, line: u32, ch: u32, include_decl: bool) -> Vec<u64> {
+        let id = self.request(
+            "textDocument/references",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "position": {"line": line, "character": ch},
+                "context": {"includeDeclaration": include_decl}
+            }),
+        );
+        let r = self.await_response(id);
+        let mut out: Vec<u64> = r
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|loc| {
+                        loc.get("range")
+                            .and_then(|rg| rg.get("start"))
+                            .and_then(|s| s.get("line"))
+                            .and_then(Value::as_u64)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort_unstable();
+        out
+    }
+
+    /// Total edit count in a rename WorkspaceEdit (or None if the server
+    /// declined the rename).
+    fn rename_edit_count(&mut self, line: u32, ch: u32, new: &str) -> Option<usize> {
+        let id = self.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "position": {"line": line, "character": ch},
+                "newName": new
+            }),
+        );
+        let r = self.await_response(id);
+        let changes = r.get("changes")?.as_object()?;
+        Some(changes.values().filter_map(Value::as_array).map(|v| v.len()).sum())
+    }
+
+    fn document_symbol_names(&mut self) -> Vec<String> {
+        let id = self.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": main_uri()}}),
+        );
+        let r = self.await_response(id);
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.get("name").and_then(Value::as_str).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The decoded semantic tokens as absolute (line, char, token_type).
+    fn semantic_tokens(&mut self) -> Vec<(u64, u64, u64)> {
+        let id = self.request(
+            "textDocument/semanticTokens/full",
+            json!({"textDocument": {"uri": main_uri()}}),
+        );
+        let r = self.await_response(id);
+        let data: Vec<u64> = r
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        let (mut line, mut ch) = (0u64, 0u64);
+        for chunk in data.chunks(5) {
+            if chunk.len() < 5 {
+                break;
+            }
+            if chunk[0] == 0 {
+                ch += chunk[1];
+            } else {
+                line += chunk[0];
+                ch = chunk[1];
+            }
+            out.push((line, ch, chunk[3]));
+        }
+        out
+    }
+
     fn shutdown(mut self) {
         // Best-effort graceful stop, then hard-kill so the harness never blocks.
         let _ = Command::new("kill")
@@ -234,6 +321,106 @@ impl Client {
             .status();
         let _ = self.child.wait();
     }
+}
+
+/// Drive the M7 breadth capabilities (references / rename / documentSymbol /
+/// semanticTokens) through the real server binary end-to-end.
+#[test]
+fn breadth_capabilities_over_jsonrpc() {
+    // Legend indices mirror `sky_lsp::semantic_legend`.
+    const T_TYPE: u64 = 1;
+    const T_FUNCTION: u64 = 2;
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+
+    let mut pass = 0u32;
+    let mut fails: Vec<&str> = Vec::new();
+    let check = |name: &'static str, ok: bool, pass: &mut u32, fails: &mut Vec<&'static str>| {
+        if ok {
+            *pass += 1;
+        } else {
+            fails.push(name);
+        }
+    };
+
+    // references on the `abcLocal` use (line 17) → binder (16) + use (17).
+    check(
+        "references-let-binding",
+        c.reference_lines(17, 8, true) == vec![16, 17],
+        &mut pass,
+        &mut fails,
+    );
+    // references on the `applyMsg` use (line 32): incl-decl = anno+decl+use.
+    check(
+        "references-function-incl-decl",
+        c.reference_lines(32, 30, true) == vec![21, 22, 32],
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "references-function-excl-decl",
+        c.reference_lines(32, 30, false) == vec![32],
+        &mut pass,
+        &mut fails,
+    );
+
+    // rename the local `abcLocal` (2 sites) and the function `applyMsg` (3).
+    check(
+        "rename-local",
+        c.rename_edit_count(17, 8, "renamed") == Some(2),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "rename-function",
+        c.rename_edit_count(32, 30, "applyMsgV2") == Some(3),
+        &mut pass,
+        &mut fails,
+    );
+    // rename on the builtin `Int` (line 14) must be declined.
+    check(
+        "rename-builtin-rejected",
+        c.rename_edit_count(14, 11, "Foo").is_none(),
+        &mut pass,
+        &mut fails,
+    );
+
+    // documentSymbol surfaces the top-level defs + types.
+    let syms = c.document_symbol_names();
+    check(
+        "document-symbols",
+        ["stringify", "letDemo", "Model", "Msg", "applyMsg", "doubleIt"]
+            .iter()
+            .all(|n| syms.iter().any(|s| s == n)),
+        &mut pass,
+        &mut fails,
+    );
+
+    // semantic tokens classify `fromInt` (line 12,11) as function and `Model`
+    // (line 10,12) as type.
+    let toks = c.semantic_tokens();
+    check(
+        "semantic-tokens-kernel-function",
+        toks.iter().any(|&(l, ch, t)| l == 12 && ch == 11 && t == T_FUNCTION),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "semantic-tokens-type-name",
+        toks.iter().any(|&(l, ch, t)| l == 10 && ch == 12 && t == T_TYPE),
+        &mut pass,
+        &mut fails,
+    );
+
+    c.shutdown();
+
+    eprintln!("JSON-RPC breadth gate: {pass}/9 passed");
+    if !fails.is_empty() {
+        eprintln!("  failed: {fails:?}");
+    }
+    assert_eq!(pass, 9, "expected 9/9 breadth scenarios; failed: {fails:?}");
 }
 
 /// Drive all 17 nvim scenarios through the real server; report the pass count.
