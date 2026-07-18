@@ -8,6 +8,8 @@
 //!   1. byte-exact round-trip: `reprint(green_tree) == source_bytes` (L8);
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
+mod resolve_gate;
+
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = "xtask (rust bring-up) v0.1.0-m1";
@@ -20,6 +22,7 @@ fn main() {
             0
         }
         Some("roundtrip") => roundtrip(&args[1..]),
+        Some("resolve") => resolve_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
         Some("diff") => {
             println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");

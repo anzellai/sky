@@ -397,6 +397,8 @@ version = "0.1.0"
 dependencies = [
  "base",
  "diagnostics",
+ "indexmap",
+ "la-arena",
  "syntax",
 ]
 
@@ -1283,6 +1285,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "base",
+ "hir",
  "syntax",
 ]
 

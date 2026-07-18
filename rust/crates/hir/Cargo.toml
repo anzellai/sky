@@ -10,3 +10,5 @@ workspace = true
 base = { path = "../base" }
 syntax = { path = "../syntax" }
 diagnostics = { path = "../diagnostics" }
+indexmap.workspace = true
+la-arena.workspace = true

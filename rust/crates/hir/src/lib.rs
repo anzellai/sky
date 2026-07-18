@@ -2,66 +2,100 @@
 //! `hir` — desugared, name-resolved high-level IR: imports, scopes, `DefId`
 //! resolution, module items (doc 02, doc 05).
 //!
-//! M0 stub: the item/resolution vocabulary is seeded so downstream crates have
-//! types to name. M2 fills in real resolution (explicit-alias-wins qualifiers,
-//! E1001 collisions, Prelude-ctor shadowing).
+//! M2: real name resolution. `resolve(db, module)` builds a module environment
+//! (builtins → imports → local decls) and walks each top-level body, turning
+//! every reference into a [`Res`] (or a first-class [`Res::Error`] + diagnostic,
+//! L7). Cross-module visibility is demand-driven via [`SourceDb::module_exports`]
+//! — no 5-round fixpoint (doc 05 §8, L2). No globals: the environment is a value
+//! threaded down the walk (L1).
 
-use base::{DefId, ModuleId, Name, Span};
+mod cst;
+mod db;
+mod exports;
+mod hir;
+mod ids;
+mod kernel;
+mod resolve;
 
-/// A resolved top-level item in a module (doc 05).
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Item {
-    pub def: DefId,
-    pub name: Name,
-    pub span: Span,
-    pub kind: ItemKind,
-}
-
-/// The syntactic category of a resolved item. Exhaustive by design (L6) — no
-/// catch-all arm; new kinds force a compile error at every match site.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ItemKind {
-    Value,
-    TypeAlias,
-    UnionType,
-    Import,
-}
-
-/// The name-resolution result for one module: its items and how names bind.
-#[derive(Clone, Debug, Default)]
-pub struct ResolvedModule {
-    pub items: Vec<Item>,
-}
-
-impl ResolvedModule {
-    /// Resolve a `DefId` back to its item within this module.
-    pub fn item(&self, def: DefId) -> Option<&Item> {
-        self.items.iter().find(|i| i.def == def)
-    }
-}
-
-/// Placeholder resolution entry point. M2 replaces this with a real
-/// `resolve(ModuleId)` salsa query living in `skydb` over this crate's types.
-pub fn resolve_stub(_module: ModuleId) -> ResolvedModule {
-    ResolvedModule::default()
-}
+pub use db::{ImportSource, SourceDb};
+pub use exports::{ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
+pub use hir::{
+    Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId,
+};
+pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
+pub use kernel::{KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED};
+pub use resolve::{resolve, ClassA, ClassB, RefKind, ResolveResult};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use base::FileId;
 
+    fn db_with(modules: &[(&str, &str)]) -> SourceDb {
+        let mut db = SourceDb::new();
+        for (name, src) in modules {
+            let parse = syntax::parse(src, FileId(0));
+            db.add_module(name, parse);
+        }
+        db
+    }
+
     #[test]
-    fn resolves_an_item_by_def() {
-        let m = ResolvedModule {
-            items: vec![Item {
-                def: DefId(0),
-                name: Name::new("main"),
-                span: Span::new(FileId(0), 0, 4),
-                kind: ItemKind::Value,
-            }],
-        };
-        assert_eq!(m.item(DefId(0)).map(|i| i.name.as_str()), Some("main"));
-        assert!(m.item(DefId(1)).is_none());
+    fn resolves_prelude_and_kernel() {
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Std.Log exposing (println)\n\n\
+                   main =\n    println (String.fromInt 42)\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
+    fn let_forward_reference() {
+        let src = "x =\n    let\n        a = b\n        b = 5\n    in\n    a\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
+    fn unknown_qualifier_is_class_a() {
+        let src = "x =\n    NotARealModule.foo 1\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(r.class_a.len(), 1);
+        assert_eq!(r.class_a[0].qualifier.as_deref(), Some("NotARealModule"));
+    }
+
+    #[test]
+    fn cross_module_ctor_and_value() {
+        let dep = "module Lib exposing (Color(..), pick)\n\
+                   type Color = Red | Green\n\
+                   pick = Red\n";
+        let main = "module Main exposing (main)\n\
+                    import Lib exposing (Color(..), pick)\n\n\
+                    main =\n    case pick of\n        Red -> 1\n        Green -> 2\n";
+        let db = db_with(&[("Lib", dep), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
+    fn explicit_alias_wins() {
+        // `Db.x` → Std.Db (kernel); bare `conn` → Lib.Db.
+        let libdb = "module Lib.Db exposing (conn)\nconn = 0\n";
+        let main = "module Main exposing (main)\n\
+                    import Std.Db as Db\n\
+                    import Lib.Db exposing (conn)\n\n\
+                    main =\n    Db.exec conn\n";
+        let db = db_with(&[("Lib.Db", libdb), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
     }
 }
