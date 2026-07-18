@@ -829,6 +829,47 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// The recorded Sky type of an expression node, resolving a `Var(Local)`
+    /// through the per-local type table when the expr node itself carries no
+    /// recorded type (a bare local reference often does not).
+    fn sky_ty_of(&self, e: ExprId) -> Option<Ty> {
+        if let Some(t) = self.types.exprs.get(&e) {
+            return Some(t.clone());
+        }
+        if let Expr::Var(Res::Local(l)) = &self.body.exprs[e] {
+            return self.types.locals.get(l).cloned();
+        }
+        None
+    }
+
+    /// A `Dict.toList` on a `Dict Int v` / `Dict Float v` must lower to the
+    /// typed-key kernel entry point (`rt.Dict_toListIntKey` /
+    /// `rt.Dict_toListFloatKey`) — the underlying runtime map is `map[string]V`,
+    /// so the default `rt.Dict_toList` leaks stringified keys and any downstream
+    /// `rt.AsInt` on a key panics with TypeMismatch (Limitation #10). The key
+    /// type is read from the argument's HM-inferred `Dict k v` shape at the call
+    /// site (oracle: `rt.Dict_toListIntKey(byCounts)` vs
+    /// `rt.Dict_toList(rt.AsMapAny(totals))`).
+    fn dict_tolist_specialised(&self, base: &str, args: &[ExprId]) -> Option<&'static str> {
+        if base != "rt.Dict_toList" || args.len() != 1 {
+            return None;
+        }
+        match self.sky_ty_of(args[0])? {
+            Ty::App(dict, dargs) if dict.as_str() == "Dict" && dargs.len() == 2 => {
+                match &dargs[0] {
+                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Int" => {
+                        Some("rt.Dict_toListIntKey")
+                    }
+                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Float" => {
+                        Some("rt.Dict_toListFloatKey")
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Is `e` a Task-typed expression? Checks the recorded type first, then —
     /// for a call to an unannotated def whose result the caller inferred as a
     /// flex var — the callee's own inferred result type.
@@ -1231,9 +1272,25 @@ impl<'a> Ctx<'a> {
                         GoTy::Any,
                     );
                 }
+                // A func-typed struct field (`OnChange func(bool) any`) accessed
+                // in callee position must carry its REAL func type, not the
+                // expected slot type (`actual`, frequently `any` for a callee) —
+                // `lower_call` reads the callee's param types off this node to
+                // coerce `any`-returning kernel args (`rt.Basics_not`) into the
+                // concrete param slot (`bool`). Non-func fields keep the existing
+                // `actual` typing (zero baseline change).
+                let field_ty = match &b.ty {
+                    GoTy::Struct(fs) => fs
+                        .iter()
+                        .find(|(n, _)| n.as_str() == cap)
+                        .map(|(_, t)| t.clone())
+                        .filter(|t| matches!(t, GoTy::Func(_, _))),
+                    _ => None,
+                }
+                .unwrap_or_else(|| actual.clone());
                 GoExpr::new(
                     GoExprKind::Selector(Box::new(b), cap),
-                    actual.clone(),
+                    field_ty,
                 )
             }
             Expr::Record(fields) => self.lower_record(fields, actual),
@@ -1673,6 +1730,16 @@ impl<'a> Ctx<'a> {
                 None
             };
         let c = self.lower_expr(callee, &GoTy::Any);
+        // A non-`Def` callee (a typed Go func *value* — e.g. the checkbox cfg's
+        // `OnChange func(bool) any` struct field) carries its param types in its
+        // own lowered Go func type. Derive the arg-coercion targets from it so an
+        // `any`-returning kernel arg (`rt.Basics_not`) narrows to the concrete
+        // param slot (`bool`) via `rt.AsBool` — Go rejects a bare `any` in a
+        // typed param position ("need type assertion", example 37/38).
+        let param_gtys = param_gtys.or_else(|| match &c.ty {
+            GoTy::Func(ps, _) if ps.iter().any(|p| *p != GoTy::Any) => Some(ps.clone()),
+            _ => None,
+        });
         let largs: Vec<GoExpr> = args
             .iter()
             .enumerate()
@@ -1840,6 +1907,10 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // `Dict.toList` on a typed-key Dict routes to the typed-key entry point
+        // (`rt.Dict_toListIntKey` / `…FloatKey`) so keys re-parse to their Sky
+        // type instead of leaking the runtime `map[string]V` string keys.
+        let go = self.dict_tolist_specialised(go, args).unwrap_or(go);
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {

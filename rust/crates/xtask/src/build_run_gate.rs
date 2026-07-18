@@ -734,7 +734,44 @@ fn normalise_stdout(s: &str) -> String {
         .map(strip_leading_timestamp)
         .collect::<Vec<_>>()
         .join("\n");
-    strip_uuids(&strip_clock_times(&deiso)).trim().to_string()
+    strip_epoch_millis(&strip_uuids(&strip_clock_times(&deiso)))
+        .trim()
+        .to_string()
+}
+
+/// Replace a bare Unix epoch-millis integer (a maximal run of 13–19 ASCII
+/// digits, not part of a longer alphanumeric token) with `<ts>`. `Time.now` /
+/// `Time.unixMillis` output is volatile like a UUID or clock time — the compare
+/// should assert structure, not the wall-clock instant. 13 digits covers
+/// milliseconds through ~year 2286; the upper bound catches micro/nanos.
+/// Ordinary business integers in the corpus are ≤ 6 digits (cents, counts,
+/// ids), well under the floor, so this never masks meaningful values.
+fn strip_epoch_millis(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let start = i;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            let len = i - start;
+            // Only a run bounded by non-digits on both sides (a standalone
+            // number) and in the epoch-millis..nanos width band collapses.
+            let prev_alnum = start > 0 && chars[start - 1].is_ascii_alphanumeric();
+            let next_alnum = i < chars.len() && chars[i].is_ascii_alphanumeric();
+            if (13..=19).contains(&len) && !prev_alnum && !next_alnum {
+                out.push_str("<ts>");
+            } else {
+                out.extend(&chars[start..i]);
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Replace any RFC-4122 UUID (`8-4-4-4-12` hex, hyphenated) with `<uuid>`.

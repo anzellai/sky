@@ -4595,10 +4595,24 @@ func Dict_isEmpty(dict any) any {
 	return len(AsDict(unwrapAny(dict))) == 0
 }
 
+// sortedDictKeys returns the map's string keys in ascending lexical order.
+// Sky's Dict is Elm-shaped: enumeration (keys/values/toList/foldl) is defined
+// to visit entries in sorted-key order, which also makes output deterministic
+// across runs (Go map iteration is randomised).
+func sortedDictKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func Dict_keys(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for k := range m {
+	for _, k := range keys {
 		result = append(result, k)
 	}
 	return result
@@ -4606,9 +4620,10 @@ func Dict_keys(dict any) any {
 
 func Dict_values(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for _, v := range m {
-		result = append(result, v)
+	for _, k := range keys {
+		result = append(result, m[k])
 	}
 	return result
 }
@@ -4639,9 +4654,10 @@ func AsDict(v any) map[string]any {
 
 func Dict_toList(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for k, v := range m {
-		result = append(result, SkyTuple2{V0: k, V1: v})
+	for _, k := range keys {
+		result = append(result, SkyTuple2{V0: k, V1: m[k]})
 	}
 	return result
 }
@@ -4712,17 +4728,19 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 // Strings are boxed through `any(k)` so V=any inference works when
 // the caller's dict is map[string]V for any V.
 func Dict_keysT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
 	keys := make([]any, 0, len(d))
-	for k := range d {
+	for _, k := range sk {
 		keys = append(keys, any(k))
 	}
 	return keys
 }
 
 func Dict_valuesT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
 	vals := make([]any, 0, len(d))
-	for _, v := range d {
-		vals = append(vals, any(v))
+	for _, k := range sk {
+		vals = append(vals, any(d[k]))
 	}
 	return vals
 }
@@ -4824,17 +4842,29 @@ func Dict_fromListTA(list []any) any {
 // list" contract.
 func Dict_toListIntKey(dict any) any {
 	m := AsDict(unwrapAny(dict))
-	result := make([]any, 0, len(m))
+	// Parse each key to its Int form, then sort NUMERICALLY (Elm's Dict Int is
+	// ordered by the integer key, not its stringified form — "10" < "2"
+	// lexically but 2 < 10 numerically). Deterministic + Elm-faithful.
+	type ent struct {
+		k int
+		v any
+	}
+	ents := make([]ent, 0, len(m))
 	for k, v := range m {
 		// strconv.Atoi handles signed decimals; ParseFloat fallback
 		// covers the Float-rounded-to-Int corner case.
 		if n, err := strconv.Atoi(k); err == nil {
-			result = append(result, SkyTuple2{V0: n, V1: v})
+			ents = append(ents, ent{n, v})
 		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
-			result = append(result, SkyTuple2{V0: int(f), V1: v})
+			ents = append(ents, ent{int(f), v})
 		} else {
-			result = append(result, SkyTuple2{V0: 0, V1: v})
+			ents = append(ents, ent{0, v})
 		}
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
 	}
 	return result
 }
@@ -4844,13 +4874,22 @@ func Dict_toListIntKey(dict any) any {
 // failure falls back to 0.0.
 func Dict_toListFloatKey(dict any) any {
 	m := AsDict(unwrapAny(dict))
-	result := make([]any, 0, len(m))
+	type ent struct {
+		k float64
+		v any
+	}
+	ents := make([]ent, 0, len(m))
 	for k, v := range m {
 		if f, err := strconv.ParseFloat(k, 64); err == nil {
-			result = append(result, SkyTuple2{V0: f, V1: v})
+			ents = append(ents, ent{f, v})
 		} else {
-			result = append(result, SkyTuple2{V0: 0.0, V1: v})
+			ents = append(ents, ent{0.0, v})
 		}
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
 	}
 	return result
 }
@@ -4858,9 +4897,11 @@ func Dict_toListFloatKey(dict any) any {
 func Dict_foldl(fn any, acc any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := acc
-	for k, v := range m {
+	// Elm's Dict.foldl visits entries in ascending key order (also makes the
+	// fold deterministic despite Go's randomised map iteration).
+	for _, k := range sortedDictKeys(m) {
 		step := SkyCall(fn, k)
-		step2 := SkyCall(step, v)
+		step2 := SkyCall(step, m[k])
 		result = SkyCall(step2, result)
 	}
 	return result
