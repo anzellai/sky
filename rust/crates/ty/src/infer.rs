@@ -12,7 +12,7 @@
 use crate::sig::World;
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
-use base::Name;
+use base::{DefId, Name};
 use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SourceDb};
 use std::collections::HashMap;
 
@@ -60,6 +60,18 @@ pub struct Infer<'a> {
     /// Per-local recording: which locals bound to which type-var (params of the
     /// def + let/lambda binders). The lowerer reads these back for param types.
     local_vars: Vec<(LocalId, TyVarId)>,
+    /// The def currently being inferred. Its own body must NOT pick up its
+    /// pass-3-inferred polymorphic scheme at a recursive self-reference —
+    /// recursion is monomorphic, so the self-call shares the def's type rather
+    /// than instantiating a fresh polymorphic copy (which would split e.g.
+    /// `SkyResult[any,any]` vs `SkyResult[any,[]any]` in an accumulator helper).
+    self_def: Option<DefId>,
+    /// Whether to consult the pass-3 INFERRED schemes (`World::inferred_sigs`)
+    /// at a `Res::Def` call site. `true` only for the lowerer's typed table
+    /// (result pinning) — the accept-parity check (M3) leaves it `false` so a
+    /// combinator's precise inferred sig never flags a latent mismatch the
+    /// oracle accepts leniently (`Result.withDefault "" (loadEnv-shaped `()`)`).
+    use_inferred: bool,
 }
 
 impl<'a> Infer<'a> {
@@ -73,7 +85,23 @@ impl<'a> Infer<'a> {
             record_exprs: false,
             expr_vars: Vec::new(),
             local_vars: Vec::new(),
+            self_def: None,
+            use_inferred: false,
         }
+    }
+
+    /// Mark the def being inferred so its own body treats a recursive
+    /// self-reference monomorphically (see [`Infer::self_def`]).
+    pub fn with_self_def(mut self, def: Option<DefId>) -> Self {
+        self.self_def = def;
+        self
+    }
+
+    /// Consult pass-3 inferred schemes at call sites (lowerer only — see
+    /// [`Infer::use_inferred`]).
+    pub fn with_inferred(mut self, on: bool) -> Self {
+        self.use_inferred = on;
+        self
     }
 
     /// Infer a top-level def body, returning its read-back type (the result
@@ -123,6 +151,29 @@ impl<'a> Infer<'a> {
             locals.insert(lid, t);
         }
         (Some(result), exprs, locals)
+    }
+
+    /// Infer the FULL scheme of a (typically unannotated) top-level def:
+    /// `param0 -> … -> paramN -> result`, generalised over its residual vars.
+    /// Used to give unannotated stdlib combinators (`Result.map3`, `List.foldl`,
+    /// `List.map`, …) a real polymorphic signature so that applying them at a
+    /// call site pins the result type from the argument types (proper HM). The
+    /// scheme read-back maps every unbound flex/super var to a *distinct*
+    /// quantifier so two independent vars never collapse into one.
+    pub fn infer_def_scheme(&mut self, body: &Body) -> Option<Scheme> {
+        let root = body.root?;
+        let param_vars: Vec<TyVarId> = body
+            .params
+            .iter()
+            .map(|&p| self.infer_pat_fresh(body, p))
+            .collect();
+        let rv = self.infer_expr(body, root);
+        let full = param_vars
+            .into_iter()
+            .rev()
+            .fold(rv, |acc, pv| self.fun(pv, acc));
+        let ty = self.read_back_scheme(full);
+        Some(Scheme::generalize(ty))
     }
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
@@ -293,13 +344,30 @@ impl<'a> Infer<'a> {
                 .locals
                 .entry(id)
                 .or_insert_with(|| self.uf.fresh_flex()),
-            Res::Def(def) => match self.world.value_sigs.get(&def) {
-                Some(s) => {
+            Res::Def(def) => {
+                // Monomorphic recursion: the def's own body never instantiates
+                // its own scheme (see `self_def`).
+                // An ANNOTATED def uses its annotation even at a recursive
+                // self-reference — annotated recursion is sound HM (the sig is
+                // the fixed point). Only the def's own INFERRED (pass-3) scheme
+                // is skipped for self, so unannotated recursive helpers stay
+                // monomorphic (a polymorphic self-instantiation would split
+                // e.g. `SkyResult[any,any]` vs `SkyResult[any,[]any]`).
+                if let Some(s) = self.world.value_sigs.get(&def) {
                     let s = s.clone();
-                    self.instantiate(&s)
+                    return self.instantiate(&s);
                 }
-                None => self.uf.fresh_flex(),
-            },
+                if self.self_def == Some(def) {
+                    return self.uf.fresh_flex();
+                }
+                match self.world.inferred_sigs.get(&def) {
+                    Some(s) if self.use_inferred => {
+                        let s = s.clone();
+                        self.instantiate(&s)
+                    }
+                    _ => self.uf.fresh_flex(),
+                }
+            }
             Res::Kernel { module, func } => {
                 let key = (module.as_str().to_string(), func.as_str().to_string());
                 match self.world.kernel_sigs.get(&key) {
@@ -611,16 +679,33 @@ impl<'a> Infer<'a> {
 
     pub fn read_back(&mut self, v: TyVarId) -> Ty {
         let mut seen = std::collections::HashSet::new();
-        self.read_back_seen(v, &mut seen)
+        self.read_back_seen(v, &mut seen, false)
     }
 
-    fn read_back_seen(&mut self, v: TyVarId, seen: &mut std::collections::HashSet<TyVarId>) -> Ty {
+    /// Read-back for scheme generation: every unbound flex/super var becomes a
+    /// *distinct* quantifier `t<repr>` (super-constraints are dropped — lenient,
+    /// accept-more). This avoids (a) `Number → App("number")` unifying wrongly
+    /// against `Int`/`Float`, and (b) two independent `comparable`/`appendable`
+    /// vars collapsing onto one shared name and over-constraining the scheme.
+    fn read_back_scheme(&mut self, v: TyVarId) -> Ty {
+        let mut seen = std::collections::HashSet::new();
+        self.read_back_seen(v, &mut seen, true)
+    }
+
+    fn read_back_seen(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        scheme: bool,
+    ) -> Ty {
         let r = self.uf.find(v);
         if !seen.insert(r) {
             return Ty::Error; // cycle guard (anyEquivSeen, Solve.hs:1449)
         }
+        let super_var = |r: TyVarId| Ty::Var(Name::new(&format!("t{}", r.0)));
         let out = match self.uf.content(r) {
             Content::Flex => Ty::Var(Name::new(&format!("t{}", r.0))),
+            Content::FlexSuper(_) if scheme => super_var(r),
             Content::FlexSuper(SuperType::Number) => Ty::app("number", vec![]),
             Content::FlexSuper(SuperType::Comparable) => Ty::var("comparable"),
             Content::FlexSuper(SuperType::Appendable) => Ty::var("appendable"),
@@ -629,20 +714,20 @@ impl<'a> Infer<'a> {
             Content::Structure(ft) => match ft {
                 FlatTy::App(name, args) => Ty::App(
                     name,
-                    args.into_iter().map(|a| self.read_back_seen(a, seen)).collect(),
+                    args.into_iter().map(|a| self.read_back_seen(a, seen, scheme)).collect(),
                 ),
                 FlatTy::Fun(a, b) => Ty::Fun(
-                    Box::new(self.read_back_seen(a, seen)),
-                    Box::new(self.read_back_seen(b, seen)),
+                    Box::new(self.read_back_seen(a, seen, scheme)),
+                    Box::new(self.read_back_seen(b, seen, scheme)),
                 ),
                 FlatTy::Tuple(xs) => {
-                    Ty::Tuple(xs.into_iter().map(|x| self.read_back_seen(x, seen)).collect())
+                    Ty::Tuple(xs.into_iter().map(|x| self.read_back_seen(x, seen, scheme)).collect())
                 }
                 FlatTy::Unit => Ty::Unit,
                 FlatTy::Record(fs, ext) => {
                     let mut fields: Vec<(Name, Ty)> = fs
                         .into_iter()
-                        .map(|(n, t)| (n, self.read_back_seen(t, seen)))
+                        .map(|(n, t)| (n, self.read_back_seen(t, seen, scheme)))
                         .collect();
                     fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
                     let ext_name = ext.and_then(|e| match self.uf.content(e) {

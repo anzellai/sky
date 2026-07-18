@@ -65,8 +65,12 @@ impl<'a> Typer<'a> {
     }
 
     /// Infer `body`, returning the per-expression + per-local type table.
-    pub fn body_types(&self, body: &Body) -> BodyTypes {
-        let mut infer = Infer::new(&self.world, self.db);
+    /// `def` is the body's own DefId so a recursive self-reference stays
+    /// monomorphic (does not instantiate the def's own pass-3 scheme).
+    pub fn body_types(&self, def: DefId, body: &Body) -> BodyTypes {
+        let mut infer = Infer::new(&self.world, self.db)
+            .with_self_def(Some(def))
+            .with_inferred(true);
         let (result, exprs, locals) = infer.infer_def_typed(body);
         BodyTypes {
             result,
@@ -103,7 +107,7 @@ pub fn check_modules(db: &SourceDb, to_check: &[ModuleId]) -> CheckOutput {
 
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
-            let mut infer = Infer::new(&world, db);
+            let mut infer = Infer::new(&world, db).with_self_def(Some(*def));
             let inferred = infer.infer_def(body);
             for err in &infer.errors {
                 out.type_errors += 1;

@@ -70,7 +70,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         let resolved = hir::resolve(db, m);
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
-                let types = typer.body_types(body);
+                let types = typer.body_types(td.def, body);
                 let sig = typer.value_sig(td.def).map(|s| s.ty.clone());
                 defs.insert(
                     td.def,

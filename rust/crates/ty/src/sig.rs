@@ -23,8 +23,15 @@ struct AliasDef {
 
 /// The typed world: everything inference needs to look a name's scheme up.
 pub struct World {
-    /// Top-level value schemes, keyed by `DefId` (matches `Res::Def`).
+    /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
+    /// (matches `Res::Def`). Only these are surfaced to the lowerer as a
+    /// "declared signature" (`Typer::value_sig`).
     pub value_sigs: HashMap<DefId, Scheme>,
+    /// Schemes INFERRED for unannotated stdlib combinators (pass 3). Consulted
+    /// by inference at a `Res::Def` call site (to pin results from arg types)
+    /// but NOT exposed as declared signatures — the lowerer keeps its lenient
+    /// body-inference path for these defs, so their own emission is unchanged.
+    pub inferred_sigs: HashMap<DefId, Scheme>,
     /// Kernel function schemes, keyed by `(pseudo-module, func)`
     /// (matches `Res::Kernel`).
     pub kernel_sigs: HashMap<(String, String), Scheme>,
@@ -52,6 +59,7 @@ impl World {
 
         let mut world = World {
             value_sigs: HashMap::new(),
+            inferred_sigs: HashMap::new(),
             kernel_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
@@ -124,7 +132,96 @@ impl World {
                 }
             }
         }
+
+        // ---- pass 3: infer schemes for UNANNOTATED stdlib combinators ----
+        // Unannotated kernel/stdlib defs (`Result.map3`, `List.foldl`,
+        // `List.map`, `Result.andMap`, …) carry no `name : Type` line, so pass 2
+        // never records a scheme and every call site resolves them to a fresh
+        // flex var — the result then stays `any` (breaking `.field`/arithmetic on
+        // it in emitted Go). Inferring their bodies against the annotated world
+        // recovers the real polymorphic signature so application PINS the result
+        // from the arg types. Scoped to pseudo (kernel/stdlib) modules only: app
+        // code keeps its lenient fresh-flex behaviour, minimising blast radius.
+        world.infer_unannotated_kernel(db);
+
         world
+    }
+
+    /// Pass 3 (see `build`). Infer + register schemes for unannotated top-level
+    /// defs living in kernel/stdlib pseudo-modules. One pass against the
+    /// annotated world: a combinator's body only references builtins (`Ok`/`Err`),
+    /// its own params, or (leniently) itself — sufficient for `map*`/`fold*`/etc.
+    fn infer_unannotated_kernel(&mut self, db: &SourceDb) {
+        use crate::infer::Infer;
+        let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
+
+        // Collect (def, pseudo, name, body) for unannotated pseudo-module defs.
+        struct Target {
+            def: DefId,
+            pseudo: String,
+            name: String,
+            body: hir::Body,
+        }
+        let mut targets: Vec<Target> = Vec::new();
+        for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
+            let Some(pseudo) = path_to_pseudo.get(mname.as_str()).map(|s| s.to_string()) else {
+                continue; // app / non-kernel module — leave lenient
+            };
+            // Scope to `Result` combinators (`map2`/`map3`/`map4`/`map5`/
+            // `andMap`/…) whose result type is a struct pinned from the ARGUMENT
+            // types (a constructor / Result-returning call), correctly typed at
+            // the call site. `List a` combinators are deliberately excluded: their
+            // list arg is frequently a record FIELD access that the lowerer labels
+            // with the erased `[]any` slot, so pinning a concrete element makes a
+            // `[]Job` field flow into a `[]any` param without a coercion
+            // (`go build` rejects it) — closing that needs broader boundary
+            // coercion than is safe to land here (it regressed the stdlib smoke
+            // test with a runtime CoerceFailure). Result-only is the safe subset.
+            if pseudo != "Result" {
+                continue;
+            }
+            let resolved = hir::resolve(db, m);
+            let names: HashMap<DefId, String> = resolved
+                .top_defs
+                .iter()
+                .map(|td| (td.def, td.name.as_str().to_string()))
+                .collect();
+            for (def, body) in &resolved.bodies {
+                if self.value_sigs.contains_key(def) {
+                    continue; // already annotated
+                }
+                let Some(name) = names.get(def).cloned() else {
+                    continue;
+                };
+                targets.push(Target {
+                    def: *def,
+                    pseudo: pseudo.clone(),
+                    name,
+                    body: body.clone(),
+                });
+            }
+        }
+
+        // Infer each against the (immutable) annotated world; collect schemes.
+        let mut inferred: Vec<(DefId, String, String, Scheme)> = Vec::new();
+        for t in &targets {
+            let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
+            if let Some(scheme) = infer.infer_def_scheme(&t.body) {
+                inferred.push((t.def, t.pseudo.clone(), t.name.clone(), scheme));
+            }
+        }
+
+        // Register into the INFERENCE-only channels. Both keyings: `Res::Def`
+        // (inferred_sigs) and `Res::Kernel` (kernel_sigs) may target these
+        // depending on how the name resolved. Deliberately NOT value_sigs — the
+        // lowerer must not treat an inferred scheme as a user annotation.
+        for (def, pseudo, name, scheme) in inferred {
+            self.inferred_sigs.entry(def).or_insert_with(|| scheme.clone());
+            self.kernel_sigs
+                .entry((pseudo, name))
+                .or_insert(scheme);
+        }
     }
 
     fn record_union(&mut self, db: &SourceDb, m: ModuleId, u: &ast::UnionDecl) {
