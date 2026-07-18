@@ -8,3 +8,4 @@ workspace = true
 
 [dependencies]
 syntax = { path = "../syntax" }
+base = { path = "../base" }

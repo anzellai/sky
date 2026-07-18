@@ -48,6 +48,21 @@ struct Emitted {
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
 /// clock, no environment reads reach the emitted bytes.
 fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, String> {
+    assemble_and_emit_with(repo_root, example_dir, &[], None)
+}
+
+/// [`assemble_and_emit`] with two additive knobs used by `sky test`
+/// (`testrunner`): `extra_dirs` are further source roots to load alongside
+/// `src/` (e.g. the project's `tests/` tree holding the suite module), and
+/// `entry_module` overrides the entry-detection heuristic with an explicit
+/// module name (the synthesised `SkyTestEntry__`) so the entry is unambiguous
+/// even when a real `Main` also exists under `src/`.
+fn assemble_and_emit_with(
+    repo_root: &Path,
+    example_dir: &Path,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+) -> Result<Emitted, String> {
     // ---- assemble the source db (stdlib + example src) ----
     let mut db = SourceDb::new();
     let stdlib = load_dir(&repo_root.join("sky-stdlib"));
@@ -68,19 +83,29 @@ fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, St
         db.add_module(&n, parse);
     }
 
-    let locals = load_dir(&example_dir.join("src"));
+    let mut locals = load_dir(&example_dir.join("src"));
+    for dir in extra_dirs {
+        locals.extend(load_dir(dir));
+    }
     if locals.is_empty() {
         return Err("no .sky under src/".into());
     }
     let mut entry = None;
     for (n, parse) in locals {
         let id = db.add_module(&n, parse);
-        if n == "Main" || n.ends_with(".Main") || n == "main" {
+        let is_entry = match entry_module {
+            Some(want) => n == want,
+            None => n == "Main" || n.ends_with(".Main") || n == "main",
+        };
+        if is_entry {
             entry = Some(id);
         }
     }
     let Some(entry) = entry else {
-        return Err("no entry module named Main".into());
+        return Err(match entry_module {
+            Some(want) => format!("no entry module named {want}"),
+            None => "no entry module named Main".into(),
+        });
     };
 
     // ---- lower + emit ----
@@ -114,9 +139,33 @@ pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<Strin
 
 /// Build one example directory, returning a structured report (never panics).
 pub fn build_example(opts: &BuildOptions) -> BuildReport {
+    build_inner(opts, &[], None)
+}
+
+/// Like [`build_example`], but with extra source roots (e.g. the project's
+/// `tests/` tree) and an explicit entry-module override — the shape `sky test`
+/// needs. Same write + `go build` + optional run tail as [`build_example`].
+pub fn build_project(
+    opts: &BuildOptions,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+) -> BuildReport {
+    build_inner(opts, extra_dirs, entry_module)
+}
+
+fn build_inner(
+    opts: &BuildOptions,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+) -> BuildReport {
     let mut report = BuildReport::default();
 
-    let (source, registry, ffi_used) = match assemble_and_emit(&opts.repo_root, &opts.example_dir) {
+    let (source, registry, ffi_used) = match assemble_and_emit_with(
+        &opts.repo_root,
+        &opts.example_dir,
+        extra_dirs,
+        entry_module,
+    ) {
         Ok(e) => {
             report.warnings = e.warnings;
             (e.source, e.registry, e.ffi_used)
