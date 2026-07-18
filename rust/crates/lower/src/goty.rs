@@ -48,6 +48,13 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
             }
             GoTy::Func(params, Box::new(sky_ty_to_go(ret, env)))
         }
+        // Tuple element types are kept for TYPING (pattern binds need them),
+        // but tuples RENDER as the runtime's `rt.T2[any,any]` (`SkyTuple2`) —
+        // see `render_goty` / codegen `render_ty` — and literals widen their
+        // elements. The runtime's reflection paths (`Dict_fromList`,
+        // `Basics_fst/sndT`) assert `T2[any,any]`; a concretely-typed
+        // `rt.T2[string,int]` value flowing in panics on the interface
+        // conversion.
         Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| sky_ty_to_go(x, env)).collect()),
         Ty::Unit => GoTy::Unit,
         // A remaining rigid/flex var → generic erase to `any` (doc 07 §6 class 8).
@@ -92,9 +99,30 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv) -> GoTy {
         ("Dict", 2) => GoTy::Map(Box::new(go(&args[0])), Box::new(go(&args[1]))),
         ("Cmd", _) => GoTy::Any,
         ("Sub", _) => GoTy::Any,
+        // Kernel-opaque handle types carry a runtime handle (a `JsonDecoder` /
+        // JSON `Value`), not a modelled Go struct — map to `any`. `Decoder` is
+        // declared in multiple modules (`Sky.Core.Json.Decode` uses a
+        // kernel-implicit one; `Std.Config`/`Std.Db.Decode` each phantom-define
+        // `type Decoder a = Decoder`), so a flat nominal lookup would coerce a
+        // real decoder to an unrelated module's phantom enum (`= int`) and
+        // panic at runtime. `Value` is the same story for JSON encoders.
+        ("Decoder", _) => GoTy::Any,
+        ("Value", _) => GoTy::Any,
         _ => {
             if let Some(n) = env.nominal.get(name) {
-                GoTy::Named(n.go_name.clone(), args.iter().map(go).collect())
+                // User nominal types are emitted NON-generic in the M4 runtime
+                // representation: sealed ADT → `rt.SkyADT` bag (`Fields []any`),
+                // iota enum → `int`, record alias → a plain (non-parametric)
+                // struct whose type-var fields are erased to `any`. So a
+                // parametric application like `ShouldRetry msg` / `Event msg`
+                // renders as the bare Go name — appending `[msg]` would
+                // reference a non-generic type with a type argument and fail
+                // `go build`. The type parameters are erased; ADT payloads flow
+                // as `any` (the generic-erase floor, doc 07 §6 class 8). The
+                // arg types' own reachability is driven by the variant/field
+                // use sites in `emit_type_decl`, so dropping them here is safe.
+                let _ = go; // args intentionally erased
+                GoTy::Named(n.go_name.clone(), vec![])
             } else {
                 // Unknown nominal (FFI type, unmodelled) → erase to any.
                 GoTy::Any

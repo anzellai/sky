@@ -43,7 +43,23 @@ enum TypeDeclKind {
     Record(Vec<(String, Ty)>),
 }
 
+/// Build-time configuration (from `sky.toml`) that drives the emitted `init()`
+/// defaults — the runtime reads these via `rt.SkyDefault` (`SKY_*` fallbacks).
+#[derive(Default, Clone)]
+pub struct LowerConfig {
+    /// `port` (default 8000 when `None`).
+    pub port: Option<String>,
+    /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_DRIVER",
+    /// "sqlite"), ("DB_PATH", "todos.db")]` from `[database]`. Emitted after the
+    /// fixed defaults so a config value wins.
+    pub extra_defaults: Vec<(String, String)>,
+}
+
 pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
+    lower_program_cfg(db, entry, &LowerConfig::default())
+}
+
+pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     let typer = Typer::new(db);
     let mut warnings = Vec::new();
 
@@ -128,11 +144,32 @@ pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
     // solver would do — recovered here as an explicit boundary coercion).
     let mut def_param_tys: HashMap<DefId, Vec<Ty>> = HashMap::new();
     for (d, e) in &defs {
+        // Prefer the DECLARED signature's param types (nominal, e.g.
+        // `RetryPolicy e`) over the body-INFERRED local types. Independent
+        // per-def inference of a record param that a body only field-updates
+        // (`{ p | shouldRetry = … }`) produces a *subset* structural record
+        // (`{ shouldRetry }`), which `sky_ty_to_go` renders as an anonymous
+        // `struct{ ShouldRetry … }`. The caller then passes the full nominal
+        // `RetryPolicy_R` and the boundary-coercion forces a
+        // `rt.Coerce[struct{…}]` between a named struct and a different
+        // anonymous struct — which `go build` rejects. Using the annotated
+        // param type keeps both sides on the nominal `_R` type, so `from == to`
+        // and the coercion elides (doc 07 §3 subset-record case).
+        let sig_ptys = e.sig.as_ref().map(peel_params);
         let mut ptys = Vec::new();
-        for p in &e.body.params {
-            let t = match &e.body.pats[*p] {
-                Pattern::Var(lid) => e.types.locals.get(lid).cloned().unwrap_or(Ty::Var(Name::new("any"))),
+        for (i, p) in e.body.params.iter().enumerate() {
+            let inferred = || match &e.body.pats[*p] {
+                Pattern::Var(lid) => {
+                    e.types.locals.get(lid).cloned().unwrap_or(Ty::Var(Name::new("any")))
+                }
                 _ => Ty::Var(Name::new("any")),
+            };
+            // Take the sig param type when it is concrete enough to be useful
+            // (not a bare type variable — a rigid `msg`/`a` gives no more than
+            // the inferred type and would erase to `any` anyway).
+            let t = match sig_ptys.as_ref().and_then(|ps| ps.get(i)) {
+                Some(st) if !matches!(st, Ty::Var(_)) => st.clone(),
+                _ => inferred(),
             };
             ptys.push(t);
         }
@@ -203,6 +240,7 @@ pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
             body: &e.body,
             types: &e.types,
             local_names: HashMap::new(),
+            local_tys: HashMap::new(),
             local_counter: 0,
             discovered: Vec::new(),
             used_types: HashSet::new(),
@@ -249,7 +287,7 @@ pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
 
     // ---- assemble the module ----
     let mut items = Vec::new();
-    items.push(prologue_init());
+    items.push(prologue_init(cfg));
     for (_, group) in type_items {
         items.extend(group);
     }
@@ -263,7 +301,10 @@ pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
 }
 
 /// The bootstrap `init()` every emitted program opens with (doc 08 §3).
-fn prologue_init() -> GoItem {
+/// Config-driven defaults from `sky.toml` (`[database]` path/driver, `port`) are
+/// appended so `Db.connect ()` etc. resolve the same `SKY_*` fallbacks the
+/// oracle sets.
+fn prologue_init(cfg: &LowerConfig) -> GoItem {
     let call = |name: &str, args: &[&str]| {
         GoStmt::Expr(GoExpr::new(
             GoExprKind::Call(
@@ -275,13 +316,18 @@ fn prologue_init() -> GoItem {
             GoTy::Unit,
         ))
     };
-    GoItem::Init(vec![
-        call("rt.SetPortDefault", &["8000"]),
+    let port = cfg.port.clone().unwrap_or_else(|| "8000".to_string());
+    let mut stmts = vec![
+        call("rt.SetPortDefault", &[&port]),
         call("rt.SetSkyDefault", &["LIVE_TTL", "1800"]),
         call("rt.SetSkyDefault", &["AUTH_TOKEN_TTL", "86400"]),
         call("rt.SetSkyDefault", &["AUTH_COOKIE", "sky_auth"]),
         call("rt.SetSkyDefault", &["AUTH_DRIVER", "jwt"]),
-    ])
+    ];
+    for (suffix, value) in &cfg.extra_defaults {
+        stmts.push(call("rt.SetSkyDefault", &[suffix, value]));
+    }
+    GoItem::Init(stmts)
 }
 
 // ---- module / name mangling (doc 08 §5) --------------------------------
@@ -469,10 +515,19 @@ fn emit_type_decl(decl: &TypeDecl, env: &TypeEnv) -> (Vec<GoItem>, Vec<String>) 
             let mut items = vec![GoItem::Type(decl.go_name.clone(), GoTypeDef::AdtAlias)];
             let mut reg = String::from("func init() { ");
             for (i, (cn, args)) in variants.iter().enumerate() {
+                // ADT payloads are stored in the untyped `Fields []any` bag, so
+                // the constructor params are `any` — call sites pass already-
+                // widened args (a typed param would force each caller to narrow
+                // to the exact variant arg type, e.g. `Claims []T2` fed a
+                // `rt.Concat` result of type `any`). `collect(t)` still runs for
+                // its reachability side effect on the arg types.
                 let params: Vec<String> = args
                     .iter()
                     .enumerate()
-                    .map(|(j, t)| format!("v{j} {}", render_goty(&collect(t))))
+                    .map(|(j, t)| {
+                        let _ = collect(t);
+                        format!("v{j} any")
+                    })
                     .collect();
                 let fields: Vec<String> = (0..args.len()).map(|j| format!("v{j}")).collect();
                 // constructor
@@ -557,6 +612,11 @@ struct Ctx<'a> {
     body: &'a Body,
     types: &'a BodyTypes,
     local_names: HashMap<LocalId, String>,
+    /// The *declared* Go type of each bound local (params from the sig,
+    /// let-bindings from the RHS). A local reference uses this rather than the
+    /// caller's "expected" slot type, so e.g. a `RetryPolicy_R` param stays
+    /// nominal instead of collapsing to a body-inferred subset record.
+    local_tys: HashMap<LocalId, GoTy>,
     local_counter: u32,
     discovered: Vec<DefId>,
     used_types: HashSet<String>,
@@ -617,10 +677,12 @@ impl<'a> Ctx<'a> {
         // bind params
         let param_pats: Vec<PatId> = self.body.params.clone();
         let mut params = Vec::new();
+        let mut param_destructure: Vec<GoStmt> = Vec::new();
         let sig_params = sig.map(peel_params).unwrap_or_default();
         for (i, p) in param_pats.iter().enumerate() {
-            let (pname, pty) = self.bind_param(*p, sig_params.get(i));
+            let (pname, pty, binds) = self.bind_param(*p, sig_params.get(i));
             params.push(GoParam { name: pname, ty: pty });
+            param_destructure.extend(binds);
         }
 
         if is_main {
@@ -628,18 +690,30 @@ impl<'a> Ctx<'a> {
         }
 
         let go_name = top_go_name(module, name);
-        let ret_ty = match &self.types.result {
-            Some(t) => self.goty(t),
-            None => GoTy::Unit,
+        // Prefer the DECLARED signature's return type over the body-inferred
+        // result. `debugShow : a -> String` whose body is `errorToString v`
+        // infers `any` under independent per-def inference (errorToString's
+        // cross-module sig isn't threaded), so the Go func would return `any`
+        // and a caller's `"…" + debugShow x` would fail `go build`. The sig
+        // says `String`; the body is coerced to it. Peel exactly as many arrows
+        // as the def has value params so a partially-applied sig
+        // (`f : A -> B -> C` with `f x = \y -> …`) still returns the right
+        // (function) type. Only used when concrete (a bare type variable adds
+        // nothing over the inferred type and erases to `any` anyway).
+        let sig_ret = sig.map(|s| sig_result_after(s, param_pats.len()));
+        let ret_ty = match sig_ret {
+            Some(t) if !matches!(t, Ty::Var(_)) => self.goty(&t),
+            _ => match &self.types.result {
+                Some(t) => self.goty(t),
+                None => GoTy::Unit,
+            },
         };
         let root = self.body.root;
-        let body = match root {
-            Some(r) => {
-                let e = self.lower_expr(r, &ret_ty);
-                vec![GoStmt::Return(Some(e))]
-            }
-            None => vec![],
-        };
+        let mut body = param_destructure;
+        if let Some(r) = root {
+            let e = self.lower_expr(r, &ret_ty);
+            body.push(GoStmt::Return(Some(e)));
+        }
         GoItem::Func(GoFuncDecl {
             name: go_name,
             type_params: Vec::new(),
@@ -650,7 +724,10 @@ impl<'a> Ctx<'a> {
         })
     }
 
-    fn bind_param(&mut self, p: PatId, sig_ty: Option<&Ty>) -> (String, GoTy) {
+    /// Bind a function parameter. Returns the Go param name, its Go type, and
+    /// any destructuring statements to prepend to the body (for constructor /
+    /// tuple / record patterns like `amount (Money d _) = d`).
+    fn bind_param(&mut self, p: PatId, sig_ty: Option<&Ty>) -> (String, GoTy, Vec<GoStmt>) {
         match &self.body.pats[p] {
             Pattern::Var(id) => {
                 let id = *id;
@@ -659,17 +736,24 @@ impl<'a> Ctx<'a> {
                     Some(t) => self.goty(t),
                     None => self.local_ty(id),
                 };
-                (name, ty)
+                self.local_tys.insert(id, ty.clone());
+                (name, ty, vec![])
             }
             Pattern::Anything | Pattern::Unit => {
                 let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
-                ("_".to_string(), ty)
+                ("_".to_string(), ty, vec![])
             }
             _ => {
-                // destructured param — bind a temp (basic support).
+                // Destructured param (`amount (Money d _) = …`): bind the value
+                // to a temp, then reuse the pattern-match binder to emit the
+                // inner variable bindings at the top of the body. The test
+                // condition is discarded — a function param is an irrefutable
+                // (single-constructor / tuple / record) binding.
                 let n = self.fresh_temp();
                 let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
-                (n, ty)
+                let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
+                let (_cond, binds) = self.pattern_test(&subj, &ty, p);
+                (n, ty, binds)
             }
         }
     }
@@ -754,6 +838,7 @@ impl<'a> Ctx<'a> {
             let gname = self.fresh_local_named(lid, Some(bn.as_str()));
             let ty = self.expr_ty(d.body);
             let lowered = self.lower_expr(d.body, &ty);
+            self.local_tys.insert(lid, lowered.ty.clone());
             out.push(GoStmt::Short(gname, lowered));
         }
     }
@@ -852,7 +937,12 @@ impl<'a> Ctx<'a> {
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| format!("v{}", id.0));
-                GoExpr::new(GoExprKind::Ident(name), actual.clone())
+                // Use the local's DECLARED Go type, not the caller's expected
+                // slot type — the outer `lower_expr` coerces to `expected`. A
+                // param declared `RetryPolicy_R` must not report itself as a
+                // body-inferred subset record.
+                let ty = self.local_tys.get(&id).cloned().unwrap_or_else(|| actual.clone());
+                GoExpr::new(GoExprKind::Ident(name), ty)
             }
             Res::Def(d) => {
                 if let Some(raw) = self.kernel_alias.get(&d) {
@@ -860,10 +950,27 @@ impl<'a> Ctx<'a> {
                     GoExpr::new(GoExprKind::Ident(alias_go_name(raw)), actual.clone())
                 } else if let Some(e) = self.defs.get(&d) {
                     self.discovered.push(d);
-                    GoExpr::new(
-                        GoExprKind::Ident(top_go_name(&e.module_name, &e.name)),
-                        actual.clone(),
-                    )
+                    let go = top_go_name(&e.module_name, &e.name);
+                    if e.body.params.is_empty() {
+                        // A zero-param top-level binding is emitted as a zero-arg
+                        // Go thunk `func M_x() T` (every top-level def becomes a
+                        // func, doc 08 §3). Referenced in a *value* slot it must
+                        // be CALLED to yield the value — a bare `M_x` is a
+                        // `func() T`, not a `T` (Limitation #7 value-slot class,
+                        // e.g. `Sky_Test_runMain(tests)`, `Cmd.perform someTask`).
+                        // A def WITH params is a genuine function value (HOF
+                        // callback) and stays bare.
+                        let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+                        GoExpr::new(
+                            GoExprKind::Call(
+                                Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
+                                vec![],
+                            ),
+                            actual.clone(),
+                        )
+                    } else {
+                        GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                    }
                 } else {
                     GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
                 }
@@ -977,7 +1084,7 @@ impl<'a> Ctx<'a> {
         // inferred param type (cross-def boundary coercion). The call's Go type is
         // the callee's DECLARED Go return type (which is `any` for a generic Sky
         // def) — the outer `coerce_if_needed` then narrows it to the slot type.
-        let (param_gtys, ret_goty): (Option<Vec<GoTy>>, GoTy) =
+        let (param_gtys, ret_goty, go_arity): (Option<Vec<GoTy>>, GoTy, Option<usize>) =
             if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
                 let d = *d;
                 let ps = self
@@ -990,9 +1097,11 @@ impl<'a> Ctx<'a> {
                     .cloned()
                     .map(|t| self.goty(&t))
                     .unwrap_or_else(|| actual.clone());
-                (ps, ret)
+                // The emitted Go function's arity is the def's value-param count.
+                let arity = self.defs.get(&d).map(|e| e.body.params.len());
+                (ps, ret, arity)
             } else {
-                (None, actual.clone())
+                (None, actual.clone(), None)
             };
         let c = self.lower_expr(callee, &GoTy::Any);
         let largs: Vec<GoExpr> = args
@@ -1007,7 +1116,53 @@ impl<'a> Ctx<'a> {
                 self.lower_expr(*a, &expected)
             })
             .collect();
+        // Partial application: a def of arity N called with M < N args must
+        // yield a closure over the remaining params (Sky curries; Go does not).
+        // `Result.andThen (validateTime now)` → `func(_p0 any) R { return
+        // validateTime(now, rt.AsString(_p0)) }`.
+        if let Some(arity) = go_arity {
+            if largs.len() < arity {
+                return self.make_partial(c, largs, &param_gtys, &ret_goty, arity);
+            }
+        }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
+    }
+
+    /// Build a closure for a partially-applied top-level function. The closure
+    /// takes the remaining params as `any` (so the runtime's reflection-based
+    /// HOF dispatch can invoke it), coercing each to the callee's real Go param
+    /// type inside the wrapped call.
+    fn make_partial(
+        &mut self,
+        callee: GoExpr,
+        given: Vec<GoExpr>,
+        param_gtys: &Option<Vec<GoTy>>,
+        ret: &GoTy,
+        arity: usize,
+    ) -> GoExpr {
+        let n_given = given.len();
+        let n_rest = arity - n_given;
+        let mut rest_params = Vec::new();
+        let mut call_args = given;
+        for i in 0..n_rest {
+            let pty = param_gtys
+                .as_ref()
+                .and_then(|ps| ps.get(n_given + i))
+                .cloned()
+                .unwrap_or(GoTy::Any);
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            rest_params.push(GoParam { name: pname.clone(), ty: GoTy::Any });
+            let arg_ref = GoExpr::new(GoExprKind::Ident(pname), GoTy::Any);
+            call_args.push(self.coerce_if_needed(arg_ref, &pty));
+        }
+        let body_call =
+            GoExpr::new(GoExprKind::Call(Box::new(callee), call_args), ret.clone());
+        let fn_ty = GoTy::Func(vec![GoTy::Any; n_rest], Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(rest_params, ret.clone(), vec![GoStmt::Return(Some(body_call))]),
+            fn_ty,
+        )
     }
 
     /// `func_e applied to value_e`, flattening a partial-application spine on
@@ -1070,14 +1225,21 @@ impl<'a> Ctx<'a> {
                         GoTy::Bare(Prim::Str),
                     );
                 }
-                call_rt("rt.Concat", vec![widen(l), widen(r)], actual.clone())
+                // `rt.Concat` returns Go `any` (list `++`); type the node `Any`
+                // so the enclosing slot narrows via `rt.AsListT` rather than
+                // feeding `any` into a `[]T` slot.
+                call_rt("rt.Concat", vec![widen(l), widen(r)], GoTy::Any)
             }
             "::" => {
                 let elem = actual.elem_ty();
                 let l = self.lower_expr(lhs, &elem);
                 let r = self.lower_expr(rhs, actual);
-                // x :: xs  →  rt.List_cons(x, xs)
-                call_rt("rt.List_cons", vec![widen(l), widen(r)], actual.clone())
+                // x :: xs  →  rt.List_cons(x, xs). `rt.List_cons` returns Go
+                // `any`, so the node's type is `Any`; the enclosing slot
+                // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
+                // Typing it `[]T` here would suppress that coercion and feed an
+                // `any` value into a `[]T` slot (`go build` rejects it).
+                call_rt("rt.List_cons", vec![widen(l), widen(r)], GoTy::Any)
             }
             "|>" => {
                 // a |> f  ==  f a. Flatten when `f` is a partial application
@@ -1181,9 +1343,15 @@ impl<'a> Ctx<'a> {
 
     fn lower_update(&mut self, base: ExprId, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
         // { base | f = v } → func() T { _u := base; _u.F = v; return _u }()
-        let b = self.lower_expr(base, actual);
+        // A record update yields EXACTLY the base record's Go type (`_u := base`
+        // copies it whole), NOT the update expression's body-inferred type
+        // (which is a *subset* record when only some fields are read/written).
+        // Take the base's own lowered type as the block/`_u` type; the outer
+        // `lower_expr` coerces the block to the caller's `expected` if needed.
+        let b = self.lower_expr(base, &GoTy::Any);
+        let uty = b.ty.clone();
         let mut stmts = vec![GoStmt::Short("_u".into(), b)];
-        let uref = GoExpr::new(GoExprKind::Ident("_u".into()), actual.clone());
+        let uref = GoExpr::new(GoExprKind::Ident("_u".into()), uty.clone());
         for (n, v) in fields {
             let lowered = self.lower_expr(*v, &GoTy::Any);
             stmts.push(GoStmt::AssignField(
@@ -1193,7 +1361,12 @@ impl<'a> Ctx<'a> {
             ));
         }
         stmts.push(GoStmt::Return(Some(uref)));
-        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+        // Return the block typed as the base record; the caller's `lower_expr`
+        // reconciles against the true `expected` slot type. (The `actual`
+        // argument is this node's *body-inferred* subset type — deliberately
+        // not used as the result type.)
+        let _ = actual;
+        GoExpr::new(GoExprKind::Block(stmts), uty)
     }
 
     fn lower_tuple(&mut self, elems: &[ExprId], actual: &GoTy) -> GoExpr {
@@ -1214,10 +1387,12 @@ impl<'a> Ctx<'a> {
         // rt.T2 literal is a struct; use the named struct literal form.
         let go = format!("rt.T{}", elems.len());
         if elems.len() == 2 || elems.len() == 3 {
+            // `rt.T2`/`rt.T3` struct fields are V0, V1, … (see runtime rt.go
+            // `type T2[A, B any] struct { V0 A; V1 B }`).
             let fields: Vec<(String, GoExpr)> = args
                 .into_iter()
                 .enumerate()
-                .map(|(i, a)| (format!("F{}", i + 1), a))
+                .map(|(i, a)| (format!("V{i}"), a))
                 .collect();
             let tname = GoTy::Tuple(tys);
             return GoExpr::new(
@@ -1241,18 +1416,34 @@ impl<'a> Ctx<'a> {
             _ => (vec![GoTy::Any; params.len()], GoTy::Any),
         };
         let mut gparams = Vec::new();
+        let mut destructure: Vec<GoStmt> = Vec::new();
         for (i, p) in params.iter().enumerate() {
             let ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
             let name = match &self.body.pats[*p] {
-                Pattern::Var(id) => self.fresh_local_named(*id, None),
+                Pattern::Var(id) => {
+                    let n = self.fresh_local_named(*id, None);
+                    self.local_tys.insert(*id, ty.clone());
+                    n
+                }
                 Pattern::Anything | Pattern::Unit => "_".to_string(),
-                _ => self.fresh_temp(),
+                _ => {
+                    // Destructured lambda param (`\(_, result) -> …`): bind a
+                    // temp, then emit the inner bindings at the body head — the
+                    // same shape as `bind_param` for top-level defs.
+                    let n = self.fresh_temp();
+                    let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
+                    let (_cond, binds) = self.pattern_test(&subj, &ty, *p);
+                    destructure.extend(binds);
+                    n
+                }
             };
             gparams.push(GoParam { name, ty });
         }
         let b = self.lower_expr(body, &rt);
+        let mut stmts = destructure;
+        stmts.push(GoStmt::Return(Some(b)));
         GoExpr::new(
-            GoExprKind::FuncLit(gparams, rt, vec![GoStmt::Return(Some(b))]),
+            GoExprKind::FuncLit(gparams, rt, stmts),
             actual.clone(),
         )
     }
@@ -1260,7 +1451,22 @@ impl<'a> Ctx<'a> {
     fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
         let branches = branches.to_vec();
         let subj = self.lower_expr(subject, &GoTy::Any);
-        let subj_ty = self.expr_ty(subject);
+        let mut subj_ty = self.expr_ty(subject);
+        // When the subject's Go type is `any` (a record field / FFI value the
+        // per-def inference couldn't pin) but the branches match a USER ADT /
+        // iota constructor, `_subj.Tag` / `_subj == Iota_Const` fail to compile
+        // (`any` has no `.Tag`; `any == int` is a type mismatch). Coerce the
+        // subject to the nominal the patterns imply so tag/equality tests type.
+        let subj = if subj_ty == GoTy::Any {
+            if let Some(nom) = self.pattern_nominal(&branches) {
+                subj_ty = nom.clone();
+                self.coerce_if_needed(subj, &nom)
+            } else {
+                subj
+            }
+        } else {
+            subj
+        };
         let mut stmts = vec![GoStmt::Short("_subj".into(), subj)];
         let subj_ref = GoExpr::new(GoExprKind::Ident("_subj".into()), subj_ty.clone());
         for br in &branches {
@@ -1272,6 +1478,25 @@ impl<'a> Ctx<'a> {
             GoTy::Unit,
         )));
         GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    /// The nominal Go type implied by a case's branch patterns — the owning ADT
+    /// / iota type of the first USER constructor pattern found. Builtin
+    /// container patterns (Ok/Err/Just/Nothing/True/False) are skipped; they
+    /// route through `rt.SkyResult` / `rt.SkyMaybe` / `bool`, not a bare nominal.
+    fn pattern_nominal(&self, branches: &[CaseBranch]) -> Option<GoTy> {
+        for br in branches {
+            if let Pattern::Ctor { name, .. } = &self.body.pats[br.pat] {
+                let cname = name.as_str();
+                if matches!(cname, "Ok" | "Err" | "Just" | "Nothing" | "True" | "False") {
+                    continue;
+                }
+                if let Some((go_type, _kind)) = self.ctor_owner.get(cname) {
+                    return Some(GoTy::Named(go_type.clone(), vec![]));
+                }
+            }
+        }
+        None
     }
 
     fn lower_case_branch(
@@ -1304,10 +1529,12 @@ impl<'a> Ctx<'a> {
             Pattern::Anything | Pattern::Unit => (None, vec![]),
             Pattern::Var(id) => {
                 let name = self.fresh_local_named(*id, None);
-                (
-                    None,
-                    vec![GoStmt::Short(name, subj.clone())],
-                )
+                // Register the bound var's REAL Go type (the subject's), so a
+                // later reference coerces to its use-slot rather than trusting
+                // the slot type. Critical for cons tails bound from
+                // `rt.SkyTailSlice` (`[]any`) that flow into a `[]T` param.
+                self.local_tys.insert(*id, subj.ty.clone());
+                (None, vec![GoStmt::Short(name, subj.clone())])
             }
             Pattern::Int(n) => (
                 Some(GoExpr::new(
@@ -1355,7 +1582,126 @@ impl<'a> Ctx<'a> {
                 binds.insert(0, GoStmt::Short(name, subj.clone()));
                 (c, binds)
             }
-            _ => {
+            Pattern::Cons(h, t) => {
+                let (h, t) = (*h, *t);
+                let elem = subj_ty.elem_ty();
+                // guard: at least one element.
+                let cond = GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Ge,
+                        Box::new(call_rt("rt.SkyLen", vec![subj.clone()], GoTy::Bare(Prim::Int))),
+                        Box::new(int_lit(1)),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                );
+                let head_raw =
+                    call_rt("rt.SkyElem", vec![subj.clone(), int_lit(0)], GoTy::Any);
+                let head = self.coerce_if_needed(head_raw, &elem);
+                // `rt.SkyTailSlice` returns `[]any`; type it as such so a use
+                // in a `[]T` slot narrows via `rt.AsListT`.
+                let tail = call_rt(
+                    "rt.SkyTailSlice",
+                    vec![subj.clone()],
+                    GoTy::Slice(Box::new(GoTy::Any)),
+                );
+                let (ch, mut binds) = self.pattern_test(&head, &elem, h);
+                let (ct, tb) = self.pattern_test(&tail, subj_ty, t);
+                binds.extend(tb);
+                (and_opt(Some(cond), and_opt(ch, ct)), binds)
+            }
+            Pattern::List(pats) => {
+                let pats = pats.clone();
+                let elem = subj_ty.elem_ty();
+                // guard: exact length match.
+                let mut cond = Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(call_rt("rt.SkyLen", vec![subj.clone()], GoTy::Bare(Prim::Int))),
+                        Box::new(int_lit(pats.len() as i64)),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                ));
+                let mut binds = Vec::new();
+                for (i, sp) in pats.iter().enumerate() {
+                    let raw =
+                        call_rt("rt.SkyElem", vec![subj.clone(), int_lit(i as i64)], GoTy::Any);
+                    let el = self.coerce_if_needed(raw, &elem);
+                    let (c, b) = self.pattern_test(&el, &elem, *sp);
+                    cond = and_opt(cond, c);
+                    binds.extend(b);
+                }
+                (cond, binds)
+            }
+            Pattern::Tuple(pats) => {
+                let pats = pats.clone();
+                let elem_tys: Vec<GoTy> = match subj_ty {
+                    GoTy::Tuple(ts) => ts.clone(),
+                    _ => vec![GoTy::Any; pats.len()],
+                };
+                let mut cond = None;
+                let mut binds = Vec::new();
+                for (i, sp) in pats.iter().enumerate() {
+                    let ety = elem_tys.get(i).cloned().unwrap_or(GoTy::Any);
+                    // `.V{i}` is `any` on the runtime `rt.T2[any,any]` — coerce
+                    // to the element's concrete type so a bound var carries its
+                    // real type (e.g. an ADT for a nested `case`).
+                    let raw = GoExpr::new(
+                        GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
+                        GoTy::Any,
+                    );
+                    let field = self.coerce_if_needed(raw, &ety);
+                    let (c, b) = self.pattern_test(&field, &ety, *sp);
+                    cond = and_opt(cond, c);
+                    binds.extend(b);
+                }
+                (cond, binds)
+            }
+            Pattern::Record(fields) => {
+                let fields = fields.clone();
+                // field Go-types from the nominal `_R` struct when known.
+                let field_tys: HashMap<String, GoTy> = match subj_ty {
+                    GoTy::Named(gn, _) => self
+                        .record_fields
+                        .get(gn)
+                        .map(|fs| {
+                            fs.iter()
+                                .map(|(cap, t)| (cap.clone(), sky_ty_to_go(t, self.env)))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    _ => HashMap::new(),
+                };
+                let mut binds = Vec::new();
+                for (fname, lid) in &fields {
+                    let cap = capitalize(fname.as_str());
+                    let fty = field_tys.get(&cap).cloned().unwrap_or(GoTy::Any);
+                    let name = self.fresh_local_named(*lid, Some(fname.as_str()));
+                    self.local_tys.insert(*lid, fty.clone());
+                    binds.push(GoStmt::Short(
+                        name,
+                        GoExpr::new(
+                            GoExprKind::Selector(Box::new(subj.clone()), cap),
+                            fty,
+                        ),
+                    ));
+                }
+                (None, binds)
+            }
+            Pattern::Chr(s) => (
+                Some(GoExpr::new(
+                    GoExprKind::Binary(
+                        GoBin::Eq,
+                        Box::new(subj.clone()),
+                        Box::new(GoExpr::new(
+                            GoExprKind::StrLit(s.to_string()),
+                            GoTy::Bare(Prim::Str),
+                        )),
+                    ),
+                    GoTy::Bare(Prim::Bool),
+                )),
+                vec![],
+            ),
+            Pattern::Float(_) | Pattern::Error => {
                 self.warnings
                     .push("unsupported pattern in case — treated as wildcard".into());
                 (None, vec![])
@@ -1478,6 +1824,21 @@ impl<'a> Ctx<'a> {
     }
 }
 
+fn int_lit(n: i64) -> GoExpr {
+    GoExpr::new(GoExprKind::IntLit(n), GoTy::Bare(Prim::Int))
+}
+
+/// Combine two optional pattern-guard conditions with `&&` (identity: `None`).
+fn and_opt(a: Option<GoExpr>, b: Option<GoExpr>) -> Option<GoExpr> {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(a), Some(b)) => Some(GoExpr::new(
+            GoExprKind::Binary(GoBin::And, Box::new(a), Box::new(b)),
+            GoTy::Bare(Prim::Bool),
+        )),
+    }
+}
+
 fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {
     GoExpr::new(
         GoExprKind::Binary(
@@ -1505,6 +1866,20 @@ fn peel_params(sig: &Ty) -> Vec<Ty> {
         cur = b;
     }
     out
+}
+
+/// The return type of a signature after peeling exactly `n` leading arrows
+/// (the def's value-param count). A sig with fewer arrows than params stops
+/// early and returns whatever remains (defensive).
+fn sig_result_after(sig: &Ty, n: usize) -> Ty {
+    let mut cur = sig;
+    for _ in 0..n {
+        match cur {
+            Ty::Fun(_, b) => cur = b,
+            _ => break,
+        }
+    }
+    cur.clone()
 }
 
 /// `rt.AnyTaskRun(expr)` — force a Task at an entry boundary (doc 08 §3).
@@ -1559,7 +1934,9 @@ fn is_cmp(op: &str) -> bool {
 
 fn tuple_type_args(t: &GoTy) -> String {
     if let GoTy::Tuple(xs) = t {
-        let parts: Vec<String> = xs.iter().map(render_goty).collect();
+        // Erased `any` element types — the tuple literal is `rt.T2[any,any]{…}`
+        // (runtime `SkyTuple2`); concrete element values widen in.
+        let parts: Vec<String> = xs.iter().map(|_| "any".to_string()).collect();
         format!("[{}]", parts.join(", "))
     } else {
         String::new()
@@ -1585,11 +1962,14 @@ fn render_goty(t: &GoTy) -> String {
             let a: Vec<String> = ps.iter().map(render_goty).collect();
             format!("func({}) {}", a.join(", "), render_goty(r))
         }
+        // Tuples render as the runtime `SkyTuple2/3` shape `rt.TN[any, …]` —
+        // element types erased so reflection paths (`T2[any,any]`) match. Type
+        // info survives on the GoTy for pattern-bind coercion only.
         GoTy::Tuple(xs) => match xs.len() {
             2 | 3 => format!(
                 "rt.T{}[{}]",
                 xs.len(),
-                xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
+                xs.iter().map(|_| "any").collect::<Vec<_>>().join(", ")
             ),
             _ => "rt.SkyTupleN".to_string(),
         },

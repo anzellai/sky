@@ -142,9 +142,43 @@ fn compare_oracle(dir: &Path, _name: &str, rust_stdout: &str) -> Option<bool> {
     Some(normalise(&oracle_stdout) == normalise(rust_stdout))
 }
 
-/// Strip volatile bits (timestamps, hashes) for a best-effort output compare.
+/// Strip volatile bits (log timestamps) for a best-effort output compare. Both
+/// the Rust build and the oracle emit `Std.Log` lines prefixed with an
+/// RFC3339-ish `2026-07-18T05:41:04.646513Z` timestamp that differs run-to-run;
+/// blank it so equal log CONTENT compares equal.
 fn normalise(s: &str) -> String {
-    s.trim().to_string()
+    s.lines()
+        .map(strip_leading_timestamp)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Remove a leading ISO-8601/RFC3339 UTC timestamp token
+/// (`YYYY-MM-DDTHH:MM:SS(.ffffff)Z`) from a log line, if present.
+fn strip_leading_timestamp(line: &str) -> String {
+    let (head, rest) = match line.split_once(' ') {
+        Some(p) => p,
+        None => return line.to_string(),
+    };
+    if is_iso_timestamp(head) {
+        format!("<ts> {rest}")
+    } else {
+        line.to_string()
+    }
+}
+
+fn is_iso_timestamp(tok: &str) -> bool {
+    // shape: 10 chars date, 'T', time, trailing 'Z' — cheap structural check.
+    let b = tok.as_bytes();
+    tok.len() >= 20
+        && tok.ends_with('Z')
+        && b.get(4) == Some(&b'-')
+        && b.get(7) == Some(&b'-')
+        && b.get(10) == Some(&b'T')
+        && b.get(13) == Some(&b':')
+        && b.get(16) == Some(&b':')
 }
 
 fn first_go_error(stderr: &str) -> String {

@@ -2206,6 +2206,16 @@ func AsListT[T any](v any) []T {
 		}
 		return out
 	}
+	// Result/Maybe unwrap — mirrors `AsList`. A Sky-source list op (the
+	// CPS `List.map`/`filter`/… helpers) can receive a list routed through
+	// `Ffi.callPure` (`Money.allocate`, …) where `runWithRecover`'s
+	// auto-`Ok`-wrap parks the slice inside a `SkyResult`. Without this,
+	// `AsListT[any](Ok([...]))` returned empty and the map produced `[]`.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsListT[T](u)
+		}
+	}
 	return nil
 }
 
@@ -3259,6 +3269,9 @@ func String_contains(sub any, s any) any {
 }
 func String_startsWith(prefix any, s any) any {
 	return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix))
+}
+func String_endsWith(suffix any, s any) any {
+	return strings.HasSuffix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", suffix))
 }
 func String_reverse(s any) any {
 	runes := []rune(fmt.Sprintf("%v", s))
@@ -7564,6 +7577,34 @@ func List_tail(list any) any {
 		return Nothing[any]()
 	}
 	return Just[any](items[1:])
+}
+
+// ── Cons / list pattern-destructuring raw accessors ─────────────
+// The Rust codegen's pattern-match binder uses these to destructure
+// a Sky list value in a `case`/param cons pattern (`x :: xs`, `[a, b]`).
+// Unlike List_head / List_tail (which return Maybe), these return raw
+// elements/slices — the pattern's length guard has already run. AsList
+// normalises the []any / SkyList representations.
+
+// SkyLen is the element count of a Sky list value.
+func SkyLen(x any) int { return len(AsList(x)) }
+
+// SkyElem is the i-th element (bounds-guarded; nil when out of range).
+func SkyElem(x any, i int) any {
+	l := AsList(x)
+	if i < 0 || i >= len(l) {
+		return nil
+	}
+	return l[i]
+}
+
+// SkyTailSlice is the list minus its head (empty when already empty).
+func SkyTailSlice(x any) []any {
+	l := AsList(x)
+	if len(l) == 0 {
+		return l
+	}
+	return l[1:]
 }
 
 func List_indexedMap(fn any, list any) any {

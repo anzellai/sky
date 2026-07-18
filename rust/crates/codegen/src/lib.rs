@@ -359,10 +359,14 @@ pub fn render_ty(t: &GoTy) -> String {
 }
 
 fn render_tuple_ty(xs: &[GoTy]) -> String {
+    // Tuples render with erased `any` element types — the runtime standardises
+    // on `rt.T2[any,any]` / `rt.T3[…]` (`SkyTuple2`) and its reflection paths
+    // assert that shape. Concrete element types survive on the GoTy only for
+    // pattern-bind coercion. (Mirror: lower::render_goty.)
     match xs.len() {
         2 | 3 => {
             let n = xs.len();
-            let a: Vec<String> = xs.iter().map(render_ty).collect();
+            let a: Vec<String> = xs.iter().map(|_| "any".to_string()).collect();
             format!("rt.T{n}[{}]", a.join(", "))
         }
         _ => "rt.SkyTupleN".to_string(),

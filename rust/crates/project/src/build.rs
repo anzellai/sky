@@ -63,7 +63,8 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     };
 
     // ---- lower + emit ----
-    let out = lower::lower_program(&db, entry);
+    let cfg = read_sky_toml_config(&opts.example_dir.join("sky.toml"));
+    let out = lower::lower_program_cfg(&db, entry, &cfg);
     report.warnings = out.warnings;
     if !out.entry_ok {
         report.note = "lowering found no entry `main`".into();
@@ -126,6 +127,41 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     }
 
     report
+}
+
+/// Minimal `sky.toml` reader for the build-time `init()` defaults. Extracts
+/// top-level `port` and the `[database]` `driver`/`path` — enough for the
+/// runtime's `SKY_*` fallbacks (`Db.connect ()` resolves `SKY_DB_PATH`). A full
+/// TOML parse isn't warranted for these flat keys; unknown shapes are ignored.
+fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
+    let mut cfg = lower::LowerConfig::default();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return cfg;
+    };
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line.trim_matches(['[', ']']).trim().trim_matches('"').to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let key = k.trim();
+        let val = v.trim().trim_matches('"').to_string();
+        match (section.as_str(), key) {
+            ("", "port") => cfg.port = Some(val),
+            ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
+            ("database", "path") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
+            ("live", "port") => cfg.port = Some(val),
+            _ => {}
+        }
+    }
+    cfg
 }
 
 fn write_out(repo_root: &Path, out_dir: &Path, source: &str) -> std::io::Result<()> {

@@ -583,19 +583,99 @@ impl<'a> Resolver<'a> {
                 self.body.expr(hir)
             }
             ast::Expr::Multiline(m) => {
-                // resolve interpolation interiors quietly (oracle never rejects).
+                // Reconstruct the string value from `StringChunk` tokens (raw
+                // bytes, incl. the `"""` delimiters + literal text) interleaved
+                // with `Interpolation` nodes (`{{expr}}` — stringified + `++`).
+                // Pre-fix bug: this emitted `Expr::Str("")`, so every multiline
+                // string (SQL `CREATE TABLE …`, HTML templates) lowered to empty.
+                enum Seg {
+                    Lit(String),
+                    Ex(ExprId),
+                }
+                let mut segs: Vec<Seg> = Vec::new();
+                let mut cur = String::new();
                 self.quiet += 1;
-                for interp in m
-                    .syntax()
-                    .children()
-                    .filter(|c| c.kind() == SyntaxKind::Interpolation)
-                {
-                    for ie in cst::child_exprs(&interp) {
-                        let _ = self.resolve_expr(&ie);
+                for ch in m.syntax().children_with_tokens() {
+                    if let Some(t) = ch.as_token() {
+                        if t.kind() == SyntaxKind::StringChunk {
+                            cur.push_str(t.text());
+                        }
+                    } else if let Some(nd) = ch.as_node() {
+                        if nd.kind() == SyntaxKind::Interpolation {
+                            if !cur.is_empty() {
+                                segs.push(Seg::Lit(std::mem::take(&mut cur)));
+                            }
+                            let mut eid = None;
+                            for ie in cst::child_exprs(nd) {
+                                eid = Some(self.resolve_expr(&ie));
+                            }
+                            if let Some(id) = eid {
+                                segs.push(Seg::Ex(id));
+                            }
+                        }
                     }
                 }
                 self.quiet -= 1;
-                self.body.expr(Expr::Str(String::new().into_boxed_str()))
+                if !cur.is_empty() {
+                    segs.push(Seg::Lit(cur));
+                }
+                // Strip the `"""` delimiters off the first/last literal segments
+                // and decode `\{{` → `{{` (the only multiline escape, doc 04 §9).
+                let lit_idxs: Vec<usize> = segs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| matches!(s, Seg::Lit(_)))
+                    .map(|(i, _)| i)
+                    .collect();
+                if let Some(&first) = lit_idxs.first() {
+                    if let Seg::Lit(s) = &mut segs[first] {
+                        if let Some(rest) = s.strip_prefix("\"\"\"") {
+                            *s = rest.to_string();
+                        }
+                    }
+                }
+                if let Some(&last) = lit_idxs.last() {
+                    if let Seg::Lit(s) = &mut segs[last] {
+                        if let Some(rest) = s.strip_suffix("\"\"\"") {
+                            *s = rest.to_string();
+                        }
+                    }
+                }
+                for s in &mut segs {
+                    if let Seg::Lit(t) = s {
+                        *t = t.replace("\\{{", "{{");
+                    }
+                }
+                // Build the value: pure-literal → `Expr::Str`; else fold with
+                // `++`. An interpolation `{{expr}}` splices the expr's value
+                // directly — Sky does NOT auto-`toString` (the docs' examples use
+                // `{{String.fromInt n}}`), so the expr is expected to be a
+                // `String` and concatenates as-is; a non-String is a genuine type
+                // error, same as the oracle.
+                let build_seg = |this: &mut Self, s: Seg| -> ExprId {
+                    match s {
+                        Seg::Lit(t) => this.body.expr(Expr::Str(t.into_boxed_str())),
+                        Seg::Ex(id) => id,
+                    }
+                };
+                if segs.is_empty() {
+                    self.body.expr(Expr::Str(String::new().into_boxed_str()))
+                } else {
+                    let mut it = segs.into_iter();
+                    let first = it.next().unwrap();
+                    let mut acc = build_seg(self, first);
+                    for s in it {
+                        let rhs = build_seg(self, s);
+                        let res = op_kernel("++");
+                        acc = self.body.expr(Expr::Binop {
+                            op: Name::new("++"),
+                            res,
+                            lhs: acc,
+                            rhs,
+                        });
+                    }
+                    acc
+                }
             }
             ast::Expr::Ref(r) => {
                 let name = r
@@ -933,8 +1013,15 @@ impl<'a> Resolver<'a> {
                 // Float patterns are rejected upstream; recover as wildcard.
                 self.body.pat(Pattern::Anything)
             }
-            ast::Pattern::Str(_) => self.body.pat(Pattern::Str(String::new().into_boxed_str())),
-            ast::Pattern::Char(_) => self.body.pat(Pattern::Chr(String::new().into_boxed_str())),
+            ast::Pattern::Str(s) => {
+                // Pre-fix bug: this emitted an EMPTY string, so every string
+                // `case` pattern compiled to `subj == ""` — `case cmd of "add"
+                // -> …` matched only the empty command.
+                self.body.pat(Pattern::Str(s.value().into_boxed_str()))
+            }
+            ast::Pattern::Char(c) => {
+                self.body.pat(Pattern::Chr(c.value().into_boxed_str()))
+            }
             ast::Pattern::Bool(b) => {
                 let val = cst::first_token_is_true(b.syntax());
                 self.body.pat(Pattern::Bool(val))
