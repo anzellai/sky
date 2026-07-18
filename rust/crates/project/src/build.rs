@@ -57,6 +57,17 @@ fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, St
     for (n, parse) in stdlib {
         db.add_module(&n, parse);
     }
+    // Sky-package dependencies (`[dependencies]` in sky.toml, e.g.
+    // `github.com/anzellai/sky-tailwind`) are fetched as Sky *source* under
+    // `.skydeps/<pkg>/src/`. Load those modules into the db so imports like
+    // `import Tailwind exposing (..)` resolve to the real bindings rather than
+    // falling through to a `Basics` kernel guess. Loaded BEFORE the example's
+    // own src so a dep module named `Main` (packages ship their own demo entry)
+    // is overwritten by — and never shadows — the example's real `Main`.
+    for (n, parse) in load_skydeps(&example_dir.join(".skydeps")) {
+        db.add_module(&n, parse);
+    }
+
     let locals = load_dir(&example_dir.join("src"));
     if locals.is_empty() {
         return Err("no .sky under src/".into());
@@ -250,6 +261,7 @@ fn build_ffi_table(reg: &ffi::FfiRegistry) -> lower::FfiTable {
                 kernel_name: pkg.kernel_name.clone(),
                 go_symbols: pkg.go_symbols.clone(),
                 ffi_slots: pkg.ffi_slots.clone(),
+                wrapper_params: pkg.wrapper_params.clone(),
             },
         );
     }
@@ -400,6 +412,55 @@ fn materialise_rt(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 // ---- module loading (mirrors xtask/infer_gate) ---------------------------
+
+/// Load every Sky-source module from fetched package dependencies under
+/// `.skydeps/<pkg>/src/`. A package ships its own demo `module Main`; those are
+/// dropped here so they can never be mistaken for — nor shadow — the consuming
+/// example's entry point. Enumeration is sorted (via `load_dir`) so the result
+/// is deterministic. Absent `.skydeps/` → empty (the common no-deps case).
+fn load_skydeps(skydeps: &Path) -> Vec<(String, syntax::Parse)> {
+    let mut out = Vec::new();
+    let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
+        Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect(),
+        Err(_) => return out,
+    };
+    pkgs.sort();
+    for pkg in pkgs {
+        // `collect_sky` (via `load_dir`) prunes any path under `.skydeps/`, so
+        // enumerate the dep's src tree directly here.
+        let mut files = Vec::new();
+        collect_sky_unfiltered(&pkg.join("src"), &mut files);
+        for path in files {
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let parse = syntax::parse(&src, base::FileId(0));
+            let n = module_name(&parse, &path);
+            if n == "Main" || n == "main" {
+                continue;
+            }
+            out.push((n, parse));
+        }
+    }
+    out
+}
+
+/// Recursively collect `*.sky` files, sorted, with no generated-dir pruning.
+/// Used for `.skydeps/` trees which `collect_sky` deliberately excludes.
+fn collect_sky_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => return,
+    };
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_sky_unfiltered(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
+            out.push(path);
+        }
+    }
+}
 
 fn load_dir(dir: &Path) -> Vec<(String, syntax::Parse)> {
     let mut files = Vec::new();

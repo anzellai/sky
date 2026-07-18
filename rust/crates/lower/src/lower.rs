@@ -41,20 +41,30 @@ pub struct FfiModInfo {
     /// non-primitive params get one). A call-site coercion to a slot alias is
     /// emitted only when the target name is present here.
     pub ffi_slots: BTreeSet<String>,
+    /// Per-wrapper-symbol ordered Go param type strings (`Go_Stripe_…T →
+    /// ["int64", "*pkg.X"]`), parsed from the wrapper signatures — the
+    /// authoritative REAL Go param types (`int64` where the skyType only says
+    /// `Int`). Used to coerce/convert a primitive arg to the wrapper's exact Go
+    /// type. Non-primitive params still route through their `FfiT_…_P<i>` slot.
+    pub wrapper_params: BTreeMap<String, Vec<String>>,
 }
 
 impl FfiTable {
     /// The Go call symbol for `module.func`, preferring the typed `T` wrapper
     /// (`Go_Uuid_newStringT`) over the untyped fallback (`Go_Uuid_future`).
     /// `None` when the package isn't in the surface or defines no such symbol.
-    pub fn call_symbol(&self, module: &str, func: &str) -> Option<String> {
+    /// Returns `(symbol, typed)`. `typed` is `true` for the `…T` wrapper (typed
+    /// params, unit params elided from its Go signature) and `false` for the
+    /// untyped fallback `Go_<Pkg>_<fn>(_ any)` (all params `any`, INCLUDING the
+    /// unit — so unit call-args must NOT be elided for it).
+    pub fn call_symbol(&self, module: &str, func: &str) -> Option<(String, bool)> {
         let m = self.mods.get(module)?;
         let base = format!("{}_{}", m.kernel_name, func);
         let typed = format!("{base}T");
         if m.go_symbols.contains(&typed) {
-            Some(typed)
+            Some((typed, true))
         } else if m.go_symbols.contains(&base) {
-            Some(base)
+            Some((base, false))
         } else {
             None
         }
@@ -65,6 +75,16 @@ impl FfiTable {
     /// so they are globally unique — a flat scan is unambiguous.
     pub fn has_ffi_slot(&self, name: &str) -> bool {
         self.mods.values().any(|m| m.ffi_slots.contains(name))
+    }
+
+    /// The ordered Go param type strings for a wrapper `symbol` (`Go_…T`).
+    /// Empty when the surface carries no parsed wrapper-param info.
+    pub fn wrapper_params(&self, symbol: &str) -> Vec<String> {
+        self.mods
+            .values()
+            .find_map(|m| m.wrapper_params.get(symbol))
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -1758,9 +1778,10 @@ impl<'a> Ctx<'a> {
         // so the enclosing `case`/coercion narrows the `any` return exactly as
         // for a kernel call.
         if let Expr::Var(Res::Foreign { package, name }) = &self.body.exprs[callee] {
-            if let Some(sym) = self.ffi.call_symbol(package.as_str(), name.as_str()) {
+            if let Some((sym, typed)) = self.ffi.call_symbol(package.as_str(), name.as_str()) {
                 self.ffi_used.insert(package.as_str().to_string());
-                return self.ffi_call(&format!("rt.{sym}"), args, actual);
+                let wparams = self.ffi.wrapper_params(&sym);
+                return self.ffi_call(&format!("rt.{sym}"), args, actual, &wparams, typed);
             }
         }
         // general call: lower callee + args, coercing each arg to the callee's
@@ -1926,7 +1947,68 @@ impl<'a> Ctx<'a> {
     /// for a Sky `Unit` (a `() -> R` binding lowers to a zero-arg Go func). Any
     /// non-unit args are widened to `any` and passed through; the `any` return is
     /// coerced to the call's typed slot (FFI-return coercion).
-    fn ffi_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+    /// Coerce/convert an arg to a Go-FFI wrapper's REAL primitive param type.
+    /// `want` is the wrapper's Go type string for this slot (`"int64"`,
+    /// `"string"`, …). Handles two shapes Go rejects on a bare value:
+    ///   * `any → string/int/bool/float64/[]byte`: assert via `rt.As*`.
+    ///   * numeric widen (`Int`→`int64`/`int32`/`uint…`, `Float`→`float32`):
+    ///     a Go conversion `int64(x)` (asserting `any→int` first when needed) —
+    ///     `rt.Coerce[int64]` would be a type ASSERTION and panic (`int` is not
+    ///     `int64`). A matching or unrecognised type passes verbatim.
+    fn coerce_ffi_prim_arg(&mut self, e: GoExpr, want: Option<&str>) -> GoExpr {
+        let Some(want) = want else {
+            return e;
+        };
+        let is_any = e.ty == GoTy::Any;
+        match want {
+            "string" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Str)),
+            "bool" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Bool)),
+            "int" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Int)),
+            "float64" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Float)),
+            "[]byte" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Bytes)),
+            // Go integer widths Sky's `Int` (Go `int`) must be CONVERTED to.
+            "int64" | "int32" | "int16" | "int8" | "uint" | "uint64" | "uint32"
+            | "uint16" | "uint8" | "byte" | "rune" | "uintptr" => {
+                let base = if is_any {
+                    self.coerce_if_needed(e, &GoTy::Bare(Prim::Int))
+                } else {
+                    e
+                };
+                self.go_convert(want, base)
+            }
+            "float32" => {
+                let base = if is_any {
+                    self.coerce_if_needed(e, &GoTy::Bare(Prim::Float))
+                } else {
+                    e
+                };
+                self.go_convert(want, base)
+            }
+            // A non-primitive / `any` wrapper param takes the value verbatim (Go
+            // widens any concrete type to `any` implicitly).
+            _ => e,
+        }
+    }
+
+    /// Wrap `e` in a Go numeric conversion `T(e)` (e.g. `int64(x)`).
+    fn go_convert(&self, go_ty: &str, e: GoExpr) -> GoExpr {
+        GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go_ty.into()), GoTy::Any)),
+                vec![e],
+            ),
+            GoTy::Named(go_ty.into(), vec![]),
+        )
+    }
+
+    fn ffi_call(
+        &mut self,
+        go: &str,
+        args: &[ExprId],
+        actual: &GoTy,
+        wrapper_params: &[String],
+        typed: bool,
+    ) -> GoExpr {
         // A Go-FFI wrapper (`rt.Go_<Pkg>_<fn>T`) has TYPED params, not `any`:
         // each arg must narrow to the wrapper's per-param slot alias
         // `rt.FfiT_<base>_P<i>` (`base` = the wrapper name minus the `rt.` prefix
@@ -1942,8 +2024,16 @@ impl<'a> Ctx<'a> {
         let mut largs: Vec<GoExpr> = Vec::new();
         let mut pi = 0usize;
         for a in args {
-            // The wrapper drops Sky's `()` unit params (zero-arg Go signatures).
+            // A TYPED wrapper drops Sky's `()` unit params (zero-arg Go
+            // signature) — elide the arg. The UNTYPED fallback keeps `(_ any)`,
+            // so its unit param must be passed as the Go unit literal
+            // `struct{}{}` (matching how a Sky helper's unit-param call emits).
             if matches!(&self.body.exprs[*a], Expr::Unit) {
+                if typed {
+                    continue;
+                }
+                largs.push(GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Any));
+                pi += 1;
                 continue;
             }
             let e = self.lower_expr(*a, &GoTy::Any);
@@ -1962,10 +2052,14 @@ impl<'a> Ctx<'a> {
                     slot,
                 ));
             } else {
-                // Primitive Go param (`string`/`int`/…): no alias exists. Pass the
-                // value with its own Go type — a `string`/`int` literal matches the
-                // wrapper's param directly (the oracle passes it verbatim).
-                largs.push(e);
+                // Primitive Go param (no typed-slot alias). Coerce/convert the
+                // arg to the wrapper's REAL Go param type (from its parsed
+                // signature) — `rt.AsString` for `any → string`, a numeric
+                // conversion `int64(x)` where Sky's `Int` (Go `int`) must widen
+                // to the wrapper's `int64`, etc. A param type we don't recognise
+                // (or an already-matching one) passes the value verbatim.
+                let want = wrapper_params.get(pi).map(String::as_str);
+                largs.push(self.coerce_ffi_prim_arg(e, want));
             }
             pi += 1;
         }
@@ -2449,10 +2543,30 @@ impl<'a> Ctx<'a> {
         // iota constructor, `_subj.Tag` / `_subj == Iota_Const` fail to compile
         // (`any` has no `.Tag`; `any == int` is a type mismatch). Coerce the
         // subject to the nominal the patterns imply so tag/equality tests type.
-        let subj = if subj_ty == GoTy::Any {
+        let subj = if subj.ty == GoTy::Any && subj_ty != GoTy::Any {
+            // The emitted subject VALUE is `any` (e.g. a call to a Sky helper
+            // whose Go return erased to `any` because its body forwards a raw
+            // FFI value) but caller-side inference pinned a concrete
+            // `subj_ty` (`rt.SkyResult[…]` / a nominal ADT). `_subj.Tag` /
+            // field reads are generated against `subj_ty`, so the bound `_subj`
+            // must actually BE that type — coerce the `any` value up to it.
+            // Common in FFI-heavy code where the callee's return stayed `any`
+            // but the call expression's HM type is a Result/Maybe (doc 09).
+            self.coerce_if_needed(subj, &subj_ty)
+        } else if subj_ty == GoTy::Any {
             if let Some(nom) = self.pattern_nominal(&branches) {
                 subj_ty = nom.clone();
                 self.coerce_if_needed(subj, &nom)
+            } else if let Some(cont) = self.pattern_container(&branches) {
+                // Builtin container patterns (Ok/Err, Just/Nothing) on an
+                // `any`-typed subject — e.g. a Sky function whose recovered
+                // return stayed `any`, or an FFI value flowing into a `case`.
+                // `_subj.Tag` / `.OkValue` need a concrete `rt.SkyResult` /
+                // `rt.SkyMaybe`; coerce to the element-erased shape so the tag
+                // + payload reads type-check. Element types stay `any`; each
+                // arm's binder re-coerces to its own inferred type (2538).
+                subj_ty = cont.clone();
+                self.coerce_if_needed(subj, &cont)
             } else {
                 subj
             }
@@ -2485,6 +2599,33 @@ impl<'a> Ctx<'a> {
                 }
                 if let Some((go_type, _kind)) = self.ctor_owner.get(cname) {
                     return Some(GoTy::Named(go_type.clone(), vec![]));
+                }
+            }
+        }
+        None
+    }
+
+    /// The builtin container Go type implied by a case's branch patterns when
+    /// the subject is `any`: `rt.SkyResult[any, any]` for Ok/Err, `rt.SkyMaybe
+    /// [any]` for Just/Nothing. Element types are erased to `any` — the exact
+    /// element inference is unavailable when the subject itself lowered to
+    /// `any`, and each arm's binder re-coerces to its own recorded type. Returns
+    /// `None` when no container constructor appears (a user ADT / literal case,
+    /// handled by `pattern_nominal`).
+    fn pattern_container(&self, branches: &[CaseBranch]) -> Option<GoTy> {
+        for br in branches {
+            if let Pattern::Ctor { name, .. } = &self.body.pats[br.pat] {
+                match name.as_str() {
+                    "Ok" | "Err" => {
+                        return Some(GoTy::Named(
+                            "rt.SkyResult".into(),
+                            vec![GoTy::Any, GoTy::Any],
+                        ));
+                    }
+                    "Just" | "Nothing" => {
+                        return Some(GoTy::Named("rt.SkyMaybe".into(), vec![GoTy::Any]));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2903,11 +3044,35 @@ impl<'a> Ctx<'a> {
         ty: &GoTy,
     ) -> (Option<GoExpr>, Vec<GoStmt>) {
         if let Some(a) = args.first() {
-            let field_expr = GoExpr::new(
+            // The payload's declared type. When it is `any` (element-erased
+            // container, `rt.SkyResult[E, any]`) but the sub-pattern is itself a
+            // container / ADT (`Ok (Just x)`, `Ok (Custom e)`), narrow the
+            // extracted `.OkValue` to the sub-pattern's nominal so the recursive
+            // `pattern_test` reads `.Tag` off a concrete `rt.SkyMaybe` / ADT
+            // rather than off `any`. Mirrors the sealed-ADT `Fields[i]` arm.
+            let sub_ty = if *ty == GoTy::Any {
+                self.pattern_nominal_ty(&self.body.pats[*a]).unwrap_or(GoTy::Any)
+            } else {
+                ty.clone()
+            };
+            let raw = GoExpr::new(
                 GoExprKind::Selector(Box::new(subj.clone()), field.into()),
-                ty.clone(),
+                GoTy::Any,
             );
-            return self.pattern_test(&field_expr, ty, *a);
+            let field_expr = if sub_ty == GoTy::Any {
+                GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), field.into()), ty.clone())
+            } else {
+                GoExpr::new(
+                    GoExprKind::Coerce {
+                        inner: Box::new(raw),
+                        from: GoTy::Any,
+                        to: sub_ty.clone(),
+                        reason: CoerceReason::GenericErase,
+                    },
+                    sub_ty.clone(),
+                )
+            };
+            return self.pattern_test(&field_expr, &sub_ty, *a);
         }
         (None, vec![])
     }

@@ -73,6 +73,13 @@ pub struct FfiPackage {
     pub ffi_slots: BTreeSet<String>,
     /// Path to the `<slug>_bindings.go` wrapper (materialised into sky-out/rt/).
     pub binding_file: Option<PathBuf>,
+    /// Per-wrapper-symbol ordered Go param types, parsed from each
+    /// `func Go_…(name type, …)` signature in the wrapper. The authoritative
+    /// source for a primitive param's REAL Go type (`int64` vs Sky's `Int`,
+    /// which the `kernel.json` skyType flattens to `Int`). Keyed by the full Go
+    /// symbol (`Go_Stripe_…SetUnitAmountT`). Non-primitive params still route
+    /// through their `FfiT_…_P<i>` slot; this pins the primitives.
+    pub wrapper_params: BTreeMap<String, Vec<String>>,
 }
 
 /// The loaded FFI surface, keyed by Sky module path. Every collection is a
@@ -117,10 +124,15 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
             continue;
         };
         let binding = go_dir.join(format!("{slug}_bindings.go"));
-        let (go_symbols, ffi_slots, binding_file) = if binding.exists() {
-            (scan_go_symbols(&binding), scan_ffi_slots(&binding), Some(binding))
+        let (go_symbols, ffi_slots, wrapper_params, binding_file) = if binding.exists() {
+            (
+                scan_go_symbols(&binding),
+                scan_ffi_slots(&binding),
+                scan_wrapper_params(&binding),
+                Some(binding),
+            )
         } else {
-            (BTreeSet::new(), BTreeSet::new(), None)
+            (BTreeSet::new(), BTreeSet::new(), BTreeMap::new(), None)
         };
         let mut functions = BTreeMap::new();
         for f in kj.functions {
@@ -135,6 +147,7 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
                 functions,
                 go_symbols,
                 ffi_slots,
+                wrapper_params,
                 binding_file,
             },
         );
@@ -186,6 +199,97 @@ fn scan_go_symbols(path: &Path) -> BTreeSet<String> {
         }
     }
     out
+}
+
+/// Scan a Go wrapper file for each top-level `func Go_<sym>(params…)` signature,
+/// returning `symbol → [param-type strings]` in declaration order. The param
+/// TYPE (everything after the param name) is captured for each param; grouped
+/// params (`a, b int`) are not emitted by the generator so a first-space split
+/// per param is sufficient. Depth-aware comma splitting handles `func(…)` /
+/// generic param types that embed commas.
+fn scan_wrapper_params(path: &Path) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("func ") else {
+            continue;
+        };
+        if rest.starts_with('(') {
+            continue; // method receiver — not a plain Go_* func.
+        }
+        let sym: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !sym.starts_with("Go_") {
+            continue;
+        }
+        // The param list is between the first `(` after the name and its match.
+        let after = &rest[sym.len()..];
+        let Some(open) = after.find('(') else {
+            continue;
+        };
+        let inner = match matching_paren(&after[open..]) {
+            Some(end) => &after[open + 1..open + end],
+            None => continue,
+        };
+        let params = split_top_commas(inner)
+            .into_iter()
+            .filter_map(|p| {
+                let p = p.trim();
+                if p.is_empty() {
+                    return None;
+                }
+                // `name type` → the type is everything past the first token.
+                match p.split_once(char::is_whitespace) {
+                    Some((_name, ty)) => Some(ty.trim().to_string()),
+                    None => Some(p.to_string()),
+                }
+            })
+            .collect::<Vec<_>>();
+        out.insert(sym, params);
+    }
+    out
+}
+
+/// Byte offset (into `s`, which must start with `(`) of the matching `)`.
+fn matching_paren(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split a Go param list on top-level commas (depth 0 of `()`/`[]`/`{}`).
+fn split_top_commas(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(s[start..i].to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(s[start..].to_string());
+    parts
 }
 
 /// A pinned FFI symbol: a Go binding surfaced to Sky with its HM signature.

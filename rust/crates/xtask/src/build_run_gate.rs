@@ -46,8 +46,13 @@ const CLI_FAMILY: &[&str] = &[
     "20-cli-counter",
 ];
 
-/// Examples blocked on unported Go-FFI surfaces (skip entirely).
-const FFI_BLOCKED: &[&str] = &["11-fyne-stopwatch", "13-skyshop"];
+/// Heavy-FFI GUI examples that build but cannot be headless-verified (native
+/// macOS GUI via cgo — the Fyne stopwatch opens a window + blocks on its event
+/// loop). Classified as `Shape::Ffi`: emit + `go build` are exercised, run is
+/// n/a — the exact build-only ceiling Webview already occupies. `13-skyshop`
+/// (the 76k-symbol Stripe Sky.Live benchmark) is NOT here — it classifies as a
+/// normal Live app and is run+matched like any other server.
+const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shape {
@@ -166,7 +171,7 @@ fn corpus(root: &Path) -> Vec<String> {
 /// the DEFAULT (no-args) branch for arg-dispatched multi-backend mains, and
 /// falling back to a whole-example scan when the main body only delegates.
 fn classify(dir: &Path, name: &str) -> Shape {
-    if FFI_BLOCKED.contains(&name) {
+    if FFI_BUILD_ONLY.contains(&name) {
         return Shape::Ffi;
     }
     let src = dir.join("src");
@@ -307,20 +312,6 @@ fn verify_one(
     do_verify: bool,
     verbose: bool,
 ) -> Row {
-    // FFI / Webview: emit+build only (Webview needs cgo/GUI; FFI is skipped).
-    if shape == Shape::Ffi {
-        return Row {
-            name: name.into(),
-            shape,
-            emitted: false,
-            build_ok: false,
-            run_ok: None,
-            matched: None,
-            run_kind: "n/a",
-            blocker: "FFI-blocked".into(),
-        };
-    }
-
     // CLI runs through build_example's own run+stdin path; servers/tui build
     // without the blocking run (we drive the process ourselves).
     let want_inline_run = do_verify && shape == Shape::Cli;
@@ -390,7 +381,14 @@ fn verify_one(
                     blocker = "macOS GUI — build-only".into();
                 }
             }
-            Shape::Ffi => {}
+            Shape::Ffi => {
+                // Heavy-FFI GUI (Fyne): native macOS window + blocking event
+                // loop — build is the ceiling, same as Webview.
+                run_kind = "n/a";
+                if blocker.is_empty() {
+                    blocker = "macOS GUI (cgo) — build-only".into();
+                }
+            }
         }
     }
 
