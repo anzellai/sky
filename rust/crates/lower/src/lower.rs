@@ -1338,7 +1338,7 @@ impl<'a> Ctx<'a> {
                 // function (`Result.map3 Profile …`, `List.map Piece …`): eta
                 // to a closure over its fields, same as a `Res::Ctor` value.
                 if self.record_ctor_name(d).is_some() {
-                    return self.lower_ctor_value(d, actual);
+                    return self.lower_ctor_value(d, actual, None);
                 }
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
@@ -1390,7 +1390,10 @@ impl<'a> Ctx<'a> {
                     GoExpr::new(GoExprKind::Ident(go), actual.clone())
                 }
             }
-            Res::Ctor(cr) => self.lower_ctor_value(cr.def, actual),
+            Res::Ctor(cr) => {
+                let pin = self.pinned_union_go(cr.type_);
+                self.lower_ctor_value(cr.def, actual, pin)
+            }
             Res::Foreign { package, name } => {
                 self.warnings
                     .push(format!("foreign ref {}.{}", package.as_str(), name.as_str()));
@@ -1433,7 +1436,7 @@ impl<'a> Ctx<'a> {
         )
     }
 
-    fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy) -> GoExpr {
+    fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy, pin: Option<String>) -> GoExpr {
         // A bare constructor reference used as a VALUE. For a nullary ctor this
         // is just the constructed value. For a ctor of arity ≥ 1 used as a
         // function value (`onInput UpdateDraft`, `onClick (Select room)` after
@@ -1443,7 +1446,7 @@ impl<'a> Ctx<'a> {
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
         let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
         if arity == 0 {
-            let (_, expr) = self.ctor_call(def, &[], actual);
+            let (_, expr) = self.ctor_call(def, &[], actual, pin);
             return expr;
         }
         // ADT/iota constructors take the untyped `Fields []any` bag — their Go
@@ -1476,7 +1479,7 @@ impl<'a> Ctx<'a> {
             // hand it the raw typed ident and let it decide.
             arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
         }
-        let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret);
+        let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret, pin.as_deref());
         let body = self.coerce_if_needed(ctor_val, &ret);
         let fn_ty = GoTy::Func(param_tys, Box::new(ret.clone()));
         GoExpr::new(
@@ -1487,7 +1490,13 @@ impl<'a> Ctx<'a> {
 
     /// Lower a constructor application (0+ args). Handles builtin Ok/Err/Just/
     /// Nothing/True/False and user ADT/iota/record constructors.
-    fn ctor_call(&mut self, def: DefId, args: &[ExprId], actual: &GoTy) -> (bool, GoExpr) {
+    fn ctor_call(
+        &mut self,
+        def: DefId,
+        args: &[ExprId],
+        actual: &GoTy,
+        pin: Option<String>,
+    ) -> (bool, GoExpr) {
         let loc = self.db.defs().borrow().loc(def);
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
         // Partial application of a multi-arg constructor (`JobDone jid` where
@@ -1499,11 +1508,11 @@ impl<'a> Ctx<'a> {
         let arity = self.ctor_arity.get(&cname).copied().unwrap_or(0);
         let builtin = matches!(cname.as_str(), "Ok" | "Err" | "Just" | "Nothing" | "True" | "False");
         if !builtin && args.len() < arity {
-            return (true, self.ctor_partial(&cname, args, arity, actual));
+            return (true, self.ctor_partial(&cname, args, arity, actual, pin));
         }
         let lowered_args: Vec<GoExpr> =
             args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
-        let expr = self.ctor_emit(&cname, lowered_args, actual);
+        let expr = self.ctor_emit(&cname, lowered_args, actual, pin.as_deref());
         (true, expr)
     }
 
@@ -1515,6 +1524,7 @@ impl<'a> Ctx<'a> {
         given: &[ExprId],
         arity: usize,
         actual: &GoTy,
+        pin: Option<String>,
     ) -> GoExpr {
         let mut arg_exprs: Vec<GoExpr> =
             given.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
@@ -1530,7 +1540,7 @@ impl<'a> Ctx<'a> {
             gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
             arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
         }
-        let ctor_val = self.ctor_emit(cname, arg_exprs, &ret);
+        let ctor_val = self.ctor_emit(cname, arg_exprs, &ret, pin.as_deref());
         let body = self.coerce_if_needed(ctor_val, &ret);
         let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
         GoExpr::new(
@@ -1540,7 +1550,13 @@ impl<'a> Ctx<'a> {
     }
 
     /// Emit a constructor call from already-lowered argument expressions.
-    fn ctor_emit(&mut self, cname: &str, lowered_args: Vec<GoExpr>, actual: &GoTy) -> GoExpr {
+    fn ctor_emit(
+        &mut self,
+        cname: &str,
+        lowered_args: Vec<GoExpr>,
+        actual: &GoTy,
+        pin: Option<&str>,
+    ) -> GoExpr {
         let cname = cname.to_string();
         // type args for the generic container constructors (Go can't infer the
         // unused type param, e.g. `E` in `Ok`).
@@ -1568,7 +1584,7 @@ impl<'a> Ctx<'a> {
             "False" => GoExpr::new(GoExprKind::BoolLit(false), GoTy::Bare(Prim::Bool)),
             _ => {
                 // user ctor: find its union go name via nominal + ctor union.
-                if let Some((go_type, kind)) = self.ctor_union_go(&cname) {
+                if let Some((go_type, kind)) = self.ctor_union_go_pinned(&cname, pin) {
                     match kind {
                         NominalKind::Iota => {
                             self.used_types.insert(go_type.clone());
@@ -1621,6 +1637,43 @@ impl<'a> Ctx<'a> {
         self.ctor_owner.get(cname).cloned()
     }
 
+    /// The owning-union Go name for a ctor, disambiguated by the resolved
+    /// `CtorRef.type_` DefId (`pin`) when the bare name collides across two
+    /// unions (`AlignLeft` lives in both `Std.Ui.HAlign` and
+    /// `Std.Css.TextAlign`). The bare-name `ctor_owner` map picks whichever
+    /// union interned last, so a value-position ctor reference in a module
+    /// that only imports the OTHER union emits the wrong nominal (and, for an
+    /// iota enum, a bare `int` that then fails `rt.Coerce`). Mirrors the
+    /// pattern-path disambiguation via `_subj_ty`. Falls back to `ctor_owner`.
+    fn ctor_union_go_pinned(
+        &self,
+        cname: &str,
+        pin: Option<&str>,
+    ) -> Option<(String, NominalKind)> {
+        if let Some(gt) = pin {
+            if let Some((k, _)) = self.ctor_in_union.get(&(gt.to_string(), cname.to_string())) {
+                return Some((gt.to_string(), *k));
+            }
+        }
+        self.ctor_union_go(cname)
+    }
+
+    /// Build the owning-union Go name (`Std_Css_TextAlign`) from a union's
+    /// `DefId` (the resolved `CtorRef.type_`). Matches `module_prefix + "_" +
+    /// type-name`, the same shape `reg!` interns during type-decl collection.
+    fn pinned_union_go(&self, type_: DefId) -> Option<String> {
+        let loc = self.db.defs().borrow().loc(type_)?;
+        // Builtin ctors (Ok/Err/Just/Nothing/…) intern their type under the
+        // synthetic `BUILTIN_MOD` (`ModuleId(u32::MAX)`), which is not a real
+        // module — `module_name` would index out of bounds. They never collide
+        // and are handled by name in `ctor_emit`, so no pin is needed.
+        if loc.module.index() == u32::MAX {
+            return None;
+        }
+        let mname = self.db.module_name(loc.module).to_string();
+        Some(format!("{}_{}", module_prefix(&mname), loc.name.as_str()))
+    }
+
     // ---- call / operator / control-flow lowering -----------------------
 
     /// If `d` names a record-alias auto-constructor (`type alias Piece = { … }`
@@ -1642,7 +1695,8 @@ impl<'a> Ctx<'a> {
         // constructor application?
         if let Expr::Var(Res::Ctor(cr)) = &self.body.exprs[callee] {
             let cr = cr.clone();
-            let (_, e) = self.ctor_call(cr.def, args, actual);
+            let pin = self.pinned_union_go(cr.type_);
+            let (_, e) = self.ctor_call(cr.def, args, actual, pin);
             return e;
         }
         // record-alias auto-constructor applied (resolves as `Res::Def`, see
@@ -1650,7 +1704,7 @@ impl<'a> Ctx<'a> {
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
             let d = *d;
             if self.record_ctor_name(d).is_some() {
-                let (_, e) = self.ctor_call(d, args, actual);
+                let (_, e) = self.ctor_call(d, args, actual, None);
                 return e;
             }
         }
@@ -2002,7 +2056,19 @@ impl<'a> Ctx<'a> {
                     let both_prim = matches!(l.ty, GoTy::Bare(_))
                         && matches!(r.ty, GoTy::Bare(_))
                         && l.ty == r.ty;
-                    if both_prim {
+                    // Float `+`/`-`/`*` must NOT emit Go's native operator: on
+                    // arm64 Go contracts `a*b + c` into a single-rounding FMA,
+                    // producing a last-ulp-different result from the oracle,
+                    // which routes float arithmetic through `rt.Add`/`rt.Mul`
+                    // (each returns a rounded float64 boxed in `any`, so the
+                    // intermediate product is rounded before the add — no FMA
+                    // fusion). Route float arithmetic through the same rt
+                    // helpers so results are byte-identical. Int arithmetic is
+                    // exact (native == rt), and float comparisons yield bool
+                    // (no fusion), so both stay native.
+                    let float_arith =
+                        l.ty == GoTy::Bare(Prim::Float) && matches!(op, "+" | "-" | "*");
+                    if both_prim && !float_arith {
                         let ty = if is_cmp(op) { GoTy::Bare(Prim::Bool) } else { l.ty.clone() };
                         return GoExpr::new(GoExprKind::Binary(b, Box::new(l), Box::new(r)), ty);
                     }

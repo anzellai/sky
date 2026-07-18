@@ -209,10 +209,17 @@ fn value_or_anno(p: &mut Parser) {
         });
         m.complete(p, TypeAnnoDecl);
     } else {
-        // `name pat* = expr`
+        // `name pat* = expr`. Each param is a constructor-application
+        // pattern (`pattern_app`), so an unparenthesized uppercase
+        // constructor greedily consumes its argument patterns —
+        // `f onChange selected RadioOption value labelEl` binds three
+        // params, the third being `RadioOption value labelEl`. This
+        // mirrors the Haskell oracle's `functionParams`/`pattern_`
+        // (patternCtorArgs is greedy). A lowercase/paren/literal param
+        // delegates to `pattern_atom`, so those are unchanged.
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
-            pattern_atom(p);
+            pattern_app(p);
         }
         pl.complete(p, ParamList);
         p.expect(Eq);
@@ -870,7 +877,9 @@ fn lambda_expr(p: &mut Parser) -> CompletedMarker {
     p.bump(); // backslash
     let pl = p.start();
     while p.at_any(PAT_ATOM_START) && !p.at(Arrow) {
-        pattern_atom(p);
+        // `pattern_app` so an uppercase constructor param consumes its
+        // args (`\Just x -> …`), matching the oracle's `lambdaParams`.
+        pattern_app(p);
     }
     pl.complete(p, ParamList);
     p.expect(Arrow);
@@ -928,7 +937,9 @@ fn let_binding(p: &mut Parser, anchor: u32) {
         p.bump(); // name
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
-            pattern_atom(p);
+            // `pattern_app` so a constructor param consumes its args,
+            // matching the oracle's greedy `pattern_` in let bindings.
+            pattern_app(p);
         }
         pl.complete(p, ParamList);
         p.expect(Eq);
