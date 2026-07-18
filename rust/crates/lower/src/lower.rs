@@ -98,9 +98,32 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             record_fieldsets.entry(names).or_insert_with(|| d.go_name.clone());
         }
     }
+    // ---- detect the app's single TEA Model ----
+    // A TEA `init` returns `( Model, Cmd msg )` and CONSTRUCTS the Model as a full
+    // record literal → inference gives a closed record that EXACTLY matches a
+    // declared record alias. That alias is the Model; unannotated view/update/
+    // helpers infer subsets of it, resolved to the nominal `_R` in `sky_ty_to_go`.
+    let model: Option<(Vec<String>, String)> = defs.values().find_map(|e| {
+        let Ty::Tuple(xs) = e.types.result.as_ref()? else {
+            return None;
+        };
+        if xs.len() != 2 {
+            return None;
+        }
+        let Ty::Record(fields, _) = &xs[0] else {
+            return None;
+        };
+        if !matches!(&xs[1], Ty::App(cn, _) if cn.as_str() == "Cmd") {
+            return None;
+        }
+        let mut names: Vec<String> = fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        names.sort();
+        record_fieldsets.get(&names).map(|go| (names.clone(), go.clone()))
+    });
     let env = TypeEnv {
         nominal,
         record_fieldsets,
+        model,
     };
 
     // record `_R` go-name → declared field (Go-name, Sky type) list, for typing
@@ -1029,7 +1052,26 @@ impl<'a> Ctx<'a> {
             Res::Def(d) => {
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
-                    GoExpr::new(GoExprKind::Ident(alias_go_name(raw)), actual.clone())
+                    // A NULLARY kernel value (`Dict.empty = Ffi.kernel "Dict_empty"`,
+                    // `Cmd.none`) whose runtime symbol is a zero-arg func must be
+                    // CALLED here too — the alias def carries no params, so a bare
+                    // `rt.Dict_empty` is a `func() any` and a typed slot panics.
+                    let go = alias_go_name(raw);
+                    let nullary = raw
+                        .split_once('_')
+                        .is_some_and(|(m, f)| crate::kernel::is_nullary_kernel_value(m, f));
+                    if nullary {
+                        let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+                        GoExpr::new(
+                            GoExprKind::Call(
+                                Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
+                                vec![],
+                            ),
+                            actual.clone(),
+                        )
+                    } else {
+                        GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                    }
                 } else if let Some(e) = self.defs.get(&d) {
                     self.discovered.push(d);
                     let go = top_go_name(&e.module_name, &e.name);
@@ -1057,10 +1099,24 @@ impl<'a> Ctx<'a> {
                     GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
                 }
             }
-            Res::Kernel { module, func } => GoExpr::new(
-                GoExprKind::Ident(kernel_go_name(module.as_str(), func.as_str())),
-                actual.clone(),
-            ),
+            Res::Kernel { module, func } => {
+                let go = kernel_go_name(module.as_str(), func.as_str());
+                if crate::kernel::is_nullary_kernel_value(module.as_str(), func.as_str()) {
+                    // Nullary kernel *value* (`Dict.empty`, `Cmd.none`, `Math.pi`):
+                    // the runtime symbol is a zero-arg func — CALL it to yield the
+                    // value (bare would be a `func() T` and a typed slot panics).
+                    let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+                    GoExpr::new(
+                        GoExprKind::Call(
+                            Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
+                            vec![],
+                        ),
+                        actual.clone(),
+                    )
+                } else {
+                    GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                }
+            }
             Res::Ctor(cr) => self.lower_ctor_value(cr.def, actual),
             Res::Foreign { package, name } => {
                 self.warnings

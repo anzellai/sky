@@ -32,6 +32,14 @@ pub struct TypeEnv {
     pub nominal: HashMap<String, Nominal>,
     /// sorted field-name list → the record alias's Go `_R` type name.
     pub record_fieldsets: HashMap<Vec<String>, String>,
+    /// The app's single TEA Model, when detected: `(sorted full field-set, `_R`
+    /// Go name)`. An unannotated `view`/`update`/`subscriptions` or a Model-taking
+    /// helper infers a *subset* row over the Model (only the fields it touches);
+    /// the runtime value is always the full nominal record, so a record whose
+    /// field-set is a SUBSET of the Model resolves to the nominal `_R` here. One
+    /// Model per app makes this unambiguous (doc 07 §3 subset-record case, the
+    /// TEA disambiguator).
+    pub model: Option<(Vec<String>, String)>,
 }
 
 /// Map a Sky type to its structural Go type.
@@ -66,6 +74,20 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
             names.sort();
             if let Some(go_name) = env.record_fieldsets.get(&names) {
                 return GoTy::Named(go_name.clone(), vec![]);
+            }
+            // subset→nominal: an anonymous record whose fields are all present in
+            // the app's single TEA Model resolves to the nominal Model `_R`. This
+            // is what the runtime actually passes — unannotated `view model` /
+            // `viewHistory model` infer a subset row; both sides must land on the
+            // nominal `_R` so the boundary coercion elides instead of asserting one
+            // subset struct against a different one (the `rt.Coerce` render panic).
+            if let Some((model_fields, model_go)) = &env.model {
+                if !names.is_empty()
+                    && names.len() < model_fields.len()
+                    && names.iter().all(|n| model_fields.binary_search(n).is_ok())
+                {
+                    return GoTy::Named(model_go.clone(), vec![]);
+                }
             }
             // else: anonymous Go struct. Field names Go-exported (capitalised) to
             // stay consistent with record-literal construction + field access.

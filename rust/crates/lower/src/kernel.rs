@@ -32,6 +32,32 @@ pub fn alias_go_name(raw: &str) -> String {
     format!("rt.{raw}")
 }
 
+/// Is `(module, func)` a NULLARY kernel *value* — a Sky binding declared with no
+/// parameters (`Dict.empty : Dict k v`, `Cmd.none : Cmd msg`, `Math.pi : Float`,
+/// `JsonDec.string : Decoder String`) whose runtime symbol is a zero-arg Go func
+/// (`func Dict_empty() any`)? Such a symbol referenced in a *value* slot must be
+/// CALLED (`rt.Dict_empty()`) — a bare `rt.Dict_empty` is a `func() any`, not the
+/// value, and a typed slot (`map[string]string`) `rt.Coerce`s the func and panics
+/// (Limitation #7 value-slot class, kernel branch — the oracle always calls these).
+/// A kernel of arity ≥ 1 (`String.toUpper`, `JsonDec.field`) is a genuine function
+/// value (HOF callback) and stays bare, so it is NOT in this set. The set mirrors
+/// the runtime's zero-parameter kernel funcs exactly.
+pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
+    matches!(
+        (module, func),
+        ("Dict", "empty")
+            | ("Set", "empty")
+            | ("Cmd", "none")
+            | ("Sub", "none")
+            | ("Uuid", "v4")
+            | ("Uuid", "v7")
+            | ("JsonEnc", "null")
+            | ("JsonDec", "string" | "int" | "float" | "bool")
+            | ("Config", "string" | "int" | "float" | "bool")
+            | ("Math", "pi" | "e" | "phi" | "sqrt2" | "inf" | "nan")
+    )
+}
+
 fn table() -> &'static HashMap<(&'static str, &'static str), &'static str> {
     static T: OnceLock<HashMap<(&'static str, &'static str), &'static str>> = OnceLock::new();
     T.get_or_init(|| {
