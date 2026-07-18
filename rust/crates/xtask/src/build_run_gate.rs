@@ -47,7 +47,7 @@ const CLI_FAMILY: &[&str] = &[
 ];
 
 /// Examples blocked on unported Go-FFI surfaces (skip entirely).
-const FFI_BLOCKED: &[&str] = &["05-mux-server", "11-fyne-stopwatch", "13-skyshop"];
+const FFI_BLOCKED: &[&str] = &["11-fyne-stopwatch", "13-skyshop"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shape {
@@ -206,6 +206,11 @@ fn shape_of_segment(seg: &str) -> Option<Shape> {
     if seg.contains("Server.listen") || seg.contains("HttpServer.listen") {
         return Some(Shape::Http);
     }
+    // Raw net/http server via FFI (`Http.listenAndServe`, e.g. 05-mux-server):
+    // an HTTP shape driven by a Go-FFI listen call rather than Sky.Http.Server.
+    if seg.contains("listenAndServe") {
+        return Some(Shape::Http);
+    }
     // bare `app { … routes … notFound … }` from
     // `import Std.Live exposing (app, route)`. Reached only after Webview/Tui/
     // Live.app are ruled out, so `notFound` here always means a bare Live app.
@@ -225,7 +230,7 @@ fn whole_example_shape(src: &Path) -> Option<Shape> {
             blob.push('\n');
         }
     }
-    if blob.contains("Server.listen") || blob.contains("HttpServer.listen") {
+    if blob.contains("Server.listen") || blob.contains("HttpServer.listen") || blob.contains("listenAndServe") {
         Some(Shape::Http)
     } else if blob.contains("Live.app") {
         Some(Shape::Live)
@@ -502,8 +507,12 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape) -> ServerR
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                if line.to_lowercase().contains("listening") {
-                    if let Some(p) = last_colon_number(&line) {
+                // Sky.Live/Http print "listening on …:PORT"; a raw net/http FFI
+                // server (05-mux-server) prints "Server starting on port PORT".
+                // Accept either and lift the port from the last number/`:PORT`.
+                let low = line.to_lowercase();
+                if low.contains("listening") || low.contains("starting on port") {
+                    if let Some(p) = last_colon_number(&line).or_else(|| last_number(&line)) {
                         let _ = tx.send(p);
                     }
                 }
@@ -591,6 +600,24 @@ fn last_colon_number(s: &str) -> Option<u16> {
     let idx = s.rfind(':')?;
     let digits: String = s[idx + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
+}
+
+/// The last run of ASCII digits anywhere in the line ("… on port 8000" → 8000).
+fn last_number(s: &str) -> Option<u16> {
+    let mut best: Option<u16> = None;
+    let mut cur = String::new();
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            cur.push(c);
+        } else if !cur.is_empty() {
+            best = cur.parse().ok().or(best);
+            cur.clear();
+        }
+    }
+    if !cur.is_empty() {
+        best = cur.parse().ok().or(best);
+    }
+    best
 }
 
 // ---- TUI verification (pty, no-panic) ------------------------------------

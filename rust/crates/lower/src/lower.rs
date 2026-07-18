@@ -3,7 +3,7 @@
 //! dispatch, ADT/record type-decl emission. Scoped to the M4 CLI-family subset;
 //! server/TUI/webview backends are reported as out of scope.
 
-use crate::goty::{sky_ty_to_go, Nominal, NominalKind, TypeEnv};
+use crate::goty::{sky_ty_to_go, sky_ty_to_go_in, Nominal, NominalKind, TypeEnv};
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
@@ -37,6 +37,10 @@ pub struct FfiModInfo {
     pub kernel_name: String,
     /// The wrapper's defined `Go_*` symbols (`Go_Uuid_newStringT`, …).
     pub go_symbols: BTreeSet<String>,
+    /// The wrapper's declared `FfiT_<sym>_P<i>` typed-slot aliases (only
+    /// non-primitive params get one). A call-site coercion to a slot alias is
+    /// emitted only when the target name is present here.
+    pub ffi_slots: BTreeSet<String>,
 }
 
 impl FfiTable {
@@ -54,6 +58,13 @@ impl FfiTable {
         } else {
             None
         }
+    }
+
+    /// Whether any imported package declares the typed-slot alias `name`
+    /// (`FfiT_Go_Mux_routerHandleFunc_P0`). Slot names embed the full Go symbol,
+    /// so they are globally unique — a flat scan is unambiguous.
+    pub fn has_ffi_slot(&self, name: &str) -> bool {
+        self.mods.values().any(|m| m.ffi_slots.contains(name))
     }
 }
 
@@ -129,7 +140,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     }
 
     // ---- collect type declarations + the nominal name map ----
-    let (nominal, type_decls) = collect_types(db);
+    let (nominal, nominal_by_module, type_decls) = collect_types(db);
 
     // record field-set → `_R` alias index (structural → nominal resolution).
     let mut record_fieldsets: HashMap<Vec<String>, String> = HashMap::new();
@@ -164,6 +175,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     });
     let env = TypeEnv {
         nominal,
+        nominal_by_module,
         record_fieldsets,
         model,
     };
@@ -335,6 +347,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             warnings: Vec::new(),
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
+            cur_module: e.module_name.clone(),
         };
         let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         for r in cx.discovered {
@@ -474,13 +487,30 @@ fn detect_kernel_alias(body: &Body) -> Option<String> {
 
 // ---- type declaration collection ---------------------------------------
 
-fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
+#[allow(clippy::type_complexity)]
+fn collect_types(
+    db: &SourceDb,
+) -> (
+    HashMap<String, Nominal>,
+    HashMap<(String, String), Nominal>,
+    Vec<TypeDecl>,
+) {
     use syntax::ast::{self, AstNode};
     let mut nominal: HashMap<String, Nominal> = HashMap::new();
+    let mut nominal_by_module: HashMap<(String, String), Nominal> = HashMap::new();
     let mut decls: Vec<TypeDecl> = Vec::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let prefix = module_prefix(&mname);
+        // register a nominal under both the flat map (last-writer) and the
+        // module-scoped map (never collides across modules).
+        macro_rules! reg {
+            ($tname:expr, $nom:expr) => {{
+                let nom: Nominal = $nom;
+                nominal_by_module.insert((mname.clone(), $tname.clone()), nom.clone());
+                nominal.insert($tname.clone(), nom);
+            }};
+        }
         let tree = db.module_parse(m).tree();
         for decl in tree.decls() {
             match &decl {
@@ -510,23 +540,23 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
                         // the placeholder decl aliases.
                         let opaque = variants.len() == 1
                             && variants[0].0.ends_with("_OPAQUE");
-                        nominal.insert(
-                            tname.clone(),
+                        reg!(
+                            tname,
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Iota,
                                 opaque,
-                            },
+                            }
                         );
                         TypeDeclKind::Iota(variants.into_iter().map(|(n, _)| n).collect())
                     } else {
-                        nominal.insert(
-                            tname.clone(),
+                        reg!(
+                            tname,
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Adt,
                                 opaque: false,
-                            },
+                            }
                         );
                         TypeDeclKind::Adt(variants)
                     };
@@ -542,13 +572,13 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
                     {
                         let fields = ty::record_alias_fields(a.syntax());
                         let go_name = format!("{prefix}_{tname}_R");
-                        nominal.insert(
-                            tname.clone(),
+                        reg!(
+                            tname,
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Record,
                                 opaque: false,
-                            },
+                            }
                         );
                         decls.push(TypeDecl {
                             name: tname,
@@ -561,7 +591,7 @@ fn collect_types(db: &SourceDb) -> (HashMap<String, Nominal>, Vec<TypeDecl>) {
             }
         }
     }
-    (nominal, decls)
+    (nominal, nominal_by_module, decls)
 }
 
 /// Emit a type declaration's Go items; return the further Go type names its
@@ -731,11 +761,23 @@ struct Ctx<'a> {
     /// The pinned FFI surface (read-only) + the modules actually called here.
     ffi: &'a FfiTable,
     ffi_used: BTreeSet<String>,
+    /// The module the def currently being lowered belongs to — disambiguates a
+    /// nominal type name (`Msg`/`Model`) declared in more than one module.
+    cur_module: String,
 }
 
 impl<'a> Ctx<'a> {
     fn goty(&mut self, t: &Ty) -> GoTy {
-        let gt = sky_ty_to_go(t, self.env);
+        let m = self.cur_module.clone();
+        self.goty_in(t, &m)
+    }
+
+    /// Like `goty`, but resolves nominal names in `module`'s scope. Used to lower
+    /// a CALLEE's declared param/result types (which live in the callee's module,
+    /// not the caller's) so a cross-module `Msg`/`Model` resolves to the callee's
+    /// own type, and the arg coercion targets the right nominal.
+    fn goty_in(&mut self, t: &Ty, module: &str) -> GoTy {
+        let gt = sky_ty_to_go_in(t, self.env, Some(module));
         let mut names = Vec::new();
         collect_named(&gt, &mut names);
         for n in names {
@@ -1255,9 +1297,23 @@ impl<'a> Ctx<'a> {
             let (_, expr) = self.ctor_call(def, &[], actual);
             return expr;
         }
+        // ADT/iota constructors take the untyped `Fields []any` bag — their Go
+        // ctor func is `func(any…) T`. Eta-expanding with a CONCRETE param type
+        // (adopted from the expected func shape) is unsound: when the closure is
+        // later `rt.Coerce`d to a different concrete func type and reflect-called,
+        // the arg's real type won't match the declared param (`int` reaching a
+        // `rt.SkyADT` param — the cross-module `Msg`-wrapper case). Force `any`
+        // params for those; record ctors keep their typed field params.
+        let adt_like = matches!(
+            self.ctor_owner.get(&cname).map(|(_, k)| *k),
+            Some(NominalKind::Adt) | Some(NominalKind::Iota)
+        );
         // Match the expected function shape when known; else `any` params.
         let (param_tys, ret): (Vec<GoTy>, GoTy) = match actual {
-            GoTy::Func(ps, r) if ps.len() == arity => (ps.clone(), (**r).clone()),
+            GoTy::Func(ps, r) if ps.len() == arity => {
+                let ps = if adt_like { vec![GoTy::Any; arity] } else { ps.clone() };
+                (ps, (**r).clone())
+            }
             _ => (vec![GoTy::Any; arity], GoTy::Any),
         };
         let mut gparams: Vec<GoParam> = Vec::new();
@@ -1389,7 +1445,7 @@ impl<'a> Ctx<'a> {
                                 .record_fields
                                 .get(&go_type)
                                 .map(|fs| {
-                                    fs.iter().map(|(_, t)| sky_ty_to_go(t, self.env)).collect()
+                                    fs.iter().map(|(_, t)| sky_ty_to_go_in(t, self.env, Some(&self.cur_module))).collect()
                                 })
                                 .unwrap_or_default();
                             let coerced: Vec<GoExpr> = lowered_args
@@ -1480,15 +1536,21 @@ impl<'a> Ctx<'a> {
         let (param_gtys, ret_goty, go_arity): (Option<Vec<GoTy>>, GoTy, Option<usize>) =
             if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
                 let d = *d;
-                let ps = self
-                    .def_param_tys
+                // The callee's param/result types are declared in ITS module — a
+                // nominal `Msg`/`Model` there is the callee's, not the caller's.
+                let callee_mod = self
+                    .defs
                     .get(&d)
-                    .map(|ptys| ptys.iter().map(|t| self.goty(t)).collect::<Vec<_>>());
+                    .map(|e| e.module_name.clone())
+                    .unwrap_or_else(|| self.cur_module.clone());
+                let ps = self.def_param_tys.get(&d).cloned().map(|ptys| {
+                    ptys.iter().map(|t| self.goty_in(t, &callee_mod)).collect::<Vec<_>>()
+                });
                 let ret = self
                     .def_result_tys
                     .get(&d)
                     .cloned()
-                    .map(|t| self.goty(&t))
+                    .map(|t| self.goty_in(&t, &callee_mod))
                     .unwrap_or_else(|| actual.clone());
                 // The emitted Go function's arity is the def's value-param count.
                 let arity = self.defs.get(&d).map(|e| e.body.params.len());
@@ -1581,12 +1643,68 @@ impl<'a> Ctx<'a> {
     /// non-unit args are widened to `any` and passed through; the `any` return is
     /// coerced to the call's typed slot (FFI-return coercion).
     fn ffi_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
-        let non_unit: Vec<ExprId> = args
-            .iter()
-            .copied()
-            .filter(|a| !matches!(&self.body.exprs[*a], Expr::Unit))
-            .collect();
-        self.kernel_call(go, &non_unit, actual)
+        // A Go-FFI wrapper (`rt.Go_<Pkg>_<fn>T`) has TYPED params, not `any`:
+        // each arg must narrow to the wrapper's per-param slot alias
+        // `rt.FfiT_<base>_P<i>` (`base` = the wrapper name minus the `rt.` prefix
+        // and the trailing `T`). `rt.Coerce` handles the narrowing — including the
+        // reflect.MakeFunc adapter for a Sky closure flowing into a Go `func(...)`
+        // slot. Widening to `any` (as a kernel call does) fails `go build` because
+        // Go won't pass `any` into a `*mux.Router` / `string` / `func(...)` param.
+        let base = go
+            .strip_prefix("rt.")
+            .unwrap_or(go)
+            .strip_suffix('T')
+            .unwrap_or(go);
+        let mut largs: Vec<GoExpr> = Vec::new();
+        let mut pi = 0usize;
+        for a in args {
+            // The wrapper drops Sky's `()` unit params (zero-arg Go signatures).
+            if matches!(&self.body.exprs[*a], Expr::Unit) {
+                continue;
+            }
+            let e = self.lower_expr(*a, &GoTy::Any);
+            let slot_name = format!("FfiT_{base}_P{pi}");
+            if self.ffi.has_ffi_slot(&slot_name) {
+                // Non-primitive Go param: narrow to its typed slot alias.
+                let slot = GoTy::Named(format!("rt.{slot_name}"), vec![]);
+                let from = e.ty.clone();
+                largs.push(GoExpr::new(
+                    GoExprKind::Coerce {
+                        inner: Box::new(e),
+                        from,
+                        to: slot.clone(),
+                        reason: CoerceReason::FfiReturn,
+                    },
+                    slot,
+                ));
+            } else {
+                // Primitive Go param (`string`/`int`/…): no alias exists. Pass the
+                // value with its own Go type — a `string`/`int` literal matches the
+                // wrapper's param directly (the oracle passes it verbatim).
+                largs.push(e);
+            }
+            pi += 1;
+        }
+        let call = GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                largs,
+            ),
+            GoTy::Any,
+        );
+        if *actual == GoTy::Any {
+            call
+        } else {
+            GoExpr::new(
+                GoExprKind::Coerce {
+                    inner: Box::new(call),
+                    from: GoTy::Any,
+                    to: actual.clone(),
+                    reason: CoerceReason::FfiReturn,
+                },
+                actual.clone(),
+            )
+        }
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
@@ -1627,8 +1745,17 @@ impl<'a> Ctx<'a> {
                 let r = self.lower_expr(rhs, &GoTy::Any);
                 // string concat is the dominant case in the CLI corpus.
                 if actual == &GoTy::Bare(Prim::Str) || l.ty == GoTy::Bare(Prim::Str) {
+                    // Go's `+` needs both operands statically `string`. An operand
+                    // that stayed `any` (an untyped kernel return like
+                    // `Db.getField`, whose Sky sig is loose) must narrow via
+                    // `rt.AsString` at the concat boundary — otherwise `go build`
+                    // rejects `string + any`.
                     return GoExpr::new(
-                        GoExprKind::Binary(GoBin::Add, Box::new(l), Box::new(r)),
+                        GoExprKind::Binary(
+                            GoBin::Add,
+                            Box::new(coerce_to_str(l)),
+                            Box::new(coerce_to_str(r)),
+                        ),
                         GoTy::Bare(Prim::Str),
                     );
                 }
@@ -2191,7 +2318,7 @@ impl<'a> Ctx<'a> {
                         .get(gn)
                         .map(|fs| {
                             fs.iter()
-                                .map(|(cap, t)| (cap.clone(), sky_ty_to_go(t, self.env)))
+                                .map(|(cap, t)| (cap.clone(), sky_ty_to_go_in(t, self.env, Some(&self.cur_module))))
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -2527,6 +2654,26 @@ fn widen(e: GoExpr) -> GoExpr {
     } else {
         GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
     }
+}
+
+/// Narrow an operand of a Go string `+` to `string`. A statically-`string`
+/// operand passes through unchanged; anything else (an `any`-typed kernel
+/// return, a flex case binder) routes through `rt.AsString` so `go build`
+/// accepts `string + string` rather than rejecting `string + any`.
+fn coerce_to_str(e: GoExpr) -> GoExpr {
+    if e.ty == GoTy::Bare(Prim::Str) {
+        return e;
+    }
+    let from = e.ty.clone();
+    GoExpr::new(
+        GoExprKind::Coerce {
+            inner: Box::new(e),
+            from,
+            to: GoTy::Bare(Prim::Str),
+            reason: CoerceReason::FfiReturn,
+        },
+        GoTy::Bare(Prim::Str),
+    )
 }
 
 fn go_binop(op: &str) -> Option<GoBin> {

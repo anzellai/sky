@@ -26,7 +26,11 @@ use std::path::{Path, PathBuf};
 struct KernelJsonFn {
     name: String,
     arity: usize,
-    #[serde(rename = "skyType")]
+    // Some inspector-emitted entries (`requestCancel`, `closeNotifierCloseNotify`)
+    // omit `skyType`. Defaulting rather than requiring it keeps ONE malformed
+    // function from sinking the whole package's `serde` parse (which would drop
+    // every other symbol — e.g. `Net.Http.listenAndServe`).
+    #[serde(rename = "skyType", default)]
     sky_type: String,
 }
 
@@ -61,6 +65,12 @@ pub struct FfiPackage {
     /// Every `Go_*` func symbol defined in the wrapper (`Go_Uuid_newStringT`, …)
     /// — used to pick the typed `T` variant over the untyped fallback.
     pub go_symbols: BTreeSet<String>,
+    /// Every `FfiT_<sym>_P<i>` / `FfiT_<sym>_R` typed-slot alias the wrapper
+    /// declares. The generator emits one only for a non-primitive Go param type
+    /// (`*mux.Router`, a `func(...)` handler) — a `string`/`int`/`bool` param has
+    /// no alias and is passed to the wrapper directly. A call-site coercion to
+    /// `rt.FfiT_<sym>_P<i>` is therefore valid only when that name is in this set.
+    pub ffi_slots: BTreeSet<String>,
     /// Path to the `<slug>_bindings.go` wrapper (materialised into sky-out/rt/).
     pub binding_file: Option<PathBuf>,
 }
@@ -107,10 +117,10 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
             continue;
         };
         let binding = go_dir.join(format!("{slug}_bindings.go"));
-        let (go_symbols, binding_file) = if binding.exists() {
-            (scan_go_symbols(&binding), Some(binding))
+        let (go_symbols, ffi_slots, binding_file) = if binding.exists() {
+            (scan_go_symbols(&binding), scan_ffi_slots(&binding), Some(binding))
         } else {
-            (BTreeSet::new(), None)
+            (BTreeSet::new(), BTreeSet::new(), None)
         };
         let mut functions = BTreeMap::new();
         for f in kj.functions {
@@ -124,11 +134,33 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
                 go_package: kj.package,
                 functions,
                 go_symbols,
+                ffi_slots,
                 binding_file,
             },
         );
     }
     reg
+}
+
+/// Scan a Go wrapper file for its `type FfiT_… = …` slot-alias names.
+fn scan_ffi_slots(path: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("type ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.starts_with("FfiT_") {
+            out.insert(name);
+        }
+    }
+    out
 }
 
 /// Scan a Go wrapper file for its top-level `func Go_*` symbol names.

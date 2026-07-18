@@ -40,6 +40,13 @@ pub enum NominalKind {
 #[derive(Default)]
 pub struct TypeEnv {
     pub nominal: HashMap<String, Nominal>,
+    /// Module-scoped nominal lookup: `(module_name, type_name) → Nominal`. Two
+    /// modules can each declare a `Msg`/`Model` ADT; the flat `nominal` map
+    /// collapses them (last writer wins), so a type name resolved inside module
+    /// M must prefer M's own declaration. Falls back to `nominal` when M declares
+    /// no such name. Only collisions differ from the flat map — a name declared
+    /// in one module resolves identically either way.
+    pub nominal_by_module: HashMap<(String, String), Nominal>,
     /// sorted field-name list → the record alias's Go `_R` type name.
     pub record_fieldsets: HashMap<Vec<String>, String>,
     /// The app's single TEA Model, when detected: `(sorted full field-set, `_R`
@@ -52,19 +59,25 @@ pub struct TypeEnv {
     pub model: Option<(Vec<String>, String)>,
 }
 
-/// Map a Sky type to its structural Go type.
+/// Map a Sky type to its structural Go type. `cur_mod` is the module the type is
+/// being lowered in (when known) — it disambiguates a nominal name declared in
+/// more than one module (`Counter.Msg` vs `Main.Msg`).
 pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
+    sky_ty_to_go_in(t, env, None)
+}
+
+pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
     match t {
-        Ty::App(name, args) => app_to_go(name.as_str(), args, env),
+        Ty::App(name, args) => app_to_go(name.as_str(), args, env, cur_mod),
         Ty::Fun(a, b) => {
             // Collapse the curried spine into an N-ary Go func.
-            let mut params = vec![sky_ty_to_go(a, env)];
+            let mut params = vec![sky_ty_to_go_in(a, env, cur_mod)];
             let mut ret = b.as_ref();
             while let Ty::Fun(x, y) = ret {
-                params.push(sky_ty_to_go(x, env));
+                params.push(sky_ty_to_go_in(x, env, cur_mod));
                 ret = y;
             }
-            GoTy::Func(params, Box::new(sky_ty_to_go(ret, env)))
+            GoTy::Func(params, Box::new(sky_ty_to_go_in(ret, env, cur_mod)))
         }
         // Tuple element types are kept for TYPING (pattern binds need them),
         // but tuples RENDER as the runtime's `rt.T2[any,any]` (`SkyTuple2`) —
@@ -73,7 +86,7 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
         // `Basics_fst/sndT`) assert `T2[any,any]`; a concretely-typed
         // `rt.T2[string,int]` value flowing in panics on the interface
         // conversion.
-        Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| sky_ty_to_go(x, env)).collect()),
+        Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| sky_ty_to_go_in(x, env, cur_mod)).collect()),
         Ty::Unit => GoTy::Unit,
         // A remaining rigid/flex var → generic erase to `any` (doc 07 §6 class 8).
         Ty::Var(_) => GoTy::Any,
@@ -104,7 +117,7 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
             GoTy::Struct(
                 fields
                     .iter()
-                    .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), sky_ty_to_go(ft, env)))
+                    .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), sky_ty_to_go_in(ft, env, cur_mod)))
                     .collect(),
             )
         }
@@ -112,8 +125,8 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
     }
 }
 
-fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv) -> GoTy {
-    let go = |t: &Ty| sky_ty_to_go(t, env);
+fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
+    let go = |t: &Ty| sky_ty_to_go_in(t, env, cur_mod);
     match (name, args.len()) {
         ("Int", 0) => GoTy::Bare(Prim::Int),
         ("Float", 0) => GoTy::Bare(Prim::Float),
@@ -141,7 +154,13 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv) -> GoTy {
         ("Decoder", _) => GoTy::Any,
         ("Value", _) => GoTy::Any,
         _ => {
-            if let Some(n) = env.nominal.get(name) {
+            // Prefer the current module's own declaration of `name` when it has
+            // one (disambiguates a `Msg`/`Model` declared in several modules);
+            // fall back to the flat map otherwise.
+            let nominal = cur_mod
+                .and_then(|m| env.nominal_by_module.get(&(m.to_string(), name.to_string())))
+                .or_else(|| env.nominal.get(name));
+            if let Some(n) = nominal {
                 // Phantom opaque-handle types (`Route`/`Server`/`Cookie`):
                 // the runtime value is a kernel struct handle, not the `int`
                 // the placeholder decl aliases. Resolve to `any` so lists of

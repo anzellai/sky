@@ -90,6 +90,13 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
         report.note = format!("ffi binding copy failed: {e}");
         return report;
     }
+    // The base go.mod copied from `runtime-go` pins the stdlib's deps but NOT
+    // project-specific FFI packages (`sky add github.com/gorilla/mux`). A
+    // materialised binding that imports such a package fails `go build` until the
+    // module is a `require` + present in go.sum — inject those now.
+    if let Err(e) = inject_ffi_deps(&registry, &out.ffi_used, &out_dir, &opts.example_dir) {
+        report.warnings.push(format!("ffi go.mod injection: {e}"));
+    }
     report.emitted = true;
 
     // ---- go build ----
@@ -204,6 +211,7 @@ fn build_ffi_table(reg: &ffi::FfiRegistry) -> lower::FfiTable {
             lower::FfiModInfo {
                 kernel_name: pkg.kernel_name.clone(),
                 go_symbols: pkg.go_symbols.clone(),
+                ffi_slots: pkg.ffi_slots.clone(),
             },
         );
     }
@@ -233,6 +241,83 @@ fn materialise_ffi_bindings(
         }
     }
     Ok(())
+}
+
+/// Add a `require` for every external Go-FFI package the program calls that the
+/// base go.mod (copied from `runtime-go`) does not already pin. Stdlib packages
+/// (`net/http`, `io`, `os`) never need a require and are skipped. The version is
+/// taken from the oracle's committed `sky-out/go.mod` when present (exact match),
+/// else resolved as `@latest`. `go get` handles go.mod + go.sum + the module
+/// download in one step (offline via the module cache when populated).
+fn inject_ffi_deps(
+    reg: &ffi::FfiRegistry,
+    used: &std::collections::BTreeSet<String>,
+    out_dir: &Path,
+    example_dir: &Path,
+) -> std::io::Result<()> {
+    let mut paths: Vec<String> = used
+        .iter()
+        .filter_map(|m| reg.resolve(m))
+        .map(|p| p.go_package.trim().to_string())
+        .filter(|p| is_external_module(p))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let go_mod = out_dir.join("go.mod");
+    let existing = std::fs::read_to_string(&go_mod).unwrap_or_default();
+    let oracle_mod = std::fs::read_to_string(example_dir.join("sky-out").join("go.mod")).ok();
+
+    for path in &paths {
+        if module_required(&existing, path) {
+            continue;
+        }
+        let spec = match oracle_mod.as_deref().and_then(|m| required_version(m, path)) {
+            Some(v) => format!("{path}@{v}"),
+            None => path.clone(),
+        };
+        // `go get <path>[@version]` edits go.mod, downloads the module, and writes
+        // go.sum. Best-effort: a network/cache miss is surfaced by the subsequent
+        // `go build` failure rather than aborting the emit.
+        let _ = Command::new("go")
+            .args(["get", &spec])
+            .current_dir(out_dir)
+            .env("GOFLAGS", "-mod=mod")
+            .output();
+    }
+    Ok(())
+}
+
+/// A Go import path names an external module (needs a `require`) when its first
+/// segment carries a dot (`github.com/…`, `gopkg.in/…`). Stdlib paths (`io`,
+/// `net/http`, `os`) never do.
+fn is_external_module(path: &str) -> bool {
+    path.split('/').next().is_some_and(|head| head.contains('.'))
+}
+
+/// Whether `go.mod` text already pins `path` in a require directive.
+fn module_required(go_mod: &str, path: &str) -> bool {
+    go_mod
+        .lines()
+        .any(|l| l.split_whitespace().next() == Some(path) || l.trim() == path)
+}
+
+/// Extract the version pinned for `path` from a go.mod's require lines.
+fn required_version(go_mod: &str, path: &str) -> Option<String> {
+    for line in go_mod.lines() {
+        let mut it = line.split_whitespace();
+        if it.next() == Some(path) {
+            if let Some(v) = it.next() {
+                if v.starts_with('v') {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn write_out(repo_root: &Path, out_dir: &Path, source: &str) -> std::io::Result<()> {
