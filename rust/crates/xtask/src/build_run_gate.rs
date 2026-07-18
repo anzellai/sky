@@ -444,7 +444,7 @@ fn verify_server(
 ) -> (bool, Option<bool>, String) {
     let port = free_port().unwrap_or(0);
     let rust_app = out_dir.join("app");
-    let rust = serve_and_fetch(&rust_app, out_dir, port, shape);
+    let rust = serve_and_fetch(&rust_app, out_dir, port, shape, name);
     if verbose {
         eprintln!("  [{name}] rust: started={} port={:?}", rust.started, rust.port);
     }
@@ -457,7 +457,7 @@ fn verify_server(
         // rust served but no oracle to compare against.
         return (true, None, "no oracle binary".into());
     }
-    let oracle = serve_and_fetch(&oracle_app, &dir.join("sky-out"), port, shape);
+    let oracle = serve_and_fetch(&oracle_app, &dir.join("sky-out"), port, shape, name);
     if verbose {
         eprintln!("  [{name}] oracle: started={} port={:?}", oracle.started, oracle.port);
     }
@@ -479,7 +479,7 @@ struct ServerRun {
 
 /// Spawn a server binary, wait for its "listening" line, curl `/`, then ALWAYS
 /// kill it. Watchdog-bounded; the child is killed on every exit path.
-fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape) -> ServerRun {
+fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape, name: &str) -> ServerRun {
     let mut cmd = Command::new(app);
     cmd.current_dir(cwd)
         .stdin(Stdio::null())
@@ -492,6 +492,14 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape) -> ServerR
         .env("SKY_DEV_BANNER", "off")
         .env("SKY_LIVE_BANNER", "off")
         .env("ENV", "dev");
+    // Per-example runtime env some servers require to boot at all. Name-scoped
+    // so only the named example sees extra vars — every other example spawns
+    // byte-identically to before. 36-composite-server refuses to start unless
+    // SKY_AUTH_TOKEN_SECRET is >= 32 bytes (a hard runServer guard), and reads
+    // its port from SKY_COMPOSITE_PORT rather than SKY_LIVE_PORT.
+    for (k, v) in extra_server_env(name, spare) {
+        cmd.env(k, v);
+    }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -571,6 +579,23 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape) -> ServerR
         })
     };
     ServerRun { started, port, body, note }
+}
+
+/// Extra runtime env a specific example needs to boot. Empty for every example
+/// but the ones listed — keeps the default spawn path byte-identical.
+fn extra_server_env(name: &str, spare: u16) -> Vec<(String, String)> {
+    match name {
+        "36-composite-server" => vec![
+            // >= 32 bytes: runServer hard-fails and exits otherwise.
+            (
+                "SKY_AUTH_TOKEN_SECRET".into(),
+                "gate-fixture-secret-0123456789abcdef".into(),
+            ),
+            // This server reads its port from SKY_COMPOSITE_PORT, not SKY_LIVE_PORT.
+            ("SKY_COMPOSITE_PORT".into(), spare.to_string()),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 fn curl_get(port: u16) -> Option<String> {
