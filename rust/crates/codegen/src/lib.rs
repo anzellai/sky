@@ -274,6 +274,14 @@ pub fn render_expr(e: &GoExpr) -> String {
                 GoTy::Slice(t) => {
                     format!("rt.AsListT[{}]({})", render_ty(t), render_expr(inner))
                 }
+                // A Sky `Dict k v` is `map[string]V` at runtime; narrow an `any`
+                // (`rt.Dict_empty()`, an untyped kernel return) via `rt.AsMapT[V]`,
+                // which REBUILDS the value-coerced `map[string]V` (matching the
+                // oracle). `rt.Coerce[map[…]…]` would assert the exact Go map type
+                // and panic (Go map types are invariant).
+                GoTy::Map(_, v) => {
+                    format!("rt.AsMapT[{}]({})", render_ty(v), render_expr(inner))
+                }
                 GoTy::Bare(Prim::Str) => format!("rt.AsString({})", render_expr(inner)),
                 GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", render_expr(inner)),
                 GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", render_expr(inner)),

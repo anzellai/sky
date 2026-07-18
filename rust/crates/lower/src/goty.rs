@@ -141,7 +141,14 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> G
         ("Maybe", 1) => GoTy::Named("rt.SkyMaybe".into(), vec![go(&args[0])]),
         ("Result", 2) => GoTy::Named("rt.SkyResult".into(), vec![go(&args[0]), go(&args[1])]),
         ("Task", 2) => GoTy::Named("rt.SkyTask".into(), vec![go(&args[0]), go(&args[1])]),
-        ("Dict", 2) => GoTy::Map(Box::new(go(&args[0])), Box::new(go(&args[1]))),
+        // A Sky `Dict k v` is ALWAYS stored as `map[string]V` at runtime — keys are
+        // stringified (`rt.Dict_empty() any` returns `map[string]any`; an `Int`-keyed
+        // dict stores key `"0"`). The oracle renders every dict key as `string`
+        // (`bucketsByIndex : Dict Int … → map[string][]…`); narrowing goes through
+        // `rt.AsMapT[V]` which returns `map[string]V`. Rendering the key as `goty(k)`
+        // (e.g. `map[int]V`) never matches that runtime shape and panics under
+        // `rt.Coerce` — so pin the Go key type to `string`.
+        ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go(&args[1]))),
         ("Cmd", _) => GoTy::Any,
         ("Sub", _) => GoTy::Any,
         // Kernel-opaque handle types carry a runtime handle (a `JsonDecoder` /

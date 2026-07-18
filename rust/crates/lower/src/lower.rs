@@ -271,12 +271,31 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
         def_param_tys.insert(*d, ptys);
     }
-    // per-def result type — used to detect a Task-returning call for auto-force
-    // even when the caller inferred the (unannotated) call as a flex var.
+    // per-def result type — the callee's Go return type as seen by a caller (for
+    // arg→param coercion of the return, partial-application closure return, and
+    // Task-returning detection). MUST agree with the type `lower_def` actually
+    // emits as the func's Go return: `lower_def` prefers the DECLARED sig result
+    // (`sig_result_after`) when concrete over the body-inferred one. A body that
+    // only field-updates its record param (`{ post | upvoters = … }`) infers a
+    // *subset* open record (`{ Downvoters, Id, Upvoters | row }` → anon
+    // `struct{…}`), but the func returns the annotated nominal (`State_Post_R`).
+    // If `def_result_tys` reported the subset, a partial-app closure would be
+    // typed `func(_p any) struct{…}` while its body returns the nominal — which
+    // `go build` rejects (19-skyforum toggle map). Mirroring the sig-first rule
+    // keeps both sides on the nominal `_R`. Bare-var / unannotated results fall
+    // back to the body-inferred type, unchanged.
     let mut def_result_tys: HashMap<DefId, Ty> = HashMap::new();
     for (d, e) in &defs {
-        if let Some(r) = &e.types.result {
-            def_result_tys.insert(*d, r.clone());
+        let sig_ret = e
+            .sig
+            .as_ref()
+            .map(|s| sig_result_after(s, e.body.params.len()));
+        let t = match sig_ret {
+            Some(st) if !matches!(st, Ty::Var(_)) => Some(st),
+            _ => e.types.result.clone(),
+        };
+        if let Some(t) = t {
+            def_result_tys.insert(*d, t);
         }
     }
 
@@ -345,6 +364,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             discovered: Vec::new(),
             used_types: HashSet::new(),
             warnings: Vec::new(),
+            closure_elem: None,
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
             cur_module: e.module_name.clone(),
@@ -773,6 +793,13 @@ struct Ctx<'a> {
     /// The module the def currently being lowered belongs to — disambiguates a
     /// nominal type name (`Msg`/`Model`) declared in more than one module.
     cur_module: String,
+    /// The Go element type of the list a HIGHER-ORDER combinator closure is being
+    /// applied to (`List.map (\x -> …) xs` → element type of `xs`), set while the
+    /// closure arg is lowered. A closure param whose body-inferred type collapsed to
+    /// an anonymous subset `struct{…}` is pinned to this instead — the honest
+    /// runtime element (a nominal `_R`, or `any` for an erased list). `None`
+    /// outside a combinator-closure arg. See `lower_lambda` + `lower_call`.
+    closure_elem: Option<GoTy>,
 }
 
 impl<'a> Ctx<'a> {
@@ -1185,8 +1212,27 @@ impl<'a> Ctx<'a> {
             Expr::Let { defs, body } => self.lower_let_expr(defs, *body, actual),
             Expr::Access(base, field) => {
                 let b = self.lower_expr(*base, &GoTy::Any);
+                let cap = capitalize(field.as_str());
+                // Field access on an `any`-typed base — a lambda param pinned to a
+                // list element the combinator erased to `any` (`\r -> r.tx.account`
+                // over a `[]any` `Dict.get` result), or a raw untyped kernel value.
+                // Go's `.Field` selector is invalid on `any`, so route through the
+                // runtime's reflective `rt.Field`. Typed `Any` so the use slot
+                // narrows it (matches the oracle's `rt.Field(r, "AmountCents")`).
+                if b.ty == GoTy::Any {
+                    return GoExpr::new(
+                        GoExprKind::Call(
+                            Box::new(GoExpr::new(GoExprKind::Ident("rt.Field".into()), GoTy::Any)),
+                            vec![
+                                b,
+                                GoExpr::new(GoExprKind::StrLit(cap), GoTy::Bare(Prim::Str)),
+                            ],
+                        ),
+                        GoTy::Any,
+                    );
+                }
                 GoExpr::new(
-                    GoExprKind::Selector(Box::new(b), capitalize(field.as_str())),
+                    GoExprKind::Selector(Box::new(b), cap),
                     actual.clone(),
                 )
             }
@@ -1248,14 +1294,7 @@ impl<'a> Ctx<'a> {
                         .split_once('_')
                         .is_some_and(|(m, f)| crate::kernel::is_nullary_kernel_value(m, f));
                     if nullary {
-                        let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
-                        GoExpr::new(
-                            GoExprKind::Call(
-                                Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
-                                vec![],
-                            ),
-                            actual.clone(),
-                        )
+                        self.nullary_kernel_value(&go, actual)
                     } else {
                         GoExpr::new(GoExprKind::Ident(go), actual.clone())
                     }
@@ -1289,17 +1328,7 @@ impl<'a> Ctx<'a> {
             Res::Kernel { module, func } => {
                 let go = kernel_go_name(module.as_str(), func.as_str());
                 if crate::kernel::is_nullary_kernel_value(module.as_str(), func.as_str()) {
-                    // Nullary kernel *value* (`Dict.empty`, `Cmd.none`, `Math.pi`):
-                    // the runtime symbol is a zero-arg func — CALL it to yield the
-                    // value (bare would be a `func() T` and a typed slot panics).
-                    let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
-                    GoExpr::new(
-                        GoExprKind::Call(
-                            Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
-                            vec![],
-                        ),
-                        actual.clone(),
-                    )
+                    self.nullary_kernel_value(&go, actual)
                 } else {
                     GoExpr::new(GoExprKind::Ident(go), actual.clone())
                 }
@@ -1312,6 +1341,39 @@ impl<'a> Ctx<'a> {
             }
             Res::Error => GoExpr::new(GoExprKind::Nil, GoTy::Any),
         }
+    }
+
+    /// Emit a nullary kernel *value* (`Dict.empty`, `Cmd.none`, `Math.pi`): its
+    /// runtime symbol is a zero-arg func, so CALL it (a bare `func() T` in a value
+    /// slot panics). The non-`T` symbols return Go `any` (`func Dict_empty() any`).
+    /// A CONCRETE-key map slot (`map[string]V` — `Dict.empty : Dict String ()`
+    /// passed to a `map[string]struct{}` param) needs the `any` value narrowed via
+    /// `rt.AsMapT` (matching the oracle) or `go build` rejects `any` in that slot.
+    /// Every other slot keeps the historical bare-call typed-`actual` form: an
+    /// any-key `map[interface{}]interface{}` (`Dict any any`, a widened `foldl`
+    /// accumulator) has NO sound coercion from the runtime's `map[string]any`, and
+    /// those contexts widen to `any` anyway — coercing there panics (CoerceFailure).
+    fn nullary_kernel_value(&mut self, go: &str, actual: &GoTy) -> GoExpr {
+        let concrete_key_map = matches!(actual, GoTy::Map(k, _) if **k != GoTy::Any);
+        if concrete_key_map {
+            let fn_ty = GoTy::Func(vec![], Box::new(GoTy::Any));
+            let call = GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(GoExprKind::Ident(go.to_string()), fn_ty)),
+                    vec![],
+                ),
+                GoTy::Any,
+            );
+            return self.coerce_if_needed(call, actual);
+        }
+        let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+        GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.to_string()), fn_ty)),
+                vec![],
+            ),
+            actual.clone(),
+        )
     }
 
     fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy) -> GoExpr {
@@ -1588,6 +1650,28 @@ impl<'a> Ctx<'a> {
             } else {
                 (None, actual.clone(), None)
             };
+        // Higher-order list-combinator closure: `List.map (\x -> …) xs`,
+        // `List.foldl (\x acc -> …) z xs`. When arg 0 is a lambda and the LAST arg
+        // is list-shaped, the closure's element param IS the list's element type.
+        // Pin it (via `closure_elem`) so a body-inferred subset `struct{…}` param
+        // resolves to the honest runtime element. The element is read from the list
+        // arg's OWN recorded Go type, so `func(elem …) …` and the list arg agree by
+        // construction — when that element is already the subset struct
+        // (18-job-queue's `[]struct{…}` field) the pin is a no-op (byte-identical).
+        // Only when the list's Go type is a concrete `Slice` do we know its element
+        // (`[]any` → `any`, `[]State_Post_R` → the nominal). A bare `Any` means
+        // inference didn't pin the list — leave the closure param untouched (its
+        // body-inferred struct is the baseline, and pinning to `any` there would
+        // strip the fields a record update needs, 18-job-queue).
+        let combinator_elem: Option<GoTy> =
+            if args.len() >= 2 && matches!(&self.body.exprs[args[0]], Expr::Lambda { .. }) {
+                match self.expr_ty(*args.last().unwrap()) {
+                    GoTy::Slice(e) => Some(*e),
+                    _ => None,
+                }
+            } else {
+                None
+            };
         let c = self.lower_expr(callee, &GoTy::Any);
         let largs: Vec<GoExpr> = args
             .iter()
@@ -1598,7 +1682,15 @@ impl<'a> Ctx<'a> {
                     .and_then(|ps| ps.get(i))
                     .cloned()
                     .unwrap_or(GoTy::Any);
-                self.lower_expr(*a, &expected)
+                if i == 0 && combinator_elem.is_some() {
+                    let saved = self.closure_elem.take();
+                    self.closure_elem = combinator_elem.clone();
+                    let e = self.lower_expr(*a, &expected);
+                    self.closure_elem = saved;
+                    e
+                } else {
+                    self.lower_expr(*a, &expected)
+                }
             })
             .collect();
         // Partial application: a def of arity N called with M < N args must
@@ -1658,6 +1750,16 @@ impl<'a> Ctx<'a> {
             let mut full = gargs.clone();
             full.push(value_e);
             return self.lower_call(g, &full, actual);
+        }
+        // `value_e |> func_e` with a bare function reference is the single-arg
+        // application `func_e(value_e)`. Route through `lower_call` so the piped
+        // value coerces to the callee's DECLARED param type — a `List.map`-produced
+        // `[]any` flowing into `uniqueKeepingFirst : List String -> …` must narrow
+        // to `[]string` (35-composite-generics). The prior `Call(f,[a])` lowered the
+        // arg with expected `Any`, skipping that boundary coercion. `lower_call`
+        // dispatches Res::Def/Kernel/Ctor/FFI identically to a direct call.
+        if matches!(&self.body.exprs[func_e], Expr::Var(_)) {
+            return self.lower_call(func_e, &[value_e], actual);
         }
         let f = self.lower_expr(func_e, &GoTy::Any);
         let a = self.lower_expr(value_e, &GoTy::Any);
@@ -2103,8 +2205,28 @@ impl<'a> Ctx<'a> {
         };
         let mut gparams = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
+        let mut elem_pinned = false;
         for (i, p) in params.iter().enumerate() {
-            let ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
+            let mut ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
+            // A closure param whose body-inferred Go type collapsed to an ANONYMOUS
+            // subset `struct{…}` (only the fields the closure reads: `\r ->
+            // r.tx.account`) never matches the runtime value a LIST COMBINATOR
+            // passes — the real element is the list's own Go type. `closure_elem`
+            // (set at the combinator call site) carries it; pin the FIRST such subset
+            // param to it (the element position for map/filter/foldl `\elem …` and
+            // indexedMap `\idx elem …` — idx is `int`, not a struct, so the element
+            // is still the first struct). An erased `any` element → field access
+            // routes through `rt.Field` (see `Expr::Access`); a nominal `_R` element
+            // → typed field access + record update stay valid. When the list element
+            // IS that same anonymous struct (18-job-queue: `[]struct{…}` field), the
+            // pin is a no-op — byte-identical to before. Non-combinator lambdas keep
+            // their struct param (no `closure_elem`) — no regression.
+            if !elem_pinned && matches!(ty, GoTy::Struct(_)) {
+                if let Some(elem) = self.closure_elem.clone() {
+                    ty = elem;
+                    elem_pinned = true;
+                }
+            }
             let name = match &self.body.pats[*p] {
                 Pattern::Var(id) => {
                     let n = self.fresh_local_named(*id, None);
@@ -2125,6 +2247,10 @@ impl<'a> Ctx<'a> {
             };
             gparams.push(GoParam { name, ty });
         }
+        // The element pin is consumed by THIS lambda's params only; a nested lambda
+        // in the body is a different closure (its own combinator call sets its own
+        // `closure_elem`). Clear so the body doesn't inherit this one.
+        self.closure_elem = None;
         let b = self.lower_expr(body, &rt);
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
