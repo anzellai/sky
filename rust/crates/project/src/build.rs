@@ -31,24 +31,35 @@ pub struct BuildReport {
     pub note: String,
 }
 
-/// Build one example directory, returning a structured report (never panics).
-pub fn build_example(opts: &BuildOptions) -> BuildReport {
-    let mut report = BuildReport::default();
+/// The product of assembling the source db, lowering, and emitting Go — the
+/// pure (no-IO-side-effect beyond reading source) front half of a build. Shared
+/// by [`build_example`] (which then writes + `go build`s) and
+/// [`emit_example_source`] (which only wants the emitted bytes, e.g. the
+/// reproducibility gate).
+struct Emitted {
+    source: String,
+    registry: ffi::FfiRegistry,
+    ffi_used: std::collections::BTreeSet<String>,
+    warnings: Vec<String>,
+}
 
+/// Assemble the source db (stdlib + example src), lower, and emit the Go source.
+/// Returns `Err(note)` for every non-emit outcome (no stdlib, no src, no entry,
+/// no `main`) so callers surface the same diagnostics. Deterministic: no wall
+/// clock, no environment reads reach the emitted bytes.
+fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, String> {
     // ---- assemble the source db (stdlib + example src) ----
     let mut db = SourceDb::new();
-    let stdlib = load_dir(&opts.repo_root.join("sky-stdlib"));
+    let stdlib = load_dir(&repo_root.join("sky-stdlib"));
     if stdlib.is_empty() {
-        report.note = "no stdlib under sky-stdlib".into();
-        return report;
+        return Err("no stdlib under sky-stdlib".into());
     }
     for (n, parse) in stdlib {
         db.add_module(&n, parse);
     }
-    let locals = load_dir(&opts.example_dir.join("src"));
+    let locals = load_dir(&example_dir.join("src"));
     if locals.is_empty() {
-        report.note = "no .sky under src/".into();
-        return report;
+        return Err("no .sky under src/".into());
     }
     let mut entry = None;
     for (n, parse) in locals {
@@ -58,25 +69,52 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
         }
     }
     let Some(entry) = entry else {
-        report.note = "no entry module named Main".into();
-        return report;
+        return Err("no entry module named Main".into());
     };
 
     // ---- lower + emit ----
-    let mut cfg = read_sky_toml_config(&opts.example_dir.join("sky.toml"));
+    let mut cfg = read_sky_toml_config(&example_dir.join("sky.toml"));
     // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
     // directory is preferred; the oracle's gitignored `.skycache/` cache is the
     // fallback so a project that hasn't yet migrated to the committed layout
     // still builds. Absent both → an empty table (no FFI).
-    let registry = load_ffi_surface(&opts.example_dir);
+    let registry = load_ffi_surface(example_dir);
     cfg.ffi = build_ffi_table(&registry);
     let out = lower::lower_program_cfg(&db, entry, &cfg);
-    report.warnings = out.warnings;
     if !out.entry_ok {
-        report.note = "lowering found no entry `main`".into();
-        return report;
+        return Err("lowering found no entry `main`".into());
     }
     let source = codegen::emit_program(&out.items);
+    Ok(Emitted {
+        source,
+        registry,
+        ffi_used: out.ffi_used,
+        warnings: out.warnings,
+    })
+}
+
+/// Emit the Go source for an example without writing anything or running
+/// `go build`. Used by the reproducibility gate (`xtask repro`), which runs this
+/// in a fresh process per sample so any `HashMap`/`HashSet` iteration that
+/// reaches emitted output surfaces as a byte diff across runs (L4).
+pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<String, String> {
+    assemble_and_emit(repo_root, example_dir).map(|e| e.source)
+}
+
+/// Build one example directory, returning a structured report (never panics).
+pub fn build_example(opts: &BuildOptions) -> BuildReport {
+    let mut report = BuildReport::default();
+
+    let (source, registry, ffi_used) = match assemble_and_emit(&opts.repo_root, &opts.example_dir) {
+        Ok(e) => {
+            report.warnings = e.warnings;
+            (e.source, e.registry, e.ffi_used)
+        }
+        Err(note) => {
+            report.note = note;
+            return report;
+        }
+    };
 
     // ---- write sky-out + materialise runtime ----
     let out_dir = opts.example_dir.join(&opts.out_dir_name);
@@ -86,7 +124,7 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     }
     // Materialise the Go wrapper for every FFI package the program actually
     // calls into `sky-out/rt/` (package rt), so `rt.Go_<Pkg>_<fn>T` resolves.
-    if let Err(e) = materialise_ffi_bindings(&registry, &out.ffi_used, &out_dir) {
+    if let Err(e) = materialise_ffi_bindings(&registry, &ffi_used, &out_dir) {
         report.note = format!("ffi binding copy failed: {e}");
         return report;
     }
@@ -94,7 +132,7 @@ pub fn build_example(opts: &BuildOptions) -> BuildReport {
     // project-specific FFI packages (`sky add github.com/gorilla/mux`). A
     // materialised binding that imports such a package fails `go build` until the
     // module is a `require` + present in go.sum — inject those now.
-    if let Err(e) = inject_ffi_deps(&registry, &out.ffi_used, &out_dir, &opts.example_dir) {
+    if let Err(e) = inject_ffi_deps(&registry, &ffi_used, &out_dir, &opts.example_dir) {
         report.warnings.push(format!("ffi go.mod injection: {e}"));
     }
     report.emitted = true;

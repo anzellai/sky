@@ -6,7 +6,7 @@
 //! (doc 01). Real module discovery + `go build` land in M4/M5.
 
 mod build;
-pub use build::{build_example, BuildOptions, BuildReport};
+pub use build::{build_example, emit_example_source, BuildOptions, BuildReport};
 
 use skydb::{line_count, SkyDatabase, SourceFile};
 

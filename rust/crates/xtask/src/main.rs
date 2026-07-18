@@ -10,6 +10,7 @@
 
 mod build_run_gate;
 mod infer_gate;
+mod repro_gate;
 mod resolve_gate;
 
 use std::path::{Path, PathBuf};
@@ -32,10 +33,7 @@ fn main() {
             println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
             0
         }
-        Some("repro") => {
-            println!("xtask repro: (stub) will byte-diff the corpus across seeds");
-            0
-        }
+        Some("repro") => repro_gate::run(&args[1..], &repo_root()),
         _ => {
             println!("{VERSION}");
             println!("usage: xtask <roundtrip|diff|repro> [args]");
