@@ -8,5 +8,9 @@ workspace = true
 
 [dependencies]
 base = { path = "../base" }
+diagnostics = { path = "../diagnostics" }
 rowan.workspace = true
 logos.workspace = true
+
+[dev-dependencies]
+insta = "1"

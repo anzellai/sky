@@ -1,0 +1,39 @@
+---
+source: crates/syntax/tests/parse_tests.rs
+expression: tree_dump(&parse)
+---
+SourceFile
+  ModuleHeader
+    ModuleName
+    ExposingList
+      ExposedValue
+  Import
+    ModuleName
+    ImportExposing
+  UnionDecl
+    TypeVarList
+    UnionVariantList
+      UnionVariant
+      UnionVariant
+  TypeAnnoDecl
+    TypeFun
+      TypeCon
+      TypeFun
+        TypeCon
+        TypeCon
+  ValueDecl
+    ParamList
+      PatVar
+      PatVar
+    CaseExpr
+      RefExpr
+      MatchArm
+        PatCtor
+        BinExpr
+          RefExpr
+          Literal
+      MatchArm
+        PatCtor
+        BinExpr
+          RefExpr
+          Literal

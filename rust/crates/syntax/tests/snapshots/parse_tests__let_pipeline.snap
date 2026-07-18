@@ -1,0 +1,30 @@
+---
+source: crates/syntax/tests/parse_tests.rs
+expression: tree_dump(&parse)
+---
+SourceFile
+  ValueDecl
+    ParamList
+    LetExpr
+      LetBinding
+        ParamList
+        ListExpr
+          Literal
+          Literal
+          Literal
+      BinExpr
+        BinExpr
+          RefExpr
+          CallExpr
+            QualRefExpr
+            ParenExpr
+              LambdaExpr
+                ParamList
+                  PatVar
+                BinExpr
+                  RefExpr
+                  Literal
+        CallExpr
+          QualRefExpr
+          RefExpr
+          Literal

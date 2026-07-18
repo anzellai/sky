@@ -1,108 +1,171 @@
 #![forbid(unsafe_code)]
-//! `syntax` — lexer (`logos`) + lossless CST (`rowan`) + typed AST view, error
-//! recovery, layout/indentation (doc 02, doc 04, law L8: parse always produces
-//! a tree; the LSP works on broken code).
-//!
-//! M0 stub: the `SyntaxKind` enum is seeded and the rowan `Language` binding is
-//! declared so the CST spine compiles. M1 fills in the real lexer + parser + the
-//! reprint round-trip gate.
+//! `syntax` — lexer (`logos`) + layout pass + lossless CST (`rowan`) + typed AST
+//! view, with error recovery and byte-exact round-trip (doc 04). Law L8: parse
+//! always produces a tree; the LSP works on broken code. Law L7: errors are
+//! `Diagnostic` values, never exceptions. Law L4: `lex`/`layout`/`parse` are
+//! pure functions of the source bytes.
 
-use logos::Logos;
+mod event;
+mod grammar;
+mod interp;
+mod kind;
+mod layout;
+mod lexer;
+mod parser;
 
-/// Every syntactic token + node kind. The single source of truth for both the
-/// lexer and the rowan tree (doc 04). Ordered; discriminants are stable.
-#[derive(Logos, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[repr(u16)]
-pub enum SyntaxKind {
-    // --- trivia (kept in the tree — L8) ---
-    #[regex(r"[ \t]+")]
-    Whitespace,
-    #[regex(r"--[^\n]*", allow_greedy = true)]
-    LineComment,
+pub mod ast;
 
-    // --- a few real tokens to prove the lexer wiring (M1 completes) ---
-    #[token("module")]
-    ModuleKw,
-    #[token("import")]
-    ImportKw,
-    #[regex(r"[A-Za-z_][A-Za-z0-9_]*")]
-    Ident,
+pub use kind::{SkyLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
+pub use layout::{layout, PToken};
+pub use lexer::{lex, LexToken};
 
-    // --- sentinels ---
-    /// Lexing error / unexpected byte (recovery lands here — L8).
-    Error,
-    /// End of input.
-    Eof,
+use base::FileId;
+use diagnostics::Diagnostic;
+use rowan::GreenNode;
 
-    // --- composite node kinds (produced by the parser, not the lexer) ---
-    SourceFile,
-    ModuleDecl,
-    ImportDecl,
+/// The result of parsing a file: a lossless green tree + the diagnostics
+/// collected along the way (doc 04 §5.3). Cheap to clone (`GreenNode` is Arc'd).
+#[derive(Clone)]
+pub struct Parse {
+    green: GreenNode,
+    errors: Vec<Diagnostic>,
 }
 
-impl From<SyntaxKind> for rowan::SyntaxKind {
-    fn from(k: SyntaxKind) -> Self {
-        rowan::SyntaxKind(k as u16)
-    }
-}
-
-/// The rowan `Language` binding for Sky's CST (doc 04).
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum SkyLang {}
-
-impl rowan::Language for SkyLang {
-    type Kind = SyntaxKind;
-
-    fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
-        // M0: identity-ish mapping over the known range; M1 makes this total +
-        // exhaustive (L6). Bounded to the highest declared discriminant.
-        match raw.0 {
-            0 => SyntaxKind::Whitespace,
-            1 => SyntaxKind::LineComment,
-            2 => SyntaxKind::ModuleKw,
-            3 => SyntaxKind::ImportKw,
-            4 => SyntaxKind::Ident,
-            5 => SyntaxKind::Error,
-            6 => SyntaxKind::Eof,
-            7 => SyntaxKind::SourceFile,
-            8 => SyntaxKind::ModuleDecl,
-            _ => SyntaxKind::ImportDecl,
-        }
+impl Parse {
+    /// The untyped root node.
+    pub fn syntax(&self) -> SyntaxNode {
+        SyntaxNode::new_root(self.green.clone())
     }
 
-    fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
-        kind.into()
+    /// The typed root view.
+    pub fn tree(&self) -> ast::SourceFile {
+        use ast::AstNode;
+        ast::SourceFile::cast(self.syntax()).expect("root is always SOURCE_FILE")
+    }
+
+    /// The interned green tree.
+    pub fn green(&self) -> &GreenNode {
+        &self.green
+    }
+
+    /// Parse diagnostics (L7 — values, not exceptions).
+    pub fn errors(&self) -> &[Diagnostic] {
+        &self.errors
+    }
+
+    /// Reconstruct the source by concatenating every leaf's text in order — the
+    /// operational definition of L8 losslessness (doc 04 §14).
+    pub fn reprint(&self) -> String {
+        self.syntax().text().to_string()
+    }
+
+    /// Count `ERROR` nodes — the parser structured every construct iff this is
+    /// zero (the M1 gate, doc 04 §11).
+    pub fn error_node_count(&self) -> usize {
+        self.syntax()
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::Error)
+            .count()
     }
 }
 
-/// A Sky syntax node in the lossless tree.
-pub type SyntaxNode = rowan::SyntaxNode<SkyLang>;
-/// A Sky token in the lossless tree.
-pub type SyntaxToken = rowan::SyntaxToken<SkyLang>;
-
-/// Lex a source string into `(kind, text)` spans. M0 smoke of the `logos`
-/// wiring; the parser that feeds rowan is an M1 deliverable.
-pub fn lex(src: &str) -> Vec<(SyntaxKind, &str)> {
-    let mut out = Vec::new();
-    let mut lexer = SyntaxKind::lexer(src);
-    while let Some(res) = lexer.next() {
-        let kind = res.unwrap_or(SyntaxKind::Error);
-        out.push((kind, lexer.slice()));
-    }
-    out
+/// Parse `src` into a lossless CST. Never panics; broken input yields `ERROR`
+/// nodes + diagnostics (L7, L8).
+pub fn parse(src: &str, file: FileId) -> Parse {
+    let raw = lexer::lex(src);
+    let toks = layout::layout(src, &raw);
+    let mut p = parser::Parser::new(src, toks, file);
+    grammar::source_file(&mut p);
+    let (events, errors) = p.finish();
+    let green = event::build_tree(src, &raw, events);
+    Parse { green, errors }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn parse_str(src: &str) -> Parse {
+        parse(src, FileId(0))
+    }
+
     #[test]
-    fn lexer_recognises_keywords_and_idents() {
-        let toks = lex("module Main");
-        let kinds: Vec<_> = toks.iter().map(|(k, _)| *k).collect();
-        assert_eq!(
-            kinds,
-            vec![SyntaxKind::ModuleKw, SyntaxKind::Whitespace, SyntaxKind::Ident]
-        );
+    fn roundtrip_and_no_errors_hello() {
+        let src = "module Main exposing (main)\n\nimport Std.Log exposing (println)\n\n\nmain =\n    println \"Hello from Sky!\"\n";
+        let p = parse_str(src);
+        assert_eq!(p.reprint(), src);
+        assert_eq!(p.error_node_count(), 0);
+    }
+
+    #[test]
+    fn roundtrip_let_case_lambda_pipeline() {
+        let src = "\
+f x =
+    let
+        a = 10
+        b = 20
+    in
+    case x of
+        Just v ->
+            v
+                |> add a
+                |> add b
+
+        Nothing ->
+            0
+";
+        let p = parse_str(src);
+        assert_eq!(p.reprint(), src, "byte-exact round-trip");
+        assert_eq!(p.error_node_count(), 0, "no error nodes");
+    }
+
+    #[test]
+    fn roundtrip_types_and_records() {
+        let src = "\
+type alias Model = { count : Int, name : String }
+
+
+type Msg
+    = Increment
+    | Decrement
+    | SetName String
+
+
+update : Msg -> Model -> Model
+update msg model =
+    case msg of
+        Increment ->
+            { model | count = model.count + 1 }
+
+        Decrement ->
+            { model | count = model.count - 1 }
+
+        SetName n ->
+            { model | name = n }
+";
+        let p = parse_str(src);
+        assert_eq!(p.reprint(), src);
+        assert_eq!(p.error_node_count(), 0);
+    }
+
+    #[test]
+    fn recovers_and_keeps_bytes_on_broken_input() {
+        let src = "main =\n    @@@ let\n";
+        let p = parse_str(src);
+        assert_eq!(p.reprint(), src);
+        assert!(!p.errors().is_empty() || p.error_node_count() > 0);
+    }
+
+    #[test]
+    fn negative_literal_argument() {
+        let src = "x =\n    atan2 0 -1\n";
+        let p = parse_str(src);
+        assert_eq!(p.reprint(), src);
+        assert_eq!(p.error_node_count(), 0);
+        let has_negate = p
+            .syntax()
+            .descendants()
+            .any(|n| n.kind() == SyntaxKind::NegateExpr);
+        assert!(has_negate, "expected NEGATE_EXPR for `-1` arg");
     }
 }

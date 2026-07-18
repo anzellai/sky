@@ -5,17 +5,16 @@
 //! M0 stub: the entry point exists over the `syntax` lexer; the CST-walking
 //! formatter lands with the parser in M1.
 
-use syntax::{lex, SyntaxKind};
+use syntax::lex;
 
 /// M0 placeholder: proves the `fmt` → `syntax` dependency edge and the lexer
 /// hand-off. Currently a no-op reprint of the token text (identity), which the
-/// idempotence property trivially satisfies. M1 replaces it with a real
-/// CST-driven formatter.
+/// idempotence property trivially satisfies. M1+ replaces it with a real
+/// CST-driven formatter over the lossless tree.
 pub fn format_source(src: &str) -> String {
     lex(src)
         .into_iter()
-        .filter(|(k, _)| *k != SyntaxKind::Eof)
-        .map(|(_, text)| text)
+        .map(|t| &src[t.start as usize..t.end as usize])
         .collect()
 }
 

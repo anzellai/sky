@@ -10,7 +10,9 @@ workspace = true
 name = "xtask"
 path = "src/main.rs"
 
-# Standalone dev-automation crate (doc 02). Depends on nothing in the DAG so it
-# can orchestrate the whole build from the outside (differential-test vs the
-# Haskell oracle, reproducibility gate — docs 11, 12).
+# Dev-automation crate (doc 02). Orchestrates the workspace from the outside
+# (differential-test vs the Haskell oracle, reproducibility gate — docs 11, 12).
+# `roundtrip` parses the corpus in-process, so it depends on `syntax` + `base`.
 [dependencies]
+syntax = { path = "../syntax" }
+base = { path = "../base" }
