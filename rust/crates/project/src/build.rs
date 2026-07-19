@@ -145,6 +145,28 @@ fn assemble_and_emit_with(
             .collect();
         return Err(rendered.join("\n"));
     }
+    // Name-resolution rejections (the `[E1xxx]` class over the checked app
+    // modules): undefined names (`[E1001]`), duplicate top-level definitions
+    // (`[E1002]`), non-linear patterns / duplicate binders (`[E1003]`), and
+    // user ADTs/aliases shadowing a Prelude name (`[E1004]`). The oracle rejects
+    // each (some only at `go build`: "x redeclared", "no new variables on left
+    // side of :="; the shadow class at canonicalise time). Halt HERE — before
+    // lower/emit — so a program Go would refuse, or that shadows the Prelude,
+    // never reaches codegen (`sky check ≡ sky build`, CLAUDE.md §8). `check_ids`
+    // is app-code only, so the canonical stdlib that legitimately defines
+    // `Maybe`/`Result`/… is never gated. Undefined names are additionally
+    // caught by the lowering `class_a` path (all modules), which stays intact.
+    if checked.name_errors > 0 {
+        let rendered: Vec<String> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E1")
+            })
+            .map(|d| format!("[{}] {}", d.code.0, d.message))
+            .collect();
+        return Err(rendered.join("\n"));
+    }
     // Exhaustiveness gate (`[E3001]`): Sky treats a non-exhaustive `case` as a
     // HARD error (stronger than GHC-as-configured — self-host R1-D3, doc 06
     // §Exhaustiveness). The Haskell oracle rejects such a program at exit 1; the

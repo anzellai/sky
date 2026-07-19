@@ -15,9 +15,22 @@ use crate::kernel::{
 use base::{DefId, FileId, ModuleId, Name, Span};
 use diagnostics::Diagnostic;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use syntax::ast::{self, AstNode};
 use syntax::SyntaxKind;
+
+/// Prelude-exposed type + constructor names a user-defined ADT/alias may NOT
+/// shadow (oracle: Canonicalise audit §3.2, CLAUDE.md v0.15.42). A user
+/// `type Result a = Just a | Nothing` (or any type/ctor reusing one of these
+/// names) is a hard canonicalise-time rejection — it silently shadows the
+/// Prelude entry and produces confusing downstream errors. The canonical
+/// stdlib modules that legitimately DEFINE these (`Sky.Core.Maybe`, …) are
+/// never gated here: this diagnostic is surfaced through `check_modules`, which
+/// only checks app-code modules (`check_ids`), never the trusted stdlib.
+const PRELUDE_RESERVED: &[&str] = &[
+    "Int", "Float", "Bool", "String", "Char", "List", "Maybe", "Result", "Task", "Error", "True",
+    "False", "Just", "Nothing", "Ok", "Err",
+];
 
 /// Synthetic module id for builtin defs (Prelude types/ctors). Never collides
 /// with a real module (real ids are small indices).
@@ -550,11 +563,26 @@ impl<'a> Resolver<'a> {
     }
 
     fn register_locals(&mut self, tree: &ast::SourceFile) {
+        // Top-level value names already registered in THIS module. A second
+        // `foo = …` for the same `foo` is a redefinition the oracle rejects (at
+        // `go build`: "x redeclared in this block"); Sky has no multi-clause
+        // function definitions, so a repeat is always an error. Reject at
+        // check-time (`sky check ≡ sky build`). A `foo : T` annotation is a
+        // separate `Decl::TypeAnno` (never a `Decl::Value`), so it never
+        // trips this.
+        let mut seen_values: HashSet<String> = HashSet::new();
         for decl in tree.decls() {
             match decl {
                 ast::Decl::Value(v) => {
                     if let Some(n) = v.name() {
                         if n.kind() == SyntaxKind::LowerIdent {
+                            let nm = n.text().to_string();
+                            if !seen_values.insert(nm.clone()) {
+                                self.result.diagnostics.push(Diagnostic::error(
+                                    "E1002",
+                                    format!("`{nm}` is defined more than once at the top level"),
+                                ));
+                            }
                             let d = self.def(self.module, n.text(), DefKind::Value);
                             self.vars.insert(n.text().to_string(), Res::Def(d));
                             // LSP: a value's goto-def target is its name span. A
@@ -571,6 +599,14 @@ impl<'a> Resolver<'a> {
                     let Some(tn) = u.name().map(|t| t.text().to_string()) else {
                         continue;
                     };
+                    if PRELUDE_RESERVED.contains(&tn.as_str()) {
+                        self.result.diagnostics.push(Diagnostic::error(
+                            "E1004",
+                            format!(
+                                "Type `{tn}` shadows a Prelude-exposed name — pick a different name"
+                            ),
+                        ));
+                    }
                     let arity = cst::decl_type_vars(u.syntax()).len() as u16;
                     let type_ = self.def(self.module, &tn, DefKind::TypeCon);
                     self.types
@@ -584,6 +620,14 @@ impl<'a> Resolver<'a> {
                         let Some(cn) = var.name().map(|t| t.text().to_string()) else {
                             continue;
                         };
+                        if PRELUDE_RESERVED.contains(&cn.as_str()) {
+                            self.result.diagnostics.push(Diagnostic::error(
+                                "E1004",
+                                format!(
+                                    "Constructor `{cn}` shadows a Prelude-exposed name — pick a different name"
+                                ),
+                            ));
+                        }
                         let cargs = cst::child_types(var.syntax()).len() as u16;
                         let d = self.def(self.module, &cn, DefKind::Ctor);
                         if let Some(t) = var.name() {
@@ -606,6 +650,14 @@ impl<'a> Resolver<'a> {
                     let Some(an) = a.name().map(|t| t.text().to_string()) else {
                         continue;
                     };
+                    if PRELUDE_RESERVED.contains(&an.as_str()) {
+                        self.result.diagnostics.push(Diagnostic::error(
+                            "E1004",
+                            format!(
+                                "Type `{an}` shadows a Prelude-exposed name — pick a different name"
+                            ),
+                        ));
+                    }
                     let arity = cst::decl_type_vars(a.syntax()).len() as u16;
                     let is_record = a
                         .ty()
@@ -702,6 +754,7 @@ impl<'a> Resolver<'a> {
         self.push_scope();
         let mut params = Vec::new();
         if let Some(pl) = v.params() {
+            self.check_linear_group(pl.params());
             for p in pl.params() {
                 params.push(self.resolve_pattern(&p));
             }
@@ -1027,6 +1080,7 @@ impl<'a> Resolver<'a> {
                 self.push_scope();
                 let mut params = Vec::new();
                 if let Some(pl) = l.params() {
+                    self.check_linear_group(pl.params());
                     for p in pl.params() {
                         params.push(self.resolve_pattern(&p));
                     }
@@ -1107,10 +1161,11 @@ impl<'a> Resolver<'a> {
                     if let Some(pl) = params_node {
                         self.push_scope();
                         let mut params = Vec::new();
-                        for p in ast::ParamList::cast(pl)
+                        let plist = ast::ParamList::cast(pl)
                             .map(|pl| pl.params().collect::<Vec<_>>())
-                            .unwrap_or_default()
-                        {
+                            .unwrap_or_default();
+                        self.check_linear_group(plist.iter().cloned());
+                        for p in plist {
                             params.push(self.resolve_pattern(&p));
                         }
                         let body = match b.body() {
@@ -1178,7 +1233,10 @@ impl<'a> Resolver<'a> {
         for arm in c.arms() {
             self.push_scope();
             let pat = match arm.pattern() {
-                Some(p) => self.resolve_pattern(&p),
+                Some(p) => {
+                    self.check_linear_group(std::iter::once(p.clone()));
+                    self.resolve_pattern(&p)
+                }
                 None => self.body.pat(Pattern::Error),
             };
             let body = match arm.body() {
@@ -1192,6 +1250,36 @@ impl<'a> Resolver<'a> {
     }
 
     // ---- pattern resolution ---------------------------------------------
+
+    /// Linearity gate for a set of patterns bound TOGETHER in one scope
+    /// (a function/lambda parameter list, or a single `case`-arm / `let`
+    /// destructure pattern). Sky patterns are linear: the same variable may not
+    /// be bound twice in one group — `f x x = …` and `case p of (a, a) -> …`
+    /// both fail the oracle (at `go build`: "x redeclared" / "no new variables
+    /// on left side of :="). We reject at check-time instead — `sky check ≡ sky
+    /// build`, and rejecting BEFORE emit keeps a program that Go would refuse
+    /// from ever reaching codegen. Only INTRA-group duplicates are flagged;
+    /// shadowing across nested scopes (a lambda re-using an outer name) is legal
+    /// and untouched. `_` is not a binder and never collides.
+    fn check_linear_group(&mut self, pats: impl Iterator<Item = ast::Pattern>) {
+        if self.quiet > 0 {
+            return;
+        }
+        let mut acc: Vec<String> = Vec::new();
+        for p in pats {
+            collect_pattern_binders(&p, &mut acc);
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut reported: HashSet<String> = HashSet::new();
+        for name in &acc {
+            if !seen.insert(name.clone()) && reported.insert(name.clone()) {
+                self.result.diagnostics.push(Diagnostic::error(
+                    "E1003",
+                    format!("Variable `{name}` is bound more than once in the same pattern"),
+                ));
+            }
+        }
+    }
 
     /// Register the variable binders of a pattern (used by the `let` pre-pass;
     /// does not resolve ctor heads).
@@ -1748,6 +1836,64 @@ impl<'a> Resolver<'a> {
 }
 
 // ---- free helpers --------------------------------------------------------
+
+/// Collect the variable-binder names introduced by a pattern (recursing through
+/// tuples / lists / cons / ctor args / parens / aliases / records). `_`
+/// (wildcard) and literal patterns introduce no binder. Used by the linearity
+/// gate; mirrors the binder set `bind_pattern_names` registers.
+fn collect_pattern_binders(p: &ast::Pattern, acc: &mut Vec<String>) {
+    match p {
+        ast::Pattern::Var(v) => {
+            if let Some(n) = cst::first_lower(v.syntax()) {
+                acc.push(n);
+            }
+        }
+        ast::Pattern::Alias(a) => {
+            for k in cst::child_pats(a.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+            if let Some(n) = cst::lower_idents(a.syntax()).last() {
+                acc.push(n.clone());
+            }
+        }
+        ast::Pattern::Record(r) => {
+            for f in cst::lower_idents(r.syntax()) {
+                acc.push(f);
+            }
+        }
+        ast::Pattern::Tuple(t) => {
+            for k in cst::child_pats(t.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        ast::Pattern::List(t) => {
+            for k in cst::child_pats(t.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        ast::Pattern::Cons(t) => {
+            for k in cst::child_pats(t.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        ast::Pattern::Paren(t) => {
+            for k in cst::child_pats(t.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        ast::Pattern::Ctor(c) => {
+            for k in cst::child_pats(c.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        ast::Pattern::CtorQual(c) => {
+            for k in cst::child_pats(c.syntax()) {
+                collect_pattern_binders(&k, acc);
+            }
+        }
+        _ => {}
+    }
+}
 
 fn to_ctor_ref(ct: &crate::exports::ExportedCtor) -> CtorRef {
     CtorRef {

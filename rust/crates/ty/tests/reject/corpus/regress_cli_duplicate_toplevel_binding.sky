@@ -1,0 +1,20 @@
+-- gate: reject
+-- defect: duplicate top-level binding `x` (redefinition in one module)
+-- oracle: reject — Sky has no multi-clause definitions; the oracle emits Go
+--         that `go build` rejects ("x redeclared in this block").
+--
+-- The Rust resolver used to last-wins-overwrite the second `x` silently
+-- (IndexMap::insert + interned DefId collision), so `sky check` accepted a
+-- program `go build` refuses — a `sky check ≡ sky build` violation. Fixed in
+-- `hir::resolve::register_locals`: a repeated top-level value name emits
+-- `[E1002]`, gated before lower/emit by the driver's name-error halt.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+x = 1
+x = 2
+
+main =
+    println (String.fromInt x)

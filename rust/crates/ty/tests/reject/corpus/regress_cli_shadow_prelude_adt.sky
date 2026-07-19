@@ -1,0 +1,21 @@
+-- gate: reject
+-- defect: user ADT shadows Prelude-exposed `Result` / `Just` / `Nothing`
+-- oracle: reject — Canonicalise error (audit §3.2, CLAUDE.md v0.15.42): a
+--         user-defined type or constructor may not reuse a Prelude-exposed name.
+--
+-- The Rust resolver used to register the shadow silently, letting confusing
+-- downstream errors surface. Fixed in `register_locals`: a union/alias type name
+-- or constructor name in the reserved Prelude set emits `[E1004]`. Scoped to
+-- app modules (`check_ids`) so the canonical stdlib that DEFINES these is never
+-- gated.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Result a
+    = Just a
+    | Nothing
+
+main =
+    println "hi"

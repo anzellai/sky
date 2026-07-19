@@ -1,0 +1,25 @@
+-- gate: reject
+-- defect: literal-only `case` with no catch-all `_` arm
+-- oracle: reject — "Non-exhaustive patterns": an Int/String/Char match over an
+--         infinite domain can never be exhaustive without a covering arm.
+--
+-- The Rust exhaustiveness checker treated literal heads as non-forcing (lenient
+-- for the finite-ADT case), so it accepted a match `go build` compiles but that
+-- panics at runtime on an unmatched input — an "if it compiles it works"
+-- violation. Fixed by classifying Int/String/Char heads as `Head::Literal`: a
+-- pure-literal match with no cover arm emits `[E3001]`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+name n =
+    case n of
+        1 ->
+            "one"
+
+        2 ->
+            "two"
+
+main =
+    println (name 1)

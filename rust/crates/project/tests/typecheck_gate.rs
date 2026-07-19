@@ -207,3 +207,160 @@ fn driver_accepts_well_typed_and_emits() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// A duplicate top-level binding (`x = 1` then `x = 2`) is REJECTED before emit
+/// with `[E1002]`. Sky has no multi-clause definitions; the oracle rejects such
+/// a program (at `go build`: "x redeclared in this block"). The Rust resolver
+/// used to last-wins-overwrite silently — accepting a program `go build`
+/// refuses. This is the confirmed driver-seam gap this batch closes.
+#[test]
+fn driver_rejects_duplicate_toplevel_binding() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "dupbind",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         x = 1\n\
+         x = 2\n\n\
+         main =\n    println (String.fromInt x)\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED a duplicate top-level binding (`x` twice) — the name gate is not wired in; note: {}",
+        report.note
+    );
+    assert!(!report.go_build_ok, "go build must not run on a redefinition");
+    assert!(
+        report.note.contains("E1002"),
+        "expected an [E1002] duplicate-definition diagnostic in the note, got: {}",
+        report.note
+    );
+    assert!(
+        !out.join("main.go").exists(),
+        "no Go should be emitted for a redefined binding"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// A non-linear parameter list (`f x x = …`) is REJECTED before emit with
+/// `[E1003]` — the oracle rejects it at `go build` ("x redeclared").
+#[test]
+fn driver_rejects_duplicate_param() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "dupparam",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         f x x =\n    x\n\n\
+         main =\n    println (String.fromInt (f 1 2))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED a non-linear param list (`f x x`); note: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("E1003"),
+        "expected [E1003] in note, got: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// A user ADT shadowing a Prelude name (`type Result a = Just a | Nothing`) is
+/// REJECTED before emit with `[E1004]` — the oracle rejects it at canonicalise
+/// time (audit §3.2 / CLAUDE.md v0.15.42).
+#[test]
+fn driver_rejects_prelude_shadow_adt() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "shadow",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         type Result a\n    = Just a\n    | Nothing\n\n\
+         main =\n    println \"hi\"\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED an ADT shadowing Prelude `Result`/`Just`/`Nothing`; note: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("E1004"),
+        "expected [E1004] in note, got: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// A literal-only `case` with no catch-all is REJECTED before emit with
+/// `[E3001]` — an infinite-domain (Int) match can never be exhaustive without a
+/// covering arm; the oracle rejects it ("Non-exhaustive patterns").
+#[test]
+fn driver_rejects_nonexhaustive_literal_case() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "litcase",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         name n =\n    case n of\n        1 -> \"one\"\n        2 -> \"two\"\n\n\
+         main =\n    println (name 1)\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED a literal-only `case` with no catch-all; note: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("E3001"),
+        "expected [E3001] in note, got: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// Legitimate lexical shadowing (an inner lambda re-using an outer param name)
+/// is NOT a duplicate binder — the linearity gate flags only intra-group
+/// duplicates. This program reaches emission (proves no over-rejection).
+#[test]
+fn driver_accepts_nested_shadowing() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "shadow-ok",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         f x =\n    (\\x -> x + 1) x\n\n\
+         main =\n    println (String.fromInt (f 5))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted,
+        "driver failed to emit a program with legitimate nested shadowing — the linearity gate over-rejects; note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}

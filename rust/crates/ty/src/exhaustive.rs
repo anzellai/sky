@@ -79,7 +79,13 @@ enum Head {
     /// A named constructor (ADT or Bool True/False) + the union's `DefId` when
     /// the ctor resolved (disambiguates same-named unions across modules).
     Ctor(String, Option<base::DefId>),
-    /// A literal / list head that does NOT force coverage here.
+    /// An infinite-domain literal head (Int / String / Char / Float). A match
+    /// built only from these — with no covering `_`/var arm — can NEVER be
+    /// exhaustive (the domain is unbounded), so the oracle rejects it
+    /// ("Non-exhaustive patterns"). We force coverage the same way.
+    Literal,
+    /// A list/cons head (or anything else) that does NOT force coverage here —
+    /// `[] | x :: xs` is a legitimately-exhaustive shape we don't over-report.
     Other,
 }
 
@@ -92,6 +98,7 @@ fn classify(body: &Body, p: PatId) -> Head {
             Head::Ctor(name.as_str().to_string(), ctor.as_ref().map(|cr| cr.type_))
         }
         Pattern::Bool(b) => Head::Ctor(if *b { "True".into() } else { "False".into() }, None),
+        Pattern::Int(_) | Pattern::Str(_) | Pattern::Chr(_) => Head::Literal,
         _ => Head::Other,
     }
 }
@@ -104,6 +111,7 @@ fn check_case(
 ) {
     let mut covered: BTreeSet<String> = BTreeSet::new();
     let mut union_def: Option<base::DefId> = None;
+    let mut has_literal = false;
     for br in branches {
         match classify(body, br.pat) {
             Head::Cover => return, // a covering head makes the match exhaustive
@@ -111,8 +119,22 @@ fn check_case(
                 covered.insert(c);
                 union_def = union_def.or(def);
             }
+            Head::Literal => has_literal = true,
             Head::Other => {}
         }
+    }
+    // A match built only from infinite-domain literals (no ADT/Bool head, no
+    // covering arm — we'd have returned above) can never be exhaustive: the
+    // oracle rejects it, so we must too. Requires a catch-all `_`/var arm.
+    if covered.is_empty() && has_literal {
+        out.push(diagnostics::Diagnostic {
+            severity: diagnostics::Severity::Warning,
+            code: diagnostics::Code("E3001".to_string()),
+            message: "This `case` does not cover all cases — literal patterns need a catch-all `_` arm".to_string(),
+            labels: Vec::new(),
+            suggestion: None,
+        });
+        return;
     }
     if covered.is_empty() {
         return; // no ADT/Bool heads to force coverage
