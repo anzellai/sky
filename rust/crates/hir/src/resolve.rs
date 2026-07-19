@@ -9,7 +9,8 @@ use crate::exports::ModuleExports;
 use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
-    BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS, KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
+    kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS, KERNEL_IMPLICIT_TYPES,
+    PRELUDE_QUALIFIERS,
 };
 use base::{DefId, FileId, ModuleId, Name, Span};
 use diagnostics::Diagnostic;
@@ -350,7 +351,31 @@ impl<'a> Resolver<'a> {
             }
             (ImportSource::Kernel(pseudo), Some(c)) => {
                 if c.all {
-                    self.kernel_open.push(pseudo.clone());
+                    // `import M exposing (..)` on a kernel module binds exactly the
+                    // module's known kernel functions (oracle: kernelVarsFor +
+                    // addExposed, Module.hs:700-703) — NOT "anything". This closes
+                    // the soundness hole where a bare undefined name (e.g. under the
+                    // ubiquitous `import Sky.Core.Prelude exposing (..)` → `Basics`)
+                    // silently resolved to a bogus `rt.<Mod>_<name>` kernel ref and
+                    // only failed at `go build`. An unknown bare name now falls
+                    // through `resolve_var` to `Res::Error` + `[E1001]`.
+                    match kernel_functions(pseudo) {
+                        Some(funcs) => {
+                            for f in funcs {
+                                self.vars.insert(
+                                    (*f).to_string(),
+                                    Res::Kernel {
+                                        module: Name::new(pseudo),
+                                        func: Name::new(f),
+                                    },
+                                );
+                            }
+                        }
+                        // No static enumeration for this pseudo — keep the lenient
+                        // fallback (defensive; no such pseudo is imported
+                        // `exposing (..)` in the corpus, so this never fires there).
+                        None => self.kernel_open.push(pseudo.clone()),
+                    }
                 } else {
                     self.bind_exposing_kernel(pseudo, &c);
                 }

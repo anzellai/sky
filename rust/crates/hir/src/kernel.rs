@@ -194,6 +194,204 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// `staticKernelFunctions` (Module.hs:1752-1861): the known function names each
+/// kernel pseudo-module exposes. This is the source of truth for a kernel
+/// `import M exposing (..)` — it binds exactly these names (like the oracle's
+/// `kernelVarsFor`/`addExposed`, Module.hs:700-703), so an unknown bare name is
+/// NOT lenient-resolved to a bogus `rt.<Mod>_<name>` kernel ref but falls
+/// through to `Res::Error` + `[E1001] Undefined name` (doc 05 §9, C-`sky check ≡
+/// sky build`). Ported verbatim; a diff against the Haskell list is the compat
+/// check. In batch bring-up the FFI kernel-function channel is empty, matching
+/// the LSP single-module path (`Map.empty` → static-only, Module.hs:820-827).
+pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
+    (
+        "Basics",
+        &[
+            "identity", "always", "not", "toString", "modBy", "clamp", "fst", "snd", "compare",
+            "negate", "abs", "sqrt", "min", "max",
+        ],
+    ),
+    (
+        "String",
+        &[
+            "length", "reverse", "append", "split", "join", "contains", "startsWith", "endsWith",
+            "toInt", "fromInt", "toFloat", "fromFloat", "toUpper", "toLower", "trim", "replace",
+            "slice", "isEmpty", "toBytes", "fromBytes", "fromChar", "toChar", "left", "right",
+            "padLeft", "padRight", "repeat", "lines", "words", "isValid", "normalize",
+            "normalizeNFD", "casefold", "equalFold", "graphemes", "trimStart", "trimEnd", "isEmail",
+            "isUrl", "slugify", "htmlEscape", "truncate", "ellipsize",
+        ],
+    ),
+    (
+        "List",
+        &[
+            "map", "filter", "foldl", "foldr", "length", "head", "tail", "take", "drop", "append",
+            "concat", "concatMap", "reverse", "sort", "sortBy", "member", "any", "all", "range",
+            "zip", "filterMap", "parallelMap", "isEmpty", "indexedMap", "find",
+        ],
+    ),
+    (
+        "Dict",
+        &[
+            "empty", "insert", "get", "remove", "member", "keys", "values", "toList", "fromList",
+            "map", "foldl", "union",
+        ],
+    ),
+    (
+        "Set",
+        &[
+            "empty", "fromList", "insert", "remove", "member", "toList", "size", "union",
+            "intersect", "diff",
+        ],
+    ),
+    (
+        "Maybe",
+        &[
+            "withDefault", "map", "andThen", "map2", "map3", "map4", "map5", "andMap", "combine",
+            "traverse",
+        ],
+    ),
+    (
+        "Result",
+        &[
+            "withDefault", "map", "andThen", "mapError", "map2", "map3", "map4", "map5", "andMap",
+            "combine", "traverse", "andThenTask",
+        ],
+    ),
+    (
+        "Task",
+        &[
+            "succeed", "fail", "map", "andThen", "perform", "sequence", "parallel", "lazy", "run",
+            "map2", "map3", "map4", "map5", "andMap", "fromResult", "andThenResult", "mapError",
+            "onError",
+        ],
+    ),
+    (
+        "Log",
+        &[
+            "println", "debug", "info", "warn", "error", "debugWith", "infoWith", "warnWith",
+            "errorWith", "with",
+        ],
+    ),
+    ("Cmd", &["none", "batch", "perform"]),
+    (
+        "Time",
+        &[
+            "now", "sleep", "every", "unixMillis", "timeString", "formatISO8601", "formatRFC3339",
+            "formatHTTP", "format", "parseISO8601", "parse", "addMillis", "diffMillis",
+        ],
+    ),
+    ("Random", &["int", "float", "choice", "shuffle"]),
+    (
+        "Math",
+        &[
+            "sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log",
+            "min", "max",
+        ],
+    ),
+    (
+        "Io",
+        &["readLine", "readBytes", "writeStdout", "writeStderr", "writeString"],
+    ),
+    (
+        "File",
+        &[
+            "readFile", "readFileLimit", "readFileBytes", "writeFile", "append", "mkdirAll",
+            "readDir", "exists", "remove", "isDir", "tempFile", "copy", "rename",
+        ],
+    ),
+    ("Process", &["run"]),
+    ("Http", &["get", "post", "request"]),
+    (
+        "Server",
+        &[
+            "listen", "get", "post", "put", "delete", "api", "static", "text", "json", "html",
+            "withStatus", "redirect", "param", "queryParam", "header", "getCookie", "cookie",
+            "withCookie", "withHeader", "any", "method", "formValue", "body", "path", "group",
+            "use",
+        ],
+    ),
+    (
+        "Crypto",
+        &[
+            "sha256", "sha512", "md5", "hmacSha256", "constantTimeEqual", "randomBytes",
+            "randomToken",
+        ],
+    ),
+    (
+        "Encoding",
+        &[
+            "base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode",
+        ],
+    ),
+    ("Regex", &["match", "find", "findAll", "replace", "split"]),
+    (
+        "Char",
+        &["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"],
+    ),
+    ("Path", &["join", "dir", "base", "ext", "isAbsolute", "safeJoin"]),
+    ("Uuid", &["v4", "v7", "parse"]),
+    ("RateLimit", &["allow"]),
+    (
+        "Middleware",
+        &["withCors", "withLogging", "withBasicAuth", "withRateLimit"],
+    ),
+    (
+        "Ffi",
+        &["call", "callPure", "callTask", "has", "isPure", "toAny", "kernel"],
+    ),
+    ("Live", &["app", "route", "api", "lifecycle"]),
+    ("Jobs", &["define", "enqueue", "enqueueIn", "cancel"]),
+    ("Sub", &["none", "every"]),
+    (
+        "JsonEnc",
+        &["string", "int", "float", "bool", "null", "list", "object", "encode"],
+    ),
+    (
+        "JsonDec",
+        &[
+            "decodeString", "string", "int", "float", "bool", "field", "index", "list", "map",
+            "andThen", "succeed", "fail", "oneOf", "at", "map2", "map3", "map4", "map5",
+        ],
+    ),
+    (
+        "System",
+        &[
+            "args", "getArg", "getenv", "getenvOr", "getenvInt", "getenvBool", "cwd", "exit",
+            "loadEnv", "setenv", "unsetenv",
+        ],
+    ),
+    ("Context", &["background", "todo", "withValue", "withCancel"]),
+    ("Fmt", &["sprint", "sprintf", "sprintln", "errorf"]),
+    (
+        "Db",
+        &[
+            "connect", "open", "close", "exec", "execRaw", "query", "queryDecode", "insertRow",
+            "getById", "updateById", "deleteById", "findWhere", "withTransaction", "getField",
+            "getFieldOr", "getString", "getInt", "getBool",
+        ],
+    ),
+    (
+        "Auth",
+        &[
+            "hashPassword", "verifyPassword", "signToken", "verifyToken", "register", "login",
+            "setRole", "hashPasswordCost", "passwordStrength",
+        ],
+    ),
+    ("JsonDecP", &["required", "optional", "custom", "requiredAt"]),
+];
+
+/// Look up the known function names a kernel pseudo-module exposes. `None` means
+/// we have no static enumeration for that pseudo — the caller keeps the lenient
+/// `kernel_open` fallback for it (defensive; no such pseudo is imported
+/// `exposing (..)` in the corpus).
+pub fn kernel_functions(pseudo: &str) -> Option<&'static [&'static str]> {
+    KERNEL_FUNCTIONS
+        .iter()
+        .find(|(m, _)| *m == pseudo)
+        .map(|(_, fns)| *fns)
+}
+
 /// Kernel-implicit Prelude types (#576, Module.hs:520): globally-available
 /// runtime types with no `type alias` in any `.sky` source. Accepted as a no-op
 /// in `exposing (…)` and resolvable unqualified (C12).

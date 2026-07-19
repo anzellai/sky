@@ -144,10 +144,31 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let mut errors: Vec<String> = Vec::new();
 
     // ---- collect all value defs (bodies) across modules ----
+    // Name-resolution (class-a) errors are surfaced as hard errors so `sky check`
+    // rejects a program with an undefined bare/qualified name BEFORE `go build`,
+    // upholding `sky check ≡ sky build` (CLAUDE.md §8). Without this the resolver
+    // degrades the reference to `Res::Error`, lowering silently drops it, and the
+    // defect only surfaces as a `go build` failure (or, worse, passes). Deduped by
+    // (qualifier, name) so a name used N times reports once (oracle: dedupeByNameTop,
+    // Module.hs:1599). Class-b (Go-FFI) refs are NOT surfaced here — they resolve
+    // once the FFI surface lands (doc 09).
+    let mut seen_name_errors: HashSet<(Option<String>, String)> = HashSet::new();
     let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let resolved = hir::resolve(db, m);
+        for ca in &resolved.class_a {
+            if seen_name_errors.insert((ca.qualifier.clone(), ca.name.clone())) {
+                let full = match &ca.qualifier {
+                    Some(q) => format!("{q}.{}", ca.name),
+                    None => ca.name.clone(),
+                };
+                errors.push(format!(
+                    "[E1001] Undefined name: {full} (in module {mname}) — {}",
+                    ca.reason
+                ));
+            }
+        }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
                 let types = typer.body_types(td.def, body);

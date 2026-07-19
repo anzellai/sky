@@ -89,6 +89,48 @@ mod tests {
     }
 
     #[test]
+    fn unknown_bare_name_under_prelude_open_is_rejected() {
+        // Regression for the `kernel_open` soundness hole: `import Sky.Core.Prelude
+        // exposing (..)` opens the `Basics` kernel pseudo-module. A bare undefined
+        // name (`mysteryValue`) MUST resolve to `Res::Error` + a class-(a)
+        // `[E1001] Undefined name` diagnostic at resolve time — NOT a lenient
+        // `rt.Basics_mysteryValue` kernel ref that only fails at `go build`.
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Std.Log exposing (println)\n\n\
+                   main =\n    println mysteryValue\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(r.class_a.len(), 1, "class-a: {:?}", r.class_a);
+        assert_eq!(r.class_a[0].name, "mysteryValue");
+        assert_eq!(r.class_a[0].qualifier, None);
+        assert!(
+            r.diagnostics
+                .iter()
+                .any(|d| d.code.0 == "E1001" && d.message.contains("mysteryValue")),
+            "expected [E1001] Undefined name for mysteryValue, got {:?}",
+            r.diagnostics
+        );
+    }
+
+    #[test]
+    fn correct_prelude_program_same_shape_still_resolves() {
+        // The sibling positive: the SAME program shape with a real `Basics`
+        // export (`identity`) and enumerated kernel functions (`compare`, added
+        // by the ported `KERNEL_FUNCTIONS` table) resolves clean — the fix binds
+        // exactly the module's known functions, so nothing legitimate regresses.
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Std.Log exposing (println)\n\n\
+                   main =\n    println (String.fromInt (compare 1 2))\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
     fn explicit_alias_wins() {
         // `Db.x` → Std.Db (kernel); bare `conn` → Lib.Db.
         let libdb = "module Lib.Db exposing (conn)\nconn = 0\n";

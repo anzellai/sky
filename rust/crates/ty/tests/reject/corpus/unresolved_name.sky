@@ -1,19 +1,18 @@
--- gate: known-leniency
+-- gate: reject
 -- defect: unresolved name `mysteryValue` (not a Sky/stdlib/local binding)
 -- oracle: reject [E1001] naming error at canonicalisation
 --
--- DOCUMENTED RESOLVER LENIENCY (accept-parity, NOT a ty soundness hole).
--- `import Sky.Core.Prelude exposing (..)` opens the `Basics` kernel pseudo-
--- module; the Rust resolver cannot statically ENUMERATE kernel exports, so it
--- resolves any bare unknown name to a lenient `Res::Kernel` ref rather than
--- emit `[E1001]` (resolve.rs `resolve_var` kernel-open fallback). This is a
--- deliberate accept-parity choice: tightening it means enumerating every
--- kernel export in the resolver, a change that touches every example's
--- `exposing (..)` import with its own over-eager-rejection risk. It is
--- ORTHOGONAL to the v0.7 self-host killer classes (nominal unification +
--- exhaustiveness + annotation-vs-body — all closed by this milestone). The
--- Haskell oracle rejects because it carries the full kernel-function tables.
--- This file is tracked as a known leniency, not counted against the hard gate.
+-- CLOSED (was known-leniency). `import Sky.Core.Prelude exposing (..)` opens the
+-- `Basics` kernel pseudo-module. The resolver used to lack a static enumeration
+-- of `Basics`' exports, so it resolved ANY bare unknown name to a lenient
+-- `Res::Kernel` ref rather than emit `[E1001]` — a `sky check ≡ sky build`
+-- violation (`main = println mysteryValue` passed `sky check` then failed
+-- `go build` with `undefined: rt.Basics_mysteryValue`). Fixed by porting the
+-- oracle's `staticKernelFunctions` table (Module.hs:1752) into
+-- `hir::kernel::KERNEL_FUNCTIONS`: a kernel `exposing (..)` now binds exactly
+-- the module's known functions (mirroring `kernelVarsFor` + `addExposed`,
+-- Module.hs:700-703), so an unknown bare name falls through `resolve_var` to
+-- `Res::Error` + `[E1001] Undefined name`. Matches the Haskell oracle exactly.
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
