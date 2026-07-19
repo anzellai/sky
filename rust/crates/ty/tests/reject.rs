@@ -81,6 +81,11 @@ fn check(file: &Path, stdlib: &[(String, syntax::Parse)]) -> (bool, bool) {
         db.add_module(n, parse.clone());
     }
     let parse = syntax::parse(&src, base::FileId(0));
+    // Parser-recovery diagnostics (`[E0001]` class) — mirrors the driver's
+    // parse-error gate (`crates/project/src/build.rs`): a syntactically broken
+    // program the oracle rejects at parse time (e.g. a bare operator section
+    // `(+)`) is REJECTED here too. Read BEFORE the parse is moved into the db.
+    let parse_error = !parse.errors().is_empty() || parse.error_node_count() > 0;
     let mname = parse
         .tree()
         .module_header()
@@ -90,8 +95,10 @@ fn check(file: &Path, stdlib: &[(String, syntax::Parse)]) -> (bool, bool) {
         .unwrap_or_else(|| "Main".to_string());
     let mid = db.add_module(&mname, parse);
     let out = ty::check_modules(&db, &[mid]);
-    let rejected =
-        out.type_errors > 0 || out.name_errors > 0 || out.exhaustiveness_warnings > 0;
+    let rejected = parse_error
+        || out.type_errors > 0
+        || out.name_errors > 0
+        || out.exhaustiveness_warnings > 0;
     (rejected, known_leniency)
 }
 

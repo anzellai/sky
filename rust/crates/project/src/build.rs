@@ -100,7 +100,39 @@ fn assemble_and_emit_with(
     }
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
+    // Parse-error gate accumulator (`[E0001]` class). Collected HERE, in the
+    // app-module loop, because `db.add_module` moves the `parse` — the parser's
+    // recovery diagnostics (`parse.errors()`) and its structural ERROR-node
+    // count (`parse.error_node_count()`) must be read off each app module before
+    // it is handed to the db. Only APP modules are gated: the stdlib +
+    // `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes across
+    // the whole corpus) and are trusted, exactly like the type/name/exhaustive
+    // gates scope to `check_ids`.
+    let mut parse_diags: Vec<String> = Vec::new();
     for (n, parse) in locals {
+        // A parser that RECOVERS from a syntax error (e.g. a bare operator
+        // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
+        // node that lowers to Go `nil` and panics at runtime — while `sky check`
+        // otherwise reports success. The Haskell oracle rejects such a program
+        // at exit 1 (`[E0001] PARSE ERROR`). Gate it here so `sky
+        // check`/`build`/`run` all reject before lower/emit, upholding both
+        // "at least compatible with the oracle" and `sky check ≡ sky build` →
+        // "if it compiles it works".
+        if !parse.errors().is_empty() || parse.error_node_count() > 0 {
+            if parse.errors().is_empty() {
+                // Recovery produced a structural ERROR node without an attached
+                // diagnostic (defensive — the recovery paths always pair the two).
+                parse_diags.push(format!(
+                    "[E0001] PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
+                ));
+            } else {
+                for d in parse.errors() {
+                    if d.severity == diagnostics::Severity::Error {
+                        parse_diags.push(format!("[{}] {}", d.code.0, d.message));
+                    }
+                }
+            }
+        }
         let id = db.add_module(&n, parse);
         // Every app-code module (the project's own `src/` + any `extra_dirs`
         // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
@@ -114,6 +146,13 @@ fn assemble_and_emit_with(
         if is_entry {
             entry = Some(id);
         }
+    }
+    // Halt on any app-module parse error BEFORE entry detection, typecheck,
+    // lower, and emit — a syntactically broken module can never be soundly
+    // lowered, and reporting the parse error is more actionable than a
+    // downstream "no entry module named Main" / type-clash message.
+    if !parse_diags.is_empty() {
+        return Err(parse_diags.join("\n"));
     }
     let Some(entry) = entry else {
         return Err(match entry_module {

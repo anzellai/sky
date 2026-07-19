@@ -364,3 +364,71 @@ fn driver_accepts_nested_shadowing() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// A bare operator section `(+)` (Sky has NO operator sections) is REJECTED
+/// before emit with `[E0001]`. The parser RECOVERS from `(+)` and produces an
+/// `Expr::Error` node that lowers to Go `nil`; without a parse-error gate
+/// `sky check` reported success and `sky run` then panicked `NilDereference`
+/// inside `Sky_Core_List_foldl` — a check-clean program crashing at runtime,
+/// breaking both oracle parity (the Haskell rejects at exit 1) and
+/// `sky check ≡ sky build` ("if it compiles it works"). This is the confirmed
+/// driver-seam gap this change closes.
+#[test]
+fn driver_rejects_parse_error_op_section() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "opsection",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.List as List\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    println (String.fromInt (List.foldl (+) 0 [ 1, 2, 3 ]))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED a program with a bare operator section `(+)` — the parse-error gate is not wired in; note: {}",
+        report.note
+    );
+    assert!(!report.go_build_ok, "go build must not run on a parse error");
+    assert!(
+        report.note.contains("E0001"),
+        "expected an [E0001] parse-error diagnostic in the note, got: {}",
+        report.note
+    );
+    assert!(
+        !out.join("main.go").exists(),
+        "no Go should be emitted for a program with a parse error"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// The corrected program — a real `add` binding in place of the `(+)` section —
+/// parses clean and reaches emission (proves the parse-error gate does not
+/// over-reject: with 0 error nodes, well-formed code is unaffected).
+#[test]
+fn driver_accepts_corrected_named_fn_and_emits() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "opsection-fixed",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.List as List\n\
+         import Std.Log exposing (println)\n\n\
+         add a b =\n    a + b\n\n\
+         main =\n    println (String.fromInt (List.foldl add 0 [ 1, 2, 3 ]))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted,
+        "driver failed to emit a WELL-FORMED program (real `add` instead of `(+)`) — the parse-error gate over-rejects; note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}

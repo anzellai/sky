@@ -26,6 +26,11 @@ struct Row {
     type_errors: usize,
     name_errors: usize,
     exhaustiveness: usize,
+    /// Parser-recovery diagnostics (`[E0001]` class): a syntactically broken
+    /// program the oracle rejects at parse time (e.g. a bare operator section
+    /// `(+)`). The driver gates these before lower/emit; this gate mirrors that
+    /// so such a program is counted REJECTED here too.
+    parse_errors: usize,
     /// A file tagged `-- gate: known-leniency` is a program the ORACLE rejects
     /// but the Rust checker deliberately accepts for a documented accept-parity
     /// reason (see the file's header). Tracked + reported, but NOT counted
@@ -36,11 +41,16 @@ struct Row {
 
 impl Row {
     fn rejected(&self) -> bool {
-        self.type_errors > 0 || self.name_errors > 0 || self.exhaustiveness > 0
+        self.type_errors > 0
+            || self.name_errors > 0
+            || self.exhaustiveness > 0
+            || self.parse_errors > 0
     }
     /// Which signal caught it (for the report).
     fn signal(&self) -> &'static str {
-        if self.type_errors > 0 {
+        if self.parse_errors > 0 {
+            "parse"
+        } else if self.type_errors > 0 {
             "type"
         } else if self.name_errors > 0 {
             "name"
@@ -84,8 +94,8 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
     // ---- report ----
     let w = rows.iter().map(|r| r.name.len()).max().unwrap_or(8).max(8);
     println!(
-        "{:<w$}  {:>6}  {:>6}  {:>6}  {:>9}  SIGNAL / first diagnostic",
-        "DEFECT FILE", "TYPE", "NAME", "EXHST", "VERDICT",
+        "{:<w$}  {:>6}  {:>6}  {:>6}  {:>6}  {:>9}  SIGNAL / first diagnostic",
+        "DEFECT FILE", "TYPE", "NAME", "EXHST", "PARSE", "VERDICT",
         w = w
     );
     println!("{}", "-".repeat(w + 60));
@@ -106,8 +116,8 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
             }
         }
         println!(
-            "{:<w$}  {:>6}  {:>6}  {:>6}  {:>9}  {} {}",
-            r.name, r.type_errors, r.name_errors, r.exhaustiveness, verdict, r.signal(), r.first_msg,
+            "{:<w$}  {:>6}  {:>6}  {:>6}  {:>6}  {:>9}  {} {}",
+            r.name, r.type_errors, r.name_errors, r.exhaustiveness, r.parse_errors, verdict, r.signal(), r.first_msg,
             w = w
         );
     }
@@ -160,6 +170,24 @@ fn check_one(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Row {
         .take(3)
         .any(|l| l.contains("gate: known-leniency"));
     let parse = syntax::parse(&src, base::FileId(0));
+    // Parser-recovery diagnostics (`[E0001]` class) — mirrors the driver's
+    // parse-error gate (`crates/project/src/build.rs`). Read BEFORE the parse is
+    // moved into the db.
+    let parse_errors = parse
+        .errors()
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .count()
+        .max(parse.error_node_count().min(1));
+    let parse_first: Option<String> = parse
+        .errors()
+        .iter()
+        .find(|d| d.severity == diagnostics::Severity::Error)
+        .map(|d| {
+            let m = d.message.replace('\n', " ");
+            let m: String = m.chars().take(70).collect();
+            format!("[{}] {}", d.code.0, m)
+        });
     let mname = parse
         .tree()
         .module_header()
@@ -170,17 +198,18 @@ fn check_one(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Row {
     let mid = db.add_module(&mname, parse);
     let out = ty::check_modules(&db, &[mid]);
 
-    let first_msg = out
-        .diagnostics
-        .iter()
-        .find(|d| {
-            d.severity == diagnostics::Severity::Error
-                || d.code.0 == "E3001"
-        })
-        .map(|d| {
-            let m = d.message.replace('\n', " ");
-            let m: String = m.chars().take(70).collect();
-            format!("[{}] {}", d.code.0, m)
+    let first_msg = parse_first
+        .or_else(|| {
+            out.diagnostics
+                .iter()
+                .find(|d| {
+                    d.severity == diagnostics::Severity::Error || d.code.0 == "E3001"
+                })
+                .map(|d| {
+                    let m = d.message.replace('\n', " ");
+                    let m: String = m.chars().take(70).collect();
+                    format!("[{}] {}", d.code.0, m)
+                })
         })
         .unwrap_or_default();
 
@@ -189,6 +218,7 @@ fn check_one(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Row {
         type_errors: out.type_errors,
         name_errors: out.name_errors,
         exhaustiveness: out.exhaustiveness_warnings,
+        parse_errors,
         known_leniency,
         first_msg,
     }
