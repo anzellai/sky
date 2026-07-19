@@ -187,8 +187,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
 
 // ---- fmt -----------------------------------------------------------------
 
-/// `sky fmt [--check] [--stdin|-] <file...>` — lossless, idempotent CST reprint
-/// (doc 10 §"sky fmt"; bring-up scope: reprint, not opinionated re-layout).
+/// `sky fmt [--check] [--stdin|-] <file...>` — opinionated, idempotent
+/// re-layout (doc 10 §"sky fmt"), falling back to a lossless CST reprint for
+/// any file where the opinionated pass would drop a comment or not be provably
+/// idempotent (see `fmt::format_source`).
 fn cmd_fmt(args: &[String]) -> ExitCode {
     let check = args.iter().any(|a| a == "--check");
     let stdin_mode = args.iter().any(|a| a == "--stdin" || a == "-");
