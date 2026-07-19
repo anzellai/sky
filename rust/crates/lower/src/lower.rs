@@ -1644,6 +1644,40 @@ impl<'a> Ctx<'a> {
                         GoTy::Any,
                     );
                 }
+                // A record ALIAS is NOT monomorphised: a generic field
+                // (`type alias Payload a = { value : a, ... }`) erases to a Go
+                // `any` field (`Value any`) regardless of the instantiation. When
+                // that `any` field is consumed at a CONCRETE slot — directly
+                // (`p.value` with `p : Payload Int`) OR after being carried in an
+                // ADT variant and re-bound in a case arm (`Filled rec -> rec.value`,
+                // where the variant field `V0 Main_Payload_R` binds `rec`
+                // nominally) — Go rejects the uncoerced `any` in the concrete
+                // context (`cannot use v.Value (any) as int`). Narrow it via
+                // `rt.Coerce`, mirroring the container-payload narrowing in
+                // `bind_field_pat` / the cons-tail reads. Only fires when the
+                // field's DECLARED Go type is `any` and the use slot is concrete —
+                // concrete-typed fields keep byte-identical emission.
+                let declared_field_ty: Option<GoTy> = match &b.ty {
+                    GoTy::Struct(fs) => {
+                        fs.iter().find(|(n, _)| n.as_str() == cap).map(|(_, t)| t.clone())
+                    }
+                    GoTy::Named(n, _) => {
+                        let sky = self
+                            .record_fields
+                            .get(n)
+                            .and_then(|fs| fs.iter().find(|(fn_, _)| fn_.as_str() == cap))
+                            .map(|(_, t)| t.clone());
+                        sky.map(|t| self.goty(&t))
+                    }
+                    _ => None,
+                };
+                if declared_field_ty.as_ref() == Some(&GoTy::Any) && *actual != GoTy::Any {
+                    let sel = GoExpr::new(
+                        GoExprKind::Selector(Box::new(b), cap),
+                        GoTy::Any,
+                    );
+                    return self.coerce_if_needed(sel, actual);
+                }
                 // A func-typed struct field (`OnChange func(bool) any`) accessed
                 // in callee position must carry its REAL func type, not the
                 // expected slot type (`actual`, frequently `any` for a callee) —
