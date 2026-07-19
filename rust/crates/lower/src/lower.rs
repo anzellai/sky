@@ -2275,8 +2275,44 @@ impl<'a> Ctx<'a> {
             if largs.len() < arity {
                 return self.make_partial(c, largs, &param_gtys, &ret_goty, arity);
             }
+            if largs.len() > arity {
+                return self.over_apply(c, largs, arity, &ret_goty);
+            }
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
+    }
+
+    /// Over-application (audit #7): a def of arity N called with M > N args.
+    /// Sky curries and the body returns a function, but Go's direct call is
+    /// fixed-arity — `mul3 : Int -> Int -> (Int -> Int); mul3 a b = \c -> …`
+    /// called `mul3 2 3 5` would emit `Main_mul3(2, 3, 5)`, which Go rejects
+    /// ("too many arguments in call to Main_mul3", a 2-param func). Emit the
+    /// N-ary direct call, then apply each remaining arg to the returned closure
+    /// in turn (`Main_mul3(2, 3)(5)`), coercing each extra arg to the closure's
+    /// Go param type and threading the codomain as the running result type.
+    fn over_apply(
+        &mut self,
+        callee: GoExpr,
+        largs: Vec<GoExpr>,
+        arity: usize,
+        ret: &GoTy,
+    ) -> GoExpr {
+        let mut it = largs.into_iter();
+        let base: Vec<GoExpr> = it.by_ref().take(arity).collect();
+        let mut call = GoExpr::new(GoExprKind::Call(Box::new(callee), base), ret.clone());
+        let mut cur = ret.clone();
+        for extra in it {
+            let (pty, next) = match &cur {
+                GoTy::Func(ps, cod) => {
+                    (ps.first().cloned().unwrap_or(GoTy::Any), (**cod).clone())
+                }
+                _ => (GoTy::Any, GoTy::Any),
+            };
+            let ea = self.coerce_if_needed(extra, &pty);
+            call = GoExpr::new(GoExprKind::Call(Box::new(call), vec![ea]), next.clone());
+            cur = next;
+        }
+        call
     }
 
     /// Build a closure for a partially-applied top-level function. The closure
