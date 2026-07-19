@@ -54,21 +54,38 @@ fn main() -> ExitCode {
         // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
         Some("console") => cmd_console(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
-        // `upgrade` self-updates the binary (a separate milestone).
-        Some(verb @ "upgrade") => {
-            eprintln!(
-                "sky {verb}: not yet implemented in the rust bring-up.\n\
-                 Wired verbs: build, run, check, fmt, test, lsp, clean, init, doc,\n\
-                 console, console-serve, watch, db, add, remove, install, update,\n\
-                 doctor, upgrade-claude, verify, version, help."
-            );
-            ExitCode::from(2)
-        }
+        Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
             ExitCode::from(2)
         }
     }
+}
+
+/// `sky upgrade` — self-update the `sky` binary. The Haskell `sky` downloads the
+/// matching tagged release from GitHub (`anzellai/sky`) and replaces the binary.
+/// The Rust compiler is a rewrite/dev build not yet published as a `sky` release,
+/// so there is nothing newer to fetch — be honest about that (and how to update)
+/// rather than a silent no-op or an "unimplemented" stub.
+fn cmd_upgrade(_args: &[String]) -> ExitCode {
+    let ver = version_string();
+    println!("sky upgrade — current version: {ver}");
+    if ver == "sky dev" || ver.contains("dev") {
+        println!(
+            "This is a rewrite/dev build of the Rust `sky`, not a published release, so \
+             there is no newer binary to fetch.\n\
+             Update it by rebuilding from source (in the sky repo):\n  \
+             cargo build -p sky-cli --bin sky\n\
+             Self-update from GitHub releases activates once the Rust `sky` ships a tagged \
+             release."
+        );
+    } else {
+        println!(
+            "Self-update for released Rust `sky` builds is not wired yet; download the \
+             latest release from https://github.com/anzellai/sky/releases."
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 // ---- build / check -------------------------------------------------------
