@@ -7,10 +7,15 @@
 //!     *output*, not a source. Embedding it would bloat every `sky` binary and,
 //!     because the binary changes per rebuild, break determinism. The filter
 //!     drops it (mirrors `EmbeddedInspector.collectToolSources`).
-//!   * `runtime-go/rt/` carries `*_test.go` + `testdata/` + the `console_app/`
-//!     package-`main` subtree that the materialise step never copies. Stripping
-//!     them at stage time keeps the embedded payload to the ~93-file non-test
-//!     subset (doc 09 §E.3) so the `sky` binary stays lean.
+//!   * `runtime-go/rt/` carries `*_test.go` + `testdata/`; stripping those at
+//!     stage time keeps the embedded payload lean (doc 09 §E.3). `console_app/`
+//!     IS embedded (unlike the normal user-app materialise, which skips it):
+//!     `rt/hub` — built by `sky console-serve` via the embedded `cmd/sky-hub` —
+//!     blank-imports `sky-app/rt/console_app`, so the standalone hub build needs
+//!     it on disk.
+//!   * `sky-bundled/` (the `console` + `doc` bundled Sky apps) is embedded
+//!     source-only: its committed `sky-out/` / `.skycache/` / `.skydeps/` build
+//!     artefacts are dropped so only `src/` + `sky.toml` ship.
 //!
 //! The `cargo:rerun-if-changed` lines below make Cargo re-stage whenever any
 //! source tree changes — new files included by construction. This is the direct
@@ -36,18 +41,25 @@ fn main() {
 
     // sky-stdlib/ — the .sky stdlib (read by the build driver + `sky doc`).
     stage(&repo.join("sky-stdlib"), &dest.join("sky-stdlib"));
-    // runtime-go/ — go.mod + go.sum + the rt/ tree (materialised beside main.go).
+    // runtime-go/ — go.mod + go.sum + the rt/ tree (materialised beside main.go)
+    // + cmd/sky-hub (the pure-Go console hub `sky console-serve` builds).
     stage_runtime(&repo.join("runtime-go"), &dest.join("runtime-go"));
     // tools/sky-ffi-inspect/ — the Go introspector source (ensure_inspector).
     stage(&repo.join("tools").join("sky-ffi-inspect"), &dest.join("tools").join("sky-ffi-inspect"));
     // templates/ — CLAUDE.md et al. (copied by `sky init`).
     stage(&repo.join("templates"), &dest.join("templates"));
+    // sky-bundled/ — the console + doc bundled Sky apps `sky console` /
+    // `sky doc --serve` / `sky doc --tui` build + spawn. Source only: the
+    // committed `sky-out/` / `.skycache/` / `.skydeps/` build artefacts are
+    // dropped by `skip_dir` so the embed carries just `src/` + `sky.toml`.
+    stage(&repo.join("sky-bundled"), &dest.join("sky-bundled"));
 
     // Re-stage when any source tree changes (new files included).
     rerun(&repo.join("sky-stdlib"));
     rerun(&repo.join("runtime-go"));
     rerun(&repo.join("tools").join("sky-ffi-inspect"));
     rerun(&repo.join("templates"));
+    rerun(&repo.join("sky-bundled"));
     // And when this script itself changes.
     rerun(&manifest.join("build.rs"));
 }
@@ -84,9 +96,11 @@ fn stage(src: &Path, dst: &Path) {
     }
 }
 
-/// Stage `runtime-go/` selectively: only `go.mod`, `go.sum`, and the `rt/` tree
-/// are ever read by the driver (write_out + ensure_go_mod). `cmd/` and other
-/// top-level dirs are never materialised, so they are not embedded.
+/// Stage `runtime-go/` selectively: `go.mod`, `go.sum`, the `rt/` tree (read by
+/// the driver's write_out + ensure_go_mod), and `cmd/sky-hub/` (built directly
+/// by `sky console-serve` — `go build ./cmd/sky-hub` against this tree). The
+/// `rt/` stage includes `rt/console_app/` because `rt/hub` (which sky-hub
+/// imports) blank-imports it, so a standalone hub build needs it present.
 fn stage_runtime(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap_or_else(|e| panic!("mkdir {}: {e}", dst.display()));
     for f in ["go.mod", "go.sum"] {
@@ -96,6 +110,8 @@ fn stage_runtime(src: &Path, dst: &Path) {
         }
     }
     stage(&src.join("rt"), &dst.join("rt"));
+    // cmd/ — the `sky-hub` daemon main package (`sky console-serve`).
+    stage(&src.join("cmd"), &dst.join("cmd"));
 }
 
 fn copy_file(src: &Path, dst: &Path) {
@@ -117,12 +133,17 @@ fn skip_file(name: &str) -> bool {
         || name.ends_with('~')
 }
 
-/// Non-embeddable dirs: test fixtures, per-project caches, the package-`main`
-/// console subtree the materialise step skips. Matches
-/// `EmbedDirTH.isEmbeddableRuntimeDir` (+ `console_app`, never materialised).
+/// Non-embeddable dirs: test fixtures, per-project caches, and committed build
+/// outputs (`sky-out/` / `.skydeps/` under `sky-bundled/*`). Matches
+/// `EmbedDirTH.isEmbeddableRuntimeDir`. NOTE: `console_app` is intentionally NOT
+/// skipped — `rt/hub` (built by `sky console-serve` via `cmd/sky-hub`) blank-
+/// imports `sky-app/rt/console_app`, so the standalone hub build needs it. The
+/// normal user-app build re-materialises `rt/` beside `main.go` and skips
+/// `console_app` there (see `project::build::materialise_rt`), so it never
+/// bloats a user's `sky-out/`.
 fn skip_dir(name: &str) -> bool {
     matches!(
         name,
-        ".skycache" | "testdata" | "node_modules" | ".git" | "console_app"
+        ".skycache" | ".skydeps" | "sky-out" | "testdata" | "node_modules" | ".git"
     )
 }

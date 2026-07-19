@@ -8,11 +8,15 @@
 //! with the right env. Building into `~/.cache/sky/…` keeps the committed
 //! `sky-bundled/*/sky-out` untouched.
 //!
-//! Bring-up scope: the bundled source is read from the repo tree
-//! (`<repo_root>/sky-bundled/<name>`). `sky-bundled/` is NOT yet embedded in the
-//! binary (only `sky-stdlib` / `runtime-go` / `tools` / `templates` are), so
-//! these verbs require running inside the repo tree — [`bundled_src_dir`]
-//! returns `None` otherwise and the caller emits a clear message.
+//! Asset resolution: the bundled source is read from `<root>/sky-bundled/<name>`
+//! where `root` is whatever [`project::assets_root_for`] resolved at the call
+//! site — the repo tree in dev (byte-identical bring-up), else the extracted
+//! embedded asset root ([`ffi::extract_assets_root`]) when running standalone.
+//! `sky-bundled/` is embedded in the binary alongside `sky-stdlib` /
+//! `runtime-go` / `tools` / `templates`, so [`bundled_src_dir`] finds the
+//! bundled source under the extracted root and these verbs work from any
+//! directory. (`console-serve`'s hub builds directly against the same root's
+//! embedded `runtime-go/cmd/sky-hub`.)
 
 use std::path::{Path, PathBuf};
 
@@ -37,9 +41,11 @@ pub fn cache_root() -> PathBuf {
     PathBuf::from(home).join(".cache").join("sky")
 }
 
-/// The repo-tree source dir for bundled app `name` (`console` / `doc`), if it
-/// exists with a `src/`. Returns `None` when running standalone (no repo tree),
-/// which is the residual "needs embedding" case.
+/// The source dir for bundled app `name` (`console` / `doc`) under `repo_root`
+/// (the [`project::assets_root_for`]-resolved root — repo tree in dev, extracted
+/// embedded root standalone), if it exists with a `src/`. Returns `None` only
+/// when the resolved root somehow lacks the bundled source (should not happen
+/// once `sky-bundled/` is embedded + extracted).
 pub fn bundled_src_dir(repo_root: &Path, name: &str) -> Option<PathBuf> {
     let dir = repo_root.join("sky-bundled").join(name);
     if dir.join("src").is_dir() {

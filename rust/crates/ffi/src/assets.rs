@@ -38,6 +38,12 @@ pub fn embedded_runtime() -> Option<&'static Dir<'static>> {
     EMBEDDED.get_dir("runtime-go")
 }
 
+/// The embedded `sky-bundled/` subtree (the `console` + `doc` bundled Sky apps
+/// `sky console` / `sky doc --serve` / `sky doc --tui` build + spawn), if present.
+pub fn embedded_bundled() -> Option<&'static Dir<'static>> {
+    EMBEDDED.get_dir("sky-bundled")
+}
+
 /// Materialise the embedded asset trees into a content-hashed cache dir and
 /// return it — a synthetic "repo root" carrying `sky-stdlib/`, `runtime-go/`,
 /// `tools/sky-ffi-inspect/`, and `templates/` in the same layout the repo tree
@@ -180,6 +186,51 @@ mod tests {
         let rt = embedded_runtime().expect("runtime embedded");
         assert!(rt.get_file("runtime-go/go.mod").is_some(), "go.mod embedded");
         assert!(rt.get_dir("runtime-go/rt").is_some(), "rt/ embedded");
+    }
+
+    #[test]
+    fn runtime_has_sky_hub_cmd_and_console_app() {
+        // `sky console-serve` builds `./cmd/sky-hub` against the extracted
+        // runtime-go tree; `rt/hub` blank-imports `rt/console_app`. Both must be
+        // present for the standalone hub build to succeed.
+        let rt = embedded_runtime().expect("runtime embedded");
+        assert!(
+            rt.get_file("runtime-go/cmd/sky-hub/main.go").is_some(),
+            "cmd/sky-hub/main.go embedded"
+        );
+        assert!(
+            rt.get_dir("runtime-go/rt/console_app").is_some(),
+            "rt/console_app embedded (rt/hub blank-imports it)"
+        );
+        assert!(
+            rt.get_dir("runtime-go/rt/hub").is_some(),
+            "rt/hub embedded (sky-hub imports it)"
+        );
+    }
+
+    #[test]
+    fn bundled_apps_embedded_source_only() {
+        let b = embedded_bundled().expect("sky-bundled embedded");
+        // Both bundled apps' entry source + sky.toml present.
+        for name in ["console", "doc"] {
+            assert!(
+                b.get_file(format!("sky-bundled/{name}/src/Main.sky")).is_some(),
+                "sky-bundled/{name}/src/Main.sky embedded"
+            );
+            assert!(
+                b.get_file(format!("sky-bundled/{name}/sky.toml")).is_some(),
+                "sky-bundled/{name}/sky.toml embedded"
+            );
+        }
+        // The committed build artefacts must NOT leak into the embed.
+        let mut files = Vec::new();
+        collect(&EMBEDDED, &mut files);
+        for (p, _) in &files {
+            assert!(
+                !p.contains("sky-bundled/") || (!p.contains("/sky-out/") && !p.contains("/.skycache/")),
+                "bundled build artefact leaked into embed: {p}"
+            );
+        }
     }
 
     #[test]

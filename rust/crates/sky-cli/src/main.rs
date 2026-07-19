@@ -656,9 +656,10 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     let runtime_go = repo_root.join("runtime-go");
     if !runtime_go.join("cmd").join("sky-hub").join("main.go").is_file() {
         eprintln!(
-            "sky console-serve: requires the repo tree (runtime-go/cmd/sky-hub).\n\
-             The rust bring-up does not yet embed runtime-go/ for a standalone\n\
-             hub build — run inside the Sky repo, or use the Haskell `sky`."
+            "sky console-serve: runtime-go/cmd/sky-hub not found under {}.\n\
+             The hub source is embedded in the binary and extracted on first use;\n\
+             a missing source here means the embedded asset extraction failed.",
+            repo_root.display()
         );
         return ExitCode::from(2);
     }
@@ -744,13 +745,14 @@ fn propagate(code: Option<i32>) -> ExitCode {
     }
 }
 
-/// The message emitted when a bundled verb runs outside the repo tree (the
-/// `sky-bundled/` source isn't embedded in the bring-up binary — the residual).
+/// The message emitted when a bundled verb can't find its `sky-bundled/<name>`
+/// source. The source is embedded in the binary and extracted on first use, so
+/// this only fires if the embedded asset extraction failed.
 fn bundled_missing(name: &str) -> ExitCode {
     eprintln!(
-        "sky {name}: requires the sky-bundled/{name} source (repo tree).\n\
-         The rust bring-up does not yet embed sky-bundled/ for a standalone\n\
-         build — run inside the Sky repo, or use the Haskell `sky`."
+        "sky {name}: sky-bundled/{name} source not found.\n\
+         The bundled app source is embedded in the binary and extracted on first\n\
+         use; a missing source here means the embedded asset extraction failed."
     );
     ExitCode::from(2)
 }
