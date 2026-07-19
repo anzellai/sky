@@ -122,6 +122,67 @@ fn driver_rejects_annotated_string_plus_int() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A non-exhaustive `case` (missing the `Nothing` arm) is REJECTED by the driver
+/// with `[E3001]` — matching the Haskell oracle (exit 1). Sky treats a
+/// non-exhaustive match as a HARD error; accepting it would emit Go that panics
+/// at runtime the moment the missing arm is hit ("if it compiles it works").
+#[test]
+fn driver_rejects_non_exhaustive_case() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "nonexhaustive",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    case Just 5 of\n        Just n -> println (String.fromInt n)\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED a non-exhaustive `case` — the exhaustiveness gate is not wired in; note: {}",
+        report.note
+    );
+    assert!(!report.go_build_ok, "go build must not run on an exhaustiveness error");
+    assert!(
+        report.note.contains("E3001"),
+        "expected an [E3001] non-exhaustive diagnostic in the note, got: {}",
+        report.note
+    );
+    assert!(
+        !out.join("main.go").exists(),
+        "no Go should be emitted for a non-exhaustive program"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// The same match with an added wildcard `_ -> …` arm is EXHAUSTIVE and reaches
+/// emission — proving the exhaustiveness gate does not over-reject (a covering
+/// head suppresses the E3001).
+#[test]
+fn driver_accepts_exhaustive_case_with_wildcard() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "exhaustive-wildcard",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    case Just 5 of\n        Just n -> println (String.fromInt n)\n        _ -> println \"none\"\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted,
+        "driver failed to emit an EXHAUSTIVE `case` (wildcard arm present) — the exhaustiveness gate over-rejects; note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A well-typed program passes the type gate and reaches emission (the gate does
 /// not over-reject). We stop at `emitted` rather than asserting `go build`
 /// success so the test needs no `go` toolchain.

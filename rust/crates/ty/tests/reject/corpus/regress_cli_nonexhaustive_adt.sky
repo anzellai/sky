@@ -1,0 +1,21 @@
+-- defect: non-exhaustive `case` over a user ADT — missing constructor `Pending`
+-- oracle: reject [E3001] (Sky exhaustiveness is a hard error — R1-D3)
+-- regress: CLI-level mirror of the exhaustiveness driver-seam gap (see
+--          regress_cli_nonexhaustive_maybe.sky). A missing user-ADT constructor
+--          must halt `sky check`/build/run at exit 1, not emit runtime-panicking
+--          Go. A wildcard `_ -> …` arm would make this exhaustive.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Status = Active | Pending | Closed
+
+describe : Status -> String
+describe s =
+    case s of
+        Active -> "active"
+        Closed -> "closed"
+
+main =
+    println (describe Active)

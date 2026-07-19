@@ -1,0 +1,14 @@
+-- defect: non-exhaustive `case Just 5 of Just n -> …` — missing `Nothing`
+-- oracle: reject [E3001] (Sky exhaustiveness is a hard error — R1-D3)
+-- regress: the CLI driver accepted this (exit 0, "No errors found") while the
+--          Haskell oracle rejected it (exit 1) — the exhaustiveness gate was
+--          wired into the reject corpus + LSP but NOT the `sky check`/build/run
+--          driver seam. Adding a `_ -> …` arm makes the same match exhaustive.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    case Just 5 of
+        Just n -> println (String.fromInt n)

@@ -145,6 +145,26 @@ fn assemble_and_emit_with(
             .collect();
         return Err(rendered.join("\n"));
     }
+    // Exhaustiveness gate (`[E3001]`): Sky treats a non-exhaustive `case` as a
+    // HARD error (stronger than GHC-as-configured — self-host R1-D3, doc 06
+    // §Exhaustiveness). The Haskell oracle rejects such a program at exit 1; the
+    // Rust CLI must match, else a program that "compiles" panics at runtime the
+    // moment the missing arm is hit (violates `sky check ≡ sky build` + "if it
+    // compiles it works"). `exhaustive.rs` is conservative — it only forces
+    // coverage on ADT/Bool heads and a wildcard/var/alias head suppresses — so
+    // this gate cannot over-reject an exhaustive match. Gate on the E3001
+    // diagnostics directly; the `exhaustiveness_warnings` counter (a separate
+    // axis from `type_errors`, which the `infer` accept-parity gate counts) is
+    // left untouched.
+    let exhaustive_diags: Vec<String> = checked
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.0 == "E3001")
+        .map(|d| format!("[{}] {}", d.code.0, d.message))
+        .collect();
+    if !exhaustive_diags.is_empty() {
+        return Err(exhaustive_diags.join("\n"));
+    }
 
     // ---- lower + emit ----
     let mut cfg = read_sky_toml_config(&example_dir.join("sky.toml"));
