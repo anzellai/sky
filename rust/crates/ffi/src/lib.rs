@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+pub mod gen;
+mod gen_bindings;
+pub mod inspect;
+
+pub use gen::{generate, GeneratedSurface};
+pub use inspect::{ensure_inspector, run_inspector, PackageInfo};
+
 // ---------------------------------------------------------------------------
 // Committed pinned-surface loader (doc 09 §C).
 //

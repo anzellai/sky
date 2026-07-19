@@ -37,18 +37,21 @@ fn main() -> ExitCode {
         Some("doc") => cmd_doc(&args[1..]),
         Some("watch") => cmd_watch(&args[1..]),
         Some("db") => cmd_db(&args[1..]),
+        Some("add") => cmd_add(&args[1..]),
+        Some("remove") => cmd_remove(&args[1..]),
+        Some("install") => cmd_install(&args[1..]),
+        Some("update") => cmd_update(&args[1..]),
         // Verbs the bring-up does not implement yet — honest, explicit deferral.
-        // `add`/`remove`/`install`/`update` need the deterministic Go-FFI
-        // inspector (a separate milestone); `doctor`/`console`/`console-serve`/
-        // `upgrade`/`verify` spawn bundled Sky apps or self-update the binary.
+        // `doctor`/`console`/`console-serve`/`upgrade`/`verify` spawn bundled
+        // Sky apps or self-update the binary (a separate milestone).
         Some(
-            verb @ ("add" | "remove" | "install" | "update" | "doctor" | "console"
-            | "console-serve" | "upgrade" | "upgrade-claude" | "verify"),
+            verb @ ("doctor" | "console" | "console-serve" | "upgrade" | "upgrade-claude"
+            | "verify"),
         ) => {
             eprintln!(
                 "sky {verb}: not yet implemented in the rust bring-up.\n\
                  Wired verbs: build, run, check, fmt, test, lsp, clean, init, doc,\n\
-                 watch, db, version, help."
+                 watch, db, add, remove, install, update, version, help."
             );
             ExitCode::from(2)
         }
@@ -690,6 +693,74 @@ fn is_watched_change(path: &Path) -> bool {
     is_sky || is_toml
 }
 
+// ---- FFI verbs (add / remove / install / update) -------------------------
+
+use project::{ffi_add, ffi_install, ffi_remove, ffi_update, FfiReport};
+
+/// Resolve `(repo_root, project_dir)` for an FFI verb run from the cwd. The
+/// project dir is the cwd (where `sky.toml` + `sky-out/` live, matching the
+/// oracle's cwd-relative behaviour); the repo root supplies the stdlib +
+/// `tools/sky-ffi-inspect` source (bring-up reads assets from the repo tree).
+fn resolve_ffi_ctx() -> Option<(PathBuf, PathBuf)> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = project::repo_root_for(&cwd) else {
+        eprintln!(
+            "sky: could not locate compiler assets (sky-stdlib/ + runtime-go/ +\n\
+             tools/sky-ffi-inspect/) above {}. Run from within the Sky repo tree.",
+            cwd.display()
+        );
+        return None;
+    };
+    Some((repo_root, cwd))
+}
+
+fn emit_ffi_report(r: FfiReport) -> ExitCode {
+    for line in &r.lines {
+        println!("{line}");
+    }
+    if r.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn cmd_add(args: &[String]) -> ExitCode {
+    let Some(pkg) = args.iter().find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: sky add <go-import-path>");
+        return ExitCode::from(2);
+    };
+    let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
+        return ExitCode::FAILURE;
+    };
+    emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg))
+}
+
+fn cmd_remove(args: &[String]) -> ExitCode {
+    let Some(pkg) = args.iter().find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: sky remove <go-import-path>");
+        return ExitCode::from(2);
+    };
+    let Some((_repo_root, project_dir)) = resolve_ffi_ctx() else {
+        return ExitCode::FAILURE;
+    };
+    emit_ffi_report(ffi_remove(&project_dir, pkg))
+}
+
+fn cmd_install(_args: &[String]) -> ExitCode {
+    let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
+        return ExitCode::FAILURE;
+    };
+    emit_ffi_report(ffi_install(&project_dir, &repo_root))
+}
+
+fn cmd_update(_args: &[String]) -> ExitCode {
+    let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
+        return ExitCode::FAILURE;
+    };
+    emit_ffi_report(ffi_update(&project_dir, &repo_root))
+}
+
 // ---- shared helpers ------------------------------------------------------
 
 /// Resolve a `<file>` to its (repo_root, project_dir). Prints a diagnostic and
@@ -757,8 +828,11 @@ fn print_help() {
          \x20 doc   <Module>   print a module's exported bindings\n\
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
+         \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
+         \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
+         \x20 install               regen/verify committed FFI surfaces\n\
+         \x20 update                bump Go deps + regen surfaces\n\
          \x20 version          print the version\n\n\
-         DEFERRED (bring-up): add, remove, install, update (need the FFI\n\
-         \x20 inspector); doctor, console, console-serve, upgrade, verify"
+         DEFERRED (bring-up): doctor, console, console-serve, upgrade, verify"
     );
 }
