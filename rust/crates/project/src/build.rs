@@ -48,6 +48,10 @@ struct Emitted {
     registry: ffi::FfiRegistry,
     ffi_used: std::collections::BTreeSet<String>,
     warnings: Vec<String>,
+    /// True when the emitted `main.go` blank-imports `sky-app/rt/console_app`
+    /// (Sky.Live / Sky.Http.Server app) — the driver must then materialise the
+    /// `rt/console_app` subpackage so the import resolves at `go build`.
+    console_needed: bool,
 }
 
 /// Assemble the source db (stdlib + example src), lower, and emit the Go source.
@@ -277,6 +281,7 @@ fn assemble_and_emit_with(
         registry,
         ffi_used: prog.ffi_used.clone(),
         warnings: prog.warnings.clone(),
+        console_needed: prog.console_needed,
     })
 }
 
@@ -311,7 +316,7 @@ fn build_inner(
 ) -> BuildReport {
     let mut report = BuildReport::default();
 
-    let (source, registry, ffi_used) = match assemble_and_emit_with(
+    let (source, registry, ffi_used, console_needed) = match assemble_and_emit_with(
         &opts.repo_root,
         &opts.example_dir,
         extra_dirs,
@@ -319,7 +324,7 @@ fn build_inner(
     ) {
         Ok(e) => {
             report.warnings = e.warnings;
-            (e.source, e.registry, e.ffi_used)
+            (e.source, e.registry, e.ffi_used, e.console_needed)
         }
         Err(note) => {
             report.note = note;
@@ -334,7 +339,7 @@ fn build_inner(
         .out_dir_abs
         .clone()
         .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
-    if let Err(e) = write_out(&opts.repo_root, &out_dir, &source) {
+    if let Err(e) = write_out(&opts.repo_root, &out_dir, &source, console_needed) {
         report.note = format!("write failed: {e}");
         return report;
     }
@@ -575,7 +580,12 @@ fn required_version(go_mod: &str, path: &str) -> Option<String> {
     None
 }
 
-fn write_out(repo_root: &Path, out_dir: &Path, source: &str) -> std::io::Result<()> {
+fn write_out(
+    repo_root: &Path,
+    out_dir: &Path,
+    source: &str,
+    console_needed: bool,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     std::fs::write(out_dir.join("main.go"), source)?;
     // go.mod / go.sum from the runtime module (module `sky-app`).
@@ -587,13 +597,21 @@ fn write_out(repo_root: &Path, out_dir: &Path, source: &str) -> std::io::Result<
     }
     // materialise a pruned copy of runtime-go/rt (tests stripped).
     let rt_dst = out_dir.join("rt");
-    materialise_rt(&rt_src.join("rt"), &rt_dst)?;
+    materialise_rt(&rt_src.join("rt"), &rt_dst, console_needed)?;
     Ok(())
 }
 
 /// Copy `rt/` wholesale, skipping `*_test.go` and testdata (doc 09 §A.1). Copies
 /// recursively (the runtime has a `console_app/` subtree).
-fn materialise_rt(src: &Path, dst: &Path) -> std::io::Result<()> {
+///
+/// `console_needed` — when the emitted `main.go` blank-imports
+/// `sky-app/rt/console_app` (Sky.Live / Sky.Http.Server app), the
+/// `rt/console_app` subpackage MUST be materialised or `go build` fails to
+/// resolve the import. For CLI / Tui / Webview binaries (no blank import) it is
+/// skipped so the console stack stays out of the build (leanness — mirrors the
+/// oracle, whose linker tree-shakes it away when unimported). `testdata` is
+/// always skipped.
+fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -601,12 +619,15 @@ fn materialise_rt(src: &Path, dst: &Path) -> std::io::Result<()> {
         let name = entry.file_name();
         let name_s = name.to_string_lossy().to_string();
         if path.is_dir() {
-            // skip nested module dirs that carry their own go.mod would break the
-            // build; the console_app is package main — skip it (not linked by rt).
-            if name_s == "console_app" || name_s == "testdata" {
+            if name_s == "testdata" {
                 continue;
             }
-            materialise_rt(&path, &dst.join(&name_s))?;
+            // `console_app` (package console_app) is only linked when the program
+            // blank-imports it — materialise it exactly then, skip it otherwise.
+            if name_s == "console_app" && !console_needed {
+                continue;
+            }
+            materialise_rt(&path, &dst.join(&name_s), console_needed)?;
         } else if name_s.ends_with("_test.go") {
             continue;
         } else if name_s.ends_with(".go") {

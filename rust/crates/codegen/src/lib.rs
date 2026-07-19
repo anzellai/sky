@@ -38,11 +38,27 @@ impl Writer {
 
 /// Emit a full `main.go` for a program: package clause, `rt` import, then the
 /// items in the order the lowerer produced them (DCE-filtered, deterministic).
-pub fn emit_program(items: &[GoItem]) -> String {
+///
+/// `console_needed` — when true (the program imports `Std.Live.*` or
+/// `Sky.Http.Server.*`, so its runtime auto-mounts `/_sky/console`), a blank
+/// `_ "sky-app/rt/console_app"` import is added so the inline dev console's
+/// `init()` cfg-provider registration links into the binary. The build driver
+/// materialises `rt/console_app` for exactly these programs. False → the single
+/// `import rt "sky-app/rt"` line is emitted byte-for-byte as before (a CLI /
+/// Tui / Webview binary never links the console stack). Mirrors the oracle's
+/// `consoleNeededFromImports` gate on `collectGoImports`.
+pub fn emit_program(items: &[GoItem], console_needed: bool) -> String {
     let mut w = Writer::new();
     w.line("package main");
     w.nl();
-    w.line("import rt \"sky-app/rt\"");
+    if console_needed {
+        w.line("import (");
+        w.line("\trt \"sky-app/rt\"");
+        w.line("\t_ \"sky-app/rt/console_app\"");
+        w.line(")");
+    } else {
+        w.line("import rt \"sky-app/rt\"");
+    }
     w.nl();
     w.line("var _ = rt.AsInt");
     w.nl();

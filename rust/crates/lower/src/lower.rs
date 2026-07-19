@@ -26,6 +26,13 @@ pub struct LowerOutput {
     /// program (doc 09) — the build driver materialises only these bindings into
     /// `sky-out/rt/`, so an added-but-unused package never inflates the build.
     pub ffi_used: BTreeSet<String>,
+    /// True when ANY module in the program (entry + deps) imports `Std.Live.*`
+    /// or `Sky.Http.Server.*` — i.e. the app is a Sky.Live or Sky.Http.Server
+    /// app whose runtime auto-mounts `/_sky/console`. Drives BOTH the blank
+    /// `_ "sky-app/rt/console_app"` import in codegen AND the `rt/console_app`
+    /// materialisation in the build driver, so the inline dev console links
+    /// (mirrors the Haskell oracle's `consoleNeededFromImports`, Compile.hs).
+    pub console_needed: bool,
 }
 
 /// The pinned FFI surface, projected to exactly what lowering needs: for each
@@ -142,6 +149,17 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let typer = Typer::new(db);
     let mut warnings = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    // Whole-program console detection: does any module REACHABLE from the entry
+    // import `Std.Live.*` or `Sky.Http.Server.*`? Those are the only surfaces
+    // whose runtime reaches `MountEmbeddedConsole`, so their binaries link the
+    // inline console via the `_ "sky-app/rt/console_app"` blank import codegen
+    // emits + the driver materialises. Computed once here; flows through
+    // `LowerOutput.console_needed` to codegen + `materialise_rt`. Mirrors the
+    // oracle's `consoleNeededFromImports` OR-fold over `moduleOrder` (the
+    // dep-reachable graph) — NOT over every interned module, which would falsely
+    // fire for every program (the stdlib's own `Std.Live` source imports
+    // `Sky.Http.Server`, and the whole stdlib is interned regardless of use).
+    let console_needed = program_needs_console(db.as_sky_db(), entry);
 
     // ---- collect all value defs (bodies) across modules ----
     // Name-resolution (class-a) errors are surfaced as hard errors so `sky check`
@@ -445,6 +463,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             errors: Vec::new(),
             entry_ok: false,
             ffi_used: BTreeSet::new(),
+            console_needed,
         };
     };
 
@@ -553,7 +572,50 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         errors,
         entry_ok: true,
         ffi_used,
+        console_needed,
     }
+}
+
+/// True when any module REACHABLE from `entry` (entry + its transitive
+/// Sky-source `Dep` imports) imports `Std.Live.*` or `Sky.Http.Server.*` — the
+/// two surfaces whose runtime auto-mounts `/_sky/console`.
+///
+/// Walks the import graph from `entry`, descending only through `Dep` edges
+/// (real Sky-source modules — exactly the oracle's `moduleOrder` set), and
+/// short-circuits the moment a triggering import path is seen. Scanning the
+/// whole interned module set instead would falsely fire for EVERY program: the
+/// entire Layer-3 stdlib is interned regardless of use, and `Std.Live`'s own
+/// source imports `Sky.Http.Server`.
+///
+/// Segment-prefix match on the dotted import path mirrors the oracle's
+/// `importTriggersConsole` (`("Std":"Live":_)` / `("Sky":"Http":"Server":_)`,
+/// Compile.hs): `Std.Live`, `Std.Live.Head`, `Sky.Http.Server`,
+/// `Sky.Http.Server.WebSocket` all match; `Std.LiveX` / `Sky.Http.ServerX`
+/// (a different final segment) do not.
+fn program_needs_console(db: &dyn SkyDb, entry: base::ModuleId) -> bool {
+    let mut seen: HashSet<base::ModuleId> = HashSet::new();
+    let mut stack: Vec<base::ModuleId> = vec![entry];
+    while let Some(m) = stack.pop() {
+        if !seen.insert(m) {
+            continue;
+        }
+        for imp in db.module_parse(m).tree().imports() {
+            let Some(path) = imp.name().map(|n| n.text()) else {
+                continue;
+            };
+            if path == "Std.Live"
+                || path.starts_with("Std.Live.")
+                || path == "Sky.Http.Server"
+                || path.starts_with("Sky.Http.Server.")
+            {
+                return true;
+            }
+            if let ImportSource::Dep(dep) = db.classify_import(&path) {
+                stack.push(dep);
+            }
+        }
+    }
+    false
 }
 
 /// The bootstrap `init()` every emitted program opens with (doc 08 §3).

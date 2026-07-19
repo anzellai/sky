@@ -303,6 +303,10 @@ pub struct GoProgram {
     pub entry_ok: bool,
     /// Sky module paths of the Go-FFI packages the emitted program actually calls.
     pub ffi_used: std::collections::BTreeSet<String>,
+    /// True when the program imports `Std.Live.*` / `Sky.Http.Server.*` — the
+    /// emitted `main.go` blank-imports `sky-app/rt/console_app`, so the build
+    /// driver must materialise `rt/console_app` for the import to resolve.
+    pub console_needed: bool,
 }
 
 /// `go_program` — the Stage-E tracked query (doc 01 `typed_hir → go_module →
@@ -325,7 +329,7 @@ pub fn go_program(db: &dyn LowerDb, entry: ModuleId, config: BuildConfig) -> GoP
     // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
     // the eager path).
     let source = if out.entry_ok && out.errors.is_empty() {
-        Some(codegen::emit_program(&out.items))
+        Some(codegen::emit_program(&out.items, out.console_needed))
     } else {
         None
     };
@@ -335,6 +339,7 @@ pub fn go_program(db: &dyn LowerDb, entry: ModuleId, config: BuildConfig) -> GoP
         errors: out.errors,
         entry_ok: out.entry_ok,
         ffi_used: out.ffi_used,
+        console_needed: out.console_needed,
     }
 }
 
