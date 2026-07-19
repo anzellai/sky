@@ -32,6 +32,94 @@ pub fn render_module(repo_root: &Path, project_dir: &Path, module_arg: &str) -> 
     Ok(render_source(&src))
 }
 
+/// Render a static doc-site into `out_dir` for `sky doc --serve`: an
+/// `index.html` module index, one `m/<name>.html` per module, and a
+/// machine-readable `api/symbols.json`. The bundled `sky-doc-server` app
+/// (`sky-bundled/doc`) serves these files verbatim off `SKY_DOC_DIR` — its
+/// routes are `/` → `index.html`, `/m/:name` → `m/<name>.html`, and
+/// `/api/symbols.json`. This mirrors the file-layout contract of the Haskell
+/// `Sky.Doc.Render.renderToDir`; the page rendering reuses the same terminal
+/// projection (`render_source`) wrapped in HTML so the content matches
+/// `sky doc <Module>`.
+pub fn render_doc_site(repo_root: &Path, project_dir: &Path, out_dir: &Path) -> std::io::Result<()> {
+    let mut mods = collect_module_files(repo_root, project_dir);
+    mods.sort_by(|a, b| a.0.cmp(&b.0));
+    mods.dedup_by(|a, b| a.0 == b.0);
+
+    std::fs::create_dir_all(out_dir.join("m"))?;
+    std::fs::create_dir_all(out_dir.join("api"))?;
+
+    // index.html — a module list linking to each per-module page.
+    let mut index = String::new();
+    index.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    index.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+    index.push_str("<title>Sky API docs</title>");
+    index.push_str("<style>body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.5}h1{font-size:1.5rem}ul{columns:2;list-style:none;padding:0}a{text-decoration:none;color:#0b6}a:hover{text-decoration:underline}</style>");
+    index.push_str("</head><body><h1>Sky API documentation</h1><ul>");
+    for (name, _) in &mods {
+        index.push_str(&format!(
+            "<li><a href=\"/m/{}\">{}</a></li>",
+            html_escape(name),
+            html_escape(name)
+        ));
+    }
+    index.push_str("</ul></body></html>\n");
+    std::fs::write(out_dir.join("index.html"), index)?;
+
+    // Per-module pages + the symbols manifest.
+    let mut symbols = String::from("[");
+    let mut first = true;
+    for (name, path) in &mods {
+        let src = std::fs::read_to_string(path).unwrap_or_default();
+        let page = render_source(&src);
+        let html = format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+             <title>{} — Sky docs</title>\
+             <style>body{{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace}}a{{color:#0b6}}</style>\
+             </head><body><p><a href=\"/\">&larr; all modules</a></p><pre>{}</pre></body></html>\n",
+            html_escape(name),
+            html_escape(&page)
+        );
+        std::fs::write(out_dir.join("m").join(format!("{name}.html")), html)?;
+
+        if !first {
+            symbols.push(',');
+        }
+        first = false;
+        symbols.push_str(&format!("{{\"module\":{}}}", json_string(name)));
+    }
+    symbols.push(']');
+    std::fs::write(out_dir.join("api").join("symbols.json"), symbols)?;
+    Ok(())
+}
+
+/// Minimal HTML-escape for text embedded in an element body.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Emit `s` as a JSON string literal (quotes + the mandatory escapes).
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// List every module name discoverable under the stdlib + project `src/`, one
 /// per line, sorted. Backs `sky doc --list`.
 pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
@@ -339,5 +427,53 @@ mod tests {
         let page = render_source(src);
         assert!(page.contains("a : Int"));
         assert!(page.contains("b : Int"));
+    }
+
+    #[test]
+    fn json_string_escapes() {
+        assert_eq!(json_string("Sky.Core.List"), "\"Sky.Core.List\"");
+        assert_eq!(json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    }
+
+    #[test]
+    fn html_escape_neutralises_markup() {
+        assert_eq!(html_escape("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+    }
+
+    #[test]
+    fn render_doc_site_writes_index_module_pages_and_symbols() {
+        // A minimal fake repo: one stdlib module + one project src module.
+        let root = std::env::temp_dir().join(format!("sky-docsite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let stdlib = root.join("sky-stdlib").join("Sky").join("Core");
+        std::fs::create_dir_all(&stdlib).unwrap();
+        std::fs::write(
+            stdlib.join("List.sky"),
+            "module Sky.Core.List exposing (map)\n\nmap : (a -> b) -> List a -> List b\nmap f xs = xs\n",
+        )
+        .unwrap();
+        let proj = root.join("proj");
+        std::fs::create_dir_all(proj.join("src")).unwrap();
+        std::fs::write(
+            proj.join("src").join("App.sky"),
+            "module App exposing (main)\n\nmain : Int\nmain = 0\n",
+        )
+        .unwrap();
+
+        let out = root.join("out");
+        render_doc_site(&root, &proj, &out).unwrap();
+
+        let index = std::fs::read_to_string(out.join("index.html")).unwrap();
+        assert!(index.contains("/m/Sky.Core.List"), "index links module:\n{index}");
+        assert!(index.contains("/m/App"), "index links project module:\n{index}");
+
+        let list_page = std::fs::read_to_string(out.join("m").join("Sky.Core.List.html")).unwrap();
+        assert!(list_page.contains("map : (a -&gt; b)"), "per-module page:\n{list_page}");
+
+        let symbols = std::fs::read_to_string(out.join("api").join("symbols.json")).unwrap();
+        assert!(symbols.starts_with('[') && symbols.ends_with(']'));
+        assert!(symbols.contains("\"module\":\"Sky.Core.List\""), "symbols:\n{symbols}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

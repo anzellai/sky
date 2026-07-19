@@ -10,7 +10,7 @@ mod doc;
 mod driver;
 mod ffi_ops;
 pub use build::{build_example, build_project, emit_example_source, BuildOptions, BuildReport};
-pub use doc::{list_modules, render_module};
+pub use doc::{list_modules, render_doc_site, render_module};
 pub use driver::{
     assets_root_for, is_compiler_repo_root, module_name_from_path, project_dir_for, repo_root_for,
     run_app,

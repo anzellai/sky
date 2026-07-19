@@ -17,6 +17,8 @@ use project::{
 };
 use testrunner::run_test;
 
+mod bundled;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -48,15 +50,17 @@ fn main() -> ExitCode {
         Some("doctor") => cmd_doctor(&args[1..]),
         Some("upgrade-claude") => cmd_upgrade_claude(&args[1..]),
         Some("verify") => cmd_verify(&args[1..]),
-        // Verbs the bring-up does not implement yet — honest, explicit deferral.
-        // `console`/`console-serve` spawn bundled Sky apps; `upgrade`
-        // self-updates the binary (a separate milestone).
-        Some(verb @ ("console" | "console-serve" | "upgrade")) => {
+        // Bundled-app verbs: build + spawn a bundled Sky/Go app from the repo
+        // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
+        Some("console") => cmd_console(&args[1..]),
+        Some("console-serve") => cmd_console_serve(&args[1..]),
+        // `upgrade` self-updates the binary (a separate milestone).
+        Some(verb @ "upgrade") => {
             eprintln!(
                 "sky {verb}: not yet implemented in the rust bring-up.\n\
                  Wired verbs: build, run, check, fmt, test, lsp, clean, init, doc,\n\
-                 watch, db, add, remove, install, update, doctor, upgrade-claude,\n\
-                 verify, version, help."
+                 console, console-serve, watch, db, add, remove, install, update,\n\
+                 doctor, upgrade-claude, verify, version, help."
             );
             ExitCode::from(2)
         }
@@ -432,14 +436,17 @@ fn cmd_init(args: &[String]) -> ExitCode {
 /// `--serve` / `--tui` are deferred (they spawn a bundled Sky app the bring-up
 /// doesn't materialise).
 fn cmd_doc(args: &[String]) -> ExitCode {
-    if args.iter().any(|a| a == "--serve" || a == "--tui") {
-        eprintln!(
-            "sky doc --serve / --tui: deferred in the rust bring-up.\n\
-             These spawn a bundled Sky.Http.Server / Sky.Tui app (a separate\n\
-             milestone). The terminal renderer (`sky doc <Module>` / `--list`)\n\
-             is available."
-        );
+    let serve = args.iter().any(|a| a == "--serve");
+    let tui = args.iter().any(|a| a == "--tui");
+    if serve && tui {
+        eprintln!("sky doc: --serve and --tui are incompatible (pick one).");
         return ExitCode::from(2);
+    }
+    if serve {
+        return cmd_doc_serve(parse_port(args, 8030));
+    }
+    if tui {
+        return cmd_doc_tui();
     }
     let list = args.iter().any(|a| a == "--list");
     let target = args.iter().find(|a| !a.starts_with('-')).cloned();
@@ -469,6 +476,309 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `sky doc --serve` renders a static doc-site from the project's stdlib and
+/// `src/`, then builds and spawns the bundled `sky-doc-server` (Sky.Http.Server)
+/// pointed at it via `SKY_DOC_DIR` on `SKY_LIVE_PORT`. Foreground; Ctrl-C stops.
+/// Mirrors `app/Main.hs` `runDocServe`.
+fn cmd_doc_serve(port: u16) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let project_dir = project::project_dir_for(&cwd.join("_"));
+
+    // Render the doc-site into the project's cache so the server has content.
+    let doc_out = project_dir.join(".skycache").join("doc-out");
+    if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &doc_out) {
+        eprintln!("sky doc: could not render doc-site: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "doc") else {
+        return bundled_missing("doc");
+    };
+    let out_dir = match bundled::ensure_built(
+        &repo_root, &src_dir, "doc", "live", bundled::ENTRY_LIVE, &version_slug(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    println!(
+        "sky doc: serving {} on http://127.0.0.1:{port} (Ctrl-C to stop)",
+        doc_out.display()
+    );
+    spawn_foreground(
+        &out_dir,
+        &[
+            ("SKY_LIVE_PORT".to_string(), port.to_string()),
+            ("SKY_DOC_DIR".to_string(), doc_out.to_string_lossy().into_owned()),
+        ],
+    )
+}
+
+/// `sky doc --tui` — render the doc-site, then build + spawn the bundled
+/// Sky.Tui doc browser pointed at it via `SKY_DOC_DIR`. Mirrors `runDocTui`.
+fn cmd_doc_tui() -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let project_dir = project::project_dir_for(&cwd.join("_"));
+
+    let doc_out = project_dir.join(".skycache").join("doc-out");
+    if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &doc_out) {
+        eprintln!("sky doc: could not render doc-site: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "doc") else {
+        return bundled_missing("doc");
+    };
+    let out_dir = match bundled::ensure_built(
+        &repo_root, &src_dir, "doc", "tui", bundled::ENTRY_TUI, &version_slug(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    println!("sky doc: starting terminal browser (Ctrl-C to exit)...");
+    spawn_foreground(
+        &out_dir,
+        &[("SKY_DOC_DIR".to_string(), doc_out.to_string_lossy().into_owned())],
+    )
+}
+
+// ---- console -------------------------------------------------------------
+
+/// `sky console [--port N] [--tui]` — build + spawn the bundled Sky Console
+/// (`sky-bundled/console`): Sky.Live on `SKY_LIVE_PORT` (default 8025), or the
+/// Sky.Tui backend with `--tui`. Foreground; Ctrl-C stops. Mirrors the pre-
+/// v0.16 `SpawnSkyConsole` build+spawn shape (`app/Main.hs` `runConsole`).
+fn cmd_console(args: &[String]) -> ExitCode {
+    let tui = args.iter().any(|a| a == "--tui");
+    let port = parse_port(args, 8025);
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "console") else {
+        return bundled_missing("console");
+    };
+
+    let (variant, entry): (&str, &str) = if tui {
+        ("tui", bundled::ENTRY_TUI)
+    } else {
+        ("live", bundled::ENTRY_LIVE)
+    };
+    let out_dir = match bundled::ensure_built(
+        &repo_root, &src_dir, "console", variant, entry, &version_slug(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if tui {
+        println!("sky console: starting terminal console (Ctrl-C to exit)...");
+        spawn_foreground(&out_dir, &[])
+    } else {
+        println!(
+            "sky console: serving on http://127.0.0.1:{port} (Ctrl-C to stop)"
+        );
+        spawn_foreground(
+            &out_dir,
+            &[("SKY_LIVE_PORT".to_string(), port.to_string())],
+        )
+    }
+}
+
+/// `sky console-serve` builds and spawns the standalone Sky Console Hub daemon
+/// (OTLP receivers plus a SQLite hot store) from `runtime-go/cmd/sky-hub` (pure
+/// Go, `CGO_ENABLED=0`). Flags: `--port N`, `--data-dir DIR`, `--auth MODE`, and
+/// an optional `--tls-cert F` / `--tls-key F` pair. Mirrors `runConsoleServe`.
+fn cmd_console_serve(args: &[String]) -> ExitCode {
+    let port = parse_port(args, 4000);
+    let data_dir = flag_value(args, "--data-dir").unwrap_or_else(|| "./skyhub-data".to_string());
+    let auth = flag_value(args, "--auth").unwrap_or_else(|| "token".to_string());
+    let tls_cert = flag_value(args, "--tls-cert");
+    let tls_key = flag_value(args, "--tls-key");
+
+    // Validate flag combinations up front (fail fast), mirroring the oracle.
+    match (&tls_cert, &tls_key) {
+        (Some(_), None) => {
+            eprintln!("sky console-serve: --tls-cert set but --tls-key missing");
+            return ExitCode::from(2);
+        }
+        (None, Some(_)) => {
+            eprintln!("sky console-serve: --tls-key set but --tls-cert missing");
+            return ExitCode::from(2);
+        }
+        _ => {}
+    }
+    if auth != "token" && auth != "off" && auth != "app" {
+        eprintln!("sky console-serve: unknown --auth mode {auth} (want token|off|app)");
+        return ExitCode::from(2);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let runtime_go = repo_root.join("runtime-go");
+    if !runtime_go.join("cmd").join("sky-hub").join("main.go").is_file() {
+        eprintln!(
+            "sky console-serve: requires the repo tree (runtime-go/cmd/sky-hub).\n\
+             The rust bring-up does not yet embed runtime-go/ for a standalone\n\
+             hub build — run inside the Sky repo, or use the Haskell `sky`."
+        );
+        return ExitCode::from(2);
+    }
+
+    // Build the hub binary into the per-version cache (one-time per version).
+    let hub_dir = bundled::cache_root().join(format!("hub-{}", version_slug()));
+    let hub_bin = hub_dir.join("sky-hub");
+    if !hub_bin.is_file() {
+        if let Err(e) = std::fs::create_dir_all(&hub_dir) {
+            eprintln!("sky console-serve: could not create cache dir: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!(
+            "sky console-serve: building hub daemon (one-time per version, into {})...",
+            hub_dir.display()
+        );
+        // CGO_ENABLED=0: rt/hub transitively imports rt (webview.go, cgo+WebKit
+        // on darwin); disabling cgo routes through webview_stub.go and dodges the
+        // Apple ld_prime long-symbol assertion. The hub never calls webview.
+        let status = Command::new("go")
+            .args(["build", "-o"])
+            .arg(&hub_bin)
+            .arg("./cmd/sky-hub")
+            .current_dir(&runtime_go)
+            .env("CGO_ENABLED", "0")
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!(
+                    "sky console-serve: go build sky-hub failed (exit {})",
+                    s.code().unwrap_or(1)
+                );
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("sky console-serve: could not launch go build: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let mut child_args: Vec<String> = vec![
+        "--port".to_string(), port.to_string(),
+        "--data-dir".to_string(), data_dir,
+        "--auth".to_string(), auth,
+    ];
+    if let (Some(c), Some(k)) = (tls_cert, tls_key) {
+        child_args.extend(["--tls-cert".to_string(), c, "--tls-key".to_string(), k]);
+    }
+    let status = Command::new(&hub_bin).args(&child_args).status();
+    match status {
+        Ok(s) => propagate(s.code()),
+        Err(e) => {
+            eprintln!("sky console-serve: could not launch hub: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- bundled-app helpers -------------------------------------------------
+
+/// Run the built `app` binary at `<out_dir>/app` with inherited stdio + `envs`,
+/// foreground, propagating its exit code. Ctrl-C reaches the child (shared
+/// process group) so the server stops cleanly; 130/143 (SIGINT/SIGTERM) map to
+/// success — a user-initiated stop is not a failure.
+fn spawn_foreground(out_dir: &Path, envs: &[(String, String)]) -> ExitCode {
+    match run_app(out_dir, envs) {
+        Ok(status) => propagate(status.code()),
+        Err(e) => {
+            eprintln!("sky: could not launch bundled app: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Map a child exit code to an `ExitCode`, treating the signal-terminated cases
+/// a foreground server hits on Ctrl-C (130 = SIGINT, 143 = SIGTERM) as success.
+fn propagate(code: Option<i32>) -> ExitCode {
+    match code {
+        Some(0) | Some(130) | Some(143) | None => ExitCode::SUCCESS,
+        Some(n) => ExitCode::from(n as u8),
+    }
+}
+
+/// The message emitted when a bundled verb runs outside the repo tree (the
+/// `sky-bundled/` source isn't embedded in the bring-up binary — the residual).
+fn bundled_missing(name: &str) -> ExitCode {
+    eprintln!(
+        "sky {name}: requires the sky-bundled/{name} source (repo tree).\n\
+         The rust bring-up does not yet embed sky-bundled/ for a standalone\n\
+         build — run inside the Sky repo, or use the Haskell `sky`."
+    );
+    ExitCode::from(2)
+}
+
+/// A filesystem-safe slug of the version string for cache-dir naming
+/// (`sky v0.17.10` → `v0.17.10`, `sky dev` → `dev`).
+fn version_slug() -> String {
+    version_string()
+        .trim_start_matches("sky ")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Parse `--port N` / `-p N` / `--port=N` from `args`, falling back to `default`.
+fn parse_port(args: &[String], default: u16) -> u16 {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--port" || a == "-p" {
+            if let Some(v) = it.next() {
+                if let Ok(n) = v.parse() {
+                    return n;
+                }
+            }
+        } else if let Some(v) = a.strip_prefix("--port=") {
+            if let Ok(n) = v.parse() {
+                return n;
+            }
+        }
+    }
+    default
+}
+
+/// Parse a `--flag VALUE` / `--flag=VALUE` string option from `args`.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    let eq = format!("{flag}=");
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == flag {
+            return it.next().cloned();
+        } else if let Some(v) = a.strip_prefix(&eq) {
+            return Some(v.to_string());
+        }
+    }
+    None
 }
 
 // ---- db ------------------------------------------------------------------
@@ -1753,6 +2063,9 @@ fn print_help() {
          \x20 clean            remove sky-out/ + .skycache/\n\
          \x20 init  [name]     scaffold a new project\n\
          \x20 doc   <Module>   print a module's exported bindings\n\
+         \x20 doc   --serve|--tui  browse the docs (HTTP server / terminal)\n\
+         \x20 console [--port N] [--tui]   run the Sky Console mini-app\n\
+         \x20 console-serve [...]          run the Sky Console hub daemon\n\
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
          \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
@@ -1763,7 +2076,7 @@ fn print_help() {
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 version          print the version\n\n\
-         DEFERRED (bring-up): console, console-serve, upgrade"
+         DEFERRED (bring-up): upgrade"
     );
 }
 
@@ -1803,6 +2116,25 @@ mod tests {
         std::fs::write(dir.join("sky.toml"), "name = \"x\"\nentry = \"src/App.sky\"\n").unwrap();
         assert_eq!(toml_entry(&dir).as_deref(), Some("src/App.sky"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_port_reads_all_forms_else_default() {
+        let sp = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        assert_eq!(parse_port(&sp("--port 9000"), 8025), 9000);
+        assert_eq!(parse_port(&sp("-p 9001"), 8025), 9001);
+        assert_eq!(parse_port(&sp("--port=9002"), 8025), 9002);
+        assert_eq!(parse_port(&sp("--tui"), 8025), 8025);
+        // A non-numeric value falls back to the default rather than aborting.
+        assert_eq!(parse_port(&sp("--port abc"), 4000), 4000);
+    }
+
+    #[test]
+    fn flag_value_reads_space_and_eq_forms() {
+        let sp = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        assert_eq!(flag_value(&sp("--data-dir /tmp/x"), "--data-dir").as_deref(), Some("/tmp/x"));
+        assert_eq!(flag_value(&sp("--auth=off"), "--auth").as_deref(), Some("off"));
+        assert_eq!(flag_value(&sp("--port 1"), "--auth"), None);
     }
 
     #[test]
