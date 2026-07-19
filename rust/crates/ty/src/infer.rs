@@ -252,6 +252,7 @@ impl<'a> Infer<'a> {
         // primitive / nominal / function params still catches the genuine
         // non-record-vs-record misuse (`grab : Int -> String; grab n = n.name`).
         let mut cur = scheme.ty.clone();
+        let mut consumed = 0usize;
         for &pv in &param_vars {
             match cur {
                 Ty::Fun(a, b) => {
@@ -260,9 +261,38 @@ impl<'a> Infer<'a> {
                         self.unify(pv, av);
                     }
                     cur = *b;
+                    consumed += 1;
                 }
                 _ => break,
             }
+        }
+        // Arity gate (RC1 / audit #4): the body binds MORE top-level params than
+        // the declared signature has arrows, AND the declared result is a
+        // concrete non-function type that cannot absorb the extra params. This
+        // is a genuine signature-vs-body arity mismatch — `f : Int -> Int;
+        // f x y = x + y` — which the flexible-instantiation path (arrow-peel
+        // stops at `_ => break`, silently dropping leftover params) would
+        // otherwise ACCEPT, build, and then panic at runtime (`rt.AsInt: got
+        // func(...)`, oracle rejects at compile time). We fire only when the
+        // remaining result is DEFINITELY concrete-non-function: a `Ty::Var`
+        // result (polymorphic return may itself be a function), `Ty::Error`
+        // (cascade suppression), and the `any` wildcard stay lenient. Aliases
+        // are already unfolded in `sig` (`getUser : Handler` → `Fun`), so a
+        // function-typed alias result correctly presents as `Ty::Fun` and is
+        // consumed by the loop, never reaching this gate.
+        let cur_is_concrete_non_fun = match &cur {
+            Ty::Var(_) | Ty::Error | Ty::Fun(..) => false,
+            Ty::App(name, _) if name.as_str() == "any" => false,
+            _ => true,
+        };
+        if consumed < param_vars.len() && cur_is_concrete_non_fun {
+            self.errors.push(TypeError {
+                message: format!(
+                    "the body binds {} parameter(s) but the type signature declares only {}",
+                    param_vars.len(),
+                    consumed
+                ),
+            });
         }
         let expected_result = self.ty_to_var_open(&cur, &mut sub);
         // Body inference stays STRICT (record-presence clashes inside the body —

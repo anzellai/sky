@@ -1,0 +1,22 @@
+-- defect: def body binds MORE params than the signature has arrows — declared
+--         `Int -> Int` (1 arg), body `f x y = ...` (2 params). The flexible
+--         arrow-peel used to stop silently at the extra param, ACCEPT the def,
+--         build, then panic at runtime (`rt.AsInt: got func(...)`). The arity
+--         gate in `infer_def_against` now rejects: the declared result `Int` is
+--         a concrete non-function that cannot absorb the second param.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+f : Int -> Int
+f x y =
+    x + y
+
+g : Int -> Int
+g n =
+    f n
+
+main =
+    println (String.fromInt (g 5))
