@@ -62,6 +62,13 @@ impl LanguageServer for Backend {
                     work_done_progress_options: Default::default(),
                 })),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".into(), ",".into()]),
+                    retrigger_characters: Some(vec![",".into()]),
+                    work_done_progress_options: Default::default(),
+                }),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -165,6 +172,25 @@ impl LanguageServer for Backend {
     ) -> Result<Option<SemanticTokensResult>> {
         let a = self.analysis.lock().await;
         Ok(a.semantic_tokens(&params.text_document.uri))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let a = self.analysis.lock().await;
+        Ok(a.formatting(&params.text_document.uri))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let a = self.analysis.lock().await;
+        Ok(Some(a.inlay_hints(&params.text_document.uri, params.range)))
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
+        let p = params.text_document_position_params;
+        let a = self.analysis.lock().await;
+        Ok(a.signature_help(&p.text_document.uri, p.position))
     }
 }
 

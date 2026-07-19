@@ -313,6 +313,70 @@ impl Client {
         out
     }
 
+    /// The new-text of the (single) whole-file formatting edit, or None.
+    fn formatting_text(&mut self) -> Option<String> {
+        let id = self.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "options": {"tabSize": 4, "insertSpaces": true}
+            }),
+        );
+        let r = self.await_response(id);
+        let arr = r.as_array()?;
+        arr.first()
+            .and_then(|e| e.get("newText"))
+            .and_then(Value::as_str)
+            .map(String::from)
+    }
+
+    /// Inlay-hint (line, label) pairs over the whole document.
+    fn inlay_hints(&mut self) -> Vec<(u64, String)> {
+        let id = self.request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1000, "character": 0}
+                }
+            }),
+        );
+        let r = self.await_response(id);
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|h| {
+                        let line = h.get("position")?.get("line")?.as_u64()?;
+                        let label = h.get("label")?.as_str()?.to_string();
+                        Some((line, label))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The first signature's label + active-parameter index at a call position.
+    fn signature_help(&mut self, line: u32, ch: u32) -> Option<(String, u64)> {
+        let id = self.request(
+            "textDocument/signatureHelp",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "position": {"line": line, "character": ch}
+            }),
+        );
+        let r = self.await_response(id);
+        let label = r
+            .get("signatures")?
+            .as_array()?
+            .first()?
+            .get("label")?
+            .as_str()?
+            .to_string();
+        let active = r.get("activeParameter").and_then(Value::as_u64).unwrap_or(0);
+        Some((label, active))
+    }
+
     fn shutdown(mut self) {
         // Best-effort graceful stop, then hard-kill so the harness never blocks.
         let _ = Command::new("kill")
@@ -421,6 +485,62 @@ fn breadth_capabilities_over_jsonrpc() {
         eprintln!("  failed: {fails:?}");
     }
     assert_eq!(pass, 9, "expected 9/9 breadth scenarios; failed: {fails:?}");
+}
+
+/// Drive the three added endpoints (formatting / inlayHint / signatureHelp)
+/// through the real server binary end-to-end.
+#[test]
+fn new_endpoints_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+
+    let mut pass = 0u32;
+    let mut fails: Vec<&str> = Vec::new();
+    let check = |name: &'static str, ok: bool, pass: &mut u32, fails: &mut Vec<&'static str>| {
+        if ok {
+            *pass += 1;
+        } else {
+            fails.push(name);
+        }
+    };
+
+    // formatting: feed an unformatted buffer, expect the collapsed form back.
+    c.change("module M exposing (main)\n\nmain =\n    println   \"hi\"\n");
+    let fmt = c.formatting_text();
+    check(
+        "formatting-collapses-whitespace",
+        fmt.as_deref().map(|t| t.contains("println \"hi\"")).unwrap_or(false),
+        &mut pass,
+        &mut fails,
+    );
+
+    // inlayHint: back to the FIXTURE — `let abcLocal = 1` (line 16) → ` : Int`.
+    c.change(FIXTURE);
+    let hints = c.inlay_hints();
+    check(
+        "inlay-hint-let-binding",
+        hints.iter().any(|(l, lbl)| *l == 16 && lbl == " : Int"),
+        &mut pass,
+        &mut fails,
+    );
+
+    // signatureHelp: cursor inside `Task.run (…)` (line 32) → Task.run signature.
+    let sig = c.signature_help(32, 14);
+    check(
+        "signature-help-task-run",
+        sig.as_ref().map(|(l, _)| l.contains("Task")).unwrap_or(false),
+        &mut pass,
+        &mut fails,
+    );
+
+    c.shutdown();
+
+    eprintln!("JSON-RPC new-endpoints gate: {pass}/3 passed");
+    if !fails.is_empty() {
+        eprintln!("  failed: {fails:?}");
+    }
+    assert_eq!(pass, 3, "expected 3/3 new endpoints; failed: {fails:?}");
 }
 
 /// Drive all 17 nvim scenarios through the real server; report the pass count.

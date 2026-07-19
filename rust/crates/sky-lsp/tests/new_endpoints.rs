@@ -1,0 +1,191 @@
+//! In-process coverage for the three endpoints added on top of the M7 breadth
+//! set (doc 10 §request→query map): `textDocument/formatting`,
+//! `textDocument/inlayHint`, and `textDocument/signatureHelp`. Driven directly
+//! against the `sky_lsp::Analysis` engine — the same code path the `tower-lsp`
+//! server calls per request (mirrors `scenarios.rs`).
+
+use sky_lsp::Analysis;
+use std::path::{Path, PathBuf};
+use tower_lsp::lsp_types::{
+    InlayHintLabel, ParameterLabel, Position, Range, Url,
+};
+
+// Same fixture the 17-scenario suite uses (0-based line, UTF-16 char columns).
+const FIXTURE: &str = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task\nimport Sky.Core.String as String\nimport Std.Log exposing (println)\nimport Std.Ui as Ui\n\ntype alias Model = { count : Int, label : String }\n\nstringify : Model -> String\nstringify model =\n    String.fromInt model.count\n\nletDemo : Int\nletDemo =\n    let abcLocal = 1\n    in abcLocal\n\ntype Msg = Increment | Decrement | SetCount Int\n\napplyMsg : Msg -> Int -> Int\napplyMsg msg current =\n    case msg of\n        Increment -> current + 1\n        Decrement -> current - 1\n        SetCount n -> n\n\ndoubleIt : Int -> Int\ndoubleIt = \\x -> x * 2\n\nmain =\n    Task.run (Task.succeed (applyMsg Increment 41))\n";
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|p| p.join("sky-stdlib").is_dir())
+        .expect("sky-stdlib not found above the crate")
+        .to_path_buf()
+}
+
+fn main_url() -> Url {
+    Url::from_file_path("/tmp/lsp-rust-new-endpoints/src/Main.sky").unwrap()
+}
+
+fn analysis_with(src: &str) -> Analysis {
+    let mut a = Analysis::new();
+    a.load_stdlib(Some(&repo_root()));
+    a.set_document(main_url(), src.to_string());
+    a
+}
+
+/// A range covering the whole buffer — `end` past the last line is clamped to
+/// the document end inside the engine's offset conversion.
+fn whole_doc() -> Range {
+    Range {
+        start: Position { line: 0, character: 0 },
+        end: Position { line: u32::MAX, character: 0 },
+    }
+}
+
+// ---- textDocument/formatting ------------------------------------------
+
+#[test]
+fn formatting_normalises_whitespace() {
+    // Extra spaces inside the call are collapsed by `fmt::format_source`.
+    let src = "module M exposing (main)\n\nmain =\n    println   \"hi\"\n";
+    let a = analysis_with(src);
+    let edits = a.formatting(&main_url()).expect("formatting returns edits");
+    assert_eq!(edits.len(), 1, "one whole-file replacement edit");
+    let out = &edits[0].new_text;
+    assert!(out.contains("println \"hi\""), "collapsed spaces; got: {out:?}");
+    // The replacement covers from the start of the document.
+    assert_eq!(edits[0].range.start, Position { line: 0, character: 0 });
+}
+
+#[test]
+fn formatting_already_formatted_is_noop() {
+    // A buffer that is already canonical yields NO edits (no client churn).
+    let src = "module M exposing (main)\n\n\nmain =\n    println \"hi\"\n";
+    let a = analysis_with(src);
+    let once = fmt::format_source(src);
+    // Feed the canonical form back in.
+    let a2 = analysis_with(&once);
+    let _ = a; // first analysis unused beyond documenting intent
+    let edits = a2.formatting(&main_url()).expect("some");
+    assert!(edits.is_empty(), "already-formatted → no edits; got {edits:?}");
+}
+
+#[test]
+fn formatting_is_idempotent_via_edit() {
+    // Applying the formatting edit once, then formatting again, is a no-op.
+    let a = analysis_with(FIXTURE);
+    let edits = a.formatting(&main_url()).expect("edits");
+    let formatted = if edits.is_empty() {
+        FIXTURE.to_string()
+    } else {
+        edits[0].new_text.clone()
+    };
+    let a2 = analysis_with(&formatted);
+    assert!(
+        a2.formatting(&main_url()).unwrap().is_empty(),
+        "second format pass must be a no-op (idempotent)"
+    );
+}
+
+// ---- textDocument/inlayHint -------------------------------------------
+
+#[test]
+fn inlay_hint_on_let_binding() {
+    // `let abcLocal = 1` (line 16) is unannotated → hint ` : Int` after the name.
+    let a = analysis_with(FIXTURE);
+    let hints = a.inlay_hints(&main_url(), whole_doc());
+    let on_16 = hints.iter().find(|h| h.position.line == 16);
+    let label = on_16.map(|h| match &h.label {
+        InlayHintLabel::String(s) => s.clone(),
+        _ => String::new(),
+    });
+    assert_eq!(
+        label.as_deref(),
+        Some(" : Int"),
+        "let-binding inlay hint; got {label:?} (all: {:?})",
+        hints
+            .iter()
+            .map(|h| (h.position.line, match &h.label {
+                InlayHintLabel::String(s) => s.clone(),
+                _ => String::new(),
+            }))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inlay_hint_on_unannotated_top_level() {
+    // `main =` (line 31) has no annotation → a hint is emitted after `main`.
+    let a = analysis_with(FIXTURE);
+    let hints = a.inlay_hints(&main_url(), whole_doc());
+    assert!(
+        hints.iter().any(|h| h.position.line == 31),
+        "expected a hint on the unannotated `main`; got {:?}",
+        hints.iter().map(|h| h.position.line).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inlay_hint_skips_annotated_bindings() {
+    // `stringify : Model -> String` (annotated, line 11 decl on 12) gets NO hint.
+    let a = analysis_with(FIXTURE);
+    let hints = a.inlay_hints(&main_url(), whole_doc());
+    // `stringify` is declared on line 11 (annotation) / 12 (value); neither line
+    // should carry an inlay hint because the def is annotated.
+    assert!(
+        !hints.iter().any(|h| h.position.line == 11),
+        "annotated def must not get an inlay hint"
+    );
+}
+
+// ---- textDocument/signatureHelp ---------------------------------------
+
+#[test]
+fn signature_help_on_kernel_call() {
+    // Cursor inside `Task.run (…)` at line 32 (arg territory, char 14) → the
+    // signature of `Task.run` (`Task a -> …`).
+    let a = analysis_with(FIXTURE);
+    let sh = a
+        .signature_help(&main_url(), Position { line: 32, character: 14 })
+        .expect("signature help at a call site");
+    assert_eq!(sh.signatures.len(), 1);
+    let label = &sh.signatures[0].label;
+    assert!(
+        label.starts_with("run :") || label.starts_with("Task.run :"),
+        "label names the callee + type; got {label:?}"
+    );
+    assert!(label.contains("Task"), "Task.run type mentions Task; got {label:?}");
+    // At least one parameter slot (the arrow LHS) is reported.
+    let params = sh.signatures[0].parameters.as_ref().expect("params");
+    assert!(!params.is_empty(), "at least one parameter slot");
+    // The parameter labels are offset pairs into the signature label.
+    assert!(matches!(params[0].label, ParameterLabel::LabelOffsets(_)));
+}
+
+#[test]
+fn signature_help_active_parameter_advances() {
+    // `applyMsg Increment 41` inside `Task.succeed (…)` — after the first
+    // argument (`Increment`), the active parameter is the second slot.
+    let a = analysis_with(FIXTURE);
+    // Line 32: `    Task.run (Task.succeed (applyMsg Increment 41))`
+    // Place the cursor right after `Increment ` (before `41`).
+    let line = "    Task.run (Task.succeed (applyMsg Increment 41))";
+    let col = line.find("41").unwrap() as u32;
+    let sh = a
+        .signature_help(&main_url(), Position { line: 32, character: col })
+        .expect("signature help inside applyMsg call");
+    let label = &sh.signatures[0].label;
+    assert!(label.starts_with("applyMsg :"), "callee is applyMsg; got {label:?}");
+    // One argument (`Increment`) is fully before the cursor → active param 1.
+    assert_eq!(sh.active_parameter, Some(1), "active parameter after first arg");
+}
+
+#[test]
+fn signature_help_none_outside_call() {
+    // A position on the module header is not inside any call.
+    let a = analysis_with(FIXTURE);
+    assert!(
+        a.signature_help(&main_url(), Position { line: 0, character: 3 })
+            .is_none(),
+        "no signature help outside a call"
+    );
+}

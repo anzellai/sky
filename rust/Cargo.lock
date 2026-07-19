@@ -1113,6 +1113,7 @@ version = "0.1.0"
 dependencies = [
  "base",
  "diagnostics",
+ "fmt",
  "hir",
  "project",
  "serde_json",

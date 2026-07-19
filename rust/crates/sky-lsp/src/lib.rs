@@ -33,14 +33,16 @@ use skydb::{SkyDatabase, SourceFile};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use syntax::ast::{self, AstNode};
 use syntax::SyntaxKind;
 use ty::{Ty, TyDb, Typer};
 
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, DocumentSymbol, Hover,
-    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
-    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
-    SymbolKind, TextEdit, Url, WorkspaceEdit,
+    HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, MarkupContent, MarkupKind,
+    ParameterInformation, ParameterLabel, Position, PrepareRenameResponse, Range, SemanticToken,
+    SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SignatureHelp,
+    SignatureInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 /// One loaded document: its parsed tree, source text, and url. (The module name
@@ -239,7 +241,19 @@ impl Analysis {
 
     fn hover_ref(&self, typer: &Typer, resolved: &ResolveResult, o: &RefOcc) -> Option<String> {
         let name = self.slice(o.span).trim().to_string();
-        let ty = match &o.res {
+        let ty = self
+            .ref_type_string(typer, resolved, o)
+            .unwrap_or_else(|| "?".to_string());
+        Some(format!("```sky\n{name} : {ty}\n```"))
+    }
+
+    /// The rendered type of a reference occurrence — the shared core of hover and
+    /// signature help. `Res::Def` prefers the declared signature, then the
+    /// pass-3 inferred scheme, then the body-inferred result; `Res::Kernel` /
+    /// `Res::Ctor` read their scheme; `Res::Local` reads the owning body's
+    /// per-local table (doc 10 §"resolve at call head → infer signature").
+    fn ref_type_string(&self, typer: &Typer, resolved: &ResolveResult, o: &RefOcc) -> Option<String> {
+        match &o.res {
             Res::Def(d) => typer
                 .value_sig(*d)
                 .or_else(|| typer.inferred_sig(*d))
@@ -261,9 +275,7 @@ impl Analysis {
                     .map(|t| t.render())
             }
             Res::Foreign { .. } | Res::Error => None,
-        };
-        let ty = ty.unwrap_or_else(|| "?".to_string());
-        Some(format!("```sky\n{name} : {ty}\n```"))
+        }
     }
 
     fn hover_field(&self, typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> Option<String> {
@@ -834,6 +846,156 @@ impl Analysis {
             data,
         }))
     }
+
+    // ---- textDocument/formatting ---------------------------------------
+
+    /// Format the whole document via the shared `fmt::format_source` (the same
+    /// entry point `sky fmt` uses — doc 10 §"`sky fmt` — exact formatter over
+    /// the CST"). Returns a single whole-file replacement `TextEdit`, or an
+    /// empty edit list when the buffer is already canonical (no client churn).
+    /// `fmt` is lossless on broken input (L8), so this never throws.
+    pub fn formatting(&self, url: &Url) -> Option<Vec<TextEdit>> {
+        let idx = self.index_of(url)?;
+        let text = &self.docs[idx].text;
+        let formatted = fmt::format_source(text);
+        if formatted == *text {
+            return Some(Vec::new());
+        }
+        let end = position_at(text, text.len() as u32);
+        Some(vec![TextEdit {
+            range: Range {
+                start: Position { line: 0, character: 0 },
+                end,
+            },
+            new_text: formatted,
+        }])
+    }
+
+    // ---- textDocument/inlayHint ----------------------------------------
+
+    /// Inferred-type inlay hints on unannotated bindings (doc 10 §request→query
+    /// map: `infer(def)` per-region types). Emits ` : T` after the name of every
+    /// top-level value def that carries no `name : T` annotation (its
+    /// `value_sig` is absent — typed by the body's inferred result), and after
+    /// every `let name … = …` binding with no inline annotation (typed by the
+    /// owning body's per-local table). Mirrors the Haskell server's
+    /// `handleInlayHint` (Server.hs:2239) — kind `Type`, no left padding, label
+    /// leads with " : ". `range` scopes the walk to the client's viewport.
+    pub fn inlay_hints(&self, url: &Url, range: Range) -> Vec<InlayHint> {
+        let Some(idx) = self.index_of(url) else {
+            return Vec::new();
+        };
+        let text = &self.docs[idx].text.clone();
+        let db = self.db();
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let typer = Typer::new(db);
+        let lo = offset_of(text, range.start).unwrap_or(0);
+        let hi = offset_of(text, range.end).unwrap_or(u32::MAX);
+        // One body-types computation per owning def, shared across its binders.
+        let mut body_cache: HashMap<DefId, ty::BodyTypes> = HashMap::new();
+        let mut hints: Vec<InlayHint> = Vec::new();
+
+        // Top-level unannotated value defs.
+        for td in &resolved.top_defs {
+            let def = td.def;
+            if typer.value_sig(def).is_some() {
+                continue; // has a declared signature — no hint
+            }
+            let Some((_, span)) = resolved.def_spans.iter().find(|(id, _)| *id == def) else {
+                continue;
+            };
+            if span.range.1 < lo || span.range.0 > hi {
+                continue;
+            }
+            let Some(body) = resolved.bodies.get(&def) else {
+                continue;
+            };
+            let bt = body_cache
+                .entry(def)
+                .or_insert_with(|| typer.body_types_annotated(def, body));
+            if let Some(ty) = bt.result.clone() {
+                hints.push(type_hint(text, span.range.1, &ty.render()));
+            }
+        }
+
+        // Let bindings without an inline annotation.
+        let tree = db.module_parse(module);
+        for node in tree.syntax().descendants() {
+            let Some(let_expr) = ast::LetExpr::cast(node.clone()) else {
+                continue;
+            };
+            // Names carried by an annotation binding (`x : T`) in this `let`;
+            // an annotation binding has a type child but no value body.
+            let annotated: HashSet<String> = let_expr
+                .bindings()
+                .filter(|b| b.body().is_none())
+                .filter_map(|b| b.name().map(|t| t.text().to_string()))
+                .collect();
+            for b in let_expr.bindings() {
+                if b.body().is_none() {
+                    continue; // the annotation binding itself
+                }
+                let Some(tok) = b.name() else { continue };
+                if annotated.contains(tok.text()) {
+                    continue; // an explicit `x : T` already documents it
+                }
+                let r = tok.text_range();
+                let (s, e) = (u32::from(r.start()), u32::from(r.end()));
+                if e < lo || s > hi {
+                    continue;
+                }
+                let Some(binder) = resolved.binders.iter().find(|bd| bd.span.range == (s, e)) else {
+                    continue;
+                };
+                let Some(obody) = resolved.bodies.get(&binder.owner) else {
+                    continue;
+                };
+                let bt = body_cache
+                    .entry(binder.owner)
+                    .or_insert_with(|| typer.body_types_annotated(binder.owner, obody));
+                if let Some(ty) = bt.locals.get(&binder.local).cloned() {
+                    hints.push(type_hint(text, e, &ty.render()));
+                }
+            }
+        }
+
+        hints.sort_by_key(|h| (h.position.line, h.position.character));
+        hints
+    }
+
+    // ---- textDocument/signatureHelp ------------------------------------
+
+    /// Parameter info for the call enclosing the cursor (doc 10 §request→query
+    /// map: `resolve` at call head → `infer` signature). Finds the innermost
+    /// `CallExpr` whose range contains the cursor but whose callee head does
+    /// not (i.e. the cursor is in argument territory), resolves the head to its
+    /// signature, and reports the active-parameter index. Mirrors the Haskell
+    /// server's `handleSignatureHelp` (Server.hs:2963).
+    pub fn signature_help(&self, url: &Url, pos: Position) -> Option<SignatureHelp> {
+        let idx = self.index_of(url)?;
+        let text = &self.docs[idx].text;
+        let off = offset_of(text, pos)?;
+        let db = self.db();
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let tree = db.module_parse(module);
+
+        // The innermost enclosing call whose head ends before the cursor.
+        let (head_off, active) = enclosing_call(&tree.syntax(), off)?;
+
+        // Resolve the head identifier to its type via the same channels hover uses.
+        let head_occ = resolved
+            .ref_occs
+            .iter()
+            .filter(|o| contains(o.span, head_off))
+            .min_by_key(|o| span_len(o.span))?;
+        let name = self.slice(self.narrow_to_name(head_occ.span)).trim().to_string();
+        let typer = Typer::new(db);
+        let ty = self.ref_type_string(&typer, &resolved, head_occ)?;
+
+        Some(build_signature(&name, &ty, active))
+    }
 }
 
 // ---- references / rename / semantic-token support ---------------------
@@ -1138,6 +1300,135 @@ fn plain_item(name: &str, kind: CompletionItemKind) -> CompletionItem {
         kind: Some(kind),
         ..Default::default()
     }
+}
+
+// ---- inlay hint / signature help support ------------------------------
+
+/// A `Type`-kind inlay hint ` : T` rendered at byte-offset `off` (no left
+/// padding — the leading space is in the label, matching the Haskell server).
+fn type_hint(text: &str, off: u32, ty: &str) -> InlayHint {
+    InlayHint {
+        position: position_at(text, off),
+        label: InlayHintLabel::String(format!(" : {ty}")),
+        kind: Some(InlayHintKind::TYPE),
+        text_edits: None,
+        tooltip: None,
+        padding_left: Some(false),
+        padding_right: Some(false),
+        data: None,
+    }
+}
+
+/// The innermost `CallExpr` enclosing byte-offset `off` whose callee head ends
+/// before `off` (the cursor is in argument territory). Returns the head's start
+/// offset (for resolution) and the active-parameter index (count of arguments
+/// fully typed before the cursor). Calls are flat (`app_expr` — `parts[0]` is
+/// the callee, the rest are arguments), so no nesting walk is needed.
+fn enclosing_call(root: &syntax::SyntaxNode, off: u32) -> Option<(u32, u32)> {
+    let mut best: Option<(u32, u32, u32)> = None; // (width, head_start, active)
+    for node in root.descendants() {
+        let Some(call) = ast::CallExpr::cast(node) else {
+            continue;
+        };
+        let r = call.syntax().text_range();
+        let (cs, ce) = (u32::from(r.start()), u32::from(r.end()));
+        if off < cs || off > ce {
+            continue;
+        }
+        let parts = call.parts();
+        let Some(head) = parts.first() else {
+            continue;
+        };
+        let hr = head.syntax().text_range();
+        let (hs, he) = (u32::from(hr.start()), u32::from(hr.end()));
+        if off < he {
+            continue; // still inside the callee head — not yet in args
+        }
+        // Active parameter: arguments whose extent ends at/before the cursor.
+        let active = parts[1..]
+            .iter()
+            .filter(|a| u32::from(a.syntax().text_range().end()) <= off)
+            .count() as u32;
+        let width = ce - cs;
+        if best.as_ref().map(|(w, _, _)| width < *w).unwrap_or(true) {
+            best = Some((width, hs, active));
+        }
+    }
+    best.map(|(_, h, a)| (h, a))
+}
+
+/// Build the `SignatureHelp` for `name : ty`, splitting `ty` at top-level
+/// arrows into per-parameter label offsets (the return-type tail is not a
+/// parameter). `active` is clamped into range. Mirrors `mkSignature`
+/// (Server.hs:3098).
+fn build_signature(name: &str, ty: &str, active: u32) -> SignatureHelp {
+    let label = format!("{name} : {ty}");
+    let base = name.chars().count() + 3; // "name" + " : "
+    let slots = param_slots(ty);
+    let params: Vec<ParameterInformation> = slots
+        .iter()
+        .map(|(s, e)| ParameterInformation {
+            label: ParameterLabel::LabelOffsets([(base + s) as u32, (base + e) as u32]),
+            documentation: None,
+        })
+        .collect();
+    let nparams = params.len() as u32;
+    let active = if nparams == 0 {
+        0
+    } else {
+        active.min(nparams - 1)
+    };
+    SignatureHelp {
+        signatures: vec![SignatureInformation {
+            label,
+            documentation: None,
+            parameters: Some(params),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(active),
+    }
+}
+
+/// Char-offset ranges of each parameter slot in a function-type string, split
+/// at TOP-LEVEL `->` (parens / brackets / braces raise the depth so
+/// `List a -> a` is one slot and `(a -> b) -> …` keeps the callback whole).
+/// The final slot (the return type) is excluded.
+fn param_slots(ty: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = ty.chars().collect();
+    let mut depth = 0i32;
+    let mut slots: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        match chars[i] {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '-' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '>' => {
+                slots.push(trim_slot(&chars, start, i));
+                i += 2;
+                start = i;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // [start, len) is the return type — deliberately not a parameter.
+    slots
+}
+
+/// Trim leading/trailing whitespace from a `[s, e)` char range, in char units.
+fn trim_slot(chars: &[char], s: usize, e: usize) -> (usize, usize) {
+    let mut a = s;
+    let mut b = e;
+    while a < b && chars[a].is_whitespace() {
+        a += 1;
+    }
+    while b > a && chars[b - 1].is_whitespace() {
+        b -= 1;
+    }
+    (a, b)
 }
 
 // ---- position / span conversion ---------------------------------------

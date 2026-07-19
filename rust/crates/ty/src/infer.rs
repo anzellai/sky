@@ -475,6 +475,14 @@ impl<'a> Infer<'a> {
                     for (_, lid) in &d.binders {
                         if let Some(&placeholder) = self.locals.get(lid) {
                             self.unify(placeholder, full);
+                            // Tooling table only (inlay hints / hover on a let
+                            // binding): record the binder's type var so the
+                            // per-local table carries it. Guarded by
+                            // `record_exprs`, so the check/build path (which never
+                            // sets it) is byte-for-byte unchanged.
+                            if self.record_exprs {
+                                self.local_vars.push((*lid, placeholder));
+                            }
                         }
                     }
                 }
