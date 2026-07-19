@@ -247,23 +247,36 @@ fn assemble_and_emit_with(
     // still builds. Absent both → an empty table (no FFI).
     let registry = load_ffi_surface(example_dir);
     cfg.ffi = build_ffi_table(&registry);
-    let out = lower::lower_program_cfg(&db, entry, &cfg);
-    if !out.entry_ok {
+    // Stage E (doc 01 bottom-of-DAG): route lowering + codegen through the salsa
+    // `go_program` tracked query, closing the query DAG below `infer`. The config
+    // is a salsa **input** created once for this build; `go_program` reads the
+    // whole module set's `type_world`/`resolve`/per-def `infer` through the db, so
+    // it is memoised (re-demand is a cache hit) and invalidated natively by any
+    // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
+    // the prior eager `lower_program_cfg` + `emit_program` pair.
+    let config = skydb::BuildConfig::new(&db, cfg);
+    let prog = skydb::go_program(&db, entry, config);
+    if !prog.entry_ok {
         return Err("lowering found no entry `main`".into());
     }
     // Hard lowering errors (e.g. a call to a Go-FFI function with no callable
     // wrapper) mean the emitted Go would not build. Abort here — before writing
     // sky-out and invoking `go build` — so the failure surfaces as a check-time
     // diagnostic, upholding the `sky check ≡ sky build` invariant.
-    if !out.errors.is_empty() {
-        return Err(out.errors.join("\n"));
+    if !prog.errors.is_empty() {
+        return Err(prog.errors.join("\n"));
     }
-    let source = codegen::emit_program(&out.items);
+    // `entry_ok && errors.is_empty()` guarantees `go_program` emitted the source.
+    // `go_program` returns a reference into the salsa memo, so clone the fields out.
+    let source = prog
+        .source
+        .clone()
+        .ok_or_else(|| "lowering produced no Go source".to_string())?;
     Ok(Emitted {
         source,
         registry,
-        ffi_used: out.ffi_used,
-        warnings: out.warnings,
+        ffi_used: prog.ffi_used.clone(),
+        warnings: prog.warnings.clone(),
     })
 }
 

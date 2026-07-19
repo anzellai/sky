@@ -26,8 +26,9 @@
 
 use base::{DefId, ModuleId};
 use hir::{ResolveResult, SkyDb};
+use lower::LowerConfig;
 use salsa::Setter;
-use skydb::{SkyDatabase, SourceFile};
+use skydb::{go_program, BuildConfig, SkyDatabase, SourceFile};
 use std::sync::{Arc, Mutex};
 use ty::TyDb;
 
@@ -513,5 +514,87 @@ fn annotation_edit_recomputes_dependent_infer() {
         main_bt,
         project_bt(&fresh.db.body_types_of(fresh.app_id, fresh_main)),
         "incremental infer(App.main) diverged from a fresh build after annotation edit"
+    );
+}
+
+// ---- Stage E: `go_program` (lower + codegen) invalidation --------------------
+//
+// These close the harness at the bottom of the DAG. `go_program(entry, config)`
+// is the WHOLE-PROGRAM floor (doc 01 `build(project)`): it lowers the program +
+// renders Go by reading `type_world`/`resolve`/per-def `infer` through the db, so
+// any `SourceFile` edit that reaches a lowered def invalidates it, while an
+// unchanged revision is a memo hit. The events name `go_program` exactly as the
+// upstream assertions name `resolve_query`/`infer_query`. Asserts BOTH the
+// recompute-set (by query name) AND correctness (byte-equal emitted Go vs a fresh
+// build) — the same two-axis contract as D-1/D-2.
+
+// A body-only edit to `Lib.greeting` (exports unchanged). `App.main = greeting`
+// lowers `Lib.greeting` (DCE-reachable), so the emitted Go's string literal moves
+// `"hi"` → `"bye"` — a visible codegen delta that also proves re-execution.
+const LIB_BODY_EDIT: &str = "module Lib exposing (greeting)\n\ngreeting = \"bye\"\n";
+
+/// (E a) The world below `infer` is closed + memoised: the first `go_program`
+/// demand emits source, and re-demanding it in the SAME revision hits the memo
+/// (no `WillExecute`) and returns byte-identical Go.
+#[test]
+fn go_program_memoised_within_a_revision() {
+    let fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let cfg = BuildConfig::new(&fx.db, LowerConfig::default());
+
+    // First demand populates the memo + emits source.
+    let s1 = go_program(&fx.db, fx.app_id, cfg).source.clone();
+    assert!(
+        s1.is_some(),
+        "go_program must emit Go source for the App entry"
+    );
+
+    // Second demand in the SAME revision must be served from memo, byte-stable.
+    fx.clear_log();
+    let s2 = go_program(&fx.db, fx.app_id, cfg).source.clone();
+    let logs = fx.take_log();
+    assert_eq!(s1, s2, "same-revision go_program must be byte-stable");
+    assert!(
+        !executed(&logs, "go_program"),
+        "re-demanding go_program in the same revision must hit the memo; log={logs:?}"
+    );
+}
+
+/// (E b) The headline Stage-E property. A body edit to a LOWERED dep (`Lib.greeting`,
+/// reachable from `App.main`) re-executes `go_program`, the emitted Go reflects the
+/// edit, and the incremental result is byte-identical to a from-scratch build on
+/// the final sources. Asserts BOTH the recompute-set AND byte-equal correctness.
+#[test]
+fn body_edit_reexecutes_go_program_byte_correct() {
+    let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let cfg = BuildConfig::new(&fx.db, LowerConfig::default());
+
+    // Cold: populate the memo.
+    let before = go_program(&fx.db, fx.app_id, cfg).source.clone();
+    assert!(before.is_some(), "cold go_program must emit source");
+
+    // Edit ONLY Lib's body (exports unchanged).
+    fx.lib.set_text(&mut fx.db).to(LIB_BODY_EDIT.to_string());
+
+    // Demand go_program: its `resolve(Lib)`/`infer(Lib.greeting)` deps changed →
+    // it MUST re-execute, and the emitted Go MUST reflect the edited literal.
+    fx.clear_log();
+    let after = go_program(&fx.db, fx.app_id, cfg).source.clone();
+    let logs = fx.take_log();
+    assert!(
+        executed(&logs, "go_program"),
+        "go_program MUST re-execute after a body edit to a lowered dep; log={logs:?}"
+    );
+    assert!(
+        before != after,
+        "the emitted Go must change to reflect the edited body"
+    );
+
+    // Correctness: incremental == fresh-from-scratch on the FINAL sources.
+    let fresh = Fixture::build(LIB_BODY_EDIT, APP, OTHER_V1);
+    let fresh_cfg = BuildConfig::new(&fresh.db, LowerConfig::default());
+    let fresh_src = go_program(&fresh.db, fresh.app_id, fresh_cfg).source.clone();
+    assert_eq!(
+        after, fresh_src,
+        "incremental go_program diverged from a fresh build after a body edit"
     );
 }

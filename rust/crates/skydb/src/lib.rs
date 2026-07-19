@@ -235,6 +235,109 @@ pub fn infer_query(
     ty::compute_body_types(world, db.sky_db(), module, def)
 }
 
+// ---- Stage E: lower + codegen as a tracked query (doc 01 bottom-of-DAG) ----
+//
+// The nodes BELOW `infer` — lowering (typed Go-IR) + codegen (Go source) — are
+// closed here as a single **whole-program** `#[salsa::tracked]` query. This is
+// the documented granularity FLOOR (doc 01 "build(project)"), chosen because the
+// Rust lowerer (`lower::lower_program_cfg`) is inherently whole-program: DCE from
+// `main`, the single-`Model` TEA detection, cross-module `collect_types`,
+// ambiguous-name resolution, and the per-def arg→param coercion maps all read
+// EVERY def before producing the one ordered `Vec<GoItem>`; and the emitted
+// artifact is a single `main.go` (`codegen::emit_program`), not a per-module Go
+// file — so there is no honest per-`ModuleId` `go_module` output unit to key on.
+// A coarser-but-memoised `go_program` still closes the DAG end-to-end (every
+// build with unchanged inputs is a cache hit) and gives `infer_query` its real
+// build-path consumer: `go_program`'s execution reads `type_world` + `resolve` +
+// per-def `infer` through the `TyDb`/`SkyDb` bridges, so salsa records the whole
+// sub-DAG below `infer` against it. Emitted bytes are byte-identical to the
+// prior eager `lower_program_cfg` + `emit_program` call pair (the `build-run` +
+// `repro` gates are the guard).
+
+/// The salsa view the Stage-E `go_program` query needs to reach the lowerer.
+/// Mirrors [`ResolveDb`]: `lower::lower_program_cfg` is authored against the
+/// forbid-clean [`ty::TyDb`] surface, but a `#[salsa::tracked]` query only
+/// receives a salsa database. [`SkyDatabase`] hands back `self` as a
+/// `&dyn TyDb`, so the query drives lowering while every read it performs
+/// (`type_world`, `resolve`, per-def `infer`, `parse`, interning) is recorded
+/// against the executing `go_program` query — closing the DAG below `infer`.
+#[salsa::db]
+pub trait LowerDb: salsa::Database {
+    /// This database as the forbid-clean type-database interface the lowerer consumes.
+    fn ty_db(&self) -> &dyn ty::TyDb;
+}
+
+#[salsa::db]
+impl LowerDb for SkyDatabase {
+    fn ty_db(&self) -> &dyn ty::TyDb {
+        self
+    }
+}
+
+/// The build-time lowering configuration (`sky.toml` port/defaults + the pinned
+/// Go-FFI surface) modelled as a salsa **input** so it participates in the query
+/// key. The driver creates one per build and never mutates it, so `go_program`
+/// keyed on it is a memo hit across re-demands within a build/LSP session while a
+/// `SourceFile` text edit still invalidates through the parse/resolve/infer edges
+/// `go_program` records internally. Held as one opaque `LowerConfig` field
+/// (the FFI table is large; salsa stores it once, borrowed via `returns(ref)`).
+#[salsa::input]
+pub struct BuildConfig {
+    /// The lowerer's whole-program config for this build.
+    #[returns(ref)]
+    pub cfg: lower::LowerConfig,
+}
+
+/// The product of the Stage-E `go_program` query: the emitted Go source (when
+/// lowering produced a buildable program) plus the diagnostics + FFI-usage set
+/// the build driver needs. `source` is `None` when there is no `main` in the
+/// entry module or lowering raised a hard error — the driver surfaces `errors`
+/// exactly as it did off the eager `LowerOutput`.
+#[derive(Clone, Debug)]
+pub struct GoProgram {
+    /// The emitted `main.go` bytes, or `None` when lowering found no entry / erred.
+    pub source: Option<String>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+    /// True when `main` was found + lowered.
+    pub entry_ok: bool,
+    /// Sky module paths of the Go-FFI packages the emitted program actually calls.
+    pub ffi_used: std::collections::BTreeSet<String>,
+}
+
+/// `go_program` — the Stage-E tracked query (doc 01 `typed_hir → go_module →
+/// build`, landed at the whole-program floor). Lowers the whole program from
+/// `entry` against the memoised type world + per-def inference, then renders the
+/// Go source. Pure + memoised: re-demanding with unchanged inputs is a cache hit;
+/// any `SourceFile` edit that transitively reaches a lowered def re-executes it.
+///
+/// `no_eq`: `GoProgram` carries the emitted source + `Vec`/`BTreeSet` diagnostics
+/// and is consumed eagerly by the build driver (written to disk + `go build`), so
+/// recompute-on-demand is the right shape — no backdate needed, matching
+/// [`infer_query`]/[`resolve_query`]. Keyed by `(entry, config)`: `config` (a
+/// salsa input) carries the FFI/port memo edge; the source/inference edges are
+/// captured through the `db.ty_db()` reads the lowerer performs while executing.
+#[salsa::tracked(no_eq)]
+pub fn go_program(db: &dyn LowerDb, entry: ModuleId, config: BuildConfig) -> GoProgram {
+    let cfg = config.cfg(db);
+    let out = lower::lower_program_cfg(db.ty_db(), entry, cfg);
+    // Emit only when lowering yielded a buildable program — otherwise the driver
+    // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
+    // the eager path).
+    let source = if out.entry_ok && out.errors.is_empty() {
+        Some(codegen::emit_program(&out.items))
+    } else {
+        None
+    };
+    GoProgram {
+        source,
+        warnings: out.warnings,
+        errors: out.errors,
+        entry_ok: out.entry_ok,
+        ffi_used: out.ffi_used,
+    }
+}
+
 /// A source file's text keyed by its `file_id` — the Stage-A **input** (doc 01
 /// `source_text(FileId)`). One per module; the module set is the collection of
 /// these inputs. The driver `set_*`s them; every query is a pure function of

@@ -705,7 +705,6 @@ version = "0.1.0"
 dependencies = [
  "base",
  "hir",
- "skydb",
  "syntax",
  "ty",
 ]
@@ -867,7 +866,6 @@ name = "project"
 version = "0.1.0"
 dependencies = [
  "base",
- "codegen",
  "diagnostics",
  "ffi",
  "hir",
@@ -1130,8 +1128,10 @@ name = "skydb"
 version = "0.1.0"
 dependencies = [
  "base",
+ "codegen",
  "diagnostics",
  "hir",
+ "lower",
  "salsa",
  "syntax",
  "ty",
