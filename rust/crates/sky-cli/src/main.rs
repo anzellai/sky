@@ -11,7 +11,8 @@ use std::process::{Command, ExitCode};
 
 use fmt::{format_source, is_formatted};
 use project::{
-    build_example, is_compiler_repo_root, project_dir_for, repo_root_for, run_app, BuildOptions,
+    assets_root_for, build_example, is_compiler_repo_root, project_dir_for, repo_root_for, run_app,
+    BuildOptions,
 };
 use testrunner::run_test;
 
@@ -393,14 +394,19 @@ fn cmd_init(args: &[String]) -> ExitCode {
         }
     }
 
-    // Best-effort CLAUDE.md copy from the repo template (dev-tree path).
+    // Best-effort CLAUDE.md: from the repo template in dev, else the copy
+    // embedded in the binary (doc 09 §E) so `sky init` scaffolds it standalone.
     let mut copied_claude = false;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let dst = root.join("CLAUDE.md");
     if let Some(repo_root) = repo_root_for(&cwd).or_else(|| repo_root_for(root)) {
         let tmpl = repo_root.join("templates").join("CLAUDE.md");
-        if tmpl.is_file() && std::fs::copy(&tmpl, root.join("CLAUDE.md")).is_ok() {
+        if tmpl.is_file() && std::fs::copy(&tmpl, &dst).is_ok() {
             copied_claude = true;
         }
+    }
+    if !copied_claude {
+        copied_claude = project::extract_template("CLAUDE.md", &dst);
     }
 
     println!("Created {}/", root.display());
@@ -436,12 +442,7 @@ fn cmd_doc(args: &[String]) -> ExitCode {
 
     // Resolve the project + repo root from cwd (doc reads stdlib + src/).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(repo_root) = repo_root_for(&cwd) else {
-        eprintln!(
-            "sky doc: could not locate compiler assets (sky-stdlib/ + runtime-go/)\n\
-             above {}. Run from within the Sky repo tree.",
-            cwd.display()
-        );
+    let Some(repo_root) = assets_root_for(&cwd) else {
         return ExitCode::FAILURE;
     };
     let project_dir = project::project_dir_for(&cwd.join("_"));
@@ -705,14 +706,10 @@ use project::{ffi_add, ffi_install, ffi_remove, ffi_update, FfiReport};
 /// `tools/sky-ffi-inspect` source (bring-up reads assets from the repo tree).
 fn resolve_ffi_ctx() -> Option<(PathBuf, PathBuf)> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(repo_root) = project::repo_root_for(&cwd) else {
-        eprintln!(
-            "sky: could not locate compiler assets (sky-stdlib/ + runtime-go/ +\n\
-             tools/sky-ffi-inspect/) above {}. Run from within the Sky repo tree.",
-            cwd.display()
-        );
-        return None;
-    };
+    // Dev reads the inspector source + runtime from the repo tree; standalone
+    // extracts the embedded copy (ensure_inspector then `go build`s it, so FFI
+    // works outside the repo). See doc 09 §E / §C.3.
+    let repo_root = assets_root_for(&cwd)?;
     Some((repo_root, cwd))
 }
 
@@ -773,14 +770,9 @@ fn resolve(file: &Path) -> Option<(PathBuf, PathBuf)> {
         eprintln!("sky: no such file: {}", file.display());
         return None;
     }
-    let Some(repo_root) = repo_root_for(file) else {
-        eprintln!(
-            "sky: could not locate compiler assets (sky-stdlib/ + runtime-go/)\n\
-             above {}. Run from within the Sky repo tree.",
-            file.display()
-        );
-        return None;
-    };
+    // Dev: assets live in the repo tree above `file`. Standalone: fall back to
+    // the trees embedded in the binary, extracted to a cache dir (doc 09 §E).
+    let repo_root = assets_root_for(file)?;
     let project_dir = project_dir_for(file);
     Some((repo_root, project_dir))
 }

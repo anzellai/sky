@@ -29,6 +29,34 @@ pub fn repo_root_for(start: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Resolve the compiler-asset root for a build/doc/ffi invocation starting at
+/// `start` (a file or dir). Two-tier, dev-first (doc 09 §E):
+///
+/// 1. **Repo tree** — if [`repo_root_for`] finds `sky-stdlib/` + `runtime-go/`
+///    above `start`, use it. This keeps the in-repo dev path (the xtask gates,
+///    `examples/*`) byte-identical: assets read straight off disk, no extraction.
+/// 2. **Embedded** — otherwise the binary is running standalone; materialise the
+///    trees baked in at compile time ([`ffi::extract_assets_root`]) into a
+///    content-hashed cache dir laid out identically to the repo root, and use
+///    that. Extract-once, reused across invocations.
+///
+/// The returned path always carries `sky-stdlib/`, `runtime-go/`, and
+/// `tools/sky-ffi-inspect/` in repo layout, so every downstream consumer that
+/// takes a `repo_root: &Path` (the build driver, `sky doc`,
+/// [`ffi::ensure_inspector`]) works against it unchanged.
+pub fn assets_root_for(start: &Path) -> Option<PathBuf> {
+    if let Some(root) = repo_root_for(start) {
+        return Some(root);
+    }
+    match ffi::extract_assets_root() {
+        Ok(root) => Some(root),
+        Err(e) => {
+            eprintln!("sky: could not materialise embedded compiler assets: {e}");
+            None
+        }
+    }
+}
+
 /// Resolve the project directory owning `file` (an entry `.sky` under `src/`):
 /// the nearest ancestor containing `sky.toml`, else the grandparent when the
 /// file sits directly under a `src/` or `tests/` root, else the file's parent.

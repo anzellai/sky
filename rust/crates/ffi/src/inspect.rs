@@ -293,7 +293,7 @@ fn content_hash(files: &[(String, Vec<u8>)]) -> String {
     format!("{h:016x}")
 }
 
-fn xdg_cache_sky() -> PathBuf {
+pub(crate) fn xdg_cache_sky() -> PathBuf {
     if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
         if !x.is_empty() {
             return PathBuf::from(x).join("sky");

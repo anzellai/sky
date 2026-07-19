@@ -11,10 +11,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+pub mod assets;
 pub mod gen;
 mod gen_bindings;
 pub mod inspect;
 
+pub use assets::{
+    embedded_assets, embedded_runtime, embedded_stdlib, extract_assets_root, extract_template,
+};
 pub use gen::{generate, GeneratedSurface};
 pub use inspect::{ensure_inspector, run_inspector, PackageInfo};
 

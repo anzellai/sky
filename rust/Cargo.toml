@@ -36,6 +36,11 @@ salsa = "0.28"
 # ffi — pinned .skyi surface (de)serialisation (doc 09)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ffi — compile-time embedding of the stdlib + runtime + inspector asset trees
+# so the `sky` binary is standalone (doc 09 §E). `include_dir!` recurses
+# natively (no `embedDir` non-recursion scar) and a `build.rs` rerun-if-changed
+# kills the 89-marker staleness hack.
+include_dir = "0.7"
 # sky-lsp — async LSP scaffolding (doc 10)
 tower-lsp = "0.20"
 
