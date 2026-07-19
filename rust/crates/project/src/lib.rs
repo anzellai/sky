@@ -22,7 +22,7 @@ pub use ffi_ops::{
 /// when running standalone, outside the repo tree (doc 09 §E).
 pub use ffi::extract_template;
 
-use skydb::{line_count, SkyDatabase, SourceFile};
+use skydb::{parse, SkyDatabase, SourceFile};
 
 /// The build driver's project handle. Owns the salsa db — the single state
 /// holder (L1). The CLI and LSP are two front-ends over this same db (doc 01).
@@ -43,12 +43,13 @@ impl Project {
         }
     }
 
-    /// M0 smoke: set the source-text input for a file and read a derived query
-    /// back, proving inputs → queries flow through the db (doc 01). M5 replaces
-    /// this with real module discovery + lowering + `go build`.
-    pub fn analyze(&mut self, file_id: u32, text: &str) -> usize {
+    /// Stage-B smoke: set the source-text input for a file and pull the `parse`
+    /// leaf query through the db, proving inputs → queries flow (doc 01). Returns
+    /// the parsed module's `ERROR`-node count (0 for well-formed input). The
+    /// build path (`build::assemble_and_emit_with`) drives the same input+query.
+    pub fn analyze(&self, file_id: u32, text: &str) -> usize {
         let file = SourceFile::new(&self.db, file_id, text.to_string());
-        *line_count(&self.db, file)
+        parse(&self.db, file).error_node_count()
     }
 }
 
@@ -58,7 +59,7 @@ mod tests {
 
     #[test]
     fn driver_runs_a_query_through_the_db() {
-        let mut p = Project::new();
-        assert_eq!(p.analyze(0, "a\nb\n"), 2);
+        let p = Project::new();
+        assert_eq!(p.analyze(0, "module Main exposing (main)\n\nmain = 1\n"), 0);
     }
 }

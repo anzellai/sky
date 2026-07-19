@@ -72,8 +72,16 @@ fn assemble_and_emit_with(
     entry_module: Option<&str>,
 ) -> Result<Emitted, String> {
     // ---- assemble the source db (stdlib + example src) ----
+    // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
+    // inputs and the `parse` leaf query memoises each module's CST. Every parse
+    // below flows through this input+query rather than an inline `syntax::parse`,
+    // making the query DAG's leaf load-bearing on the build path. `next_id` mints
+    // a distinct `file_id` per module in load order (no span/file-id reaches
+    // emitted Go, so the routing is byte-identical to the prior inline parse).
+    let sdb = skydb::SkyDatabase::default();
+    let mut next_id: u32 = 0;
     let mut db = SourceDb::new();
-    let stdlib = load_dir(&repo_root.join("sky-stdlib"));
+    let stdlib = load_dir(&sdb, &mut next_id, &repo_root.join("sky-stdlib"));
     if stdlib.is_empty() {
         return Err("no stdlib under sky-stdlib".into());
     }
@@ -87,13 +95,13 @@ fn assemble_and_emit_with(
     // falling through to a `Basics` kernel guess. Loaded BEFORE the example's
     // own src so a dep module named `Main` (packages ship their own demo entry)
     // is overwritten by — and never shadows — the example's real `Main`.
-    for (n, parse) in load_skydeps(&example_dir.join(".skydeps")) {
+    for (n, parse) in load_skydeps(&sdb, &mut next_id, &example_dir.join(".skydeps")) {
         db.add_module(&n, parse);
     }
 
-    let mut locals = load_dir(&example_dir.join("src"));
+    let mut locals = load_dir(&sdb, &mut next_id, &example_dir.join("src"));
     for dir in extra_dirs {
-        locals.extend(load_dir(dir));
+        locals.extend(load_dir(&sdb, &mut next_id, dir));
     }
     if locals.is_empty() {
         return Err("no .sky under src/".into());
@@ -598,7 +606,11 @@ fn materialise_rt(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// dropped here so they can never be mistaken for — nor shadow — the consuming
 /// example's entry point. Enumeration is sorted (via `load_dir`) so the result
 /// is deterministic. Absent `.skydeps/` → empty (the common no-deps case).
-fn load_skydeps(skydeps: &Path) -> Vec<(String, syntax::Parse)> {
+fn load_skydeps(
+    sdb: &skydb::SkyDatabase,
+    next_id: &mut u32,
+    skydeps: &Path,
+) -> Vec<(String, syntax::Parse)> {
     let mut out = Vec::new();
     let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
         Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect(),
@@ -614,8 +626,7 @@ fn load_skydeps(skydeps: &Path) -> Vec<(String, syntax::Parse)> {
             let Ok(src) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let parse = syntax::parse(&src, base::FileId(0));
-            let n = module_name(&parse, &path);
+            let (n, parse) = parse_via_salsa(sdb, next_id, src, &path);
             if n == "Main" || n == "main" {
                 continue;
             }
@@ -623,6 +634,26 @@ fn load_skydeps(skydeps: &Path) -> Vec<(String, syntax::Parse)> {
         }
     }
     out
+}
+
+/// Route a module's source through the Stage-A salsa input + Stage-B `parse`
+/// query (doc 01, doc 12): intern the text as a [`skydb::SourceFile`] and pull
+/// its CST from the memoised `parse` leaf query, instead of an inline
+/// `syntax::parse`. `next_id` mints a distinct `file_id` per module. Returns the
+/// module's declared name (from its header, else file stem) + the parsed tree.
+/// Byte-identical to the prior inline parse — no `FileId`/span reaches emitted
+/// Go, so build + repro output is unchanged.
+fn parse_via_salsa(
+    sdb: &skydb::SkyDatabase,
+    next_id: &mut u32,
+    src: String,
+    path: &Path,
+) -> (String, syntax::Parse) {
+    let file = skydb::SourceFile::new(sdb, *next_id, src);
+    *next_id += 1;
+    let parse = skydb::parse(sdb, file).clone();
+    let name = module_name(&parse, path);
+    (name, parse)
 }
 
 /// Recursively collect `*.sky` files, sorted, with no generated-dir pruning.
@@ -642,7 +673,11 @@ fn collect_sky_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn load_dir(dir: &Path) -> Vec<(String, syntax::Parse)> {
+fn load_dir(
+    sdb: &skydb::SkyDatabase,
+    next_id: &mut u32,
+    dir: &Path,
+) -> Vec<(String, syntax::Parse)> {
     let mut files = Vec::new();
     collect_sky(dir, &mut files);
     let mut out = Vec::new();
@@ -650,9 +685,7 @@ fn load_dir(dir: &Path) -> Vec<(String, syntax::Parse)> {
         let Ok(src) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let parse = syntax::parse(&src, base::FileId(0));
-        let name = module_name(&parse, &path);
-        out.push((name, parse));
+        out.push(parse_via_salsa(sdb, next_id, src, &path));
     }
     out
 }

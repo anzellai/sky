@@ -132,7 +132,7 @@ fn scratch_dir() -> std::path::PathBuf {
 
 /// M0 placeholder retained for the crate-DAG smoke test.
 pub fn run_stub(sources: &[&str]) -> TestSummary {
-    let mut p = project::Project::new();
+    let p = project::Project::new();
     for (i, src) in sources.iter().enumerate() {
         let _ = p.analyze(i as u32, src);
     }
