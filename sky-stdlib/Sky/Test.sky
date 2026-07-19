@@ -1,3 +1,29 @@
+module Sky.Test exposing
+    ( Test
+    , TestResult(..)
+    , test
+    , suite
+    , equal
+    , notEqual
+    , ok
+    , err
+    , expectErrorKind
+    , isTrue
+    , isFalse
+    , fail
+    , pass
+    , run
+    , summarise
+    , runMain
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error(..), ErrorKind(..))
+import Std.Log exposing (println)
+import System
+
 -- | Sky.Test — first-class test framework for Sky projects.
 --
 -- A test module exposes a single `tests` value of type `List Test`.
@@ -28,15 +54,6 @@
 -- The framework is intentionally small. Every assertion returns a
 -- `TestResult`; `Test.test` wraps a thunk so failures are reported
 -- by name without aborting the rest of the suite.
-module Sky.Test exposing (Test, TestResult(..), test, suite, equal, notEqual, ok, err, expectErrorKind, isTrue, isFalse, fail, pass, run, summarise, runMain)
-
-import Sky.Core.Prelude exposing (..)
-import Sky.Core.List as List
-import Sky.Core.String as String
-import Sky.Core.Error exposing (Error(..), ErrorKind(..))
-import Std.Log exposing (println)
-import System
-
 -- | A named assertion thunk. The thunk is evaluated lazily by `run`
 -- so a panic in one assertion can't prevent later assertions from
 -- being exercised. `suite` collects multiple Tests under a shared
@@ -81,8 +98,7 @@ equal expected actual =
 
     else
         Failed
-            ("expected " ++ debugShow expected ++ " but got "
-                 ++ debugShow actual)
+            ("expected " ++ debugShow expected ++ " but got " ++ debugShow actual)
 
 
 notEqual : a -> a -> TestResult
@@ -137,7 +153,7 @@ expectErrorKind expected result =
             else
                 Failed
                     ("expected ErrorKind " ++ kindName expected ++ " but got "
-                         ++ kindName kind)
+                        ++ kindName kind)
 
 
 -- | Local kind-to-string helper. Mirrors the constructor names so
@@ -211,23 +227,23 @@ runWithPrefix : String -> List Test -> List ( String, TestResult )
 runWithPrefix prefix tests =
     List.concat
         (List.map
-             (\t ->
-                  case t of
+            (\t ->
+                case t of
 
-                      Leaf name thunk ->
-                          [( prefix ++ name, safeRun thunk )]
+                    Leaf name thunk ->
+                        [ ( prefix ++ name, safeRun thunk ) ]
 
-                      Suite name inner ->
-                          let
-                              nextPrefix =
-                                  if prefix == "" then
-                                      name ++ " > "
+                    Suite name inner ->
+                        let
+                            nextPrefix =
+                                if prefix == "" then
+                                    name ++ " > "
 
-                                  else
-                                      prefix ++ name ++ " > "
-                          in
-                              runWithPrefix nextPrefix inner)
-             tests)
+                                else
+                                    prefix ++ name ++ " > "
+                        in
+                            runWithPrefix nextPrefix inner)
+            tests)
 
 
 -- | Execute a test thunk. If it panics, the panic is surfaced as a
@@ -246,41 +262,59 @@ summarise results =
         failures =
             List.filterMap
                 (\( name, r ) ->
-                     case r of
+                    case r of
 
-                         Failed msg ->
-                             Just ( name, msg )
+                        Failed msg ->
+                            Just ( name, msg )
 
-                         Passed ->
-                             Nothing)
+                        Passed ->
+                            Nothing)
                 results
         failCount = List.length failures
         passCount = total - failCount
+        -- Per-item Task force. `List.map` here would produce a
+        -- `List (Task Error ())` whose thunks never get executed —
+        -- the `let _ =` auto-force convention only fires when the
+        -- RHS is a single Task, not a list of them (issue #151).
+        -- `List.foldl` with an inner `let _ = TaskExpr in ()`
+        -- forces each `println` per iteration. Same shape below
+        -- for the failure branch.
         _ =
-            List.map
-                (\( name, _ ) -> println ("  ok    " ++ name))
+            List.foldl
+                (\( name, _ ) _ ->
+                    let
+                        _ = println ("  ok    " ++ name)
+                    in
+                        ())
+                ()
                 (List.filter
-                     (\( _, r ) ->
-                          case r of
+                    (\( _, r ) ->
+                        case r of
 
-                              Passed ->
-                                  True
+                            Passed ->
+                                True
 
-                              Failed _ ->
-                                  False)
-                     results)
+                            Failed _ ->
+                                False)
+                    results)
         _ =
-            List.map
-                (\( name, msg ) ->
-                     println ("  FAIL  " ++ name ++ "\n          " ++ msg))
+            List.foldl
+                (\( name, msg ) _ ->
+                    let
+                        _ =
+                            println
+                                ("  FAIL  " ++ name ++ "\n          " ++ msg)
+                    in
+                        ())
+                ()
                 failures
         _ =
             println
                 (String.fromInt passCount ++ " passed, "
-                     ++ String.fromInt failCount
-                     ++ " failed ("
-                     ++ String.fromInt total
-                     ++ " total)")
+                    ++ String.fromInt failCount
+                    ++ " failed ("
+                    ++ String.fromInt total
+                    ++ " total)")
     in
         failCount == 0
 
