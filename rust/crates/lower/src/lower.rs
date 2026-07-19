@@ -14,6 +14,12 @@ use ty::{BodyTypes, Ty, Typer};
 pub struct LowerOutput {
     pub items: Vec<GoItem>,
     pub warnings: Vec<String>,
+    /// Hard lowering errors — conditions that would emit Go the toolchain
+    /// rejects (e.g. a call to a Go-FFI function that has no callable wrapper).
+    /// The build driver aborts before `go build` when this is non-empty, so a
+    /// program that would break `go build` is rejected at check time instead
+    /// (upholds the `sky check ≡ sky build` invariant).
+    pub errors: Vec<String>,
     /// True when `main` was found + lowered; false → nothing to build.
     pub entry_ok: bool,
     /// Sky module paths of the Go-FFI packages actually *called* by the emitted
@@ -135,6 +141,7 @@ pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
 pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     let typer = Typer::new(db);
     let mut warnings = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
 
     // ---- collect all value defs (bodies) across modules ----
     let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
@@ -353,6 +360,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         return LowerOutput {
             items: Vec::new(),
             warnings: vec!["no `main` in entry module".into()],
+            errors: Vec::new(),
             entry_ok: false,
             ffi_used: BTreeSet::new(),
         };
@@ -398,6 +406,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             discovered: Vec::new(),
             used_types: HashSet::new(),
             warnings: Vec::new(),
+            errors: Vec::new(),
             closure_elem: None,
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
@@ -416,6 +425,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             ffi_used.insert(m);
         }
         warnings.extend(cx.warnings);
+        errors.extend(cx.errors);
         funcs.push(item);
     }
 
@@ -456,6 +466,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     LowerOutput {
         items,
         warnings,
+        errors,
         entry_ok: true,
         ffi_used,
     }
@@ -822,6 +833,8 @@ struct Ctx<'a> {
     discovered: Vec<DefId>,
     used_types: HashSet<String>,
     warnings: Vec<String>,
+    /// Hard lowering errors (see [`LowerOutput::errors`]).
+    errors: Vec<String>,
     /// The pinned FFI surface (read-only) + the modules actually called here.
     ffi: &'a FfiTable,
     ffi_used: BTreeSet<String>,
@@ -1783,6 +1796,21 @@ impl<'a> Ctx<'a> {
                 let wparams = self.ffi.wrapper_params(&sym);
                 return self.ffi_call(&format!("rt.{sym}"), args, actual, &wparams, typed);
             }
+            // A Go-FFI call whose package has no wrapper symbol for `name`: the
+            // function either does not exist in the pinned surface, or is
+            // inexpressible from Sky (e.g. it takes a Go `error` parameter, whose
+            // wrapper is deliberately not emitted — see `ffi::gen::has_error_param`).
+            // Falling through would lower the callee to `nil` and emit `nil(args)`,
+            // which `go build` rejects (`cannot call nil`). Reject at check time
+            // instead so `sky check ≡ sky build` holds.
+            self.errors.push(format!(
+                "no such Go-FFI function `{}.{}` — it is not exported by the pinned \
+                 FFI surface, or it takes a value that cannot be produced from Sky \
+                 (such as a Go `error` parameter). It cannot be called from Sky.",
+                package.as_str(),
+                name.as_str()
+            ));
+            return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
         }
         // general call: lower callee + args, coercing each arg to the callee's
         // inferred param type (cross-def boundary coercion). The call's Go type is

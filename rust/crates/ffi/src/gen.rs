@@ -134,8 +134,9 @@ fn lower_first(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Skip functions that can't be realised at the FFI boundary: unresolvable
-/// generics (unless a pure identity-pointer) and anything referencing an
-/// `internal/`/`vendor/` type Go forbids importing.
+/// generics (unless a pure identity-pointer), anything referencing an
+/// `internal/`/`vendor/` type Go forbids importing, and anything taking a Go
+/// `error` value as a *parameter* (see [`has_error_param`]).
 pub fn should_skip_fn(fn_: &Function) -> bool {
     let param_tys: Vec<&str> = fn_.params.iter().map(|p| p.ty.as_str()).collect();
     let result_tys: Vec<&str> = fn_.results.iter().map(|p| p.ty.as_str()).collect();
@@ -149,7 +150,40 @@ pub fn should_skip_fn(fn_: &Function) -> bool {
         && is_star_bare_param(&fn_.results[0].ty);
     let refs_internal = param_tys.iter().any(|t| touches_internal(t))
         || result_tys.iter().any(|t| touches_internal(t));
-    (has_generic && !is_id_pointer) || refs_internal
+    (has_generic && !is_id_pointer) || refs_internal || has_error_param(fn_)
+}
+
+/// True when any *parameter* is the Go `error` interface (bare `error`, or
+/// decorated `*error` / `[]error`).
+///
+/// A Go `error` value cannot be constructed from a Sky value: `goTypeToSky`
+/// maps `error` → `String` (correct for a *result*, where the error is peeled
+/// into the `Result Error` wrap), but as a *parameter* that leaves the emitted
+/// typed wrapper declaring `argN error` while the Sky surface type says
+/// `String`. Any call then emits Go that passes a `string` where an `error` is
+/// required — `go build` rejects it (`string does not implement error`),
+/// breaking the hard `sky check ≡ sky build` invariant.
+///
+/// Such a function is genuinely inexpressible from pure Sky (there is no way to
+/// materialise a Go `error` at the boundary — the idiomatic error channel is
+/// `Result Error` on the *return*), so we skip generating the binding entirely.
+/// The Sky surface never exposes the name, and a call to it is rejected cleanly
+/// at name-resolution time (`undefined name`) instead of emitting broken Go.
+///
+/// This deliberately diverges from the Haskell oracle's `shouldSkipFn`
+/// (`FfiGen.hs:549`), which lacks this arm and therefore emits the same broken
+/// binding (e.g. `uuid.Must(uuid UUID, err error) UUID`). No corpus example
+/// calls such a function, so the oracle bug is dormant; the divergence is a
+/// pure correctness improvement, not a parity regression.
+pub(crate) fn has_error_param(fn_: &Function) -> bool {
+    fn_.params.iter().any(|p| is_error_type(&p.ty))
+}
+
+/// The Go `error` interface, ignoring pointer / slice decoration.
+fn is_error_type(t: &str) -> bool {
+    let t = t.trim_start_matches('*');
+    let t = t.strip_prefix("[]").unwrap_or(t);
+    t == "error"
 }
 
 fn touches_internal(t: &str) -> bool {
@@ -585,6 +619,61 @@ mod tests {
         assert_eq!(go_type_to_sky("[]string"), "List String");
         assert_eq!(go_type_to_sky("map[string]int"), "Dict String Int");
         assert_eq!(go_type_to_sky("UUID@github.com/google/uuid"), "UUID@github.com/google/uuid");
+    }
+
+    #[test]
+    fn error_param_functions_are_skipped() {
+        // A Go `error` PARAMETER is not constructible from Sky. Such a binding
+        // must be dropped from the surface (skipped), never emitted with an
+        // `error`-typed wrapper param + `String` Sky type (which breaks
+        // `go build`). Regression for the `uuid.Must(uuid, err error)` case.
+        let err_param = Function {
+            name: "Must".to_string(),
+            params: vec![
+                Param { ty: "github.com/google/uuid.UUID".to_string(), ..Default::default() },
+                Param { ty: "error".to_string(), ..Default::default() },
+            ],
+            results: vec![Param {
+                ty: "github.com/google/uuid.UUID".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(should_skip_fn(&err_param), "error-param fn must be skipped");
+        assert!(is_error_type("error"));
+        assert!(is_error_type("*error"));
+        assert!(is_error_type("[]error"));
+        assert!(!is_error_type("uuid.UUID"));
+
+        // An `error` RESULT is fine — it peels into `Result Error`.
+        let err_result = Function {
+            name: "Parse".to_string(),
+            params: vec![Param { ty: "string".to_string(), ..Default::default() }],
+            results: vec![
+                Param { ty: "github.com/google/uuid.UUID".to_string(), ..Default::default() },
+                Param { ty: "error".to_string(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        assert!(!should_skip_fn(&err_result), "error-result fn must NOT be skipped");
+
+        // End-to-end over the committed uuid inspector fixture: the generated
+        // kernel.json drops `must` (error param) but keeps `mustParse`.
+        let mut info = crate::inspect::parse_one(&fixture("uuid.inspector.json")).unwrap();
+        crate::inspect::normalize(&mut info);
+        let got = emit_kernel_json(
+            &pkg_to_module_name(&info.pkg),
+            &kernel_name_from_pkg(&info.pkg),
+            &info,
+        );
+        assert!(
+            !got.contains("\"name\": \"must\","),
+            "kernel.json must not expose the error-param `must` binding"
+        );
+        assert!(
+            got.contains("\"name\": \"mustParse\","),
+            "kernel.json must still expose `mustParse`"
+        );
     }
 
     #[test]

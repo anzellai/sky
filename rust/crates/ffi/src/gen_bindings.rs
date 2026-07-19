@@ -1261,6 +1261,14 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
     let seen_names = dedup_by_first(&info.functions);
     let entries: Vec<String> = seen_names
         .iter()
+        // A function taking a Go `error` PARAMETER has no callable wrapper: the
+        // Sky surface maps `error` → `String`, but the wrapper would declare
+        // `argN error`, so any call emits Go passing a `string` where an `error`
+        // is required (`go build` rejects it). Such a function is inexpressible
+        // from Sky (see `gen::has_error_param`); emit no wrapper so its Go symbol
+        // never enters `go_symbols` and a call is rejected cleanly at lower time
+        // (undefined FFI function) rather than breaking `go build`.
+        .filter(|fn_| !crate::gen::has_error_param(fn_))
         .map(|fn_| emit_typed_wrapper(kernel_name, &aliases, fn_))
         .collect();
     let any_emitted = entries.iter().any(|e| !is_skipped_entry(e));

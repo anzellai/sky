@@ -128,6 +128,13 @@ fn assemble_and_emit_with(
     if !out.entry_ok {
         return Err("lowering found no entry `main`".into());
     }
+    // Hard lowering errors (e.g. a call to a Go-FFI function with no callable
+    // wrapper) mean the emitted Go would not build. Abort here — before writing
+    // sky-out and invoking `go build` — so the failure surfaces as a check-time
+    // diagnostic, upholding the `sky check ≡ sky build` invariant.
+    if !out.errors.is_empty() {
+        return Err(out.errors.join("\n"));
+    }
     let source = codegen::emit_program(&out.items);
     Ok(Emitted {
         source,

@@ -73,27 +73,11 @@ func Go_Uuid_group(_ any) any { return Ok[any, any](pkg.Group) }
 
 func Go_Uuid_invalid(_ any) any { return Ok[any, any](pkg.Invalid) }
 
-// [pure] typed wrapper for Go_Uuid_isInvalidLengthError (P7 adaptor target)
-func Go_Uuid_isInvalidLengthErrorT(arg0 error) (out SkyResult[any, bool]) {
-	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,bool](pkg.IsInvalidLengthError(arg0))
-	return
-}
-
 func Go_Uuid_max(_ any) any { return Ok[any, any](pkg.Max) }
 
 func Go_Uuid_setMax(value any) any { reflect.ValueOf(&pkg.Max).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.Max))); return Ok[any, any](struct{}{}) }
 
 func Go_Uuid_microsoft(_ any) any { return Ok[any, any](pkg.Microsoft) }
-
-type FfiT_Go_Uuid_must_P0 = pkg.UUID
-type FfiT_Go_Uuid_must_R = pkg.UUID
-// [pure] typed wrapper for Go_Uuid_must (P7 adaptor target)
-func Go_Uuid_mustT(arg0 pkg.UUID, arg1 error) (out SkyResult[any, pkg.UUID]) {
-	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,pkg.UUID](pkg.Must(arg0, arg1))
-	return
-}
 
 type FfiT_Go_Uuid_mustParse_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_mustParse (P7 adaptor target)
