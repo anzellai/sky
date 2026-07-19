@@ -7,7 +7,8 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
 use project::{
@@ -42,17 +43,20 @@ fn main() -> ExitCode {
         Some("remove") => cmd_remove(&args[1..]),
         Some("install") => cmd_install(&args[1..]),
         Some("update") => cmd_update(&args[1..]),
+        // Rust-native verbs (no bundled Sky app needed): project/environment
+        // health, template refresh, and build+run verification.
+        Some("doctor") => cmd_doctor(&args[1..]),
+        Some("upgrade-claude") => cmd_upgrade_claude(&args[1..]),
+        Some("verify") => cmd_verify(&args[1..]),
         // Verbs the bring-up does not implement yet — honest, explicit deferral.
-        // `doctor`/`console`/`console-serve`/`upgrade`/`verify` spawn bundled
-        // Sky apps or self-update the binary (a separate milestone).
-        Some(
-            verb @ ("doctor" | "console" | "console-serve" | "upgrade" | "upgrade-claude"
-            | "verify"),
-        ) => {
+        // `console`/`console-serve` spawn bundled Sky apps; `upgrade`
+        // self-updates the binary (a separate milestone).
+        Some(verb @ ("console" | "console-serve" | "upgrade")) => {
             eprintln!(
                 "sky {verb}: not yet implemented in the rust bring-up.\n\
                  Wired verbs: build, run, check, fmt, test, lsp, clean, init, doc,\n\
-                 watch, db, add, remove, install, update, version, help."
+                 watch, db, add, remove, install, update, doctor, upgrade-claude,\n\
+                 verify, version, help."
             );
             ExitCode::from(2)
         }
@@ -760,6 +764,935 @@ fn cmd_update(_args: &[String]) -> ExitCode {
     emit_ffi_report(ffi_update(&project_dir, &repo_root))
 }
 
+// ---- doctor --------------------------------------------------------------
+
+/// Severity of a doctor finding — drives the output prefix and the exit code.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Severity {
+    Info,
+    Warn,
+    Error,
+}
+
+/// A single diagnostic finding. Mirrors `Sky.Cli.Doctor.Finding`
+/// (`src/Sky/Cli/Doctor.hs`): a short id, severity, message, a one-line manual
+/// hint, and an optional safe auto-fix applied only under `--fix`.
+struct Finding {
+    check: &'static str,
+    severity: Severity,
+    message: String,
+    hint: String,
+    fix: Option<Fix>,
+}
+
+/// A safe remediation `--fix` may apply. Kept to non-destructive-to-source
+/// actions (delete a regenerable cache dir, regen FFI) — never touches user
+/// source or `sky.toml` (the oracle's invariant, `Doctor.hs` header).
+enum Fix {
+    RemoveDir(PathBuf),
+    Install,
+}
+
+/// `sky doctor [--fix] [--verbose|-v]` — port of `Sky.Cli.Doctor.runDoctor`.
+/// Runs the tractable subset of the oracle's checks against the nearest project
+/// root: sky.toml present + non-empty, entry file exists, Go toolchain ≥ 1.22,
+/// stdlib/runtime assets resolvable, stale `.skycache`/`sky-out`, missing FFI
+/// bindings for domain-style imports, and the `SKY_AUTH_TOKEN_SECRET` gate when
+/// `[live]`/`[auth]` is configured. Exit 0 = clean, 1 = at least one finding,
+/// 2 = no sky.toml visible (diagnostic couldn't run).
+fn cmd_doctor(args: &[String]) -> ExitCode {
+    let do_fix = args.iter().any(|a| a == "--fix");
+    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(root) = locate_project_root(&cwd) else {
+        eprintln!("sky doctor: no sky.toml found in current directory or any ancestor.");
+        eprintln!("            (cd into a project root and re-run, or `sky init` to start one.)");
+        return ExitCode::from(2);
+    };
+
+    println!("sky doctor — checking {}", root.display());
+    println!();
+
+    let mut findings = run_all_checks(&root);
+    findings.sort_by_key(|f| f.severity); // Info first, Error last (stable).
+
+    for f in &findings {
+        let prefix = match f.severity {
+            Severity::Info => "·",
+            Severity::Warn => "⚠",
+            Severity::Error => "✗",
+        };
+        println!("{prefix} {}", f.message);
+        println!("   ↳ {}", f.hint);
+        if verbose {
+            println!("   ↳ check-id: {}", f.check);
+        }
+        println!();
+    }
+
+    let mut applied: Vec<String> = Vec::new();
+    if do_fix {
+        println!("─── applying fixes ─────────────────────────────────────");
+        for f in &findings {
+            if let Some(fix) = &f.fix {
+                applied.push(apply_fix(&root, f.check, fix));
+            }
+        }
+    }
+    for line in &applied {
+        println!("{line}");
+    }
+    println!();
+
+    if findings.is_empty() {
+        println!("✓ no issues found.");
+        return ExitCode::SUCCESS;
+    }
+    let count = |s: Severity| findings.iter().filter(|f| f.severity == s).count();
+    let (n_err, n_warn, n_info) = (count(Severity::Error), count(Severity::Warn), count(Severity::Info));
+    let parts: Vec<String> = [(n_err, "errors"), (n_warn, "warnings"), (n_info, "info")]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, label)| format!("{n} {label}"))
+        .collect();
+    let issues = if parts.is_empty() { "no issues".to_string() } else { parts.join(", ") };
+    if do_fix {
+        let n = applied.len();
+        println!("{issues}; applied {n} auto-fix{}.", if n == 1 { "" } else { "es" });
+    } else {
+        println!("{issues} — run with --fix to auto-apply safe remediations.");
+    }
+    ExitCode::from(1)
+}
+
+/// Nearest ancestor of `start` (inclusive) containing `sky.toml`.
+fn locate_project_root(start: &Path) -> Option<PathBuf> {
+    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut dir: Option<&Path> = Some(start.as_path());
+    while let Some(d) = dir {
+        if d.join("sky.toml").is_file() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+fn run_all_checks(root: &Path) -> Vec<Finding> {
+    let mut out = Vec::new();
+    out.extend(check_sky_toml(root));
+    out.extend(check_entry_file(root));
+    out.extend(check_go_toolchain());
+    out.extend(check_assets(root));
+    out.extend(check_stale_cache(root));
+    out.extend(check_stale_build(root));
+    out.extend(check_missing_ffi(root));
+    out.extend(check_auth_secret(root));
+    out
+}
+
+/// sky.toml exists (root guarantees it) AND is non-empty / readable.
+fn check_sky_toml(root: &Path) -> Vec<Finding> {
+    let toml = root.join("sky.toml");
+    match std::fs::metadata(&toml) {
+        Err(e) => vec![Finding {
+            check: "sky-toml-unreadable",
+            severity: Severity::Error,
+            message: format!("sky.toml could not be read: {e}"),
+            hint: "ensure file permissions allow reading; recreate from `sky init` if corrupt".into(),
+            fix: None,
+        }],
+        Ok(m) if m.len() == 0 => vec![Finding {
+            check: "sky-toml-empty",
+            severity: Severity::Error,
+            message: "sky.toml is empty".into(),
+            hint: "minimal valid file:\n  name = \"myapp\"\n  entry = \"src/Main.sky\"".into(),
+            fix: None,
+        }],
+        Ok(_) => Vec::new(),
+    }
+}
+
+/// The entry `.sky` (sky.toml `entry`, default `src/Main.sky`) must exist.
+fn check_entry_file(root: &Path) -> Vec<Finding> {
+    let entry = toml_entry(root).unwrap_or_else(|| "src/Main.sky".to_string());
+    let path = root.join(&entry);
+    if path.is_file() {
+        Vec::new()
+    } else {
+        vec![Finding {
+            check: "entry-missing",
+            severity: Severity::Error,
+            message: format!("entry file `{entry}` does not exist"),
+            hint: "create it, or fix the `entry = \"...\"` path in sky.toml".into(),
+            fix: None,
+        }]
+    }
+}
+
+/// Go toolchain present + ≥ 1.22 (generics + range-over-func the runtime needs).
+fn check_go_toolchain() -> Vec<Finding> {
+    match Command::new("go").arg("version").output() {
+        Err(_) => vec![Finding {
+            check: "go-toolchain",
+            severity: Severity::Error,
+            message: "`go` not found on PATH".into(),
+            hint: "install Go ≥ 1.22 (https://go.dev/dl/) and re-run".into(),
+            fix: None,
+        }],
+        Ok(o) if o.status.success() => {
+            let out = String::from_utf8_lossy(&o.stdout);
+            match parse_go_version(&out) {
+                Some((maj, minor)) if maj > 1 || (maj == 1 && minor >= 22) => Vec::new(),
+                Some((maj, minor)) => vec![Finding {
+                    check: "go-toolchain",
+                    severity: Severity::Error,
+                    message: format!("Go {maj}.{minor} is too old — Sky's runtime needs ≥ 1.22"),
+                    hint: "upgrade Go: https://go.dev/dl/".into(),
+                    fix: None,
+                }],
+                None => Vec::new(), // couldn't parse — don't false-positive.
+            }
+        }
+        Ok(o) => vec![Finding {
+            check: "go-toolchain",
+            severity: Severity::Warn,
+            message: format!(
+                "`go version` failed: {}",
+                String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("")
+            ),
+            hint: "check `go` is installed + on PATH".into(),
+            fix: None,
+        }],
+    }
+}
+
+/// Parse the leading "go1.X.Y" from `go version` output → (major, minor).
+fn parse_go_version(s: &str) -> Option<(u32, u32)> {
+    let idx = s.find("go version go")? + "go version go".len();
+    let rest = &s[idx..];
+    let maj_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let rest2 = &rest[maj_str.len()..];
+    let min_str: String = rest2
+        .strip_prefix('.')
+        .map(|r| r.chars().take_while(|c| c.is_ascii_digit()).collect())
+        .unwrap_or_default();
+    Some((maj_str.parse().ok()?, min_str.parse().ok()?))
+}
+
+/// The stdlib + Go runtime asset root must be resolvable (repo tree or embedded).
+/// Silent when healthy — only a missing asset root is a finding.
+fn check_assets(root: &Path) -> Vec<Finding> {
+    match assets_root_for(root) {
+        Some(_) => Vec::new(),
+        None => vec![Finding {
+            check: "assets-root",
+            severity: Severity::Error,
+            message: "could not resolve the stdlib + Go runtime asset root".into(),
+            hint: "run inside the Sky repo tree, or reinstall the `sky` binary (embedded assets missing)".into(),
+            fix: None,
+        }],
+    }
+}
+
+/// `.skycache/` older than the newest `src/*.sky` → stale; safe to delete.
+fn check_stale_cache(root: &Path) -> Vec<Finding> {
+    let cache = root.join(".skycache");
+    if !cache.is_dir() {
+        return Vec::new();
+    }
+    match (newest_mtime(&cache), newest_sky_mtime(&root.join("src"))) {
+        (Some(cm), Some(sm)) if sm > cm => vec![Finding {
+            check: "stale-cache",
+            severity: Severity::Warn,
+            message: ".skycache/ is older than your src/*.sky files".into(),
+            hint: "run `sky doctor --fix` to delete it (next build regenerates)".into(),
+            fix: Some(Fix::RemoveDir(cache)),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+/// `sky-out/main.go` older than the newest `src/*.sky` → stale build (Info).
+fn check_stale_build(root: &Path) -> Vec<Finding> {
+    let out_dir = root.join("sky-out");
+    let main_go = out_dir.join("main.go");
+    if !main_go.is_file() {
+        return Vec::new();
+    }
+    match (file_mtime(&main_go), newest_sky_mtime(&root.join("src"))) {
+        (Some(gm), Some(sm)) if sm > gm => vec![Finding {
+            check: "stale-build",
+            severity: Severity::Info,
+            message: "sky-out/main.go is older than your src/*.sky files".into(),
+            hint: "run `sky build` to refresh, or `sky doctor --fix` to remove sky-out/".into(),
+            fix: Some(Fix::RemoveDir(out_dir)),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+/// Domain-style imports (github.com/…, golang.org/…) with no matching cached
+/// FFI surface → the build will fail with a cryptic "package not found".
+fn check_missing_ffi(root: &Path) -> Vec<Finding> {
+    let src = root.join("src");
+    if !src.is_dir() {
+        return Vec::new();
+    }
+    let mut imports: Vec<String> = Vec::new();
+    let mut files = Vec::new();
+    collect_sky_files(&src, &mut files);
+    for f in &files {
+        let Ok(c) = std::fs::read_to_string(f) else { continue };
+        for line in c.lines() {
+            let mut it = line.split_whitespace();
+            if it.next() == Some("import") {
+                if let Some(pkg) = it.next() {
+                    if is_ffi_path(pkg) && !imports.contains(&pkg.to_string()) {
+                        imports.push(pkg.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if imports.is_empty() {
+        return Vec::new();
+    }
+    let ffi_cache = root.join(".skycache").join("ffi");
+    let cached: Vec<String> = if ffi_cache.is_dir() {
+        std::fs::read_dir(&ffi_cache)
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned())).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let missing: Vec<String> = imports
+        .into_iter()
+        .filter(|imp| {
+            let stem: String = imp.chars().take_while(|c| *c != '.').collect();
+            !cached.iter().any(|f| f.contains(&stem))
+        })
+        .collect();
+    missing
+        .into_iter()
+        .map(|pkg| Finding {
+            check: "missing-ffi",
+            severity: Severity::Warn,
+            message: format!("import references {pkg} but no FFI bindings cached for it"),
+            hint: "run `sky install` (regenerates `.skycache/ffi/`), or `sky doctor --fix`".into(),
+            fix: Some(Fix::Install),
+        })
+        .collect()
+}
+
+fn is_ffi_path(p: &str) -> bool {
+    p.contains(".com") || p.contains(".org") || p.contains(".io") || p.contains("google.golang")
+}
+
+/// When sky.toml declares `[live]`/`[auth]`, `SKY_AUTH_TOKEN_SECRET` must be
+/// ≥ 32 bytes (the runtime hard-fails at boot otherwise).
+fn check_auth_secret(root: &Path) -> Vec<Finding> {
+    let Ok(c) = std::fs::read_to_string(root.join("sky.toml")) else {
+        return Vec::new();
+    };
+    if !(c.contains("[live]") || c.contains("[auth]")) {
+        return Vec::new();
+    }
+    match std::env::var("SKY_AUTH_TOKEN_SECRET") {
+        Ok(s) if s.len() >= 32 => Vec::new(),
+        Ok(s) => vec![Finding {
+            check: "auth-secret-short",
+            severity: Severity::Error,
+            message: format!("SKY_AUTH_TOKEN_SECRET is {} bytes — must be ≥ 32", s.len()),
+            hint: "export SKY_AUTH_TOKEN_SECRET=\"$(openssl rand -hex 32)\"".into(),
+            fix: None,
+        }],
+        Err(_) => vec![Finding {
+            check: "auth-secret-missing",
+            severity: Severity::Warn,
+            message: "SKY_AUTH_TOKEN_SECRET is unset (Sky.Live / Std.Auth in use)".into(),
+            hint: "export SKY_AUTH_TOKEN_SECRET=\"$(openssl rand -hex 32)\"".into(),
+            fix: None,
+        }],
+    }
+}
+
+/// Apply one `--fix` remediation, returning a status line.
+fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
+    match fix {
+        Fix::RemoveDir(dir) => match std::fs::remove_dir_all(dir) {
+            Ok(()) => format!("✓ deleted {}", dir.display()),
+            Err(e) => format!("✗ {check}: fix failed — {e}"),
+        },
+        Fix::Install => {
+            match assets_root_for(root) {
+                Some(repo_root) => {
+                    let r = project::ffi_install(root, &repo_root);
+                    if r.ok {
+                        format!("✓ {check}: ran `sky install`")
+                    } else {
+                        format!("✗ {check}: `sky install` reported problems")
+                    }
+                }
+                None => format!("✗ {check}: could not resolve assets to run `sky install`"),
+            }
+        }
+    }
+}
+
+// ---- upgrade-claude ------------------------------------------------------
+
+/// `sky upgrade-claude` — refresh the cwd's `./CLAUDE.md` from the template
+/// (`templates/CLAUDE.md`, from the repo tree in dev or the embedded copy
+/// standalone). Port of `Sky.Cli`'s `runUpgradeClaude` (`app/Main.hs:1848`):
+/// always overwrites, backs any existing file up to `CLAUDE.md.bak`, and prints
+/// the byte delta. Exit 0 on success, 1 if the template can't be located.
+fn cmd_upgrade_claude(_args: &[String]) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let target = cwd.join("CLAUDE.md");
+
+    let Some(bytes) = template_claude_bytes(&cwd) else {
+        eprintln!(
+            "sky upgrade-claude: could not locate templates/CLAUDE.md\n\
+             (run inside the Sky repo tree, or reinstall the `sky` binary)."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let existed = target.is_file();
+    let old_size = if existed {
+        std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    if existed {
+        let bak = cwd.join("CLAUDE.md.bak");
+        if let Err(e) = std::fs::rename(&target, &bak) {
+            eprintln!("sky upgrade-claude: could not back up existing CLAUDE.md: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    if let Err(e) = std::fs::write(&target, &bytes) {
+        eprintln!("sky upgrade-claude: could not write CLAUDE.md: {e}");
+        return ExitCode::FAILURE;
+    }
+    let new_size = bytes.len();
+    let verb = if existed { "Refreshed" } else { "Created" };
+    println!(
+        "{verb} CLAUDE.md ({old_size} → {new_size} bytes, from {})",
+        version_string()
+    );
+    if existed {
+        println!("  previous version saved as CLAUDE.md.bak");
+    }
+    ExitCode::SUCCESS
+}
+
+/// The template CLAUDE.md bytes: the repo `templates/CLAUDE.md` when running in
+/// the repo tree, else the copy embedded in the binary (extracted to a temp
+/// file and read back).
+fn template_claude_bytes(start: &Path) -> Option<Vec<u8>> {
+    if let Some(repo_root) = repo_root_for(start) {
+        let tmpl = repo_root.join("templates").join("CLAUDE.md");
+        if tmpl.is_file() {
+            if let Ok(b) = std::fs::read(&tmpl) {
+                return Some(b);
+            }
+        }
+    }
+    // Embedded fallback (standalone binary): extract to a temp file, read, drop.
+    let tmp = std::env::temp_dir().join(format!("sky-claude-{}.md", std::process::id()));
+    if project::extract_template("CLAUDE.md", &tmp) {
+        let b = std::fs::read(&tmp).ok();
+        let _ = std::fs::remove_file(&tmp);
+        return b;
+    }
+    None
+}
+
+// ---- verify --------------------------------------------------------------
+
+/// The runtime shape of a verify target, deciding how it is run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// HTTP server / Sky.Live — long-running; probed for a live listener.
+    Server,
+    /// Sky.Tui / Sky.Webview — long-running interactive; run as no-panic.
+    LongRunning,
+    /// One-shot CLI — must exit cleanly (0, no panic) within the timeout.
+    Cli,
+}
+
+/// `sky verify [target]` — build AND run each example (or the given project /
+/// path), catching the "builds but crashes / hangs at runtime" class that a
+/// build-only check misses. Reuses `project::build_example` + a bounded run
+/// (thin user-facing wrapper; the exhaustive corpus gate lives in `xtask
+/// build-run`). Builds into `sky-out-rust/` so it never clobbers an example's
+/// `sky-out/` oracle binary. Non-zero exit on any failure.
+fn cmd_verify(args: &[String]) -> ExitCode {
+    let (positional, out_override) = parse_out(args);
+    let out_dir_name = out_override.unwrap_or_else(|| "sky-out-rust".to_string());
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let targets = match resolve_verify_targets(&cwd, positional.first().map(String::as_str)) {
+        Ok(t) => t,
+        Err(msg) => {
+            eprintln!("sky verify: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+    if targets.is_empty() {
+        eprintln!("sky verify: no targets found");
+        return ExitCode::from(2);
+    }
+
+    let mut failures = 0usize;
+    for dir in &targets {
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string();
+        let Some(repo_root) = assets_root_for(dir) else {
+            println!("  FAIL assets: {name}");
+            failures += 1;
+            continue;
+        };
+        if is_compiler_repo_root(dir) {
+            // Guard: never build from the compiler repo root itself.
+            continue;
+        }
+        // Build.
+        let opts = BuildOptions {
+            repo_root,
+            example_dir: dir.clone(),
+            out_dir_name: out_dir_name.clone(),
+            out_dir_abs: None,
+            run: false,
+            stdin: None,
+        };
+        let report = build_example(&opts);
+        if !report.emitted {
+            println!("  FAIL build: {name} ({})", report.note.trim());
+            failures += 1;
+            continue;
+        }
+        if !report.go_build_ok {
+            println!("  FAIL go-build: {name}");
+            failures += 1;
+            continue;
+        }
+        // Run (bounded).
+        let out_dir = dir.join(&out_dir_name);
+        match run_verify_target(&name, dir, &out_dir) {
+            Ok(note) => println!("  ok: {name}{}", if note.is_empty() { String::new() } else { format!(" ({note})") }),
+            Err(reason) => {
+                println!("  FAIL run: {name} ({reason})");
+                failures += 1;
+            }
+        }
+    }
+
+    println!();
+    if failures == 0 {
+        println!("verify: {} target(s) passed", targets.len());
+        ExitCode::SUCCESS
+    } else {
+        println!("verify: {failures} of {} target(s) failed", targets.len());
+        ExitCode::FAILURE
+    }
+}
+
+/// Resolve the set of project dirs to verify from `cwd` + an optional target:
+/// a named example under `cwd/examples`, an explicit path to a project, all
+/// examples under `cwd/examples`, or `cwd` itself when it holds a `sky.toml`.
+fn resolve_verify_targets(cwd: &Path, target: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    let examples = cwd.join("examples");
+    if let Some(t) = target {
+        // Explicit path to a project dir?
+        let as_path = Path::new(t);
+        if as_path.join("sky.toml").is_file() {
+            // Absolutise so `.`/relative paths get a real file_name (target name)
+            // and an absolute binary path for the spawn step (a relative `app`
+            // under `current_dir(out_dir)` would double-nest and fail to spawn).
+            let abs = as_path.canonicalize().unwrap_or_else(|_| cwd.join(as_path));
+            return Ok(vec![abs]);
+        }
+        // Named example under examples/.
+        let ex = examples.join(t);
+        if ex.join("sky.toml").is_file() {
+            return Ok(vec![ex]);
+        }
+        return Err(format!("target `{t}` is not a project dir or a known example"));
+    }
+    // No target: all examples if examples/ exists, else the cwd project.
+    if examples.is_dir() {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&examples)
+            .map_err(|e| format!("reading examples/: {e}"))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join("sky.toml").is_file())
+            .collect();
+        dirs.sort();
+        return Ok(dirs);
+    }
+    if cwd.join("sky.toml").is_file() {
+        return Ok(vec![cwd.to_path_buf()]);
+    }
+    Err("no examples/ directory and no sky.toml in the current directory".to_string())
+}
+
+/// Run a built target with a bounded watchdog, classifying failure. Server
+/// shapes are probed for a live listener; CLI shapes must exit 0 without a
+/// panic; long-running (TUI/Webview) shapes must not panic on start.
+fn run_verify_target(name: &str, dir: &Path, out_dir: &Path) -> Result<String, String> {
+    if is_gui_example(name) {
+        // GUI (Fyne) needs a display + native toolkit at link/run time; the
+        // build already succeeded — don't attempt a headless runtime probe.
+        return Ok("gui build-only".into());
+    }
+    let shape = classify_shape(dir);
+    let app = out_dir.join("app");
+    if !app.is_file() {
+        return Err("binary not produced".into());
+    }
+
+    match shape {
+        Shape::Server => run_server_probe(&app, out_dir),
+        Shape::Cli | Shape::LongRunning => run_process_bounded(&app, out_dir, shape),
+    }
+}
+
+/// Spawn a server target, discover its listening port from its startup line
+/// (falling back to the env port for servers that don't announce one), probe a
+/// TCP listener, then kill it. Watchdog-bounded on every path.
+fn run_server_probe(app: &Path, cwd: &Path) -> Result<String, String> {
+    let env_port = free_port().unwrap_or(8000);
+    let mut child = match Command::new(app)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("SKY_LIVE_PORT", env_port.to_string())
+        .env("PORT", env_port.to_string())
+        .env("SKY_LIVE_STORE", "memory")
+        .env("SKY_CONSOLE_EMBED", "off")
+        .env("SKY_DEV_BANNER", "off")
+        .env("SKY_LIVE_BANNER", "off")
+        .env("ENV", "dev")
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("spawn: {e}")),
+    };
+
+    // Read stdout on a thread: parse the announced port live, and accumulate the
+    // full text (delivered on EOF) for panic detection. A dev server may spawn a
+    // `/_sky/console` grandchild that keeps the pipe fds open, so we never read
+    // to EOF synchronously — the thread + bounded recv keep this bounded.
+    let (port_rx, out_rx) = spawn_server_stdout(child.stdout.take());
+    let err_rx = spawn_drain(child.stderr.take());
+
+    // Wait up to 8s for the announced port; on Disconnected (stdout closed) the
+    // server exited before announcing → crash. On Timeout, fall back to env_port
+    // (servers that never print a line but do bind the env port).
+    let port = match port_rx.recv_timeout(Duration::from_secs(8)) {
+        Ok(p) => p,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => env_port,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let logs = collect_drains(&[out_rx, err_rx]);
+            return Err(panic_reason(&logs).unwrap_or_else(|| "server exited on start".into()));
+        }
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let mut connected = false;
+    while Instant::now() < deadline {
+        if let Ok(Some(_)) = child.try_wait() {
+            break; // exited before we connected
+        }
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let logs = collect_drains(&[out_rx, err_rx]);
+    if let Some(r) = panic_reason(&logs) {
+        return Err(r);
+    }
+    if connected {
+        Ok(format!("server up on :{port}"))
+    } else {
+        Err(format!("no listener on :{port} within 6s"))
+    }
+}
+
+/// Read a server's stdout on a thread: send the first announced listening port
+/// over the first channel, and the full accumulated text on EOF over the second
+/// (for panic detection). Mirrors `xtask build-run`'s port-lift heuristic.
+#[allow(clippy::type_complexity)]
+fn spawn_server_stdout(
+    pipe: Option<impl Read + Send + 'static>,
+) -> (
+    std::sync::mpsc::Receiver<u16>,
+    std::sync::mpsc::Receiver<String>,
+) {
+    use std::io::BufRead;
+    let (port_tx, port_rx) = std::sync::mpsc::channel();
+    let (text_tx, text_rx) = std::sync::mpsc::channel();
+    if let Some(p) = pipe {
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            let mut announced = false;
+            let reader = std::io::BufReader::new(p);
+            for line in reader.lines().map_while(Result::ok) {
+                let low = line.to_lowercase();
+                if !announced && (low.contains("listening") || low.contains("starting on port")) {
+                    if let Some(port) = last_colon_number(&line).or_else(|| last_number(&line)) {
+                        let _ = port_tx.send(port);
+                        announced = true;
+                    }
+                }
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = text_tx.send(buf);
+        });
+    }
+    (port_rx, text_rx)
+}
+
+/// Last `:PORT` in a line (`listening on 127.0.0.1:8000` → 8000).
+fn last_colon_number(s: &str) -> Option<u16> {
+    s.rsplit(':').find_map(|seg| {
+        let digits: String = seg.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok()
+    })
+}
+
+/// Last bare number in a line (`Server starting on port 8080` → 8080).
+fn last_number(s: &str) -> Option<u16> {
+    let mut last = None;
+    let mut cur = String::new();
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            cur.push(c);
+        } else if !cur.is_empty() {
+            last = cur.parse().ok();
+            cur.clear();
+        }
+    }
+    if !cur.is_empty() {
+        last = cur.parse().ok();
+    }
+    last
+}
+
+/// Run a one-shot / long-running target with a timeout. CLI must exit 0 without
+/// a panic; long-running must survive the grace window without panicking.
+fn run_process_bounded(app: &Path, cwd: &Path, shape: Shape) -> Result<String, String> {
+    let mut child = match Command::new(app)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("spawn: {e}")),
+    };
+    let out_rx = spawn_drain(child.stdout.take());
+    let err_rx = spawn_drain(child.stderr.take());
+    let timeout = if shape == Shape::Cli { Duration::from_secs(60) } else { Duration::from_secs(3) };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let _ = child.wait();
+                let logs = collect_drains(&[out_rx, err_rx]);
+                if let Some(r) = panic_reason(&logs) {
+                    return Err(r);
+                }
+                return match status.code() {
+                    Some(0) => Ok(String::new()),
+                    Some(n) => Err(format!("exit {n}")),
+                    None => Err("terminated by signal".into()),
+                };
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // CLI that never exits = hang (fail); long-running that
+                    // stays up without panic = pass.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let logs = collect_drains(&[out_rx, err_rx]);
+                    if let Some(r) = panic_reason(&logs) {
+                        return Err(r);
+                    }
+                    return if shape == Shape::Cli {
+                        Err("did not exit within 60s".into())
+                    } else {
+                        Ok("no-panic".into())
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("wait: {e}")),
+        }
+    }
+}
+
+/// Spawn a background thread that drains a child pipe to a String and sends it
+/// on EOF. Keeps the main watchdog non-blocking even when a grandchild holds the
+/// pipe fd open (the thread may then never finish — bounded by `collect_drains`).
+fn spawn_drain(pipe: Option<impl Read + Send + 'static>) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if let Some(mut p) = pipe {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = p.read_to_string(&mut s);
+            let _ = tx.send(s);
+        });
+    }
+    rx
+}
+
+/// Collect whatever the drain threads have produced within a short bound, then
+/// give up (a grandchild-held pipe may keep a thread alive indefinitely).
+fn collect_drains(rxs: &[std::sync::mpsc::Receiver<String>]) -> String {
+    let mut out = String::new();
+    for rx in rxs {
+        if let Ok(s) = rx.recv_timeout(Duration::from_millis(500)) {
+            out.push_str(&s);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Extract a short reason from a Sky runtime panic line, if present.
+fn panic_reason(s: &str) -> Option<String> {
+    let line = s.lines().find(|l| l.contains("panic:") || l.contains("panicKind="))?;
+    if let Some(pos) = line.find("panicKind=") {
+        let kind: String = line[pos + "panicKind=".len()..]
+            .chars()
+            .take_while(|c| !c.is_whitespace())
+            .collect();
+        return Some(format!("panic: {kind}"));
+    }
+    let after = line.split("panic:").nth(1).unwrap_or(line).trim();
+    Some(format!("panic: {}", after.chars().take(60).collect::<String>()))
+}
+
+/// A free TCP port on loopback (bind :0, read the assigned port, drop).
+fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+}
+
+/// Classify a target's runtime shape by scanning its entry module's `main`
+/// binding, falling back to a whole-`src/` scan. Mirrors the tokens
+/// `xtask build-run`'s classifier keys on.
+fn classify_shape(dir: &Path) -> Shape {
+    let src = dir.join("src");
+    let blob = read_src_blob(&src);
+    if blob.contains("Server.listen")
+        || blob.contains("HttpServer.listen")
+        || blob.contains("listenAndServe")
+        || blob.contains("Live.app")
+        || (blob.contains("notFound") && blob.contains("routes"))
+    {
+        Shape::Server
+    } else if blob.contains("Tui.app")
+        || blob.contains("Tui.program")
+        || blob.contains("Webview.app")
+        || blob.contains("Webview.program")
+    {
+        Shape::LongRunning
+    } else {
+        Shape::Cli
+    }
+}
+
+/// GUI (Fyne) examples: build-only at runtime (need a native display toolkit).
+fn is_gui_example(name: &str) -> bool {
+    name.contains("fyne") || name.contains("-gui")
+}
+
+fn read_src_blob(src: &Path) -> String {
+    let mut files = Vec::new();
+    collect_sky_files(src, &mut files);
+    let mut blob = String::new();
+    for f in &files {
+        if let Ok(s) = std::fs::read_to_string(f) {
+            blob.push_str(&s);
+            blob.push('\n');
+        }
+    }
+    blob
+}
+
+// ---- doctor/verify fs helpers --------------------------------------------
+
+fn toml_entry(root: &Path) -> Option<String> {
+    let c = std::fs::read_to_string(root.join("sky.toml")).ok()?;
+    for line in c.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("entry") {
+            let rest = rest.trim_start();
+            if let Some(v) = rest.strip_prefix('=') {
+                let v = v.trim();
+                return Some(v.trim_matches(|c| c == '"' || c == '\'').to_string());
+            }
+        }
+    }
+    None
+}
+
+fn collect_sky_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_sky_files(&p, out);
+        } else if p.extension().and_then(|x| x.to_str()) == Some("sky") {
+            out.push(p);
+        }
+    }
+}
+
+fn file_mtime(p: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
+fn newest_mtime(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    fn walk(dir: &Path, newest: &mut Option<std::time::SystemTime>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, newest);
+            } else if let Some(t) = file_mtime(&p) {
+                if newest.is_none() || Some(t) > *newest {
+                    *newest = Some(t);
+                }
+            }
+        }
+    }
+    walk(dir, &mut newest);
+    newest
+}
+
+fn newest_sky_mtime(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut files = Vec::new();
+    collect_sky_files(dir, &mut files);
+    files.iter().filter_map(|f| file_mtime(f)).max()
+}
+
 // ---- shared helpers ------------------------------------------------------
 
 /// Resolve a `<file>` to its (repo_root, project_dir). Prints a diagnostic and
@@ -826,7 +1759,56 @@ fn print_help() {
          \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
          \x20 install               regen/verify committed FFI surfaces\n\
          \x20 update                bump Go deps + regen surfaces\n\
+         \x20 doctor [--fix] [-v]  diagnose project / environment health\n\
+         \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
+         \x20 verify [target]      build + run each example / the project\n\
          \x20 version          print the version\n\n\
-         DEFERRED (bring-up): doctor, console, console-serve, upgrade, verify"
+         DEFERRED (bring-up): console, console-serve, upgrade"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn go_version_parses_major_minor() {
+        assert_eq!(parse_go_version("go version go1.22.3 darwin/arm64"), Some((1, 22)));
+        assert_eq!(parse_go_version("go version go1.21.0 linux/amd64"), Some((1, 21)));
+        assert_eq!(parse_go_version("go version go2.0.1 x"), Some((2, 0)));
+        assert_eq!(parse_go_version("garbage"), None);
+    }
+
+    #[test]
+    fn ffi_path_detects_domain_imports() {
+        assert!(is_ffi_path("github.com/stripe/stripe-go"));
+        assert!(is_ffi_path("golang.org/x/term"));
+        assert!(!is_ffi_path("Std.Db"));
+        assert!(!is_ffi_path("Sky.Core.List"));
+    }
+
+    #[test]
+    fn panic_reason_extracts_kind() {
+        assert_eq!(
+            panic_reason("boot ok\nSky panic: panicKind=DivisionByZero errId=abcd"),
+            Some("panic: DivisionByZero".to_string())
+        );
+        assert!(panic_reason("all fine\nlistening on :8000").is_none());
+    }
+
+    #[test]
+    fn toml_entry_reads_entry_key() {
+        let dir = std::env::temp_dir().join(format!("sky-doctor-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("sky.toml"), "name = \"x\"\nentry = \"src/App.sky\"\n").unwrap();
+        assert_eq!(toml_entry(&dir).as_deref(), Some("src/App.sky"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn severity_orders_info_before_error() {
+        let mut v = vec![Severity::Error, Severity::Info, Severity::Warn];
+        v.sort();
+        assert_eq!(v, vec![Severity::Info, Severity::Warn, Severity::Error]);
+    }
 }
