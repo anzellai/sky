@@ -294,6 +294,40 @@ impl<'a> Infer<'a> {
                 ),
             });
         }
+        // Record-literal-vs-closed-annotation strictness (RC2 / audit #1,#2): a
+        // bare record LITERAL checked against a CLOSED declared record type must
+        // have an EXACTLY matching field set. The general body unify below stays
+        // presence-lenient (protecting real TEA model-threading through record
+        // updates / subset field access — 19-skyforum), but a literal written
+        // directly against a closed annotation has no such excuse: a missing
+        // field silently zero-fills and an extra field is silently dropped (both
+        // accepted here, both rejected by the oracle). Fires only for a bare
+        // `Expr::Record` literal (never `Expr::Update`) against `Ty::Record(_,
+        // None)` (closed; `Some(ext)` = extensible → stays lenient).
+        if let (Expr::Record(lit_fields), Ty::Record(decl_fields, None)) =
+            (&body.exprs[root], &cur)
+        {
+            for (dn, _) in decl_fields {
+                if !lit_fields.iter().any(|(ln, _)| ln == dn) {
+                    self.errors.push(TypeError {
+                        message: format!(
+                            "record literal is missing required field `{}`",
+                            dn.as_str()
+                        ),
+                    });
+                }
+            }
+            for (ln, _) in lit_fields {
+                if !decl_fields.iter().any(|(dn, _)| dn == ln) {
+                    self.errors.push(TypeError {
+                        message: format!(
+                            "record literal has unknown field `{}` not in the declared type",
+                            ln.as_str()
+                        ),
+                    });
+                }
+            }
+        }
         let expected_result = self.ty_to_var_open(&cur, &mut sub);
         // Body inference stays STRICT (record-presence clashes inside the body —
         // e.g. a call passing a record that lacks a required field — must still

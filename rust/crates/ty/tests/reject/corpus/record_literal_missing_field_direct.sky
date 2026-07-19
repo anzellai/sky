@@ -1,0 +1,20 @@
+-- defect: a record LITERAL bound directly to a CLOSED annotated type omits a
+--         required field — `p : P = { name = "a" }` where `P = {name, age}`.
+--         The presence-lenient body unify (open rows, for TEA model-threading)
+--         used to ACCEPT this and silently zero-fill `age`, printing 100 for
+--         `p.age + 100`. The record-literal-vs-closed strictness now rejects.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias P =
+    { name : String, age : Int }
+
+p : P
+p =
+    { name = "a" }
+
+main =
+    println (String.fromInt (p.age + 100))
