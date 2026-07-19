@@ -12,6 +12,7 @@ codegen = { path = "../codegen" }
 lower = { path = "../lower" }
 hir = { path = "../hir" }
 ty = { path = "../ty" }
+diagnostics = { path = "../diagnostics" }
 syntax = { path = "../syntax" }
 base = { path = "../base" }
 ffi = { path = "../ffi" }

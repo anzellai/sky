@@ -1,0 +1,18 @@
+-- defect: CLI-driver regression — annotated `bad : Int` whose body is `"text" + 1`.
+--         The shipped pipeline accepted this and emitted
+--         `rt.AsInt(rt.Add(any("text"), any(1)))`, which PANICS at runtime — the
+--         worst class of the miss (accepts + crashes rather than accepts + wrong).
+--         The annotation gate now checks the body against the declared `Int`, and
+--         the `String + Int` clash rejects at check time before any Go is emitted.
+-- oracle: reject [E2001] (type mismatch)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+bad : Int
+bad =
+    "text" + 1
+
+main =
+    println (String.fromInt bad)

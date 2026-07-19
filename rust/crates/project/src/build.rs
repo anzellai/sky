@@ -99,8 +99,14 @@ fn assemble_and_emit_with(
         return Err("no .sky under src/".into());
     }
     let mut entry = None;
+    let mut check_ids: Vec<base::ModuleId> = Vec::new();
     for (n, parse) in locals {
         let id = db.add_module(&n, parse);
+        // Every app-code module (the project's own `src/` + any `extra_dirs`
+        // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
+        // signatures, never re-checked — mirrors the `xtask infer` gate, whose
+        // zero-type-error accept-parity property this preserves.
+        check_ids.push(id);
         let is_entry = match entry_module {
             Some(want) => n == want,
             None => n == "Main" || n.ends_with(".Main") || n == "main",
@@ -115,6 +121,30 @@ fn assemble_and_emit_with(
             None => "no entry module named Main".into(),
         });
     };
+
+    // ---- typecheck (accept/reject gate) ----
+    // `sky check ≡ sky build` (CLAUDE.md §8): an ill-typed program the oracle
+    // rejects MUST NOT reach lowering/emit. `ty::check_modules` was previously
+    // wired only into the LSP + the `xtask infer/reject` gates, so the shipped
+    // CLI pipeline accepted programs like `1 + "x"` and emitted Go that panics at
+    // runtime. Gate on TYPE-ERROR diagnostics (the `[E2001]` unify-clash class —
+    // proven zero across the accept corpus by `xtask infer`, and safe for FFI
+    // because a `Res::Foreign` reference infers to a fresh var, never clashing).
+    // Halt HERE — before `write_out` + `go build` — so the failure surfaces as a
+    // check-time diagnostic. Name-resolution + exhaustiveness handling stays with
+    // the existing lowering path; only the type-clash hole is closed here.
+    let checked = ty::check_modules(&db, &check_ids);
+    if checked.type_errors > 0 {
+        let rendered: Vec<String> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error && d.code.0 == "E2001"
+            })
+            .map(|d| format!("[{}] {}", d.code.0, d.message))
+            .collect();
+        return Err(rendered.join("\n"));
+    }
 
     // ---- lower + emit ----
     let mut cfg = read_sky_toml_config(&example_dir.join("sky.toml"));

@@ -1,0 +1,14 @@
+-- defect: wrong-arity application — `String.fromInt` (Int -> String) applied to
+--         TWO arguments. Applying the `String` result to a further argument
+--         unifies `String` with `(Int -> _)`, a clash. This is the over-application
+--         shape of the arity defect (distinct from calling a non-function value in
+--         `arity_call_value_with_unit.sky`), and it too slipped the shipped CLI
+--         because the build driver never ran the checker.
+-- oracle: reject [E2001] arity / type mismatch
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    println (String.fromInt 1 2)
