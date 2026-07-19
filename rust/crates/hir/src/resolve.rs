@@ -113,7 +113,13 @@ pub struct FieldDecl {
 }
 
 /// The result of resolving one module (doc 05 §1).
-#[derive(Default)]
+///
+/// `Clone`: the salsa build path memoises resolution as the `#[salsa::tracked]`
+/// `skydb::resolve_query` and hands each caller an owned `Rc<ResolveResult>`
+/// (cloned out of the memo, exactly like `module_exports`); the clone is what
+/// lets the tracked query's `&ResolveResult` cross the `SkyDb::resolve` seam.
+/// `Debug`: used by the incremental-correctness harness' projection.
+#[derive(Default, Clone, Debug)]
 pub struct ResolveResult {
     pub bodies: IndexMap<DefId, Body>,
     pub top_defs: Vec<TopDef>,

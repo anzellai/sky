@@ -162,6 +162,14 @@ pub trait SkyDb {
     fn kernel_pseudo(&self, qualifier: &str) -> Option<&str>;
     /// A module's exports, narrowed by its `exposing` clause (memoised).
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports>;
+    /// Resolve a module to its `ResolveResult` (doc 05 §1). The salsa-backed
+    /// `skydb::SkyDatabase` routes this to the `#[salsa::tracked]` `resolve_query`
+    /// (so the parse/exports → resolve dependency edges are captured for
+    /// incremental invalidation); the eager [`SourceDb`] recomputes on demand.
+    /// Returned behind `Rc` so both backends share one owning shape (the tracked
+    /// query clones out of its memo, `SourceDb` computes fresh), mirroring
+    /// [`SkyDb::module_exports`].
+    fn resolve(&self, m: ModuleId) -> Rc<crate::ResolveResult>;
     /// All registered module ids, in insertion order (deterministic, L4).
     fn module_ids(&self) -> Vec<ModuleId>;
     /// Mint / recover the stable `DefId` for `(module, name, kind)` — the
@@ -190,6 +198,11 @@ impl SkyDb for SourceDb {
     }
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         SourceDb::module_exports(self, m)
+    }
+    fn resolve(&self, m: ModuleId) -> Rc<crate::ResolveResult> {
+        // Eager path (LSP + tests): recompute on demand. Cheap and never on a
+        // hot loop; the salsa `SkyDatabase` is the memoised build-path backend.
+        Rc::new(crate::resolve::resolve(self, m))
     }
     fn module_ids(&self) -> Vec<ModuleId> {
         SourceDb::module_ids(self).collect()

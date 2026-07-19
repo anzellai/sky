@@ -156,7 +156,7 @@ pub fn lower_program_cfg(db: &dyn SkyDb, entry: ModuleId, cfg: &LowerConfig) -> 
     let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
-        let resolved = hir::resolve(db, m);
+        let resolved = db.resolve(m);
         for ca in &resolved.class_a {
             if seen_name_errors.insert((ca.qualifier.clone(), ca.name.clone())) {
                 let full = match &ca.qualifier {

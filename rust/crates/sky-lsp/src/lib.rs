@@ -173,7 +173,7 @@ impl Analysis {
         let off = offset_of(text, pos)?;
         let db = self.build_db();
         let module = ModuleId(idx as u32);
-        let resolved = hir::resolve(&db, module);
+        let resolved = db.resolve(module);
         let cand = best_candidate(&resolved, off)?;
         let typer = Typer::new(&db);
         let md = match cand {
@@ -242,7 +242,7 @@ impl Analysis {
         let off = offset_of(text, pos)?;
         let db = self.build_db();
         let module = ModuleId(idx as u32);
-        let resolved = hir::resolve(&db, module);
+        let resolved = db.resolve(module);
         let cand = best_candidate(&resolved, off)?;
         let span = match cand {
             Cand::Ref(o) => match &o.res {
@@ -286,7 +286,7 @@ impl Analysis {
         let before = &text[..off as usize];
         let db = self.build_db();
         let module = ModuleId(idx as u32);
-        let resolved = hir::resolve(&db, module);
+        let resolved = db.resolve(module);
 
         if let Some((recv, _partial)) = split_qualified(before) {
             // Qualified module member: `M.` → enumerate M's exports.
@@ -371,7 +371,7 @@ impl Analysis {
         let module = ModuleId(idx as u32);
         let mut out: Vec<diagnostics::Diagnostic> = Vec::new();
         out.extend(db.module_parse(module).errors().iter().cloned());
-        let resolved = hir::resolve(&db, module);
+        let resolved = db.resolve(module);
         out.extend(resolved.diagnostics.iter().cloned());
         let checked = ty::check_modules(&db, &[module]);
         out.extend(checked.diagnostics);
@@ -462,7 +462,7 @@ impl Analysis {
                 // if-let temporary keeps the shared borrow alive across it.
                 let owner_mod = db.def_loc(*owner).map(|l| l.module);
                 if let Some(m) = owner_mod {
-                    let r = hir::resolve(db, m);
+                    let r = db.resolve(m);
                     for o in &r.ref_occs {
                         if o.owner == *owner {
                             if let Res::Local(l) = &o.res {
@@ -477,7 +477,7 @@ impl Analysis {
             Target::Global(d) => {
                 for mi in 0..self.docs.len() {
                     let m = ModuleId(mi as u32);
-                    let r = hir::resolve(db, m);
+                    let r = db.resolve(m);
                     for o in &r.ref_occs {
                         if res_is_def(&o.res, *d) {
                             out.push(self.narrow_to_name(o.span));
@@ -506,7 +506,7 @@ impl Analysis {
             Target::Kernel { module, func } => {
                 for mi in 0..self.docs.len() {
                     let m = ModuleId(mi as u32);
-                    let r = hir::resolve(db, m);
+                    let r = db.resolve(m);
                     for o in &r.ref_occs {
                         if let Res::Kernel { module: km, func: kf } = &o.res {
                             if km.as_str() == module && kf.as_str() == func {
@@ -519,7 +519,7 @@ impl Analysis {
             Target::Field(name) => {
                 for mi in 0..self.docs.len() {
                     let m = ModuleId(mi as u32);
-                    let r = hir::resolve(db, m);
+                    let r = db.resolve(m);
                     for o in &r.field_occs {
                         if o.field.as_str() == name {
                             out.push(o.span);
@@ -584,7 +584,7 @@ impl Analysis {
             return Vec::new();
         };
         let db = self.build_db();
-        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let resolved = db.resolve(ModuleId(idx as u32));
         let Some((target, _)) = self.resolve_target(&resolved, off) else {
             return Vec::new();
         };
@@ -601,7 +601,7 @@ impl Analysis {
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
         let db = self.build_db();
-        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let resolved = db.resolve(ModuleId(idx as u32));
         let (target, span) = self.resolve_target(&resolved, off)?;
         if !self.is_renameable(&db, &target) {
             return None;
@@ -626,7 +626,7 @@ impl Analysis {
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
         let db = self.build_db();
-        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let resolved = db.resolve(ModuleId(idx as u32));
         let (target, _) = self.resolve_target(&resolved, off)?;
         if !self.is_renameable(&db, &target) {
             return None;
@@ -681,7 +681,7 @@ impl Analysis {
         };
         let text = &self.docs[idx].text.clone();
         let db = self.build_db();
-        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let resolved = db.resolve(ModuleId(idx as u32));
         let mut out = Vec::new();
         for (d, span) in &resolved.def_spans {
             let Some(loc) = db.def_loc(*d) else {
@@ -718,7 +718,7 @@ impl Analysis {
         let idx = self.index_of(url)?;
         let text = self.docs[idx].text.clone();
         let db = self.build_db();
-        let resolved = hir::resolve(&db, ModuleId(idx as u32));
+        let resolved = db.resolve(ModuleId(idx as u32));
 
         // Span-keyed classification from the occurrence index. First writer wins
         // (type/field beat the coarser ref span at the same key).
@@ -954,7 +954,7 @@ fn def_span(db: &dyn SkyDb, resolved: &ResolveResult, this: ModuleId, d: DefId) 
     if loc.module == this || loc.module.index() == u32::MAX {
         return None;
     }
-    let other = hir::resolve(db, loc.module);
+    let other = db.resolve(loc.module);
     other
         .def_spans
         .iter()

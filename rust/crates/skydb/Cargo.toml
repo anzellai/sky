@@ -15,3 +15,11 @@ syntax = { path = "../syntax" }
 hir = { path = "../hir" }
 ty = { path = "../ty" }
 salsa.workspace = true
+
+# Integration tests link only against this crate + dev-deps (not the crate's
+# regular deps), so the incremental-correctness harness (`tests/incremental.rs`)
+# re-declares the types it names directly.
+[dev-dependencies]
+base = { path = "../base" }
+hir = { path = "../hir" }
+salsa.workspace = true

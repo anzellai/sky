@@ -23,9 +23,10 @@
 //! (see the Stage-B report / doc 12 for the layering the resolve stage resolves).
 
 use base::{DefId, ModuleId, Name};
-use hir::{compute_exports, DefKind, DefLoc, ImportSource, ModuleExports, SkyDb};
+use hir::{compute_exports, DefKind, DefLoc, ImportSource, ModuleExports, ResolveResult, SkyDb};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// A registered module: its dotted name and the [`SourceFile`] input it parses
 /// from. Indexed by `ModuleId` (the vector position), mirroring the eager
@@ -132,6 +133,55 @@ pub fn module_exports(
     compute_exports(module, &tree, &mut |m, n, k| intern_def_id(db, m, n, k))
 }
 
+/// The salsa view a tracked query needs to reach the resolver. The resolver
+/// (`hir::resolve`) is authored against the forbid-clean [`SkyDb`] surface and
+/// reaches cross-module data through it; a `#[salsa::tracked]` query, however,
+/// only receives a salsa database, not a `&dyn SkyDb`. This `#[salsa::db]`
+/// supertrait bridges the two: [`SkyDatabase`] implements it by handing back
+/// `self` as a `&dyn SkyDb`, so the tracked query can call `hir::resolve` while
+/// the reads it performs (`parse`, `module_exports`, `DefKey` interning) are
+/// recorded against the executing query by salsa's runtime.
+///
+/// The registry reads the resolver also performs (`module_name`,
+/// `module_by_name`, `classify_import`, `kernel_pseudo`) hit [`SkyDatabase`]'s
+/// append-only, set-once-at-assembly fields — untracked by salsa, which is sound
+/// here because that registry never mutates across revisions (only `SourceFile`
+/// text inputs do). This is the sanctioned "untracked db field behind a
+/// `#[salsa::db]` trait" pattern (salsa's own `backdate_untracked_db_field`
+/// test), safe precisely because of the read-only-after-assembly invariant.
+#[salsa::db]
+pub trait ResolveDb: salsa::Database {
+    /// This database as the forbid-clean resolver interface.
+    fn sky_db(&self) -> &dyn SkyDb;
+}
+
+#[salsa::db]
+impl ResolveDb for SkyDatabase {
+    fn sky_db(&self) -> &dyn SkyDb {
+        self
+    }
+}
+
+/// `resolve` as a `#[salsa::tracked]` query (doc 05 §1, doc 12 L2) — the salsa
+/// successor to the eager `hir::resolve` free function on the build path. Pure +
+/// memoised: a module's resolution is a function of its own `parse` plus the
+/// `module_exports` of the modules it imports, each reached through a salsa
+/// query, so salsa captures the full parse/exports → resolve dependency graph.
+/// Editing one module's `SourceFile` text invalidates exactly its own `resolve`
+/// (and any module that imports it), never an unrelated sibling — the property
+/// the incremental-correctness harness asserts.
+///
+/// `no_eq`: `ResolveResult` has no `PartialEq` (it carries `Body` arenas),
+/// matching `parse`/`module_exports` — over-invalidation on an edit is sound; a
+/// backdate refinement is a later LSP-incrementality concern, not required for
+/// build-path correctness. Keyed by `(module, file)` for the same reason
+/// `module_exports` is: `file` carries the invalidation edge, `module` pins the
+/// `ModuleId` the interned `DefKey`s mint under.
+#[salsa::tracked(no_eq)]
+pub fn resolve_query(db: &dyn ResolveDb, module: ModuleId, _file: SourceFile) -> ResolveResult {
+    hir::resolve(db.sky_db(), module)
+}
+
 /// A source file's text keyed by its `file_id` — the Stage-A **input** (doc 01
 /// `source_text(FileId)`). One per module; the module set is the collection of
 /// these inputs. The driver `set_*`s them; every query is a pure function of
@@ -168,6 +218,26 @@ impl SkyDatabase {
     /// `Sky.Core.List`, …) — the salsa-backed peer of `hir::SourceDb::new`.
     pub fn with_kernel() -> Self {
         SkyDatabase {
+            kernel: hir::KERNEL_MODULES
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// A kernel-populated db that mirrors every salsa event's `kind` (stringified)
+    /// into `sink`. This is the observability seam the incremental-correctness
+    /// harness (and, later, LSP recompute profiling) uses to assert WHICH queries
+    /// re-execute after a `SourceFile` edit — a `WillExecute` line names the query
+    /// that recomputed, a `DidValidateMemoizedValue` line names one served from
+    /// memo. The default constructors install no callback (zero overhead); only
+    /// this path pays the per-event `format!` + lock.
+    pub fn with_kernel_events(sink: Arc<Mutex<Vec<String>>>) -> Self {
+        SkyDatabase {
+            storage: salsa::Storage::new(Some(Box::new(move |event: salsa::Event| {
+                sink.lock().unwrap().push(format!("{:?}", event.kind));
+            }))),
             kernel: hir::KERNEL_MODULES
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -254,6 +324,13 @@ impl SkyDb for SkyDatabase {
     }
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         Rc::new(module_exports(self, m, self.modules[m.index() as usize].file).clone())
+    }
+    fn resolve(&self, m: ModuleId) -> Rc<ResolveResult> {
+        // Salsa build path: route to the tracked `resolve_query` so the
+        // parse/exports → resolve edges are memoised + invalidated natively.
+        // Clone out of the memo into an `Rc` (the shared owning shape both
+        // backends return), exactly like `module_exports` above.
+        Rc::new(resolve_query(self, m, self.modules[m.index() as usize].file).clone())
     }
     fn module_ids(&self) -> Vec<ModuleId> {
         (0..self.modules.len() as u32).map(ModuleId).collect()

@@ -136,7 +136,7 @@ pub fn check_modules(db: &dyn SkyDb, to_check: &[ModuleId]) -> CheckOutput {
 
     for &mid in to_check {
         let mname = db.module_name(mid).to_string();
-        let resolved = hir::resolve(db, mid);
+        let resolved = db.resolve(mid);
         // Surface unresolved-name diagnostics (additive — see `name_errors`).
         for d in &resolved.diagnostics {
             if d.severity == Severity::Error {

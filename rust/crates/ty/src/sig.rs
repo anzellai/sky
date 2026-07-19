@@ -181,7 +181,7 @@ impl World {
             if pseudo != "Result" {
                 continue;
             }
-            let resolved = hir::resolve(db, m);
+            let resolved = db.resolve(m);
             let names: HashMap<DefId, String> = resolved
                 .top_defs
                 .iter()
