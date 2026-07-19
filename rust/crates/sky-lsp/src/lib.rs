@@ -17,7 +17,9 @@
 //! integration-tested directly; `main.rs` is the thin async transport wrapper.
 
 use base::{DefId, FileId, ModuleId, Span};
-use hir::{DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SourceDb, TypeOcc};
+use hir::{
+    DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SkyDb, SourceDb, TypeOcc,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use syntax::SyntaxKind;
@@ -303,7 +305,7 @@ impl Analysis {
 
     fn field_completion(
         &self,
-        db: &SourceDb,
+        db: &dyn SkyDb,
         resolved: &ResolveResult,
         recv: &str,
         off: usize,
@@ -410,8 +412,8 @@ impl Analysis {
     /// The kind of a `DefId` (value / type / ctor), for rename validation +
     /// symbol classification. `None` when the def is a builtin (Prelude) — those
     /// are not renameable.
-    fn def_kind(&self, db: &SourceDb, d: DefId) -> Option<DefKind> {
-        let loc = db.defs().borrow().loc(d)?;
+    fn def_kind(&self, db: &dyn SkyDb, d: DefId) -> Option<DefKind> {
+        let loc = db.def_loc(d)?;
         if loc.module.index() == u32::MAX {
             return None; // builtin/Prelude — no rename
         }
@@ -448,7 +450,7 @@ impl Analysis {
     /// Every occurrence span of `target` across the workspace. Declarations are
     /// included iff `include_decl`. Deterministic order: (file, start) sorted,
     /// deduplicated (L4).
-    fn collect_occurrences(&self, db: &SourceDb, target: &Target, include_decl: bool) -> Vec<Span> {
+    fn collect_occurrences(&self, db: &dyn SkyDb, target: &Target, include_decl: bool) -> Vec<Span> {
         let mut out: Vec<Span> = Vec::new();
         match target {
             Target::Local { owner, local } => {
@@ -458,7 +460,7 @@ impl Analysis {
                 // NB: bind the module out of the borrow BEFORE calling
                 // `hir::resolve` (which takes `defs().borrow_mut()`), else the
                 // if-let temporary keeps the shared borrow alive across it.
-                let owner_mod = db.defs().borrow().loc(*owner).map(|l| l.module);
+                let owner_mod = db.def_loc(*owner).map(|l| l.module);
                 if let Some(m) = owner_mod {
                     let r = hir::resolve(db, m);
                     for o in &r.ref_occs {
@@ -541,8 +543,8 @@ impl Analysis {
     /// Top-level `name : T` annotation-name spans in module `m` whose identifier
     /// matches def `d`'s name — recovers the signature occurrence the resolver's
     /// `def_spans` (which records the `name =` value site) does not carry.
-    fn annotation_name_spans(&self, db: &SourceDb, m: ModuleId, d: DefId) -> Vec<Span> {
-        let Some(loc) = db.defs().borrow().loc(d) else {
+    fn annotation_name_spans(&self, db: &dyn SkyDb, m: ModuleId, d: DefId) -> Vec<Span> {
+        let Some(loc) = db.def_loc(d) else {
             return Vec::new();
         };
         if loc.module != m || loc.kind != DefKind::Value {
@@ -607,7 +609,7 @@ impl Analysis {
         Some(PrepareRenameResponse::Range(span_to_range(text, span)))
     }
 
-    fn is_renameable(&self, db: &SourceDb, target: &Target) -> bool {
+    fn is_renameable(&self, db: &dyn SkyDb, target: &Target) -> bool {
         match target {
             Target::Local { .. } => true,
             Target::Global(d) => self.def_kind(db, *d).is_some(),
@@ -682,7 +684,7 @@ impl Analysis {
         let resolved = hir::resolve(&db, ModuleId(idx as u32));
         let mut out = Vec::new();
         for (d, span) in &resolved.def_spans {
-            let Some(loc) = db.defs().borrow().loc(*d) else {
+            let Some(loc) = db.def_loc(*d) else {
                 continue;
             };
             let (kind, keep) = match loc.kind {
@@ -737,7 +739,7 @@ impl Analysis {
             exact.entry(b.span.range).or_insert(TOK_PARAMETER);
         }
         for (d, s) in &resolved.def_spans {
-            let tt = match db.defs().borrow().loc(*d).map(|l| l.kind) {
+            let tt = match db.def_loc(*d).map(|l| l.kind) {
                 Some(DefKind::Value) => TOK_FUNCTION,
                 Some(DefKind::TypeCon) | Some(DefKind::TypeAlias) => TOK_TYPE,
                 Some(DefKind::Ctor) => TOK_ENUM_MEMBER,
@@ -880,7 +882,7 @@ fn classify_res(res: &Res) -> u32 {
 
 /// Every token of module `m` in document order (trivia included — comments carry
 /// a semantic-token class).
-fn resolved_tokens(db: &SourceDb, m: ModuleId) -> Vec<syntax::SyntaxToken> {
+fn resolved_tokens(db: &dyn SkyDb, m: ModuleId) -> Vec<syntax::SyntaxToken> {
     db.module_parse(m)
         .syntax()
         .descendants_with_tokens()
@@ -944,11 +946,11 @@ fn classify_token(
 
 /// Declaration span of a def — this module first, else the def's home module
 /// (cross-file goto for free: `DefId` carries its module via the interner).
-fn def_span(db: &SourceDb, resolved: &ResolveResult, this: ModuleId, d: DefId) -> Option<Span> {
+fn def_span(db: &dyn SkyDb, resolved: &ResolveResult, this: ModuleId, d: DefId) -> Option<Span> {
     if let Some((_, s)) = resolved.def_spans.iter().find(|(id, _)| *id == d) {
         return Some(*s);
     }
-    let loc = db.defs().borrow().loc(d)?;
+    let loc = db.def_loc(d)?;
     if loc.module == this || loc.module.index() == u32::MAX {
         return None;
     }
@@ -994,7 +996,7 @@ fn receiver_fields(
     }
 }
 
-fn module_completion(db: &SourceDb, dep: ModuleId, recv: &str) -> Vec<CompletionItem> {
+fn module_completion(db: &dyn SkyDb, dep: ModuleId, recv: &str) -> Vec<CompletionItem> {
     let exports = db.module_exports(dep);
     let mut items = Vec::new();
     for (name, _) in &exports.values {

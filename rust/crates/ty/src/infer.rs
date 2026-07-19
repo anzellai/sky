@@ -13,7 +13,7 @@ use crate::sig::World;
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
 use base::{DefId, Name};
-use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SourceDb};
+use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::HashMap;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
@@ -61,7 +61,7 @@ fn ty_contains_record(ty: &Ty) -> bool {
 
 pub struct Infer<'a> {
     world: &'a World,
-    db: &'a SourceDb,
+    db: &'a dyn SkyDb,
     pub uf: UnionFind,
     locals: HashMap<LocalId, TyVarId>,
     pub errors: Vec<TypeError>,
@@ -93,7 +93,7 @@ pub struct Infer<'a> {
 }
 
 impl<'a> Infer<'a> {
-    pub fn new(world: &'a World, db: &'a SourceDb) -> Self {
+    pub fn new(world: &'a World, db: &'a dyn SkyDb) -> Self {
         Infer {
             world,
             db,
@@ -565,9 +565,7 @@ impl<'a> Infer<'a> {
                 }
                 let name = self
                     .db
-                    .defs()
-                    .borrow()
-                    .loc(cr.def)
+                    .def_loc(cr.def)
                     .map(|l| l.name.as_str().to_string());
                 match name.and_then(|n| self.world.ctors.get(&n).cloned()) {
                     Some(s) => self.instantiate(&s),

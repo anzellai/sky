@@ -7,7 +7,7 @@ use crate::goty::{sky_ty_to_go, sky_ty_to_go_in, Nominal, NominalKind, TypeEnv};
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
-use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, Pattern, PatId, Res, SourceDb};
+use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, Pattern, PatId, Res, SkyDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ty::{BodyTypes, Ty, Typer};
 
@@ -134,11 +134,11 @@ pub struct LowerConfig {
     pub ffi: FfiTable,
 }
 
-pub fn lower_program(db: &SourceDb, entry: ModuleId) -> LowerOutput {
+pub fn lower_program(db: &dyn SkyDb, entry: ModuleId) -> LowerOutput {
     lower_program_cfg(db, entry, &LowerConfig::default())
 }
 
-pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
+pub fn lower_program_cfg(db: &dyn SkyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     let typer = Typer::new(db);
     let mut warnings = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -204,23 +204,39 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // record literal → inference gives a closed record that EXACTLY matches a
     // declared record alias. That alias is the Model; unannotated view/update/
     // helpers infer subsets of it, resolved to the nominal `_R` in `sky_ty_to_go`.
-    let model: Option<(Vec<String>, String)> = defs.values().find_map(|e| {
-        let Ty::Tuple(xs) = e.types.result.as_ref()? else {
-            return None;
-        };
-        if xs.len() != 2 {
-            return None;
-        }
-        let Ty::Record(fields, _) = &xs[0] else {
-            return None;
-        };
-        if !matches!(&xs[1], Ty::App(cn, _) if cn.as_str() == "Cmd") {
-            return None;
-        }
-        let mut names: Vec<String> = fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-        names.sort();
-        record_fieldsets.get(&names).map(|go| (names.clone(), go.clone()))
-    });
+    //
+    // `defs` is a `BTreeMap<DefId, _>` whose iteration order is DefId-valued;
+    // since `DefId`s became content-keyed salsa-interned ids (resolve-stage port),
+    // that order is no longer the insertion order. Scan candidates in a STABLE
+    // `(module, name)` order so which def is picked — hence emitted Go — never
+    // depends on the raw `DefId` value (the `repro` byte-stability guarantee). In
+    // a well-formed single-`init` app exactly one def matches, so the order only
+    // hardens the pathological multi-match case.
+    let model: Option<(Vec<String>, String)> = {
+        let mut candidates: Vec<&DefEntry> = defs.values().collect();
+        candidates.sort_by(|a, b| {
+            (a.module_name.as_str(), a.name.as_str())
+                .cmp(&(b.module_name.as_str(), b.name.as_str()))
+        });
+        candidates.into_iter().find_map(|e| {
+            let Ty::Tuple(xs) = e.types.result.as_ref()? else {
+                return None;
+            };
+            if xs.len() != 2 {
+                return None;
+            }
+            let Ty::Record(fields, _) = &xs[0] else {
+                return None;
+            };
+            if !matches!(&xs[1], Ty::App(cn, _) if cn.as_str() == "Cmd") {
+                return None;
+            }
+            let mut names: Vec<String> =
+                fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+            names.sort();
+            record_fieldsets.get(&names).map(|go| (names.clone(), go.clone()))
+        })
+    };
     let env = TypeEnv {
         nominal,
         nominal_by_module,
@@ -624,7 +640,7 @@ fn detect_kernel_alias(body: &Body) -> Option<String> {
 /// The qualifier is the explicit `as`-alias if present, else the import path's
 /// final segment (the default qualifier). Only parsed-module (`Dep`) imports are
 /// mapped — kernel / FFI qualifiers are resolved elsewhere in `sky_ty_to_go`.
-fn import_module_map(db: &SourceDb, m: base::ModuleId) -> HashMap<String, String> {
+fn import_module_map(db: &dyn SkyDb, m: base::ModuleId) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let tree = db.module_parse(m).tree();
     for imp in tree.imports() {
@@ -678,7 +694,7 @@ fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
 
 #[allow(clippy::type_complexity)]
 fn collect_types(
-    db: &SourceDb,
+    db: &dyn SkyDb,
 ) -> (
     HashMap<String, Nominal>,
     HashMap<(String, String), Nominal>,
@@ -1050,7 +1066,7 @@ fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
 // ---- per-def lowering context ------------------------------------------
 
 struct Ctx<'a> {
-    db: &'a SourceDb,
+    db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
     kernel_alias: &'a HashMap<DefId, String>,
     env: &'a TypeEnv,
@@ -1735,7 +1751,7 @@ impl<'a> Ctx<'a> {
         // function value (`onInput UpdateDraft`, `onClick (Select room)` after
         // spine flattening leaves a partial), Sky curries but Go does not — so
         // eta-expand into a closure that applies the ctor to its params.
-        let loc = self.db.defs().borrow().loc(def);
+        let loc = self.db.def_loc(def);
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
         let arity = self.ctor_arity_pinned(&cname, pin.as_deref());
         if arity == 0 {
@@ -1790,7 +1806,7 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
         pin: Option<String>,
     ) -> (bool, GoExpr) {
-        let loc = self.db.defs().borrow().loc(def);
+        let loc = self.db.def_loc(def);
         let cname = loc.map(|l| l.name.as_str().to_string()).unwrap_or_default();
         // Partial application of a multi-arg constructor (`JobDone jid` where
         // `JobDone : Int -> Result … -> Msg`, `Piece kind` for a record ctor) is
@@ -2020,7 +2036,7 @@ impl<'a> Ctx<'a> {
     /// `DefId` (the resolved `CtorRef.type_`). Matches `module_prefix + "_" +
     /// type-name`, the same shape `reg!` interns during type-decl collection.
     fn pinned_union_go(&self, type_: DefId) -> Option<String> {
-        let loc = self.db.defs().borrow().loc(type_)?;
+        let loc = self.db.def_loc(type_)?;
         // Builtin ctors (Ok/Err/Just/Nothing/…) intern their type under the
         // synthetic `BUILTIN_MOD` (`ModuleId(u32::MAX)`), which is not a real
         // module — `module_name` would index out of bounds. They never collide
@@ -2041,7 +2057,7 @@ impl<'a> Ctx<'a> {
     /// emits a zero-arg thunk `Piece()` and the args apply to its result
     /// (`Piece()(kind, colour)` → "not enough arguments", example 16).
     fn record_ctor_name(&self, d: DefId) -> Option<String> {
-        let loc = self.db.defs().borrow().loc(d);
+        let loc = self.db.def_loc(d);
         let name = loc.map(|l| l.name.as_str().to_string())?;
         match self.ctor_owner.get(&name) {
             Some((_, NominalKind::Record)) => Some(name),
@@ -3731,6 +3747,7 @@ mod qualified_type_tests {
     use super::*;
     use crate::goty::{sky_ty_to_go, TypeEnv};
     use crate::ir::GoTy;
+    use hir::SourceDb;
 
     fn parse_mod(src: &str) -> syntax::Parse {
         syntax::parse(src, base::FileId(0))

@@ -5,7 +5,7 @@
 //! (doc 05 §8).
 
 use crate::cst::{self, CtorExposure, ExposedItem};
-use crate::ids::{DefKind, DefTable};
+use crate::ids::DefKind;
 use base::{DefId, ModuleId, Name};
 use syntax::ast::{self, AstNode};
 use syntax::SyntaxKind;
@@ -98,10 +98,16 @@ struct LocalAlias {
 }
 
 /// Compute a module's exports from its parsed tree.
+///
+/// `DefId`s are minted through the `intern` callback rather than a borrowed
+/// `&mut DefTable`, so this stays agnostic to where the interner lives — the
+/// eager [`crate::db::SourceDb`] hands a `RefCell<DefTable>` closure; a
+/// salsa-backed db hands a `#[salsa::interned]` closure. Called only from a
+/// `module_exports` query, so the interning is captured as that query's effect.
 pub fn compute_exports(
     module: ModuleId,
     tree: &ast::SourceFile,
-    defs: &mut DefTable,
+    intern: &mut dyn FnMut(ModuleId, &Name, DefKind) -> DefId,
 ) -> ModuleExports {
     // ---- collect local declarations ----
     let mut local_values: Vec<String> = Vec::new();
@@ -163,8 +169,10 @@ pub fn compute_exports(
 
     let mut exports = ModuleExports::empty(module);
 
-    // Helper to mint ids.
-    let value_def = |defs: &mut DefTable, n: &str| defs.intern(module, &Name::new(n), DefKind::Value);
+    // Helper to mint value ids through the interner callback.
+    let value_def = |intern: &mut dyn FnMut(ModuleId, &Name, DefKind) -> DefId, n: &str| {
+        intern(module, &Name::new(n), DefKind::Value)
+    };
 
     // ---- unions ----
     for u in &local_unions {
@@ -181,7 +189,7 @@ pub fn compute_exports(
         let Some(ctor_exp) = exposed_ctors else {
             continue; // type not exposed at all
         };
-        let type_def = defs.intern(module, &Name::new(&u.name), DefKind::TypeCon);
+        let type_def = intern(module, &Name::new(&u.name), DefKind::TypeCon);
         let mut ctors = Vec::new();
         for (i, (cn, carity)) in u.ctors.iter().enumerate() {
             let keep = match &ctor_exp {
@@ -194,7 +202,7 @@ pub fn compute_exports(
             }
             ctors.push(ExportedCtor {
                 name: Name::new(cn),
-                def: defs.intern(module, &Name::new(cn), DefKind::Ctor),
+                def: intern(module, &Name::new(cn), DefKind::Ctor),
                 type_: type_def,
                 index: i as u16,
                 arity: *carity,
@@ -221,7 +229,7 @@ pub fn compute_exports(
         if !exposed {
             continue;
         }
-        let def = defs.intern(module, &Name::new(&a.name), DefKind::TypeAlias);
+        let def = intern(module, &Name::new(&a.name), DefKind::TypeAlias);
         exports.aliases.push(ExportedAlias {
             name: Name::new(&a.name),
             def,
@@ -230,7 +238,7 @@ pub fn compute_exports(
         });
         // record alias name doubles as a positional constructor value (C9).
         if a.is_record {
-            let vd = value_def(defs, &a.name);
+            let vd = value_def(intern, &a.name);
             exports.values.push((Name::new(&a.name), vd));
         }
     }
@@ -244,7 +252,7 @@ pub fn compute_exports(
                     .any(|it| matches!(it, ExposedItem::Value(x) if x == v))
             });
         if exposed {
-            let vd = value_def(defs, v);
+            let vd = value_def(intern, v);
             exports.values.push((Name::new(v), vd));
         }
     }
@@ -257,7 +265,7 @@ pub fn compute_exports(
             if let ExposedItem::Value(v) = it {
                 let known = exports.values.iter().any(|(n, _)| n.as_str() == v);
                 if !known {
-                    let vd = value_def(defs, v);
+                    let vd = value_def(intern, v);
                     exports.values.push((Name::new(v), vd));
                 }
             }

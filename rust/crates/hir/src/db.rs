@@ -8,9 +8,9 @@
 //! variant the task permits, structured so a salsa port is mechanical.
 
 use crate::exports::{compute_exports, ModuleExports};
-use crate::ids::DefTable;
+use crate::ids::{DefKind, DefLoc, DefTable};
 use crate::kernel::KERNEL_MODULES;
-use base::ModuleId;
+use base::{DefId, ModuleId, Name};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -35,12 +35,17 @@ struct ModuleInfo {
 }
 
 /// The resolution database.
+///
+/// The old `exports_cache: RefCell<HashMap<…>>` hand-rolled memo is gone (the
+/// resolve-stage salsa port): on the real build path `module_exports` is a
+/// `#[salsa::tracked]` query on `skydb::SkyDatabase`, which memoises it natively;
+/// this eager `SourceDb` (LSP + test path) simply recomputes on demand — cheap,
+/// and it never sat on a hot loop.
 pub struct SourceDb {
     modules: Vec<ModuleInfo>,
     by_name: HashMap<String, ModuleId>,
     kernel: HashMap<String, String>,
     defs: RefCell<DefTable>,
-    exports_cache: RefCell<HashMap<u32, Rc<ModuleExports>>>,
 }
 
 impl Default for SourceDb {
@@ -60,7 +65,6 @@ impl SourceDb {
             by_name: HashMap::new(),
             kernel,
             defs: RefCell::new(DefTable::new()),
-            exports_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -69,7 +73,6 @@ impl SourceDb {
     pub fn add_module(&mut self, name: &str, parse: syntax::Parse) -> ModuleId {
         if let Some(&id) = self.by_name.get(name) {
             self.modules[id.index() as usize].parse = parse;
-            self.exports_cache.borrow_mut().remove(&id.index());
             return id;
         }
         let id = ModuleId(self.modules.len() as u32);
@@ -109,19 +112,16 @@ impl SourceDb {
         self.kernel.get(qualifier).map(String::as_str)
     }
 
-    /// `module_exports(m)` — memoised, computed purely from `m`'s parse (doc 05
-    /// §8: no recursion into other modules, so no cycles).
+    /// `module_exports(m)` — computed purely from `m`'s parse (doc 05 §8: no
+    /// recursion into other modules, so no cycles). Recomputed per call (the
+    /// former `RefCell` memo is gone; the salsa build path memoises natively).
     pub fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
-        if let Some(e) = self.exports_cache.borrow().get(&m.index()) {
-            return e.clone();
-        }
         let tree = self.modules[m.index() as usize].parse.tree();
-        let exports = compute_exports(m, &tree, &mut self.defs.borrow_mut());
-        let rc = Rc::new(exports);
-        self.exports_cache
-            .borrow_mut()
-            .insert(m.index(), rc.clone());
-        rc
+        let defs = &self.defs;
+        let exports = compute_exports(m, &tree, &mut |mm, n, k| {
+            defs.borrow_mut().intern(mm, n, k)
+        });
+        Rc::new(exports)
     }
 
     /// Mint / recover a `DefId` for a name in a module.
@@ -132,5 +132,72 @@ impl SourceDb {
     /// All registered module ids, in insertion order (deterministic, L4).
     pub fn module_ids(&self) -> impl Iterator<Item = ModuleId> {
         (0..self.modules.len() as u32).map(ModuleId)
+    }
+}
+
+/// The resolution-database interface the forbid-clean frontend crates
+/// (`hir::resolve`, `ty`, `lower`, `sky-lsp`) call through (doc 05 §1, §8, L1).
+///
+/// This is the seam the salsa port needs: `hir` cannot host salsa (its
+/// proc-macros expand to `unsafe impl`, incompatible with `#![forbid(unsafe_code)]`
+/// — doc 02), so the query authors reach the database only via these methods.
+/// The eager, hand-rolled [`SourceDb`] implements it directly; a salsa-backed
+/// `skydb::SkyDatabase` implements the same surface with `#[salsa::tracked]`
+/// `module_exports` + `#[salsa::interned]` `DefId`s — swapping the storage
+/// without touching a single call site. Deliberately borrow-returning where the
+/// implementation can hand out a `&self`-tied reference (`module_name`,
+/// `module_parse`, `kernel_pseudo`); `intern_def`/`def_loc` replace the old
+/// `defs() -> &RefCell<DefTable>` accessor so the interner can live behind
+/// content-keyed salsa storage that has no `RefCell` to lend out.
+pub trait SkyDb {
+    /// The dotted module name for a registered module id.
+    fn module_name(&self, m: ModuleId) -> &str;
+    /// The parsed CST for a registered module id.
+    fn module_parse(&self, m: ModuleId) -> &syntax::Parse;
+    /// The module id registered under a dotted name, if any.
+    fn module_by_name(&self, name: &str) -> Option<ModuleId>;
+    /// Classify an import path (parsed dep > kernel pseudo > foreign package).
+    fn classify_import(&self, path: &str) -> ImportSource;
+    /// The kernel pseudo-module a bare qualifier names, if any.
+    fn kernel_pseudo(&self, qualifier: &str) -> Option<&str>;
+    /// A module's exports, narrowed by its `exposing` clause (memoised).
+    fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports>;
+    /// All registered module ids, in insertion order (deterministic, L4).
+    fn module_ids(&self) -> Vec<ModuleId>;
+    /// Mint / recover the stable `DefId` for `(module, name, kind)` — the
+    /// register-on-first-mention interner (successor to `defs().borrow_mut()`).
+    fn intern_def(&self, module: ModuleId, name: &Name, kind: DefKind) -> DefId;
+    /// Recover a definition's location from its id (successor to
+    /// `defs().borrow().loc()`).
+    fn def_loc(&self, def: DefId) -> Option<DefLoc>;
+}
+
+impl SkyDb for SourceDb {
+    fn module_name(&self, m: ModuleId) -> &str {
+        SourceDb::module_name(self, m)
+    }
+    fn module_parse(&self, m: ModuleId) -> &syntax::Parse {
+        SourceDb::module_parse(self, m)
+    }
+    fn module_by_name(&self, name: &str) -> Option<ModuleId> {
+        SourceDb::module_by_name(self, name)
+    }
+    fn classify_import(&self, path: &str) -> ImportSource {
+        SourceDb::classify_import(self, path)
+    }
+    fn kernel_pseudo(&self, qualifier: &str) -> Option<&str> {
+        SourceDb::kernel_pseudo(self, qualifier)
+    }
+    fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
+        SourceDb::module_exports(self, m)
+    }
+    fn module_ids(&self) -> Vec<ModuleId> {
+        SourceDb::module_ids(self).collect()
+    }
+    fn intern_def(&self, module: ModuleId, name: &Name, kind: DefKind) -> DefId {
+        self.defs.borrow_mut().intern(module, name, kind)
+    }
+    fn def_loc(&self, def: DefId) -> Option<DefLoc> {
+        self.defs.borrow().loc(def)
     }
 }

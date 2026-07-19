@@ -17,8 +17,8 @@ mod ids;
 mod kernel;
 mod resolve;
 
-pub use db::{ImportSource, SourceDb};
-pub use exports::{ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
+pub use db::{ImportSource, SkyDb, SourceDb};
+pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
 pub use hir::{
     Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId,
 };

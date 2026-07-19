@@ -3,7 +3,6 @@
 //! materialise a pruned copy of `runtime-go/rt` beside it, then run `go build`.
 //! The runtime tree is copied wholesale, never regenerated (L10).
 
-use hir::SourceDb;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -78,15 +77,18 @@ fn assemble_and_emit_with(
     // making the query DAG's leaf load-bearing on the build path. `next_id` mints
     // a distinct `file_id` per module in load order (no span/file-id reaches
     // emitted Go, so the routing is byte-identical to the prior inline parse).
-    let sdb = skydb::SkyDatabase::default();
+    // The salsa db now holds the WHOLE module set (the resolve-stage port): each
+    // module is a `SourceFile` input, `parse`/`module_exports` are tracked queries,
+    // and `DefId`s are `#[salsa::interned]`. `load_dir` mints the inputs under a
+    // shared `&db` borrow that closes before each `&mut db` registration.
+    let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
-    let mut db = SourceDb::new();
-    let stdlib = load_dir(&sdb, &mut next_id, &repo_root.join("sky-stdlib"));
+    let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
     if stdlib.is_empty() {
         return Err("no stdlib under sky-stdlib".into());
     }
-    for (n, parse) in stdlib {
-        db.add_module(&n, parse);
+    for (n, file) in stdlib {
+        db.add_module(&n, file);
     }
     // Sky-package dependencies (`[dependencies]` in sky.toml, e.g.
     // `github.com/anzellai/sky-tailwind`) are fetched as Sky *source* under
@@ -95,13 +97,13 @@ fn assemble_and_emit_with(
     // falling through to a `Basics` kernel guess. Loaded BEFORE the example's
     // own src so a dep module named `Main` (packages ship their own demo entry)
     // is overwritten by — and never shadows — the example's real `Main`.
-    for (n, parse) in load_skydeps(&sdb, &mut next_id, &example_dir.join(".skydeps")) {
-        db.add_module(&n, parse);
+    for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
+        db.add_module(&n, file);
     }
 
-    let mut locals = load_dir(&sdb, &mut next_id, &example_dir.join("src"));
+    let mut locals = load_dir(&db, &mut next_id, &example_dir.join("src"));
     for dir in extra_dirs {
-        locals.extend(load_dir(&sdb, &mut next_id, dir));
+        locals.extend(load_dir(&db, &mut next_id, dir));
     }
     if locals.is_empty() {
         return Err("no .sky under src/".into());
@@ -109,15 +111,14 @@ fn assemble_and_emit_with(
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
     // Parse-error gate accumulator (`[E0001]` class). Collected HERE, in the
-    // app-module loop, because `db.add_module` moves the `parse` — the parser's
-    // recovery diagnostics (`parse.errors()`) and its structural ERROR-node
-    // count (`parse.error_node_count()`) must be read off each app module before
-    // it is handed to the db. Only APP modules are gated: the stdlib +
-    // `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes across
-    // the whole corpus) and are trusted, exactly like the type/name/exhaustive
-    // gates scope to `check_ids`.
+    // app-module loop, reading each app module's parse (from the tracked `parse`
+    // query, keyed by its `SourceFile` input) BEFORE `&mut db` registration — the
+    // `&db` borrow closes before `add_module`. Only APP modules are gated: the
+    // stdlib + `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes
+    // across the whole corpus) and are trusted, exactly like the type/name/
+    // exhaustive gates scope to `check_ids`.
     let mut parse_diags: Vec<String> = Vec::new();
-    for (n, parse) in locals {
+    for (n, file) in locals {
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
         // node that lowers to Go `nil` and panics at runtime — while `sky check`
@@ -126,22 +127,25 @@ fn assemble_and_emit_with(
         // check`/`build`/`run` all reject before lower/emit, upholding both
         // "at least compatible with the oracle" and `sky check ≡ sky build` →
         // "if it compiles it works".
-        if !parse.errors().is_empty() || parse.error_node_count() > 0 {
-            if parse.errors().is_empty() {
-                // Recovery produced a structural ERROR node without an attached
-                // diagnostic (defensive — the recovery paths always pair the two).
-                parse_diags.push(format!(
-                    "[E0001] PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
-                ));
-            } else {
-                for d in parse.errors() {
-                    if d.severity == diagnostics::Severity::Error {
-                        parse_diags.push(format!("[{}] {}", d.code.0, d.message));
+        {
+            let parse = skydb::parse(&db, file);
+            if !parse.errors().is_empty() || parse.error_node_count() > 0 {
+                if parse.errors().is_empty() {
+                    // Recovery produced a structural ERROR node without an attached
+                    // diagnostic (defensive — the recovery paths always pair the two).
+                    parse_diags.push(format!(
+                        "[E0001] PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
+                    ));
+                } else {
+                    for d in parse.errors() {
+                        if d.severity == diagnostics::Severity::Error {
+                            parse_diags.push(format!("[{}] {}", d.code.0, d.message));
+                        }
                     }
                 }
             }
         }
-        let id = db.add_module(&n, parse);
+        let id = db.add_module(&n, file);
         // Every app-code module (the project's own `src/` + any `extra_dirs`
         // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
         // signatures, never re-checked — mirrors the `xtask infer` gate, whose
@@ -610,7 +614,7 @@ fn load_skydeps(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     skydeps: &Path,
-) -> Vec<(String, syntax::Parse)> {
+) -> Vec<(String, skydb::SourceFile)> {
     let mut out = Vec::new();
     let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
         Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect(),
@@ -626,34 +630,34 @@ fn load_skydeps(
             let Ok(src) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let (n, parse) = parse_via_salsa(sdb, next_id, src, &path);
+            let (n, file) = parse_via_salsa(sdb, next_id, src, &path);
             if n == "Main" || n == "main" {
                 continue;
             }
-            out.push((n, parse));
+            out.push((n, file));
         }
     }
     out
 }
 
 /// Route a module's source through the Stage-A salsa input + Stage-B `parse`
-/// query (doc 01, doc 12): intern the text as a [`skydb::SourceFile`] and pull
-/// its CST from the memoised `parse` leaf query, instead of an inline
-/// `syntax::parse`. `next_id` mints a distinct `file_id` per module. Returns the
-/// module's declared name (from its header, else file stem) + the parsed tree.
-/// Byte-identical to the prior inline parse — no `FileId`/span reaches emitted
-/// Go, so build + repro output is unchanged.
+/// query (doc 01, doc 12): intern the text as a [`skydb::SourceFile`] and read
+/// its name off the memoised `parse` leaf query. `next_id` mints a distinct
+/// `file_id` per module (the module's load-order ordinal). Returns the module's
+/// declared name (from its header, else file stem) + the `SourceFile` input
+/// handle — the whole module set now lives in the salsa db (the resolve-stage
+/// port), so `resolve`/`module_exports` key off these handles rather than cloned
+/// `Parse`s. No `FileId`/span reaches emitted Go, so build + repro are unchanged.
 fn parse_via_salsa(
-    sdb: &skydb::SkyDatabase,
+    db: &skydb::SkyDatabase,
     next_id: &mut u32,
     src: String,
     path: &Path,
-) -> (String, syntax::Parse) {
-    let file = skydb::SourceFile::new(sdb, *next_id, src);
+) -> (String, skydb::SourceFile) {
+    let file = db.new_source(*next_id, src);
     *next_id += 1;
-    let parse = skydb::parse(sdb, file).clone();
-    let name = module_name(&parse, path);
-    (name, parse)
+    let name = module_name(skydb::parse(db, file), path);
+    (name, file)
 }
 
 /// Recursively collect `*.sky` files, sorted, with no generated-dir pruning.
@@ -677,7 +681,7 @@ fn load_dir(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     dir: &Path,
-) -> Vec<(String, syntax::Parse)> {
+) -> Vec<(String, skydb::SourceFile)> {
     let mut files = Vec::new();
     collect_sky(dir, &mut files);
     let mut out = Vec::new();

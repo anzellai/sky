@@ -9,7 +9,7 @@
 
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Name};
-use hir::{DefKind, SourceDb, KERNEL_MODULES};
+use hir::{DefKind, SkyDb, KERNEL_MODULES};
 use std::collections::HashMap;
 use syntax::ast::{self, AstNode};
 use syntax::{SyntaxKind, SyntaxNode};
@@ -54,7 +54,7 @@ pub struct World {
 
 impl World {
     /// Build the world from every loaded module (stdlib + deps + entry).
-    pub fn build(db: &SourceDb) -> World {
+    pub fn build(db: &dyn SkyDb) -> World {
         let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
 
         let mut world = World {
@@ -151,7 +151,7 @@ impl World {
     /// defs living in kernel/stdlib pseudo-modules. One pass against the
     /// annotated world: a combinator's body only references builtins (`Ok`/`Err`),
     /// its own params, or (leniently) itself — sufficient for `map*`/`fold*`/etc.
-    fn infer_unannotated_kernel(&mut self, db: &SourceDb) {
+    fn infer_unannotated_kernel(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
         let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
 
@@ -224,7 +224,7 @@ impl World {
         }
     }
 
-    fn record_union(&mut self, db: &SourceDb, m: ModuleId, u: &ast::UnionDecl) {
+    fn record_union(&mut self, db: &dyn SkyDb, m: ModuleId, u: &ast::UnionDecl) {
         let Some(tname) = u.name().map(|t| t.text().to_string()) else {
             return;
         };
@@ -247,19 +247,13 @@ impl World {
                 .rev()
                 .fold(result.clone(), |acc, a| Ty::Fun(Box::new(a), Box::new(acc)));
             let scheme = Scheme::generalize(ty);
-            let cdef = db
-                .defs()
-                .borrow_mut()
-                .intern(m, &Name::new(&cn), hir::DefKind::Ctor);
+            let cdef = db.intern_def(m, &Name::new(&cn), hir::DefKind::Ctor);
             self.ctors_by_def.insert(cdef, scheme.clone());
             self.ctors.insert(cn.clone(), scheme);
             self.ctor_union.insert(cn.clone(), tname.clone());
             names.push(cn.clone());
         }
-        let type_def = db
-            .defs()
-            .borrow_mut()
-            .intern(m, &Name::new(&tname), hir::DefKind::TypeCon);
+        let type_def = db.intern_def(m, &Name::new(&tname), hir::DefKind::TypeCon);
         self.union_members_by_def.insert(type_def, names.clone());
         self.union_ctors.insert(tname, names);
     }
@@ -385,10 +379,8 @@ fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
     }
 }
 
-fn intern_value(db: &SourceDb, m: ModuleId, name: &str) -> DefId {
-    db.defs()
-        .borrow_mut()
-        .intern(m, &Name::new(name), DefKind::Value)
+fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
+    db.intern_def(m, &Name::new(name), DefKind::Value)
 }
 
 // ---- AST → Ty ------------------------------------------------------------

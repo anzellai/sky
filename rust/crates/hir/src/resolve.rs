@@ -4,7 +4,7 @@
 //! `Res::Error` + a diagnostic and the walk continues (L7).
 
 use crate::cst;
-use crate::db::{ImportSource, SourceDb};
+use crate::db::{ImportSource, SkyDb};
 use crate::exports::ModuleExports;
 use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
@@ -138,7 +138,7 @@ pub struct ResolveResult {
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
-pub fn resolve(db: &SourceDb, module: ModuleId) -> ResolveResult {
+pub fn resolve(db: &dyn SkyDb, module: ModuleId) -> ResolveResult {
     let mut r = Resolver::new(db, module);
     r.build_env();
     r.walk_module();
@@ -146,7 +146,7 @@ pub fn resolve(db: &SourceDb, module: ModuleId) -> ResolveResult {
 }
 
 struct Resolver<'a> {
-    db: &'a SourceDb,
+    db: &'a dyn SkyDb,
     module: ModuleId,
     file: FileId,
 
@@ -194,7 +194,7 @@ enum TypeResEntry {
 }
 
 impl<'a> Resolver<'a> {
-    fn new(db: &'a SourceDb, module: ModuleId) -> Self {
+    fn new(db: &'a dyn SkyDb, module: ModuleId) -> Self {
         Resolver {
             db,
             module,
@@ -267,10 +267,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn def(&self, module: ModuleId, name: &str, kind: DefKind) -> DefId {
-        self.db
-            .defs()
-            .borrow_mut()
-            .intern(module, &Name::new(name), kind)
+        self.db.intern_def(module, &Name::new(name), kind)
     }
 
     // ---- environment building (doc 05 §5, §10) --------------------------

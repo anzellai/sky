@@ -8,7 +8,7 @@ use crate::sig::World;
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
-use hir::{Body, ExprId, LocalId, SourceDb};
+use hir::{Body, ExprId, LocalId, SkyDb};
 use std::collections::HashMap;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
@@ -59,11 +59,11 @@ pub struct BodyTypes {
 /// crate ask for per-expression types without rebuilding the world per def.
 pub struct Typer<'a> {
     world: World,
-    db: &'a SourceDb,
+    db: &'a dyn SkyDb,
 }
 
 impl<'a> Typer<'a> {
-    pub fn new(db: &'a SourceDb) -> Self {
+    pub fn new(db: &'a dyn SkyDb) -> Self {
         Typer {
             world: World::build(db),
             db,
@@ -130,7 +130,7 @@ impl<'a> Typer<'a> {
 
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
-pub fn check_modules(db: &SourceDb, to_check: &[ModuleId]) -> CheckOutput {
+pub fn check_modules(db: &dyn SkyDb, to_check: &[ModuleId]) -> CheckOutput {
     let world = World::build(db);
     let mut out = CheckOutput::default();
 
