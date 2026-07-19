@@ -3794,6 +3794,29 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			cmd = Cmd_batch([]any{cmd, navCmd})
 		}
 	}
+	// Hold sess.mu across the model mutation + Cmd/subscription spawn +
+	// initial render so the render's write to sess.handlers cannot race
+	// a Cmd.perform / Time.every goroutine's own dispatch render.
+	//
+	// The trap: init returns a Cmd (typically a Cmd.batch containing a
+	// Cmd.perform whose Task resolves near-instantly — e.g.
+	// `Cmd.perform (Time.unixMillis ()) GotNowMs`). runCmd spawns that
+	// as `go app.runPerform(...)`; the goroutine acquires sess.mu and
+	// calls dispatch → renderVNode(sess.handlers), REPLACING and
+	// writing the same map this handler renders into at mount time.
+	// This handler holds app.locker(sid) but NOT sess.mu, so the two
+	// writers are guarded by different locks → fatal "concurrent map
+	// writes" in renderVNode on the very first request.
+	//
+	// runCmd + setupSubscriptions only acquire sess.mu LAZILY inside
+	// the goroutines they spawn (runPerformBody, the Time.every tick,
+	// topic/stream/ws delivery) — never synchronously on this path — so
+	// holding sess.mu here simply defers those goroutines' first
+	// dispatch until the initial render has committed. This matches the
+	// locking discipline every other render path already follows
+	// (handleEvent, dispatchBatched, the SSE reconnect-resync all hold
+	// sess.mu around their renderVNode call).
+	sess.mu.Lock()
 	sess.model = model
 	sess.handlers = map[string]any{}
 
@@ -3812,6 +3835,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	sess.commitRender(&vn, body)
 	sess.lastShippedBody = body
 	app.store.Set(sid, sess)
+	sess.mu.Unlock()
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
