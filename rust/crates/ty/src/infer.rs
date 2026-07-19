@@ -606,28 +606,45 @@ impl<'a> Infer<'a> {
                 if self.self_def == Some(def) {
                     return self.uf.fresh_flex();
                 }
-                match self.world.inferred_sigs.get(&def) {
-                    Some(s) if self.use_inferred => {
+                if let Some(s) = self.world.inferred_sigs.get(&def) {
+                    if self.use_inferred {
                         let s = s.clone();
-                        self.instantiate(&s)
+                        return self.instantiate(&s);
                     }
-                    _ => self.uf.fresh_flex(),
                 }
+                // CHECK-ONLY precise combinator sig (audit #3). Consulted only on
+                // the accept/reject-check path (`!use_inferred`) so the lowerer's
+                // lenient wildcard behaviour — and hence Go emission — is
+                // unchanged. Pins e.g. `List.map`'s result element from its arg.
+                if !self.use_inferred {
+                    if let Some(s) = self.world.check_sigs.get(&def) {
+                        let s = s.clone();
+                        return self.instantiate(&s);
+                    }
+                }
+                self.uf.fresh_flex()
             }
             Res::Kernel { module, func } => {
                 let key = (module.as_str().to_string(), func.as_str().to_string());
-                match self.world.kernel_sigs.get(&key) {
-                    Some(s) => {
-                        // Zero-arg kernel-shim class (Limitation #7 family:
-                        // `loadEnv`/`uuidV4`/`timeNow`/`Pure.*`): a kernel
-                        // `() -> X` accepts a call with or without the unit, so
-                        // relax leading `Unit` params to flex. Narrow — only
-                        // affects Unit-first-param kernel sigs.
-                        let s = relax_unit_arg_spine(s);
-                        self.instantiate(&s)
-                    }
-                    None => self.uf.fresh_flex(),
+                if let Some(s) = self.world.kernel_sigs.get(&key) {
+                    // Zero-arg kernel-shim class (Limitation #7 family:
+                    // `loadEnv`/`uuidV4`/`timeNow`/`Pure.*`): a kernel
+                    // `() -> X` accepts a call with or without the unit, so
+                    // relax leading `Unit` params to flex. Narrow — only
+                    // affects Unit-first-param kernel sigs.
+                    let s = relax_unit_arg_spine(s);
+                    return self.instantiate(&s);
                 }
+                // CHECK-ONLY precise combinator sig for a bare prelude-qualified
+                // `List.map` that stayed `Res::Kernel` (audit #3). Same
+                // `!use_inferred` gate + `relax` symmetry as the kernel path.
+                if !self.use_inferred {
+                    if let Some(s) = self.world.check_kernel_sigs.get(&key) {
+                        let s = relax_unit_arg_spine(s);
+                        return self.instantiate(&s);
+                    }
+                }
+                self.uf.fresh_flex()
             }
             Res::Ctor(cr) => {
                 // Disambiguate same-named ctors by DefId first, then by name

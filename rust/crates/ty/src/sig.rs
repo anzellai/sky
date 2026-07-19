@@ -44,6 +44,13 @@ pub struct World {
     /// Kernel function schemes, keyed by `(pseudo-module, func)`
     /// (matches `Res::Kernel`).
     pub kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Precise combinator schemes consulted by the accept/reject CHECKER ONLY
+    /// (`use_inferred == false`). Deliberately invisible to the lowerer
+    /// (`use_inferred == true`) and to pass-3 inference, so call-site element
+    /// pinning cannot perturb Go emission (see the pass-3 `Result`-only
+    /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
+    pub check_sigs: HashMap<DefId, Scheme>,
+    pub check_kernel_sigs: HashMap<(String, String), Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -70,6 +77,8 @@ impl World {
             value_sigs: HashMap::new(),
             inferred_sigs: HashMap::new(),
             kernel_sigs: HashMap::new(),
+            check_sigs: HashMap::new(),
+            check_kernel_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
             ctor_union: HashMap::new(),
@@ -153,7 +162,66 @@ impl World {
         // code keeps its lenient fresh-flex behaviour, minimising blast radius.
         world.infer_unannotated_kernel(db);
 
+        // ---- pass 4: seed precise CHECK-ONLY List combinator schemes ----
+        // Seeded AFTER pass 3 (grill hardening): `check_sigs` must never leak
+        // into the pass-3-inferred Result schemes the lowerer consumes. Both run
+        // with `use_inferred=false`; today no Result combinator body calls a List
+        // HOF, but seed-after makes the isolation structural, not incidental.
+        world.seed_check_sigs(db);
+
         world
+    }
+
+    /// Pass 4 (see `build`). Register precise `List a` HOF schemes into the
+    /// CHECK-ONLY channels (`check_sigs` / `check_kernel_sigs`). These pin a
+    /// combinator's result element from its argument types at accept/reject-check
+    /// time (`use_inferred == false`) so an unannotated `List.map` no longer
+    /// falls to a wildcard flex that silently absorbs a downstream param clash
+    /// (audit #3: `String.join "," (List.map String.length xs)`). The lowerer
+    /// (`use_inferred == true`) never reads these channels — emission is
+    /// byte-identical to the pre-fix wildcard path.
+    fn seed_check_sigs(&mut self, db: &dyn SkyDb) {
+        let a = || Ty::var("a");
+        let b = || Ty::var("b");
+        let bool_ = || Ty::app("Bool", vec![]);
+        let int_ = || Ty::app("Int", vec![]);
+        let list = |t: Ty| Ty::app("List", vec![t]);
+        let maybe = |t: Ty| Ty::app("Maybe", vec![t]);
+        let fun = |from: Ty, to: Ty| Ty::Fun(Box::new(from), Box::new(to));
+
+        // Schemes are order-correct against the actual `sky-stdlib/Sky/Core/
+        // List.sky` bodies (element-first `foldl`, matching the Sky source).
+        let specs: Vec<(&str, Ty)> = vec![
+            ("map", fun(fun(a(), b()), fun(list(a()), list(b())))),
+            ("filter", fun(fun(a(), bool_()), fun(list(a()), list(a())))),
+            ("foldl", fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b())))),
+            ("foldr", fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b())))),
+            ("concatMap", fun(fun(a(), list(b())), fun(list(a()), list(b())))),
+            ("filterMap", fun(fun(a(), maybe(b())), fun(list(a()), list(b())))),
+            ("find", fun(fun(a(), bool_()), fun(list(a()), maybe(a())))),
+            ("any", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
+            ("all", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
+            ("indexedMap", fun(fun(int_(), fun(a(), b())), fun(list(a()), list(b())))),
+        ];
+
+        let list_mod = db.module_by_name("Sky.Core.List");
+        for (name, ty) in specs {
+            let scheme = Scheme::generalize(ty);
+            self.check_kernel_sigs
+                .entry(("List".to_string(), name.to_string()))
+                .or_insert_with(|| scheme.clone());
+            // The `Res::Def` key: mirror pass-2's `intern_value` interning so an
+            // `import Sky.Core.List as List` call site (resolving to `Res::Def`)
+            // finds the same DefId. GUARD: respect a future explicit annotation
+            // (never shadow `value_sigs`). `filterMap` may be kernel-only (no
+            // Sky-source public def) — its DefId key is then inert; harmless.
+            if let Some(m) = list_mod {
+                let def = intern_value(db, m, name);
+                if !self.value_sigs.contains_key(&def) {
+                    self.check_sigs.entry(def).or_insert(scheme);
+                }
+            }
+        }
     }
 
     /// Pass 3 (see `build`). Infer + register schemes for unannotated top-level
