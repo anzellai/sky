@@ -228,6 +228,41 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         model,
     };
 
+    // Type names declared in MORE THAN ONE module (`Msg`/`Model`/`Page` in a
+    // multi-module app). A qualified type reference (`Counter.Msg`) drops its
+    // qualifier at `ast_type_to_ty`, so an ambiguous name can't be resolved to
+    // the right Go union — its `sky_ty_to_go` result is unreliable.
+    let ambiguous_names: HashSet<String> = {
+        let mut per_name: HashMap<String, HashSet<String>> = HashMap::new();
+        for (module, name) in env.nominal_by_module.keys() {
+            per_name.entry(name.clone()).or_default().insert(module.clone());
+        }
+        per_name
+            .into_iter()
+            .filter(|(_, mods)| mods.len() > 1)
+            .map(|(n, _)| n)
+            .collect()
+    };
+    // ADT unions emitted as sealed interfaces: an app-module ADT (see
+    // `should_seal_prefix`) whose every variant field type resolves
+    // UNAMBIGUOUSLY (so the typed variant struct fields + ctor params are the
+    // real Go types). Ambiguous-cross-module-field unions stay on the `rt.SkyADT`
+    // bag — a correctness floor, not a soundness one (both paths co-live).
+    let sealed_unions: HashSet<String> = type_decls
+        .iter()
+        .filter_map(|d| match &d.kind {
+            TypeDeclKind::Adt(variants)
+                if should_seal_prefix(&d.go_name)
+                    && variants
+                        .iter()
+                        .all(|(_, args)| args.iter().all(|t| !ty_refs_ambiguous(t, &ambiguous_names))) =>
+            {
+                Some(d.go_name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+
     // record `_R` go-name → declared field (Go-name, Sky type) list, for typing
     // record-literal field values to the struct's declared field types.
     let mut record_fields: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
@@ -263,6 +298,12 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // closure that then fails `rt.Coerce[Tab]` at runtime. Pin resolves the
     // arity against the SAME nominal the owner is pinned to.
     let mut ctor_arity_in_union: HashMap<(String, String), usize> = HashMap::new();
+    // (owning Go type, ctor name) → the variant struct's payload Go-types (V0..Vn),
+    // for sealed-ADT emission: typed constructors, typed `.V{i}` pattern reads, and
+    // the wire JSON factory. Computed with the SAME `sky_ty_to_go(t, &env)` mapping
+    // `emit_type_decl` uses for the struct fields, so the read type matches the
+    // declared field type exactly (no coercion at the read site).
+    let mut ctor_field_gotys: HashMap<(String, String), Vec<GoTy>> = HashMap::new();
     for d in &type_decls {
         match &d.kind {
             TypeDeclKind::Iota(vs) => {
@@ -282,6 +323,10 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
                     ctor_in_union
                         .insert((d.go_name.clone(), cn.clone()), (NominalKind::Adt, i));
                     ctor_arity_in_union.insert((d.go_name.clone(), cn.clone()), args.len());
+                    ctor_field_gotys.insert(
+                        (d.go_name.clone(), cn.clone()),
+                        args.iter().map(|t| sky_ty_to_go(t, &env)).collect(),
+                    );
                 }
             }
             TypeDeclKind::Record(fields) => {
@@ -417,6 +462,8 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
             ctor_arity: &ctor_arity,
             ctor_in_union: &ctor_in_union,
             ctor_arity_in_union: &ctor_arity_in_union,
+            ctor_field_gotys: &ctor_field_gotys,
+            sealed_unions: &sealed_unions,
             def_param_tys: &def_param_tys,
             def_result_tys: &def_result_tys,
             body: &e.body,
@@ -464,7 +511,7 @@ pub fn lower_program_cfg(db: &SourceDb, entry: ModuleId, cfg: &LowerConfig) -> L
         // record type names carry the `_R` suffix in Go usage.
         let decl = type_by_go.get(&gn).or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
         if let Some(decl) = decl {
-            let (items, more) = emit_type_decl(decl, &env);
+            let (items, more) = emit_type_decl(decl, &env, &sealed_unions);
             for m in more {
                 if !seen_types.contains(&m) {
                     tqueue.push(m);
@@ -691,7 +738,11 @@ fn collect_types(
 
 /// Emit a type declaration's Go items; return the further Go type names its
 /// fields/variants reference (for BFS reachability).
-fn emit_type_decl(decl: &TypeDecl, env: &TypeEnv) -> (Vec<GoItem>, Vec<String>) {
+fn emit_type_decl(
+    decl: &TypeDecl,
+    env: &TypeEnv,
+    sealed_unions: &HashSet<String>,
+) -> (Vec<GoItem>, Vec<String>) {
     let mut more: Vec<String> = Vec::new();
     let mut collect = |t: &Ty| {
         let gt = sky_ty_to_go(t, env);
@@ -739,6 +790,67 @@ fn emit_type_decl(decl: &TypeDecl, env: &TypeEnv) -> (Vec<GoItem>, Vec<String>) 
                 decl.go_name,
                 assigns.join(", ")
             )));
+            (items, more)
+        }
+        TypeDeclKind::Adt(variants) if sealed_unions.contains(&decl.go_name) => {
+            // Sealed-interface emission: `type Name interface {…}` + one typed
+            // `Name_<Ctor>_V` struct per variant, typed constructors returning the
+            // interface, and an init() block registering the tag, the gob type
+            // (unconditionally — the session-store value-walker misses absent
+            // variants), and the wire JSON factory.
+            let mut variant_defs: Vec<(String, usize, Vec<GoTy>)> = Vec::new();
+            let mut items: Vec<GoItem> = Vec::new();
+            let mut reg = String::from("func init() { ");
+            for (i, (cn, args)) in variants.iter().enumerate() {
+                let ftys: Vec<GoTy> = args.iter().map(&mut collect).collect();
+                let vstruct = format!("{}_{}_V", decl.go_name, cn);
+                variant_defs.push((cn.clone(), i, ftys.clone()));
+                // typed constructor → returns the sealed interface (struct auto-boxes).
+                let params: Vec<String> = ftys
+                    .iter()
+                    .enumerate()
+                    .map(|(j, t)| format!("v{j} {}", render_goty(t)))
+                    .collect();
+                let assigns: Vec<String> =
+                    (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
+                items.push(GoItem::Raw(format!(
+                    "func {}_{}({}) {} {{ return {}{{{}}} }}",
+                    decl.go_name,
+                    cn,
+                    params.join(", "),
+                    decl.go_name,
+                    vstruct,
+                    assigns.join(", ")
+                )));
+                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                reg.push_str(&format!(
+                    "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
+                    decl.go_name,
+                    args.len()
+                ));
+                reg.push_str(&format!("rt.GobRegister({vstruct}{{}}); "));
+                // wire JSON factory: decode each raw arg into its typed field.
+                let mut fbody = String::new();
+                for (j, t) in ftys.iter().enumerate() {
+                    fbody.push_str(&format!(
+                        "var v{j} {}; if len(raw) >= {} {{ _ = rt.JsonUnmarshal(raw[{j}], &v{j}) }}; ",
+                        render_goty(t),
+                        j + 1
+                    ));
+                }
+                let fassigns: Vec<String> =
+                    (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
+                reg.push_str(&format!(
+                    "rt.RegisterAdtVariant(\"{cn}\", func(raw []rt.JsonRawMessage) any {{ {fbody}return {vstruct}{{{}}} }}); ",
+                    fassigns.join(", ")
+                ));
+            }
+            reg.push('}');
+            items.insert(
+                0,
+                GoItem::Type(decl.go_name.clone(), GoTypeDef::SealedIface(variant_defs)),
+            );
+            items.push(GoItem::Raw(reg));
             (items, more)
         }
         TypeDeclKind::Adt(variants) => {
@@ -827,6 +939,46 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// Whether an ADT union (by its Go name) is a candidate for sealed-interface
+/// emission — an app-module (non-stdlib) ADT.
+///
+/// STDLIB ADTs are kept on the bag: the runtime itself constructs many of them
+/// directly as `rt.SkyADT` values (`Sky.Core.Error`, `Std.Money`, `Std.Ui`
+/// attributes, `Std.Db` SqlField, retry policies, …) and `rt.SkyADT` does NOT
+/// implement the `SkyVariant` interface — flipping those to interfaces would make
+/// rt-produced values fail the user-side variant type-assert. USER (app-module)
+/// ADTs are only ever constructed by the emitted typed constructor and consumed
+/// by emitted pattern matches + the sealed-aware runtime paths (session-store gob
+/// via `GobRegister`, wire dispatch via `RegisterAdtVariant`, `HtmlToVNode` /
+/// msg-logging via `unwrapADTShape`/`SkyVariant`), so they migrate cleanly.
+///
+/// The final sealing decision (see `sealed_unions`) further requires every
+/// variant field type to resolve unambiguously — a qualified cross-module type
+/// reference (`Counter.Msg`) drops its qualifier at `ast_type_to_ty`, so an
+/// ambiguous name can't be pinned to the right Go type.
+fn should_seal_prefix(go_name: &str) -> bool {
+    !(go_name.starts_with("Sky_Core_")
+        || go_name.starts_with("Std_")
+        || go_name.starts_with("Sky_Http_"))
+}
+
+/// Whether a Sky type references any nominal name that is declared in more than
+/// one module (`ambiguous`) — structurally, at any depth. Such a reference can't
+/// be resolved to a single Go type after the qualifier is dropped, so a union
+/// carrying it as a variant field is NOT sealed.
+fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
+    match t {
+        Ty::App(n, args) => {
+            ambiguous.contains(n.as_str())
+                || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
+        }
+        Ty::Fun(a, b) => ty_refs_ambiguous(a, ambiguous) || ty_refs_ambiguous(b, ambiguous),
+        Ty::Tuple(xs) => xs.iter().any(|x| ty_refs_ambiguous(x, ambiguous)),
+        Ty::Record(fs, _) => fs.iter().any(|(_, x)| ty_refs_ambiguous(x, ambiguous)),
+        _ => false,
+    }
+}
+
 // ---- per-def lowering context ------------------------------------------
 
 struct Ctx<'a> {
@@ -840,6 +992,10 @@ struct Ctx<'a> {
     ctor_arity: &'a HashMap<String, usize>,
     ctor_in_union: &'a HashMap<(String, String), (NominalKind, usize)>,
     ctor_arity_in_union: &'a HashMap<(String, String), usize>,
+    /// (owning Go type, ctor) → variant payload Go-types. Present for ADT ctors.
+    ctor_field_gotys: &'a HashMap<(String, String), Vec<GoTy>>,
+    /// Go names of ADT unions emitted as sealed interfaces (typed variant dispatch).
+    sealed_unions: &'a HashSet<String>,
     def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
     def_result_tys: &'a HashMap<DefId, Ty>,
     body: &'a Body,
@@ -1579,10 +1735,34 @@ impl<'a> Ctx<'a> {
         if !builtin && args.len() < arity {
             return (true, self.ctor_partial(&cname, args, arity, actual, pin));
         }
-        let lowered_args: Vec<GoExpr> =
-            args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
+        // For a sealed-ADT ctor (typed params), lower each arg with its declared
+        // field Go-type as the expected slot so the value lands typed and the
+        // `coerce_if_needed` in `ctor_emit` elides — zero construction coerces in
+        // the common (already-typed) case. Bag / builtin ctors keep `any`.
+        let field_tys = self.sealed_ctor_field_gotys(&cname, pin.as_deref());
+        let lowered_args: Vec<GoExpr> = match &field_tys {
+            Some(ftys) => args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| self.lower_expr(*a, ftys.get(i).unwrap_or(&GoTy::Any)))
+                .collect(),
+            None => args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect(),
+        };
         let expr = self.ctor_emit(&cname, lowered_args, actual, pin.as_deref());
         (true, expr)
+    }
+
+    /// The variant field Go-types for a ctor IFF it belongs to a sealed ADT union
+    /// (else `None`, so bag/builtin ctors keep `any`-typed argument lowering).
+    /// Disambiguated by the pinned owning union, mirroring `ctor_arity_pinned`.
+    fn sealed_ctor_field_gotys(&self, cname: &str, pin: Option<&str>) -> Option<Vec<GoTy>> {
+        let (go_type, kind) = self.ctor_union_go_pinned(cname, pin)?;
+        if kind != NominalKind::Adt || !self.sealed_unions.contains(&go_type) {
+            return None;
+        }
+        self.ctor_field_gotys
+            .get(&(go_type, cname.to_string()))
+            .cloned()
     }
 
     /// Eta-expand a partially-applied constructor into a Go closure that applies
@@ -1664,7 +1844,32 @@ impl<'a> Ctx<'a> {
                         }
                         NominalKind::Adt => {
                             self.used_types.insert(go_type.clone());
-                            call_rt(&format!("{go_type}_{cname}"), lowered_args, GoTy::Named(go_type, vec![]))
+                            // A sealed-ADT ctor takes TYPED params (the variant
+                            // struct's field types); coerce each arg to its field
+                            // type. This elides when the arg is already typed (the
+                            // direct-call path lowers args with the field type as
+                            // the expected slot); it inserts the necessary narrowing
+                            // only for `any`-typed args (the eta-expanded closure
+                            // path forces `any` params). Bag ADTs keep `any` params
+                            // and pass args unchanged.
+                            let args_out = if self.sealed_unions.contains(&go_type) {
+                                let ftys = self
+                                    .ctor_field_gotys
+                                    .get(&(go_type.clone(), cname.clone()))
+                                    .cloned()
+                                    .unwrap_or_default();
+                                lowered_args
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(i, a)| match ftys.get(i) {
+                                        Some(t) => self.coerce_if_needed(a, t),
+                                        None => a,
+                                    })
+                                    .collect()
+                            } else {
+                                lowered_args
+                            };
+                            call_rt(&format!("{go_type}_{cname}"), args_out, GoTy::Named(go_type, vec![]))
                         }
                         NominalKind::Record => {
                             let ctor = go_type.trim_end_matches("_R").to_string();
@@ -2689,6 +2894,49 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
         out: &mut Vec<GoStmt>,
     ) {
+        // Sealed-ADT top-level ctor pattern → idiomatic comma-ok type-switch case:
+        //   `if _vN, _okN := _subj.(Union_Ctor_V); _okN { <typed .V{i} binds>; body }`
+        // Typed dispatch — the variant struct binds once, field reads are direct
+        // typed `_vN.V{i}` (no `rt.Coerce` on the payload).
+        if let Pattern::Ctor { name, args, .. } = &self.body.pats[br.pat] {
+            let cname = name.as_str();
+            if !is_builtin_ctor(cname) {
+                if let Some(union) = self.sealed_adt_union(cname, subj_ty) {
+                    let args = args.clone();
+                    let vstruct_ty = GoTy::Named(format!("{union}_{cname}_V"), vec![]);
+                    let binder_name = format!("_v{}", self.local_counter);
+                    self.local_counter += 1;
+                    let ok = format!("_ok{}", self.local_counter);
+                    self.local_counter += 1;
+                    let struct_val =
+                        GoExpr::new(GoExprKind::Ident(binder_name.clone()), vstruct_ty.clone());
+                    let (subcond, binds) =
+                        self.adt_variant_binds(&struct_val, &union, cname, &args);
+                    let binder = if binds.is_empty() && subcond.is_none() {
+                        "_".to_string()
+                    } else {
+                        binder_name
+                    };
+                    let discards = discard_binds(&binds);
+                    let mut then_inner: Vec<GoStmt> = binds;
+                    then_inner.extend(discards);
+                    let body = self.lower_expr(br.body, actual);
+                    then_inner.push(GoStmt::Return(Some(body)));
+                    let then = match subcond {
+                        Some(c) => vec![GoStmt::If(c, then_inner, vec![])],
+                        None => then_inner,
+                    };
+                    out.push(GoStmt::IfTypeAssert {
+                        binder,
+                        ok,
+                        subj: subj.clone(),
+                        ty: vstruct_ty,
+                        then,
+                    });
+                    return;
+                }
+            }
+        }
         let (cond, binds) = self.pattern_test(subj, subj_ty, br.pat);
         // Discard every pattern-bound name (`_ = v`) so an arm that ignores its
         // binding (`Just _ -> …` bound as `v := _subj.JustValue`) does not trip
@@ -2980,6 +3228,36 @@ impl<'a> Ctx<'a> {
                     );
                     return (Some(cond), vec![]);
                 }
+                // Sealed-ADT NESTED ctor pattern (`SendMessage (Inner x)` reached
+                // via recursion). Tag test via `rt.EnumTagIs` (works whether `subj`
+                // is the sealed interface or `any`; NOT a coerce) short-circuits the
+                // typed `subj.(Union_Ctor_V).V{i}` field reads — so those reads are
+                // only evaluated when the tag matched.
+                if let Some((go, NominalKind::Adt)) = &owner {
+                    if self.sealed_unions.contains(go) {
+                        let tag = match _subj_ty {
+                            GoTy::Named(gt, _) => self
+                                .ctor_in_union
+                                .get(&(gt.clone(), cname.to_string()))
+                                .map(|(_, t)| *t)
+                                .or_else(|| self.ctor_tag.get(cname).copied())
+                                .unwrap_or(0),
+                            _ => self.ctor_tag.get(cname).copied().unwrap_or(0),
+                        };
+                        let tag_cond = call_rt(
+                            "rt.EnumTagIs",
+                            vec![subj.clone(), int_lit(tag as i64)],
+                            GoTy::Bare(Prim::Bool),
+                        );
+                        let vstruct_ty = GoTy::Named(format!("{go}_{cname}_V"), vec![]);
+                        let struct_val = GoExpr::new(
+                            GoExprKind::TypeAssert(Box::new(subj.clone()), vstruct_ty.clone()),
+                            vstruct_ty,
+                        );
+                        let (subcond, binds) = self.adt_variant_binds(&struct_val, go, cname, &args);
+                        return (and_opt(Some(tag_cond), subcond), binds);
+                    }
+                }
                 // sealed ADT: match by declaration-order tag; bind Fields[i].
                 // Prefer the union-scoped tag when the subject pins the union.
                 let tag = match _subj_ty {
@@ -3046,6 +3324,56 @@ impl<'a> Ctx<'a> {
                 (cond, binds)
             }
         }
+    }
+
+    /// Resolve the owning union of `cname` (disambiguated by `subj_ty`'s pinned
+    /// nominal, as elsewhere) and return its Go name IFF it is a sealed-interface
+    /// ADT union — else `None`. Used to route a ctor pattern to typed variant
+    /// dispatch instead of the `rt.SkyADT` bag.
+    fn sealed_adt_union(&self, cname: &str, subj_ty: &GoTy) -> Option<String> {
+        let owner = match subj_ty {
+            GoTy::Named(gt, _) => self
+                .ctor_in_union
+                .get(&(gt.clone(), cname.to_string()))
+                .map(|(k, _)| (gt.clone(), *k))
+                .or_else(|| self.ctor_owner.get(cname).cloned()),
+            _ => self.ctor_owner.get(cname).cloned(),
+        };
+        match owner {
+            Some((go, NominalKind::Adt)) if self.sealed_unions.contains(&go) => Some(go),
+            _ => None,
+        }
+    }
+
+    /// Given `struct_val` — a Go expression of a sealed-ADT variant struct type
+    /// (`Union_Ctor_V`) — build the field bindings + nested sub-condition for its
+    /// argument patterns. Each field reads directly as the declared typed
+    /// `struct_val.V{i}` (no `rt.Coerce`); nested sub-patterns recurse.
+    fn adt_variant_binds(
+        &mut self,
+        struct_val: &GoExpr,
+        union: &str,
+        ctor: &str,
+        args: &[PatId],
+    ) -> (Option<GoExpr>, Vec<GoStmt>) {
+        let ftys = self
+            .ctor_field_gotys
+            .get(&(union.to_string(), ctor.to_string()))
+            .cloned()
+            .unwrap_or_default();
+        let mut cond: Option<GoExpr> = None;
+        let mut binds: Vec<GoStmt> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let fty = ftys.get(i).cloned().unwrap_or(GoTy::Any);
+            let field = GoExpr::new(
+                GoExprKind::Selector(Box::new(struct_val.clone()), format!("V{i}")),
+                fty.clone(),
+            );
+            let (c, b) = self.pattern_test(&field, &fty, *a);
+            cond = and_opt(cond, c);
+            binds.extend(b);
+        }
+        (cond, binds)
     }
 
     /// The nominal Go type a (sub-)pattern matches against, derived structurally
@@ -3156,6 +3484,13 @@ fn and_opt(a: Option<GoExpr>, b: Option<GoExpr>) -> Option<GoExpr> {
             GoTy::Bare(Prim::Bool),
         )),
     }
+}
+
+/// The builtin container / bool constructors, which route through
+/// `rt.SkyResult` / `rt.SkyMaybe` / `bool` rather than a user nominal — never
+/// sealed-ADT variant dispatch.
+fn is_builtin_ctor(cname: &str) -> bool {
+    matches!(cname, "Ok" | "Err" | "Just" | "Nothing" | "True" | "False")
 }
 
 fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {

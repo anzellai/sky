@@ -129,6 +129,35 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
         GoTypeDef::AdtAlias => {
             w.line(&format!("type {name} = rt.SkyADT"));
         }
+        GoTypeDef::SealedIface(variants) => {
+            // The sealed interface every variant satisfies.
+            w.line(&format!("type {name} interface {{"));
+            w.indent += 1;
+            w.line("SkyVariantTag() int");
+            w.line("SkyVariantName() string");
+            w.indent -= 1;
+            w.line("}");
+            // One concrete struct per variant + its two marker methods.
+            for (ctor, tag, fields) in variants {
+                let vstruct = format!("{name}_{ctor}_V");
+                if fields.is_empty() {
+                    w.line(&format!("type {vstruct} struct {{}}"));
+                } else {
+                    let fs: Vec<String> = fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| format!("V{i} {}", render_ty(t)))
+                        .collect();
+                    w.line(&format!("type {vstruct} struct {{ {} }}", fs.join("; ")));
+                }
+                w.line(&format!(
+                    "func ({vstruct}) SkyVariantTag() int {{ return {tag} }}"
+                ));
+                w.line(&format!(
+                    "func ({vstruct}) SkyVariantName() string {{ return \"{ctor}\" }}"
+                ));
+            }
+        }
         GoTypeDef::IotaEnum(variants) => {
             w.line(&format!("type {name} = int"));
             w.line("const (");
@@ -169,6 +198,19 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
         GoStmt::Return(None) => w.line("return"),
         GoStmt::Return(Some(e)) => w.line(&format!("return {}", render_expr(e))),
         GoStmt::Comment(c) => w.line(&format!("// {c}")),
+        GoStmt::IfTypeAssert { binder, ok, subj, ty, then } => {
+            w.line(&format!(
+                "if {binder}, {ok} := {}.({}); {ok} {{",
+                render_expr(subj),
+                render_ty(ty)
+            ));
+            w.indent += 1;
+            for s in then {
+                emit_stmt(w, s);
+            }
+            w.indent -= 1;
+            w.line("}");
+        }
         GoStmt::If(cond, then, els) => {
             w.line(&format!("if {} {{", render_expr(cond)));
             w.indent += 1;
@@ -219,6 +261,7 @@ pub fn render_expr(e: &GoExpr) -> String {
             format!("{}[{}]({})", f, ts.join(", "), rendered.join(", "))
         }
         GoExprKind::Selector(base, field) => format!("{}.{}", render_expr(base), field),
+        GoExprKind::TypeAssert(base, ty) => format!("{}.({})", render_expr(base), render_ty(ty)),
         GoExprKind::Index(base, i) => format!("{}[{}]", render_expr(base), render_expr(i)),
         GoExprKind::SliceLit(elem, xs) => {
             let rendered: Vec<String> = xs.iter().map(render_expr).collect();
@@ -313,6 +356,14 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
                     s.push_str(&format!(" else {{ {} }}", render_stmts_inline(els)));
                 }
                 parts.push(s);
+            }
+            GoStmt::IfTypeAssert { binder, ok, subj, ty, then } => {
+                parts.push(format!(
+                    "if {binder}, {ok} := {}.({}); {ok} {{ {} }}",
+                    render_expr(subj),
+                    render_ty(ty),
+                    render_stmts_inline(then)
+                ));
             }
         }
     }

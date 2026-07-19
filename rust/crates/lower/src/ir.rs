@@ -132,6 +132,11 @@ pub enum GoExprKind {
     GenericCall(String, Vec<GoTy>, Vec<GoExpr>),
     /// `x.field`.
     Selector(Box<GoExpr>, String),
+    /// `x.(T)` — a Go type assertion. NOT a coerce: it is typed dispatch on a
+    /// sealed-interface value (a sealed-ADT variant downcast), always guarded by
+    /// a preceding tag/ok check so it never panics in practice. Emitted for
+    /// direct typed `.V{i}` reads on sealed-ADT variant structs.
+    TypeAssert(Box<GoExpr>, GoTy),
     /// `x[i]`.
     Index(Box<GoExpr>, Box<GoExpr>),
     /// `[]T{…}`.
@@ -172,6 +177,18 @@ pub enum GoStmt {
     Return(Option<GoExpr>),
     /// `if cond { then } else { els }`.
     If(GoExpr, Vec<GoStmt>, Vec<GoStmt>),
+    /// `if <binder>, <ok> := <subj>.(<ty>); <ok> { then }` — a comma-ok type
+    /// assertion guard. The idiomatic Go type-switch-case body for a sealed-ADT
+    /// variant match: typed dispatch that binds the concrete variant struct
+    /// `binder` (used for typed `.V{i}` field reads) when the assertion holds.
+    /// NOT a coerce — it never panics.
+    IfTypeAssert {
+        binder: String,
+        ok: String,
+        subj: GoExpr,
+        ty: GoTy,
+        then: Vec<GoStmt>,
+    },
     Comment(String),
 }
 
@@ -206,6 +223,12 @@ pub struct GoFuncDecl {
 pub enum GoTypeDef {
     /// `type Name = rt.SkyADT` alias + the ctor machinery is emitted as Raw items.
     AdtAlias,
+    /// A sealed-interface ADT: `type Name interface { SkyVariantTag() int;
+    /// SkyVariantName() string }` + one concrete `Name_<Ctor>_V` struct per
+    /// variant (with typed `V0..Vn` payload fields) implementing the interface.
+    /// Each entry: `(ctor_name, tag, field_go_types)`. Ctors / init-registration
+    /// are emitted as `Raw` items by the lowerer (mirrors `AdtAlias`).
+    SealedIface(Vec<(String, usize, Vec<GoTy>)>),
     /// `type Name = int` + `const ( … = iota )`.
     IotaEnum(Vec<String>),
     /// `type Name struct { … }` (record `_R`).
