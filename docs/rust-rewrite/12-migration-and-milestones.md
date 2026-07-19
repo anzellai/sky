@@ -21,6 +21,51 @@ Two facts frame every decision:
 
 ---
 
+## Implementation status (as of `rewrite/rust-compiler`)
+
+The milestone plan below (§2, M0–M8) is the roadmap. Here is where the branch
+actually stands, verified via the gate (`cargo run -p xtask -- build-run --all
+--run`, `cargo test -p sky-lsp`, the determinism + reject gates). **Functionally
+the bring-up is well advanced** — the non-FFI corpus builds+runs+matches the
+Haskell oracle, FFI scales to skyshop (76k symbols), `sky` is a standalone binary,
+and the LSP passes 17/17. What remains is largely two *architectural refinements*
+that the functional results do not depend on, plus a handful of narrow items.
+
+### Milestones
+
+| Milestone | Status | Notes / evidence |
+|---|---|---|
+| **M0** workspace + salsa spike | **Built** | Crate DAG compiles; `#![forbid(unsafe_code)]` on frontend crates; clippy-deny clean. Salsa spike only — one input + one tracked query (`skydb`); the DAG is **not** threaded through salsa (see below). |
+| **M1** lex + parse, round-trip | **Built** | Lossless CST + recovery; reprint round-trip on the corpus (156/156). |
+| **M2** name resolution | **Built** | `resolve` over `hir::db::SourceDb`; qualifier rules, E1001, DefId alloc; 0 resolver gaps. |
+| **M3** inference | **Built** (accept + reject) | HM + union-find + exhaustiveness; 39/39 non-FFI typecheck-match; reject-parity/rejection corpus added (v0.7 unifier killer closed). |
+| **M4** lower + emit Go | **Built (interim representation)** | Typed `GoTy`-carrying IR emits deterministic Go that builds+runs+matches — but via an **erase-based** runtime representation (`rt.SkyADT` bags, `rt.T2[any,any]`, a `Widen`→`any` node), **not** the structural-generic / sealed-interface / coercion-is-the-exception target of [`07`](07-lowering-and-ir.md)/[`08`](08-go-codegen.md). |
+| **M5** full corpus build+run | **Built** | Whole corpus builds; run+match vs a freshly-rebuilt oracle across the non-FFI set + skyshop; `11-fyne` GUI is build-only (headless-unverifiable); `36-composite-server`'s only non-match is a genuine **oracle-side** Haskell bug (Rust serves correctly). |
+| **M6** LSP | **Built (minus 3 endpoints)** | Hover/goto/completion/references/rename/semantic-tokens/document-symbol; 17/17 nvim + broader suite. Runs on `hir::db::SourceDb`, not salsa. `inlayHint`/`signatureHelp`/`formatting` **not implemented** ([`10`](10-lsp-and-tooling.md) status). |
+| **M7** reproducibility gate | **Built** | Byte-stable emission across seeds (37/37); deterministic FFI inspector runs only at `add`/`install`/`update`, never mid-build (L4). |
+| **M8** cutover (Rust default) | **Not started** | This is the rewrite branch only; there is no release and no production risk. Cutover waits on the remaining items below being fully closed. |
+
+### Subsystems (built / interim / target)
+
+| Subsystem | State | Reality vs the target docs |
+|---|---|---|
+| Crate DAG, determinism gate, standalone binary | **Built** | Matches [`02`](02-workspace-and-crates.md)/[`08`](08-go-codegen.md)/[`09`](09-runtime-and-ffi.md). |
+| Lexer / parser / CST / recovery | **Built** | Matches [`04`](04-syntax-lexer-parser.md). |
+| Name resolution, HM inference, exhaustiveness | **Built** | Matches [`05`](05-name-resolution.md)/[`06`](06-type-system.md) in behaviour; runs value-threaded, not salsa-memoised. |
+| Deterministic committed-surface FFI (inspector + `sky add/install/update`) | **Built** | Matches [`09`](09-runtime-and-ffi.md) (correct the Part G API names). |
+| CLI verbs (build/run/check/fmt/test/init/doc/watch/db/add/install), `sky fmt` | **Built** | Opinionated formatter with lossless safety net. |
+| LSP (hover/goto/completion/references/rename/semantic-tokens/document-symbol) | **Built** | 17/17 + broader. |
+| **Salsa query DAG** | **Interim → target** | Spike wired; running pipeline is `hir::db::SourceDb` (batch RefCell walk). [`01`](01-architecture-overview.md). |
+| **Structural typed Go-IR (coercion-is-the-exception, no `any` widen, Go-generic aliases, sealed ifaces)** | **Interim → target** | IR carries `GoTy`, but Go rep erases to `any`-backed shapes + `Widen`. [`07`](07-lowering-and-ir.md)/[`08`](08-go-codegen.md). |
+| LSP `inlayHint` / `signatureHelp` / `formatting` endpoints | **Target** | Advertised in the target capability set; not yet implemented. [`10`](10-lsp-and-tooling.md). |
+| Runtime `abi` manifest gate (§A.2) | **Target** | Not yet a wired CI gate. |
+| Reject-parity completeness, remaining FFI-surface pinning (`03`/`08`) | **In progress** | See resume notes. |
+
+Everything below (§0 onward) is the **plan**; read it as the intended path, with
+the table above as the ground truth for what is already done on the branch.
+
+---
+
 ## 0. Repo layout: in-tree `rust/` subdir (decided)
 
 **Decision: an in-tree `rust/` subdirectory on branch `rewrite/rust-compiler`,

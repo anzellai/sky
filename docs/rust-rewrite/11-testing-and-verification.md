@@ -384,6 +384,19 @@ Notes carried from the Haskell CI that stay true:
 Every design law from [`00`](00-goals-and-principles.md) maps to a *test*, not a
 promise. If a law has no gate, it is not enforced.
 
+> **Implementation status (as of `rewrite/rust-compiler`).** Most gates below are
+> live: the LSP 17-test suite, the reproducibility gate (§3, byte-stable across
+> seeds), the `HashMap`-in-output lint, reject-parity (§2b), parser reprint, and
+> formatter idempotence all run today. Two rows describe gates whose *target*
+> mechanism isn't in place yet, tracking the two interim subsystems from
+> [`01`](01-architecture-overview.md)/[`07`](07-lowering-and-ir.md): **L2's "salsa
+> invalidation unit tests"** — the running engine is `hir::db::SourceDb`, so
+> incrementality is exercised via the LSP suite, not salsa memoisation tests; and
+> **L9's "coercion is the exception" emitted-Go parity** — parity holds, but
+> against the interim erase-based Go (which still carries a wide `rt.Coerce`/`any`
+> surface), so "fewer `rt.Coerce`" is a target the gate will tighten toward, not a
+> property already met.
+
 | Law | Enforcing gate |
 |---|---|
 | L1 no globals | crate boundaries (Cargo) + no `static mut` lint; a leaked global would surface as a repro-gate diff |

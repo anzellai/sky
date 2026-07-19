@@ -9,6 +9,41 @@ This doc is the concrete design of law **L9 — a typed lowering IR; coercion is
 the exception**. It is also where **L4** (deterministic fresh-name generation),
 **L3** (interned ids drive iteration order), and the TCO/DCE memory story live.
 
+> **Implementation status (as of `rewrite/rust-compiler`).** The typed IR is
+> **partly built**: `rust/crates/lower/src/ir.rs` does carry a structural `GoTy`
+> on every `GoExpr` (the L9 spine is real, and it is why the corpus builds+runs).
+> But the target's stronger claims below — *"coercion is the exception"*, *"no
+> `Raw(String)`"*, *"no widen-to-`any`"*, structural Go-generics on record
+> aliases, and sealed-interface ADT emission that deletes residual coerce classes
+> 1/2/3/4/6/8 — describe the **destination**, not the current milestone. What the
+> code does today:
+>
+> - **A `Widen` node exists** (`ir.rs`, `GoExprKind::Widen`) and codegen renders
+>   it as `any(x)` (`rust/crates/codegen/src/lib.rs`). So `Coerce` is *not* the
+>   only narrowing/widening node yet.
+> - **User ADTs are erased, not structurally generic.** `sky_ty_to_go`
+>   (`rust/crates/lower/src/goty.rs`) emits user nominal types **non-generic**: a
+>   sealed ADT becomes a `rt.SkyADT` bag (`type X = rt.SkyADT`, `{Fields []any}`,
+>   codegen `emit_type`), an iota enum becomes `int`, a parametric record alias
+>   becomes a plain struct whose type-var fields are erased to `any`. A parametric
+>   application like `Cfg Msg` renders as the bare Go name with its args dropped —
+>   the file calls this the *"generic-erase floor, doc 07 §6 class 8"* in a code
+>   comment. The `Cfg_R[Msg]` structural-generic emission in §3 below is target.
+> - **Tuples erase to `rt.T2[any,any]`** (`goty.rs` / codegen `render_tuple_ty`) —
+>   the runtime's reflection paths standardise on the `any`-element shape — rather
+>   than the `rt.T2[A,B]` structural form §1/§6 describe.
+> - **Names are `String`, not interned `GoName`/`TyParamId`.** `GoTy::Named(String, …)`
+>   and `GoTy::TyVar(String)` in `ir.rs`; the interned-`GoName`/`Name` listing
+>   in §1 is target.
+>
+> This interim erase-based representation is **verified to build+run+match** the
+> Haskell oracle across the corpus (including `13-skyshop`, 76k FFI symbols), so
+> it is a working simplification, not a bug — but the residual-`any` surface it
+> carries is exactly what the structural typed IR below is designed to remove, and
+> that removal is remaining work ([`12`](12-migration-and-milestones.md)). Read the
+> rest of this doc as the target design; the §6 "Fate under the typed IR" column
+> is target-state, not a description of current emission.
+
 ## The scar this fixes
 
 In the Haskell backend the Go IR carries **types as `String`s**. Look at the

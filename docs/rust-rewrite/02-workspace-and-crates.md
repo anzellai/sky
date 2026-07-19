@@ -42,17 +42,27 @@ flowchart TD
 | `diagnostics` | `Diagnostic` type, severities, labels, suggested fixes, one renderer for CLI + LSP (Elm-style output). | `base`, `annotate-snippets` | 07(L7) |
 | `syntax` | Lexer + lossless CST (rowan), typed AST view, error recovery, layout/indentation. | `base`, `rowan`, `logos`(lexer) | 04 |
 | `hir` | Desugared, name-resolved high-level IR. Imports, scopes, `DefId` resolution, module items. | `base`, `syntax`, `diagnostics` | 05 |
-| `ty` | HM inference, arena union-find, generalisation, exhaustiveness, the type table. | `base`, `hir`, `diagnostics` | 06 |
-| `skydb` | The salsa database + every query. Ties inputs → parse → resolve → infer → lower. The only place "the whole compiler" is assembled. | `salsa`, all above | 01 |
-| `lower` | Typed lowering IR (Sky-typed → Go-IR), type-directed lowering, TCO, DCE, monomorphisation. | `base`, `ty`, `skydb` | 07 |
+| `ty` | HM inference, arena union-find, generalisation, exhaustiveness, the type table. | `base`, `hir`, `syntax`, `diagnostics` | 06 |
+| `skydb` | The salsa database + query spike (target: every query; today: one input + one tracked query, doc 01). | `salsa`, `base`, `syntax`, `hir`, `ty`, `diagnostics` | 01 |
+| `lower` | Typed lowering IR (Sky-typed → Go-IR), type-directed lowering, TCO, DCE, monomorphisation. | `base`, `ty`, `hir`, `syntax`, `skydb` | 07 |
 | `codegen` | Deterministic Go source emission from the Go-IR; the runtime ABI/interface. | `base`, `lower` | 08 |
-| `ffi` | Deterministic Go-package inspection → pinned `.skyi` surface; reproducible, committed. | `base`, `serde` | 09 |
-| `project` | `sky.toml`, module discovery, dependency graph, driver that runs the build + `go build`, stdlib embedding. | `skydb`, `codegen`, `ffi` | 08, 09 |
-| `fmt` | `sky fmt` — exact formatter over the CST (idempotent, trivia-preserving). | `syntax` | 04, 10 |
+| `ffi` | Deterministic Go-package inspection → pinned `.skyi` surface; reproducible, committed. | `base`, `serde`, `serde_json`, `include_dir` | 09 |
+| `project` | `sky.toml`, module discovery, dependency graph, driver that runs the build + `go build`, stdlib embedding. | `skydb`, `codegen`, `lower`, `hir`, `ty`, `syntax`, `base`, `ffi` | 08, 09 |
+| `fmt` | `sky fmt` — opinionated formatter over the CST (idempotent, trivia-safe). | `syntax` | 04, 10 |
 | `sky-cli` | The `sky` binary: build/run/check/fmt/doc/test/watch/add/etc. | `project`, `fmt`, `testrunner` | 10 |
-| `sky-lsp` | LSP server over the same `skydb`. Hover/goto/completion/diagnostics/rename. | `skydb`, `ty`, `project`, `tower-lsp` | 10 |
+| `sky-lsp` | LSP server over the resolution db (target: the same `skydb`). Hover/goto/completion/diagnostics/references/rename/semantic-tokens. | `base`, `syntax`, `hir`, `ty`, `skydb`, `project`, `diagnostics`, `tower-lsp`, `tokio` | 10 |
 | `testrunner` | `sky test` (Sky.Test) runner. | `project` | 10 |
-| `xtask` | Dev automation: run corpus, differential-test vs Haskell oracle, reproducibility gate. | — | 11, 12 |
+| `xtask` | Dev automation: run corpus, differential-test vs Haskell oracle, reproducibility gate. | `syntax`, `base`, `hir`, `ty`, `project`, `diagnostics` | 11, 12 |
+
+> **Implementation status (as of `rewrite/rust-compiler`).** The **Key deps**
+> column above reflects the actual `Cargo.toml` of each crate. Note that `lower`,
+> `project`, `sky-lsp`, and `xtask` depend directly on the frontend crates
+> (`hir`/`ty`/`syntax`/`diagnostics`) rather than reaching them only through
+> `skydb` — because the running pipeline threads values through
+> `hir::db::SourceDb`, not the salsa DAG (see [`01`](01-architecture-overview.md)
+> status). `skydb` is on the graph and depended on, but as the M0 salsa spike, not
+> yet the assembly point for "the whole compiler". The crate DAG itself (who may
+> depend on whom) is as drawn and enforced by Cargo.
 
 ## Key external dependencies (and why)
 

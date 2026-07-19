@@ -18,6 +18,24 @@ at arm's length from the query core:
 Everything below treats L4 as the axis the design rotates around, not a
 nice-to-have.
 
+> **Implementation status (as of `rewrite/rust-compiler`).** The FFI subsystem
+> this doc designs is **built and verified**: `rust/crates/ffi` ports the Haskell
+> `FfiGen`/inspector — a deterministic Go-package inspector (`inspect.rs`, pinned
+> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`, Go-map-order normalised → byte-stable)
+> that runs **only** at `sky add`/`install`/`update` and never mid-build (L4);
+> surface generation (`gen.rs`, `gen_bindings.rs`); committed-surface loading
+> (`load_surface` → `FfiRegistry`/`FfiPackage`, `lib.rs`); and runtime+stdlib+tool
+> asset embedding via `include_dir!` (`assets.rs`, `extract_assets_root`) so `sky`
+> is a standalone binary. Verified live end-to-end (`sky add github.com/google/uuid`
+> → build → runs a valid v4; second add byte-identical) and at scale
+> (`13-skyshop`, 76k Stripe symbols, build+run+match). The design (Parts A–H) is
+> therefore an accurate description of what exists — with **one correction**: the
+> `ffi`-crate API names in **Part G** were aspirational; the real surface is named
+> below. Two smaller items remain target: the runtime-`abi`-manifest test (§A.2)
+> is not yet a wired gate, and a couple of committed example surfaces (`03`/`08`)
+> use `go get`-time regeneration rather than a fully pinned commit for every
+> package.
+
 ---
 
 ## Part A — The runtime is an asset; keep it (L10)
@@ -472,22 +490,30 @@ stay correct and fast at this size:
 
 ## Part G — The `ffi` crate: shape & queries
 
-Per doc [`02`](02-workspace-and-crates.md), `ffi` depends only on `base` + `serde`
-and feeds `project`. Its surface:
+Per doc [`02`](02-workspace-and-crates.md), `ffi` depends on `base` + `serde` +
+`serde_json` + `include_dir` and feeds `project`. Its **actual** surface (`rust/crates/ffi/src/lib.rs`
++ `inspect.rs`/`gen.rs`/`gen_bindings.rs`/`assets.rs`):
 
 | Item | Responsibility |
 |---|---|
-| `ensure_inspector() -> Result<PathBuf>` | Materialise + `go build` the embedded inspector into the XDG cache, keyed by content hash (mirrors `EmbeddedInspector.ensureInspector`, `EmbeddedInspector.hs:65`). |
-| `run_inspector(&[Pkg], target) -> InspectorReport` | Subprocess the inspector with a pinned `GOOS/GOARCH`; parse canonical JSON. |
-| `FfiSurface` (the committed model) | `kernel.json` parsed + interned: `BTreeMap<Name, FfiPkg>`; every collection is a `BTreeMap`/`Vec`-sorted, so iteration is deterministic (L4). |
-| `emit_surface(&FfiSurface) -> Files` | Serialize `kernel.json` + `.skyi` + `_bindings.go` through the one sorted serializer. |
-| `verify_surface(committed, regenerated) -> Diff` | The CI gate primitive — byte-diff for `sky install`/reproducibility check. |
-| `kernel_registry() -> &'static KernelTable` | The static `(module,fn) → KernelInfo` map (§C.3), the `Kernel.hs` successor. |
-| `embedded_runtime() / embedded_stdlib()` | `&'static Dir` from `include_dir!` (§E). |
+| `ensure_inspector() / run_inspector(...) -> PackageInfo` (`inspect.rs`) | Materialise + `go build` the embedded inspector into the XDG cache (content-hash keyed), then subprocess it with a pinned `GOOS/GOARCH` and parse canonical JSON (mirrors `EmbeddedInspector.ensureInspector` / `FfiGen.runInspector`). |
+| `generate(...) -> GeneratedSurface` (`gen.rs`, `gen_bindings.rs`) | Turn inspector output into the committed surface: `kernel.json` + `.skyi` + the `_bindings.go` wrapper, through the one sorted/deterministic serializer. |
+| `load_surface(ffi_dir, go_dir) -> FfiRegistry` (`lib.rs`) | Load a committed/pinned surface: parse every `*.kernel.json`, pair with its `_bindings.go`, scan `Go_*`/`FfiT_*` symbols. Directory enumeration sorted before folding; every collection is `BTreeMap`/`BTreeSet` (L4). `FfiRegistry`/`FfiPackage`/`FfiFnInfo` are the loaded model. |
+| `FfiSurface` / `FfiSymbol` (`lib.rs`) | The `serde`-serialisable committed `.skyi` payload model. |
+| `embedded_runtime() / embedded_stdlib() / extract_assets_root() / extract_template()` (`assets.rs`) | `&'static Dir` from `include_dir!` + materialisation of the embedded runtime/stdlib/tool/template trees (§E) — what makes `sky` standalone. |
+
+> **Planned (not yet implemented) — the original Part G names.** Earlier drafts of
+> this table named `emit_surface(&FfiSurface)`, `verify_surface(committed, regenerated) -> Diff`,
+> and `kernel_registry() -> &'static KernelTable`. **None of those functions exist
+> in `rust/crates/ffi`.** Their intent is covered differently: surface emission is
+> `gen::generate` (writing files, not returning a `Files` value); byte-diff
+> verification for `sky install`/reproducibility lives in the `xtask` gate rather
+> than an `ffi` primitive; and the static `(module,fn) → KernelInfo` kernel table
+> is not yet a generated `'static` map in `ffi`. Treat these three as target items.
 
 The crate is `#![forbid(unsafe_code)]` and holds **no global mutable state** —
 the inspector cache is content-addressed on disk, the surface is a value, the
-registry is `'static` immutable data (L1).
+registry is immutable data (L1).
 
 ---
 

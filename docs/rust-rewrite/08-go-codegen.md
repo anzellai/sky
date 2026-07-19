@@ -7,6 +7,18 @@ finished in `lower`. Codegen's contracts are **determinism** (L4), **fidelity to
 the runtime ABI** (L10), and the **panic-safety floor** (the "if it compiles, it
 works" invariant, 00 §4).
 
+> **Implementation status (as of `rewrite/rust-compiler`).** `rust/crates/codegen`
+> is built and renders the `lower` IR deterministically — the determinism gate
+> (byte-stable emission across seeds/platforms) holds, and the corpus builds+runs.
+> But codegen renders the **interim** representation described in
+> [`07` status](07-lowering-and-ir.md), so some shapes below are target, not
+> current output: user ADTs emit as `type X = rt.SkyADT` bags (`emit_type`), not
+> the sealed-`interface` / iota-`alias` forms in §3; tuples emit `rt.T2[any,any]`
+> (`render_tuple_ty`), not `rt.T2[A,B]`; and a `Widen` node renders `any(x)`
+> (`render_expr`). The `emit_coerce` elision (`from == to` → no wrap), the
+> structural `emit_ty`, and the panic-safety floor (§6) reflect the target design;
+> treat §2/§3's sealed-iface/structural-generic emission as the destination.
+
 ## The scar this fixes
 
 The Haskell renderer (`src/Sky/Generate/Go/Builder.hs`) is already close to the

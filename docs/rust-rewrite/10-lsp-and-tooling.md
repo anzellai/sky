@@ -18,6 +18,30 @@ with `sky build`. This is L2 (`db` is the state, one incremental engine),
 L1 (no globals — the 8 IORefs vanish into inputs), and L8 (every query runs on
 the lossless CST, so hover/goto/completion work on broken code).
 
+> **Implementation status (as of `rewrite/rust-compiler`).** `sky-lsp` is **built
+> and strong**: `rust/crates/sky-lsp/src/lib.rs` implements `hover` (functions,
+> fields, type names, kernel calls, ctors, lambda params, case patterns),
+> `goto`/definition, `completion` (qualified / field / let-binding), `references`,
+> `prepare_rename` + `rename`, `semantic_tokens` (a frozen 12-type legend), and
+> document-symbols. It passes the 17/17 Neovim gate (`scripts/lsp-test-nvim.sh`)
+> plus a broader in-process + JSON-RPC suite. It owns no IORef pile — the 8-IORef +
+> 5-round-fixpoint + background-`sky check` scars are genuinely gone. **Two gaps
+> vs the present-tense text below:**
+>
+> - **It runs over `hir::db::SourceDb`, not salsa.** The `db.resolve_at` /
+>   `db.infer_type_of` / `set_source_text` sketches and every "salsa query" label
+>   are the target engine ([`01`](01-architecture-overview.md) status); today the
+>   handlers drive the same value-threaded resolution db + `Typer` the CLI uses.
+>   The scars are gone via that db, not via salsa memoisation yet.
+> - **`inlayHint`, `signatureHelp`, and `textDocument/formatting` are not
+>   implemented.** No handler for any of the three exists in `crates/sky-lsp`
+>   (grep: zero hits). They appear in the request→query map, the `sky_capabilities`
+>   block, and the acceptance-gate list below as the **target** capability set
+>   (matching the Haskell server's advertised capabilities), but the current server
+>   does not advertise or answer them. `sky fmt` itself *does* exist as a CLI verb
+>   (`crates/fmt`, opinionated pretty-printer with a lossless safety net) — it is
+>   simply not yet wired to the LSP `formatting` endpoint.
+
 ---
 
 ## The current tooling, and its holes
@@ -65,9 +89,9 @@ Each LSP method lowers to one (or a couple of) salsa queries. The queries are th
 | `textDocument/rename` / `prepareRename` | `references(DefId)` → one `WorkspaceEdit`; `prepareRename` validates the target is a renameable `DefId` | Reuses the references query |
 | `textDocument/semanticTokens/full` | `parse(file)` (CST) + `resolve` to classify each token | 12 token types (`Server.hs:2042–2056`), preserved verbatim |
 | `textDocument/publishDiagnostics` | `parse` + `resolve` + `infer` + `exhaustiveness` diagnostics, unioned | **Push** on input change (below); no `forkIO`, no `sky check` subprocess |
-| `textDocument/inlayHint` | `infer(def)` per-region types | Same table type-directed lowering reads |
-| `textDocument/formatting` | `fmt` crate over `parse(file)` CST | Exact, idempotent (below) |
-| `textDocument/signatureHelp` | `resolve` at call head → `infer` signature | Parity with `Server.hs:1123` |
+| `textDocument/inlayHint` | `infer(def)` per-region types | **Target — not yet implemented in `crates/sky-lsp`.** |
+| `textDocument/formatting` | `fmt` crate over `parse(file)` CST | **Target — `crates/fmt` exists (CLI `sky fmt`) but is not wired to this LSP endpoint yet.** |
+| `textDocument/signatureHelp` | `resolve` at call head → `infer` signature | **Target — not yet implemented in `crates/sky-lsp`.** |
 
 ### Incremental for free — contrast the 5-round + threads
 
@@ -150,7 +174,10 @@ impl LanguageServer for SkyLsp {
 }
 ```
 
-`initialize` capabilities reproduce today's exactly (`Server.hs:1108–1148`):
+`initialize` capabilities — the **target** set, reproducing the Haskell server's
+advertised capabilities (`Server.hs:1108–1148`). The current `crates/sky-lsp`
+advertises the subset it implements; the three fields marked `// target` below are
+not yet answered (see this doc's status callout):
 
 ```rust
 fn sky_capabilities() -> ServerCapabilities {
@@ -161,16 +188,16 @@ fn sky_capabilities() -> ServerCapabilities {
         declaration_provider: Some(true.into()),
         references_provider: Some(true.into()),
         document_symbol_provider: Some(true.into()),
-        document_formatting_provider: Some(true.into()),
+        document_formatting_provider: Some(true.into()),          // target — not yet implemented
         rename_provider: Some(RenameOptions { prepare_provider: Some(true), ..Default::default() }.into()),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into()]), ..Default::default() }),
-        signature_help_provider: Some(SignatureHelpOptions {
+        signature_help_provider: Some(SignatureHelpOptions {      // target — not yet implemented
             trigger_characters: Some(vec!["(".into(), " ".into()]),
             retrigger_characters: Some(vec![",".into()]), ..Default::default() }),
         semantic_tokens_provider: Some(sky_semantic_legend().into()), // 12 types, Server.hs:2042
         code_action_provider: Some(true.into()),
-        inlay_hint_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),             // target — not yet implemented
         ..Default::default()
     }
 }
@@ -540,7 +567,11 @@ query output, so they *cannot* diverge (the LSP-vs-CLI asymmetry that forced the
    the editor-parity floor.
 2. **LSP capability parity** with `Server.hs:1108–1148` (hover, goto, declaration,
    completion, references, rename+prepare, document-symbol, formatting,
-   signature-help, code-action, 12-type semantic tokens, inlay hints).
+   signature-help, code-action, 12-type semantic tokens, inlay hints). *Status:
+   hover / goto / declaration / completion / references / rename+prepare /
+   document-symbol / semantic-tokens are implemented; **formatting,
+   signature-help, inlay-hint, and code-action are still target** (see this doc's
+   status callout).*
 3. **No LSP-private compiler state** — `sky-lsp` owns a `skydb` handle + open-doc
    inputs and nothing else. No fixpoint loop, no background full-check thread, no
    externals timeout (L1, L2). CI greps the crate for `IORef`-equivalents (extra

@@ -1,10 +1,14 @@
 # Sky Compiler — Rust Rewrite (architecture-first)
 
 > **Branch:** `rewrite/rust-compiler`
-> **Status:** DESIGN / DOCUMENTATION. No compiler code until this blueprint is
-> reviewed. This directory is the full implementation guide for rebuilding the
-> Sky compiler + tooling + LSP in Rust, on the architecture the Haskell journey
-> taught us we needed.
+> **Status:** TARGET-ARCHITECTURE BLUEPRINT + working bring-up. This directory is
+> the full implementation guide for building the Sky compiler + tooling + LSP in
+> Rust, on the architecture the Haskell journey taught us we needed. It describes
+> the **desired** architecture in the present tense; the `rust/` tree is at an
+> interim milestone that already builds+runs+matches the corpus but does not yet
+> realise every target mechanism. Each doc carries an **"Implementation status (as
+> of `rewrite/rust-compiler`)"** callout distinguishing what is built from what is
+> the target — see the status matrix in [`12`](12-migration-and-milestones.md).
 
 ## Why a rewrite (not another patch)
 
@@ -62,6 +66,27 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 
 ## Status
 
-DOCUMENTATION IN PROGRESS. Spine docs (00–02) authored inline; subsystem docs
-(03–12) delegated to focused agents against the spine. No `Cargo.toml`, no Rust
-source yet — the blueprint lands first.
+**Blueprint: complete.** Spine docs (00–02) authored inline; subsystem docs
+(03–12) authored against the spine. The docs describe the target architecture.
+
+**Bring-up: interim milestone, verified functional.** The `rust/` Cargo workspace
+exists (all crates in [`02`](02-workspace-and-crates.md)) and is well past a
+skeleton: the non-FFI corpus builds+runs and matches the Haskell differential
+oracle, the FFI subsystem scales to the 76k-symbol Stripe SDK, `sky` is a
+standalone binary, the LSP passes its 17/17 Neovim gate (plus broader
+references/rename/semantic-token coverage), and a determinism gate holds. Two
+target mechanisms are **not yet built** and are called out inline where the docs
+present them in the present tense:
+
+- **The salsa query DAG** ([`01`](01-architecture-overview.md), [`10`](10-lsp-and-tooling.md)).
+  A salsa spike is wired (`skydb`), but the running pipeline threads through a
+  hand-rolled resolution db (`hir::db::SourceDb`), not memoised salsa queries.
+- **The structural typed Go-IR that makes coercion the exception**
+  ([`07`](07-lowering-and-ir.md), [`08`](08-go-codegen.md)). The IR carries a
+  `GoTy` per node, but the current Go representation erases user ADTs / tuples /
+  generics to `any`-backed runtime shapes (`rt.SkyADT`, `rt.T2[any,any]`, a
+  `Widen` node) rather than the structural-generic + sealed-interface emission the
+  target specifies. This interim representation nonetheless builds+runs+matches.
+
+See [`12` §Implementation status](12-migration-and-milestones.md) for the
+per-milestone / per-subsystem matrix.

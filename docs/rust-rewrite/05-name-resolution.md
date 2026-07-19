@@ -7,8 +7,18 @@ are processed, qualifier-collision rules are applied, and cross-module visibilit
 is computed. It is the Rust successor to `Sky.Canonicalise.*`
 (`src/Sky/Canonicalise/{Module,Environment,Expression,Pattern,Type}.hs`).
 
-The whole subsystem is expressed as **salsa queries**, which is the direct answer
-to three laws:
+> **Implementation status (as of `rewrite/rust-compiler`).** Name resolution is
+> **built** and behaviour-complete (M2: 0 resolver gaps; qualifier rules, E1001,
+> DefId allocation, cross-module `module_exports` on demand). But the "salsa
+> queries" framing here is the **target**: the running code lives in
+> `rust/crates/hir` and threads through `hir::db::SourceDb` (a value-threaded
+> `struct` with a `RefCell` exports cache), not memoised salsa `#[salsa::tracked]`
+> queries. The db is deliberately structured so a salsa port is mechanical, and it
+> already delivers the demand-driven `module_exports(dep)` lookup that replaces the
+> 5-round fixpoint. See [`01`](01-architecture-overview.md) status.
+
+The whole subsystem is expressed (in the target) as **salsa queries**, which is
+the direct answer to three laws:
 
 - **L1 (no globals).** Resolution is a query `resolve(db, ModuleId)`; the
   environment is a value threaded down the walk, never an `IORef` or a

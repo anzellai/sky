@@ -214,7 +214,17 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 }
 ```
 
-## `infer(DefId)` — inference as a salsa query
+## `infer(DefId)` — inference as a salsa query (target)
+
+> **Implementation status (as of `rewrite/rust-compiler`).** HM inference is
+> **built** (M3: arena union-find, generalisation, exhaustiveness, per-region
+> types; 39/39 non-FFI typecheck-match + reject-parity). The `#[salsa::tracked]`
+> annotations and `db: &dyn Db` signatures in this section are the **target**
+> shape — the running inference in `rust/crates/ty` is invoked value-threaded over
+> `hir::db::SourceDb` (via the `Typer`), not as memoised salsa queries. The
+> `ImplementsMap`-as-"pinned salsa input" and `infer`-as-query framing below
+> describe the destination engine ([`01`](01-architecture-overview.md) status);
+> the *logic* they describe is what the code does.
 
 Today constraint generation is a whole-module `IO` pass (`constrainModule`,
 `Constrain/Module.hs:17`) feeding one `solve` (`Solve.hs:803`); the LSP had to
