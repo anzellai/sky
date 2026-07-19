@@ -4,6 +4,7 @@
 //! (doc 05) consumes *this*, never a raw `SyntaxKind`.
 
 use crate::kind::{SyntaxKind, SyntaxNode, SyntaxToken};
+use crate::TextRange;
 // Token-kind variants that don't collide with the node wrapper struct names
 // (those must stay `SyntaxKind::`-qualified — see the enum-view impls).
 use SyntaxKind::{Char, Colon2, Float, HexInt, Int, LowerIdent, Op, TrueKw, UpperIdent};
@@ -630,6 +631,16 @@ impl RefExpr {
     }
 }
 
+/// Classification of an integer literal token — see [`Literal::int_literal`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IntLiteral {
+    /// A literal whose value fits in a 64-bit `Int`.
+    InRange(i64),
+    /// A literal whose magnitude exceeds `i64::MAX` — must be rejected at check
+    /// time. Carries the raw digits + the token span for the diagnostic.
+    OutOfRange { text: String, range: TextRange },
+}
+
 impl Literal {
     fn token(&self) -> Option<SyntaxToken> {
         self.0
@@ -647,6 +658,36 @@ impl Literal {
             HexInt => i64::from_str_radix(text.strip_prefix("0x")?, 16).ok(),
             _ => None,
         }
+    }
+
+    /// Classify this literal when it is an integer token (`INT` / `HEX_INT`),
+    /// distinguishing an in-range `i64` value from one whose magnitude exceeds
+    /// `i64::MAX`. Returns `None` for non-integer literals (float / bool /
+    /// string / char).
+    ///
+    /// Sky's `Int` lowers to Go's 64-bit `int`; a literal that does not fit is
+    /// silently truncated by the Haskell oracle and lowers here to a codegen
+    /// node that panics at runtime as a classified `TypeMismatch`. Surfacing the
+    /// [`IntLiteral::OutOfRange`] arm lets the resolver reject it at CHECK time
+    /// (`sky check ≡ sky build` → "if it compiles it works") instead.
+    pub fn int_literal(&self) -> Option<IntLiteral> {
+        let t = self.token()?;
+        let text = t.text();
+        let parsed = match t.kind() {
+            // `INT` is `[0-9]+` and `HEX_INT` is `0x[0-9a-fA-F]+` (lexer), so the
+            // ONLY way either fails to parse is out-of-range — never a malformed
+            // digit. That makes `None` here an unambiguous overflow signal.
+            Int => text.parse::<i64>().ok(),
+            HexInt => i64::from_str_radix(text.strip_prefix("0x")?, 16).ok(),
+            _ => return None,
+        };
+        Some(match parsed {
+            Some(v) => IntLiteral::InRange(v),
+            None => IntLiteral::OutOfRange {
+                text: text.to_string(),
+                range: t.text_range(),
+            },
+        })
     }
 
     /// Parse a `FLOAT` literal.
@@ -818,6 +859,52 @@ mod tests {
             Expr::Literal(l) => assert_eq!(l.as_int(), Some(42)),
             _ => panic!("expected literal"),
         }
+    }
+
+    fn body_literal(src: &str) -> Literal {
+        let p = parse(src, FileId(0));
+        match p.tree().decls().next().unwrap() {
+            Decl::Value(v) => match v.body().unwrap() {
+                Expr::Literal(l) => l,
+                _ => panic!("expected literal body"),
+            },
+            _ => panic!("expected value decl"),
+        }
+    }
+
+    #[test]
+    fn int_literal_in_range() {
+        // i64::MAX must classify as InRange and keep its exact value.
+        let l = body_literal("x =\n    9223372036854775807\n");
+        assert_eq!(l.int_literal(), Some(IntLiteral::InRange(9223372036854775807)));
+        // hex is an integer form too.
+        let l = body_literal("x =\n    0xFF\n");
+        assert_eq!(l.int_literal(), Some(IntLiteral::InRange(255)));
+    }
+
+    #[test]
+    fn int_literal_out_of_range() {
+        // A 29-digit decimal literal overflows i64 → OutOfRange (rejected at check).
+        let l = body_literal("x =\n    12345678901234567890123456789\n");
+        match l.int_literal() {
+            Some(IntLiteral::OutOfRange { text, .. }) => {
+                assert_eq!(text, "12345678901234567890123456789");
+            }
+            other => panic!("expected OutOfRange, got {other:?}"),
+        }
+        // One past i64::MAX also overflows.
+        let l = body_literal("x =\n    9223372036854775808\n");
+        assert!(matches!(l.int_literal(), Some(IntLiteral::OutOfRange { .. })));
+        // Oversized hex overflows too.
+        let l = body_literal("x =\n    0xFFFFFFFFFFFFFFFFFF\n");
+        assert!(matches!(l.int_literal(), Some(IntLiteral::OutOfRange { .. })));
+    }
+
+    #[test]
+    fn int_literal_none_for_non_int() {
+        // Float / string literals are not integer literals.
+        assert_eq!(body_literal("x =\n    3.14\n").int_literal(), None);
+        assert_eq!(body_literal("x =\n    \"hi\"\n").int_literal(), None);
     }
 
     #[test]

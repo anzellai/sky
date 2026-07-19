@@ -827,8 +827,39 @@ impl<'a> Resolver<'a> {
     fn resolve_expr(&mut self, e: &ast::Expr) -> ExprId {
         match e {
             ast::Expr::Literal(l) => {
-                let hir = if let Some(i) = l.as_int() {
-                    Expr::Int(i)
+                let hir = if let Some(int) = l.int_literal() {
+                    // An integer literal too large for the target Go `int`/`int64`
+                    // (e.g. a 29-digit literal) is truncated silently by the
+                    // Haskell oracle and lowers here to a node that panics at
+                    // runtime as a classified `TypeMismatch`. Reject it at CHECK
+                    // time (`sky check ≡ sky build` → "if it compiles it works")
+                    // instead of shipping a program that "compiles" but crashes.
+                    // The `quiet` gate mirrors interpolation-interior handling —
+                    // the oracle never rejects there (doc 03 §1.6).
+                    match int {
+                        ast::IntLiteral::InRange(v) => Expr::Int(v),
+                        ast::IntLiteral::OutOfRange { text, range } => {
+                            if self.quiet == 0 {
+                                let span = self.span_of(range);
+                                self.result.diagnostics.push(
+                                    Diagnostic::error(
+                                        "E1005",
+                                        format!(
+                                            "Integer literal `{text}` is out of range \
+                                             for `Int` (valid range is {} to {})",
+                                            i64::MIN,
+                                            i64::MAX
+                                        ),
+                                    )
+                                    .with_label(
+                                        span,
+                                        "value does not fit in a 64-bit Int",
+                                    ),
+                                );
+                            }
+                            Expr::Error
+                        }
+                    }
                 } else if let Some(f) = l.as_float() {
                     Expr::Float(f)
                 } else if let Some(b) = l.as_bool() {
