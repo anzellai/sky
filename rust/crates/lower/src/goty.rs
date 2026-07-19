@@ -127,7 +127,27 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
 
 fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
     let go = |t: &Ty| sky_ty_to_go_in(t, env, cur_mod);
-    match (name, args.len()) {
+    // A qualified reference (`Counter.Msg`) carries its declaring module in the
+    // name — resolve it to THAT module's nominal directly, bypassing the
+    // `cur_mod` disambiguation (which would wrongly pick a same-module `Msg`).
+    // Falls through to the bare final segment when the qualified name isn't a
+    // known user nominal (kernel/FFI qualified types like `Json.Value`), so those
+    // keep their existing bare-name resolution below.
+    let bare = if let Some((qual, tail)) = name.rsplit_once('.') {
+        if let Some(n) = env
+            .nominal_by_module
+            .get(&(qual.to_string(), tail.to_string()))
+        {
+            if n.opaque {
+                return GoTy::Any;
+            }
+            return GoTy::Named(n.go_name.clone(), vec![]);
+        }
+        tail
+    } else {
+        name
+    };
+    match (bare, args.len()) {
         ("Int", 0) => GoTy::Bare(Prim::Int),
         ("Float", 0) => GoTy::Bare(Prim::Float),
         ("String", 0) => GoTy::Bare(Prim::Str),
@@ -165,8 +185,8 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> G
             // one (disambiguates a `Msg`/`Model` declared in several modules);
             // fall back to the flat map otherwise.
             let nominal = cur_mod
-                .and_then(|m| env.nominal_by_module.get(&(m.to_string(), name.to_string())))
-                .or_else(|| env.nominal.get(name));
+                .and_then(|m| env.nominal_by_module.get(&(m.to_string(), bare.to_string())))
+                .or_else(|| env.nominal.get(bare));
             if let Some(n) = nominal {
                 // Phantom opaque-handle types (`Route`/`Server`/`Cookie`):
                 // the runtime value is a kernel struct handle, not the `int`

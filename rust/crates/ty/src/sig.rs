@@ -396,6 +396,31 @@ fn intern_value(db: &SourceDb, m: ModuleId, name: &str) -> DefId {
 /// Convert a `syntax::ast::Type` into a `Ty`. Qualified names collapse to their
 /// final segment (name-based nominal equality — accept-parity honesty note).
 pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
+    ast_type_to_ty_impl(t, false)
+}
+
+/// Like [`ast_type_to_ty`] but PRESERVES a qualified reference's qualifier in the
+/// `Ty::App` name (`Counter.Msg` → `App("Counter.Msg")`) instead of collapsing to
+/// the bare final segment. Used ONLY by the Go-emission type collection
+/// (`lower::collect_types`) so a cross-module field type resolves to the correct
+/// module-prefixed Go type (`Counter_Msg` vs a same-module `Main_Msg`). The
+/// inference / sig world keeps calling [`ast_type_to_ty`] (bare) so unification
+/// and the read-back oracle stay byte-identical.
+pub fn ast_type_to_ty_qualified(t: &ast::Type) -> Ty {
+    ast_type_to_ty_impl(t, true)
+}
+
+/// Format a qualified reference's name: `"Qual.Name"` when preserving (and a
+/// qualifier is present), else the bare `"Name"` (historical collapse).
+fn qual_name(preserve_qual: bool, qual: &str, name: &str) -> String {
+    if preserve_qual && !qual.is_empty() {
+        format!("{qual}.{name}")
+    } else {
+        name.to_string()
+    }
+}
+
+fn ast_type_to_ty_impl(t: &ast::Type, preserve_qual: bool) -> Ty {
     match t {
         ast::Type::Var(v) => Ty::var(&first_lower(v.syntax()).unwrap_or_default()),
         ast::Type::Con(c) => Ty::App(
@@ -403,22 +428,25 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
             Vec::new(),
         ),
         ast::Type::Qual(q) => {
-            let (_, name) = dotted_parts(q.syntax());
-            Ty::App(Name::new(&name), Vec::new())
+            let (qual, name) = dotted_parts(q.syntax());
+            Ty::App(Name::new(&qual_name(preserve_qual, &qual, &name)), Vec::new())
         }
         ast::Type::App(app) => {
             let parts = child_types(app.syntax());
             let Some((head, rest)) = parts.split_first() else {
                 return Ty::Error;
             };
-            let args: Vec<Ty> = rest.iter().map(ast_type_to_ty).collect();
+            let args: Vec<Ty> = rest
+                .iter()
+                .map(|x| ast_type_to_ty_impl(x, preserve_qual))
+                .collect();
             match head {
                 ast::Type::Con(c) => {
                     Ty::App(Name::new(&first_upper(c.syntax()).unwrap_or_default()), args)
                 }
                 ast::Type::Qual(q) => {
-                    let (_, name) = dotted_parts(q.syntax());
-                    Ty::App(Name::new(&name), args)
+                    let (qual, name) = dotted_parts(q.syntax());
+                    Ty::App(Name::new(&qual_name(preserve_qual, &qual, &name)), args)
                 }
                 ast::Type::Var(v) => {
                     // higher-kinded var application (`f a`) — no HKT in Sky; keep
@@ -426,20 +454,31 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
                     let _ = args;
                     Ty::var(&first_lower(v.syntax()).unwrap_or_default())
                 }
-                other => ast_type_to_ty(other),
+                other => ast_type_to_ty_impl(other, preserve_qual),
             }
         }
         ast::Type::Fun(f) => {
             let kids = child_types(f.syntax());
-            let from = kids.first().map(ast_type_to_ty).unwrap_or(Ty::Error);
-            let to = kids.get(1).map(ast_type_to_ty).unwrap_or(Ty::Error);
+            let from = kids
+                .first()
+                .map(|x| ast_type_to_ty_impl(x, preserve_qual))
+                .unwrap_or(Ty::Error);
+            let to = kids
+                .get(1)
+                .map(|x| ast_type_to_ty_impl(x, preserve_qual))
+                .unwrap_or(Ty::Error);
             Ty::Fun(Box::new(from), Box::new(to))
         }
-        ast::Type::Tuple(t) => Ty::Tuple(child_types(t.syntax()).iter().map(ast_type_to_ty).collect()),
+        ast::Type::Tuple(t) => Ty::Tuple(
+            child_types(t.syntax())
+                .iter()
+                .map(|x| ast_type_to_ty_impl(x, preserve_qual))
+                .collect(),
+        ),
         ast::Type::Unit(_) => Ty::Unit,
         ast::Type::Paren(p) => child_types(p.syntax())
             .first()
-            .map(ast_type_to_ty)
+            .map(|x| ast_type_to_ty_impl(x, preserve_qual))
             .unwrap_or(Ty::Unit),
         ast::Type::Record(r) => {
             let mut fields = Vec::new();
@@ -451,7 +490,7 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
                 let fname = first_lower(&field).unwrap_or_default();
                 let fty = child_types(&field)
                     .first()
-                    .map(ast_type_to_ty)
+                    .map(|x| ast_type_to_ty_impl(x, preserve_qual))
                     .unwrap_or(Ty::Error);
                 fields.push((Name::new(&fname), fty));
             }
@@ -472,6 +511,16 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
 /// The argument types of a union variant (for the lowerer's ADT emission).
 pub fn variant_arg_types(variant_syntax: &SyntaxNode) -> Vec<Ty> {
     child_types(variant_syntax).iter().map(ast_type_to_ty).collect()
+}
+
+/// Like [`variant_arg_types`] but preserves qualifiers on cross-module type
+/// references (`Counter.Msg` → `App("Counter.Msg")`) so the Go-emission path can
+/// resolve them to the declaring module's Go type. See [`ast_type_to_ty_qualified`].
+pub fn variant_arg_types_qualified(variant_syntax: &SyntaxNode) -> Vec<Ty> {
+    child_types(variant_syntax)
+        .iter()
+        .map(ast_type_to_ty_qualified)
+        .collect()
 }
 
 /// The (field-name, field-type) pairs of a record alias in DECLARATION order

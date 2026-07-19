@@ -7,7 +7,7 @@ use crate::goty::{sky_ty_to_go, sky_ty_to_go_in, Nominal, NominalKind, TypeEnv};
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
-use hir::{Body, CaseBranch, Expr, ExprId, LocalId, Pattern, PatId, Res, SourceDb};
+use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, Pattern, PatId, Res, SourceDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ty::{BodyTypes, Ty, Typer};
 
@@ -620,6 +620,62 @@ fn detect_kernel_alias(body: &Body) -> Option<String> {
 
 // ---- type declaration collection ---------------------------------------
 
+/// Build a `qualifier → declaring-module-name` map for module `m`'s imports.
+/// The qualifier is the explicit `as`-alias if present, else the import path's
+/// final segment (the default qualifier). Only parsed-module (`Dep`) imports are
+/// mapped — kernel / FFI qualifiers are resolved elsewhere in `sky_ty_to_go`.
+fn import_module_map(db: &SourceDb, m: base::ModuleId) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let tree = db.module_parse(m).tree();
+    for imp in tree.imports() {
+        let Some(path) = imp.name().map(|n| n.text()) else {
+            continue;
+        };
+        if let ImportSource::Dep(dep) = db.classify_import(&path) {
+            let modname = db.module_name(dep).to_string();
+            let qual = imp
+                .alias()
+                .map(|t| t.text().to_string())
+                .unwrap_or_else(|| path.rsplit('.').next().unwrap_or(&path).to_string());
+            map.insert(qual, modname);
+        }
+    }
+    map
+}
+
+/// Rewrite a qualified `Ty::App` name's qualifier (`Counter.Msg`, or an alias
+/// `C.Msg`) to the full declaring module name (`Counter.Msg`) via `map`, keyed
+/// by the type's final segment. Bare names and unmapped qualifiers pass through
+/// unchanged.
+fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
+    match t {
+        Ty::App(name, args) => {
+            let args: Vec<Ty> = args.iter().map(|a| requalify_ty(a, map)).collect();
+            let n = name.as_str();
+            let new_name = match n.rsplit_once('.') {
+                Some((qual, tail)) => match map.get(qual) {
+                    Some(modname) => format!("{modname}.{tail}"),
+                    None => n.to_string(),
+                },
+                None => n.to_string(),
+            };
+            Ty::App(base::Name::new(&new_name), args)
+        }
+        Ty::Fun(a, b) => Ty::Fun(
+            Box::new(requalify_ty(a, map)),
+            Box::new(requalify_ty(b, map)),
+        ),
+        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| requalify_ty(x, map)).collect()),
+        Ty::Record(fs, ext) => Ty::Record(
+            fs.iter()
+                .map(|(n, x)| (n.clone(), requalify_ty(x, map)))
+                .collect(),
+            ext.clone(),
+        ),
+        other => other.clone(),
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn collect_types(
     db: &SourceDb,
@@ -641,6 +697,11 @@ fn collect_types(
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let prefix = module_prefix(&mname);
+        // Per-module qualifier → declaring-module-name map, so a variant field
+        // written `Counter.Msg` (or an aliased `import X as C` → `C.Msg`) can be
+        // requalified to the FULL declaring module name that `nominal_by_module`
+        // is keyed by. Bare (unqualified) references are untouched.
+        let requal = import_module_map(db, m);
         // register a nominal under both the flat map (last-writer) and the
         // module-scoped map (never collides across modules).
         macro_rules! reg {
@@ -663,7 +724,14 @@ fn collect_types(
                         let Some(cn) = var.name().map(|t| t.text().to_string()) else {
                             continue;
                         };
-                        let arg_tys: Vec<Ty> = ty::variant_arg_types(var.syntax());
+                        // Qualifier-preserving extraction + requalify to the full
+                        // declaring module name, so a cross-module variant field
+                        // (`CounterMsg Counter.Msg`) resolves to `Counter_Msg` in
+                        // `sky_ty_to_go`, distinct from a same-module `Msg`.
+                        let arg_tys: Vec<Ty> = ty::variant_arg_types_qualified(var.syntax())
+                            .iter()
+                            .map(|t| requalify_ty(t, &requal))
+                            .collect();
                         if !arg_tys.is_empty() {
                             all_nullary = false;
                         }
@@ -3655,5 +3723,122 @@ fn render_goty(t: &GoTy) -> String {
                 .collect();
             format!("struct{{ {} }}", parts.join("; "))
         }
+    }
+}
+
+#[cfg(test)]
+mod qualified_type_tests {
+    use super::*;
+    use crate::goty::{sky_ty_to_go, TypeEnv};
+    use crate::ir::GoTy;
+
+    fn parse_mod(src: &str) -> syntax::Parse {
+        syntax::parse(src, base::FileId(0))
+    }
+
+    /// Regression: a union variant field typed with a QUALIFIED cross-module type
+    /// (`A.Msg`) must resolve to that module's Go type (`A_Msg`), distinct from a
+    /// same-module local `Msg` (`B_Msg`). Before qualifier preservation, `A.Msg`
+    /// collapsed to bare `Msg` at `ast_type_to_ty` and resolved (wrongly) to
+    /// `B_Msg` — so a cross-module-field union could not be sealed with the
+    /// correct field type (the `rt.Coerce: expected <nil>, got int` panic class in
+    /// `10-live-component`).
+    #[test]
+    fn qualified_variant_field_resolves_to_declaring_module() {
+        let mut db = SourceDb::new();
+        db.add_module(
+            "A",
+            parse_mod("module A exposing (..)\n\ntype Msg = AOne | ATwo Int\n"),
+        );
+        db.add_module(
+            "B",
+            parse_mod("module B exposing (..)\n\nimport A\n\ntype Msg = BLocal | Wrap A.Msg\n"),
+        );
+
+        let (nominal, nominal_by_module, decls) = collect_types(&db);
+        let env = TypeEnv {
+            nominal,
+            nominal_by_module,
+            ..Default::default()
+        };
+
+        // B declares its OWN `Msg` (→ `B_Msg`) whose `Wrap` variant carries `A.Msg`.
+        let b_msg = decls
+            .iter()
+            .find(|d| d.go_name == "B_Msg")
+            .expect("B_Msg decl present");
+        let wrap_args = match &b_msg.kind {
+            TypeDeclKind::Adt(vs) => vs
+                .iter()
+                .find(|(cn, _)| cn == "Wrap")
+                .map(|(_, args)| args.clone())
+                .expect("Wrap variant present"),
+            _ => panic!("B_Msg should be a (sealed-eligible) ADT"),
+        };
+        assert_eq!(wrap_args.len(), 1, "Wrap carries exactly one field");
+
+        // The qualifier is preserved (requalified to the full declaring module).
+        assert_eq!(
+            wrap_args[0],
+            Ty::app("A.Msg", vec![]),
+            "the Wrap field Ty keeps its `A.` qualifier"
+        );
+
+        // …and it maps to A's Go type, NOT B's same-named `Msg`.
+        assert_eq!(
+            sky_ty_to_go(&wrap_args[0], &env),
+            GoTy::Named("A_Msg".to_string(), vec![]),
+            "A.Msg must resolve to A_Msg (declaring module), not B_Msg"
+        );
+
+        // Sanity: a BARE local `Msg` reference inside B still resolves to `B_Msg`
+        // (same-module names are byte-identical to pre-fix behaviour).
+        assert_eq!(
+            sky_ty_to_go_in(&Ty::app("Msg", vec![]), &env, Some("B")),
+            GoTy::Named("B_Msg".to_string(), vec![]),
+            "a same-module bare `Msg` still resolves to B_Msg"
+        );
+
+        // And both distinct Go types actually exist as separate decls.
+        assert!(decls.iter().any(|d| d.go_name == "A_Msg"));
+        assert!(decls.iter().any(|d| d.go_name == "B_Msg"));
+    }
+
+    /// An `import X as C` alias must requalify to the declaring module, so `C.Msg`
+    /// (alias) still resolves to `A_Msg`.
+    #[test]
+    fn aliased_import_qualifier_requalifies_to_module() {
+        let mut db = SourceDb::new();
+        db.add_module(
+            "A",
+            parse_mod("module A exposing (..)\n\ntype Msg = AOne | ATwo Int\n"),
+        );
+        db.add_module(
+            "B",
+            parse_mod("module B exposing (..)\n\nimport A as C\n\ntype Msg = BLocal | Wrap C.Msg\n"),
+        );
+
+        let (nominal, nominal_by_module, decls) = collect_types(&db);
+        let env = TypeEnv {
+            nominal,
+            nominal_by_module,
+            ..Default::default()
+        };
+
+        let b_msg = decls.iter().find(|d| d.go_name == "B_Msg").unwrap();
+        let wrap_args = match &b_msg.kind {
+            TypeDeclKind::Adt(vs) => vs
+                .iter()
+                .find(|(cn, _)| cn == "Wrap")
+                .map(|(_, args)| args.clone())
+                .unwrap(),
+            _ => panic!("B_Msg should be an ADT"),
+        };
+        // requalified from alias `C` to the full module name `A`.
+        assert_eq!(wrap_args[0], Ty::app("A.Msg", vec![]));
+        assert_eq!(
+            sky_ty_to_go(&wrap_args[0], &env),
+            GoTy::Named("A_Msg".to_string(), vec![])
+        );
     }
 }
