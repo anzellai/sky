@@ -2312,6 +2312,20 @@ impl<'a> Ctx<'a> {
             if largs.len() > arity {
                 return self.over_apply(c, largs, arity, &ret_goty);
             }
+        } else if let GoTy::Func(ps, cod) = c.ty.clone() {
+            // Under-application of a func VALUE (not a top-level Def, so `go_arity`
+            // is None) — e.g. a nested-curried return applied STEPWISE:
+            // `((makeAdder 1) 2) 3`, where `makeAdder 1` is a `func(int,int) int`
+            // value and `… 2` applies it to ONE arg. Go can't partially apply a
+            // fixed-arity func, so wrap the remaining params in a closure (the same
+            // shape `make_partial` builds for Defs). Over-application (largs >= arity)
+            // and exact calls fall through to the plain call below. (audit #7b
+            // stepwise companion to the `lower_lambda` spine-collapse.)
+            let arity = ps.len();
+            if !largs.is_empty() && largs.len() < arity {
+                let cod = *cod;
+                return self.make_partial(c, largs, &Some(ps), &cod, arity);
+            }
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
     }
@@ -2335,16 +2349,38 @@ impl<'a> Ctx<'a> {
         let base: Vec<GoExpr> = it.by_ref().take(arity).collect();
         let mut call = GoExpr::new(GoExprKind::Call(Box::new(callee), base), ret.clone());
         let mut cur = ret.clone();
-        for extra in it {
-            let (pty, next) = match &cur {
+        // Apply the remaining args by BATCHING each round to the running func's
+        // arity — a curried return whose lambda body was spine-collapsed to a flat
+        // `func(int,int) int` (see `lower_lambda`, audit #7b) must be called
+        // `f(a,b)(c,d)`, not one-at-a-time `f(a,b)(c)(d)` which under-applies. A
+        // single-codomain func (`func(int) int`, the mul3 case) has arity 1 → one
+        // arg per round → identical to the prior behaviour.
+        let rest: Vec<GoExpr> = it.collect();
+        let mut idx = 0;
+        while idx < rest.len() {
+            match cur.clone() {
                 GoTy::Func(ps, cod) => {
-                    (ps.first().cloned().unwrap_or(GoTy::Any), (**cod).clone())
+                    let cod = *cod;
+                    let n = ps.len().max(1);
+                    let end = (idx + n).min(rest.len());
+                    let batch: Vec<GoExpr> = rest[idx..end]
+                        .iter()
+                        .enumerate()
+                        .map(|(k, e)| {
+                            self.coerce_if_needed(e.clone(), ps.get(k).unwrap_or(&GoTy::Any))
+                        })
+                        .collect();
+                    call = GoExpr::new(GoExprKind::Call(Box::new(call), batch), cod.clone());
+                    cur = cod;
+                    idx += n;
                 }
-                _ => (GoTy::Any, GoTy::Any),
-            };
-            let ea = self.coerce_if_needed(extra, &pty);
-            call = GoExpr::new(GoExprKind::Call(Box::new(call), vec![ea]), next.clone());
-            cur = next;
+                _ => {
+                    let ea = self.coerce_if_needed(rest[idx].clone(), &GoTy::Any);
+                    call = GoExpr::new(GoExprKind::Call(Box::new(call), vec![ea]), GoTy::Any);
+                    cur = GoTy::Any;
+                    idx += 1;
+                }
+            }
         }
         call
     }
@@ -2931,11 +2967,36 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_lambda(&mut self, params: &[PatId], body: ExprId, actual: &GoTy) -> GoExpr {
-        let params = params.to_vec();
+        let mut params = params.to_vec();
         let (pt, rt) = match actual {
             GoTy::Func(ps, r) => (ps.clone(), (**r).clone()),
             _ => (vec![GoTy::Any; params.len()], GoTy::Any),
         };
+        // `sky_ty_to_go` flattens the ENTIRE curried arrow spine into one N-ary Go
+        // func (`Int -> (Int -> Int)` → `func(int,int) int`), but a source
+        // `\c -> \d -> body` is a CHAIN of arity-1 lambda NODES. Binding only
+        // `params` against the flat `pt` would drop `pt[1..]`, pass the final
+        // codomain as the inner body's expected type, and emit a `func(int) int`
+        // value under a `func(int,int) int` declaration → `go build` arity error
+        // (plus a spurious `rt.AsInt` on the inner closure). Absorb the nested
+        // lambda spine so the emitted closure is a single flat `func(c, d) body`,
+        // matching the declared type and the flat func-value ABI (`rt.skyCallOne`
+        // curries a flat N-ary func, so both flat and curried application sites stay
+        // valid). Fires ONLY when the type carries more params than the lambda binds
+        // AND the body is a nested lambda — i.e. currently-broken shapes;
+        // arity-matched callbacks (`List.map (\x -> …)`) have `pt.len() ==
+        // params.len()` so the loop never runs → byte-identical. (audit #7b)
+        let mut body = body;
+        while params.len() < pt.len() {
+            if let Expr::Lambda { params: inner, body: ib } = &self.body.exprs[body] {
+                let inner = inner.clone();
+                let ib = *ib;
+                params.extend(inner);
+                body = ib;
+            } else {
+                break; // residual: lambda bottoms out in a func value (eta-exp gap)
+            }
+        }
         let mut gparams = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
         let mut elem_pinned = false;
