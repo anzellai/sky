@@ -15,13 +15,22 @@ use syntax::ast::{self, AstNode};
 use syntax::{SyntaxKind, SyntaxNode};
 
 /// One alias definition: its type parameters and its (unexpanded) body.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct AliasDef {
     params: Vec<String>,
     body: Ty,
 }
 
 /// The typed world: everything inference needs to look a name's scheme up.
+///
+/// `PartialEq`/`Eq` back salsa **backdating** of the `type_world` tracked query
+/// (Stage D-2): the world is a pure function of every module's declarations
+/// (annotations, unions, aliases) plus pass-3 inference of the stdlib
+/// combinators — none of which a body-only edit to app code changes. So an app
+/// body edit re-executes `World::build` but yields a value-equal `World`; salsa
+/// backdates it and dependent `infer(DefId)` queries validate from memo rather
+/// than re-inferring. See `skydb::type_world_query`.
+#[derive(Clone, PartialEq, Eq)]
 pub struct World {
     /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
     /// (matches `Res::Def`). Only these are surfaced to the lowerer as a

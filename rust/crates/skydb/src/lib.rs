@@ -182,6 +182,59 @@ pub fn resolve_query(db: &dyn ResolveDb, module: ModuleId, _file: SourceFile) ->
     hir::resolve(db.sky_db(), module)
 }
 
+/// `type_world` as a `#[salsa::tracked]` query (Stage D-2 — doc 01's `infer`
+/// upstream, doc 12 risk #M1). The salsa successor to the eager `ty::World::build`
+/// that the build path rebuilt ≥3× (`check_modules`, `Typer::new`,
+/// `lower::collect_types`); routed through [`ty::TyDb::type_world`] those sites now
+/// share **one** memoised assembly.
+///
+/// **Backdated** (deliberately NOT `no_eq`): `ty::World` is `PartialEq`, and the
+/// world is a pure function of every module's *declarations* (annotations, unions,
+/// aliases) + pass-3 inference of the stdlib combinators — never of an app def's
+/// body. So a body-only edit re-executes this query (its `parse` dep changed) but
+/// yields a value-equal `World`; salsa backdates it, and every dependent
+/// [`infer_query`] validates from memo instead of re-inferring. That backdate is
+/// the mechanism the incremental harness's "sibling `infer` not recomputed after a
+/// body edit" scenario proves. Reads flow through `db.sky_db()` (the `ResolveDb`
+/// bridge) so the `parse`/`resolve`/interning edges are recorded against this
+/// query exactly as they are for [`resolve_query`].
+#[salsa::tracked]
+pub fn type_world_query(db: &dyn ResolveDb) -> ty::World {
+    ty::World::build(db.sky_db())
+}
+
+/// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
+/// per-region type map`) — memoised at **per-def granularity**, the ideal
+/// incremental unit. Builds the def's per-expression/per-local type table against
+/// the memoised [`type_world_query`], reached via [`ty::compute_body_types`]
+/// (the single inference body the eager `SourceDb` backend also runs, so the
+/// typed table is byte-identical whichever backend produced it).
+///
+/// The union-find stays **local to this query's execution**: `compute_body_types`
+/// creates the `Infer` (and its `UnionFind`), drives it, and reads every result
+/// back to a canonical `ty::Ty` before returning — a `TyVarId` never escapes into
+/// the memoised `BodyTypes` (doc 12 #M1; verified: `infer_def_typed` calls
+/// `read_back` on the result + every recorded expr/local var).
+///
+/// `no_eq`: `BodyTypes` carries `HashMap`s and is consumed eagerly by the lowerer
+/// (not yet a query), so recompute-on-demand is fine — no backdate needed. Keyed
+/// by `(def, module, file)`: `file` (the def's own module `SourceFile`, an input)
+/// is the salsa-struct a tracked fn requires as a key; `module` + `def` let the
+/// query reach the body via `resolve(module)` WITHOUT reading the interned
+/// `DefKey` (which would be revision-unsafe at the caller's non-query boundary).
+/// The body invalidation edge is captured through that `resolve(module)` read, not
+/// the key (`file` is stable across edits — `set_text` mutates the input in place).
+#[salsa::tracked(no_eq)]
+pub fn infer_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    module: ModuleId,
+    _file: SourceFile,
+) -> ty::BodyTypes {
+    let world = type_world_query(db);
+    ty::compute_body_types(world, db.sky_db(), module, def)
+}
+
 /// A source file's text keyed by its `file_id` — the Stage-A **input** (doc 01
 /// `source_text(FileId)`). One per module; the module set is the collection of
 /// these inputs. The driver `set_*`s them; every query is a pure function of
@@ -340,6 +393,26 @@ impl SkyDb for SkyDatabase {
     }
     fn def_loc(&self, def: DefId) -> Option<DefLoc> {
         Some(def_id_loc(self, def))
+    }
+}
+
+/// The salsa-backed [`ty::TyDb`]: the assembled world and each def's typed table
+/// route to the memoised [`type_world_query`] / [`infer_query`]. Mirrors the
+/// `SkyDb` impl above (route to a tracked query, clone out of the memo into the
+/// owning `Rc` shape both backends return) — the seam that keeps salsa in `skydb`
+/// while `ty`/`lower` author against the forbid-clean `TyDb` interface.
+impl ty::TyDb for SkyDatabase {
+    fn type_world(&self) -> Rc<ty::World> {
+        Rc::new(type_world_query(self).clone())
+    }
+    fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<ty::BodyTypes> {
+        // `module` comes from the caller (revision-safe — no interned read here);
+        // `source_file` reads the append-only registry, also revision-safe.
+        let file = self.source_file(module);
+        Rc::new(infer_query(self, def, module, file).clone())
+    }
+    fn as_sky_db(&self) -> &dyn SkyDb {
+        self
     }
 }
 

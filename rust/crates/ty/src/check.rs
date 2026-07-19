@@ -2,14 +2,16 @@
 //! Produces the type-error diagnostics + per-def type table (the "per-region
 //! type map output (name → inferred type)" the lowerer will consume).
 
+use crate::db::TyDb;
 use crate::exhaustive;
 use crate::infer::Infer;
 use crate::sig::World;
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
-use hir::{Body, ExprId, LocalId, SkyDb};
+use hir::{Body, ExprId, LocalId};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -47,42 +49,47 @@ pub struct CheckOutput {
 
 /// The per-body type table the lowerer (doc 07 §2) consumes: the def's result
 /// type, plus a per-expression and per-local type map keyed by arena id.
-#[derive(Default)]
+///
+/// This is the value of the `infer(DefId)` tracked query (Stage D-2 — doc 01's
+/// `infer(DefId) -> types, per-region type map`). It is deliberately `no_eq` as
+/// a salsa output (recompute-on-demand is fine; the lowerer is not yet a query),
+/// but derives `Clone` so the trait accessor can hand an owned copy back out of
+/// the memo, mirroring `SkyDb::resolve`'s `Rc`-clone.
+#[derive(Default, Clone)]
 pub struct BodyTypes {
     pub result: Option<Ty>,
     pub exprs: HashMap<ExprId, Ty>,
     pub locals: HashMap<LocalId, Ty>,
 }
 
-/// A reusable typed view of a whole program (stdlib + deps + entry). Built once;
-/// `body_types` re-infers a single def against the shared world. Lets the `lower`
-/// crate ask for per-expression types without rebuilding the world per def.
+/// A reusable typed view of a whole program (stdlib + deps + entry). The world
+/// comes from `db.type_world()` — a single memoised assembly on the salsa backend
+/// (so the build's several `Typer::new` sites share one world), or an eager build
+/// on `SourceDb`. `body_types` routes through the `infer(DefId)` query, so a def's
+/// typed table is memoised at per-def granularity on the salsa backend.
 pub struct Typer<'a> {
-    world: World,
-    db: &'a dyn SkyDb,
+    world: Rc<World>,
+    db: &'a dyn TyDb,
 }
 
 impl<'a> Typer<'a> {
-    pub fn new(db: &'a dyn SkyDb) -> Self {
+    pub fn new(db: &'a dyn TyDb) -> Self {
         Typer {
-            world: World::build(db),
+            world: db.type_world(),
             db,
         }
     }
 
-    /// Infer `body`, returning the per-expression + per-local type table.
-    /// `def` is the body's own DefId so a recursive self-reference stays
-    /// monomorphic (does not instantiate the def's own pass-3 scheme).
-    pub fn body_types(&self, def: DefId, body: &Body) -> BodyTypes {
-        let mut infer = Infer::new(&self.world, self.db)
-            .with_self_def(Some(def))
-            .with_inferred(true);
-        let (result, exprs, locals) = infer.infer_def_typed(body);
-        BodyTypes {
-            result,
-            exprs,
-            locals,
-        }
+    /// The per-expression + per-local type table for `def` (in `module`) — routed
+    /// through the `infer(DefId)` query (`TyDb::body_types_of`), so it is memoised
+    /// per def on the salsa backend. `module` is the def's own module (the caller
+    /// has it from its `resolve` walk); it lets the query reach the body without a
+    /// revision-unsafe interned-`DefKey` read. The `body` argument is retained for
+    /// call-site compatibility with the lowerer (which has it in hand); the query
+    /// refetches the identical body from `resolve`, so both agree. Recursive
+    /// self-references stay monomorphic inside the query body (its `with_self_def`).
+    pub fn body_types(&self, module: ModuleId, def: DefId, _body: &Body) -> BodyTypes {
+        (*self.db.body_types_of(module, def)).clone()
     }
 
     /// Like [`Typer::body_types`], but additionally seeds param/local types from
@@ -92,7 +99,7 @@ impl<'a> Typer<'a> {
     /// lowerer's typed table — and therefore codegen — is byte-for-byte
     /// unchanged (the LSP is additive).
     pub fn body_types_annotated(&self, def: DefId, body: &Body) -> BodyTypes {
-        let mut infer = Infer::new(&self.world, self.db)
+        let mut infer = Infer::new(&self.world, self.db.as_sky_db())
             .with_self_def(Some(def))
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
@@ -130,13 +137,14 @@ impl<'a> Typer<'a> {
 
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
-pub fn check_modules(db: &dyn SkyDb, to_check: &[ModuleId]) -> CheckOutput {
-    let world = World::build(db);
+pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
+    let world = db.type_world();
+    let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 
     for &mid in to_check {
-        let mname = db.module_name(mid).to_string();
-        let resolved = db.resolve(mid);
+        let mname = sky.module_name(mid).to_string();
+        let resolved = sky.resolve(mid);
         // Surface unresolved-name diagnostics (additive — see `name_errors`).
         for d in &resolved.diagnostics {
             if d.severity == Severity::Error {
@@ -152,7 +160,7 @@ pub fn check_modules(db: &dyn SkyDb, to_check: &[ModuleId]) -> CheckOutput {
 
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
-            let mut infer = Infer::new(&world, db).with_self_def(Some(*def));
+            let mut infer = Infer::new(&world, sky).with_self_def(Some(*def));
             // Annotation gate (M3 residual): a def with a DECLARED signature is
             // checked against it (params seeded + body result unified with the
             // declared type), so a body that contradicts its own annotation is

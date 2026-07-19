@@ -24,11 +24,12 @@
 //! then `assert_recompute` + `assert_matches_fresh`. New tracked queries become
 //! verifiable for invalidation by asserting on their `WillExecute` name here.
 
-use base::DefId;
+use base::{DefId, ModuleId};
 use hir::{ResolveResult, SkyDb};
 use salsa::Setter;
 use skydb::{SkyDatabase, SourceFile};
 use std::sync::{Arc, Mutex};
+use ty::TyDb;
 
 // ---- fixtures -------------------------------------------------------------
 
@@ -310,5 +311,207 @@ fn same_revision_resolution_is_stable() {
     assert!(
         !executed(&logs, "resolve_query"),
         "re-demanding App.resolve in the same revision must hit the memo; log={logs:?}"
+    );
+}
+
+// ---- Stage D-2: `type_world` + `infer(DefId)` invalidation ----------------
+//
+// These extend the harness to the two tracked queries Stage D-2 introduced:
+// `type_world_query` (the world, assembled once + backdated) and `infer_query`
+// (per-def type table). The seams are demanded through the forbid-clean `TyDb`
+// trait (`db.type_world()` / `db.body_types_of(def)`), which route to the
+// queries — so the salsa events (`WillExecute` / `DidValidateMemoizedValue`) name
+// them exactly as the resolve-stage assertions above name `resolve_query`.
+
+/// A body-only edit: `x = 1` → `x = "changed"` (exports unchanged, so `App` is
+/// unaffected; only the inferred TYPE of `x` moves number→String).
+const OTHER_BODY_EDIT: &str = "module Other exposing (x)\n\nx = \"changed\"\n";
+
+/// The `DefId` of a named top-level def in a module (via its resolution).
+fn def_of(db: &SkyDatabase, m: ModuleId, name: &str) -> DefId {
+    let rr = db.resolve(m);
+    rr.top_defs
+        .iter()
+        .find(|td| td.name.as_str() == name)
+        .unwrap_or_else(|| panic!("no top-level def `{name}` in module {}", m.index()))
+        .def
+}
+
+/// A deterministic, DB-independent rendering of a `BodyTypes` — sorted so the
+/// `HashMap` iteration order can't perturb the bytes. `Ty` and the arena
+/// `ExprId`/`LocalId` keys carry no raw `DefId`, so no normalisation is needed:
+/// the projection is directly comparable incremental-vs-fresh.
+fn project_bt(bt: &ty::BodyTypes) -> String {
+    let mut s = format!("result {:?}\n", bt.result);
+    let mut es: Vec<(String, String)> = bt
+        .exprs
+        .iter()
+        .map(|(k, v)| (format!("{k:?}"), format!("{v:?}")))
+        .collect();
+    es.sort();
+    for (k, v) in es {
+        s += &format!("expr {k} = {v}\n");
+    }
+    let mut ls: Vec<(String, String)> = bt
+        .locals
+        .iter()
+        .map(|(k, v)| (format!("{k:?}"), format!("{v:?}")))
+        .collect();
+    ls.sort();
+    for (k, v) in ls {
+        s += &format!("local {k} = {v}\n");
+    }
+    s
+}
+
+/// (D-2 a) The world is assembled **once and reused**: re-demanding `type_world`
+/// in the same revision hits the memo (no `WillExecute`), and its value — plus
+/// each def's `infer` table — is byte-stable on repeated demand (per-def memo).
+#[test]
+fn type_world_and_infer_are_memoised_within_a_revision() {
+    let fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let main_def = def_of(&fx.db, fx.app_id, "main");
+
+    // First demand populates both memos.
+    let w1 = fx.db.type_world();
+    let bt1 = project_bt(&fx.db.body_types_of(fx.app_id, main_def));
+
+    // Second demand in the SAME revision must be served from memo, byte-stable.
+    fx.clear_log();
+    let w2 = fx.db.type_world();
+    let bt2 = project_bt(&fx.db.body_types_of(fx.app_id, main_def));
+    let logs = fx.take_log();
+
+    assert!(*w1 == *w2, "type_world must be value-stable within a revision");
+    assert_eq!(bt1, bt2, "infer(App.main) must be byte-stable within a revision");
+    assert!(
+        !executed(&logs, "type_world_query"),
+        "re-demanding type_world in the same revision must hit the memo; log={logs:?}"
+    );
+    assert!(
+        !executed(&logs, "infer_query"),
+        "re-demanding infer(App.main) in the same revision must hit the memo; log={logs:?}"
+    );
+}
+
+/// (D-2 b) The headline incremental property. A **body-only** edit to `Other`
+/// recomputes `infer(Other.x)` (its own body changed) but NOT `infer(App.main)`
+/// in an unrelated module — because `type_world` **backdates** (a body edit
+/// touches no annotation/union/alias, so `World::build` re-executes to a
+/// value-equal world) and `App`'s own `resolve` is untouched. Asserts BOTH the
+/// recompute-set (by query name) AND correctness (byte-equal a fresh build).
+#[test]
+fn body_edit_recomputes_only_that_defs_infer() {
+    let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let main_def = def_of(&fx.db, fx.app_id, "main");
+    let x_def = def_of(&fx.db, fx.other_id, "x");
+
+    // Cold: populate every memo (world + both defs' infer tables).
+    let _ = fx.db.type_world();
+    let _ = fx.db.body_types_of(fx.app_id, main_def);
+    let _ = fx.db.body_types_of(fx.other_id, x_def);
+
+    // Edit ONLY Other's body.
+    fx.other.set_text(&mut fx.db).to(OTHER_BODY_EDIT.to_string());
+
+    // Window 1: demand the UNRELATED def. `type_world` re-executes (its `parse`
+    // dep changed) but BACKDATES; App's resolve is untouched → infer(App.main)
+    // validates from memo without re-executing.
+    fx.clear_log();
+    let main_bt = project_bt(&fx.db.body_types_of(fx.app_id, main_def));
+    let l1 = fx.take_log();
+    assert!(
+        executed(&l1, "type_world_query"),
+        "type_world must re-execute (its parse dep changed) to be checked for backdate; log={l1:?}"
+    );
+    assert!(
+        !executed(&l1, "infer_query"),
+        "infer(App.main) MUST NOT recompute after an unrelated body edit (type_world backdated); log={l1:?}"
+    );
+    assert!(
+        validated(&l1, "infer_query"),
+        "infer(App.main) MUST validate from memo (checked, not skipped); log={l1:?}"
+    );
+
+    // Window 2: demand the EDITED def. Its own `resolve` changed → re-executes.
+    fx.clear_log();
+    let x_bt = project_bt(&fx.db.body_types_of(fx.other_id, x_def));
+    let l2 = fx.take_log();
+    assert!(
+        executed(&l2, "infer_query"),
+        "infer(Other.x) MUST recompute after its own body edit; log={l2:?}"
+    );
+
+    // Correctness: incremental == fresh-from-scratch on the FINAL sources.
+    let fresh = Fixture::build(LIB_V1, APP, OTHER_BODY_EDIT);
+    let fresh_main = def_of(&fresh.db, fresh.app_id, "main");
+    let fresh_x = def_of(&fresh.db, fresh.other_id, "x");
+    assert_eq!(
+        main_bt,
+        project_bt(&fresh.db.body_types_of(fresh.app_id, fresh_main)),
+        "incremental infer(App.main) diverged from a fresh build"
+    );
+    assert_eq!(
+        x_bt,
+        project_bt(&fresh.db.body_types_of(fresh.other_id, fresh_x)),
+        "incremental infer(Other.x) diverged from a fresh build after body edit"
+    );
+}
+
+// A `Lib` carrying an ANNOTATED export — editing an annotation changes the
+// sig-world's VALUE (unlike a body edit), so `type_world` does NOT backdate.
+const LIB_ANNO_V1: &str = "module Lib exposing (greeting)\n\ngreeting : String\n\ngreeting = \"hi\"\n";
+// V2 adds a NEW annotated export (`shout`) → a new `value_sigs` entry → the world
+// value differs → no backdate → dependents' `infer` re-executes.
+const LIB_ANNO_V2: &str = "module Lib exposing (greeting, shout)\n\ngreeting : String\n\ngreeting = \"hi\"\n\nshout : String\n\nshout = \"HI\"\n";
+
+/// (D-2 c) The complement to (b): an **annotation** edit changes `type_world`'s
+/// value (no backdate), so a dependent def's `infer` DOES recompute — proving the
+/// sig → infer edge fires (and correctness is preserved).
+///
+/// Granularity note: `infer(App.main)` recomputes here even though `main` never
+/// references the newly-added `shout` — every `infer` depends on the single
+/// aggregate `type_world`, so ANY sig change invalidates all of them. Making that
+/// selective (infer depends only on the sigs of the defs it references) is the
+/// Stage-E refinement — per-referenced-def `sig(DefId)` queries; the aggregate
+/// world is the current, honest granularity floor. This test asserts the
+/// achievable subset: the dependent recomputes + stays correct.
+#[test]
+fn annotation_edit_recomputes_dependent_infer() {
+    let mut fx = Fixture::build(LIB_ANNO_V1, APP, OTHER_V1);
+    let main_def = def_of(&fx.db, fx.app_id, "main");
+
+    // Cold: populate world + infer(App.main).
+    let world_before = fx.db.type_world();
+    let _ = fx.db.body_types_of(fx.app_id, main_def);
+
+    // Edit Lib's annotations (adds `shout : String`).
+    fx.lib.set_text(&mut fx.db).to(LIB_ANNO_V2.to_string());
+
+    fx.clear_log();
+    let main_bt = project_bt(&fx.db.body_types_of(fx.app_id, main_def));
+    let world_after = fx.db.type_world();
+    let l = fx.take_log();
+
+    assert!(
+        *world_before != *world_after,
+        "an annotation edit MUST change type_world's value (no backdate)"
+    );
+    assert!(
+        executed(&l, "type_world_query"),
+        "type_world MUST re-execute after an annotation edit; log={l:?}"
+    );
+    assert!(
+        executed(&l, "infer_query"),
+        "infer(App.main) MUST recompute after a sig-world change; log={l:?}"
+    );
+
+    // Correctness: incremental == fresh-from-scratch on the FINAL sources.
+    let fresh = Fixture::build(LIB_ANNO_V2, APP, OTHER_V1);
+    let fresh_main = def_of(&fresh.db, fresh.app_id, "main");
+    assert_eq!(
+        main_bt,
+        project_bt(&fresh.db.body_types_of(fresh.app_id, fresh_main)),
+        "incremental infer(App.main) diverged from a fresh build after annotation edit"
     );
 }

@@ -9,7 +9,7 @@ use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
 use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, Pattern, PatId, Res, SkyDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use ty::{BodyTypes, Ty, Typer};
+use ty::{BodyTypes, Ty, TyDb, Typer};
 
 pub struct LowerOutput {
     pub items: Vec<GoItem>,
@@ -134,11 +134,11 @@ pub struct LowerConfig {
     pub ffi: FfiTable,
 }
 
-pub fn lower_program(db: &dyn SkyDb, entry: ModuleId) -> LowerOutput {
+pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
     lower_program_cfg(db, entry, &LowerConfig::default())
 }
 
-pub fn lower_program_cfg(db: &dyn SkyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
+pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     let typer = Typer::new(db);
     let mut warnings = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -171,7 +171,7 @@ pub fn lower_program_cfg(db: &dyn SkyDb, entry: ModuleId, cfg: &LowerConfig) -> 
         }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
-                let types = typer.body_types(td.def, body);
+                let types = typer.body_types(m, td.def, body);
                 let sig = typer.value_sig(td.def).map(|s| s.ty.clone());
                 defs.insert(
                     td.def,
@@ -468,7 +468,7 @@ pub fn lower_program_cfg(db: &dyn SkyDb, entry: ModuleId, cfg: &LowerConfig) -> 
             continue;
         }
         let mut cx = Ctx {
-            db,
+            db: db.as_sky_db(),
             defs: &defs,
             kernel_alias: &kernel_alias,
             env: &env,
@@ -694,7 +694,7 @@ fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
 
 #[allow(clippy::type_complexity)]
 fn collect_types(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
 ) -> (
     HashMap<String, Nominal>,
     HashMap<(String, String), Nominal>,
@@ -708,8 +708,9 @@ fn collect_types(
     // `type alias Point = (Float, Float)`) must expand `Point` to the tuple so the
     // struct-field decl agrees with the pre-expanded function signatures. Without
     // this the field erases to `[]any` while the param renders `[]rt.T2[…]` — the
-    // same Sky type, two incompatible Go types (26/37).
-    let world = ty::World::build(db);
+    // same Sky type, two incompatible Go types (26/37). Routed through the
+    // memoised `type_world` query so it shares the build's single world assembly.
+    let world = db.type_world();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let prefix = module_prefix(&mname);
@@ -717,7 +718,7 @@ fn collect_types(
         // written `Counter.Msg` (or an aliased `import X as C` → `C.Msg`) can be
         // requalified to the FULL declaring module name that `nominal_by_module`
         // is keyed by. Bare (unqualified) references are untouched.
-        let requal = import_module_map(db, m);
+        let requal = import_module_map(db.as_sky_db(), m);
         // register a nominal under both the flat map (last-writer) and the
         // module-scoped map (never collides across modules).
         macro_rules! reg {

@@ -14,12 +14,14 @@
 use base::Name;
 
 mod check;
+mod db;
 mod exhaustive;
 mod infer;
 mod sig;
 mod unify;
 
 pub use check::{check_modules, BodyTypes, CheckOutput, DefType, Typer, TypeErrorKind};
+pub use db::{compute_body_types, TyDb};
 pub use sig::{
     record_alias_fields, variant_arg_types, variant_arg_types_qualified, World,
 };
@@ -141,7 +143,13 @@ impl Ty {
 /// A HM type scheme: quantified vars + body. Generalisation is via annotations
 /// (Sky does not rank-generalise), so `vars` are the annotation's free vars
 /// minus `"any"` (doc 06 §"Generalisation & instantiation").
-#[derive(Clone, Debug)]
+///
+/// `PartialEq`/`Eq` are load-bearing for salsa **backdating** of the
+/// `type_world` tracked query (Stage D-2): a body-only edit re-executes
+/// `World::build` but the resulting schemes are value-equal, so salsa backdates
+/// the world and dependent `infer(DefId)` queries validate from memo instead of
+/// re-executing. See `skydb::type_world_query`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scheme {
     pub vars: Vec<Name>,
     pub ty: Ty,

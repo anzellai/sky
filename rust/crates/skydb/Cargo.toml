@@ -22,4 +22,5 @@ salsa.workspace = true
 [dev-dependencies]
 base = { path = "../base" }
 hir = { path = "../hir" }
+ty = { path = "../ty" }
 salsa.workspace = true

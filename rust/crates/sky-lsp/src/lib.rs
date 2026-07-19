@@ -23,7 +23,7 @@ use hir::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use syntax::SyntaxKind;
-use ty::{Ty, Typer};
+use ty::{Ty, TyDb, Typer};
 
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, DocumentSymbol, Hover,
@@ -305,7 +305,7 @@ impl Analysis {
 
     fn field_completion(
         &self,
-        db: &dyn SkyDb,
+        db: &dyn TyDb,
         resolved: &ResolveResult,
         recv: &str,
         off: usize,
