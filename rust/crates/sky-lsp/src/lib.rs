@@ -15,13 +15,24 @@
 //!
 //! Deliberately independent of `tower-lsp`'s server so it can be unit- and
 //! integration-tested directly; `main.rs` is the thin async transport wrapper.
+//!
+//! **Persistent salsa db (doc 10 §"Incremental for free", the salsa payoff).**
+//! The engine holds ONE long-lived `skydb::SkyDatabase`. On `didOpen`/`didChange`
+//! only the edited file's `SourceFile` input is `set_source_text`-ed; every
+//! feature answers by running the same tracked queries (`resolve`/`type_world`/
+//! `infer`) the CLI uses, reached through the forbid-clean `SkyDb`/`TyDb` traits.
+//! Salsa recomputes only the edited module + its dependents — an untouched
+//! module's memoised `resolve`/`infer` stands, so a keystroke no longer re-walks
+//! the whole stdlib+project (the per-request `SourceDb` rebuild is gone). The
+//! `SkyDatabase` is `Send`, so it is held across `await` behind the server's one
+//! async mutex; no salsa is imported here (it stays quarantined in `skydb`, L1).
 
 use base::{DefId, FileId, ModuleId, Span};
-use hir::{
-    DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SkyDb, SourceDb, TypeOcc,
-};
+use hir::{DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SkyDb, TypeOcc};
+use skydb::{SkyDatabase, SourceFile};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use syntax::SyntaxKind;
 use ty::{Ty, TyDb, Typer};
 
@@ -32,19 +43,29 @@ use tower_lsp::lsp_types::{
     SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
-/// One loaded document: its module name, parsed tree, source text, and url.
+/// One loaded document: its parsed tree, source text, and url. (The module name
+/// keys `by_name`; it need not be duplicated on the doc.)
 struct Doc {
-    name: String,
     parse: syntax::Parse,
     text: String,
     url: Url,
 }
 
-/// The workspace: the driver-set inputs (loaded documents). The `SourceDb` is
-/// rebuilt per request from these — the only mutable state the LSP owns (L1).
+/// The workspace: a persistent salsa `SkyDatabase` plus the driver-set inputs.
+/// The db is long-lived — an edit `set_source_text`s the one changed file's input
+/// and every query recomputes only the dirty sub-DAG (L2). `docs`/`files` mirror
+/// the db's module registry position-for-position so a `ModuleId`/span
+/// (`FileId(module.index())`) indexes straight back into `docs` for text + url.
 pub struct Analysis {
-    /// Documents in insertion order; the index doubles as the rebuilt db's
-    /// `ModuleId`/`FileId` (register-in-order is deterministic — L4).
+    /// The one incremental engine — held across requests (and `await`s), so
+    /// memoised queries survive keystrokes.
+    db: SkyDatabase,
+    /// The `SourceFile` input backing each module, parallel to `docs` (index ==
+    /// `ModuleId` == span `FileId`); editing calls `set_text` on `files[i]`.
+    files: Vec<SourceFile>,
+    /// Documents in insertion order; the index doubles as the db's
+    /// `ModuleId`/`FileId` (register-in-order is deterministic — L4). Holds the
+    /// text + url + eager parse for span↔position conversion and token walks.
     docs: Vec<Doc>,
     /// Module name → index in `docs` (dedup so indices stay 1:1 with modules).
     by_name: HashMap<String, usize>,
@@ -62,7 +83,21 @@ impl Default for Analysis {
 
 impl Analysis {
     pub fn new() -> Self {
+        Analysis::from_db(SkyDatabase::with_kernel())
+    }
+
+    /// Test seam: an engine whose salsa db mirrors every event `kind` into `sink`,
+    /// so an integration test can assert WHICH queries re-execute after an edit
+    /// (the incrementality proof) — the LSP peer of `skydb`'s
+    /// `with_kernel_events`. Behaviour is otherwise identical to [`Analysis::new`].
+    pub fn with_event_log(sink: Arc<Mutex<Vec<String>>>) -> Self {
+        Analysis::from_db(SkyDatabase::with_kernel_events(sink))
+    }
+
+    fn from_db(db: SkyDatabase) -> Self {
         Analysis {
+            db,
+            files: Vec::new(),
             docs: Vec::new(),
             by_name: HashMap::new(),
             by_path: HashMap::new(),
@@ -70,28 +105,50 @@ impl Analysis {
         }
     }
 
+    /// The persistent salsa db as the query interface every feature runs on.
+    fn db(&self) -> &SkyDatabase {
+        &self.db
+    }
+
     // ---- loading -------------------------------------------------------
 
     /// Register (or update) one source under a url. Idempotent per module name:
     /// a re-add (didChange) updates the module in place, keeping its index so
     /// spans (which carry a `FileId` == index) stay valid.
+    ///
+    /// The salsa payoff lives here: on an UPDATE we `set_source_text` the existing
+    /// module's `SourceFile` input — the sole mutation — so salsa invalidates only
+    /// that module's `parse` and its transitive dependents; an unrelated module's
+    /// memoised `resolve`/`infer` is untouched. On a NEW module we mint a fresh
+    /// input and register it (position == `ModuleId` == span `FileId`).
     pub fn set_document(&mut self, url: Url, text: String) {
         let parse = syntax::parse(&text, FileId(0));
         let name = module_name(&parse, url_key(&url).as_deref());
-        let doc = Doc {
-            name: name.clone(),
-            parse,
-            text,
-            url: url.clone(),
-        };
         let idx = match self.by_name.get(&name) {
             Some(&i) => {
-                self.docs[i] = doc;
+                // In-place edit: mutate the salsa input (incremental), then the
+                // eager Doc bookkeeping (text/url/parse for position + tokens).
+                self.db.set_source_text(self.files[i], text.clone());
+                self.docs[i] = Doc {
+                    parse,
+                    text,
+                    url: url.clone(),
+                };
                 i
             }
             None => {
                 let i = self.docs.len();
-                self.docs.push(doc);
+                // New module: a fresh SourceFile input, registered under `name`
+                // so `ModuleId(i)` binds to it; `file_id == i` keeps span
+                // `FileId(module.index())` indexing straight back into `docs`.
+                let file = self.db.new_source(i as u32, text.clone());
+                self.db.add_module(&name, file);
+                self.files.push(file);
+                self.docs.push(Doc {
+                    parse,
+                    text,
+                    url: url.clone(),
+                });
                 self.by_name.insert(name, i);
                 i
             }
@@ -135,16 +192,6 @@ impl Analysis {
         }
     }
 
-    /// Rebuild the (lightweight) source db from the loaded documents. Cheap:
-    /// `syntax::Parse` is `Arc`-backed, so `add_module` clones a pointer.
-    fn build_db(&self) -> SourceDb {
-        let mut db = SourceDb::new();
-        for d in &self.docs {
-            db.add_module(&d.name, d.parse.clone());
-        }
-        db
-    }
-
     // ---- request routing ----------------------------------------------
 
     fn index_of(&self, url: &Url) -> Option<usize> {
@@ -171,11 +218,11 @@ impl Analysis {
         let idx = self.index_of(url)?;
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
-        let db = self.build_db();
+        let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
         let cand = best_candidate(&resolved, off)?;
-        let typer = Typer::new(&db);
+        let typer = Typer::new(db);
         let md = match cand {
             Cand::Ref(o) => self.hover_ref(&typer, &resolved, o),
             Cand::Field(o) => self.hover_field(&typer, &resolved, o),
@@ -240,14 +287,14 @@ impl Analysis {
         let idx = self.index_of(url)?;
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
-        let db = self.build_db();
+        let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
         let cand = best_candidate(&resolved, off)?;
         let span = match cand {
             Cand::Ref(o) => match &o.res {
-                Res::Def(d) => def_span(&db, &resolved, module, *d),
-                Res::Ctor(cr) => def_span(&db, &resolved, module, cr.def),
+                Res::Def(d) => def_span(db, &resolved, module, *d),
+                Res::Ctor(cr) => def_span(db, &resolved, module, cr.def),
                 Res::Local(l) => resolved
                     .binders
                     .iter()
@@ -255,9 +302,9 @@ impl Analysis {
                     .map(|b| b.span),
                 Res::Kernel { .. } | Res::Foreign { .. } | Res::Error => None,
             },
-            Cand::Type(o) => def_span(&db, &resolved, module, o.con),
+            Cand::Type(o) => def_span(db, &resolved, module, o.con),
             Cand::Field(o) => {
-                let typer = Typer::new(&db);
+                let typer = Typer::new(db);
                 let recv_fields = receiver_fields(&typer, &resolved, o.owner, o.receiver);
                 field_span(&resolved, o.field.as_str(), recv_fields.as_deref())
             }
@@ -284,17 +331,17 @@ impl Analysis {
             return Vec::new();
         };
         let before = &text[..off as usize];
-        let db = self.build_db();
+        let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
 
         if let Some((recv, _partial)) = split_qualified(before) {
             // Qualified module member: `M.` → enumerate M's exports.
             if let Some(ImportSource::Dep(dep)) = resolved.qualifiers.get(&recv) {
-                return module_completion(&db, *dep, &recv);
+                return module_completion(db, *dep, &recv);
             }
             // Record field: `record.` → the receiver type's fields.
-            if let Some(items) = self.field_completion(&db, &resolved, &recv, off as usize) {
+            if let Some(items) = self.field_completion(db, &resolved, &recv, off as usize) {
                 return items;
             }
             return Vec::new();
@@ -367,13 +414,13 @@ impl Analysis {
             return Vec::new();
         };
         let text = &self.docs[idx].text;
-        let db = self.build_db();
+        let db = self.db();
         let module = ModuleId(idx as u32);
         let mut out: Vec<diagnostics::Diagnostic> = Vec::new();
         out.extend(db.module_parse(module).errors().iter().cloned());
         let resolved = db.resolve(module);
         out.extend(resolved.diagnostics.iter().cloned());
-        let checked = ty::check_modules(&db, &[module]);
+        let checked = ty::check_modules(db, &[module]);
         out.extend(checked.diagnostics);
         out.into_iter().map(|d| to_lsp_diag(text, &d)).collect()
     }
@@ -583,12 +630,12 @@ impl Analysis {
         let Some(off) = offset_of(text, pos) else {
             return Vec::new();
         };
-        let db = self.build_db();
+        let db = self.db();
         let resolved = db.resolve(ModuleId(idx as u32));
         let Some((target, _)) = self.resolve_target(&resolved, off) else {
             return Vec::new();
         };
-        self.collect_occurrences(&db, &target, include_decl)
+        self.collect_occurrences(db, &target, include_decl)
             .into_iter()
             .filter_map(|s| self.location(s))
             .collect()
@@ -600,10 +647,10 @@ impl Analysis {
         let idx = self.index_of(url)?;
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
-        let db = self.build_db();
+        let db = self.db();
         let resolved = db.resolve(ModuleId(idx as u32));
         let (target, span) = self.resolve_target(&resolved, off)?;
-        if !self.is_renameable(&db, &target) {
+        if !self.is_renameable(db, &target) {
             return None;
         }
         Some(PrepareRenameResponse::Range(span_to_range(text, span)))
@@ -625,17 +672,17 @@ impl Analysis {
         let idx = self.index_of(url)?;
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
-        let db = self.build_db();
+        let db = self.db();
         let resolved = db.resolve(ModuleId(idx as u32));
         let (target, _) = self.resolve_target(&resolved, off)?;
-        if !self.is_renameable(&db, &target) {
+        if !self.is_renameable(db, &target) {
             return None;
         }
         // The new name must match the lexical class of what it replaces: values
         // + locals are lower-ident; types + constructors are upper-ident.
         let upper = match &target {
             Target::Global(d) => matches!(
-                self.def_kind(&db, *d),
+                self.def_kind(db, *d),
                 Some(DefKind::TypeCon | DefKind::TypeAlias | DefKind::Ctor)
             ),
             _ => false,
@@ -643,7 +690,7 @@ impl Analysis {
         if !is_valid_ident(new_name, upper) {
             return None;
         }
-        let spans = self.collect_occurrences(&db, &target, true);
+        let spans = self.collect_occurrences(db, &target, true);
         if spans.is_empty() {
             return None;
         }
@@ -680,7 +727,7 @@ impl Analysis {
             return Vec::new();
         };
         let text = &self.docs[idx].text.clone();
-        let db = self.build_db();
+        let db = self.db();
         let resolved = db.resolve(ModuleId(idx as u32));
         let mut out = Vec::new();
         for (d, span) in &resolved.def_spans {
@@ -717,7 +764,7 @@ impl Analysis {
     pub fn semantic_tokens(&self, url: &Url) -> Option<SemanticTokensResult> {
         let idx = self.index_of(url)?;
         let text = self.docs[idx].text.clone();
-        let db = self.build_db();
+        let db = self.db();
         let resolved = db.resolve(ModuleId(idx as u32));
 
         // Span-keyed classification from the occurrence index. First writer wins
@@ -748,7 +795,7 @@ impl Analysis {
             exact.entry(s.range).or_insert(tt);
         }
 
-        let tokens: Vec<syntax::SyntaxToken> = resolved_tokens(&db, ModuleId(idx as u32));
+        let tokens: Vec<syntax::SyntaxToken> = resolved_tokens(db, ModuleId(idx as u32));
         let mut data: Vec<SemanticToken> = Vec::new();
         let (mut prev_line, mut prev_char) = (0u32, 0u32);
         for (i, t) in tokens.iter().enumerate() {

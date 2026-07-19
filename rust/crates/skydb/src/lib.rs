@@ -331,6 +331,18 @@ impl SkyDatabase {
         self.modules[m.index() as usize].file
     }
 
+    /// Replace one module's source text in place (doc 01 `set_source_text`, doc
+    /// 10 §"Incremental for free"). This is the *only* mutation an incremental
+    /// driver (the LSP `didChange`, `sky watch`) performs: salsa marks
+    /// `parse(file)` and its transitive dependents maybe-dirty, and the next
+    /// demand recomputes only that sub-DAG — every unrelated module's memoised
+    /// `resolve`/`infer` stands. Kept here so the salsa `Setter` stays quarantined
+    /// in `skydb` (the LSP crate never imports salsa; L1).
+    pub fn set_source_text(&mut self, file: SourceFile, text: String) {
+        use salsa::Setter;
+        file.set_text(self).to(text);
+    }
+
     /// Intern an ordered module set as Stage-A [`SourceFile`] inputs. Returns the
     /// handles in input order, so a caller may treat position `i` as the module's
     /// ordinal (matching `base::ModuleId(i)`). Interning is `&self` (salsa input
