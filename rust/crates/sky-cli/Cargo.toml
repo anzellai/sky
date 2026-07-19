@@ -14,3 +14,4 @@ path = "src/main.rs"
 project = { path = "../project" }
 fmt = { path = "../fmt" }
 testrunner = { path = "../testrunner" }
+notify = "8"

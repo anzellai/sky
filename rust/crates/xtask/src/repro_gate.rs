@@ -263,6 +263,7 @@ fn go_builds(root: &Path, dir: &Path, name: &str) -> bool {
         repo_root: root.to_path_buf(),
         example_dir: dir.to_path_buf(),
         out_dir_name: "sky-out-rust".into(),
+        out_dir_abs: None,
         run: false,
         stdin: None,
     };

@@ -14,6 +14,14 @@ pub struct BuildOptions {
     /// Output dir name under the example (kept distinct from the oracle's
     /// `sky-out/` so a comparison harness can hold both).
     pub out_dir_name: String,
+    /// When set, the build writes here VERBATIM instead of
+    /// `example_dir.join(out_dir_name)`. This is how `sky test` (and any verb
+    /// that synthesises a temporary entry) directs output to a scratch dir so
+    /// it can NEVER clobber a project's real `sky-out/` (which, for the
+    /// examples, holds their oracle binaries). `example_dir` still points at the
+    /// real project so its `src/`, FFI surface, and go.mod version pins load
+    /// correctly — only the *output* location moves.
+    pub out_dir_abs: Option<PathBuf>,
     pub run: bool,
     /// stdin to feed the binary when `run` is set.
     pub stdin: Option<String>,
@@ -177,7 +185,12 @@ fn build_inner(
     };
 
     // ---- write sky-out + materialise runtime ----
-    let out_dir = opts.example_dir.join(&opts.out_dir_name);
+    // An explicit absolute output dir (scratch dir for synthesised-entry verbs
+    // like `sky test`) wins; otherwise the conventional `<project>/<name>`.
+    let out_dir = opts
+        .out_dir_abs
+        .clone()
+        .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
     if let Err(e) = write_out(&opts.repo_root, &out_dir, &source) {
         report.note = format!("write failed: {e}");
         return report;

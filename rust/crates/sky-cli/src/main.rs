@@ -33,14 +33,22 @@ fn main() -> ExitCode {
         Some("test") => cmd_test(&args[1..]),
         Some("lsp") => cmd_lsp(&args[1..]),
         Some("clean") => cmd_clean(&args[1..]),
+        Some("init") => cmd_init(&args[1..]),
+        Some("doc") => cmd_doc(&args[1..]),
+        Some("watch") => cmd_watch(&args[1..]),
+        Some("db") => cmd_db(&args[1..]),
         // Verbs the bring-up does not implement yet — honest, explicit deferral.
+        // `add`/`remove`/`install`/`update` need the deterministic Go-FFI
+        // inspector (a separate milestone); `doctor`/`console`/`console-serve`/
+        // `upgrade`/`verify` spawn bundled Sky apps or self-update the binary.
         Some(
-            verb @ ("doc" | "watch" | "db" | "add" | "remove" | "install" | "update" | "init"
-            | "doctor" | "console" | "console-serve" | "upgrade" | "upgrade-claude" | "verify"),
+            verb @ ("add" | "remove" | "install" | "update" | "doctor" | "console"
+            | "console-serve" | "upgrade" | "upgrade-claude" | "verify"),
         ) => {
             eprintln!(
                 "sky {verb}: not yet implemented in the rust bring-up.\n\
-                 Wired verbs: build, run, check, fmt, test, lsp, clean, version, help."
+                 Wired verbs: build, run, check, fmt, test, lsp, clean, init, doc,\n\
+                 watch, db, version, help."
             );
             ExitCode::from(2)
         }
@@ -86,6 +94,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         repo_root,
         example_dir: project_dir.clone(),
         out_dir_name: out_dir_name.clone(),
+        out_dir_abs: None,
         run: false,
         stdin: None,
     };
@@ -147,6 +156,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         repo_root,
         example_dir: project_dir.clone(),
         out_dir_name: out_dir_name.clone(),
+        out_dir_abs: None,
         run: false,
         stdin: None,
     };
@@ -315,6 +325,371 @@ fn cmd_clean(_args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+// ---- init ----------------------------------------------------------------
+
+/// `sky init [name]` — scaffold a new project: `<name>/sky.toml`,
+/// `<name>/src/Main.sky` (a hello-world), and `<name>/.gitignore`. Mirrors
+/// `app/Main.hs`'s `Init` handler (name defaults to `sky-project`). The CLAUDE.md
+/// coding guide is copied from the repo's `templates/CLAUDE.md` when reachable.
+fn cmd_init(args: &[String]) -> ExitCode {
+    let name = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .cloned()
+        .unwrap_or_else(|| "sky-project".to_string());
+    let root = Path::new(&name);
+    println!("Initialising project: {name}");
+
+    if let Err(e) = std::fs::create_dir_all(root.join("src")) {
+        eprintln!("sky init: could not create {}/src: {e}", root.display());
+        return ExitCode::FAILURE;
+    }
+
+    let toml = format!(
+        "# sky.toml — project configuration.\n\
+         # Full reference: https://github.com/anzellai/sky#skytoml\n\n\
+         name    = \"{name}\"\n\
+         version = \"0.1.0\"\n\
+         entry   = \"src/Main.sky\"\n\
+         bin     = \"app\"\n\n\
+         [source]\n\
+         root = \"src\"\n\n\
+         # [live]            # Sky.Live runtime (uncomment to configure)\n\
+         # port         = 8000\n\
+         # store        = \"memory\"   # memory | sqlite | postgres | redis\n\
+         # storePath    = \"sky.db\"\n\
+         # ttl          = 1800\n\n\
+         # [auth]            # Std.Auth configuration (uncomment to use)\n\
+         # driver     = \"jwt\"\n\
+         # secret     = \"change-me\"\n\n\
+         # [database]        # Std.Db configuration (uncomment to use)\n\
+         # driver = \"sqlite\"\n\
+         # path   = \"app.db\"\n\n\
+         # [\"go.dependencies\"]        # `sky add <pkg>` records these here\n\n\
+         # [dependencies]              # Sky-source dependencies (from git)\n"
+    );
+    let main_sky = format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\n\
+         main =\n    println \"Hello from {name}!\"\n"
+    );
+    let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+
+    let writes = [
+        (root.join("sky.toml"), toml),
+        (root.join("src/Main.sky"), main_sky),
+        (root.join(".gitignore"), gitignore.to_string()),
+    ];
+    for (path, body) in &writes {
+        if let Err(e) = std::fs::write(path, body) {
+            eprintln!("sky init: could not write {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // Best-effort CLAUDE.md copy from the repo template (dev-tree path).
+    let mut copied_claude = false;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(repo_root) = repo_root_for(&cwd).or_else(|| repo_root_for(root)) {
+        let tmpl = repo_root.join("templates").join("CLAUDE.md");
+        if tmpl.is_file() && std::fs::copy(&tmpl, root.join("CLAUDE.md")).is_ok() {
+            copied_claude = true;
+        }
+    }
+
+    println!("Created {}/", root.display());
+    println!("  sky.toml");
+    println!("  src/Main.sky");
+    println!("  .gitignore");
+    if copied_claude {
+        println!("  CLAUDE.md");
+    }
+    println!();
+    println!("Next: cd {name} && sky build src/Main.sky");
+    ExitCode::SUCCESS
+}
+
+// ---- doc -----------------------------------------------------------------
+
+/// `sky doc <Module>` — terminal docs for one module (exported bindings + type
+/// signatures + `-- |` summaries). `--list` enumerates every module.
+/// `--serve` / `--tui` are deferred (they spawn a bundled Sky app the bring-up
+/// doesn't materialise).
+fn cmd_doc(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "--serve" || a == "--tui") {
+        eprintln!(
+            "sky doc --serve / --tui: deferred in the rust bring-up.\n\
+             These spawn a bundled Sky.Http.Server / Sky.Tui app (a separate\n\
+             milestone). The terminal renderer (`sky doc <Module>` / `--list`)\n\
+             is available."
+        );
+        return ExitCode::from(2);
+    }
+    let list = args.iter().any(|a| a == "--list");
+    let target = args.iter().find(|a| !a.starts_with('-')).cloned();
+
+    // Resolve the project + repo root from cwd (doc reads stdlib + src/).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = repo_root_for(&cwd) else {
+        eprintln!(
+            "sky doc: could not locate compiler assets (sky-stdlib/ + runtime-go/)\n\
+             above {}. Run from within the Sky repo tree.",
+            cwd.display()
+        );
+        return ExitCode::FAILURE;
+    };
+    let project_dir = project::project_dir_for(&cwd.join("_"));
+
+    if list {
+        println!("{}", project::list_modules(&repo_root, &project_dir));
+        return ExitCode::SUCCESS;
+    }
+    let Some(module) = target else {
+        eprintln!("usage: sky doc <Module>   |   sky doc --list");
+        return ExitCode::from(2);
+    };
+    match project::render_module(&repo_root, &project_dir, &module) {
+        Ok(page) => {
+            print!("{page}");
+            ExitCode::SUCCESS
+        }
+        Err(msg) => {
+            eprintln!("{msg}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- db ------------------------------------------------------------------
+
+/// `sky db status` / `sky db migrate` — build the project, then run it once with
+/// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
+/// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
+/// same env var and runs the project). The Std.Db migration engine lives in the
+/// Go runtime, so this is a thin build+run+env wrapper — no separate rust DB
+/// introspection is needed.
+fn cmd_db(args: &[String]) -> ExitCode {
+    let op = match args.first().map(String::as_str) {
+        Some("status") => "status",
+        Some("migrate") => "migrate",
+        _ => {
+            eprintln!("usage: sky db <status|migrate> [file.sky]");
+            return ExitCode::from(2);
+        }
+    };
+    let (positional, out_override) = parse_out(&args[1..]);
+    let file = positional
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "src/Main.sky".to_string());
+    let file = Path::new(&file);
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    if is_compiler_repo_root(&project_dir) && out_override.is_none() {
+        eprintln!("sky db: refusing to run from the Sky compiler repo root");
+        return ExitCode::FAILURE;
+    }
+    let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
+    let opts = BuildOptions {
+        repo_root,
+        example_dir: project_dir.clone(),
+        out_dir_name: out_dir_name.clone(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+    };
+    let report = build_example(&opts);
+    for w in &report.warnings {
+        eprintln!("warning: {w}");
+    }
+    if !report.emitted {
+        eprintln!("sky db: {}", report.note);
+        return ExitCode::FAILURE;
+    }
+    if !report.go_build_ok {
+        eprintln!("sky db: go build failed:\n{}", report.go_build_stderr);
+        return ExitCode::FAILURE;
+    }
+    let out_dir = project_dir.join(&out_dir_name);
+    match run_app(&out_dir, &[("SKY_DB_OP".to_string(), op.to_string())]) {
+        Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
+        Err(e) => {
+            eprintln!("sky db: could not launch binary: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- watch ---------------------------------------------------------------
+
+/// `sky watch <file>` — file-watch the entry dir (+ `tests/` + `sky.toml`),
+/// rebuild + restart the app on any `.sky`/`sky.toml` change. Generated trees
+/// (`sky-out`, `.skycache`, `.skydeps`, `dist-newstyle`, `.git`, `node_modules`)
+/// are excluded (Watch.hs's strict allowlist). Build-error policy: a failing
+/// rebuild leaves the previously-running binary alive; the next successful
+/// rebuild replaces it. Long-running by design; exits on Ctrl-C.
+fn cmd_watch(args: &[String]) -> ExitCode {
+    use std::sync::mpsc::channel;
+    use std::time::{Duration, Instant};
+
+    let no_run = args.iter().any(|a| a == "--no-run");
+    let Some(file) = args.iter().find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: sky watch <file.sky> [--no-run]");
+        return ExitCode::from(2);
+    };
+    let file = Path::new(file);
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    if is_compiler_repo_root(&project_dir) {
+        eprintln!("sky watch: refusing to run from the Sky compiler repo root");
+        return ExitCode::FAILURE;
+    }
+
+    // Watched roots: the entry's directory, the project's tests/ (if present),
+    // and the project root (to catch sky.toml). notify watches recursively; the
+    // event filter prunes generated dirs + non-source files.
+    let entry_dir = file.parent().map(Path::to_path_buf).unwrap_or_else(|| project_dir.clone());
+    let mut roots: Vec<PathBuf> = vec![entry_dir.clone()];
+    let tests_dir = project_dir.join("tests");
+    if tests_dir.is_dir() {
+        roots.push(tests_dir);
+    }
+    // The project root covers sky.toml; only add it if it isn't already covered.
+    if !roots.iter().any(|r| project_dir.starts_with(r)) {
+        roots.push(project_dir.clone());
+    }
+    roots.sort();
+    roots.dedup();
+
+    let (tx, rx) = channel::<()>();
+    let handler = {
+        let tx = tx.clone();
+        move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if event.paths.iter().any(|p| is_watched_change(p)) {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    };
+    let mut watcher: notify::RecommendedWatcher = match notify::recommended_watcher(handler) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("sky watch: could not create file watcher: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    use notify::Watcher;
+    for root in &roots {
+        if let Err(e) = watcher.watch(root, notify::RecursiveMode::Recursive) {
+            eprintln!("sky watch: could not watch {}: {e}", root.display());
+        }
+    }
+
+    println!("[watch] watching {} for changes (Ctrl-C to stop)", entry_dir.display());
+    let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run);
+
+    // Debounce loop: coalesce a burst of save events, rebuild once.
+    loop {
+        // Block for the first change.
+        if rx.recv().is_err() {
+            break;
+        }
+        // Drain further events for a short debounce window.
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            if rx.recv_timeout(remaining).is_err() {
+                break;
+            }
+        }
+        println!("[watch] change detected — rebuilding…");
+        // Build-error policy: only replace the running child when the rebuild
+        // produced a fresh binary. A failing rebuild returns None → the old
+        // binary keeps running.
+        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run) {
+            if let Some(mut old) = child.take() {
+                let _ = old.kill();
+                let _ = old.wait();
+            }
+            child = Some(fresh);
+        }
+    }
+    if let Some(mut c) = child.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    ExitCode::SUCCESS
+}
+
+/// One watch iteration: build the entry, and on success (re)spawn the binary.
+/// Returns the spawned child (`None` when the build failed or `--no-run`). On a
+/// build failure it prints the error and returns `None` so the caller keeps the
+/// previous binary alive.
+fn watch_build_and_spawn(
+    repo_root: &Path,
+    project_dir: &Path,
+    _file: &Path,
+    no_run: bool,
+) -> Option<std::process::Child> {
+    let opts = BuildOptions {
+        repo_root: repo_root.to_path_buf(),
+        example_dir: project_dir.to_path_buf(),
+        out_dir_name: "sky-out".to_string(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+    };
+    let report = build_example(&opts);
+    for w in &report.warnings {
+        eprintln!("[watch] warning: {w}");
+    }
+    if !report.emitted {
+        eprintln!("[watch] build failed: {} (keeping previous binary)", report.note);
+        return None;
+    }
+    if !report.go_build_ok {
+        eprintln!(
+            "[watch] go build failed (keeping previous binary):\n{}",
+            report.go_build_stderr.trim()
+        );
+        return None;
+    }
+    println!("[watch] build ok");
+    if no_run {
+        return None;
+    }
+    let out_dir = project_dir.join("sky-out");
+    match Command::new("./app").current_dir(&out_dir).spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!("[watch] could not launch binary: {e}");
+            None
+        }
+    }
+}
+
+/// True when a changed path is a source file the watcher cares about: a `.sky`
+/// file or `sky.toml`, and not inside a generated / VCS directory.
+fn is_watched_change(path: &Path) -> bool {
+    let excluded = path.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some("sky-out") | Some("sky-out-rust") | Some(".skycache") | Some(".skydeps")
+                | Some("dist-newstyle") | Some(".git") | Some("node_modules") | Some(".vscode")
+                | Some(".idea")
+        )
+    });
+    if excluded {
+        return false;
+    }
+    let is_sky = path.extension().and_then(|e| e.to_str()) == Some("sky");
+    let is_toml = path.file_name().and_then(|n| n.to_str()) == Some("sky.toml");
+    is_sky || is_toml
+}
+
 // ---- shared helpers ------------------------------------------------------
 
 /// Resolve a `<file>` to its (repo_root, project_dir). Prints a diagnostic and
@@ -378,8 +753,12 @@ fn print_help() {
          \x20 test  <file>     run a Sky.Test suite\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\
          \x20 clean            remove sky-out/ + .skycache/\n\
+         \x20 init  [name]     scaffold a new project\n\
+         \x20 doc   <Module>   print a module's exported bindings\n\
+         \x20 watch <file>     rebuild + restart on source change\n\
+         \x20 db    <status|migrate> [file]  Std.Db migrations\n\
          \x20 version          print the version\n\n\
-         DEFERRED (bring-up): doc, watch, db, add, remove, install, update,\n\
-         \x20 init, doctor, console, upgrade, verify"
+         DEFERRED (bring-up): add, remove, install, update (need the FFI\n\
+         \x20 inspector); doctor, console, console-serve, upgrade, verify"
     );
 }
