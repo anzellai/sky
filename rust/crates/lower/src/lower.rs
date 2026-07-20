@@ -2674,6 +2674,22 @@ impl<'a> Ctx<'a> {
                 // f <| a  ==  f a. Flatten `f`'s spine similarly.
                 self.lower_pipe(lhs, rhs, actual)
             }
+            ">>" | "<<" => {
+                // Function composition. `f >> g` = ComposeL(f, g) (apply f then
+                // g); `f << g` = ComposeR(f, g) (apply g then f) — matching the
+                // oracle (`rt.ComposeL(inc, dbl)` / `rt.ComposeR(inc, dbl)`). The
+                // generic `rt.ComposeL[A,B,C]`/`ComposeR` infer their type params
+                // from the `func` arguments, so the operands must be lowered at
+                // their OWN function types, NOT widened to `any` (Go cannot infer
+                // `func(A) B` from an `any` value). The result is the composed
+                // function `func(A) C`, so type the node `actual`.
+                let lty = self.expr_ty(lhs);
+                let rty = self.expr_ty(rhs);
+                let l = self.lower_expr(lhs, &lty);
+                let r = self.lower_expr(rhs, &rty);
+                let helper = if op == ">>" { "rt.ComposeL" } else { "rt.ComposeR" };
+                call_rt(helper, vec![l, r], actual.clone())
+            }
             _ => {
                 let l = self.lower_expr(lhs, &GoTy::Any);
                 let r = self.lower_expr(rhs, &GoTy::Any);
