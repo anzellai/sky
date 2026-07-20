@@ -1,0 +1,12 @@
+-- defect: unannotated polymorphic helper `apply f x = f x` (scheme
+--         `(a -> b) -> a -> b`) applied to a wrong-typed arg. `String.fromInt`
+--         pins `a = Int`, so the second arg `"s" : String` clashes. The gap2
+--         lift admits the poly scheme into app_check_sigs so the caller is
+--         checked; before, the monomorphic-only filter excluded it and the call
+--         was accepted. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+apply f x = f x
+main =
+    println (apply String.fromInt "s")

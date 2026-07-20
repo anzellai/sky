@@ -1,0 +1,10 @@
+-- defect: unannotated polymorphic helper `usef f = f 5` (scheme `(Int -> a) -> a`)
+--         applied to `String.toUpper : String -> String`. The `5` pins the
+--         param's domain to Int, clashing with String.toUpper's String domain.
+--         gap2 admits the poly scheme so the caller is checked. oracle: reject.
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+usef f = f 5
+main =
+    println (usef String.toUpper)

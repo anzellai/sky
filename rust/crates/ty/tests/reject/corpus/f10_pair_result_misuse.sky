@@ -1,0 +1,10 @@
+-- defect: unannotated polymorphic `pair a b = (a, b)` (scheme `a -> b -> (a, b)`)
+--         result fed to `String.fromInt`, which needs Int not a tuple. gap2
+--         admits the poly scheme so the result-type misuse is caught at the
+--         call site. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+pair a b = (a, b)
+main =
+    println (String.fromInt (pair 1 2))

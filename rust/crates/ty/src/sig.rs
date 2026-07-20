@@ -270,22 +270,34 @@ impl World {
                 let Some(scheme) = infer.infer_def_scheme(body, true) else {
                     continue;
                 };
-                // "CLEANLY USABLE" filter (the accept-parity guard). Both
-                // clauses must hold:
-                //   1. fully monomorphic          — excludes under-generalisation;
-                //   2. no Unit in the param spine  — excludes `() -> X` shims.
+                // "CLEANLY USABLE" filter (the accept-parity guard). The one
+                // surviving clause: no Unit in the param spine — excludes the
+                // `() -> X` shims that interact with the zero-arg-call arity gate.
                 //
-                // The former record-free clause was LIFTED once the checker's
-                // record row-polymorphism became sound + oracle-parity (record
-                // leniency valve retired, commit 2702553a). Record-typed
-                // monomorphic sigs (`Int -> {px:Int, py:Int}`, `{px:Int, py:Int}`)
-                // are now admitted so cross-module record misuse (nonexistent-
-                // field access, wrong arg type) is caught. Clauses (1)/(2) guard
-                // DIFFERENT roots — under-generalisation and the `() -> X`
-                // Unit-return interaction — not the record leniency.
-                if !scheme.vars.is_empty() {
-                    continue;
-                }
+                // HISTORY — two earlier clauses, both LIFTED after empirical P0
+                // experiments proved them vestigial (accept-parity held):
+                //   * record-free — lifted once record row-polymorphism became
+                //     sound + oracle-parity (leniency valve retired, 2702553a);
+                //     unlocked cross-module record misuse detection (F1c).
+                //   * monomorphic-only (`!scheme.vars.is_empty()`) — lifted here
+                //     (gap2). It was meant to guard "under-generalisation", but an
+                //     under-generalised scheme only makes the check LOOSER (accept-
+                //     more), never a false-reject — so the exclusion cost real
+                //     accept-invalid parity: an unannotated POLYMORPHIC helper
+                //     (`apply f x = f x`, `compose g f x = g (f x)`, `pair a b =
+                //     (a, b)`, `first xs = List.head xs`) escaped caller checking,
+                //     so a caller passing a wrong-typed arg (`apply String.fromInt
+                //     "s"`) was accepted where the oracle rejects. Admitting the
+                //     poly scheme lets the checker instantiate it fresh per call
+                //     site and unify the args — standard HM, exactly the oracle's
+                //     behaviour. Codegen-neutral (app_check_sigs is read only at
+                //     `!use_inferred`; the lowerer never consults it): infer 42/42,
+                //     build-run 31/31 match, repro 40/40 byte-stable, reject +5
+                //     gap2 locks, and 15+ valid-poly stress cases with zero
+                //     false-reject. Numeric helpers stay concretized to `Int` via
+                //     infer_def_scheme's concretize_super, so they were already
+                //     monomorphic-admitted in baseline — this lift adds only
+                //     genuine ∀-quantified helpers.
                 if param_spine_contains_unit(&scheme.ty) {
                     continue;
                 }
