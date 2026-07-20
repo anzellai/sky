@@ -385,11 +385,18 @@ impl UnionFind {
         // (extras1Illegal / extras2Illegal, Unify.hs:486). Runs unconditionally:
         // a closed record that lacks a field the other side carries is a genuine
         // field-presence clash the Haskell oracle rejects.
+        // The first unify arg is the ACTUAL (body/literal), the second the
+        // EXPECTED (declared) — `unify(v, expected)` threads a→side1, b→side2 —
+        // so the two extras rules are directional:
+        //   side1 (actual) closed + only2 (fields only the expected has)
+        //     ⇒ the actual is MISSING those fields.
+        //   side2 (expected) closed + only1 (fields only the actual has)
+        //     ⇒ the actual has UNKNOWN fields not in the declared type.
         if e1.is_none() && !only2.is_empty() {
-            return Err(Mismatch::new(record_extra_msg(&only2)));
+            return Err(Mismatch::new(record_missing_msg(&only2)));
         }
         if e2.is_none() && !only1.is_empty() {
-            return Err(Mismatch::new(record_extra_msg(&only1)));
+            return Err(Mismatch::new(record_unknown_msg(&only1)));
         }
 
         // resolved combined field set + extension
@@ -442,9 +449,17 @@ fn flat_label(ft: &FlatTy) -> String {
     }
 }
 
-fn record_extra_msg(extra: &BTreeMap<Name, TyVarId>) -> String {
-    let names: Vec<&str> = extra.keys().map(Name::as_str).collect();
+fn record_missing_msg(missing: &BTreeMap<Name, TyVarId>) -> String {
+    let names: Vec<&str> = missing.keys().map(Name::as_str).collect();
     format!("record is missing field(s): {}", names.join(", "))
+}
+
+fn record_unknown_msg(unknown: &BTreeMap<Name, TyVarId>) -> String {
+    let names: Vec<&str> = unknown.keys().map(Name::as_str).collect();
+    format!(
+        "record has unknown field(s) not in the declared type: {}",
+        names.join(", ")
+    )
 }
 
 /// `combineSuper` (`Unify.hs:546`). CompAppend is the meet of Comparable and
