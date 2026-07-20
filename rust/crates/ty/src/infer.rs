@@ -54,8 +54,9 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 }
 
 /// Does `ty` contain a record anywhere in its structure? Gates the annotation
-/// gate's param seeding (see [`Infer::infer_def_against`]).
-fn ty_contains_record(ty: &Ty) -> bool {
+/// gate's param seeding (see [`Infer::infer_def_against`]) and the F1c
+/// app-check-sig "cleanly usable" filter (see `World::infer_app_check_sigs`).
+pub(crate) fn ty_contains_record(ty: &Ty) -> bool {
     match ty {
         Ty::Record(..) => true,
         Ty::Fun(a, b) => ty_contains_record(a) || ty_contains_record(b),
@@ -700,6 +701,18 @@ impl<'a> Infer<'a> {
                 // unchanged. Pins e.g. `List.map`'s result element from its arg.
                 if !self.use_inferred {
                     if let Some(s) = self.world.check_sigs.get(&def) {
+                        let s = s.clone();
+                        return self.instantiate(&s);
+                    }
+                    // CHECK-ONLY precise scheme for an unannotated APP-module def
+                    // used cross-module (F1c narrow subset). Same `!use_inferred`
+                    // gate + isolation as `check_sigs`; the map is strictly
+                    // filtered at populate time (`World::infer_app_check_sigs`)
+                    // to fully-monomorphic, record-free, Unit-spine-free types,
+                    // so pinning e.g. `allCategories : List String` here lets the
+                    // checker reject `allCategories + 1` without perturbing any
+                    // accept-parity case. Empty on the lowerer path → no-op there.
+                    if let Some(s) = self.world.app_check_sigs.get(&def) {
                         let s = s.clone();
                         return self.instantiate(&s);
                     }

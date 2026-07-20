@@ -51,6 +51,16 @@ pub struct World {
     /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
     pub check_sigs: HashMap<DefId, Scheme>,
     pub check_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// CHECK-ONLY monomorphic schemes for UNANNOTATED **app-module** top-level
+    /// defs used cross-module (F1c narrow subset). Same isolation contract as
+    /// `check_sigs`: consulted only by the accept/reject checker
+    /// (`use_inferred == false`), never by the lowerer (`use_inferred == true`)
+    /// nor pass-3 inference, so Go emission is byte-identical. STRICTLY filtered
+    /// at populate time (`infer_app_check_sigs`): admits only fully-monomorphic,
+    /// record-free, Unit-spine-free types (e.g. `allCategories : List String`,
+    /// `Int -> Int`, `String`) — every record/polymorphic/Unit-spine app helper
+    /// is excluded to preserve accept-parity. Empty until pass 5 populates it.
+    pub app_check_sigs: HashMap<DefId, Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -79,6 +89,7 @@ impl World {
             kernel_sigs: HashMap::new(),
             check_sigs: HashMap::new(),
             check_kernel_sigs: HashMap::new(),
+            app_check_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
             ctor_union: HashMap::new(),
@@ -169,7 +180,106 @@ impl World {
         // HOF, but seed-after makes the isolation structural, not incidental.
         world.seed_check_sigs(db);
 
+        // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
+        // (F1c narrow subset.) An unannotated app def used cross-module resolves
+        // to a fresh flex at its call site (all of value_sigs/inferred_sigs/
+        // check_sigs miss), so the checker can't detect misuse
+        // (`allCategories + 1` where `allCategories : List String`). This pass
+        // infers each such def's monomorphic scheme in import-topo order and
+        // admits ONLY the "cleanly usable" ones (record-free, fully monomorphic,
+        // Unit-spine-free) into the CHECK-ONLY `app_check_sigs` channel. Runs
+        // LAST so it can consult every earlier channel (incl. its own prior
+        // admissions along the topo order).
+        world.infer_app_check_sigs(db);
+
         world
+    }
+
+    /// Pass 5 (see `build`, F1c narrow subset). Infer + register CHECK-ONLY
+    /// monomorphic schemes for unannotated top-level defs in APP (non-kernel)
+    /// modules, so a cross-module misuse of such a def (`allCategories + 1`) is
+    /// rejected instead of absorbed by a wildcard flex. STRICTLY filtered:
+    /// admits only fully-monomorphic, record-free, Unit-spine-free types
+    /// (excludes TEA record threading, under-generalised polymorphs, and
+    /// `() -> X` kernel-shim spines — the three accept-parity landmines).
+    /// Modules in an import cycle (SCC size > 1) are skipped (fixpoint deferred).
+    fn infer_app_check_sigs(&mut self, db: &dyn SkyDb) {
+        use crate::infer::{ty_contains_record, Infer};
+        let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
+
+        // App (non-kernel) modules only.
+        let app_mods: Vec<ModuleId> = db
+            .module_ids()
+            .into_iter()
+            .filter(|m| {
+                let mname = db.module_name(*m).to_string();
+                !path_to_pseudo.contains_key(mname.as_str())
+            })
+            .collect();
+        let app_set: std::collections::HashSet<ModuleId> = app_mods.iter().copied().collect();
+
+        // Import DAG among app modules: edge dep -> importer (dependency first).
+        // Only Dep imports that target another APP module contribute an edge.
+        let mut deps_of: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+        for &m in &app_mods {
+            let mut ds: Vec<ModuleId> = Vec::new();
+            let tree = db.module_parse(m).tree();
+            for imp in tree.imports() {
+                let Some(path) = imp.name().map(|n| n.text()) else {
+                    continue;
+                };
+                if let hir::ImportSource::Dep(dep) = db.classify_import(&path) {
+                    if app_set.contains(&dep) && dep != m && !ds.contains(&dep) {
+                        ds.push(dep);
+                    }
+                }
+            }
+            deps_of.insert(m, ds);
+        }
+
+        // Detect modules in an import cycle (SCC of size > 1) — defer those.
+        let in_cycle = modules_in_cycle(&app_mods, &deps_of);
+
+        // Topo order (dependencies before dependents) over the acyclic remainder.
+        let order = topo_order(&app_mods, &deps_of, &in_cycle);
+
+        // Infer each unannotated app def in topo order; admit if cleanly usable.
+        for m in order {
+            let resolved = db.resolve(m);
+            let names: HashMap<DefId, String> = resolved
+                .top_defs
+                .iter()
+                .map(|td| (td.def, td.name.as_str().to_string()))
+                .collect();
+            for (def, body) in &resolved.bodies {
+                // Respect annotations: never shadow a declared signature.
+                if self.value_sigs.contains_key(def) {
+                    continue;
+                }
+                if names.get(def).is_none() {
+                    continue;
+                }
+                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
+                let Some(scheme) = infer.infer_def_scheme(body) else {
+                    continue;
+                };
+                // "CLEANLY USABLE" filter (the accept-parity guard). All three
+                // clauses must hold:
+                //   1. no record anywhere        — excludes TEA record threading;
+                //   2. fully monomorphic         — excludes under-generalisation;
+                //   3. no Unit in the param spine — excludes `() -> X` shims.
+                if ty_contains_record(&scheme.ty) {
+                    continue;
+                }
+                if !scheme.vars.is_empty() {
+                    continue;
+                }
+                if param_spine_contains_unit(&scheme.ty) {
+                    continue;
+                }
+                self.app_check_sigs.entry(*def).or_insert(scheme);
+            }
+        }
     }
 
     /// Pass 4 (see `build`). Register precise `List a` HOF schemes into the
@@ -458,6 +568,179 @@ fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
     db.intern_def(m, &Name::new(name), DefKind::Value)
+}
+
+// ---- F1c app-check-sig support: cycle detection, topo order, Unit spine ----
+
+/// Does the ARROW PARAM SPINE of `ty` contain a `Ty::Unit` anywhere? Walks each
+/// left-hand arrow argument (the param positions) and returns true if any param
+/// contains a Unit. The result type is NOT inspected. Used by the F1c filter to
+/// exclude `() -> X` kernel-shim spines (the getGitHubClientSecret landmine).
+fn param_spine_contains_unit(ty: &Ty) -> bool {
+    let mut cur = ty;
+    while let Ty::Fun(a, b) = cur {
+        if ty_contains_unit(a) {
+            return true;
+        }
+        cur = b;
+    }
+    false
+}
+
+/// Does `ty` contain a `Ty::Unit` anywhere in its structure?
+fn ty_contains_unit(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unit => true,
+        Ty::Fun(a, b) => ty_contains_unit(a) || ty_contains_unit(b),
+        Ty::App(_, args) | Ty::Tuple(args) => args.iter().any(ty_contains_unit),
+        Ty::Record(fields, _) => fields.iter().any(|(_, t)| ty_contains_unit(t)),
+        Ty::Var(_) | Ty::Error => false,
+    }
+}
+
+/// The set of app modules that sit in an import cycle (a strongly-connected
+/// component of size > 1 in the dependency graph `deps_of`). These are skipped
+/// by the F1c pass — inferring cyclic-module defs needs a fixpoint this narrow
+/// subset deliberately defers. Tarjan's SCC over the app-module subgraph.
+fn modules_in_cycle(
+    nodes: &[ModuleId],
+    deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
+) -> std::collections::HashSet<ModuleId> {
+    #[derive(Default, Clone)]
+    struct NodeState {
+        index: Option<u32>,
+        lowlink: u32,
+        on_stack: bool,
+    }
+    let mut state: HashMap<ModuleId, NodeState> = HashMap::new();
+    let mut index_counter: u32 = 0;
+    let mut stack: Vec<ModuleId> = Vec::new();
+    let mut cyclic: std::collections::HashSet<ModuleId> = std::collections::HashSet::new();
+
+    // Iterative Tarjan (avoids deep recursion on large corpora — L7 safety).
+    // Frame carries the node and the index of the next successor to visit.
+    for &start in nodes {
+        if state.get(&start).and_then(|s| s.index).is_some() {
+            continue;
+        }
+        let mut frames: Vec<(ModuleId, usize)> = vec![(start, 0)];
+        while let Some(&(v, succ_i)) = frames.last() {
+            if succ_i == 0 {
+                let s = state.entry(v).or_default();
+                s.index = Some(index_counter);
+                s.lowlink = index_counter;
+                s.on_stack = true;
+                index_counter += 1;
+                stack.push(v);
+            }
+            let succs = deps_of.get(&v).cloned().unwrap_or_default();
+            if succ_i < succs.len() {
+                // advance this frame's cursor before descending
+                frames.last_mut().unwrap().1 += 1;
+                let w = succs[succ_i];
+                let w_index = state.get(&w).and_then(|s| s.index);
+                match w_index {
+                    None => frames.push((w, 0)),
+                    Some(wi) => {
+                        if state.get(&w).map(|s| s.on_stack).unwrap_or(false) {
+                            let v_low = state.get(&v).unwrap().lowlink;
+                            state.get_mut(&v).unwrap().lowlink = v_low.min(wi);
+                        }
+                    }
+                }
+            } else {
+                // done with v: pop the frame, form an SCC if v is a root.
+                frames.pop();
+                let v_state = state.get(&v).unwrap().clone();
+                if let Some((parent, _)) = frames.last().copied() {
+                    let p_low = state.get(&parent).unwrap().lowlink;
+                    state.get_mut(&parent).unwrap().lowlink = p_low.min(v_state.lowlink);
+                }
+                if Some(v_state.lowlink) == v_state.index {
+                    let mut comp: Vec<ModuleId> = Vec::new();
+                    while let Some(w) = stack.pop() {
+                        state.get_mut(&w).unwrap().on_stack = false;
+                        comp.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    // size > 1 → cycle; also treat a self-loop as cyclic.
+                    let self_loop = deps_of.get(&v).map(|ds| ds.contains(&v)).unwrap_or(false);
+                    if comp.len() > 1 || self_loop {
+                        cyclic.extend(comp);
+                    }
+                }
+            }
+        }
+    }
+    cyclic
+}
+
+/// Kahn topo-sort of the app modules (dependencies before dependents), EXCLUDING
+/// any node in `skip`. Deterministic: ties broken by module-id order (insertion
+/// order, L4). Nodes whose deps are all outside the working set become available
+/// immediately. Any residual (should not occur once `skip` removes every cycle)
+/// is appended in id order so no def is silently dropped.
+fn topo_order(
+    nodes: &[ModuleId],
+    deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
+    skip: &std::collections::HashSet<ModuleId>,
+) -> Vec<ModuleId> {
+    let working: Vec<ModuleId> = nodes.iter().copied().filter(|m| !skip.contains(m)).collect();
+    let working_set: std::collections::HashSet<ModuleId> = working.iter().copied().collect();
+
+    // remaining in-degree = number of deps still inside the working set.
+    let mut indeg: HashMap<ModuleId, usize> = HashMap::new();
+    for &m in &working {
+        let d = deps_of
+            .get(&m)
+            .map(|ds| ds.iter().filter(|x| working_set.contains(x)).count())
+            .unwrap_or(0);
+        indeg.insert(m, d);
+    }
+    // reverse edges: dep -> [importers] (within working set).
+    let mut dependents: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    for &m in &working {
+        if let Some(ds) = deps_of.get(&m) {
+            for &dep in ds {
+                if working_set.contains(&dep) {
+                    dependents.entry(dep).or_default().push(m);
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<ModuleId> = Vec::new();
+    let mut done: std::collections::HashSet<ModuleId> = std::collections::HashSet::new();
+    loop {
+        // pick all currently-ready nodes in id order for determinism.
+        let mut ready: Vec<ModuleId> = working
+            .iter()
+            .copied()
+            .filter(|m| !done.contains(m) && indeg.get(m).copied().unwrap_or(0) == 0)
+            .collect();
+        ready.sort_by_key(|m| m.0);
+        if ready.is_empty() {
+            break;
+        }
+        for m in ready {
+            done.insert(m);
+            out.push(m);
+            if let Some(deps) = dependents.get(&m).cloned() {
+                for d in deps {
+                    if let Some(e) = indeg.get_mut(&d) {
+                        *e = e.saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+    // append any residual (defensive; skip should have broken all cycles).
+    let mut rest: Vec<ModuleId> = working.into_iter().filter(|m| !done.contains(m)).collect();
+    rest.sort_by_key(|m| m.0);
+    out.extend(rest);
+    out
 }
 
 // ---- AST → Ty ------------------------------------------------------------
