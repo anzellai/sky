@@ -58,6 +58,13 @@ pub struct CheckOutput {
 #[derive(Default, Clone)]
 pub struct BodyTypes {
     pub result: Option<Ty>,
+    /// The def's FULL inferred type — the arrow spine of the (read-back) param
+    /// types folded over `result` (`p0 -> p1 -> … -> result`). For a nullary def
+    /// this equals `result`. Populated for the tooling layer (hover / inlay) so an
+    /// unannotated function presents `foo : Int -> Int -> Int`, not the body-root
+    /// `result` alone. STRICTLY ADDITIVE + tooling-only: the lowerer reads
+    /// `result`/`exprs`/`locals` and never this field, so codegen is unchanged.
+    pub signature: Option<Ty>,
     pub exprs: HashMap<ExprId, Ty>,
     pub locals: HashMap<LocalId, Ty>,
 }
@@ -103,9 +110,10 @@ impl<'a> Typer<'a> {
             .with_self_def(Some(def))
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
-        let (result, exprs, locals) = infer.infer_def_typed(body);
+        let (result, signature, exprs, locals) = infer.infer_def_typed(body);
         BodyTypes {
             result,
+            signature,
             exprs,
             locals,
         }

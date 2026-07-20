@@ -79,9 +79,13 @@ pub fn compute_body_types(
     let mut infer = Infer::new(world, db)
         .with_self_def(Some(def))
         .with_inferred(true);
-    let (result, exprs, locals) = infer.infer_def_typed(body);
+    // NB: `signature` is discarded here — the lowerer path only reads
+    // `result`/`exprs`/`locals`. It is populated so a stray read stays consistent
+    // with the tooling path, but codegen never consumes it (bug-b additivity).
+    let (result, signature, exprs, locals) = infer.infer_def_typed(body);
     BodyTypes {
         result,
+        signature,
         exprs,
         locals,
     }

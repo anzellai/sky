@@ -160,13 +160,14 @@ impl<'a> Infer<'a> {
         body: &Body,
     ) -> (
         Option<Ty>,
+        Option<Ty>,
         std::collections::HashMap<ExprId, Ty>,
         std::collections::HashMap<LocalId, Ty>,
     ) {
         self.record_exprs = true;
         let root = match body.root {
             Some(r) => r,
-            None => return (None, Default::default(), Default::default()),
+            None => return (None, None, Default::default(), Default::default()),
         };
         // Type + bind the top-level params first, so references in the body pick
         // up the same type-var and the locals table carries their inferred type.
@@ -209,6 +210,19 @@ impl<'a> Infer<'a> {
             self.unify(v, ev);
         }
         let result = self.read_back(v);
+        // Full inferred signature: fold the (read-back) top-level param types over
+        // the result to recover the arrow spine `p0 -> … -> result`. `read_back`
+        // only path-compresses the union-find + walks a local `seen` set — it does
+        // NOT touch `expr_vars`/`local_vars`, so the per-expr/per-local tables
+        // recorded below are byte-identical whether or not this runs. Tooling-only.
+        let signature = {
+            let mut sig = result.clone();
+            for &pv in param_vars.iter().rev() {
+                let pt = self.read_back(pv);
+                sig = Ty::Fun(Box::new(pt), Box::new(sig));
+            }
+            sig
+        };
         let mut exprs = std::collections::HashMap::new();
         let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
         for (e, tv) in recorded {
@@ -221,7 +235,7 @@ impl<'a> Infer<'a> {
             let t = self.read_back(tv);
             locals.insert(lid, t);
         }
-        (Some(result), exprs, locals)
+        (Some(result), Some(signature), exprs, locals)
     }
 
     /// Enforce a top-level def's body against its DECLARED annotation (the

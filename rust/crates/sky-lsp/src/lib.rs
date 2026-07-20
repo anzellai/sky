@@ -224,12 +224,13 @@ impl Analysis {
         let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
-        let cand = best_candidate(&resolved, off)?;
+        let cand = self.cand_at(db, &resolved, module, off)?;
         let typer = Typer::new(db);
         let md = match cand {
             Cand::Ref(o) => self.hover_ref(&typer, &resolved, o),
             Cand::Field(o) => self.hover_field(&typer, &resolved, o),
             Cand::Type(o) => self.hover_type(o),
+            Cand::Def { def, .. } => self.hover_def(&typer, &resolved, db, def),
         }?;
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -255,14 +256,7 @@ impl Analysis {
     /// per-local table (doc 10 §"resolve at call head → infer signature").
     fn ref_type_string(&self, typer: &Typer, resolved: &ResolveResult, o: &RefOcc) -> Option<String> {
         match &o.res {
-            Res::Def(d) => typer
-                .value_sig(*d)
-                .or_else(|| typer.inferred_sig(*d))
-                .map(|s| s.ty.render())
-                .or_else(|| {
-                    let body = resolved.bodies.get(d)?;
-                    typer.body_types_annotated(*d, body).result.map(|t| t.render())
-                }),
+            Res::Def(d) => self.def_sig_string(typer, resolved, *d),
             Res::Kernel { module, func } => typer
                 .kernel_sig(module.as_str(), func.as_str())
                 .map(|s| s.ty.render()),
@@ -277,6 +271,25 @@ impl Analysis {
             }
             Res::Foreign { .. } | Res::Error => None,
         }
+    }
+
+    /// The rendered type of a top-level value `def`: its declared signature, then
+    /// the pass-3 inferred scheme, then the body-inferred FULL signature (the arrow
+    /// spine — `bt.signature`), falling back to the body-root `result` only if the
+    /// signature is somehow absent. Using `signature` (not `result`) is what makes
+    /// an unannotated function hover as `Int -> Int -> Int` rather than the
+    /// body-result-only `Int` (bug (b)). Shared by `ref_type_string` (use sites) +
+    /// `hover_def` (declaration sites).
+    fn def_sig_string(&self, typer: &Typer, resolved: &ResolveResult, d: DefId) -> Option<String> {
+        typer
+            .value_sig(d)
+            .or_else(|| typer.inferred_sig(d))
+            .map(|s| s.ty.render())
+            .or_else(|| {
+                let body = resolved.bodies.get(&d)?;
+                let bt = typer.body_types_annotated(d, body);
+                bt.signature.or(bt.result).map(|t| t.render())
+            })
     }
 
     fn hover_field(&self, typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> Option<String> {
@@ -294,6 +307,38 @@ impl Analysis {
         Some(format!("```sky\ntype {}\n```", o.name.as_str()))
     }
 
+    /// Hover for a cursor ON a declaration name (bug (a)). A value renders the
+    /// same `name : ty` a use site would (via `def_sig_string`); a constructor
+    /// renders its scheme; a type-con / alias renders `type Name`. Mirrors the
+    /// hover a use of the symbol produces.
+    fn hover_def(
+        &self,
+        typer: &Typer,
+        resolved: &ResolveResult,
+        db: &dyn SkyDb,
+        def: DefId,
+    ) -> Option<String> {
+        let loc = db.def_loc(def)?;
+        let name = loc.name.as_str().to_string();
+        let md = match loc.kind {
+            DefKind::Value => {
+                let ty = self
+                    .def_sig_string(typer, resolved, def)
+                    .unwrap_or_else(|| "?".to_string());
+                format!("```sky\n{name} : {ty}\n```")
+            }
+            DefKind::Ctor => {
+                let ty = typer
+                    .ctor_sig_by_def(def)
+                    .map(|s| s.ty.render())
+                    .unwrap_or_else(|| "?".to_string());
+                format!("```sky\n{name} : {ty}\n```")
+            }
+            DefKind::TypeCon | DefKind::TypeAlias => format!("```sky\ntype {name}\n```"),
+        };
+        Some(md)
+    }
+
     // ---- goto-definition ----------------------------------------------
 
     pub fn goto(&self, url: &Url, pos: Position) -> Option<Location> {
@@ -303,8 +348,12 @@ impl Analysis {
         let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
-        let cand = best_candidate(&resolved, off)?;
+        let cand = self.cand_at(db, &resolved, module, off)?;
         let span = match cand {
+            // On a declaration name → jump to the definition site (from an
+            // annotation `foo : T` this jumps to the `foo =` value site; on the
+            // value/type/ctor name itself it is the decl's own span). (bug (a))
+            Cand::Def { def, .. } => def_span(db, &resolved, module, def),
             Cand::Ref(o) => match &o.res {
                 Res::Def(d) => def_span(db, &resolved, module, *d),
                 Res::Ctor(cr) => def_span(db, &resolved, module, cr.def),
@@ -444,9 +493,84 @@ impl Analysis {
     /// the cursor (already narrowed to the identifier token, so a qualified
     /// `M.foo` reports only `foo`). Reuses the same occurrence index + candidate
     /// selection hover/goto use — no new index (doc 10 §references/rename).
-    fn resolve_target(&self, resolved: &ResolveResult, off: u32) -> Option<(Target, Span)> {
-        let cand = best_candidate(resolved, off)?;
+    /// The candidate the cursor resolves to. `best_candidate` covers the four
+    /// resolved channels (uses + `def_spans` declaration names); this adds the one
+    /// site the resolver does not index — a top-level `foo : T` annotation name —
+    /// as a `Cand::Def` fallback, so hover/goto/references/rename answer there too
+    /// (bug (a)). The annotation site is only consulted when nothing else matched,
+    /// so an overlapping use/decl (there is none in practice) still wins.
+    fn cand_at<'r>(
+        &self,
+        db: &dyn SkyDb,
+        resolved: &'r ResolveResult,
+        module: ModuleId,
+        off: u32,
+    ) -> Option<Cand<'r>> {
+        if let Some(c) = best_candidate(resolved, off) {
+            return Some(c);
+        }
+        self.annotation_decl_at(db, module, off)
+            .map(|(def, span)| Cand::Def { def, span })
+    }
+
+    /// If `off` sits on a top-level `foo : T` annotation NAME token, return the
+    /// value def it names plus the token span. The annotation shares the value
+    /// def's identity but is not in `def_spans` (which records the `foo =` site),
+    /// so we walk the parse tree and map the name back to its `DefId` via the
+    /// module's `def_spans` (a value def of the same name). Bug (a) resolution
+    /// counterpart of the collection-side `annotation_name_spans`.
+    fn annotation_decl_at(
+        &self,
+        db: &dyn SkyDb,
+        module: ModuleId,
+        off: u32,
+    ) -> Option<(DefId, Span)> {
+        let tree = db.module_parse(module);
+        for node in tree.syntax().children() {
+            if node.kind() != SyntaxKind::TypeAnnoDecl {
+                continue;
+            }
+            let Some(tok) = node
+                .children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| t.kind() == SyntaxKind::LowerIdent)
+            else {
+                continue;
+            };
+            let r = tok.text_range();
+            let (s, e) = (u32::from(r.start()), u32::from(r.end()));
+            if off < s || off > e {
+                continue;
+            }
+            let name = tok.text();
+            let resolved = db.resolve(module);
+            for (id, _) in &resolved.def_spans {
+                if let Some(loc) = db.def_loc(*id) {
+                    if loc.module == module
+                        && loc.kind == DefKind::Value
+                        && loc.name.as_str() == name
+                    {
+                        return Some((*id, Span::new(FileId(module.index()), s, e)));
+                    }
+                }
+            }
+            return None;
+        }
+        None
+    }
+
+    fn resolve_target(
+        &self,
+        db: &dyn SkyDb,
+        resolved: &ResolveResult,
+        module: ModuleId,
+        off: u32,
+    ) -> Option<(Target, Span)> {
+        let cand = self.cand_at(db, resolved, module, off)?;
         match cand {
+            // Cursor ON a declaration name → the same `Target::Global(def)` a use
+            // site resolves to, so references/rename from the decl == from a use.
+            Cand::Def { def, span } => Some((Target::Global(def), span)),
             Cand::Ref(o) => {
                 let name_span = self.narrow_to_name(o.span);
                 let t = match &o.res {
@@ -644,8 +768,9 @@ impl Analysis {
             return Vec::new();
         };
         let db = self.db();
-        let resolved = db.resolve(ModuleId(idx as u32));
-        let Some((target, _)) = self.resolve_target(&resolved, off) else {
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let Some((target, _)) = self.resolve_target(db, &resolved, module, off) else {
             return Vec::new();
         };
         self.collect_occurrences(db, &target, include_decl)
@@ -661,8 +786,9 @@ impl Analysis {
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
         let db = self.db();
-        let resolved = db.resolve(ModuleId(idx as u32));
-        let (target, span) = self.resolve_target(&resolved, off)?;
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let (target, span) = self.resolve_target(db, &resolved, module, off)?;
         if !self.is_renameable(db, &target) {
             return None;
         }
@@ -686,8 +812,9 @@ impl Analysis {
         let text = &self.docs[idx].text;
         let off = offset_of(text, pos)?;
         let db = self.db();
-        let resolved = db.resolve(ModuleId(idx as u32));
-        let (target, _) = self.resolve_target(&resolved, off)?;
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let (target, _) = self.resolve_target(db, &resolved, module, off)?;
         if !self.is_renameable(db, &target) {
             return None;
         }
@@ -915,7 +1042,11 @@ impl Analysis {
             let bt = body_cache
                 .entry(def)
                 .or_insert_with(|| typer.body_types_annotated(def, body));
-            if let Some(ty) = bt.result.clone() {
+            // Render the FULL signature (arrow spine) so an unannotated function
+            // hints as `foo : Int -> Int -> Int`, not the body-root result alone
+            // (bug (b)). For a nullary value `signature == result`, so value-def
+            // hints are unchanged. Fall back to `result` only if absent.
+            if let Some(ty) = bt.signature.clone().or_else(|| bt.result.clone()) {
                 hints.push(type_hint(text, span.range.1, &ty.render()));
             }
         }
@@ -1230,10 +1361,19 @@ enum Cand<'a> {
     Ref(&'a RefOcc),
     Field(&'a FieldOcc),
     Type(&'a TypeOcc),
+    /// The cursor sits ON a declaration name (a value `foo =` site, a type/alias
+    /// con, or a constructor) — resolved from `def_spans`, or a top-level
+    /// annotation `foo : T` name (recovered separately). Maps to the SAME
+    /// `Target::Global(def)` a use site of the symbol resolves to, so
+    /// hover/goto/references/rename all answer from the declaration too (bug (a)).
+    Def { def: DefId, span: Span },
 }
 
-/// The smallest span containing `off` across the three occurrence channels —
-/// smallest wins so a `.field` beats its enclosing receiver, etc.
+/// The smallest span containing `off` across the occurrence channels — smallest
+/// wins so a `.field` beats its enclosing receiver, etc. Scans the three use
+/// channels (`field_occs`/`ref_occs`/`type_occs`) AND the declaration-name
+/// channel (`def_spans`) so a cursor ON a decl name resolves (bug (a)); the
+/// annotation-name site needs `db` + the parse tree and is handled by `cand_at`.
 fn best_candidate(resolved: &ResolveResult, off: u32) -> Option<Cand<'_>> {
     let mut best: Option<(u32, Cand<'_>)> = None;
     for o in &resolved.field_occs {
@@ -1257,6 +1397,14 @@ fn best_candidate(resolved: &ResolveResult, off: u32) -> Option<Cand<'_>> {
             let len = span_len(o.span);
             if best.as_ref().map(|(l, _)| len < *l).unwrap_or(true) {
                 best = Some((len, Cand::Type(o)));
+            }
+        }
+    }
+    for (d, span) in &resolved.def_spans {
+        if contains(*span, off) {
+            let len = span_len(*span);
+            if best.as_ref().map(|(l, _)| len < *l).unwrap_or(true) {
+                best = Some((len, Cand::Def { def: *d, span: *span }));
             }
         }
     }

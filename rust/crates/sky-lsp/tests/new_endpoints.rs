@@ -189,3 +189,85 @@ fn signature_help_none_outside_call() {
         "no signature help outside a call"
     );
 }
+
+// ---- bug (b): full inferred signature on unannotated functions ---------
+//
+// `BodyTypes.result` is the body-ROOT type only; an unannotated function must
+// hover / inlay-hint as its full arrow (`p0 -> … -> result`), reconstructed
+// from `BodyTypes.signature`. Regression for the "inlay/hover drop parameter
+// types" bug. `add`/`greet` have NO annotation and are NOT stdlib `Result`
+// combinators, so `value_sig` AND `inferred_sig` are both None — the arrow can
+// only come from the new `signature` field.
+
+const UNANNOTATED_SRC: &str = "module M exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.String as String\nimport Std.Log exposing (println)\n\ntype Msg = Inc | Dec\n\nstep : Msg -> Int -> Int\nstep msg n =\n    case msg of\n        Inc -> n + 1\n        Dec -> n - 1\n\nadd x y = x + y\n\nbump n = step Inc n\n\ngreet name = String.append \"hi \" name\n\nmain =\n    println (greet \"a\")\n";
+
+fn hover_md(a: &Analysis, line: u32, ch: u32) -> String {
+    match a.hover(&main_url(), Position { line, character: ch }) {
+        Some(h) => match h.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            _ => String::new(),
+        },
+        None => String::new(),
+    }
+}
+
+fn inlay_label(a: &Analysis, line: u32) -> Option<String> {
+    a.inlay_hints(&main_url(), whole_doc())
+        .into_iter()
+        .find(|h| h.position.line == line)
+        .map(|h| match h.label {
+            InlayHintLabel::String(s) => s,
+            _ => String::new(),
+        })
+}
+
+#[test]
+fn inlay_hint_unannotated_function_shows_full_arrow() {
+    let a = analysis_with(UNANNOTATED_SRC);
+    // `add x y = x + y` (line 14): the WHOLE arrow, not the body-root `number`.
+    let add = inlay_label(&a, 14);
+    assert_eq!(
+        add.as_deref(),
+        Some(" : number -> number -> number"),
+        "unannotated 2-arg fn must hint its full arrow, not the body result; got {add:?}"
+    );
+    // Regression guard: the old bug rendered the body-root type only (` : number`).
+    assert_ne!(add.as_deref(), Some(" : number"), "must NOT be body-result only");
+
+    // `bump n = step Inc n` (line 16): concrete `Int -> Int` (task's Int-arrow case).
+    let bump = inlay_label(&a, 16);
+    assert_eq!(
+        bump.as_deref(),
+        Some(" : Int -> Int"),
+        "unannotated fn with concrete param must hint `Int -> Int`; got {bump:?}"
+    );
+}
+
+#[test]
+fn hover_unannotated_function_shows_full_arrow() {
+    let a = analysis_with(UNANNOTATED_SRC);
+    // On the `add` DECLARATION name (line 14) — full arrow.
+    let add_decl = hover_md(&a, 14, 1);
+    assert!(
+        add_decl.contains("number -> number -> number"),
+        "hover on unannotated decl shows full arrow; got {add_decl:?}"
+    );
+    // On the `bump` declaration name (line 16) — concrete `Int -> Int`.
+    let bump_decl = hover_md(&a, 16, 1);
+    assert!(
+        bump_decl.contains("Int -> Int"),
+        "hover on `bump` decl shows `Int -> Int`; got {bump_decl:?}"
+    );
+    // On a USE site of `greet` (line 21, inside `println (greet "a")`) — isolates
+    // bug (b) from bug (a): `ref_type_string` for a `Res::Def` use must also fall
+    // back to the full inferred signature, not the body result (`String`).
+    let greet_use = hover_md(&a, 21, 15);
+    assert!(
+        greet_use.contains("String -> String"),
+        "hover on unannotated fn USE shows full arrow, not body result; got {greet_use:?}"
+    );
+    assert!(
+        !greet_use.contains(": String\n"),
+        "hover on use must NOT be the body-result-only `String`; got {greet_use:?}"
+    );
+}

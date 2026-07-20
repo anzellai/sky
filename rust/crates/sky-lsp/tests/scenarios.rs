@@ -330,3 +330,76 @@ fn document_symbols_top_level() {
     // Constructors are not surfaced as top-level symbols.
     assert!(syms.iter().all(|s| s.name != "Increment"), "ctors excluded");
 }
+
+// ---- bug (a): cursor ON a declaration / annotation name ----------------
+//
+// Resolution funnelled through `best_candidate`, which scanned only the three
+// USE channels (field/ref/type occs) — never `def_spans` nor the annotation
+// name. So with the cursor ON a value-def name, a type/alias decl name, or a
+// `foo : T` annotation name, hover / references / goto / rename all returned
+// nothing. The fix scans `def_spans` in `best_candidate` and adds the
+// annotation-name fallback in `cand_at`, mapping each to the SAME
+// `Target::Global(def)` a use site resolves to.
+
+#[test]
+fn hover_on_value_def_name() {
+    // Cursor ON the `applyMsg` VALUE-def name (line 22) — not a use.
+    let a = analysis_with(FIXTURE);
+    let md = hover_text(&a, 22, 3);
+    assert!(md.contains("applyMsg"), "hover on def name names it; got {md:?}");
+    assert!(md.contains("Msg -> Int -> Int"), "hover on def name shows its type; got {md:?}");
+}
+
+#[test]
+fn hover_on_annotation_name() {
+    // Cursor ON the `applyMsg` ANNOTATION name (line 21) — the `foo : T` site.
+    let a = analysis_with(FIXTURE);
+    let md = hover_text(&a, 21, 3);
+    assert!(md.contains("Msg -> Int -> Int"), "hover on annotation name; got {md:?}");
+}
+
+#[test]
+fn hover_on_type_decl_names() {
+    let a = analysis_with(FIXTURE);
+    // `Model` alias decl name (line 8, char 13).
+    let model = hover_text(&a, 8, 13);
+    assert!(model.contains("Model"), "hover on alias decl name; got {model:?}");
+    // `Msg` union decl name (line 19, char 6).
+    let msg = hover_text(&a, 19, 6);
+    assert!(msg.contains("Msg"), "hover on union decl name; got {msg:?}");
+}
+
+#[test]
+fn references_from_decl_equal_references_from_use() {
+    let a = analysis_with(FIXTURE);
+    // The canonical use-site answer (mirrors `references_top_level_function`).
+    let from_use = ref_lines(&a, 32, 30, true); // use of applyMsg
+    assert_eq!(from_use, vec![21, 22, 32], "baseline from-use");
+    // From the VALUE-def name (line 22) — identical set.
+    let from_def = ref_lines(&a, 22, 3, true);
+    assert_eq!(from_def, from_use, "references from value-def name == from use");
+    // From the ANNOTATION name (line 21) — identical set.
+    let from_anno = ref_lines(&a, 21, 3, true);
+    assert_eq!(from_anno, from_use, "references from annotation name == from use");
+    // include_decl == false from the decl is still just the use.
+    assert_eq!(ref_lines(&a, 22, 3, false), vec![32], "excl-decl from def name");
+}
+
+#[test]
+fn references_from_type_decl_equal_from_use() {
+    let a = analysis_with(FIXTURE);
+    // `Model` used in `stringify : Model -> String` (line 10) + declared (line 8).
+    let from_use = ref_lines(&a, 10, 13, true);
+    let from_decl = ref_lines(&a, 8, 13, true);
+    assert_eq!(from_decl, from_use, "type references from decl == from use; got {from_decl:?} vs {from_use:?}");
+    assert!(from_decl.contains(&8) && from_decl.contains(&10), "covers decl+use; got {from_decl:?}");
+}
+
+#[test]
+fn rename_from_decl_name() {
+    // Rename initiated ON the value-def name (line 22) renames all 3 sites.
+    let a = analysis_with(FIXTURE);
+    assert_eq!(rename_edit_count(&a, 22, 3, "renamedFn"), Some(3), "rename from def name");
+    // And from the annotation name (line 21).
+    assert_eq!(rename_edit_count(&a, 21, 3, "renamedFn"), Some(3), "rename from annotation name");
+}
