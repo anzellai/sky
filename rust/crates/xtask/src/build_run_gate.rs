@@ -54,6 +54,14 @@ const CLI_FAMILY: &[&str] = &[
 /// normal Live app and is run+matched like any other server.
 const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 
+/// CLI examples whose stdout is inherently nondeterministic (live `Time.now`
+/// timestamps + network calls to httpbin.org), so a byte-for-byte match against
+/// the oracle's stdout is a guaranteed flake (the two binaries run at different
+/// wall-clock and network states). Verified as RUN "no-panic" instead of "match"
+/// — the build proves codegen, the run proves it doesn't crash; the exact output
+/// can't be pinned. (02-go-stdlib: `Time.now |> Time.timeString` + `Http.get`.)
+const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib"];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shape {
     Cli,
@@ -342,6 +350,19 @@ fn verify_one(
 
     if do_verify && rep.go_build_ok {
         match shape {
+            Shape::Cli if NONDETERMINISTIC_OUTPUT.contains(&name) => {
+                // stdout is inherently nondeterministic (live `Time.now` +
+                // network calls), so a byte-match against the oracle is a
+                // guaranteed flake (Rust + oracle run at different wall-clock /
+                // network states). Verify RUN succeeds (no Go panic) only — the
+                // build already proved codegen; the output can't be pinned.
+                run_kind = "no-panic";
+                run_ok = rep.run_ok;
+                matched = None;
+                if rep.run_ok != Some(true) && blocker.is_empty() {
+                    blocker = truncate(rep.run_stderr.as_deref().unwrap_or("run failed"), 60);
+                }
+            }
             Shape::Cli => {
                 run_kind = "match";
                 run_ok = rep.run_ok;
