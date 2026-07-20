@@ -78,7 +78,7 @@ fn driver_rejects_int_plus_string() {
     );
     assert!(!report.go_build_ok, "go build must not run on a type error");
     assert!(
-        report.note.contains("E2001"),
+        report.note.contains("TYPE MISMATCH"),
         "expected an [E2001] type-mismatch diagnostic in the note, got: {}",
         report.note
     );
@@ -114,7 +114,7 @@ fn driver_rejects_annotated_string_plus_int() {
         report.note
     );
     assert!(
-        report.note.contains("E2001"),
+        report.note.contains("TYPE MISMATCH"),
         "expected [E2001] in note, got: {}",
         report.note
     );
@@ -146,7 +146,7 @@ fn driver_rejects_non_exhaustive_case() {
     );
     assert!(!report.go_build_ok, "go build must not run on an exhaustiveness error");
     assert!(
-        report.note.contains("E3001"),
+        report.note.contains("MISSING PATTERNS"),
         "expected an [E3001] non-exhaustive diagnostic in the note, got: {}",
         report.note
     );
@@ -235,7 +235,7 @@ fn driver_rejects_duplicate_toplevel_binding() {
     );
     assert!(!report.go_build_ok, "go build must not run on a redefinition");
     assert!(
-        report.note.contains("E1002"),
+        report.note.contains("DUPLICATE DEFINITION"),
         "expected an [E1002] duplicate-definition diagnostic in the note, got: {}",
         report.note
     );
@@ -269,7 +269,7 @@ fn driver_rejects_duplicate_param() {
         report.note
     );
     assert!(
-        report.note.contains("E1003"),
+        report.note.contains("DUPLICATE PATTERN VARIABLE"),
         "expected [E1003] in note, got: {}",
         report.note
     );
@@ -300,7 +300,7 @@ fn driver_rejects_prelude_shadow_adt() {
         report.note
     );
     assert!(
-        report.note.contains("E1004"),
+        report.note.contains("SHADOWED NAME"),
         "expected [E1004] in note, got: {}",
         report.note
     );
@@ -331,7 +331,7 @@ fn driver_rejects_nonexhaustive_literal_case() {
         report.note
     );
     assert!(
-        report.note.contains("E3001"),
+        report.note.contains("MISSING PATTERNS"),
         "expected [E3001] in note, got: {}",
         report.note
     );
@@ -394,7 +394,7 @@ fn driver_rejects_parse_error_op_section() {
     );
     assert!(!report.go_build_ok, "go build must not run on a parse error");
     assert!(
-        report.note.contains("E0001"),
+        report.note.contains("PARSE ERROR"),
         "expected an [E0001] parse-error diagnostic in the note, got: {}",
         report.note
     );

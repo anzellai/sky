@@ -121,7 +121,7 @@ fn assemble_and_emit_with(
     // stdlib + `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes
     // across the whole corpus) and are trusted, exactly like the type/name/
     // exhaustive gates scope to `check_ids`.
-    let mut parse_diags: Vec<String> = Vec::new();
+    let mut parse_diags: Vec<diagnostics::Diagnostic> = Vec::new();
     for (n, file) in locals {
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
@@ -137,13 +137,16 @@ fn assemble_and_emit_with(
                 if parse.errors().is_empty() {
                     // Recovery produced a structural ERROR node without an attached
                     // diagnostic (defensive — the recovery paths always pair the two).
-                    parse_diags.push(format!(
-                        "[E0001] PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
+                    parse_diags.push(diagnostics::Diagnostic::error(
+                        "E0001",
+                        format!(
+                            "PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
+                        ),
                     ));
                 } else {
                     for d in parse.errors() {
                         if d.severity == diagnostics::Severity::Error {
-                            parse_diags.push(format!("[{}] {}", d.code.0, d.message));
+                            parse_diags.push(d.clone());
                         }
                     }
                 }
@@ -163,12 +166,22 @@ fn assemble_and_emit_with(
             entry = Some(id);
         }
     }
+    // `FileId → source text` for every checked app module — feeds the Elm-style
+    // renderer (`Diagnostic::render_cli`) so each Sky-frontend diagnostic shows
+    // its offending source line + caret instead of a flat `[code] message`. A
+    // diagnostic span's `file.index()` is the module's `ModuleId` index, so the
+    // map keys straight off `check_ids`.
+    let src_map: std::collections::HashMap<base::FileId, String> = check_ids
+        .iter()
+        .map(|m| (base::FileId(m.index()), db.source_file(*m).text(&db).to_string()))
+        .collect();
+
     // Halt on any app-module parse error BEFORE entry detection, typecheck,
     // lower, and emit — a syntactically broken module can never be soundly
     // lowered, and reporting the parse error is more actionable than a
     // downstream "no entry module named Main" / type-clash message.
     if !parse_diags.is_empty() {
-        return Err(parse_diags.join("\n"));
+        return Err(render_diags(&parse_diags, &src_map));
     }
     let Some(entry) = entry else {
         return Err(match entry_module {
@@ -190,15 +203,13 @@ fn assemble_and_emit_with(
     // the existing lowering path; only the type-clash hole is closed here.
     let checked = ty::check_modules(&db, &check_ids);
     if checked.type_errors > 0 {
-        let rendered: Vec<String> = checked
+        let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.severity == diagnostics::Severity::Error && d.code.0 == "E2001"
-            })
-            .map(|d| format!("[{}] {}", d.code.0, d.message))
+            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E2001")
+            .cloned()
             .collect();
-        return Err(rendered.join("\n"));
+        return Err(render_diags(&ds, &src_map));
     }
     // Name-resolution rejections (the `[E1xxx]` class over the checked app
     // modules): undefined names (`[E1001]`), duplicate top-level definitions
@@ -212,15 +223,13 @@ fn assemble_and_emit_with(
     // `Maybe`/`Result`/… is never gated. Undefined names are additionally
     // caught by the lowering `class_a` path (all modules), which stays intact.
     if checked.name_errors > 0 {
-        let rendered: Vec<String> = checked
+        let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E1")
-            })
-            .map(|d| format!("[{}] {}", d.code.0, d.message))
+            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E1"))
+            .cloned()
             .collect();
-        return Err(rendered.join("\n"));
+        return Err(render_diags(&ds, &src_map));
     }
     // Exhaustiveness gate (`[E3001]`): Sky treats a non-exhaustive `case` as a
     // HARD error (stronger than GHC-as-configured — self-host R1-D3, doc 06
@@ -233,14 +242,14 @@ fn assemble_and_emit_with(
     // diagnostics directly; the `exhaustiveness_warnings` counter (a separate
     // axis from `type_errors`, which the `infer` accept-parity gate counts) is
     // left untouched.
-    let exhaustive_diags: Vec<String> = checked
+    let exhaustive_diags: Vec<diagnostics::Diagnostic> = checked
         .diagnostics
         .iter()
         .filter(|d| d.code.0 == "E3001")
-        .map(|d| format!("[{}] {}", d.code.0, d.message))
+        .cloned()
         .collect();
     if !exhaustive_diags.is_empty() {
-        return Err(exhaustive_diags.join("\n"));
+        return Err(render_diags(&exhaustive_diags, &src_map));
     }
 
     // ---- lower + emit ----
@@ -682,6 +691,22 @@ fn load_skydeps(
 /// handle — the whole module set now lives in the salsa db (the resolve-stage
 /// port), so `resolve`/`module_exports` key off these handles rather than cloned
 /// `Parse`s. No `FileId`/span reaches emitted Go, so build + repro are unchanged.
+/// Render a batch of Sky-frontend diagnostics as Elm-style terminal blocks,
+/// one per diagnostic, separated by a blank line. `src_map` supplies each span's
+/// source line for the caret excerpt (`Diagnostic::render_cli`). The joined
+/// string becomes the `BuildReport.note` printed by `sky-cli`.
+fn render_diags(
+    diags: &[diagnostics::Diagnostic],
+    src_map: &std::collections::HashMap<base::FileId, String>,
+) -> String {
+    let provider: &std::collections::HashMap<base::FileId, String> = src_map;
+    diags
+        .iter()
+        .map(|d| d.render_cli(&provider))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn parse_via_salsa(
     db: &skydb::SkyDatabase,
     next_id: &mut u32,

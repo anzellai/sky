@@ -38,7 +38,8 @@ use syntax::SyntaxKind;
 use ty::{Ty, TyDb, Typer};
 
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, DocumentSymbol, Hover,
+    CompletionItem, CompletionItemKind, Diagnostic, DiagnosticRelatedInformation,
+    DiagnosticSeverity, DocumentSymbol, Hover,
     HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, MarkupContent, MarkupKind,
     ParameterInformation, ParameterLabel, Position, PrepareRenameResponse, Range, SemanticToken,
     SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SignatureHelp,
@@ -434,7 +435,7 @@ impl Analysis {
         out.extend(resolved.diagnostics.iter().cloned());
         let checked = ty::check_modules(db, &[module]);
         out.extend(checked.diagnostics);
-        out.into_iter().map(|d| to_lsp_diag(text, &d)).collect()
+        out.into_iter().map(|d| to_lsp_diag(&self.docs, text, &d)).collect()
     }
 
     // ---- references / rename target resolution -------------------------
@@ -1432,20 +1433,16 @@ fn trim_slot(chars: &[char], s: usize, e: usize) -> (usize, usize) {
 }
 
 // ---- position / span conversion ---------------------------------------
-
-fn line_starts(text: &str) -> Vec<usize> {
-    let mut v = vec![0usize];
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            v.push(i + 1);
-        }
-    }
-    v
-}
+//
+// The byte↔line:col primitives (`line_starts`, `position_at`) live in the
+// `diagnostics` crate so the CLI renderer and this position mapper share ONE
+// implementation. The thin wrappers below adapt `diagnostics::position_at`'s
+// `(line, col)` tuple to the LSP `Position` type (which `diagnostics` must not
+// depend on — it sits below `tower-lsp`).
 
 /// LSP `Position` (0-based line, UTF-16 character) → byte offset.
 fn offset_of(text: &str, pos: Position) -> Option<u32> {
-    let starts = line_starts(text);
+    let starts = diagnostics::line_starts(text);
     let start = *starts.get(pos.line as usize)?;
     let mut utf16 = 0u32;
     let mut byte = start;
@@ -1459,19 +1456,10 @@ fn offset_of(text: &str, pos: Position) -> Option<u32> {
     Some(byte as u32)
 }
 
-/// byte offset → LSP `Position`.
+/// byte offset → LSP `Position` (adapts the shared `diagnostics::position_at`).
 fn position_at(text: &str, offset: u32) -> Position {
-    let starts = line_starts(text);
-    let off = (offset as usize).min(text.len());
-    let line = match starts.binary_search(&off) {
-        Ok(i) => i,
-        Err(i) => i.saturating_sub(1),
-    };
-    let col: usize = text[starts[line]..off].chars().map(|c| c.len_utf16()).sum();
-    Position {
-        line: line as u32,
-        character: col as u32,
-    }
+    let (line, character) = diagnostics::position_at(text, offset);
+    Position { line, character }
 }
 
 fn span_to_range(text: &str, span: Span) -> Range {
@@ -1481,7 +1469,20 @@ fn span_to_range(text: &str, span: Span) -> Range {
     }
 }
 
-fn to_lsp_diag(text: &str, d: &diagnostics::Diagnostic) -> Diagnostic {
+/// Map a structured `diagnostics::Diagnostic` into the LSP JSON shape. The
+/// primary label (`labels[0]`) drives the underline `range`; the secondary
+/// labels (`labels[1..]`) become `related_information` entries, resolving each
+/// span's file (`span.file.index()`) back to its document url + range via
+/// `docs` — so a secondary label pointing into a *different* file still links
+/// correctly. `docs` is the loaded document set (indexed by module/file id).
+///
+/// TODO(code-action): `d.suggestion`, when present, should also be surfaced as a
+/// `textDocument/codeAction` quick-fix (a `CodeAction` titled from the
+/// suggestion). No frontend emit site populates `suggestion` yet, so a handler
+/// would be dead/untestable code today; when the first suggestion-carrying
+/// diagnostic lands, register `code_action_provider` + a `code_action` handler
+/// and thread the fix here.
+fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnostic {
     let range = d
         .labels
         .first()
@@ -1495,12 +1496,30 @@ fn to_lsp_diag(text: &str, d: &diagnostics::Diagnostic) -> Diagnostic {
         diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
         diagnostics::Severity::Info => DiagnosticSeverity::INFORMATION,
     };
+    // Secondary labels → related information (each resolved to its own file).
+    let related: Vec<DiagnosticRelatedInformation> = d
+        .labels
+        .iter()
+        .skip(1)
+        .filter_map(|l| {
+            let doc = docs.get(l.span.file.index() as usize)?;
+            Some(DiagnosticRelatedInformation {
+                location: Location {
+                    uri: doc.url.clone(),
+                    range: span_to_range(&doc.text, l.span),
+                },
+                message: l.message.clone(),
+            })
+        })
+        .collect();
+    let related_information = if related.is_empty() { None } else { Some(related) };
     Diagnostic {
         range,
         severity: Some(severity),
         code: Some(tower_lsp::lsp_types::NumberOrString::String(d.code.0.clone())),
         message: d.message.clone(),
         source: Some("sky".to_string()),
+        related_information,
         ..Default::default()
     }
 }
