@@ -2495,6 +2495,23 @@ func Mul(a, b any) any {
 	return AsInt(a) * AsInt(b)
 }
 
+// Pow computes exponentiation `a ^ b`. Sky's `^` is power (Elm semantics), not
+// Go's bitwise XOR. Int^Int with a non-negative exponent stays Int; any Float
+// operand (or a negative Int exponent) promotes to Float via math.Pow.
+func Pow(a, b any) any {
+	if !isFloatish(a) && !isFloatish(b) {
+		base, exp := AsInt(a), AsInt(b)
+		if exp >= 0 {
+			result := 1
+			for i := 0; i < exp; i++ {
+				result *= base
+			}
+			return result
+		}
+	}
+	return math.Pow(AsFloat(a), AsFloat(b))
+}
+
 func Div(a, b any) any {
 	// REACHABLE-FROM-SKY: `x / 0.0` triggers this. Caught by top-level
 	// recover as `DivisionByZero` (Cycle 6 PC, v0.15.43). Sky exposes
