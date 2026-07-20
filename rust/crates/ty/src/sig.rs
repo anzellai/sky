@@ -360,9 +360,22 @@ impl World {
         ];
 
         // F8 — Basics tuple projections (`fst : (a, b) -> a`, `snd : (a, b) -> b`).
+        // F9 — Basics kernel-anchored Int arithmetic. `modBy` / `clamp` are the two
+        // Basics kernels the oracle pins as strictly `Int`-monomorphic
+        // (Constrain/Expression.hs: `modBy : Int -> Int -> Int`,
+        // `clamp : Int -> Int -> Int -> Int`), so unannotated Rust call sites that
+        // otherwise fall to a wildcard flex now reject a non-Int arg at CHECK-time
+        // with oracle parity (`modBy "x" 5`, `clamp "a" 1 2`, and `clamp`-on-Float,
+        // which the oracle also rejects). Deliberately NOT extended to the sibling
+        // arithmetic kernels (`min`/`max`/`abs`/`negate`/`sqrt`/`compare`): the
+        // oracle is genuinely LENIENT on those (`abs "x"` / `min "a" 2` accept), so
+        // pinning them would make Rust stricter than the oracle — a divergence, not
+        // a fix. Verified against the absolute-path differential, 2026-07-20.
         let basics_specs: Vec<(&str, Ty)> = vec![
             ("fst", fun(tup2(a(), b()), a())),
             ("snd", fun(tup2(a(), b()), b())),
+            ("modBy", fun(int_(), fun(int_(), int_()))),
+            ("clamp", fun(int_(), fun(int_(), fun(int_(), int_())))),
         ];
 
         // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).

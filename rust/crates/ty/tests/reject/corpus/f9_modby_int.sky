@@ -1,0 +1,11 @@
+-- defect: `modBy` is a kernel-anchored `Int -> Int -> Int` primitive, but the
+--         unannotated call site used to fall to a wildcard flex that absorbed a
+--         String first arg. The F9 check-only precise sig
+--         (`modBy : Int -> Int -> Int`) now pins it and rejects a non-Int arg.
+--         oracle: reject [E2001]. (Siblings min/max/abs/negate/sqrt stay lenient
+--         — the oracle accepts those, so they are deliberately NOT pinned.)
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (modBy "x" 5))

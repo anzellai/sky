@@ -1,0 +1,10 @@
+-- defect: `clamp` is pinned by the oracle as strictly `Int -> Int -> Int -> Int`
+--         (Constrain/Expression.hs), but the unannotated call site used to fall
+--         to a wildcard flex that absorbed a String first arg. The F9 check-only
+--         precise sig now pins it and rejects a non-Int arg (the oracle also
+--         rejects clamp-on-Float for the same reason). oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (clamp "a" 1 2))
