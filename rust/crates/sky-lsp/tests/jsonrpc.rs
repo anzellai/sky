@@ -199,6 +199,67 @@ impl Client {
             .and_then(Value::as_u64)
     }
 
+    /// `textDocument/declaration` line — proves the handler is wired (not
+    /// `method_not_found`) and delegates to the same resolution as definition.
+    fn declaration_line(&mut self, line: u32, ch: u32) -> Option<u64> {
+        let id = self.request(
+            "textDocument/declaration",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "position": {"line": line, "character": ch}
+            }),
+        );
+        let r = self.await_response(id);
+        r.get("range")
+            .and_then(|rg| rg.get("start"))
+            .and_then(|s| s.get("line"))
+            .and_then(Value::as_u64)
+    }
+
+    /// `workspace/symbol` — names of the symbols the server returns for `query`.
+    fn workspace_symbol_names(&mut self, query: &str) -> Vec<String> {
+        let id = self.request("workspace/symbol", json!({ "query": query }));
+        let r = self.await_response(id);
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.get("name").and_then(Value::as_str).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Drain every `textDocument/publishDiagnostics` notification arriving within
+    /// `window`, returning the diagnostics-array length of each (in arrival order).
+    /// Used to observe the debounce: a keystroke burst must coalesce to one publish.
+    fn collect_diagnostic_counts(&self, window: Duration) -> Vec<usize> {
+        let deadline = std::time::Instant::now() + window;
+        let mut out = Vec::new();
+        loop {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match self.rx.recv_timeout(deadline - now) {
+                Ok(msg) => {
+                    if msg.get("method").and_then(Value::as_str)
+                        == Some("textDocument/publishDiagnostics")
+                    {
+                        let n = msg
+                            .get("params")
+                            .and_then(|p| p.get("diagnostics"))
+                            .and_then(Value::as_array)
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        out.push(n);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
     fn completion_items(&mut self, line: u32, ch: u32) -> Vec<(String, Option<String>)> {
         let id = self.request(
             "textDocument/completion",
@@ -621,4 +682,100 @@ fn seventeen_scenarios_over_jsonrpc() {
         eprintln!("  failed: {fails:?}");
     }
     assert_eq!(pass, 17, "expected 17/17 over JSON-RPC; failed: {fails:?}");
+}
+
+/// `textDocument/declaration` must be handled (not `method_not_found`) and
+/// resolve identically to `textDocument/definition` — for Sky, declaration ==
+/// definition. Drives the real server binary end-to-end.
+#[test]
+fn declaration_matches_definition_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+
+    // The `applyMsg` use (line 32) → its def (line 21 anno / 22 value); both
+    // definition and declaration must return the SAME location.
+    let def = c.definition_line(32, 30);
+    let decl = c.declaration_line(32, 30);
+    assert!(def.is_some(), "definition resolves the applyMsg use");
+    assert_eq!(decl, def, "declaration must resolve to the same site as definition");
+    assert!(decl == Some(21) || decl == Some(22), "declaration lands on the def; got {decl:?}");
+
+    // A second case: the `Model` type name use (line 10) → its decl (line 8).
+    assert_eq!(
+        c.declaration_line(10, 13),
+        c.definition_line(10, 13),
+        "declaration == definition for a type name too"
+    );
+
+    c.shutdown();
+}
+
+/// `workspace/symbol` over the real binary returns the project's top-level
+/// symbols (multi-file navigation). The single-file FIXTURE suffices to prove
+/// the handler is wired + filters by query.
+#[test]
+fn workspace_symbol_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+
+    // Query `apply` → the `applyMsg` def from Main.sky.
+    let hits = c.workspace_symbol_names("apply");
+    assert!(
+        hits.iter().any(|n| n == "applyMsg"),
+        "workspace/symbol(\"apply\") finds applyMsg; got {hits:?}"
+    );
+    // A subsequence query still narrows to project symbols.
+    let strfy = c.workspace_symbol_names("strf");
+    assert!(
+        strfy.iter().any(|n| n == "stringify"),
+        "subsequence `strf` matches stringify; got {strfy:?}"
+    );
+
+    c.shutdown();
+}
+
+/// The `didChange` diagnostics publish is debounced + version-guarded: a burst
+/// of rapid edits coalesces into ONE publish (superseded generations dropped),
+/// and the surviving publish reflects the LATEST edit — not an intermediate one.
+#[test]
+fn did_change_publish_is_debounced_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+    // Absorb the immediate (non-debounced) didOpen publish.
+    let _ = c.collect_diagnostic_counts(Duration::from_millis(500));
+
+    // Fire five rapid edits with NO waiting between them — the first four are
+    // valid buffers, the FINAL one references an undefined name (→ ≥1
+    // diagnostic). They all land well inside the debounce window.
+    for i in 0..4 {
+        c.change(&format!("{FIXTURE}-- edit {i}\n"));
+    }
+    let final_buf = "module Main exposing (main)\n\nmain =\n    undefinedRefXyz\n";
+    c.change(final_buf);
+
+    // Collect publishes for well past the debounce window.
+    let counts = c.collect_diagnostic_counts(Duration::from_millis(900));
+
+    // Coalesced: the five edits produced FAR fewer than five publishes (ideally
+    // one). Allow a small straggler margin for scheduler slop.
+    assert!(
+        !counts.is_empty(),
+        "the burst must still yield at least one (final) publish"
+    );
+    assert!(
+        counts.len() <= 2,
+        "rapid edits must coalesce (superseded publishes dropped); got {} publishes: {counts:?}",
+        counts.len()
+    );
+    // The surviving publish reflects the LATEST edit — the undefined-name buffer
+    // has at least one diagnostic (an intermediate valid buffer would be empty).
+    assert!(
+        *counts.last().unwrap() >= 1,
+        "final publish reflects the latest (broken) edit; got counts {counts:?}"
+    );
+
+    c.shutdown();
 }

@@ -4,8 +4,10 @@
 //! background `sky check` thread, no externals timeout (L1/L2). All the analysis
 //! lives in the library (`lib.rs`) so it is testable without a client.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use sky_lsp::Analysis;
 use tokio::sync::Mutex;
@@ -13,10 +15,21 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+/// Quiet window before a `didChange` publishes diagnostics. Rapid edits inside
+/// this window coalesce into ONE publish (the newest generation wins); a
+/// superseded generation's delayed publish is dropped. Only publish *timing*
+/// changes — diagnostic content is exactly what a synchronous publish produced.
+const DEBOUNCE_MS: u64 = 200;
+
 struct Backend {
     client: Client,
     /// The one piece of state: the analysis engine (source db + open docs).
     analysis: Arc<Mutex<Analysis>>,
+    /// Per-document monotonic edit generation. Each `didChange` bumps its
+    /// document's counter and spawns a delayed publish that fires only if its
+    /// captured generation is STILL the latest — so a stale (superseded) publish
+    /// for an older edit is dropped, and a keystroke burst yields one publish.
+    gens: Arc<StdMutex<HashMap<Url, u64>>>,
 }
 
 impl Backend {
@@ -57,6 +70,7 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 references_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -106,12 +120,40 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        // FULL sync: the last content change is the whole buffer.
+        // FULL sync: the last content change is the whole buffer. Apply it
+        // IMMEDIATELY (before any await on the publish) so hover/completion/goto
+        // on the next request already see the fresh text — only the diagnostics
+        // publish is debounced.
         if let Some(change) = params.content_changes.into_iter().next_back() {
             let mut a = self.analysis.lock().await;
             a.set_document(uri.clone(), change.text);
         }
-        self.publish(uri).await;
+        // Bump this document's generation and capture it for the delayed publish.
+        let my_gen = {
+            let mut g = self.gens.lock().unwrap();
+            let e = g.entry(uri.clone()).or_insert(0);
+            *e += 1;
+            *e
+        };
+        // Debounced, version-guarded publish. After the quiet window, publish
+        // only if no newer edit superseded this generation; otherwise the stale
+        // publish is dropped. Diagnostics are computed from the (always-latest)
+        // analysis state, so a surviving publish reflects the newest edit.
+        let client = self.client.clone();
+        let analysis = self.analysis.clone();
+        let gens = self.gens.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
+            // Superseded by a later edit while we slept → drop this publish.
+            if gens.lock().unwrap().get(&uri).copied() != Some(my_gen) {
+                return;
+            }
+            let diags = {
+                let a = analysis.lock().await;
+                a.diagnostics(&uri)
+            };
+            client.publish_diagnostics(uri, diags, None).await;
+        });
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -130,6 +172,21 @@ impl LanguageServer for Backend {
             .map(GotoDefinitionResponse::Scalar))
     }
 
+    /// `textDocument/declaration` — for Sky, a symbol's declaration IS its
+    /// definition (no forward-declare / header split), so this delegates to the
+    /// exact engine resolution `goto_definition` uses. Advertised via
+    /// `declaration_provider`; without this method a client's request would get
+    /// `method_not_found` (the tower-lsp default), a protocol bug.
+    async fn goto_declaration(
+        &self,
+        params: request::GotoDeclarationParams,
+    ) -> Result<Option<request::GotoDeclarationResponse>> {
+        let p = params.text_document_position_params;
+        let a = self.analysis.lock().await;
+        Ok(a.goto(&p.text_document.uri, p.position)
+            .map(request::GotoDeclarationResponse::Scalar))
+    }
+
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let p = params.text_document_position;
         let a = self.analysis.lock().await;
@@ -142,6 +199,14 @@ impl LanguageServer for Backend {
         let include_decl = params.context.include_declaration;
         let a = self.analysis.lock().await;
         Ok(Some(a.references(&p.text_document.uri, p.position, include_decl)))
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let a = self.analysis.lock().await;
+        Ok(Some(a.workspace_symbol(&params.query)))
     }
 
     async fn document_highlight(
@@ -211,6 +276,7 @@ async fn main() {
     let (service, socket) = LspService::new(|client| Backend {
         client,
         analysis: Arc::new(Mutex::new(Analysis::new())),
+        gens: Arc::new(StdMutex::new(HashMap::new())),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

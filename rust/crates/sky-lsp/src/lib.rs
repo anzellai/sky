@@ -46,7 +46,7 @@ use tower_lsp::lsp_types::{
     HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, MarkupContent, MarkupKind,
     ParameterInformation, ParameterLabel, Position, PrepareRenameResponse, Range, SemanticToken,
     SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SignatureHelp,
-    SignatureInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
+    SignatureInformation, SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 /// One loaded document: its parsed tree, source text, and url. (The module name
@@ -1005,6 +1005,71 @@ impl Analysis {
         out
     }
 
+    // ---- workspace/symbol ----------------------------------------------
+
+    /// Every top-level symbol across ALL loaded modules whose name fuzzy-matches
+    /// `query` — the multi-file navigation the SkyDeploy dashboard needs. Reuses
+    /// the same per-module `def_spans` + `def_loc` enumeration `document_symbols`
+    /// runs (here flattened workspace-wide, and — unlike the nested document
+    /// outline — constructors are surfaced too, since `workspace/symbol` is a flat
+    /// list). A `Location` is built from the def span (its `FileId.index()` indexes
+    /// straight back into `docs` for the url + range). An empty query returns
+    /// everything; the result is capped at [`WS_SYMBOL_CAP`] so an editor that
+    /// opens the picker with an empty box does not receive the entire stdlib.
+    /// The match is a case-insensitive subsequence (`upd` matches `update`), the
+    /// convention editors expect from a fuzzy symbol picker.
+    pub fn workspace_symbol(&self, query: &str) -> Vec<SymbolInformation> {
+        let db = self.db();
+        let q = query.to_lowercase();
+        // Reverse the module-name index once so each symbol can carry its owning
+        // module as `container_name` (deterministic — one pass over `by_name`).
+        let mut mod_name: Vec<String> = vec![String::new(); self.docs.len()];
+        for (name, &i) in &self.by_name {
+            if i < mod_name.len() {
+                mod_name[i] = name.clone();
+            }
+        }
+        let mut out: Vec<SymbolInformation> = Vec::new();
+        for idx in 0..self.docs.len() {
+            let module = ModuleId(idx as u32);
+            let resolved = db.resolve(module);
+            let doc = &self.docs[idx];
+            for (d, span) in &resolved.def_spans {
+                let Some(loc) = db.def_loc(*d) else {
+                    continue;
+                };
+                let name = loc.name.as_str().to_string();
+                if !fuzzy_match(&name, &q) {
+                    continue;
+                }
+                let kind = match loc.kind {
+                    DefKind::Value => SymbolKind::FUNCTION,
+                    DefKind::TypeCon => SymbolKind::ENUM,
+                    DefKind::TypeAlias => SymbolKind::STRUCT,
+                    DefKind::Ctor => SymbolKind::ENUM_MEMBER,
+                };
+                let range = span_to_range(&doc.text, *span);
+                let container = mod_name.get(idx).filter(|s| !s.is_empty()).cloned();
+                #[allow(deprecated)]
+                out.push(SymbolInformation {
+                    name,
+                    kind,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri: doc.url.clone(),
+                        range,
+                    },
+                    container_name: container,
+                });
+                if out.len() >= WS_SYMBOL_CAP {
+                    return out;
+                }
+            }
+        }
+        out
+    }
+
     // ---- textDocument/semanticTokens/full ------------------------------
 
     pub fn semantic_tokens(&self, url: &Url) -> Option<SemanticTokensResult> {
@@ -1281,6 +1346,32 @@ fn is_valid_ident(name: &str, upper: bool) -> bool {
         "module" | "import" | "exposing" | "as" | "type" | "alias" | "foreign" | "if" | "then"
             | "else" | "case" | "of" | "let" | "in" | "True" | "False"
     )
+}
+
+/// Upper bound on `workspace/symbol` results — an empty query (editor opens the
+/// picker with an empty box) would otherwise enumerate the whole stdlib. 256 is
+/// enough to fill a symbol picker page; a non-empty query narrows well below it.
+const WS_SYMBOL_CAP: usize = 256;
+
+/// Case-insensitive subsequence test used by `workspace/symbol`: is every char
+/// of `query` (already lowercased) found in `name`, in order? An empty query
+/// matches everything. `name` is lowercased on the fly so the caller passes it
+/// verbatim. Subsequence (not substring) so `upd` matches `update` AND `updModel`.
+fn fuzzy_match(name: &str, query_lower: &str) -> bool {
+    if query_lower.is_empty() {
+        return true;
+    }
+    let mut q = query_lower.chars().peekable();
+    for nc in name.chars().flat_map(|c| c.to_lowercase()) {
+        if let Some(&qc) = q.peek() {
+            if nc == qc {
+                q.next();
+            }
+        } else {
+            break;
+        }
+    }
+    q.peek().is_none()
 }
 
 // Semantic-token legend indices (doc 10 §semantic tokens — 12 types, frozen).
