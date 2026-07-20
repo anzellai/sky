@@ -380,7 +380,11 @@ impl<'a> Infer<'a> {
     /// call site pins the result type from the argument types (proper HM). The
     /// scheme read-back maps every unbound flex/super var to a *distinct*
     /// quantifier so two independent vars never collapse into one.
-    pub fn infer_def_scheme(&mut self, body: &Body) -> Option<Scheme> {
+    /// `concretize_super`: when true, an unresolved `Number` super reads back as
+    /// concrete `Int` (oracle-faithful, Solve.hs:1457) so numeric helpers infer
+    /// monomorphic sigs. Passed `true` on the checker's `app_check_sigs` channel
+    /// and `false` on `inferred_sigs` (lowerer — must stay byte-identical).
+    pub fn infer_def_scheme(&mut self, body: &Body, concretize_super: bool) -> Option<Scheme> {
         let root = body.root?;
         let param_vars: Vec<TyVarId> = body
             .params
@@ -392,7 +396,7 @@ impl<'a> Infer<'a> {
             .into_iter()
             .rev()
             .fold(rv, |acc, pv| self.fun(pv, acc));
-        let ty = self.read_back_scheme(full);
+        let ty = self.read_back_scheme(full, concretize_super);
         Some(Scheme::generalize(ty))
     }
 
@@ -944,7 +948,7 @@ impl<'a> Infer<'a> {
 
     pub fn read_back(&mut self, v: TyVarId) -> Ty {
         let mut seen = std::collections::HashSet::new();
-        self.read_back_seen(v, &mut seen, false)
+        self.read_back_seen(v, &mut seen, false, false)
     }
 
     /// Read-back for scheme generation: every unbound flex/super var becomes a
@@ -952,9 +956,21 @@ impl<'a> Infer<'a> {
     /// accept-more). This avoids (a) `Number → App("number")` unifying wrongly
     /// against `Int`/`Float`, and (b) two independent `comparable`/`appendable`
     /// vars collapsing onto one shared name and over-constraining the scheme.
-    fn read_back_scheme(&mut self, v: TyVarId) -> Ty {
+    ///
+    /// `concretize_super` opts into the ORACLE's read-back semantics for an
+    /// unresolved `Number` super: it DEFAULTS TO CONCRETE `Int`
+    /// (`Sky/Type/Solve.hs:1457`) rather than dropping to a fresh quantifier.
+    /// This is used ONLY on the checker's `app_check_sigs` channel so an
+    /// unannotated numeric helper (`mkBadge n = { lvl = n + 1 }`) infers a
+    /// MONOMORPHIC `Int -> {…}` and no longer escapes the F1c monomorphism
+    /// filter — matching the oracle, which rejects `mkBadge "s"`. The
+    /// `inferred_sigs` channel (consumed by the lowerer) passes `false` so
+    /// emitted Go stays byte-identical. Only `Number` has an unambiguous
+    /// single concrete default; `Comparable`/`Appendable`/`CompAppend` keep the
+    /// drop-to-quantifier behaviour even under `concretize_super`.
+    fn read_back_scheme(&mut self, v: TyVarId, concretize_super: bool) -> Ty {
         let mut seen = std::collections::HashSet::new();
-        self.read_back_seen(v, &mut seen, true)
+        self.read_back_seen(v, &mut seen, true, concretize_super)
     }
 
     fn read_back_seen(
@@ -962,6 +978,7 @@ impl<'a> Infer<'a> {
         v: TyVarId,
         seen: &mut std::collections::HashSet<TyVarId>,
         scheme: bool,
+        concretize_super: bool,
     ) -> Ty {
         let r = self.uf.find(v);
         if !seen.insert(r) {
@@ -971,6 +988,13 @@ impl<'a> Infer<'a> {
         let out = match self.uf.content(r) {
             Content::Flex => Ty::Var(Name::new(&format!("t{}", r.0))),
             Content::Rigid(n) => Ty::Var(n),
+            // Oracle-faithful concrete default: unresolved `Number` super reads
+            // back as concrete `Int` (Solve.hs:1457) on the concretize channel.
+            // `Int` (not `App("number")`) so `super_matches(Number, Int)` still
+            // admits valid `Int` uses at call sites.
+            Content::FlexSuper(SuperType::Number) if scheme && concretize_super => {
+                Ty::app("Int", vec![])
+            }
             Content::FlexSuper(_) if scheme => super_var(r),
             Content::FlexSuper(SuperType::Number) => Ty::app("number", vec![]),
             Content::FlexSuper(SuperType::Comparable) => Ty::var("comparable"),
@@ -980,20 +1004,24 @@ impl<'a> Infer<'a> {
             Content::Structure(ft) => match ft {
                 FlatTy::App(name, args) => Ty::App(
                     name,
-                    args.into_iter().map(|a| self.read_back_seen(a, seen, scheme)).collect(),
+                    args.into_iter()
+                        .map(|a| self.read_back_seen(a, seen, scheme, concretize_super))
+                        .collect(),
                 ),
                 FlatTy::Fun(a, b) => Ty::Fun(
-                    Box::new(self.read_back_seen(a, seen, scheme)),
-                    Box::new(self.read_back_seen(b, seen, scheme)),
+                    Box::new(self.read_back_seen(a, seen, scheme, concretize_super)),
+                    Box::new(self.read_back_seen(b, seen, scheme, concretize_super)),
                 ),
-                FlatTy::Tuple(xs) => {
-                    Ty::Tuple(xs.into_iter().map(|x| self.read_back_seen(x, seen, scheme)).collect())
-                }
+                FlatTy::Tuple(xs) => Ty::Tuple(
+                    xs.into_iter()
+                        .map(|x| self.read_back_seen(x, seen, scheme, concretize_super))
+                        .collect(),
+                ),
                 FlatTy::Unit => Ty::Unit,
                 FlatTy::Record(fs, ext) => {
                     let mut fields: Vec<(Name, Ty)> = fs
                         .into_iter()
-                        .map(|(n, t)| (n, self.read_back_seen(t, seen, scheme)))
+                        .map(|(n, t)| (n, self.read_back_seen(t, seen, scheme, concretize_super)))
                         .collect();
                     fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
                     let ext_name = ext.and_then(|e| match self.uf.content(e) {

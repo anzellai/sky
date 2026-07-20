@@ -263,7 +263,11 @@ impl World {
                     continue;
                 }
                 let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                let Some(scheme) = infer.infer_def_scheme(body) else {
+                // Checker channel: concretize an unresolved `Number` super to
+                // `Int` (oracle-faithful) so a numeric helper infers a
+                // MONOMORPHIC sig and stays subject to the F1c monomorphism
+                // filter rather than escaping via a spurious `∀a. a -> …`.
+                let Some(scheme) = infer.infer_def_scheme(body, true) else {
                     continue;
                 };
                 // "CLEANLY USABLE" filter (the accept-parity guard). Both
@@ -402,7 +406,9 @@ impl World {
         let mut inferred: Vec<(DefId, String, String, Scheme)> = Vec::new();
         for t in &targets {
             let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
-            if let Some(scheme) = infer.infer_def_scheme(&t.body) {
+            // Lowerer channel (`inferred_sigs`): DO NOT concretize — the emitted
+            // Go reads these via `use_inferred` and MUST stay byte-identical.
+            if let Some(scheme) = infer.infer_def_scheme(&t.body, false) {
                 inferred.push((t.def, t.pseudo.clone(), t.name.clone(), scheme));
             }
         }
