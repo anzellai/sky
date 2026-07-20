@@ -31,6 +31,13 @@ pub enum Content {
     Flex,
     /// A super-constrained flex var (`Number`/`Comparable`/…).
     FlexSuper(SuperType),
+    /// A skolem — a rigid annotation quantifier (`Rigid(name)`). Introduced by
+    /// the annotation gate ([`crate::infer::Infer::infer_def_against`]) when it
+    /// skolemizes a declared scheme's quantifiers: a rigid BINDS a flex (so the
+    /// body may stay polymorphic through it) but CLASHES with a concrete
+    /// Structure or a different rigid (so a body that pins the quantifier to a
+    /// concrete type is rejected — audit #5/#6).
+    Rigid(Name),
     /// A resolved concrete shape.
     Structure(FlatTy),
     /// L7 recovery sentinel — unifies with anything, suppresses cascades.
@@ -235,6 +242,35 @@ impl UnionFind {
                 self.union(ra, rb, other);
                 Ok(())
             }
+            // Two skolems unify only when they are the SAME quantifier
+            // (`identity : a -> a` — the body's `x` and the declared result are
+            // the same rigid `a`). Distinct skolems clash. (Note: the def-level
+            // gate only skolemizes RESULT-position quantifiers; an argument-only
+            // quantifier stays flex and BINDS a result rigid via the `(Flex,
+            // other)` arm above — accept-parity with the flexible-instantiation
+            // oracle. This arm therefore fires only when two *distinct
+            // result-position* skolems are forced together by the body.)
+            (Content::Rigid(n1), Content::Rigid(n2)) => {
+                if n1 == n2 {
+                    self.union(ra, rb, Content::Rigid(n1));
+                    Ok(())
+                } else {
+                    Err(Mismatch::new(format!(
+                        "rigid type variable `{}` cannot unify with `{}`",
+                        n1.as_str(),
+                        n2.as_str()
+                    )))
+                }
+            }
+            // A skolem vs ANYTHING concrete (Structure / FlexSuper) is a clash:
+            // the body forced the declared quantifier to a specific type, so the
+            // annotation is strictly more general than the body (audit #5/#6).
+            // NOTE: this sits AFTER the Flex arms so a rigid still BINDS a plain
+            // flex (the body may keep the quantifier polymorphic).
+            (Content::Rigid(n), _) | (_, Content::Rigid(n)) => Err(Mismatch::new(format!(
+                "rigid type variable `{}` cannot be unified with a concrete type",
+                n.as_str()
+            ))),
             (Content::FlexSuper(s1), Content::FlexSuper(s2)) => match combine_super(s1, s2) {
                 Some(s) => {
                     self.union(ra, rb, Content::FlexSuper(s));
@@ -550,5 +586,45 @@ mod tests {
         f2.insert(Name::new("name"), s);
         let closed = uf.fresh(Content::Structure(FlatTy::Record(f2, None)));
         assert!(uf.unify(open, closed).is_ok());
+    }
+
+    #[test]
+    fn rigid_binds_flex_but_clashes_concrete() {
+        // A skolem BINDS a plain flex (body keeps the quantifier polymorphic:
+        // `identity : a -> a`).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let flex = uf.fresh_flex();
+        assert!(uf.unify(rigid, flex).is_ok());
+        assert!(matches!(uf.content(flex), Content::Rigid(n) if n.as_str() == "a"));
+
+        // A skolem CLASHES with a concrete Structure (body pins the quantifier:
+        // `f : a -> a; f n = n + 1` — audit #5).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        assert!(uf.unify(rigid, int).is_err());
+
+        // A skolem CLASHES with a super-constrained flex (`x = 5` forces Number
+        // — audit #6).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let num = uf.fresh(Content::FlexSuper(SuperType::Number));
+        assert!(uf.unify(rigid, num).is_err());
+    }
+
+    #[test]
+    fn distinct_rigids_clash_same_rigid_ok() {
+        // Same skolem name unifies (both occurrences of `a` in `a -> a`).
+        let mut uf = UnionFind::new();
+        let a1 = uf.fresh(Content::Rigid(Name::new("a")));
+        let a2 = uf.fresh(Content::Rigid(Name::new("a")));
+        assert!(uf.unify(a1, a2).is_ok());
+        // Distinct skolems clash at the primitive level (two distinct
+        // result-position quantifiers forced together by the body).
+        let mut uf = UnionFind::new();
+        let a = uf.fresh(Content::Rigid(Name::new("a")));
+        let b = uf.fresh(Content::Rigid(Name::new("b")));
+        assert!(uf.unify(a, b).is_err());
     }
 }

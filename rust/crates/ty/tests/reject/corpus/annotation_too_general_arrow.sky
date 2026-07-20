@@ -1,0 +1,21 @@
+-- defect: the declared signature is STRICTLY MORE GENERAL than the body's
+--         principal type. `f : a -> a` promises a fully polymorphic identity,
+--         but the body `f n = n + 1` pins the RESULT-position quantifier `a` to
+--         a Number → the real type is `Int -> Int`. A caller relying on the
+--         declared polymorphism (`f "hello" : String`) gets an Int and panics at
+--         runtime (`rt.AsInt: got string`). The annotation gate skolemizes the
+--         RESULT-position quantifier to a rigid var; the body pinning it to a
+--         concrete Number clashes (audit #5). The full-HM oracle ACCEPTS this
+--         (shared HM leniency) — this is a better-than-oracle hardening.
+-- oracle: reject [E2001]  (Rust checker; oracle is lenient here)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+f : a -> a
+f n =
+    n + 1
+
+main =
+    println (String.fromInt (f 5))

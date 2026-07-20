@@ -1,0 +1,20 @@
+-- defect: the declared signature is STRICTLY MORE GENERAL than the body. `x : a`
+--         promises a value of any type, but the body `x = 5` pins the
+--         RESULT-position quantifier `a` to a Number → the real type is `Int`.
+--         Code relying on the declared polymorphism (`String.toUpper x`) then
+--         typechecks against an Int and produces wrong output / panics. The
+--         annotation gate skolemizes `a` to a rigid var; the body pinning it to
+--         a concrete Number clashes (audit #6). The full-HM oracle ACCEPTS this
+--         (shared HM leniency) — this is a better-than-oracle hardening.
+-- oracle: reject [E2001]  (Rust checker; oracle is lenient here)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+x : a
+x =
+    5
+
+main =
+    println (String.toUpper x)

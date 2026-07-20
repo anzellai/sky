@@ -234,12 +234,52 @@ impl<'a> Infer<'a> {
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
-        // Instantiate the scheme's quantifiers to fresh flex vars (skip `any`,
-        // which is fresh-per-occurrence — mirrors `instantiate`).
+        // SKOLEMIZE the scheme's RESULT-position quantifiers to RIGID vars; leave
+        // argument-only quantifiers (and `any`) as fresh-per-occurrence flex.
+        //
+        // A rigid var BINDS a plain flex (so the body may keep the quantifier
+        // genuinely polymorphic — `identity : a -> a`) but CLASHES with a
+        // concrete Structure or a different rigid (so a body that PINS the
+        // quantifier to a concrete type is rejected). That closes the exploitable
+        // soundness hole — an over-general RESULT type (audit #5/#6): `f : a ->
+        // a; f n = n + 1` returns `Int` while promising `a`, so a caller relying
+        // on the polymorphic return (`f "hi" : String`) gets an `Int` and panics.
+        //
+        // We deliberately DO NOT skolemize a quantifier that appears ONLY in
+        // ARGUMENT position. An over-general argument (`init : a -> (Model, Cmd
+        // Msg)` whose body uses `req` as a `Dict`) is a DIFFERENT, milder class:
+        // the full-HM oracle also accepts it (shared leniency) and this checker
+        // historically instantiated every quantifier flexibly — so keeping
+        // argument-only quantifiers flex is exact accept-parity (13-skyshop `init`
+        // is framework-called; the runtime always supplies a real request). The
+        // distinction is principled, not name-keyed: RESULT over-generality is
+        // observable to any caller who trusts the declared return type; ARGUMENT
+        // over-generality only misfires if a caller passes an incompatible
+        // value, which the oracle itself does not reject. We add rejections only
+        // in the result-position class — never a new accept.
+        let result_ty = {
+            let mut cur = &scheme.ty;
+            for _ in 0..param_vars.len() {
+                match cur {
+                    Ty::Fun(_, b) => cur = b,
+                    _ => break,
+                }
+            }
+            cur
+        };
+        let result_vars: std::collections::HashSet<String> = result_ty
+            .free_vars()
+            .into_iter()
+            .map(|n| n.as_str().to_string())
+            .collect();
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
         for name in &scheme.vars {
             if name.as_str() != "any" {
-                let fresh = self.uf.fresh_flex();
+                let fresh = if result_vars.contains(name.as_str()) {
+                    self.uf.fresh(Content::Rigid(Name::new(name.as_str())))
+                } else {
+                    self.uf.fresh_flex()
+                };
                 sub.insert(name.as_str().to_string(), fresh);
             }
         }
@@ -966,6 +1006,7 @@ impl<'a> Infer<'a> {
         let super_var = |r: TyVarId| Ty::Var(Name::new(&format!("t{}", r.0)));
         let out = match self.uf.content(r) {
             Content::Flex => Ty::Var(Name::new(&format!("t{}", r.0))),
+            Content::Rigid(n) => Ty::Var(n),
             Content::FlexSuper(_) if scheme => super_var(r),
             Content::FlexSuper(SuperType::Number) => Ty::app("number", vec![]),
             Content::FlexSuper(SuperType::Comparable) => Ty::var("comparable"),
