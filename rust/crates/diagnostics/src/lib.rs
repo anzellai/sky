@@ -135,6 +135,7 @@ fn code_title(code: &str) -> &'static str {
         "E1005" => "INTEGER OVERFLOW",
         "E2001" => "TYPE MISMATCH",
         "E3001" => "MISSING PATTERNS",
+        "E4005" => "CODEGEN ERROR",
         _ => "ERROR",
     }
 }

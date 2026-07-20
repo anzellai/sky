@@ -298,6 +298,15 @@ fn assemble_and_emit_with(
         .source
         .clone()
         .ok_or_else(|| "lowering produced no Go source".to_string())?;
+    // ABI-symbol guard: reject any emitted `rt.X` the runtime does not export
+    // BEFORE `go build`, so a codegen hole surfaces as a clean `[E4005]`
+    // diagnostic instead of a confusing `undefined: rt.X` Go error. Upholds
+    // `sky check ≡ sky build` and is the structural lock for codegen holes.
+    let abi_diags =
+        crate::abi_guard::check_abi_symbols(&source, crate::abi_guard::runtime_exports(repo_root));
+    if !abi_diags.is_empty() {
+        return Err(render_diags(&abi_diags, &src_map));
+    }
     Ok(Emitted {
         source,
         registry,

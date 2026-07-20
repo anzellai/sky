@@ -5,6 +5,7 @@
 //! input and reads a query end-to-end — proving the CLI/LSP-shared engine wiring
 //! (doc 01). Real module discovery + `go build` land in M4/M5.
 
+mod abi_guard;
 mod build;
 mod doc;
 mod driver;
