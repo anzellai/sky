@@ -2961,15 +2961,13 @@ impl<'a> Ctx<'a> {
             .enumerate()
             .map(|(i, e)| self.lower_expr(*e, tys.get(i).unwrap_or(&GoTy::Any)))
             .collect();
-        let ctor = match elems.len() {
-            2 => "rt.MkT2",
-            3 => "rt.MkT3",
-            _ => "rt.MkTupleN",
-        };
-        // rt.T2 literal is a struct; use the named struct literal form.
-        let go = format!("rt.T{}", elems.len());
-        if elems.len() == 2 || elems.len() == 3 {
-            // `rt.T2`/`rt.T3` struct fields are V0, V1, … (see runtime rt.go
+        // Runtime has typed tuple structs `rt.T2`..`rt.T9` (fields V0..Vn); arity
+        // ≥10 uses the slice-backed `rt.SkyTupleN{ Vs []any }`. (Previously arity
+        // ≥4 emitted an undefined `rt.MkTupleN` — a check≢build hole; even the
+        // oracle mis-coerced a 4-tuple to `rt.T3` and panicked at runtime, so this
+        // is compatible-AND-better.)
+        if elems.len() <= 9 {
+            // `rt.T{n}` struct fields are V0, V1, … (runtime rt.go
             // `type T2[A, B any] struct { V0 A; V1 B }`).
             let fields: Vec<(String, GoExpr)> = args
                 .into_iter()
@@ -2978,11 +2976,22 @@ impl<'a> Ctx<'a> {
                 .collect();
             let tname = GoTy::Tuple(tys);
             return GoExpr::new(
-                GoExprKind::StructLit(format!("{go}{}", tuple_type_args(&tname)), fields),
+                GoExprKind::StructLit(
+                    format!("rt.T{}{}", elems.len(), tuple_type_args(&tname)),
+                    fields,
+                ),
                 actual.clone(),
             );
         }
-        call_rt(ctor, args, actual.clone())
+        // arity ≥10 → `rt.SkyTupleN{ Vs: []any{…} }` (slice-backed, heterogeneous).
+        let vs = GoExpr::new(
+            GoExprKind::SliceLit(GoTy::Any, args.into_iter().map(widen).collect()),
+            GoTy::Any,
+        );
+        GoExpr::new(
+            GoExprKind::StructLit("rt.SkyTupleN".to_string(), vec![("Vs".to_string(), vs)]),
+            actual.clone(),
+        )
     }
 
     fn lower_list(&mut self, elems: &[ExprId], actual: &GoTy) -> GoExpr {
@@ -3435,15 +3444,31 @@ impl<'a> Ctx<'a> {
                 };
                 let mut cond = None;
                 let mut binds = Vec::new();
+                let slice_backed = pats.len() >= 10;
                 for (i, sp) in pats.iter().enumerate() {
                     let ety = elem_tys.get(i).cloned().unwrap_or(GoTy::Any);
-                    // `.V{i}` is `any` on the runtime `rt.T2[any,any]` — coerce
-                    // to the element's concrete type so a bound var carries its
-                    // real type (e.g. an ADT for a nested `case`).
-                    let raw = GoExpr::new(
-                        GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
-                        GoTy::Any,
-                    );
+                    // Element read is `any` — coerce to the element's concrete type
+                    // so a bound var carries its real type (e.g. an ADT for a
+                    // nested `case`). Arity 2..9 read `.V{i}` on `rt.T{n}`; arity
+                    // ≥10 read `.Vs[i]` on the slice-backed `rt.SkyTupleN`.
+                    let raw = if slice_backed {
+                        let vs = GoExpr::new(
+                            GoExprKind::Selector(Box::new(subj.clone()), "Vs".to_string()),
+                            GoTy::Any,
+                        );
+                        GoExpr::new(
+                            GoExprKind::Index(
+                                Box::new(vs),
+                                Box::new(GoExpr::new(GoExprKind::IntLit(i as i64), GoTy::Bare(Prim::Int))),
+                            ),
+                            GoTy::Any,
+                        )
+                    } else {
+                        GoExpr::new(
+                            GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
+                            GoTy::Any,
+                        )
+                    };
                     let field = self.coerce_if_needed(raw, &ety);
                     let (c, b) = self.pattern_test(&field, &ety, *sp);
                     cond = and_opt(cond, c);
@@ -3984,7 +4009,9 @@ fn render_goty(t: &GoTy) -> String {
         // element types erased so reflection paths (`T2[any,any]`) match. Type
         // info survives on the GoTy for pattern-bind coercion only.
         GoTy::Tuple(xs) => match xs.len() {
-            2 | 3 => format!(
+            // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
+            // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
+            2..=9 => format!(
                 "rt.T{}[{}]",
                 xs.len(),
                 xs.iter().map(|_| "any").collect::<Vec<_>>().join(", ")

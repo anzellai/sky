@@ -439,7 +439,10 @@ fn render_tuple_ty(xs: &[GoTy]) -> String {
     // assert that shape. Concrete element types survive on the GoTy only for
     // pattern-bind coercion. (Mirror: lower::render_goty.)
     match xs.len() {
-        2 | 3 => {
+        // Runtime has typed structs `rt.T2`..`rt.T9`; arity ≥10 is the
+        // slice-backed `rt.SkyTupleN`. (Must match `lower::lower_tuple`'s
+        // construct + pattern-access split at the same 9/10 boundary.)
+        2..=9 => {
             let n = xs.len();
             let a: Vec<String> = xs.iter().map(|_| "any".to_string()).collect();
             format!("rt.T{n}[{}]", a.join(", "))
