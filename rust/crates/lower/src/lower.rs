@@ -2832,12 +2832,21 @@ impl<'a> Ctx<'a> {
         // rejects it). Records with function fields (the TEA cfg passed to
         // Live_app/Tui_app) DELIBERATELY stay all-`any` — the runtime
         // reflect-dispatches them and the oracle emits all-`any` there.
+        // Also covers the MIXED case: a record with some CONCRETE and some `any`
+        // fields (a polymorphic record-returning helper, `wrap v = { val = v, tag =
+        // "w" }` → `{ val : a, tag : String }` → `struct{ Tag string; Val any }`).
+        // The declared return renders the concrete fields concretely, so the
+        // literal must too — rendering it all-`any` (`struct{ Tag any; Val any }`)
+        // mismatches the declared `Tag string` and `go build` rejects the return.
+        // Condition: NO function field (those TEA-cfg records reflect-dispatch and
+        // stay all-`any`) AND at least one non-`any` field (an all-`any` record
+        // keeps the sorted all-`any` fallback below — byte-identical). `any`-typed
+        // fields render per-field as `any`, matching the slot.
         let concrete_struct: Option<Vec<(String, GoTy)>> = match actual {
             GoTy::Struct(fts)
                 if !fts.is_empty()
-                    && fts
-                        .iter()
-                        .all(|(_, t)| !matches!(t, GoTy::Func(_, _) | GoTy::Any)) =>
+                    && fts.iter().all(|(_, t)| !matches!(t, GoTy::Func(_, _)))
+                    && fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)) =>
             {
                 Some(
                     fts.iter()
