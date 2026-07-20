@@ -112,6 +112,17 @@ pub struct FieldDecl {
     pub span: Span,
 }
 
+/// The lexical class of an in-scope UNQUALIFIED name (for `scope_names`, the
+/// LSP unqualified-completion index). Value covers ordinary bindings + kernel
+/// functions; Ctor covers data constructors; Type covers type constructors +
+/// aliases. Additive tooling data — ignored by lowering + typecheck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeNameKind {
+    Value,
+    Ctor,
+    Type,
+}
+
 /// The result of resolving one module (doc 05 §1).
 ///
 /// `Clone`: the salsa build path memoises resolution as the `#[salsa::tracked]`
@@ -141,6 +152,11 @@ pub struct ResolveResult {
     pub field_decls: Vec<FieldDecl>,
     /// Import qualifier → source module (for qualified completion `M.`).
     pub qualifiers: HashMap<String, ImportSource>,
+    /// Every in-scope UNQUALIFIED name (name + lexical class), snapshotted after
+    /// environment building: builtins + Prelude, `exposing`-imported names, and
+    /// this module's own top-level defs. Powers unqualified completion (bare `pr`
+    /// offers `println`); lexical locals are NOT here (they live in `binders`).
+    pub scope_names: Vec<(String, ScopeNameKind)>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -333,6 +349,29 @@ impl<'a> Resolver<'a> {
         // LSP: publish import qualifiers so `M.` completion can enumerate the
         // target module's exports.
         self.result.qualifiers = self.import_aliases.clone();
+        // LSP: publish the in-scope unqualified names so bare-identifier
+        // completion can offer Prelude + `exposing`-imported names, not just
+        // locals + this module's top defs + qualifiers.
+        self.snapshot_scope_names();
+    }
+
+    /// Snapshot the module-level unqualified namespaces (`vars` / `ctors` /
+    /// `types`) into `result.scope_names` for unqualified completion. Called
+    /// once, after `build_env` fully populates them (builtins → imports →
+    /// local decls); lexical locals never enter these maps, so this is a stable
+    /// module-scope set. Read-only over the maps — no effect on resolution.
+    fn snapshot_scope_names(&mut self) {
+        let mut out: Vec<(String, ScopeNameKind)> = Vec::new();
+        for k in self.vars.keys() {
+            out.push((k.clone(), ScopeNameKind::Value));
+        }
+        for k in self.ctors.keys() {
+            out.push((k.clone(), ScopeNameKind::Ctor));
+        }
+        for k in self.types.keys() {
+            out.push((k.clone(), ScopeNameKind::Type));
+        }
+        self.result.scope_names = out;
     }
 
     fn process_import(&mut self, imp: &ast::Import, claims: &HashMap<String, String>) {

@@ -28,7 +28,10 @@
 //! async mutex; no salsa is imported here (it stays quarantined in `skydb`, L1).
 
 use base::{DefId, FileId, ModuleId, Span};
-use hir::{DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, SkyDb, TypeOcc};
+use hir::{
+    DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, ScopeNameKind, SkyDb,
+    TypeOcc,
+};
 use skydb::{SkyDatabase, SourceFile};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -39,7 +42,7 @@ use ty::{Ty, TyDb, Typer};
 
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Diagnostic, DiagnosticRelatedInformation,
-    DiagnosticSeverity, DocumentSymbol, Hover,
+    DiagnosticSeverity, DocumentHighlight, DocumentHighlightKind, DocumentSymbol, Hover,
     HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, MarkupContent, MarkupKind,
     ParameterInformation, ParameterLabel, Position, PrepareRenameResponse, Range, SemanticToken,
     SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SignatureHelp,
@@ -466,6 +469,22 @@ impl Analysis {
                 items.push(plain_item(q, CompletionItemKind::MODULE));
             }
         }
+        // Unqualified names brought into scope by `import M exposing (…)` /
+        // `exposing (..)` and the Prelude/builtin seed — the resolver already
+        // records them (name + lexical class), so completion can offer a bare
+        // `println` / `Just` / `identity` without a `M.` prefix. Deduped against
+        // the locals / top-defs / qualifiers already offered above.
+        for (name, kind) in &resolved.scope_names {
+            if name.is_empty() || !seen.insert(name.clone()) {
+                continue;
+            }
+            let ck = match kind {
+                ScopeNameKind::Value => CompletionItemKind::FUNCTION,
+                ScopeNameKind::Ctor => CompletionItemKind::ENUM_MEMBER,
+                ScopeNameKind::Type => CompletionItemKind::CLASS,
+            };
+            items.push(plain_item(name, ck));
+        }
         items
     }
 
@@ -777,6 +796,93 @@ impl Analysis {
             .into_iter()
             .filter_map(|s| self.location(s))
             .collect()
+    }
+
+    // ---- textDocument/documentHighlight --------------------------------
+
+    /// Highlight every occurrence of the symbol under the cursor IN THIS FILE.
+    /// Resolves the cursor through the SAME `resolve_target` references/rename
+    /// use — so it answers from a declaration, a use, a local, a type name, or a
+    /// field — then returns each in-file occurrence (declaration included) as a
+    /// `DocumentHighlight`. Declaration/binder sites are tagged `Write`, uses
+    /// `Read` (editors tint them differently). Per-document by contract: only
+    /// the current file's spans are returned even for a workspace-wide symbol.
+    pub fn document_highlight(&self, url: &Url, pos: Position) -> Vec<DocumentHighlight> {
+        let Some(idx) = self.index_of(url) else {
+            return Vec::new();
+        };
+        let text = &self.docs[idx].text;
+        let Some(off) = offset_of(text, pos) else {
+            return Vec::new();
+        };
+        let db = self.db();
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let Some((target, _)) = self.resolve_target(db, &resolved, module, off) else {
+            return Vec::new();
+        };
+        let this_file = FileId(module.index());
+        let writes = self.highlight_write_spans(db, &resolved, &target, module);
+        self.collect_occurrences(db, &target, true)
+            .into_iter()
+            .filter(|s| s.file == this_file)
+            .map(|s| {
+                let kind = if writes.contains(&(s.range.0, s.range.1)) {
+                    DocumentHighlightKind::WRITE
+                } else {
+                    DocumentHighlightKind::READ
+                };
+                DocumentHighlight {
+                    range: span_to_range(text, s),
+                    kind: Some(kind),
+                }
+            })
+            .collect()
+    }
+
+    /// The declaration/binder spans of `target` within module `m` — the sites a
+    /// document highlight tags `Write`. These match, byte-for-byte, the
+    /// declaration spans `collect_occurrences(.., include_decl=true)` adds for
+    /// the same module (def-name spans + `foo : T` annotation names for globals;
+    /// the binder site for a local; the field-decl span for a field), so every
+    /// occurrence classifies cleanly as Write (in this set) or Read.
+    fn highlight_write_spans(
+        &self,
+        db: &dyn SkyDb,
+        resolved: &ResolveResult,
+        target: &Target,
+        m: ModuleId,
+    ) -> HashSet<(u32, u32)> {
+        let mut set: HashSet<(u32, u32)> = HashSet::new();
+        match target {
+            Target::Global(d) => {
+                for (id, s) in &resolved.def_spans {
+                    if id == d && s.file.index() == m.index() {
+                        set.insert((s.range.0, s.range.1));
+                    }
+                }
+                for s in self.annotation_name_spans(db, m, *d) {
+                    set.insert((s.range.0, s.range.1));
+                }
+            }
+            Target::Local { owner, local } => {
+                for b in &resolved.binders {
+                    if b.owner == *owner && &b.local == local {
+                        set.insert((b.span.range.0, b.span.range.1));
+                    }
+                }
+            }
+            Target::Field(name) => {
+                for f in &resolved.field_decls {
+                    if f.field.as_str() == name {
+                        set.insert((f.span.range.0, f.span.range.1));
+                    }
+                }
+            }
+            // Kernel/builtin functions have no Sky declaration site in-file.
+            Target::Kernel { .. } => {}
+        }
+        set
     }
 
     // ---- textDocument/prepareRename ------------------------------------

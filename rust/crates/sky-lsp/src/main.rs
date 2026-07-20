@@ -57,6 +57,7 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 references_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
                     work_done_progress_options: Default::default(),
@@ -141,6 +142,15 @@ impl LanguageServer for Backend {
         let include_decl = params.context.include_declaration;
         let a = self.analysis.lock().await;
         Ok(Some(a.references(&p.text_document.uri, p.position, include_decl)))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let p = params.text_document_position_params;
+        let a = self.analysis.lock().await;
+        Ok(Some(a.document_highlight(&p.text_document.uri, p.position)))
     }
 
     async fn prepare_rename(

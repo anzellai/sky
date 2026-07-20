@@ -7,7 +7,9 @@
 
 use sky_lsp::Analysis;
 use std::path::{Path, PathBuf};
-use tower_lsp::lsp_types::{Position, SemanticTokensResult, Url};
+use tower_lsp::lsp_types::{
+    DocumentHighlightKind, Position, SemanticTokensResult, Url,
+};
 
 // NB: written as a single literal with explicit `\n` — a `\`-continuation would
 // strip each line's leading indentation and corrupt the fixture's columns.
@@ -265,6 +267,95 @@ fn rename_builtin_is_rejected() {
     assert!(a.prepare_rename(&main_url(), Position { line: 14, character: 11 }).is_none());
     // A malformed identifier is rejected even on a renameable target (local).
     assert!(a.rename(&main_url(), Position { line: 17, character: 8 }, "1bad").is_none());
+}
+
+// ---- DOCUMENT HIGHLIGHT (2) -------------------------------------------
+
+/// Sorted (start-line, kind) of the document highlights at a position.
+fn highlight_lines(a: &Analysis, line: u32, ch: u32) -> Vec<(u32, DocumentHighlightKind)> {
+    let mut v: Vec<(u32, DocumentHighlightKind)> = a
+        .document_highlight(&main_url(), Position { line, character: ch })
+        .into_iter()
+        .map(|h| (h.range.start.line, h.kind.expect("kind set")))
+        .collect();
+    v.sort_by_key(|(l, _)| *l);
+    v
+}
+
+#[test]
+fn document_highlight_local_binding() {
+    // Cursor on the `abcLocal` USE (line 17). Its in-file occurrences are the
+    // binder (line 16, a Write) and this use (line 17, a Read) — the def/binding
+    // site is included.
+    let a = analysis_with(FIXTURE);
+    let hl = highlight_lines(&a, 17, 8);
+    assert_eq!(
+        hl,
+        vec![
+            (16, DocumentHighlightKind::WRITE),
+            (17, DocumentHighlightKind::READ),
+        ],
+        "document-highlight-local got {hl:?}"
+    );
+}
+
+#[test]
+fn document_highlight_top_level_def() {
+    // Cursor on the `applyMsg` USE (line 32). Every in-file occurrence is
+    // highlighted — annotation name (21) + value decl (22), both Write, plus the
+    // use (32), a Read. Same three sites references(incl-decl) reports.
+    let a = analysis_with(FIXTURE);
+    let hl = highlight_lines(&a, 32, 30);
+    let lines: Vec<u32> = hl.iter().map(|(l, _)| *l).collect();
+    assert_eq!(lines, vec![21, 22, 32], "highlight lines got {hl:?}");
+    // The use is a Read; both declaration sites are Writes.
+    assert_eq!(
+        hl.iter().find(|(l, _)| *l == 32).map(|(_, k)| *k),
+        Some(DocumentHighlightKind::READ),
+        "use site must be Read; got {hl:?}"
+    );
+    assert!(
+        hl.iter()
+            .filter(|(l, _)| *l == 21 || *l == 22)
+            .all(|(_, k)| *k == DocumentHighlightKind::WRITE),
+        "decl + annotation sites must be Write; got {hl:?}"
+    );
+}
+
+// ---- UNQUALIFIED COMPLETION (exposing + Prelude) (2) ------------------
+
+#[test]
+fn completion_unqualified_exposing_and_prelude() {
+    // At a bare-identifier position (no `M.` prefix), completion must offer
+    // names brought into scope by `import Std.Log exposing (println)` and by the
+    // Prelude seed (`Just` ctor, `identity` value) — not just locals / top defs
+    // / qualifiers. `probe = i` gives a plain value slot to complete in.
+    let src = format!("{FIXTURE}probe = i\n");
+    let items = completion_labels(&Analysis::new(), Some(&src), 33, 9);
+    let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.contains(&"println"), "println missing; got {labels:?}");
+    assert!(labels.contains(&"Just"), "Prelude `Just` missing; got {labels:?}");
+    assert!(
+        labels.contains(&"identity"),
+        "Prelude `identity` missing; got {labels:?}"
+    );
+    // insertText is the bare name (no prefix to strip for unqualified names).
+    let pr = items.iter().find(|(l, _)| l == "println").unwrap();
+    assert_eq!(pr.1.as_deref(), Some("println"));
+}
+
+#[test]
+fn completion_unqualified_exposing_only_name() {
+    // `info` is NOT a builtin var — it reaches scope ONLY via the exposing
+    // clause. So its presence proves the `exposing`-import path (not just the
+    // Prelude seed) feeds unqualified completion.
+    let src = "module M exposing (main)\n\nimport Std.Log exposing (info)\n\nmain = i\n";
+    let items = completion_labels(&Analysis::new(), Some(src), 4, 8);
+    let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(
+        labels.contains(&"info"),
+        "exposing-imported `info` missing; got {labels:?}"
+    );
 }
 
 // ---- SEMANTIC TOKENS (2) ----------------------------------------------
