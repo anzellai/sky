@@ -4,7 +4,15 @@
 //! The runtime tree is copied wholesale, never regenerated (L10).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// Hard ceiling on a single `go build` invocation (CLAUDE.md §3 — every
+/// long-running command MUST be timeout-bounded). A wedged Go toolchain (stuck
+/// linker, hung module fetch) is killed rather than hanging the CLI. 600 s is
+/// deliberately generous — the Stripe-SDK-scale example (13-skyshop) builds well
+/// under a minute; anything past 10 min is a genuine hang, not a slow build.
+const GO_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Where a build writes + what to do after emission.
 pub struct BuildOptions {
@@ -36,6 +44,11 @@ pub struct BuildReport {
     pub run_stdout: Option<String>,
     pub run_stderr: Option<String>,
     pub note: String,
+    /// One-line note on which cgo mode `go build` used (Some when it's worth
+    /// surfacing — the cgo-forced Sky.Webview path, or a successful cgo retry
+    /// after the preferred static build failed). `None` for the common
+    /// static-first success. The CLI prints it; batch gates ignore it.
+    pub cgo_note: Option<String>,
 }
 
 /// The product of assembling the source db, lowering, and emitting Go — the
@@ -367,22 +380,22 @@ fn build_inner(
     }
     report.emitted = true;
 
-    // ---- go build ----
-    let build = Command::new("go")
-        .arg("build")
-        .arg("-o")
-        .arg("app")
-        .arg(".")
-        .current_dir(&out_dir)
-        .env("GOFLAGS", "-mod=mod")
-        .output();
-    match build {
-        Ok(o) => {
-            report.go_build_ok = o.status.success();
-            report.go_build_stderr = String::from_utf8_lossy(&o.stderr).to_string();
+    // ---- go build (two-phase cgo detection + bounded) ----
+    // Prefer static binaries (CGO_ENABLED=0) so the common pure-Go app ships
+    // without libSystem/CoreFoundation/Security dylib deps; retry with cgo when
+    // the static build fails (an FFI package that needs cgo links on the retry).
+    // A Sky.Webview program flips STRAIGHT to cgo on the first attempt — its
+    // `webview_stub.go` compiles cleanly under CGO=0 and the app would silently
+    // no-op at runtime, so the static-first probe must be skipped there. Matches
+    // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
+    match run_go_build_detecting_cgo(&out_dir, &source) {
+        Ok(outcome) => {
+            report.go_build_ok = outcome.ok;
+            report.go_build_stderr = outcome.stderr;
+            report.cgo_note = outcome.cgo_note;
         }
         Err(e) => {
-            report.go_build_stderr = format!("go build spawn failed: {e}");
+            report.go_build_stderr = e;
             return report;
         }
     }
@@ -414,6 +427,167 @@ fn build_inner(
     }
 
     report
+}
+
+/// Result of the two-phase `go build` (never panics; `Err` is a spawn/timeout
+/// failure that aborts the build entirely).
+struct GoBuildOutcome {
+    ok: bool,
+    /// Combined stderr worth surfacing on failure (both attempts on the retry
+    /// path so the user sees why static failed AND why cgo failed).
+    stderr: String,
+    /// See [`BuildReport::cgo_note`].
+    cgo_note: Option<String>,
+}
+
+/// Run `go build` with static-first cgo detection. `source` is the emitted
+/// `main.go` text; its containing `rt.Webview_app` reference is the signal that
+/// the project links the system webview and MUST build with cgo.
+fn run_go_build_detecting_cgo(out_dir: &Path, source: &str) -> Result<GoBuildOutcome, String> {
+    // Sky.Webview: the stub (`webview_stub.go`, `!cgo || !darwin`) compiles fine
+    // under CGO=0, producing a binary that silently no-ops on `Webview.app`.
+    // Force cgo up front so the real WKWebView-backed `webview.go` links.
+    if source.contains("rt.Webview_app") {
+        let attempt = run_go_build_once(out_dir, "1")?;
+        return Ok(GoBuildOutcome {
+            ok: attempt.status_ok,
+            stderr: attempt.stderr,
+            cgo_note: Some(
+                "(built with cgo — Sky.Webview requires it; the static build would link the stub and no-op at runtime)"
+                    .to_string(),
+            ),
+        });
+    }
+
+    // Preferred path: static, pure-Go binary.
+    let static_attempt = run_go_build_once(out_dir, "0")?;
+    if static_attempt.status_ok {
+        return Ok(GoBuildOutcome {
+            ok: true,
+            stderr: static_attempt.stderr,
+            cgo_note: None,
+        });
+    }
+
+    // The static build failed — an FFI package may require cgo. Retry with it.
+    let cgo_attempt = run_go_build_once(out_dir, "1")?;
+    if cgo_attempt.status_ok {
+        return Ok(GoBuildOutcome {
+            ok: true,
+            stderr: cgo_attempt.stderr,
+            cgo_note: Some(
+                "(built with cgo — the preferred static CGO_ENABLED=0 build failed; an FFI package requires cgo)"
+                    .to_string(),
+            ),
+        });
+    }
+
+    // Both failed: surface both diagnostics so the root cause is visible.
+    Ok(GoBuildOutcome {
+        ok: false,
+        stderr: format!(
+            "static build (CGO_ENABLED=0) failed:\n{}\ncgo retry (CGO_ENABLED=1) also failed:\n{}",
+            static_attempt.stderr.trim_end(),
+            cgo_attempt.stderr.trim_end()
+        ),
+        cgo_note: None,
+    })
+}
+
+/// Single bounded `go build -o app .` under an explicit `CGO_ENABLED`. `Err` is
+/// a spawn failure or the timeout tripping (a hung toolchain — CLAUDE.md §3); a
+/// non-zero Go exit is a normal `status_ok = false` outcome, not an `Err`.
+struct GoBuildAttempt {
+    status_ok: bool,
+    stderr: String,
+}
+
+fn run_go_build_once(out_dir: &Path, cgo: &str) -> Result<GoBuildAttempt, String> {
+    let mut cmd = Command::new("go");
+    cmd.arg("build")
+        .arg("-o")
+        .arg("app")
+        .arg(".")
+        .current_dir(out_dir)
+        .env("GOFLAGS", "-mod=mod")
+        .env("CGO_ENABLED", cgo);
+    match run_bounded(cmd, GO_BUILD_TIMEOUT) {
+        Ok(b) if b.timed_out => Err(format!(
+            "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
+            GO_BUILD_TIMEOUT.as_secs(),
+            b.stderr.trim_end()
+        )),
+        Ok(b) => Ok(GoBuildAttempt {
+            status_ok: b.status.map(|s| s.success()).unwrap_or(false),
+            stderr: b.stderr,
+        }),
+        Err(e) => Err(format!("go build (CGO_ENABLED={cgo}) spawn failed: {e}")),
+    }
+}
+
+/// Outcome of a bounded child process (shared bounded-run helper — factored so
+/// the same kill-on-deadline machinery `sky verify` uses covers `go build`).
+struct BoundedOutcome {
+    /// `None` when the child was killed on timeout.
+    status: Option<std::process::ExitStatus>,
+    stderr: String,
+    timed_out: bool,
+}
+
+/// Spawn `cmd`, drain its stderr on a background thread, and wait up to
+/// `timeout` — killing the child (and reaping it) if the deadline passes. stdout
+/// is piped-and-dropped so a chatty child can't block on a full pipe. Returns
+/// the exit status (or `timed_out`) plus captured stderr.
+fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOutcome> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let out_h = spawn_pipe_reader(stdout);
+    let err_h = spawn_pipe_reader(stderr);
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                let _ = out_h.join();
+                let stderr = err_h.join().unwrap_or_default();
+                return Ok(BoundedOutcome {
+                    status: Some(status),
+                    stderr,
+                    timed_out: false,
+                });
+            }
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = out_h.join();
+                    let stderr = err_h.join().unwrap_or_default();
+                    return Ok(BoundedOutcome {
+                        status: None,
+                        stderr,
+                        timed_out: true,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+/// Drain a child pipe to a String on its own thread so `run_bounded` never
+/// blocks on a full OS pipe buffer while polling the deadline.
+fn spawn_pipe_reader(
+    pipe: Option<impl std::io::Read + Send + 'static>,
+) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    })
 }
 
 /// Minimal `sky.toml` reader for the build-time `init()` defaults. Extracts

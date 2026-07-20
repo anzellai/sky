@@ -149,6 +149,9 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         }
         return ExitCode::FAILURE;
     }
+    if let Some(note) = &report.cgo_note {
+        println!("go build {note}");
+    }
     if check_only {
         println!("No errors found.");
     } else {
@@ -200,6 +203,9 @@ fn cmd_run(args: &[String]) -> ExitCode {
     if !report.go_build_ok {
         eprintln!("sky run: go build failed:\n{}", report.go_build_stderr);
         return ExitCode::FAILURE;
+    }
+    if let Some(note) = &report.cgo_note {
+        eprintln!("sky run: go build {note}");
     }
     let out_dir = project_dir.join(&out_dir_name);
     match run_app(&out_dir, &[]) {
