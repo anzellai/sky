@@ -102,3 +102,46 @@ fn e3001_carries_subject_span() {
     assert_eq!(line, 6, "subject span byte {start} maps to line {line}, expected 6");
     assert_eq!(src[start..end].trim(), "c", "subject span sliced {:?}", &src[start..end]);
 }
+
+#[test]
+fn e2001_annotated_single_error_with_span() {
+    // T2.4: an ANNOTATED def whose body clashes internally must produce EXACTLY
+    // ONE type error, WITH a span — not a duplicate span-less body-vs-annotation
+    // cascade (`b : Int; b = "x" + 1` used to emit two E2001, the second at 0:0
+    // with no caret).
+    let src = "module Main exposing (b)\n\nb : Int\nb = \"x\" + 1\n";
+    let out = check_single("Main", src);
+    assert_eq!(
+        out.type_errors, 1,
+        "expected exactly one type error, got {:?}",
+        out.diagnostics
+    );
+    let e2001: Vec<_> = out.diagnostics.iter().filter(|d| d.code.0 == "E2001").collect();
+    assert_eq!(e2001.len(), 1, "expected exactly one E2001");
+    assert_eq!(
+        e2001[0].labels.len(),
+        1,
+        "the error must carry a span/label (Elm-style caret), got {:?}",
+        e2001[0].labels
+    );
+    assert_ne!(
+        e2001[0].labels[0].span.range.0, 0,
+        "span must not be the 0:0 placeholder"
+    );
+}
+
+#[test]
+fn e2001_annotated_clean_body_mismatch_has_span() {
+    // T2.4 Case B: a clean body that mismatches the annotation (`b : Int; b =
+    // "hello"`) must carry a span anchored at the body root (caret on `"hello"`),
+    // not be span-less.
+    let src = "module Main exposing (b)\n\nb : Int\nb = \"hello\"\n";
+    let out = check_single("Main", src);
+    let e2001: Vec<_> = out.diagnostics.iter().filter(|d| d.code.0 == "E2001").collect();
+    assert!(!e2001.is_empty(), "expected a type error");
+    assert_eq!(
+        e2001[0].labels.len(),
+        1,
+        "clean-body annotation mismatch must carry a span"
+    );
+}

@@ -361,16 +361,27 @@ impl<'a> Infer<'a> {
         // Body inference stays STRICT (record-presence clashes inside the body —
         // e.g. a call passing a record that lacks a required field — must still
         // reject; that is exactly `record_missing_field` at its call site).
+        let errs_before = self.errors.len();
         let v = self.infer_expr(body, root);
-        // Body-vs-annotation unification. Both the params (above) and this
-        // expected result are seeded CLOSED via `ty_to_var`; record-presence
-        // clashes are surfaced by the (now unconditional) extras rules in
-        // `unify_records`. Real TEA threading still resolves because an
-        // `Expr::Update` / field `Expr::Access` introduces an OPEN row-poly
-        // constraint that absorbs into the closed record's own fields, while a
-        // genuine field-type clash, a non-record-vs-record clash, or a
-        // closed-vs-closed field-presence mismatch rejects.
-        self.unify(v, expected_result);
+        // Body-vs-annotation unification — ONLY when the body itself type-checked
+        // cleanly (T2.4). A body that already clashed internally has a poisoned
+        // result var; unifying it against the annotation emits a DUPLICATE error
+        // that is ALSO span-less (`infer_expr` restored `cur_span` to `None` on
+        // exit). The guard removes the cascade; anchoring `cur_span` at the body
+        // root gives the primary annotation-mismatch its Elm-style caret + source
+        // location instead of a bare header. Record-presence clashes are surfaced
+        // by the (now unconditional) extras rules in `unify_records`; real TEA
+        // threading still resolves because an `Expr::Update` / field `Expr::Access`
+        // introduces an OPEN row-poly constraint that absorbs into the closed
+        // record's own fields, while a genuine field-type clash, a
+        // non-record-vs-record clash, or a closed-vs-closed field-presence
+        // mismatch rejects.
+        if self.errors.len() == errs_before {
+            let prev = self.cur_span;
+            self.cur_span = body.expr_span(root);
+            self.unify(v, expected_result);
+            self.cur_span = prev;
+        }
     }
 
     /// Infer the FULL scheme of a (typically unannotated) top-level def:
