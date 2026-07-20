@@ -57,9 +57,12 @@ pub struct World {
     /// (`use_inferred == false`), never by the lowerer (`use_inferred == true`)
     /// nor pass-3 inference, so Go emission is byte-identical. STRICTLY filtered
     /// at populate time (`infer_app_check_sigs`): admits only fully-monomorphic,
-    /// record-free, Unit-spine-free types (e.g. `allCategories : List String`,
-    /// `Int -> Int`, `String`) — every record/polymorphic/Unit-spine app helper
-    /// is excluded to preserve accept-parity. Empty until pass 5 populates it.
+    /// Unit-spine-free types (e.g. `allCategories : List String`, `Int -> Int`,
+    /// `String`, `Int -> {px:Int, py:Int}`) — every polymorphic/Unit-spine app
+    /// helper is excluded to preserve accept-parity. Record-typed monomorphic
+    /// sigs ARE admitted (the record-free clause was lifted once record
+    /// row-polymorphism became sound, commit 2702553a) so cross-module record
+    /// misuse is caught. Empty until pass 5 populates it.
     pub app_check_sigs: HashMap<DefId, Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
@@ -199,12 +202,12 @@ impl World {
     /// monomorphic schemes for unannotated top-level defs in APP (non-kernel)
     /// modules, so a cross-module misuse of such a def (`allCategories + 1`) is
     /// rejected instead of absorbed by a wildcard flex. STRICTLY filtered:
-    /// admits only fully-monomorphic, record-free, Unit-spine-free types
-    /// (excludes TEA record threading, under-generalised polymorphs, and
-    /// `() -> X` kernel-shim spines — the three accept-parity landmines).
+    /// admits only fully-monomorphic, Unit-spine-free types (record-typed sigs
+    /// now included; excludes under-generalised polymorphs and `() -> X`
+    /// kernel-shim spines — the two remaining accept-parity landmines).
     /// Modules in an import cycle (SCC size > 1) are skipped (fixpoint deferred).
     fn infer_app_check_sigs(&mut self, db: &dyn SkyDb) {
-        use crate::infer::{ty_contains_record, Infer};
+        use crate::infer::Infer;
         let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
 
         // App (non-kernel) modules only.
@@ -263,14 +266,19 @@ impl World {
                 let Some(scheme) = infer.infer_def_scheme(body) else {
                     continue;
                 };
-                // "CLEANLY USABLE" filter (the accept-parity guard). All three
+                // "CLEANLY USABLE" filter (the accept-parity guard). Both
                 // clauses must hold:
-                //   1. no record anywhere        — excludes TEA record threading;
-                //   2. fully monomorphic         — excludes under-generalisation;
-                //   3. no Unit in the param spine — excludes `() -> X` shims.
-                if ty_contains_record(&scheme.ty) {
-                    continue;
-                }
+                //   1. fully monomorphic          — excludes under-generalisation;
+                //   2. no Unit in the param spine  — excludes `() -> X` shims.
+                //
+                // The former record-free clause was LIFTED once the checker's
+                // record row-polymorphism became sound + oracle-parity (record
+                // leniency valve retired, commit 2702553a). Record-typed
+                // monomorphic sigs (`Int -> {px:Int, py:Int}`, `{px:Int, py:Int}`)
+                // are now admitted so cross-module record misuse (nonexistent-
+                // field access, wrong arg type) is caught. Clauses (1)/(2) guard
+                // DIFFERENT roots — under-generalisation and the `() -> X`
+                // Unit-return interaction — not the record leniency.
                 if !scheme.vars.is_empty() {
                     continue;
                 }

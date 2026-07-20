@@ -53,19 +53,6 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
     }
 }
 
-/// Does `ty` contain a record anywhere in its structure? Gates the annotation
-/// gate's param seeding (see [`Infer::infer_def_against`]) and the F1c
-/// app-check-sig "cleanly usable" filter (see `World::infer_app_check_sigs`).
-pub(crate) fn ty_contains_record(ty: &Ty) -> bool {
-    match ty {
-        Ty::Record(..) => true,
-        Ty::Fun(a, b) => ty_contains_record(a) || ty_contains_record(b),
-        Ty::App(_, args) => args.iter().any(ty_contains_record),
-        Ty::Tuple(xs) => xs.iter().any(ty_contains_record),
-        Ty::Var(_) | Ty::Unit | Ty::Error => false,
-    }
-}
-
 pub struct Infer<'a> {
     world: &'a World,
     db: &'a dyn SkyDb,
