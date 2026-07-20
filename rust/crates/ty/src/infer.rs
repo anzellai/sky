@@ -12,13 +12,19 @@
 use crate::sig::World;
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
-use base::{DefId, Name};
+use base::{DefId, Name, Span};
 use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::HashMap;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
 pub struct TypeError {
     pub message: String,
+    /// Source span of the sub-expression whose unification clashed, if known.
+    /// Populated from `Infer::cur_span` (the expr currently under inference) or,
+    /// for the def-level gates, from `body.expr_span(..)`. `None` when no CST
+    /// range was recorded (synthesised / recovery nodes) — the renderer then
+    /// falls back to the whole-def span.
+    pub span: Option<Span>,
 }
 
 /// Replace leading `Unit` arguments on a scheme's top arrow-spine with fresh
@@ -90,6 +96,11 @@ pub struct Infer<'a> {
     /// param reflects `f : Int -> Int`, not the body-inferred `number`). Not
     /// set on the M3 accept-parity path, whose behaviour is unchanged.
     expected: Option<Scheme>,
+    /// Span of the expression currently under inference — maintained as a stack
+    /// discipline by the `infer_expr` wrapper (save on entry, restore on exit).
+    /// A unify clash reads this to anchor its `TypeError` at the offending
+    /// sub-expression. Read-only bookkeeping; never affects unification.
+    cur_span: Option<Span>,
 }
 
 impl<'a> Infer<'a> {
@@ -106,6 +117,7 @@ impl<'a> Infer<'a> {
             self_def: None,
             use_inferred: false,
             expected: None,
+            cur_span: None,
         }
     }
 
@@ -332,6 +344,7 @@ impl<'a> Infer<'a> {
                     param_vars.len(),
                     consumed
                 ),
+                span: body.expr_span(root),
             });
         }
         // Record-literal-vs-closed-annotation strictness (RC2 / audit #1,#2): a
@@ -354,16 +367,21 @@ impl<'a> Infer<'a> {
                             "record literal is missing required field `{}`",
                             dn.as_str()
                         ),
+                        // No literal expr for a missing field — anchor at the
+                        // whole record literal (the def root here).
+                        span: body.expr_span(root),
                     });
                 }
             }
-            for (ln, _) in lit_fields {
+            for (ln, fid) in lit_fields {
                 if !decl_fields.iter().any(|(dn, _)| dn == ln) {
                     self.errors.push(TypeError {
                         message: format!(
                             "record literal has unknown field `{}` not in the declared type",
                             ln.as_str()
                         ),
+                        // Precise: anchor at the offending field's value expr.
+                        span: body.expr_span(*fid),
                     });
                 }
             }
@@ -456,14 +474,24 @@ impl<'a> Infer<'a> {
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         if let Err(m) = self.uf.unify(a, b) {
-            self.errors.push(TypeError { message: m.message });
+            self.errors.push(TypeError {
+                message: m.message,
+                span: self.cur_span,
+            });
         }
     }
 
     // ---- expressions ----------------------------------------------------
 
     fn infer_expr(&mut self, body: &Body, e: ExprId) -> TyVarId {
+        // Track the span of the sub-expression under inference so a unify clash
+        // deeper in the tree anchors its diagnostic here. Save/restore so the
+        // parent's span is reinstated as the recursion unwinds. `.or(prev)`
+        // keeps a parent's span when this node has no recorded range.
+        let prev = self.cur_span;
+        self.cur_span = body.expr_span(e).or(prev);
         let tv = self.infer_expr_inner(body, e);
+        self.cur_span = prev;
         if self.record_exprs {
             self.expr_vars.push((e, tv));
         }

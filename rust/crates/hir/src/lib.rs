@@ -143,4 +143,29 @@ mod tests {
         let r = resolve(&db, m);
         assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
     }
+
+    #[test]
+    fn resolve_records_expr_span() {
+        // Phase 1 gate: the resolver's span side-table stamps every expression
+        // with its CST byte range. The root of `foo = 1 + 2` is the `1 + 2`
+        // node, so its recorded span must slice back to exactly "1 + 2".
+        let src = "foo = 1 + 2\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        let body = r
+            .bodies
+            .values()
+            .next()
+            .expect("one def body for `foo`");
+        let root = body.root.expect("foo has a root expression");
+        let span = body.expr_span(root).expect("root expr has a recorded span");
+        let (start, end) = (span.range.0 as usize, span.range.1 as usize);
+        // The wrapper stores `e.syntax().text_range()` — the full CST node range,
+        // which attaches the leading trivia after `=`, so it slices to " 1 + 2".
+        assert_eq!(&src[start..end], " 1 + 2", "span {span:?} sliced wrong text");
+        assert_eq!(src[start..end].trim(), "1 + 2");
+        // "foo =" is 5 bytes → node range [5, 11) (leading space is node trivia).
+        assert_eq!((start, end), (5, 11), "unexpected byte range {span:?}");
+    }
 }

@@ -7,7 +7,7 @@ use crate::exhaustive;
 use crate::infer::Infer;
 use crate::sig::World;
 use crate::{Scheme, Ty};
-use base::{DefId, ModuleId, Span};
+use base::{DefId, ModuleId};
 use diagnostics::{Code, Diagnostic, Severity};
 use hir::{Body, ExprId, LocalId};
 use std::collections::HashMap;
@@ -181,7 +181,15 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
                     severity: Severity::Error,
                     code: Code("E2001".to_string()),
                     message: format!("[{dname}] Type mismatch — {}", err.message),
-                    labels: Vec::new(),
+                    labels: err
+                        .span
+                        .map(|s| {
+                            vec![diagnostics::Label {
+                                span: s,
+                                message: "this expression".into(),
+                            }]
+                        })
+                        .unwrap_or_default(),
                     suggestion: None,
                 });
             }
@@ -211,6 +219,5 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
     // stable order for the type table (L4)
     out.def_types
         .sort_by(|a, b| (a.module.as_str(), a.name.as_str()).cmp(&(b.module.as_str(), b.name.as_str())));
-    let _ = Span::new(base::FileId(0), 0, 0); // (spans unavailable in HIR bodies — see report)
     out
 }

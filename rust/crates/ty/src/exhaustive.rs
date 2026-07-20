@@ -22,7 +22,7 @@ fn walk(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagno
     match &body.exprs[e] {
         Expr::Case { subject, branches } => {
             walk(body, world, *subject, out);
-            check_case(body, world, branches, out);
+            check_case(body, world, *subject, branches, out);
             for br in branches {
                 walk(body, world, br.body, out);
             }
@@ -106,9 +106,23 @@ fn classify(body: &Body, p: PatId) -> Head {
 fn check_case(
     body: &Body,
     world: &World,
+    subject: ExprId,
     branches: &[hir::CaseBranch],
     out: &mut Vec<diagnostics::Diagnostic>,
 ) {
+    // The `case` subject's span anchors any non-exhaustiveness diagnostic —
+    // `body.expr_span` is populated by the resolver (Phase 1). `None` (recovery
+    // node) → empty labels, matching the pre-span behaviour.
+    let subject_label = |msg: &str| {
+        body.expr_span(subject)
+            .map(|s| {
+                vec![diagnostics::Label {
+                    span: s,
+                    message: msg.to_string(),
+                }]
+            })
+            .unwrap_or_default()
+    };
     let mut covered: BTreeSet<String> = BTreeSet::new();
     let mut union_def: Option<base::DefId> = None;
     let mut has_literal = false;
@@ -131,7 +145,7 @@ fn check_case(
             severity: diagnostics::Severity::Warning,
             code: diagnostics::Code("E3001".to_string()),
             message: "This `case` does not cover all cases — literal patterns need a catch-all `_` arm".to_string(),
-            labels: Vec::new(),
+            labels: subject_label("this `case` is not exhaustive"),
             suggestion: None,
         });
         return;
@@ -163,7 +177,7 @@ fn check_case(
                 "This `case` does not cover all cases — missing: {}",
                 names.join(", ")
             ),
-            labels: Vec::new(),
+            labels: subject_label("this `case` is not exhaustive"),
             suggestion: None,
         });
     }

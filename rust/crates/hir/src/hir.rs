@@ -4,7 +4,7 @@
 
 use crate::ids::{CtorRef, LocalId, Res, TypeRes};
 use base::{DefId, Name, Span};
-use la_arena::{Arena, Idx};
+use la_arena::{Arena, ArenaMap, Idx};
 
 pub type ExprId = Idx<Expr>;
 pub type PatId = Idx<Pattern>;
@@ -144,6 +144,14 @@ pub struct Body {
     /// Top-level parameter patterns for `f x y = …` (M4: the lowerer needs these
     /// to emit the Go function signature — resolve previously discarded them).
     pub params: Vec<PatId>,
+    /// Source span side-table for expressions. Populated by the resolver's
+    /// `resolve_expr` wrapper; consumed only by the type-checker to anchor
+    /// diagnostics (E2001 / E3001) at real positions. The lowerer never reads
+    /// it, so it is codegen-neutral. Sparse `ArenaMap` — an absent id yields
+    /// `None` (recovery / synthesised nodes may lack a CST range).
+    pub expr_spans: ArenaMap<ExprId, Span>,
+    /// Source span side-table for patterns. Same contract as `expr_spans`.
+    pub pat_spans: ArenaMap<PatId, Span>,
 }
 
 impl Body {
@@ -155,6 +163,16 @@ impl Body {
     }
     pub fn ty(&mut self, t: Type) -> TypeId {
         self.types.alloc(t)
+    }
+
+    /// The source span of an expression, if recorded during resolution.
+    pub fn expr_span(&self, e: ExprId) -> Option<Span> {
+        self.expr_spans.get(e).copied()
+    }
+
+    /// The source span of a pattern, if recorded during resolution.
+    pub fn pat_span(&self, p: PatId) -> Option<Span> {
+        self.pat_spans.get(p).copied()
     }
 }
 

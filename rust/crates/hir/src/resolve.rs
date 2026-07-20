@@ -824,7 +824,20 @@ impl<'a> Resolver<'a> {
 
     // ---- expression resolution ------------------------------------------
 
+    /// Thin span-recording wrapper: resolve the expression, then stamp the
+    /// returned `ExprId` with its CST source range in `body.expr_spans`. Kept
+    /// separate from `resolve_expr_inner` so every recursive sub-expression
+    /// (the inner dispatches back through this wrapper) is stamped too. The
+    /// side-table is read only by the type-checker for diagnostic positions;
+    /// the lowerer ignores it, so this is codegen-neutral.
     fn resolve_expr(&mut self, e: &ast::Expr) -> ExprId {
+        let r = e.syntax().text_range();
+        let id = self.resolve_expr_inner(e);
+        self.body.expr_spans.insert(id, self.span_of(r));
+        id
+    }
+
+    fn resolve_expr_inner(&mut self, e: &ast::Expr) -> ExprId {
         match e {
             ast::Expr::Literal(l) => {
                 let hir = if let Some(int) = l.int_literal() {
@@ -1372,7 +1385,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Thin span-recording wrapper for patterns — mirrors `resolve_expr`.
     fn resolve_pattern(&mut self, p: &ast::Pattern) -> PatId {
+        let r = p.syntax().text_range();
+        let id = self.resolve_pattern_inner(p);
+        self.body.pat_spans.insert(id, self.span_of(r));
+        id
+    }
+
+    fn resolve_pattern_inner(&mut self, p: &ast::Pattern) -> PatId {
         match p {
             ast::Pattern::Wildcard(_) => self.body.pat(Pattern::Anything),
             ast::Pattern::Var(v) => {
