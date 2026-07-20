@@ -428,6 +428,15 @@ impl<'a> Infer<'a> {
 
     fn infer_expr_inner(&mut self, body: &Body, e: ExprId) -> TyVarId {
         match &body.exprs[e] {
+            // Integer literals stay `FlexSuper(Number)`. NB the oracle's literal
+            // model is asymmetric — it types int literals as concrete `Int` for
+            // same-module/kernel/binding contexts (rejecting `1 + 2.0`,
+            // `v : Float = 1`, `Math.sqrt 4`) BUT is lenient on CROSS-MODULE
+            // external Float params (`Css.pct 100` accepts, where `pct : Float`).
+            // A flat concrete-`Int` model here correctly rejects the strict cases
+            // but breaks the cross-module ones (12 corpus false-positives on
+            // `Css.pct N`/`Css.px N`). Closing the accept-invalid class needs the
+            // cross-module-leniency mechanism too; tracked separately.
             Expr::Int(_) => self.uf.fresh(Content::FlexSuper(SuperType::Number)),
             Expr::Float(_) => self.con("Float", vec![]),
             Expr::Str(_) => self.con("String", vec![]),
@@ -675,8 +684,33 @@ impl<'a> Infer<'a> {
 
     fn infer_binop(&mut self, op: &str, tl: TyVarId, tr: TyVarId) -> TyVarId {
         match op {
-            // arithmetic: number a => a -> a -> a
-            "+" | "-" | "*" | "/" | "^" => {
+            // arithmetic `+ - *`: fully polymorphic `a -> a -> a`, matching the
+            // oracle (which accepts `add "s" "t"`, `add True False` — its `+/-/*`
+            // are unconstrained). Result = the (unified) operand type. A concrete
+            // misuse still clashes at unify (`add "s" 1` → String vs Int). Poly
+            // helpers whose operands stay `any` lower via rt.Add/Sub/Mul
+            // (lower.rs `both_prim` gate), so an unannotated `add a b = a + b`
+            // builds and runs at Int AND Float — closing the false-reject class
+            // (`add 1.0 2.0`) the old `FlexSuper(Number)`+concretize model caused.
+            "+" | "-" | "*" => {
+                self.unify(tl, tr);
+                tl
+            }
+            // division is Float-only (`Float -> Float -> Float`): the oracle
+            // rejects integer division via `/` (use `//`). Concrete-Int literals
+            // then make `5 / 2` clash (Int vs Float) with oracle parity, while
+            // `5.0 / 2.0` and `divh x y = x / y ; divh 1.0 2.0` type as Float.
+            "/" => {
+                let f = self.con("Float", vec![]);
+                self.unify(tl, f);
+                self.unify(tr, f);
+                self.con("Float", vec![])
+            }
+            // power `^` kept on the Number super (UNCHANGED) — out of scope for the
+            // literal-model fix. Its codegen (`rt.Pow`, lower.rs) is a separate
+            // pending gap: `rt.Pow` is undefined in the runtime, so `^` fails
+            // `go build` regardless of inference (pre-existing; tracked separately).
+            "^" => {
                 let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
                 self.unify(tl, n);
                 self.unify(tr, n);
