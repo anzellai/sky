@@ -432,3 +432,58 @@ fn driver_accepts_corrected_named_fn_and_emits() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// F5 eta-expansion lock — a lambda spine that bottoms out in a func VALUE (not
+/// a nested-lambda node) when the declared curried type carries MORE arrows than
+/// the lambda binds. `makeF a = \_ -> add1` (where `add1 : Int -> Int`) has the
+/// body `add1` — a func value, not a `\… -> …` node — so the `lower_lambda`
+/// spine-absorption loop breaks early. Pre-fix the emitted closure had FEWER
+/// params than the declared flat `func(any,int) int` type AND forced the
+/// func-value body through the final scalar codomain via a spurious
+/// `rt.AsInt(Main_add1)` — a runtime `TypeMismatch` panic (`rt.AsInt: … got
+/// func(int) int`) the Haskell oracle never produces (it builds + runs → `3`).
+///
+/// The fix ETA-EXPANDS: it synthesises the missing params and APPLIES the body
+/// (a func value) to them, so the emitted closure is `func(_ any, _eta0 int) int
+/// { return Main_add1(_eta0) }` — arity matches the declared flat func type and
+/// the func-value body is called, not coerced to a scalar. This is the
+/// residual-half companion to `examples/41-nested-curry` (audit #7b), which
+/// locks the nested-lambda-chain case.
+#[test]
+fn driver_eta_expands_func_value_lambda_body() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "eta-func-value",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         add1 : Int -> Int\n\
+         add1 x =\n    x + 1\n\n\
+         makeF : Int -> Int -> (Int -> Int)\n\
+         makeF a =\n    \\_ -> add1\n\n\
+         main =\n    println (String.fromInt (makeF 1 5 2))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted,
+        "driver failed to emit the eta-residual program; note: {}",
+        report.note
+    );
+    let go_src = std::fs::read_to_string(out.join("main.go")).unwrap_or_default();
+    // The pre-fix bug signature: the func-value body `add1` coerced to a scalar
+    // via `rt.AsInt` (→ runtime TypeMismatch panic). Must be gone.
+    assert!(
+        !go_src.contains("rt.AsInt(Main_add1)"),
+        "F5 REGRESSION — the eta-residual func-value body `add1` was coerced to a \
+         scalar via rt.AsInt instead of being applied to the eta-expanded params.\n{go_src}"
+    );
+    // The fix synthesises eta params and applies the body to them.
+    assert!(
+        go_src.contains("_eta"),
+        "F5 — eta-expansion did not synthesise the missing params.\n{go_src}"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}

@@ -2994,9 +2994,29 @@ impl<'a> Ctx<'a> {
                 params.extend(inner);
                 body = ib;
             } else {
-                break; // residual: lambda bottoms out in a func value (eta-exp gap)
+                break; // residual: lambda bottoms out in a func VALUE — ETA-EXPAND below
             }
         }
+        // F5 eta-expansion. The spine loop above absorbs a NESTED-lambda chain so
+        // the emitted closure's param count matches the flat `pt`. But a lambda can
+        // also bottom out in a func VALUE that supplies the remaining arrows —
+        // `makeF a = \_ -> add1` where `add1 : Int -> Int` (body is NOT a lambda
+        // node). The loop breaks with `params.len() < pt.len()`; without repair the
+        // closure would emit `func(_ any) int { return rt.AsInt(add1) }` (fewer
+        // params than the declared `func(any,int) int`, and the func-value body
+        // forced through the final codomain `int` via a spurious `rt.AsInt`) — a
+        // runtime TypeMismatch panic (or `go build` arity error) the oracle never
+        // produces. Eta-expand: synthesise the missing params and APPLY the body
+        // (a func value of the remaining arrow type) to them, so the emitted closure
+        // is `func(_ any, _eta0 int) int { return add1(_eta0) }` — arity matches the
+        // declared flat func type and the func-value body is called, not coerced to a
+        // scalar. Empty when the loop already matched arity (nested-lambda chains,
+        // `examples/41-nested-curry`) → byte-identical.
+        let eta_extra: Vec<GoTy> = if params.len() < pt.len() {
+            pt[params.len()..].to_vec()
+        } else {
+            Vec::new()
+        };
         let mut gparams = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
         let mut elem_pinned = false;
@@ -3045,7 +3065,28 @@ impl<'a> Ctx<'a> {
         // in the body is a different closure (its own combinator call sets its own
         // `closure_elem`). Clear so the body doesn't inherit this one.
         self.closure_elem = None;
-        let b = self.lower_expr(body, &rt);
+        let b = if eta_extra.is_empty() {
+            self.lower_expr(body, &rt)
+        } else {
+            // The body is a func VALUE of the remaining arrow type `func(eta_extra) rt`.
+            // Lower it against that concrete func type (so a bare def reference like
+            // `add1` emits a callable `func(int) int` rather than being narrowed to a
+            // scalar), then apply it to freshly-synthesised extra params. `pt.len() ==
+            // gparams already-built params + eta_extra`, so appending concrete-typed
+            // extra params keeps the emitted signature equal to the declared `actual`
+            // func type.
+            let body_fn_ty = GoTy::Func(eta_extra.clone(), Box::new(rt.clone()));
+            let bexpr = self.lower_expr(body, &body_fn_ty);
+            let bexpr = self.coerce_if_needed(bexpr, &body_fn_ty);
+            let mut extra_args = Vec::new();
+            for pty in &eta_extra {
+                let pname = format!("_eta{}", self.local_counter);
+                self.local_counter += 1;
+                gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+                extra_args.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
+            }
+            GoExpr::new(GoExprKind::Call(Box::new(bexpr), extra_args), rt.clone())
+        };
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
         GoExpr::new(

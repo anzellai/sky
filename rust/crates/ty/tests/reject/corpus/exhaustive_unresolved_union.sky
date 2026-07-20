@@ -1,0 +1,27 @@
+-- defect: non-exhaustive `case` — a 4-ctor union with only 2 arms (missing
+--   `Amber` and `Off`). The covered arms `Red`/`Green` sort alphabetically
+--   BEFORE the missing ones, and the union's declaration order (Red, Amber,
+--   Green, Off) differs from both — so this locks that union resolution +
+--   missing-ctor detection is order-independent (via the DefId `cr.type_` path
+--   `union_members_by_def`, with the by-name `ctor_union` fallback behind it).
+-- oracle: reject [E3001] (Sky exhaustiveness is a hard error — R1-D3)
+-- context: F2 defensive gate. The `exhaustive.rs` `unknown union — lenient`
+--   bail is unreachable for type-correct code (every matchable ctor is recorded
+--   in the World's by-name + by-DefId maps). This fixture locks the resolution
+--   path so a future change that regressed union resolution INTO that lenient
+--   branch would resurface here as an ACCEPTED non-exhaustive program.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Light = Red | Amber | Green | Off
+
+name : Light -> String
+name c =
+    case c of
+        Red -> "red"
+        Green -> "green"
+
+main =
+    println (name Red)
