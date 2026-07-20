@@ -51,7 +51,16 @@ pub fn run(args: &[String], root: &Path) -> i32 {
             .and_then(|s| s.to_str())
             .unwrap_or("?")
             .to_string();
-        let locals = load_dir(dir, "src");
+        // Load ONLY the example's `src/` tree — the app modules the real build
+        // resolves from `src/Main.sky`. Recursing the whole example dir wrongly
+        // pulled in `test-fixtures/*.sky` (standalone stress fixtures with their
+        // own `update`/records) + stray root files, which the build never checks;
+        // that made this differential gate diverge from `sky check` (a fixture's
+        // record-subset pattern false-positived under the precise List sigs while
+        // the real app was clean). `build_run_gate` already scopes to `src/`.
+        let src_dir = dir.join("src");
+        let load_root = if src_dir.is_dir() { src_dir } else { dir.clone() };
+        let locals = load_dir(&load_root, "src");
         if locals.is_empty() {
             continue;
         }
