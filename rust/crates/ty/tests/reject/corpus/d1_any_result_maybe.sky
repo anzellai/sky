@@ -1,0 +1,11 @@
+-- defect: `f : Int -> Maybe any` with body `f x = Just x` returns `Maybe Int`;
+--         `Maybe.withDefault "s"` needs `Maybe String`, so it clashes. The D1
+--         result pin catches it. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+f : Int -> Maybe any
+f x =
+    Just x
+main =
+    println (Maybe.withDefault "s" (f 5))

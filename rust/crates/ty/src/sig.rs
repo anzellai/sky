@@ -64,6 +64,15 @@ pub struct World {
     /// row-polymorphism became sound, commit 2702553a) so cross-module record
     /// misuse is caught. Empty until pass 5 populates it.
     pub app_check_sigs: HashMap<DefId, Scheme>,
+    /// CHECK-ONLY pins of a wildcard-`any` RESULT to the body-inferred concrete
+    /// type (D1). For an ANNOTATED, non-polymorphic def whose declared result
+    /// contains `any` and whose body returns a fully-monomorphic type
+    /// (`f : Int -> any; f x = x` → `Int -> Int`), this pins the result so callers
+    /// can't absorb it at an arbitrary type (`List.length (f 5)` rejects, matching
+    /// the oracle). Same isolation as `check_sigs`/`app_check_sigs`: consulted only
+    /// at `!use_inferred`, never by the lowerer → Go emission byte-identical.
+    /// Populated by pass 6; empty on the lowerer path.
+    pub any_result_check_sigs: HashMap<DefId, Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -93,6 +102,7 @@ impl World {
             check_sigs: HashMap::new(),
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
+            any_result_check_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
             ctor_union: HashMap::new(),
@@ -194,6 +204,12 @@ impl World {
         // LAST so it can consult every earlier channel (incl. its own prior
         // admissions along the topo order).
         world.infer_app_check_sigs(db);
+
+        // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
+        // For an annotated non-poly app def whose declared result contains `any`
+        // and whose body returns a fully-monomorphic type, pin that concrete
+        // result so callers can't absorb it at an arbitrary type. Runs last.
+        world.infer_any_result_check_sigs(db);
 
         world
     }
@@ -302,6 +318,52 @@ impl World {
                     continue;
                 }
                 self.app_check_sigs.entry(*def).or_insert(scheme);
+            }
+        }
+    }
+
+    /// Pass 6 (see `build`). D1 — wildcard-`any` RESULT pins (check-only). For an
+    /// ANNOTATED, non-polymorphic APP def whose declared result contains `any`
+    /// and whose body returns a fully-monomorphic type, pin that concrete result
+    /// into `any_result_check_sigs` so a caller can't absorb the result at an
+    /// arbitrary type (`f : Int -> any; f x = x` → `List.length (f 5)` rejects,
+    /// matching the oracle). Stdlib modules are skipped (kernel + `Std.`/`Sky.`
+    /// namespaces) — the predicate already excludes every stdlib `any`-result def
+    /// (they are polymorphic or have polymorphic bodies), and the namespace skip
+    /// makes that immunity structural.
+    fn infer_any_result_check_sigs(&mut self, db: &dyn SkyDb) {
+        use crate::infer::Infer;
+        for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
+            if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
+                || mname.starts_with("Std.")
+                || mname.starts_with("Sky.")
+            {
+                continue;
+            }
+            let resolved = db.resolve(m);
+            for (def, body) in &resolved.bodies {
+                // Clause 1 (annotated) + clause 2 (non-polymorphic: `Scheme::
+                // generalize` already drops `any` from `vars`, so `vars` empty ⟺
+                // the only free type var is `any`).
+                let Some(anno) = self.value_sigs.get(def) else {
+                    continue;
+                };
+                if !anno.vars.is_empty() {
+                    continue;
+                }
+                // Clause 3: the declared RESULT position contains `any`.
+                if !result_contains_any(&anno.ty, body.params.len()) {
+                    continue;
+                }
+                let anno_ty = anno.ty.clone();
+                // Clause 4: the body-inferred pin must be fully monomorphic (a
+                // polymorphic body is left unpinned — the oracle does not pin it
+                // either). `infer_any_result_pin` returns `None` otherwise.
+                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
+                if let Some(scheme) = infer.infer_any_result_pin(body, &anno_ty, true) {
+                    self.any_result_check_sigs.insert(*def, scheme);
+                }
             }
         }
     }
@@ -662,6 +724,21 @@ fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
     db.intern_def(m, &Name::new(name), DefKind::Value)
+}
+
+/// True iff peeling `n_params` arrows off `ty` leaves a residual whose free vars
+/// include `"any"` — i.e. the declared RESULT position carries a wildcard (D1
+/// clause 3). Peeling only the param arrows keeps ARGUMENT-position `any`
+/// (`any -> any -> Int`) out of scope, preserving its per-occurrence semantics.
+fn result_contains_any(ty: &Ty, n_params: usize) -> bool {
+    let mut cur = ty;
+    for _ in 0..n_params {
+        match cur {
+            Ty::Fun(_, b) => cur = b,
+            _ => break,
+        }
+    }
+    cur.free_vars().iter().any(|n| n.as_str() == "any")
 }
 
 // ---- F1c app-check-sig support: cycle detection, topo order, Unit spine ----

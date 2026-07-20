@@ -400,6 +400,51 @@ impl<'a> Infer<'a> {
         Some(Scheme::generalize(ty))
     }
 
+    /// D1 (wildcard-`any` result pin): for an ANNOTATED def whose declared result
+    /// contains `any` (`f : Int -> any`), infer what the BODY actually returns and
+    /// build a check-only sig `<annotation params> -> <body result>`. Params are
+    /// SEEDED from the annotation (so the body result resolves concretely — a bare
+    /// `f x = x` with `x : Int` returns `Int`, not a fresh var). The annotation's
+    /// `any` result is deliberately NOT unified with the body — that lenient valve
+    /// is exactly what lets a caller absorb the result at any type. Returns the
+    /// pinned scheme ONLY if it is fully MONOMORPHIC: a polymorphic body (e.g.
+    /// `kernelAttr k v = Attr.href v : Attribute msg`) is left unpinned, matching
+    /// the oracle, which also does not pin a wildcard result whose body is
+    /// polymorphic. Populated into `World::any_result_check_sigs` (check-only).
+    pub fn infer_any_result_pin(&mut self, body: &Body, anno: &Ty, concretize: bool) -> Option<Scheme> {
+        let root = body.root?;
+        let param_vars: Vec<TyVarId> = body
+            .params
+            .iter()
+            .map(|&p| self.infer_pat_fresh(body, p))
+            .collect();
+        // Seed each param from the annotation's arrow spine (closed, via ty_to_var).
+        let mut sub: HashMap<String, TyVarId> = HashMap::new();
+        let mut cur = anno.clone();
+        for &pv in &param_vars {
+            match cur {
+                Ty::Fun(a, b) => {
+                    let av = self.ty_to_var(&a, &mut sub);
+                    self.unify(pv, av);
+                    cur = *b;
+                }
+                _ => break,
+            }
+        }
+        let rv = self.infer_expr(body, root);
+        let full = param_vars
+            .into_iter()
+            .rev()
+            .fold(rv, |acc, pv| self.fun(pv, acc));
+        let ty = self.read_back_scheme(full, concretize);
+        let scheme = Scheme::generalize(ty);
+        if scheme.vars.is_empty() {
+            Some(scheme)
+        } else {
+            None
+        }
+    }
+
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         if let Err(m) = self.uf.unify(a, b) {
             self.errors.push(TypeError {
@@ -596,6 +641,20 @@ impl<'a> Infer<'a> {
                 .entry(id)
                 .or_insert_with(|| self.uf.fresh_flex()),
             Res::Def(def) => {
+                // D1 (wildcard-`any` result pin) — CHECK-ONLY. When a def's
+                // declared result contains `any` and its body returns a concrete
+                // monomorphic type, use that pinned type at call sites so misuse
+                // of the result is caught (`f : Int -> any; f x = x` →
+                // `List.length (f 5)` rejects). Consulted only on the check path
+                // (`!use_inferred`) so the lowerer still sees the annotation's
+                // `Int -> any` and Go emission is byte-identical. Skipped for the
+                // def's own body (`self_def`) to keep monomorphic-recursion parity.
+                if !self.use_inferred && self.self_def != Some(def) {
+                    if let Some(s) = self.world.any_result_check_sigs.get(&def) {
+                        let s = s.clone();
+                        return self.instantiate(&s);
+                    }
+                }
                 // Monomorphic recursion: the def's own body never instantiates
                 // its own scheme (see `self_def`).
                 // An ANNOTATED def uses its annotation even at a recursive
