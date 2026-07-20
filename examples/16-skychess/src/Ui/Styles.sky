@@ -167,7 +167,7 @@ globalStyles =
               , property "margin-bottom" "6px"
               ]
         , rule ".form-input"
-              [ width (pct 100)
+              [ width (pct 100.0)
               , padding2 (px 10) (px 14)
               , borderRadius (px 8)
               , border ("1px solid " ++ colorToString borderLight)
@@ -271,10 +271,10 @@ globalStyles =
               , position Absolute
               , width (px 18)
               , height (px 18)
-              , borderRadius (pct 50)
+              , borderRadius (pct 50.0)
               , property "background-color" "rgba(0, 0, 0, 0.2)"
-              , top (pct 50)
-              , left (pct 50)
+              , top (pct 50.0)
+              , left (pct 50.0)
               , property "transform" "translate(-50%, -50%)"
               , property "pointer-events" "none"
               ]
@@ -375,7 +375,7 @@ globalStyles =
         , media "(max-width: 768px)"
               [ rule ".game-layout"
                     [ flexDirection Column , alignItems Center ]
-              , rule ".side-panel" [ width (pct 100) , maxWidth (px 520) ]
+              , rule ".side-panel" [ width (pct 100.0) , maxWidth (px 520) ]
               , rule ".chess-board td"
                     [ width (px 48) , height (px 48) , fontSize (px 32) ]
               , rule ".stats-grid" [ gridTemplateColumns "repeat(2, 1fr)" ]

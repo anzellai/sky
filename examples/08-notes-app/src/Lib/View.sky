@@ -230,7 +230,7 @@ appStyles _ =
               [ Css.padding2 (Css.px 6) (sp 4), Css.fontSize (Css.px 13) ]
         , Css.rule
               "input,textarea"
-              [ Css.width (Css.pct 100)
+              [ Css.width (Css.pct 100.0)
               , Css.padding (sp 3)
               , Css.border ("1px solid " ++ Css.colorToString (inputBorder ()))
               , Css.borderRadius (radius ())
@@ -437,7 +437,7 @@ appStyles _ =
               ]
         , Css.rule
               ".md img"
-              [ Css.maxWidth (Css.pct 100), Css.borderRadius (radius ()) ]
+              [ Css.maxWidth (Css.pct 100.0), Css.borderRadius (radius ()) ]
         , Css.rule ".md a" [Css.color (primaryColor ())]
         , Css.rule
               ".md hr"
@@ -448,7 +448,7 @@ appStyles _ =
         , Css.rule
               ".md table"
               [ Css.borderCollapse "collapse"
-              , Css.width (Css.pct 100)
+              , Css.width (Css.pct 100.0)
               , Css.marginBottom (sp 4)
               ]
         , Css.rule
@@ -499,14 +499,14 @@ appStyles _ =
 -- Inline style helpers
 -- ============================================================
 fullWidth _ =
-    Attr.style (Css.styles [Css.width (Css.pct 100)])
+    Attr.style (Css.styles [Css.width (Css.pct 100.0)])
 
 
 fullWidthBlock _ =
     let
         s =
             Css.styles
-                [ Css.width (Css.pct 100)
+                [ Css.width (Css.pct 100.0)
                 , Css.textAlign Css.AlignCenter
                 , Css.marginTop (sp 5)
                 , Css.display Css.Block

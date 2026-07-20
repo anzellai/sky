@@ -185,7 +185,7 @@ globalStyles =
               , property "margin-bottom" "6px"
               ]
         , rule ".form-input"
-              [ width (pct 100)
+              [ width (pct 100.0)
               , padding2 (px 10) (px 14)
               , borderRadius (px 8)
               , border ("1px solid " ++ colorToString borderLight)
@@ -571,7 +571,7 @@ globalStyles =
               ]
         , rule ".submit-container"
               [ maxWidth (px 640) , margin2 (px 32) auto ]
-        , rule ".auth-btn-full" [ width (pct 100) , justifyContent Center ]
+        , rule ".auth-btn-full" [ width (pct 100.0) , justifyContent Center ]
         , rule ".auth-prompt" [ textAlign AlignCenter , padding (px 20) ]
         , rule ".auth-nav"
               [ display Flex

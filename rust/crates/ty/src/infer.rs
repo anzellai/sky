@@ -428,16 +428,16 @@ impl<'a> Infer<'a> {
 
     fn infer_expr_inner(&mut self, body: &Body, e: ExprId) -> TyVarId {
         match &body.exprs[e] {
-            // Integer literals stay `FlexSuper(Number)`. NB the oracle's literal
-            // model is asymmetric — it types int literals as concrete `Int` for
-            // same-module/kernel/binding contexts (rejecting `1 + 2.0`,
-            // `v : Float = 1`, `Math.sqrt 4`) BUT is lenient on CROSS-MODULE
-            // external Float params (`Css.pct 100` accepts, where `pct : Float`).
-            // A flat concrete-`Int` model here correctly rejects the strict cases
-            // but breaks the cross-module ones (12 corpus false-positives on
-            // `Css.pct N`/`Css.px N`). Closing the accept-invalid class needs the
-            // cross-module-leniency mechanism too; tracked separately.
-            Expr::Int(_) => self.uf.fresh(Content::FlexSuper(SuperType::Number)),
+            // Integer literals are CONCRETE `Int` — Sky fully separates Int and
+            // Float (no implicit numeric widening). A bare `1` in a Float slot is
+            // a type error; write `1.0`. This is INTENTIONALLY stricter than the
+            // Haskell oracle, whose int-literal model is inconsistent (concrete
+            // Int for same-module/kernel/binding contexts — it rejects `1 + 2.0`,
+            // `v : Float = 1`, `Math.sqrt 4` — but leniently widens an int literal
+            // into a CROSS-MODULE external Float param, e.g. `Css.pct 100` where
+            // `pct : Float`). That convenience does not scale; Sky separates the
+            // two types uniformly. Float literals are already concrete (below).
+            Expr::Int(_) => self.con("Int", vec![]),
             Expr::Float(_) => self.con("Float", vec![]),
             Expr::Str(_) => self.con("String", vec![]),
             Expr::Chr(_) => self.con("Char", vec![]),
@@ -807,7 +807,8 @@ impl<'a> Infer<'a> {
                 self.unify(expected, b);
             }
             Pattern::Int(_) => {
-                let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                // Concrete `Int` — see `Expr::Int` (Sky separates Int/Float).
+                let n = self.con("Int", vec![]);
                 self.unify(expected, n);
             }
             Pattern::Float(_) => {

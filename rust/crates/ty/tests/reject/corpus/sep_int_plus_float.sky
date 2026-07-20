@@ -1,0 +1,9 @@
+-- defect: Int and Float are fully separate in Sky (no implicit widening), so
+--         mixing an int literal with a Float in arithmetic is a type error.
+--         `+` is polymorphic `a -> a -> a`, so its operands must share a type;
+--         `1 : Int` and `2.0 : Float` clash. Write `1.0 + 2.0`. oracle: reject.
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+main =
+    println (String.fromFloat (1 + 2.0))
