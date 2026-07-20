@@ -1,0 +1,10 @@
+-- defect: List.append element mismatch across the two lists — `List.append ["a"]
+--         [1]` unifies `List String` with `List Int`. F8 precise
+--         `List.append : List a -> List a -> List a` rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+main =
+    println (String.join "," (List.append [ "a" ] [ 1 ]))

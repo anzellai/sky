@@ -1,0 +1,10 @@
+-- defect: List.member result used as a list — `List.member 1 [1,2] : Bool` fed to
+--         `String.join`'s `List String`. F8 precise `List.member : a -> List a ->
+--         Bool` rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+main =
+    println (String.join "," (List.member 1 [ 1, 2 ]))

@@ -1,0 +1,11 @@
+-- defect: List.head payload mismatch — `List.head ["a","b"] : Maybe String` fed to
+--         `Maybe.withDefault 0` (`0 : Int`). F8 precise `List.head : List a ->
+--         Maybe a` + `Maybe.withDefault : a -> Maybe a -> a` reject. oracle: reject.
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (Maybe.withDefault 0 (List.head [ "a", "b" ])))

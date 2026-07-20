@@ -294,14 +294,29 @@ impl World {
         }
     }
 
-    /// Pass 4 (see `build`). Register precise `List a` HOF schemes into the
+    /// Pass 4 (see `build`). Register precise stdlib combinator schemes into the
     /// CHECK-ONLY channels (`check_sigs` / `check_kernel_sigs`). These pin a
-    /// combinator's result element from its argument types at accept/reject-check
-    /// time (`use_inferred == false`) so an unannotated `List.map` no longer
-    /// falls to a wildcard flex that silently absorbs a downstream param clash
-    /// (audit #3: `String.join "," (List.map String.length xs)`). The lowerer
-    /// (`use_inferred == true`) never reads these channels — emission is
-    /// byte-identical to the pre-fix wildcard path.
+    /// combinator's result element/type from its argument types at accept/reject-
+    /// check time (`use_inferred == false`) so an unannotated `List.map` /
+    /// `List.reverse` / `fst` / `Maybe.withDefault` no longer falls to a wildcard
+    /// flex that silently absorbs a downstream param clash (audit #3:
+    /// `String.join "," (List.map String.length xs)`; F8: `String.join ","
+    /// (List.reverse [1,2,3])`, `Maybe.withDefault 0 (Dict.get "k" strDict)`,
+    /// `String.fromInt (fst ("a", 1))`). The lowerer (`use_inferred == true`)
+    /// never reads these channels — emission is byte-identical to the pre-fix
+    /// wildcard path.
+    ///
+    /// SCOPE. Only UNANNOTATED, lenient stdlib combinators are seeded here. The
+    /// already-annotated modules (`Dict`, `Set`, `String` — each `.sky` def
+    /// carries a `name : Type` line) land in `value_sigs`/`kernel_sigs` at pass 2
+    /// and are precise already; the `!value_sigs.contains_key` guard below keeps
+    /// this pass from ever shadowing such an annotation. `Result` combinators are
+    /// seeded by pass 3 into `inferred_sigs`/`kernel_sigs`, so they are omitted
+    /// here too. F8 (this extension) adds the `Sky.Core.List` core ops
+    /// (`reverse`/`take`/`drop`/`append`/`concat`/`member`/`range`/`zip`/`length`/
+    /// `isEmpty`/`head`/`tail`/`cons`), `Sky.Core.Basics` tuple projections
+    /// (`fst`/`snd`), and `Sky.Core.Maybe` core combinators
+    /// (`withDefault`/`map`/`andThen`) to the audit-#3 List-HOF set.
     fn seed_check_sigs(&mut self, db: &dyn SkyDb) {
         let a = || Ty::var("a");
         let b = || Ty::var("b");
@@ -309,11 +324,15 @@ impl World {
         let int_ = || Ty::app("Int", vec![]);
         let list = |t: Ty| Ty::app("List", vec![t]);
         let maybe = |t: Ty| Ty::app("Maybe", vec![t]);
+        let tup2 = |x: Ty, y: Ty| Ty::Tuple(vec![x, y]);
         let fun = |from: Ty, to: Ty| Ty::Fun(Box::new(from), Box::new(to));
 
         // Schemes are order-correct against the actual `sky-stdlib/Sky/Core/
-        // List.sky` bodies (element-first `foldl`, matching the Sky source).
-        let specs: Vec<(&str, Ty)> = vec![
+        // *.sky` bodies (element-first `foldl`, `Int`-first `take`/`drop`/`range`,
+        // predicate-first `filter`/`find`, `def`-first `Maybe.withDefault`,
+        // matching the Sky source + the oracle).
+        let list_specs: Vec<(&str, Ty)> = vec![
+            // audit #3 — List HOFs (unchanged).
             ("map", fun(fun(a(), b()), fun(list(a()), list(b())))),
             ("filter", fun(fun(a(), bool_()), fun(list(a()), list(a())))),
             ("foldl", fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b())))),
@@ -324,23 +343,59 @@ impl World {
             ("any", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
             ("all", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
             ("indexedMap", fun(fun(int_(), fun(a(), b())), fun(list(a()), list(b())))),
+            // F8 — List core ops (element/type-precise, verified against List.sky).
+            ("reverse", fun(list(a()), list(a()))),
+            ("take", fun(int_(), fun(list(a()), list(a())))),
+            ("drop", fun(int_(), fun(list(a()), list(a())))),
+            ("append", fun(list(a()), fun(list(a()), list(a())))),
+            ("concat", fun(list(list(a())), list(a()))),
+            ("member", fun(a(), fun(list(a()), bool_()))),
+            ("range", fun(int_(), fun(int_(), list(int_())))),
+            ("zip", fun(list(a()), fun(list(b()), list(tup2(a(), b()))))),
+            ("length", fun(list(a()), int_())),
+            ("isEmpty", fun(list(a()), bool_())),
+            ("head", fun(list(a()), maybe(a()))),
+            ("tail", fun(list(a()), maybe(list(a())))),
+            ("cons", fun(a(), fun(list(a()), list(a())))),
         ];
 
-        let list_mod = db.module_by_name("Sky.Core.List");
-        for (name, ty) in specs {
-            let scheme = Scheme::generalize(ty);
-            self.check_kernel_sigs
-                .entry(("List".to_string(), name.to_string()))
-                .or_insert_with(|| scheme.clone());
-            // The `Res::Def` key: mirror pass-2's `intern_value` interning so an
-            // `import Sky.Core.List as List` call site (resolving to `Res::Def`)
-            // finds the same DefId. GUARD: respect a future explicit annotation
-            // (never shadow `value_sigs`). `filterMap` may be kernel-only (no
-            // Sky-source public def) — its DefId key is then inert; harmless.
-            if let Some(m) = list_mod {
-                let def = intern_value(db, m, name);
-                if !self.value_sigs.contains_key(&def) {
-                    self.check_sigs.entry(def).or_insert(scheme);
+        // F8 — Basics tuple projections (`fst : (a, b) -> a`, `snd : (a, b) -> b`).
+        let basics_specs: Vec<(&str, Ty)> = vec![
+            ("fst", fun(tup2(a(), b()), a())),
+            ("snd", fun(tup2(a(), b()), b())),
+        ];
+
+        // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).
+        let maybe_specs: Vec<(&str, Ty)> = vec![
+            ("withDefault", fun(a(), fun(maybe(a()), a()))),
+            ("map", fun(fun(a(), b()), fun(maybe(a()), maybe(b())))),
+            ("andThen", fun(fun(a(), maybe(b())), fun(maybe(a()), maybe(b())))),
+        ];
+
+        for (pseudo, path, specs) in [
+            ("List", "Sky.Core.List", list_specs),
+            ("Basics", "Sky.Core.Basics", basics_specs),
+            ("Maybe", "Sky.Core.Maybe", maybe_specs),
+        ] {
+            let module = db.module_by_name(path);
+            for (name, ty) in specs {
+                let scheme = Scheme::generalize(ty);
+                // The `Res::Kernel` key (pseudo-module, func): a bare
+                // prelude-qualified `List.reverse` / `fst` / `Maybe.withDefault`
+                // resolves here.
+                self.check_kernel_sigs
+                    .entry((pseudo.to_string(), name.to_string()))
+                    .or_insert_with(|| scheme.clone());
+                // The `Res::Def` key: mirror pass-2's `intern_value` interning so
+                // an `import Sky.Core.List as List` call site (resolving to
+                // `Res::Def`) finds the same DefId. GUARD: respect an explicit
+                // annotation (never shadow `value_sigs`). A kernel-only name with
+                // no Sky-source public def leaves an inert DefId key; harmless.
+                if let Some(m) = module {
+                    let def = intern_value(db, m, name);
+                    if !self.value_sigs.contains_key(&def) {
+                        self.check_sigs.entry(def).or_insert(scheme);
+                    }
                 }
             }
         }

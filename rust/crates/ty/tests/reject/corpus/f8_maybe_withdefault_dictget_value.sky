@@ -1,0 +1,13 @@
+-- defect: Maybe.withDefault default type mismatches the Maybe payload — `Dict.get
+--         "k" strDict : Maybe String` fed to `Maybe.withDefault 0` (`0 : Int`).
+--         The unannotated `Maybe.withDefault` wildcard used to accept this; the F8
+--         check-only precise `Maybe.withDefault : a -> Maybe a -> a` sig pins `a`
+--         and rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (Maybe.withDefault 0 (Dict.get "k" (Dict.fromList [ ( "k", "str" ) ]))))

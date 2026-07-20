@@ -1,0 +1,10 @@
+-- defect: List.take result element mismatch — `List.take 2 [1,2,3] : List Int`
+--         fed to `String.join`'s `List String`. F8 precise
+--         `List.take : Int -> List a -> List a` rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+main =
+    println (String.join "," (List.take 2 [ 1, 2, 3 ]))

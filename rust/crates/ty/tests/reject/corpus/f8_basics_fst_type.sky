@@ -1,0 +1,10 @@
+-- defect: fst result type mismatches a downstream param — `fst ("a", 1) : String`
+--         fed to `String.fromInt : Int -> String`. The unannotated `fst` wildcard
+--         used to accept this; the F8 check-only precise `fst : (a, b) -> a` sig
+--         pins the result and rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (fst ( "a", 1 )))
