@@ -310,23 +310,24 @@ impl<'a> Infer<'a> {
                 sub.insert(name.as_str().to_string(), fresh);
             }
         }
-        // Peel one arrow per top-level param, seeding the param's declared type.
-        // A param whose declared type CONTAINS a record is NOT seeded: pinning a
-        // record-alias param (`model : Model`) makes real TEA code's record
-        // updates / `List.map`-over-field threading clash on field-presence
-        // under this checker's record unification (which the full-HM oracle
-        // resolves) — a false positive on accepted code (19-skyforum). Seeding
-        // primitive / nominal / function params still catches the genuine
-        // non-record-vs-record misuse (`grab : Int -> String; grab n = n.name`).
+        // Peel one arrow per top-level param, seeding EVERY param's declared type
+        // (including record-typed params) CLOSED via `ty_to_var` — a param `model
+        // : Model` is exactly the closed record the user wrote. Real TEA record
+        // threading (updates / subset field access) still resolves: an
+        // `Expr::Update` / field `Expr::Access` on a closed record introduces an
+        // OPEN row-poly constraint whose extra-field row absorbs into the closed
+        // record's own fields, so `{ m | count = .. }` on a closed `Model`
+        // unifies without a presence clash. Seeding closed catches the genuine
+        // misuses the open seed silently accepted: an update / literal of a
+        // NONEXISTENT field, a record passed where a wider closed record is
+        // required, and the non-record-vs-record misuse.
         let mut cur = scheme.ty.clone();
         let mut consumed = 0usize;
         for &pv in &param_vars {
             match cur {
                 Ty::Fun(a, b) => {
-                    if !ty_contains_record(&a) {
-                        let av = self.ty_to_var_open(&a, &mut sub);
-                        self.unify(pv, av);
-                    }
+                    let av = self.ty_to_var(&a, &mut sub);
+                    self.unify(pv, av);
                     cur = *b;
                     consumed += 1;
                 }
@@ -362,106 +363,27 @@ impl<'a> Infer<'a> {
                 span: body.expr_span(root),
             });
         }
-        // Record-literal-vs-closed-annotation strictness (RC2 / audit #1,#2): a
-        // bare record LITERAL checked against a CLOSED declared record type must
-        // have an EXACTLY matching field set. The general body unify below stays
-        // presence-lenient (protecting real TEA model-threading through record
-        // updates / subset field access — 19-skyforum), but a literal written
-        // directly against a closed annotation has no such excuse: a missing
-        // field silently zero-fills and an extra field is silently dropped (both
-        // accepted here, both rejected by the oracle). Fires only for a bare
-        // `Expr::Record` literal (never `Expr::Update`) against `Ty::Record(_,
-        // None)` (closed; `Some(ext)` = extensible → stays lenient).
-        if let (Expr::Record(lit_fields), Ty::Record(decl_fields, None)) =
-            (&body.exprs[root], &cur)
-        {
-            for (dn, _) in decl_fields {
-                if !lit_fields.iter().any(|(ln, _)| ln == dn) {
-                    self.errors.push(TypeError {
-                        message: format!(
-                            "record literal is missing required field `{}`",
-                            dn.as_str()
-                        ),
-                        // No literal expr for a missing field — anchor at the
-                        // whole record literal (the def root here).
-                        span: body.expr_span(root),
-                    });
-                }
-            }
-            for (ln, fid) in lit_fields {
-                if !decl_fields.iter().any(|(dn, _)| dn == ln) {
-                    self.errors.push(TypeError {
-                        message: format!(
-                            "record literal has unknown field `{}` not in the declared type",
-                            ln.as_str()
-                        ),
-                        // Precise: anchor at the offending field's value expr.
-                        span: body.expr_span(*fid),
-                    });
-                }
-            }
-        }
-        let expected_result = self.ty_to_var_open(&cur, &mut sub);
+        // (The bespoke record-literal-vs-closed strictness check that used to
+        // sit here — RC2 / audit #1,#2 — is now redundant: with the record-param
+        // and expected-result seeds both CLOSED (`ty_to_var`) and the extras
+        // rules in `unify_records` unconditional, a bare record literal bound to
+        // a closed annotation that omits or adds a field is rejected by the
+        // general body-vs-annotation unify below — verified by the reject corpus
+        // `record_literal_missing_field_direct` / `record_literal_extra_field`.)
+        let expected_result = self.ty_to_var(&cur, &mut sub);
         // Body inference stays STRICT (record-presence clashes inside the body —
         // e.g. a call passing a record that lacks a required field — must still
         // reject; that is exactly `record_missing_field` at its call site).
         let v = self.infer_expr(body, root);
-        // Only the final body-vs-annotation unification is presence-lenient:
-        // a body result that structurally matches the declared type up to open
-        // rows is accepted, while a field-TYPE clash (age String vs Int) or a
-        // non-record-vs-record clash still lands in `errors`.
-        self.uf.lenient_record_presence = true;
+        // Body-vs-annotation unification. Both the params (above) and this
+        // expected result are seeded CLOSED via `ty_to_var`; record-presence
+        // clashes are surfaced by the (now unconditional) extras rules in
+        // `unify_records`. Real TEA threading still resolves because an
+        // `Expr::Update` / field `Expr::Access` introduces an OPEN row-poly
+        // constraint that absorbs into the closed record's own fields, while a
+        // genuine field-type clash, a non-record-vs-record clash, or a
+        // closed-vs-closed field-presence mismatch rejects.
         self.unify(v, expected_result);
-        self.uf.lenient_record_presence = false;
-    }
-
-    /// Like [`Infer::ty_to_var`] but seeds every CLOSED record (`ext = None`)
-    /// with a fresh row variable, making it OPEN. Used only by the annotation
-    /// gate ([`Infer::infer_def_against`]): a declared record type constrains
-    /// the body's field TYPES and overall SHAPE, but must not force exact
-    /// field-presence parity — real TEA code threads models through record
-    /// updates / subset accesses that the lenient body checker models with open
-    /// rows, so a closed seed would false-positive "missing/extra field" on
-    /// accepted programs (accept-parity gate: 19-skyforum). Opening the seed
-    /// keeps the sound clashes (wrong field type, non-record vs record,
-    /// primitive vs primitive) while dropping the field-presence class that the
-    /// full-HM oracle resolves and this checker cannot match exactly.
-    fn ty_to_var_open(&mut self, ty: &Ty, sub: &mut HashMap<String, TyVarId>) -> TyVarId {
-        match ty {
-            Ty::Fun(a, b) => {
-                let va = self.ty_to_var_open(a, sub);
-                let vb = self.ty_to_var_open(b, sub);
-                self.fun(va, vb)
-            }
-            Ty::App(name, args) => {
-                let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var_open(a, sub)).collect();
-                self.uf
-                    .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
-            }
-            Ty::Tuple(xs) => {
-                let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var_open(x, sub)).collect();
-                self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
-            }
-            Ty::Record(fields, ext) => {
-                let mut map = std::collections::BTreeMap::new();
-                for (n, t) in fields {
-                    let v = self.ty_to_var_open(t, sub);
-                    map.insert(n.clone(), v);
-                }
-                // Force OPEN: reuse a named row var if present, else a fresh one.
-                let ext_var = match ext {
-                    Some(e) if e.as_str() != "any" => Some(
-                        *sub.entry(e.as_str().to_string())
-                            .or_insert_with(|| self.uf.fresh_flex()),
-                    ),
-                    _ => Some(self.uf.fresh_flex()),
-                };
-                self.uf
-                    .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
-            }
-            // vars / unit / error: identical to `ty_to_var`.
-            _ => self.ty_to_var(ty, sub),
-        }
     }
 
     /// Infer the FULL scheme of a (typically unannotated) top-level def:

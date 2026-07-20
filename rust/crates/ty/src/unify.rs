@@ -83,22 +83,12 @@ impl Mismatch {
 #[derive(Default)]
 pub struct UnionFind {
     slots: Vec<Slot>,
-    /// When set, record unification treats a closed side that lacks the other's
-    /// fields as OK (skips the extra/missing-field error branches) but STILL
-    /// unifies shared fields (so wrong-field-type clashes survive). The
-    /// annotation gate ([`crate::infer::Infer::infer_def_against`]) flips this on
-    /// only while unifying a body result against its declared type, where
-    /// exact field-presence parity would false-positive on row-polymorphic TEA
-    /// code the full-HM oracle accepts (accept-parity, 19-skyforum). Field-type
-    /// and non-record-vs-record clashes are unaffected. Default `false`.
-    pub lenient_record_presence: bool,
 }
 
 impl UnionFind {
     pub fn new() -> Self {
         UnionFind {
             slots: Vec::new(),
-            lenient_record_presence: false,
         }
     }
 
@@ -392,16 +382,14 @@ impl UnionFind {
             .collect();
 
         // A closed side forbids the other side introducing extras it lacks.
-        // (extras1Illegal / extras2Illegal, Unify.hs:486). Suppressed under the
-        // annotation gate's presence-lenient mode — shared fields are still
-        // unified below, so field-TYPE clashes survive.
-        if !self.lenient_record_presence {
-            if e1.is_none() && !only2.is_empty() {
-                return Err(Mismatch::new(record_extra_msg(&only2)));
-            }
-            if e2.is_none() && !only1.is_empty() {
-                return Err(Mismatch::new(record_extra_msg(&only1)));
-            }
+        // (extras1Illegal / extras2Illegal, Unify.hs:486). Runs unconditionally:
+        // a closed record that lacks a field the other side carries is a genuine
+        // field-presence clash the Haskell oracle rejects.
+        if e1.is_none() && !only2.is_empty() {
+            return Err(Mismatch::new(record_extra_msg(&only2)));
+        }
+        if e2.is_none() && !only1.is_empty() {
+            return Err(Mismatch::new(record_extra_msg(&only1)));
         }
 
         // resolved combined field set + extension

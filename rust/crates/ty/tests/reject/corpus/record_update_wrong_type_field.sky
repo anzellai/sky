@@ -1,0 +1,23 @@
+-- defect: a record UPDATE sets an EXISTING field to a value of the WRONG type —
+--         `{ r | age = "old" }` where `age : Int`.
+-- oracle: ACCEPTS this (same update-deferral unsoundness — the updated field's
+--         value type is never unified against the declared field type). The
+--         Rust checker is intentionally STRICTER (better-than-oracle): with the
+--         record param `r : P` seeded CLOSED, the update unifies the `age` slot
+--         (Int) against the String value and REJECTS on the field-TYPE clash.
+--         This lock guards against re-introducing the record leniency that would
+--         let a wrong-typed update slip through.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias P =
+    { name : String, age : Int }
+
+bad : P -> P
+bad r =
+    { r | age = "old" }
+
+main =
+    println (bad { name = "a", age = 1 }).name
