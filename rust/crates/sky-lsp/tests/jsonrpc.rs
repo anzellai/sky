@@ -438,6 +438,29 @@ impl Client {
         Some((label, active))
     }
 
+    /// Titles of every `textDocument/codeAction` returned over the whole doc.
+    fn code_action_titles(&mut self) -> Vec<String> {
+        let id = self.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": main_uri()},
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1000, "character": 0}
+                },
+                "context": {"diagnostics": []}
+            }),
+        );
+        let r = self.await_response(id);
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| c.get("title").and_then(Value::as_str).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn shutdown(mut self) {
         // Best-effort graceful stop, then hard-kill so the harness never blocks.
         let _ = Command::new("kill")
@@ -602,6 +625,28 @@ fn new_endpoints_over_jsonrpc() {
         eprintln!("  failed: {fails:?}");
     }
     assert_eq!(pass, 3, "expected 3/3 new endpoints; failed: {fails:?}");
+}
+
+/// `textDocument/codeAction` over the wire: the FIXTURE has unsorted imports
+/// (`Sky.Core.Task` before `Sky.Core.String`) and an unannotated `main`, so both
+/// v1 quick-fixes must surface via the real server round-trip.
+#[test]
+fn code_action_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open(FIXTURE);
+
+    let titles = c.code_action_titles();
+    c.shutdown();
+
+    assert!(
+        titles.iter().any(|t| t.starts_with("Add type annotation: main")),
+        "expected an add-annotation fix for unannotated `main`; got {titles:?}"
+    );
+    assert!(
+        titles.iter().any(|t| t == "Organize imports"),
+        "FIXTURE imports are unsorted — organize must be offered; got {titles:?}"
+    );
 }
 
 /// Drive all 17 nvim scenarios through the real server; report the pass count.

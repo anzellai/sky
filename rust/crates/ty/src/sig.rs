@@ -290,7 +290,7 @@ impl World {
                 if self.value_sigs.contains_key(def) {
                     continue;
                 }
-                if names.get(def).is_none() {
+                if !names.contains_key(def) {
                     continue;
                 }
                 let mut infer = Infer::new(self, db).with_self_def(Some(*def));

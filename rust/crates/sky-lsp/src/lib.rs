@@ -41,6 +41,7 @@ use syntax::SyntaxKind;
 use ty::{Ty, TyDb, Typer};
 
 use tower_lsp::lsp_types::{
+    CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionResponse,
     CompletionItem, CompletionItemKind, Diagnostic, DiagnosticRelatedInformation,
     DiagnosticSeverity, DocumentHighlight, DocumentHighlightKind, DocumentSymbol, Hover,
     HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, MarkupContent, MarkupKind,
@@ -1267,6 +1268,86 @@ impl Analysis {
         hints
     }
 
+    // ---- textDocument/codeAction ---------------------------------------
+
+    /// Quick-fixes for the requested range. NOT diagnostic-driven (the
+    /// `Diagnostic.suggestion` field is never populated by any frontend, and the
+    /// Haskell server's `handleCodeAction` also computes from the AST/inference,
+    /// not `context.diagnostics`). v1 offers two engine-data actions, matching
+    /// the Haskell surface (`Server.hs:2346`):
+    ///   1. **Add type annotation** on an unannotated top-level value whose decl
+    ///      intersects the range (reuses the inlay-hint inference path).
+    ///   2. **Organize imports** — sort the import block by module path.
+    ///
+    /// The action list is order-stable (annotations in `top_defs` order, then
+    /// organize-imports) for deterministic tests.
+    pub fn code_actions(
+        &self,
+        url: &Url,
+        range: Range,
+        _ctx: &CodeActionContext,
+    ) -> CodeActionResponse {
+        let Some(idx) = self.index_of(url) else {
+            return Vec::new();
+        };
+        let text = self.docs[idx].text.clone();
+        let db = self.db();
+        let module = ModuleId(idx as u32);
+        let resolved = db.resolve(module);
+        let typer = Typer::new(db);
+        let lo = offset_of(&text, range.start).unwrap_or(0);
+        let hi = offset_of(&text, range.end).unwrap_or(u32::MAX);
+        let mut out: CodeActionResponse = Vec::new();
+
+        // (1) Add type annotation on an unannotated top-level value in range.
+        for td in &resolved.top_defs {
+            let def = td.def;
+            if typer.value_sig(def).is_some() {
+                continue; // already annotated
+            }
+            let Some((_, span)) = resolved.def_spans.iter().find(|(id, _)| *id == def) else {
+                continue;
+            };
+            if span.range.1 < lo || span.range.0 > hi {
+                continue; // decl name doesn't intersect the requested range
+            }
+            let Some(body) = resolved.bodies.get(&def) else {
+                continue;
+            };
+            let bt = typer.body_types_annotated(def, body);
+            let Some(ty) = bt.signature.or(bt.result) else {
+                continue;
+            };
+            let name = td.name.as_str();
+            let rendered = ty.render();
+            let line = position_at(&text, span.range.0).line;
+            let at = Range {
+                start: Position { line, character: 0 },
+                end: Position { line, character: 0 },
+            };
+            let edit = TextEdit {
+                range: at,
+                new_text: format!("{name} : {rendered}\n"),
+            };
+            out.push(quickfix(
+                format!("Add type annotation: {name} : {rendered}"),
+                CodeActionKind::QUICKFIX,
+                ws_edit(url, vec![edit]),
+            ));
+        }
+
+        // (2) Organize imports — sort the import block by module path.
+        if let Some(edit) = organize_imports_edit(db, module, &text) {
+            out.push(quickfix(
+                "Organize imports".to_string(),
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                ws_edit(url, vec![edit]),
+            ));
+        }
+
+        out
+    }
+
     // ---- textDocument/signatureHelp ------------------------------------
 
     /// Parameter info for the call enclosing the cursor (doc 10 §request→query
@@ -1821,12 +1902,80 @@ fn span_to_range(text: &str, span: Span) -> Range {
 /// `docs` — so a secondary label pointing into a *different* file still links
 /// correctly. `docs` is the loaded document set (indexed by module/file id).
 ///
-/// TODO(code-action): `d.suggestion`, when present, should also be surfaced as a
-/// `textDocument/codeAction` quick-fix (a `CodeAction` titled from the
-/// suggestion). No frontend emit site populates `suggestion` yet, so a handler
-/// would be dead/untestable code today; when the first suggestion-carrying
-/// diagnostic lands, register `code_action_provider` + a `code_action` handler
-/// and thread the fix here.
+/// Code actions are NOT driven by `d.suggestion` (never populated) — see
+/// `Analysis::code_actions`, which computes from AST/inference like the Haskell
+/// server.
+///
+/// A `WorkspaceEdit` touching a single file `url` with `edits`.
+fn ws_edit(url: &Url, edits: Vec<TextEdit>) -> WorkspaceEdit {
+    let mut changes = HashMap::new();
+    changes.insert(url.clone(), edits);
+    WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    }
+}
+
+/// A `quickfix`-style `CodeAction` carrying a workspace edit.
+fn quickfix(title: String, kind: CodeActionKind, edit: WorkspaceEdit) -> CodeActionOrCommand {
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title,
+        kind: Some(kind),
+        edit: Some(edit),
+        ..Default::default()
+    })
+}
+
+/// An edit that sorts the import block by module path, or `None` when there are
+/// ≤1 imports or they are already sorted. Whole-node source slices are moved
+/// verbatim (alias / exposing clauses preserved). Assumes the imports form one
+/// contiguous block (the canonical layout).
+fn organize_imports_edit(db: &SkyDatabase, module: ModuleId, text: &str) -> Option<TextEdit> {
+    let parse = db.module_parse(module);
+    let tree = parse.tree();
+    let imports: Vec<_> = tree.imports().collect();
+    if imports.len() <= 1 {
+        return None;
+    }
+    // (module-path key, byte start, byte end) in source order. A CST import node
+    // captures leading trivia (the newline before it), so trim each slice to the
+    // real import text — the replacement then preserves the surrounding newlines.
+    let items: Vec<(String, u32, u32)> = imports
+        .iter()
+        .map(|imp| {
+            let key = imp
+                .name()
+                .map(|n| n.syntax().text().to_string())
+                .unwrap_or_default();
+            let r = imp.syntax().text_range();
+            let (s0, e0) = (usize::from(r.start()), usize::from(r.end()));
+            let slice = &text[s0..e0];
+            let lead = slice.len() - slice.trim_start().len();
+            let trail = slice.len() - slice.trim_end().len();
+            ((key), (s0 + lead) as u32, (e0 - trail) as u32)
+        })
+        .collect();
+    let mut sorted = items.clone();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    if sorted.iter().map(|t| &t.0).eq(items.iter().map(|t| &t.0)) {
+        return None; // already sorted
+    }
+    let first_start = items.iter().map(|t| t.1).min()?;
+    let last_end = items.iter().map(|t| t.2).max()?;
+    let new_text = sorted
+        .iter()
+        .map(|(_, s, e)| text[*s as usize..*e as usize].to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(TextEdit {
+        range: Range {
+            start: position_at(text, first_start),
+            end: position_at(text, last_end),
+        },
+        new_text,
+    })
+}
+
 fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnostic {
     let range = d
         .labels
