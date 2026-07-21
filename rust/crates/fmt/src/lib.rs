@@ -257,4 +257,45 @@ mod tests {
         idempotent(src);
         let _ = format_source(src);
     }
+
+    #[test]
+    fn header_comment_stays_above_imports() {
+        // A file-header comment placed before the imports must remain ABOVE the
+        // import block — not fall through to the first decl (below the imports).
+        let src = "module M exposing (main)\n\n-- header doc\nimport A\n\nmain =\n    1\n";
+        let out = format_source(src);
+        assert!(
+            out.find("-- header doc").unwrap() < out.find("import A").unwrap(),
+            "header comment must stay above imports; got: {out:?}"
+        );
+        idempotent(src);
+    }
+
+    #[test]
+    fn let_leading_comment_stays_above_first_binding() {
+        // A comment between `let` and its first binding (even mis-indented) must
+        // render above that binding — not get deferred below the `in` body.
+        let src = "main =\n    let\n    -- note about x\n        x = 1\n    in\n        x\n";
+        let out = format_source(src);
+        let ci = out.find("-- note about x").unwrap();
+        assert!(
+            ci > out.find("let").unwrap() && ci < out.find("in\n").unwrap(),
+            "let-leading comment must stay inside the let above the binding; got: {out:?}"
+        );
+        idempotent(src);
+    }
+
+    #[test]
+    fn case_arm_body_comment_stays_with_its_arm() {
+        // A comment between an arm's `->` and its body (at the arm's own column)
+        // must stay with that arm — not get slurped onto the following arm.
+        let src =
+            "f x =\n    case x of\n        A ->\n        -- note about A\n            1\n\n        B ->\n            2\n";
+        let out = format_source(src);
+        assert!(
+            out.find("-- note about A").unwrap() < out.find("B ->").unwrap(),
+            "arm-body comment must stay with its own arm; got: {out:?}"
+        );
+        idempotent(src);
+    }
 }

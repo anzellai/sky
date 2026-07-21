@@ -208,9 +208,22 @@ impl Printer {
             sections.push(format!("{lhs}{exposing}"));
         }
 
-        let imports: Vec<String> = file.imports().map(|i| self.fmt_import(&i)).collect();
-        if !imports.is_empty() {
-            sections.push(format!("\n{}", imports.join("\n")));
+        let import_nodes: Vec<Import> = file.imports().collect();
+        if !import_nodes.is_empty() {
+            // Own-line header comments sitting above the first import belong ABOVE
+            // the import block. Drain them here; otherwise they fall through to the
+            // first decl's start-of-decl drain and get emitted below the imports.
+            let first_line = self.line_of_node(import_nodes[0].syntax());
+            let lead = trim_trailing_newlines(&self.drain_before(0, first_line));
+            if !lead.is_empty() {
+                sections.push(format!("\n{lead}"));
+            }
+            let rendered = import_nodes
+                .iter()
+                .map(|i| self.fmt_import(i))
+                .collect::<Vec<_>>()
+                .join("\n");
+            sections.push(format!("\n{rendered}"));
         }
 
         // Group decls: a `name : Type` annotation immediately followed by the
@@ -919,11 +932,21 @@ impl Printer {
 
     fn fmt_let(&mut self, col: usize, l: &syntax::ast::LetExpr) -> String {
         let def_col = col + STEP;
+        let let_line = self.line_of_node(l.syntax());
         let bindings: Vec<SyntaxNode> = let_bindings(l.syntax());
         let mut defs = String::new();
-        for b in &bindings {
+        for (i, b) in bindings.iter().enumerate() {
             let line = self.line_of_node(b);
-            let drained = self.drain_before(def_col, line);
+            // First binding: pull any own-line comment between `let` and the
+            // binding regardless of column — hand-written source often mis-indents
+            // these, and a column-exact drain would miss them and defer them to
+            // body-end. Later bindings keep the column-exact drain so a section
+            // header at def_col still attaches to the following binding.
+            let drained = if i == 0 {
+                self.drain_any_between(def_col, let_line, line)
+            } else {
+                self.drain_before(def_col, line)
+            };
             let s = self.fmt_binding(def_col, b);
             defs.push_str(&format!("{drained}{}{s}\n", indent(def_col)));
         }
@@ -1008,14 +1031,26 @@ impl Printer {
                 .unwrap_or(0);
             let drained = self.drain_before(branch_col, pat_line);
             let pat_str = pat.map(|p| self.fmt_pattern(&p)).unwrap_or_default();
-            let body = arm
-                .body()
-                .map(|b| self.fmt_expr(branch_col + STEP, &b))
+            let body = arm.body();
+            let body_col = branch_col + STEP;
+            // Arm-body-leading comments (between `->` and the body) — hand-written
+            // source often puts these at the arm's own column, so a body-column
+            // drain would miss them and the NEXT arm's drain_before would slurp
+            // them onto the wrong arm. Drain the gap here, rendered at body indent.
+            let body_lead = match &body {
+                Some(b) => {
+                    let bl = self.line_of_node(b.syntax());
+                    self.drain_any_between(body_col, pat_line, bl)
+                }
+                None => String::new(),
+            };
+            let body = body
+                .map(|b| self.fmt_expr(body_col, &b))
                 .unwrap_or_default();
             out.push_str(&format!(
-                "\n\n{drained}{}{pat_str} ->\n{}{body}",
+                "\n\n{drained}{}{pat_str} ->\n{body_lead}{}{body}",
                 indent(branch_col),
-                indent(branch_col + STEP)
+                indent(body_col)
             ));
         }
         out
