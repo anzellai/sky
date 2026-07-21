@@ -530,6 +530,23 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let constraint = self.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
                 self.unify(tb, constraint);
+                // D2 (lowering-path only): if the base is an unannotated sibling
+                // `Res::Def`, it resolved to a fresh flex above, so `tb`'s row
+                // stays open and reads back as the SUBSET of updated fields — but
+                // the emitted value is the FULL record → `go build` mismatch. Close
+                // the row by unifying `tb` with the base def's full closed-record
+                // result. Gated on `use_inferred` so the check path (accept/reject
+                // + LSP) is untouched and acceptance stays byte-identical; it only
+                // ADDS already-committed field info, so it can't clash.
+                if self.use_inferred {
+                    if let Expr::Var(Res::Def(d)) = &body.exprs[*base] {
+                        if let Some(s) = self.world.record_result_sigs.get(d) {
+                            let s = s.clone();
+                            let full = self.instantiate(&s);
+                            self.unify(tb, full);
+                        }
+                    }
+                }
                 tb
             }
             Expr::Var(res) => self.infer_res(res.clone()),

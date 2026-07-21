@@ -73,6 +73,15 @@ pub struct World {
     /// at `!use_inferred`, never by the lowerer → Go emission byte-identical.
     /// Populated by pass 6; empty on the lowerer path.
     pub any_result_check_sigs: HashMap<DefId, Scheme>,
+    /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
+    /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
+    /// on the `use_inferred` (codegen region-type) path, to close the row var when
+    /// a record update's base is an unannotated sibling `Res::Def` (which
+    /// otherwise resolves to a fresh flex → the update reads back as the SUBSET of
+    /// updated fields, while the emitted value is the FULL record → `go build`
+    /// mismatch). Never consulted on the check path, so accept/reject + LSP are
+    /// byte-identical. Populated by the pass after `any_result_check_sigs`.
+    pub record_result_sigs: HashMap<DefId, Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -103,6 +112,7 @@ impl World {
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
+            record_result_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
             ctor_union: HashMap::new(),
@@ -210,6 +220,11 @@ impl World {
         // and whose body returns a fully-monomorphic type, pin that concrete
         // result so callers can't absorb it at an arbitrary type. Runs last.
         world.infer_any_result_check_sigs(db);
+
+        // ---- pass 7: full record result types (D2, lowering-path only) ----
+        // Zero-param, unannotated defs whose body infers a CLOSED record — so the
+        // Update arm can close the row when such a def is a record-update base.
+        world.infer_record_result_sigs(db);
 
         world
     }
@@ -363,6 +378,35 @@ impl World {
                 let mut infer = Infer::new(self, db).with_self_def(Some(*def));
                 if let Some(scheme) = infer.infer_any_result_pin(body, &anno_ty, true) {
                     self.any_result_check_sigs.insert(*def, scheme);
+                }
+            }
+        }
+    }
+
+    /// Pass 7 (see `build`). D2 — record the FULL CLOSED-record result type of
+    /// every zero-param, unannotated top-level def. The `Expr::Update` arm
+    /// consults this ON THE LOWERING PATH ONLY to close the row when an update's
+    /// base is such a def (`bumped = { r | age = 2 }` where `r = {name, age}`):
+    /// without it the base resolves to a fresh flex and the update reads back as
+    /// the SUBSET `{age}`, while the emitted value is the FULL record → `go build`
+    /// mismatch. Uses the byte-faithful lowerer channel (`infer_def_scheme(_,
+    /// false)`); admits only a CLOSED record result so nothing else is affected.
+    fn infer_record_result_sigs(&mut self, db: &dyn SkyDb) {
+        use crate::infer::Infer;
+        for m in db.module_ids() {
+            let resolved = db.resolve(m);
+            for (def, body) in &resolved.bodies {
+                // Zero-param + unannotated (an annotated def already resolves to
+                // its full record via `value_sigs`).
+                if !body.params.is_empty() || self.value_sigs.contains_key(def) {
+                    continue;
+                }
+                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
+                let Some(scheme) = infer.infer_def_scheme(body, false) else {
+                    continue;
+                };
+                if matches!(&scheme.ty, Ty::Record(_, None)) {
+                    self.record_result_sigs.insert(*def, scheme);
                 }
             }
         }
