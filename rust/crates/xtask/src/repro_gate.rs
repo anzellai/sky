@@ -183,22 +183,61 @@ fn check_one(
     }
 }
 
-/// Spawn one fresh worker process, `timeout`-bounded, capturing its stdout as
-/// the emitted Go source. A fresh process → a fresh `RandomState` seed.
+/// Spawn one fresh worker process, bounded to 120 s, capturing its stdout as the
+/// emitted Go source. A fresh process → a fresh `RandomState` seed. Uses a
+/// Rust-native bounded wait (NOT the external `timeout` command, which is absent
+/// on macOS — GNU coreutils only), and drains stdout/stderr in threads so a large
+/// emission (>64 KiB pipe buffer) can't deadlock the wait.
 fn emit_once(worker: &Path, root: &Path, name: &str) -> Result<String, String> {
-    let out = Command::new("timeout")
-        .arg("120")
-        .arg(worker)
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(worker)
         .arg("repro")
         .arg(format!("--emit-worker={name}"))
         .current_dir(root)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("spawn: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().next().unwrap_or("worker failed").to_string());
+
+    // Read both pipes concurrently so the child never blocks on a full pipe.
+    let mut so = child.stdout.take().expect("piped stdout");
+    let mut se = child.stderr.take().expect("piped stderr");
+    let h_out = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = so.read_to_end(&mut b);
+        b
+    });
+    let h_err = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = se.read_to_end(&mut b);
+        b
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let success = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("emit worker timed out (120s)".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("wait: {e}")),
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&h_out.join().unwrap_or_default()).into_owned();
+    let stderr = String::from_utf8_lossy(&h_err.join().unwrap_or_default()).into_owned();
+    if !success {
+        return Err(stderr.lines().next().unwrap_or("worker failed").to_string());
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(stdout)
 }
 
 /// Compare N captured emissions. `(true, None)` iff all identical; else
