@@ -326,10 +326,20 @@ fn diff_and_gate(
         }
     }
 
-    // golden entries with no emitting example this run.
+    // golden entries with no emitting example this run. A golden entry whose
+    // example is in `no_emit` is NOT a true orphan — it EXISTS but couldn't emit
+    // in THIS environment (an FFI example whose surface is absent here: 11-fyne /
+    // 13-skyshop commit no surface — gitignored — so they emit locally but not on
+    // a fresh CI checkout). Those are environment-dependent non-emissions, already
+    // reported via `no_emit`; excluding them keeps the golden portable local↔CI.
+    // A genuinely REMOVED/renamed example is absent from the corpus entirely
+    // (neither `counts` nor `no_emit`), so it still surfaces as a true orphan.
+    let no_emit_set: std::collections::HashSet<&str> =
+        no_emit.iter().map(|(n, _)| n.as_str()).collect();
     let golden_orphans: Vec<&String> = golden
         .keys()
         .filter(|k| !counts.contains_key(*k))
+        .filter(|k| !no_emit_set.contains(k.as_str()))
         .collect();
 
     println!("{}", "-".repeat(w + 40));
