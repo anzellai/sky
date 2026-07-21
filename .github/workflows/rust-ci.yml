@@ -90,6 +90,22 @@ jobs:
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz
 
+      # ---- runtime-coercion FLOOR-LOCK (pure-Rust; no Go toolchain) ----
+      # Re-emits each example's Go in-process and counts the tracked runtime
+      # NARROWING/erasure tokens (rt.Coerce / rt.As* / rt.Field / rt.SkyCall — the
+      # §8 irreducible floor: FFI return, wire decode, TEA dispatch, type-var
+      # erase). FAIL-ON-INCREASE vs the committed golden: a codegen change that
+      # emits MORE coercions than the locked floor fails here (silent widening).
+      # A DECREASE passes (floor tightened) + is reported to re-bless. No existing
+      # gate bounds this — repro proves the Go is byte-STABLE, build-run proves it
+      # BUILDS; neither counts coercions. This is the count lock.
+      #
+      # Cost: one in-process emit per example (no `go build`, no subprocess) —
+      # the emit is the cheap half of what repro/build-run already do; the count
+      # is O(bytes). Kept a separate fast gate for a clear, single-purpose signal.
+      - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
+        run: cargo run -q -p xtask -- coerce-floor
+
       # ---- codegen determinism + emit (needs the Go toolchain) ----
       # Runtime helpers (rt.Coerce / AsTuple / Dict_fromList / tuple dispatch /
       # panic classification / …) — the ~150 `rt/*_test.go` that guard the
