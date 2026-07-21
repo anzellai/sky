@@ -15,20 +15,17 @@
 # Optional flags:
 #   --sweep       run every example end-to-end after the build (takes ~2 min)
 #   --self-tests  run test-files/*.sky through `sky build`
-#   --clean       remove dist-newstyle/, sky-out/, bin/ before building
+#   --clean       remove rust/target/, sky-out/, bin/ before building
 #   --help        print this help
 #
 # Prerequisites (expected on PATH):
-#   * cabal  (3.10+)    — https://www.haskell.org/ghcup/
-#   * ghc    (9.4.8)    — pinned; other 9.4.x should work
+#   * cargo + rustc     — see rust/rust-toolchain.toml
 #   * go     (1.21+)    — required at runtime by `sky build`
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-
-GHC_EXPECTED="9.4.8"
 
 RUN_SWEEP=0
 RUN_SELF_TESTS=0
@@ -54,19 +51,13 @@ say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ─── preflight ──────────────────────────────────────────────────────
-command -v cabal >/dev/null || fail "cabal not found on PATH"
-command -v ghc   >/dev/null || fail "ghc not found on PATH"
+command -v cargo >/dev/null || { echo "cargo not found on PATH"; exit 1; }
 command -v go    >/dev/null || fail "go not found on PATH"
-
-GHC_VER="$(ghc --numeric-version 2>/dev/null || echo '?')"
-if [[ "$GHC_VER" != "$GHC_EXPECTED"* ]]; then
-    say "warning: GHC is $GHC_VER, pinned to $GHC_EXPECTED (continuing)"
-fi
 
 # ─── clean ──────────────────────────────────────────────────────────
 if [[ $DO_CLEAN -eq 1 ]]; then
-    say "cleaning dist-newstyle/, sky-out/, bin/"
-    rm -rf dist-newstyle sky-out bin
+    say "cleaning rust/target/, sky-out/, bin/"
+    rm -rf rust/target sky-out bin
 fi
 
 mkdir -p sky-out bin
@@ -77,12 +68,9 @@ mkdir -p sky-out bin
 # each embedded file via Template Haskell's qAddDependentFile. A
 # cabal-test spec (Sky.Build.EmbeddedRuntimeSpec) guards against drift.
 
-say "building sky compiler (cabal)"
-cabal update >/dev/null
-cabal install exe:sky \
-    --overwrite-policy=always \
-    --install-method=copy \
-    --installdir=sky-out
+say "building sky compiler (cargo)"
+( cd rust && cargo build --release --locked -p sky-cli )
+mkdir -p sky-out && cp rust/target/release/sky sky-out/sky
 
 chmod +x sky-out/sky
 ./sky-out/sky --version

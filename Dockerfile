@@ -14,12 +14,12 @@
 
 FROM golang:1.26-bookworm
 
-# Debian's default locale is POSIX/C (ASCII). Sky is a Haskell binary and
-# GHC's text IO honours the system locale — without this, reading .sky
-# source files that contain UTF-8 (currency symbols, non-Latin strings,
-# multiline string content) fails with "invalid byte sequence" or silently
-# corrupts output. C.UTF-8 ships with Debian ≥ buster so no `locales`
-# package install is needed — zero image-size cost.
+# Debian's default locale is POSIX/C (ASCII). Set a UTF-8 locale so the Go
+# toolchain and any locale-sensitive IO handle .sky source files containing
+# UTF-8 (currency symbols, non-Latin strings, multiline string content)
+# without "invalid byte sequence" errors or silent corruption. C.UTF-8 ships
+# with Debian ≥ buster so no `locales` package install is needed — zero
+# image-size cost.
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
