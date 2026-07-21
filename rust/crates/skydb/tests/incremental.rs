@@ -402,17 +402,17 @@ fn type_world_and_infer_are_memoised_within_a_revision() {
 /// value-equal world) and `App`'s own `resolve` is untouched. Asserts BOTH the
 /// recompute-set (by query name) AND correctness (byte-equal a fresh build).
 ///
-/// KNOWN PRE-EXISTING FAILURE (bisected to before the 2026-07 checker-strength
-/// work). `World::build`'s per-def inference passes — `app_check_sigs` (F1c) plus
-/// the D1/D2 check-only channels — read app defs' BODIES, so a body edit in an
-/// unrelated module no longer re-executes `World::build` to a *value-equal* world;
-/// `type_world` fails to backdate and `App.main`'s `infer` recomputes. This is an
-/// incremental-PERFORMANCE regression, NOT a correctness one — the recomputed
-/// result is byte-equal to a fresh build (the test's correctness assertion passes;
-/// only the recompute-SET assertion fails). Closing it needs the tracked
-/// salsa-granularity refinement: per-referenced-def `sig(DefId)` queries so
-/// `World::build` doesn't eagerly re-infer unrelated bodies. Ignored so the
-/// workspace test suite (and Rust CI) stays green; un-ignore with that fix.
+/// GATED (live, not `#[ignore]`d). This property regressed once — `World::build`'s
+/// per-def inference passes (`app_check_sigs` F1c + the D1/D2 check-only channels)
+/// read app defs' BODIES, so a body edit no longer re-executed `World::build` to a
+/// *value-equal* world, `type_world` failed to backdate, and `App.main`'s `infer`
+/// recomputed (an incremental-PERFORMANCE regression, results stayed byte-equal).
+/// Closed by the salsa-granularity refinement (`type_world` now builds only the
+/// body-INDEPENDENT `World::build_decls`; the body-derived channels moved to
+/// `check_world` + a per-def `record_result_sig` query — see
+/// `skydb::type_world_query`). This test asserts BOTH the recompute-set (by query
+/// name, via the salsa event stream) AND byte-correctness, so a future change that
+/// re-couples `type_world` to app bodies fails HERE.
 #[test]
 fn body_edit_recomputes_only_that_defs_infer() {
     let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);

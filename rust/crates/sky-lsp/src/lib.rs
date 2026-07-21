@@ -465,7 +465,12 @@ impl Analysis {
                 items.push(plain_item(&n, CompletionItemKind::FUNCTION));
             }
         }
-        for q in resolved.qualifiers.keys() {
+        // `qualifiers` is a `HashMap`, so its key-iteration order is randomized
+        // per process — sort before pushing so the completion list is
+        // deterministic (L4) run-to-run and testable.
+        let mut quals: Vec<&String> = resolved.qualifiers.keys().collect();
+        quals.sort();
+        for q in quals {
             if seen.insert(q.clone()) {
                 items.push(plain_item(q, CompletionItemKind::MODULE));
             }
