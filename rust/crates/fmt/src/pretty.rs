@@ -199,6 +199,15 @@ impl Printer {
         let mut sections: Vec<String> = Vec::new();
 
         if let Some(h) = file.module_header() {
+            // A module-doc comment sitting ABOVE the `module` keyword must stay
+            // there — it is the module's header doc (what `sky doc` reads). Drain
+            // it before emitting the header; otherwise it falls through to the
+            // first import/decl drain and lands below the module line.
+            let mod_line = self.line_of_node(h.syntax());
+            let lead = trim_trailing_newlines(&self.drain_before(0, mod_line));
+            if !lead.is_empty() {
+                sections.push(lead);
+            }
             let name = h.name().map(|n| n.text()).unwrap_or_default();
             let lhs = format!("module {name} exposing");
             let exposing = h

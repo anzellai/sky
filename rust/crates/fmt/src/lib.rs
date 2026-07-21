@@ -272,6 +272,21 @@ mod tests {
     }
 
     #[test]
+    fn module_doc_comment_stays_above_module() {
+        // A module-doc comment above the `module` keyword (the stdlib convention,
+        // read by `sky doc`) must stay above the module header — not get swept
+        // below it to the first import/decl.
+        let src =
+            "-- | M — a module.\n--\n-- Details.\nmodule M exposing (main)\n\nmain =\n    1\n";
+        let out = format_source(src);
+        assert!(
+            out.find("-- | M — a module.").unwrap() < out.find("module M").unwrap(),
+            "module-doc comment must stay above the module header; got: {out:?}"
+        );
+        idempotent(src);
+    }
+
+    #[test]
     fn let_leading_comment_stays_above_first_binding() {
         // A comment between `let` and its first binding (even mis-indented) must
         // render above that binding — not get deferred below the `in` body.
