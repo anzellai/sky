@@ -200,7 +200,54 @@ pub fn resolve_query(db: &dyn ResolveDb, module: ModuleId, _file: SourceFile) ->
 /// query exactly as they are for [`resolve_query`].
 #[salsa::tracked]
 pub fn type_world_query(db: &dyn ResolveDb) -> ty::World {
+    // DECLARATIONS ONLY (passes 1-4). The body-derived channels (`app_check_sigs`
+    // / `any_result_check_sigs` / `record_result_sigs`, passes 5-7) are NOT baked
+    // in here — they read app defs' BODIES, which would couple every `infer` to
+    // every body and break backdating. The checker takes them via
+    // [`check_world_query`]; the lowering path demands `record_result_sigs`
+    // per-def via [`record_result_sig_query`]. So a body-only app edit re-executes
+    // this query to a *value-equal* world → salsa backdates → an unrelated def's
+    // `infer` validates from memo instead of re-inferring (the headline
+    // incremental property; incremental-test `body_edit_recomputes_only_that_defs_infer`).
+    ty::World::build_decls(db.sky_db())
+}
+
+/// The FULL world (declarations + the body-derived CHECK-ONLY channels, passes
+/// 1-6) that the accept/reject checker (`ty::check_modules`) consumes. Kept
+/// SEPARATE from [`type_world_query`] deliberately: this query reads every app
+/// def's body (passes 5-6), so it does NOT backdate on a body edit — which is
+/// fine because it is demanded only by the whole-program checker + the per-def
+/// [`record_result_sig_query`], never by the per-def lowering `infer_query` whose
+/// backdating the incremental harness asserts. Value-identical to the pre-split
+/// `World::build` the checker read directly.
+#[salsa::tracked]
+pub fn check_world_query(db: &dyn ResolveDb) -> ty::World {
     ty::World::build(db.sky_db())
+}
+
+/// The D2 record-result scheme for one def (pass 7), demanded LAZILY by the
+/// lowering `infer_query` only for defs that appear as a record-update base in the
+/// body under inference (`ty::update_base_defs`). Built against the FULL
+/// [`check_world_query`] (passes 1-6) so the inferred field types are
+/// byte-identical to the pre-split bulk pass. Because `infer_query` demands this
+/// ONLY when the body actually has such an update, a body with none creates no
+/// dependency on any other def's body — preserving backdating for the common case
+/// (e.g. `App.main = greeting`).
+/// `_module` / `_file` are salsa **carrier** keys (a tracked fn needs a
+/// salsa-interned key tuple; `DefId` alone is not a salsa struct). They are the
+/// CONSUMING def's module/file — the value depends only on `def` + the world, so
+/// they at most cause a benign duplicate memo when the same base is updated from
+/// two different modules; correctness (invalidation) flows through the
+/// `check_world_query` read below, which every app body edit re-executes.
+#[salsa::tracked]
+pub fn record_result_sig_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    _module: ModuleId,
+    _file: SourceFile,
+) -> Option<ty::Scheme> {
+    let world = check_world_query(db);
+    world.record_result_scheme_for(db.sky_db(), def)
 }
 
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
@@ -231,8 +278,30 @@ pub fn infer_query(
     module: ModuleId,
     _file: SourceFile,
 ) -> ty::BodyTypes {
+    // DECLARATIONS world (passes 1-4) — backdates on unrelated app body edits.
     let world = type_world_query(db);
-    ty::compute_body_types(world, db.sky_db(), module, def)
+    let sky = db.sky_db();
+
+    // D2 (lowering path): the `Expr::Update` arm consults `record_result_sigs` for
+    // a def used as a record-update base. Demand those per-def (against the full
+    // check-world) and splice them into a world clone ONLY when the body actually
+    // has such an update — so a body with none (the common case) depends solely on
+    // `type_world` (backdated) + this module's `resolve`, and its `infer`
+    // validates from memo after an unrelated body edit.
+    let resolved = sky.resolve(module);
+    if let Some(body) = resolved.bodies.get(&def) {
+        let bases = ty::update_base_defs(body);
+        if !bases.is_empty() {
+            let mut w = world.clone();
+            for d in bases {
+                if let Some(scheme) = record_result_sig_query(db, d, module, _file) {
+                    w.record_result_sigs.insert(d, scheme.clone());
+                }
+            }
+            return ty::compute_body_types(&w, sky, module, def);
+        }
+    }
+    ty::compute_body_types(world, sky, module, def)
 }
 
 // ---- Stage E: lower + codegen as a tracked query (doc 01 bottom-of-DAG) ----
@@ -524,6 +593,9 @@ impl SkyDb for SkyDatabase {
 impl ty::TyDb for SkyDatabase {
     fn type_world(&self) -> Rc<ty::World> {
         Rc::new(type_world_query(self).clone())
+    }
+    fn check_world(&self) -> Rc<ty::World> {
+        Rc::new(check_world_query(self).clone())
     }
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<ty::BodyTypes> {
         // `module` comes from the caller (revision-safe — no interned read here);

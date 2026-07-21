@@ -100,8 +100,43 @@ pub struct World {
 }
 
 impl World {
-    /// Build the world from every loaded module (stdlib + deps + entry).
+    /// Build the FULL world from every loaded module (stdlib + deps + entry) —
+    /// declarations (passes 1-4) PLUS the body-derived CHECK/LOWER channels
+    /// (passes 5-7). This is what the accept/reject checker (`check_modules`) and
+    /// the eager backend consume. The salsa backend splits it: `type_world` uses
+    /// only [`World::build_decls`] (body-independent → backdates on app body
+    /// edits), while the body-derived channels are demanded per-def
+    /// (`record_result_scheme_for`) or rebuilt for the check path
+    /// (`check_world`). See `skydb::type_world_query` / `check_world_query`.
     pub fn build(db: &dyn SkyDb) -> World {
+        let mut world = World::build_decls(db);
+
+        // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
+        // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
+        // decls world so it can consult every declaration channel + its own prior
+        // topo-order admissions.
+        world.infer_app_check_sigs(db);
+
+        // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
+        world.infer_any_result_check_sigs(db);
+
+        // ---- pass 7: full record result types (D2, lowering-path only) ----
+        world.infer_record_result_sigs(db);
+
+        world
+    }
+
+    /// Build the DECLARATION-ONLY world (passes 1-4): aliases, unions,
+    /// annotations, kernel/stdlib pass-3 inference of unannotated combinators, and
+    /// the static CHECK-ONLY combinator seeds (pass 4). **Body-independent w.r.t.
+    /// APP code** — none of these passes read an app def's body (pass 3 reads only
+    /// `Result` pseudo-module bodies in the trusted stdlib), so an app body-only
+    /// edit re-executes this to a *value-equal* `World`. That is the backdating
+    /// mechanism `skydb::type_world_query` relies on: the body-derived channels
+    /// (`app_check_sigs`/`any_result_check_sigs`/`record_result_sigs`, passes 5-7)
+    /// are left EMPTY here and supplied lazily/per-def instead of baked into the
+    /// aggregate world (which would couple every `infer` to every body).
+    pub fn build_decls(db: &dyn SkyDb) -> World {
         let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
 
         let mut world = World {
@@ -202,29 +237,6 @@ impl World {
         // with `use_inferred=false`; today no Result combinator body calls a List
         // HOF, but seed-after makes the isolation structural, not incidental.
         world.seed_check_sigs(db);
-
-        // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
-        // (F1c narrow subset.) An unannotated app def used cross-module resolves
-        // to a fresh flex at its call site (all of value_sigs/inferred_sigs/
-        // check_sigs miss), so the checker can't detect misuse
-        // (`allCategories + 1` where `allCategories : List String`). This pass
-        // infers each such def's monomorphic scheme in import-topo order and
-        // admits ONLY the "cleanly usable" ones (record-free, fully monomorphic,
-        // Unit-spine-free) into the CHECK-ONLY `app_check_sigs` channel. Runs
-        // LAST so it can consult every earlier channel (incl. its own prior
-        // admissions along the topo order).
-        world.infer_app_check_sigs(db);
-
-        // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
-        // For an annotated non-poly app def whose declared result contains `any`
-        // and whose body returns a fully-monomorphic type, pin that concrete
-        // result so callers can't absorb it at an arbitrary type. Runs last.
-        world.infer_any_result_check_sigs(db);
-
-        // ---- pass 7: full record result types (D2, lowering-path only) ----
-        // Zero-param, unannotated defs whose body infers a CLOSED record — so the
-        // Update arm can close the row when such a def is a record-update base.
-        world.infer_record_result_sigs(db);
 
         world
     }
@@ -392,24 +404,50 @@ impl World {
     /// mismatch. Uses the byte-faithful lowerer channel (`infer_def_scheme(_,
     /// false)`); admits only a CLOSED record result so nothing else is affected.
     fn infer_record_result_sigs(&mut self, db: &dyn SkyDb) {
-        use crate::infer::Infer;
         for m in db.module_ids() {
             let resolved = db.resolve(m);
             for (def, body) in &resolved.bodies {
-                // Zero-param + unannotated (an annotated def already resolves to
-                // its full record via `value_sigs`).
-                if !body.params.is_empty() || self.value_sigs.contains_key(def) {
-                    continue;
-                }
-                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                let Some(scheme) = infer.infer_def_scheme(body, false) else {
-                    continue;
-                };
-                if matches!(&scheme.ty, Ty::Record(_, None)) {
+                if let Some(scheme) = self.admit_record_result(db, *def, body) {
                     self.record_result_sigs.insert(*def, scheme);
                 }
             }
         }
+    }
+
+    /// Pass-7 admission logic for ONE def, using `self` as the inference context
+    /// (which MUST be a full check-world — passes 1-6 — so the inferred field
+    /// types are byte-identical to what the bulk [`World::infer_record_result_sigs`]
+    /// pass computed). A zero-param, unannotated def whose body infers a CLOSED
+    /// record is admitted; everything else yields `None`. Shared by the bulk pass
+    /// (eager full build) and the per-def salsa query (`record_result_scheme_for`).
+    fn admit_record_result(
+        &self,
+        db: &dyn SkyDb,
+        def: DefId,
+        body: &hir::Body,
+    ) -> Option<Scheme> {
+        use crate::infer::Infer;
+        // Zero-param + unannotated (an annotated def already resolves to its full
+        // record via `value_sigs`).
+        if !body.params.is_empty() || self.value_sigs.contains_key(&def) {
+            return None;
+        }
+        let mut infer = Infer::new(self, db).with_self_def(Some(def));
+        let scheme = infer.infer_def_scheme(body, false)?;
+        matches!(&scheme.ty, Ty::Record(_, None)).then_some(scheme)
+    }
+
+    /// Per-def entry point for the D2 record-result scheme (pass 7), demanded
+    /// LAZILY on the lowering path (`skydb::record_result_sig_query`) instead of
+    /// baked into the aggregate world. `self` MUST be the full check-world
+    /// (passes 1-6, e.g. `World::build`) so the value matches the bulk pass
+    /// exactly. Fetches the def's own body via `def_loc` + `resolve` (revision-safe
+    /// inside a salsa query — every live `DefId` names an interned `DefKey`).
+    pub fn record_result_scheme_for(&self, db: &dyn SkyDb, def: DefId) -> Option<Scheme> {
+        let loc = db.def_loc(def)?;
+        let resolved = db.resolve(loc.module);
+        let body = resolved.bodies.get(&def)?;
+        self.admit_record_result(db, def, body)
     }
 
     /// Pass 4 (see `build`). Register precise stdlib combinator schemes into the
@@ -725,6 +763,27 @@ impl World {
             other => other.clone(),
         }
     }
+}
+
+/// Collect the `DefId`s that appear as the DIRECT base of a record-update
+/// expression (`{ base | ... }` where `base` is `Res::Def`). These are exactly
+/// the defs whose D2 `record_result_scheme_for` the lowering path's `Expr::Update`
+/// arm consults (`infer.rs`); the salsa `infer_query` demands `record_result_sig`
+/// only for these, so a body with no such update creates no dependency on any
+/// other def's body (the incremental-backdating property). Mirrors the arm's own
+/// guard exactly: only a base that is literally `Expr::Var(Res::Def(d))`.
+pub fn update_base_defs(body: &hir::Body) -> Vec<DefId> {
+    let mut out = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        if let hir::Expr::Update { base, .. } = expr {
+            if let hir::Expr::Var(hir::Res::Def(d)) = &body.exprs[*base] {
+                if !out.contains(d) {
+                    out.push(*d);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn record_ctor_scheme(record: &Ty) -> Scheme {

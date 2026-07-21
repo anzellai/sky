@@ -38,6 +38,14 @@ pub trait TyDb: SkyDb {
     /// assembly instead of rebuilding it each.
     fn type_world(&self) -> Rc<World>;
 
+    /// The FULL world including the body-derived CHECK-ONLY channels (passes 5-6:
+    /// `app_check_sigs` / `any_result_check_sigs`), consumed by the accept/reject
+    /// checker (`check_modules`, `!use_inferred`). Distinct from [`TyDb::type_world`]
+    /// (declarations only, passes 1-4) so that the salsa backend's `type_world`
+    /// stays body-independent and backdates on app body edits while the checker
+    /// still sees the F1c / D1 pins. On the eager backend both are plain builds.
+    fn check_world(&self) -> Rc<World>;
+
     /// The per-expression/per-local type table for one def — doc 01's
     /// `infer(DefId)`. On the salsa backend this is a `#[salsa::tracked]` query
     /// memoised at per-def granularity. The def's `module` is passed by the caller
@@ -95,9 +103,18 @@ pub fn compute_body_types(
 /// the status quo for the LSP + accept/reject gates, unchanged in behaviour.
 impl TyDb for hir::SourceDb {
     fn type_world(&self) -> Rc<World> {
+        // Declarations only (passes 1-4). The eager backend has no incremental
+        // store, so this is a fresh subset build; its consumers (`Typer`, the
+        // alias-expander in `lower`) read only declaration channels.
+        Rc::new(World::build_decls(self))
+    }
+    fn check_world(&self) -> Rc<World> {
         Rc::new(World::build(self))
     }
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<BodyTypes> {
+        // FULL world so the lowering path's `Expr::Update` arm sees pass-7
+        // `record_result_sigs` (byte-identical to the pre-split eager behaviour;
+        // passes 5-6 are `!use_inferred`-gated so they never perturb lowering).
         let world = World::build(self);
         Rc::new(compute_body_types(&world, self, module, def))
     }

@@ -146,7 +146,11 @@ impl<'a> Typer<'a> {
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
 pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
-    let world = db.type_world();
+    // The FULL world (passes 1-6): the accept/reject checker runs `!use_inferred`
+    // inference, which consults the body-derived `app_check_sigs` /
+    // `any_result_check_sigs` pins. `type_world` (declarations only) omits them so
+    // it can backdate on the salsa backend — the checker takes `check_world`.
+    let world = db.check_world();
     let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 

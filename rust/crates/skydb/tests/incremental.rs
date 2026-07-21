@@ -413,7 +413,6 @@ fn type_world_and_infer_are_memoised_within_a_revision() {
 /// salsa-granularity refinement: per-referenced-def `sig(DefId)` queries so
 /// `World::build` doesn't eagerly re-infer unrelated bodies. Ignored so the
 /// workspace test suite (and Rust CI) stays green; un-ignore with that fix.
-#[ignore = "pre-existing incremental-backdating regression — see doc comment; needs per-def sig() queries"]
 #[test]
 fn body_edit_recomputes_only_that_defs_infer() {
     let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
