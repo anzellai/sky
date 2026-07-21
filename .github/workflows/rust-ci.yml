@@ -91,6 +91,14 @@ jobs:
         run: cargo run -q -p xtask -- fuzz
 
       # ---- codegen determinism + emit (needs the Go toolchain) ----
+      # Runtime helpers (rt.Coerce / AsTuple / Dict_fromList / tuple dispatch /
+      # panic classification / …) — the ~150 `rt/*_test.go` that guard the
+      # behaviour the emitted Go depends on. Previously run in NO workflow, so a
+      # runtime regression was caught only by the ABI guard's symbol-existence
+      # check, never by behaviour. The `go` toolchain is already set up above.
+      - name: Gate — runtime rt tests (go test)
+        run: cd runtime-go && go test ./rt/...
+
       - name: Gate — repro (byte-stable Go across fresh processes, L4)
         run: cargo run -q -p xtask -- repro
 
