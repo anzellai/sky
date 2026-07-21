@@ -1452,8 +1452,25 @@ impl<'a> Resolver<'a> {
                     .unwrap_or(0);
                 self.body.pat(Pattern::Int(val))
             }
-            ast::Pattern::Float(_) => {
-                // Float patterns are rejected upstream; recover as wildcard.
+            ast::Pattern::Float(fp) => {
+                // Float literal patterns are unsupported — float equality is
+                // unreliable, so the oracle rejects them at canonicalisation
+                // ("Float patterns not supported"). Emit a clean [E1006] here so
+                // accept/reject parity holds AND the program never reaches
+                // codegen: a silently recovered-as-wildcard float pattern
+                // otherwise HM-checks and then emits go-build-broken Go (an
+                // unused `_subj` / non-exhaustive lowering) — a check≢build hole.
+                // Still recover as `Anything` to suppress cascade diagnostics.
+                let span = self.span_of(fp.syntax().text_range());
+                self.result.diagnostics.push(
+                    Diagnostic::error(
+                        "E1006",
+                        "Float patterns are not supported — float equality is \
+                         unreliable. Match on an `Int` (e.g. via `round`/`floor`) \
+                         or use an `if` guard instead.",
+                    )
+                    .with_label(span, "float literal pattern"),
+                );
                 self.body.pat(Pattern::Anything)
             }
             ast::Pattern::Str(s) => {

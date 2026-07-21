@@ -133,6 +133,7 @@ fn code_title(code: &str) -> &'static str {
         "E1003" => "DUPLICATE PATTERN VARIABLE",
         "E1004" => "SHADOWED NAME",
         "E1005" => "INTEGER OVERFLOW",
+        "E1006" => "UNSUPPORTED PATTERN",
         "E2001" => "TYPE MISMATCH",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",

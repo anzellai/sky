@@ -68,7 +68,20 @@ fn walk(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagno
             }
             walk(body, world, *b, out);
         }
-        _ => {}
+        // Leaves — no sub-expression to descend into. Listed EXPLICITLY (not a
+        // `_` catch-all) so that adding a NEW child-bearing `Expr` variant is a
+        // compile error HERE, forcing it to be walked — rather than silently
+        // falling through and leaving every `case` nested inside it unchecked for
+        // exhaustiveness (the §8/L6 "don't rely on `_ -> []` catchalls" hazard).
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Var(_)
+        | Expr::Accessor(_)
+        | Expr::Error => {}
     }
 }
 
