@@ -3844,9 +3844,17 @@ impl<'a> Ctx<'a> {
                             GoTy::Any,
                         )
                     } else {
+                        // Type the `.V{i}` read as the element's actual Go type
+                        // (`ety`, from `subj_ty`'s tuple element list). On a TYPED
+                        // tuple (`rt.T2[float64, int]`) the field IS already
+                        // concrete, so `coerce_if_needed(ety, ety)` elides the
+                        // redundant `rt.AsFloat`/`rt.AsInt`/… narrow (the typed-tuple
+                        // work made the field typed, but this read still claimed
+                        // `any` and re-narrowed). On an ERASED tuple `ety == Any`,
+                        // so this is byte-identical (`any` field, coerce no-op).
                         GoExpr::new(
                             GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
-                            GoTy::Any,
+                            ety.clone(),
                         )
                     };
                     let field = self.coerce_if_needed(raw, &ety);

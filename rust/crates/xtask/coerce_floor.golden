@@ -3,7 +3,7 @@
 # A DECREASE is fine (floor tightened) — re-bless to ratchet it down.
 # Regenerate with: cargo run -p xtask -- coerce-floor --bless
 # Format: <example-name>\t<total-rt-narrowing-token-count>
-00-standard-libs	219
+00-standard-libs	214
 01-hello-world	1
 02-go-stdlib	9
 03-tea-external	3
@@ -13,35 +13,35 @@
 07-todo-cli	18
 08-notes-app	545
 09-live-counter	93
-10-live-component	97
+10-live-component	96
 11-fyne-stopwatch	10
 12-skyvote	611
-13-skyshop	1335
+13-skyshop	1326
 14-task-demo	5
 15-http-server	13
 16-skychess	556
 17-skymon	638
 18-job-queue	52
-19-skyforum	359
+19-skyforum	352
 20-cli-counter	3
 21-tui-stopwatch	9
 22-tui-stopwatch-ui	13
 23-tui-todo	36
-24-tui-kitchen-sink	283
-25-sky-console	294
-26-ui-showcase	687
+24-tui-kitchen-sink	276
+25-sky-console	287
+26-ui-showcase	633
 27-multi-session-chat	72
 28-streaming-chat	56
 29-webview-threejs-spike	19
 30-sse-server-demo	7
-31-webview-stopwatch-ui	274
+31-webview-stopwatch-ui	267
 32-sse-relay	7
 33-websocket-echo	8
 34-multi-tier-console	26
 35-composite-generics	175
 36-composite-server	163
-37-composite-live-shop	658
-38-composite-ui-multibackend	490
+37-composite-live-shop	616
+38-composite-ui-multibackend	466
 40-generic-adt-field	5
 41-nested-curry	7
 42-poly-record	3
@@ -50,4 +50,4 @@
 45-record-update-anon	2
 46-row-poly-result	6
 47-func-field-record	3
-48-tuple-unused-binding	5
+48-tuple-unused-binding	2
