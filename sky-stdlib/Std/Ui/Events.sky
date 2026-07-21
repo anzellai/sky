@@ -15,15 +15,18 @@ import Std.Ui as Ui
 
 
 onClick : msg -> Ui.Attribute msg
-onClick m = Ui.onClick m
+onClick m =
+    Ui.onClick m
 
 
 -- See Std.Ui.onSubmit — `(a -> Attribute b)` is intentionally
 -- permissive so the typed-record-arg pattern (`onSubmit DoSignIn`
 -- where `DoSignIn : LoginForm -> Msg`) type-checks in-module.
 onSubmit : a -> Ui.Attribute b
-onSubmit m = Ui.onSubmit m
+onSubmit m =
+    Ui.onSubmit m
 
 
 onInput : msg -> Ui.Attribute msg
-onInput m = Ui.onInput m
+onInput m =
+    Ui.onInput m

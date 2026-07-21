@@ -20,9 +20,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
 import Std.Html.Attributes exposing (Attribute)
 
-
 -- ─── Core type ──────────────────────────────────────────────────
-
 type Html msg
     = HElement String (List (Attribute msg)) (List (Html msg))
     | HText String
@@ -30,7 +28,6 @@ type Html msg
 
 
 -- ─── Text nodes ─────────────────────────────────────────────────
-
 text : String -> Html msg
 text s =
     HText s
@@ -43,7 +40,6 @@ raw s =
 
 
 -- ─── Generic element builders ───────────────────────────────────
-
 -- Build an element of an arbitrary tag (custom elements, SVG, …).
 node : String -> List (Attribute msg) -> List (Html msg) -> Html msg
 node tag attrs children =
@@ -57,7 +53,6 @@ voidNode tag attrs =
 
 
 -- ─── Container / flow elements (attrs -> children -> Html) ──────
-
 div : List (Attribute msg) -> List (Html msg) -> Html msg
 div attrs children =
     HElement "div" attrs children
@@ -324,7 +319,6 @@ script attrs children =
 
 
 -- ─── Void elements (attrs only — no children) ───────────────────
-
 img : List (Attribute msg) -> Html msg
 img attrs =
     HElement "img" attrs []
@@ -391,7 +385,6 @@ wbr attrs =
 
 
 -- ─── Document-structure elements ────────────────────────────────
-
 body : List (Attribute msg) -> List (Html msg) -> Html msg
 body attrs children =
     HElement "body" attrs children
@@ -421,7 +414,6 @@ titleNode s =
 -- ─── Legacy-compat aliases ──────────────────────────────────────
 -- Kept so older stdlib / example code that referenced the
 -- `*Node` kernel names keeps compiling.
-
 headerNode : List (Attribute msg) -> List (Html msg) -> Html msg
 headerNode attrs children =
     HElement "header" attrs children
@@ -448,7 +440,6 @@ linkNode attrs =
 
 
 -- ─── Special nodes ──────────────────────────────────────────────
-
 -- styleNode embeds a CSS stylesheet string inside a <style> tag.
 -- The CSS body is a raw text child — the browser's CSS engine does
 -- not HTML-decode it, so it must NOT be escaped.
@@ -471,7 +462,6 @@ doctype children =
 -- primitive.  Sky.Live calls the converter internally at the
 -- `view` boundary; `render` is for explicit server-side rendering
 -- (Sky.Http.Server handlers).
-
 render : Html msg -> String
 render node =
     Ffi.callPure "htmlRender" [ node ]

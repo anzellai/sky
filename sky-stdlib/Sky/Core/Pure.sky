@@ -47,8 +47,6 @@ import Std.Db as Db exposing (Db)
 
 
 -- ─── UUID generation ───────────────────────────────────────────────
-
-
 -- | `Pure.uuidV4 ()` — uniform-shape companion for `Uuid.v4`.
 -- See `Sky.Core.Uuid.v4` for semantics.
 --
@@ -81,8 +79,6 @@ uuidV7Kernel =
 
 
 -- ─── Clock reads ───────────────────────────────────────────────────
-
-
 -- | `Pure.timeNow ()` — uniform-shape companion for `Time.now ()`.
 -- Returns Unix milliseconds since epoch.
 timeNow : () -> Task Error Int
@@ -98,8 +94,6 @@ timeUnixMillis _ =
 
 
 -- ─── Process environment ───────────────────────────────────────────
-
-
 -- | `Pure.systemArgs ()` — uniform-shape companion for
 -- `System.args ()`.  Returns the command-line argv tail (program
 -- name excluded).
@@ -123,8 +117,6 @@ systemLoadEnv _ =
 
 
 -- ─── Standard input ────────────────────────────────────────────────
-
-
 -- | `Pure.ioReadLine ()` — uniform-shape companion for
 -- `Io.readLine ()`.  Reads one line from stdin.
 ioReadLine : () -> Task Error String
@@ -133,8 +125,6 @@ ioReadLine _ =
 
 
 -- ─── Database connection ───────────────────────────────────────────
-
-
 -- | `Pure.dbConnect ()` — uniform-shape companion for
 -- `Db.connect ()`.  Opens the connection described by
 -- `sky.toml`'s `[database]` section.

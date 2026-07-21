@@ -27,25 +27,21 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 
-
 -- ─── Core types ─────────────────────────────────────────────────
-
 -- A single CSS declaration: `key: value;`.
 type CssProp
     = CssProp String String
 
-
 -- A top-level stylesheet entry.
 type CssRule
     = CssRule String (List CssProp)
-        -- `selector { prop; prop; }`
     | CssMedia String (List CssRule)
-        -- `@media query { rule rule }`
     | CssKeyframes String (List String)
-        -- `@keyframes name { frame frame }`
     | CssRaw String
+        -- `selector { prop; prop; }`
+        -- `@media query { rule rule }`
+        -- `@keyframes name { frame frame }`
         -- a pre-rendered fragment, emitted verbatim
-
 
 -- A length / size / time / angle value.  The escape hatch
 -- `LenRaw` carries anything the ADT does not model directly
@@ -60,11 +56,10 @@ type Length
     | Ch Float
     | Fr Int
     | Num Float
-        -- a unitless number — `line-height: 1.6`, `flex-basis: 0`, …
     | LenAuto
     | LenZero
     | LenRaw String
-
+        -- a unitless number — `line-height: 1.6`, `flex-basis: 0`, …
 
 -- A colour value.  `ColorRaw` is the escape hatch for named
 -- colours, `var(--x)`, gradients used as a colour, etc.
@@ -78,11 +73,9 @@ type Color
     | ColorCurrent
     | ColorRaw String
 
-
 -- ─── Keyword enums (bounded value spaces) ───────────────────────
 -- Each carries a `*Raw` escape hatch for the rare value the enum
 -- does not list.
-
 type Display
     = Block
     | Inline
@@ -94,7 +87,6 @@ type Display
     | DisplayNone
     | DisplayRaw String
 
-
 type Position
     = Static
     | Relative
@@ -103,14 +95,12 @@ type Position
     | Sticky
     | PositionRaw String
 
-
 type TextAlign
     = AlignLeft
     | AlignRight
     | AlignCenter
     | AlignJustify
     | TextAlignRaw String
-
 
 type Cursor
     = Pointer
@@ -121,7 +111,6 @@ type Cursor
     | Grabbing
     | CursorRaw String
 
-
 type FlexDirection
     = Row
     | RowReverse
@@ -129,13 +118,11 @@ type FlexDirection
     | ColumnReverse
     | FlexDirectionRaw String
 
-
 type FlexWrap
     = NoWrap
     | Wrap
     | WrapReverse
     | FlexWrapRaw String
-
 
 -- Shared by justify-content / align-items / align-content.
 type Align
@@ -149,7 +136,6 @@ type Align
     | Baseline
     | AlignRaw String
 
-
 type FontWeight
     = Normal
     | Bold
@@ -158,13 +144,11 @@ type FontWeight
     | Weight Int
     | FontWeightRaw String
 
-
 type FontStyle
     = FontNormal
     | Italic
     | Oblique
     | FontStyleRaw String
-
 
 type Overflow
     = Visible
@@ -172,7 +156,6 @@ type Overflow
     | Scroll
     | OverflowAuto
     | OverflowRaw String
-
 
 type WhiteSpace
     = WsNormal
@@ -182,18 +165,15 @@ type WhiteSpace
     | PreLine
     | WhiteSpaceRaw String
 
-
 type BoxSizing
     = ContentBox
     | BorderBox
     | BoxSizingRaw String
 
-
 type PointerEvents
     = PeAuto
     | PeNone
     | PointerEventsRaw String
-
 
 type TextDecoration
     = NoDecoration
@@ -201,7 +181,6 @@ type TextDecoration
     | LineThrough
     | Overline
     | TextDecorationRaw String
-
 
 type BorderStyle
     = Solid
@@ -212,7 +191,6 @@ type BorderStyle
 
 
 -- ─── Value renderers ────────────────────────────────────────────
-
 floatStr : Float -> String
 floatStr n =
     String.fromFloat n
@@ -221,6 +199,7 @@ floatStr n =
 lengthToString : Length -> String
 lengthToString lengthVal =
     case lengthVal of
+
         Px n ->
             String.fromInt n ++ "px"
 
@@ -261,6 +240,7 @@ lengthToString lengthVal =
 colorToString : Color -> String
 colorToString c =
     case c of
+
         Hex s ->
             if String.startsWith "#" s then
                 s
@@ -269,40 +249,24 @@ colorToString c =
                 "#" ++ s
 
         Rgb r g b ->
-            "rgb("
-                ++ String.fromInt r
-                ++ ","
-                ++ String.fromInt g
-                ++ ","
+            "rgb(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ ","
                 ++ String.fromInt b
                 ++ ")"
 
         Rgba r g b a ->
-            "rgba("
-                ++ String.fromInt r
-                ++ ","
-                ++ String.fromInt g
-                ++ ","
+            "rgba(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ ","
                 ++ String.fromInt b
                 ++ ","
                 ++ floatStr a
                 ++ ")"
 
         Hsl h s l ->
-            "hsl("
-                ++ String.fromInt h
-                ++ ","
-                ++ String.fromInt s
-                ++ "%,"
+            "hsl(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%,"
                 ++ String.fromInt l
                 ++ "%)"
 
         Hsla h s l a ->
-            "hsla("
-                ++ String.fromInt h
-                ++ ","
-                ++ String.fromInt s
-                ++ "%,"
+            "hsla(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%,"
                 ++ String.fromInt l
                 ++ "%,"
                 ++ floatStr a
@@ -319,7 +283,6 @@ colorToString c =
 
 
 -- ─── Length builders ────────────────────────────────────────────
-
 px : Int -> Length
 px n =
     Px n
@@ -398,7 +361,6 @@ minmax a b =
 
 
 -- ─── Colour builders ────────────────────────────────────────────
-
 hex : String -> Color
 hex s =
     Hex s
@@ -441,7 +403,6 @@ colorRaw s =
 
 
 -- ─── Transform / gradient / var value builders (String-valued) ──
-
 deg : Float -> String
 deg n =
     floatStr n ++ "deg"
@@ -500,10 +461,7 @@ repeat n trackSize =
 -- A single box-shadow value: `offsetX offsetY blur color` (px units).
 shadow : Int -> Int -> Int -> Color -> String
 shadow offsetX offsetY blur c =
-    String.fromInt offsetX
-        ++ "px "
-        ++ String.fromInt offsetY
-        ++ "px "
+    String.fromInt offsetX ++ "px " ++ String.fromInt offsetY ++ "px "
         ++ String.fromInt blur
         ++ "px "
         ++ colorToString c
@@ -514,7 +472,6 @@ shadow offsetX offsetY blur c =
 -- with Go's `init()` ordering (CLAUDE.md Limitation #13).  Used in
 -- String-valued property slots (`border (none ())`, `fontFamily
 -- (systemFont ())`).
-
 none : String
 none =
     "none"
@@ -531,7 +488,6 @@ monoFont _ =
 
 
 -- ─── Property builders: bare-name passthrough ───────────────────
-
 -- The generic escape hatch — `property "name" "value"`.
 property : String -> String -> CssProp
 property k v =
@@ -544,6 +500,7 @@ property k v =
 rawProp : String -> CssProp
 rawProp decl =
     case String.split ":" decl of
+
         k :: rest ->
             CssProp (String.trim k) (String.trim (String.join ":" rest))
 
@@ -561,12 +518,12 @@ defineVar name val =
 important : CssProp -> CssProp
 important p =
     case p of
+
         CssProp k v ->
             CssProp k (v ++ " !important")
 
 
 -- ─── Property builders: Length-valued ───────────────────────────
-
 width : Length -> CssProp
 width v =
     CssProp "width" (lengthToString v)
@@ -644,15 +601,11 @@ padding2 a b =
 
 padding4 : Length -> Length -> Length -> Length -> CssProp
 padding4 t r b l =
-    CssProp "padding"
-        (lengthToString t
+    CssProp
+        "padding"
+        (lengthToString t ++ " " ++ lengthToString r ++ " " ++ lengthToString b
             ++ " "
-            ++ lengthToString r
-            ++ " "
-            ++ lengthToString b
-            ++ " "
-            ++ lengthToString l
-        )
+            ++ lengthToString l)
 
 
 margin : Length -> CssProp
@@ -687,15 +640,11 @@ margin2 a b =
 
 margin4 : Length -> Length -> Length -> Length -> CssProp
 margin4 t r b l =
-    CssProp "margin"
-        (lengthToString t
+    CssProp
+        "margin"
+        (lengthToString t ++ " " ++ lengthToString r ++ " " ++ lengthToString b
             ++ " "
-            ++ lengthToString r
-            ++ " "
-            ++ lengthToString b
-            ++ " "
-            ++ lengthToString l
-        )
+            ++ lengthToString l)
 
 
 gap : Length -> CssProp
@@ -720,15 +669,12 @@ borderRadius v =
 
 borderRadius4 : Length -> Length -> Length -> Length -> CssProp
 borderRadius4 tl tr br bl =
-    CssProp "border-radius"
-        (lengthToString tl
-            ++ " "
-            ++ lengthToString tr
-            ++ " "
+    CssProp
+        "border-radius"
+        (lengthToString tl ++ " " ++ lengthToString tr ++ " "
             ++ lengthToString br
             ++ " "
-            ++ lengthToString bl
-        )
+            ++ lengthToString bl)
 
 
 top : Length -> CssProp
@@ -752,7 +698,6 @@ right v =
 
 
 -- ─── Property builders: Colour-valued ───────────────────────────
-
 color : Color -> CssProp
 color c =
     CssProp "color" (colorToString c)
@@ -774,12 +719,12 @@ borderColor c =
 
 
 -- ─── Property builders: keyword-enum-valued ─────────────────────
-
 display : Display -> CssProp
 display d =
     let
         v =
             case d of
+
                 Block ->
                     "block"
 
@@ -815,6 +760,7 @@ position p =
     let
         v =
             case p of
+
                 Static ->
                     "static"
 
@@ -841,6 +787,7 @@ textAlign a =
     let
         v =
             case a of
+
                 AlignLeft ->
                     "left"
 
@@ -864,6 +811,7 @@ cursor c =
     let
         v =
             case c of
+
                 Pointer ->
                     "pointer"
 
@@ -893,6 +841,7 @@ flexDirection d =
     let
         v =
             case d of
+
                 Row ->
                     "row"
 
@@ -916,6 +865,7 @@ flexWrap w =
     let
         v =
             case w of
+
                 NoWrap ->
                     "nowrap"
 
@@ -934,6 +884,7 @@ flexWrap w =
 alignToString : Align -> String
 alignToString a =
     case a of
+
         Start ->
             "flex-start"
 
@@ -982,6 +933,7 @@ fontWeight w =
     let
         v =
             case w of
+
                 Normal ->
                     "normal"
 
@@ -1008,6 +960,7 @@ fontStyle s =
     let
         v =
             case s of
+
                 FontNormal ->
                     "normal"
 
@@ -1026,6 +979,7 @@ fontStyle s =
 overflowToString : Overflow -> String
 overflowToString o =
     case o of
+
         Visible ->
             "visible"
 
@@ -1062,6 +1016,7 @@ whiteSpace w =
     let
         v =
             case w of
+
                 WsNormal ->
                     "normal"
 
@@ -1088,6 +1043,7 @@ boxSizing b =
     let
         v =
             case b of
+
                 ContentBox ->
                     "content-box"
 
@@ -1105,6 +1061,7 @@ pointerEvents p =
     let
         v =
             case p of
+
                 PeAuto ->
                     "auto"
 
@@ -1122,6 +1079,7 @@ textDecoration d =
     let
         v =
             case d of
+
                 NoDecoration ->
                     "none"
 
@@ -1146,7 +1104,6 @@ textDecoration d =
 -- value grammars — typing them fully is elm-css-scale work for
 -- marginal gain.  Build the value with the helpers above
 -- (`translateX`, `linearGradient`, `cssVar`, …) or pass a literal.
-
 border : String -> CssProp
 border v =
     CssProp "border" v
@@ -1177,6 +1134,7 @@ borderStyle b =
     let
         v =
             case b of
+
                 Solid ->
                     "solid"
 
@@ -1212,8 +1170,7 @@ transition v =
 
 transitionProp : String -> Float -> String -> CssProp
 transitionProp prop dur timing =
-    CssProp "transition"
-        (prop ++ " " ++ floatStr dur ++ "s " ++ timing)
+    CssProp "transition" (prop ++ " " ++ floatStr dur ++ "s " ++ timing)
 
 
 transitionDuration : String -> CssProp
@@ -1418,7 +1375,6 @@ borderSpacing v =
 
 
 -- ─── Rules + rendering ──────────────────────────────────────────
-
 -- `selector { props }`.
 rule : String -> List CssProp -> CssRule
 rule selector props =
@@ -1440,10 +1396,7 @@ keyframes name frames =
 -- One keyframe step: `0% { prop; prop }`.
 frame : String -> List CssProp -> String
 frame pct props =
-    pct
-        ++ " { "
-        ++ String.join "; " (List.map renderProp props)
-        ++ " }"
+    pct ++ " { " ++ String.join "; " (List.map renderProp props) ++ " }"
 
 
 -- A raw, pre-rendered stylesheet fragment, emitted verbatim.
@@ -1455,6 +1408,7 @@ raw s =
 renderProp : CssProp -> String
 renderProp p =
     case p of
+
         CssProp k v ->
             k ++ ":" ++ v
 
@@ -1462,33 +1416,27 @@ renderProp p =
 renderRule : CssRule -> String
 renderRule r =
     case r of
+
         CssRule selector props ->
-            selector
-                ++ " {\n"
-                ++ String.join ""
-                    (List.map
-                        (\p ->
-                            case p of
-                                CssProp k v ->
-                                    "  " ++ k ++ ": " ++ v ++ ";\n"
-                        )
-                        props
-                    )
+            selector ++ " {\n"
+                ++ String.join
+                       ""
+                       (List.map
+                           (\p ->
+                               case p of
+
+                                   CssProp k v ->
+                                       "  " ++ k ++ ": " ++ v ++ ";\n")
+                           props)
                 ++ "}\n"
 
         CssMedia query rules ->
-            "@media "
-                ++ query
-                ++ " {\n"
+            "@media " ++ query ++ " {\n"
                 ++ String.join "" (List.map renderRule rules)
                 ++ "}\n"
 
         CssKeyframes name frames ->
-            "@keyframes "
-                ++ name
-                ++ " { "
-                ++ String.join " " frames
-                ++ " }\n"
+            "@keyframes " ++ name ++ " { " ++ String.join " " frames ++ " }\n"
 
         CssRaw s ->
             if String.endsWith "\n" s then

@@ -3,98 +3,110 @@
 -- Every function is effectful (touches the disk) so the return is
 -- always `Task Error _`.
 module Sky.Core.File exposing
-    ( readFile, readFileLimit, readFileBytes
-    , writeFile, append
-    , exists, remove
-    , mkdirAll, readDir, isDir
-    , tempFile, tempDir, copy, rename
+    ( readFile
+    , readFileLimit
+    , readFileBytes
+    , writeFile
+    , append
+    , exists
+    , remove
+    , mkdirAll
+    , readDir
+    , isDir
+    , tempFile
+    , tempDir
+    , copy
+    , rename
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
 -- ─── Read ──────────────────────────────────────────────────────────
-
-
 readFile : String -> Task Error String
-readFile = Ffi.kernel "File_readFile"
+readFile =
+    Ffi.kernel "File_readFile"
 
 
 -- | `readFileLimit path maxBytes` — read at most `maxBytes` from
 -- the file.  Useful to cap memory on untrusted-size inputs.
 readFileLimit : String -> Int -> Task Error String
-readFileLimit = Ffi.kernel "File_readFileLimit"
+readFileLimit =
+    Ffi.kernel "File_readFileLimit"
 
 
 -- | Read raw bytes as a list of Int.  Use for binary content
 -- (images, encrypted blobs); use `readFile` for UTF-8 text.
 readFileBytes : String -> Task Error (List Int)
-readFileBytes = Ffi.kernel "File_readFileBytes"
+readFileBytes =
+    Ffi.kernel "File_readFileBytes"
 
 
 -- ─── Write ─────────────────────────────────────────────────────────
-
-
 -- | `writeFile path content` — overwrites the file.
 writeFile : String -> String -> Task Error ()
-writeFile = Ffi.kernel "File_writeFile"
+writeFile =
+    Ffi.kernel "File_writeFile"
 
 
 -- | `append path content` — appends to the end of the file
 -- (creates it if absent).
 append : String -> String -> Task Error ()
-append = Ffi.kernel "File_append"
+append =
+    Ffi.kernel "File_append"
 
 
 -- ─── Existence + removal ───────────────────────────────────────────
-
-
 exists : String -> Task Error Bool
-exists = Ffi.kernel "File_exists"
+exists =
+    Ffi.kernel "File_exists"
 
 
 remove : String -> Task Error ()
-remove = Ffi.kernel "File_remove"
+remove =
+    Ffi.kernel "File_remove"
 
 
 -- ─── Directories ───────────────────────────────────────────────────
-
-
 -- | `mkdirAll path` — like `mkdir -p`.  Creates every intermediate
 -- directory that doesn't exist.
 mkdirAll : String -> Task Error ()
-mkdirAll = Ffi.kernel "File_mkdirAll"
+mkdirAll =
+    Ffi.kernel "File_mkdirAll"
 
 
 readDir : String -> Task Error (List String)
-readDir = Ffi.kernel "File_readDir"
+readDir =
+    Ffi.kernel "File_readDir"
 
 
 isDir : String -> Task Error Bool
-isDir = Ffi.kernel "File_isDir"
+isDir =
+    Ffi.kernel "File_isDir"
 
 
 -- ─── Misc ──────────────────────────────────────────────────────────
-
-
 -- | `tempFile prefix` — create a uniquely-named file in the system
 -- temp dir.  Returns the absolute path.
 tempFile : String -> Task Error String
-tempFile = Ffi.kernel "File_tempFile"
+tempFile =
+    Ffi.kernel "File_tempFile"
 
 
 -- | `tempDir prefix` — create a uniquely-named directory in the
 -- system temp dir.  Returns the absolute path.  Caller is
 -- responsible for `remove`-ing the directory when done.
 tempDir : String -> Task Error String
-tempDir = Ffi.kernel "File_tempDir"
+tempDir =
+    Ffi.kernel "File_tempDir"
 
 
 copy : String -> String -> Task Error ()
-copy = Ffi.kernel "File_copy"
+copy =
+    Ffi.kernel "File_copy"
 
 
 rename : String -> String -> Task Error ()
-rename = Ffi.kernel "File_rename"
+rename =
+    Ffi.kernel "File_rename"

@@ -23,72 +23,80 @@
 -- #10 soundness hole.
 module Sky.Core.Dict exposing
     ( empty
-    , isEmpty, size
-    , insert, get, remove, member
-    , keys, values
-    , toList, fromList
-    , map, foldl, union
+    , isEmpty
+    , size
+    , insert
+    , get
+    , remove
+    , member
+    , keys
+    , values
+    , toList
+    , fromList
+    , map
+    , foldl
+    , union
     )
-
 
 import Sky.Ffi as Ffi
 
 
 -- ─── Construction ──────────────────────────────────────────────────
-
-
 -- | The empty dictionary.
 empty : Dict k v
-empty = Ffi.kernel "Dict_empty"
+empty =
+    Ffi.kernel "Dict_empty"
 
 
 -- ─── Cardinality / queries ─────────────────────────────────────────
-
-
 -- | `True` when the dictionary contains no entries.
 isEmpty : Dict k v -> Bool
-isEmpty = Ffi.kernel "Dict_isEmpty"
+isEmpty =
+    Ffi.kernel "Dict_isEmpty"
 
 
 -- | Number of key/value pairs.
 size : Dict k v -> Int
-size = Ffi.kernel "Dict_size"
+size =
+    Ffi.kernel "Dict_size"
 
 
 -- | `member k d` — `True` iff `k` is bound in `d`.
 member : k -> Dict k v -> Bool
-member = Ffi.kernel "Dict_member"
+member =
+    Ffi.kernel "Dict_member"
 
 
 -- | `get k d` — look up `k`; `Nothing` if absent.
 get : k -> Dict k v -> Maybe v
-get = Ffi.kernel "Dict_get"
+get =
+    Ffi.kernel "Dict_get"
 
 
 -- ─── Mutation (returns new Dict) ───────────────────────────────────
-
-
 -- | `insert k v d` — bind `k → v`, replacing any prior value.
 insert : k -> v -> Dict k v -> Dict k v
-insert = Ffi.kernel "Dict_insert"
+insert =
+    Ffi.kernel "Dict_insert"
 
 
 -- | `remove k d` — drop `k`'s binding; no-op if absent.
 remove : k -> Dict k v -> Dict k v
-remove = Ffi.kernel "Dict_remove"
+remove =
+    Ffi.kernel "Dict_remove"
 
 
 -- ─── Conversion ────────────────────────────────────────────────────
-
-
 -- | All keys in the dictionary (unsorted).
 keys : Dict k v -> List k
-keys = Ffi.kernel "Dict_keys"
+keys =
+    Ffi.kernel "Dict_keys"
 
 
 -- | All values in the dictionary (unsorted).
 values : Dict k v -> List v
-values = Ffi.kernel "Dict_values"
+values =
+    Ffi.kernel "Dict_values"
 
 
 -- | `toList d` — every (key, value) pair as a list of tuples.
@@ -98,30 +106,33 @@ values = Ffi.kernel "Dict_values"
 -- tuple slot is `Int` (not `String`). Arithmetic on the returned
 -- keys works correctly — closes Limitation #10.
 toList : Dict k v -> List ( k, v )
-toList = Ffi.kernel "Dict_toList"
+toList =
+    Ffi.kernel "Dict_toList"
 
 
 -- | `fromList pairs` — build a dictionary from a list of tuples.
 -- Later pairs overwrite earlier ones with the same key.
 fromList : List ( k, v ) -> Dict k v
-fromList = Ffi.kernel "Dict_fromList"
+fromList =
+    Ffi.kernel "Dict_fromList"
 
 
 -- ─── Higher-order combinators ──────────────────────────────────────
-
-
 -- | `map fn d` — apply `fn k v` to every entry, building a new
 -- dictionary with the transformed values.
 map : (k -> v -> w) -> Dict k v -> Dict k w
-map = Ffi.kernel "Dict_map"
+map =
+    Ffi.kernel "Dict_map"
 
 
 -- | `foldl fn acc d` — accumulate over every entry.
 foldl : (k -> v -> a -> a) -> a -> Dict k v -> a
-foldl = Ffi.kernel "Dict_foldl"
+foldl =
+    Ffi.kernel "Dict_foldl"
 
 
 -- | `union a b` — merge two dictionaries. `a`'s bindings win on
 -- key collision.
 union : Dict k v -> Dict k v -> Dict k v
-union = Ffi.kernel "Dict_union"
+union =
+    Ffi.kernel "Dict_union"

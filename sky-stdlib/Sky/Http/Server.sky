@@ -41,8 +41,6 @@ import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 -- ─── Types ────────────────────────────────────────────────────────
-
-
 -- | The shape of an inbound HTTP request handed to every Sky
 -- handler.  Maps 1:1 to `rt.SkyRequest` on the Go side — field
 -- access (`req.method` / `.path` / `.headers` / `.body` / etc.)
@@ -101,8 +99,6 @@ type Cookie
 
 
 -- ─── Routing ──────────────────────────────────────────────────────
-
-
 -- | `get path handler` — register a GET route.
 get : String -> (Request -> Task Error Response) -> Route
 get =
@@ -150,8 +146,6 @@ listen =
 
 
 -- ─── Response builders ────────────────────────────────────────────
-
-
 -- | `text body` — build a 200 OK `text/plain` response.
 text : String -> Response
 text =
@@ -195,8 +189,6 @@ withHeader =
 
 
 -- ─── Request introspection ─────────────────────────────────────────
-
-
 -- | `param name req` — read a URL path parameter
 -- (e.g. `/users/:id`'s `id`).
 param : String -> Request -> Maybe String
@@ -224,8 +216,6 @@ getCookie =
 
 
 -- ─── Cookies ───────────────────────────────────────────────────────
-
-
 -- | `cookie name value` — build a default cookie (Path=/, HttpOnly,
 -- SameSite=Lax).  Pair with `withCookie` to add it to a response.
 cookie : String -> String -> Cookie
@@ -250,8 +240,6 @@ withCookie =
 
 
 -- ─── Static-file serving ───────────────────────────────────────────
-
-
 -- | `static urlPrefix diskPath` — serve files from `diskPath` at
 -- URLs starting with `urlPrefix`.  Returns a `Route`.
 static : String -> String -> Route

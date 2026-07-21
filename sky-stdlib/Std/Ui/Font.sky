@@ -229,7 +229,7 @@ typeface s =
 -- sticky-hover on touch devices.
 hoverColor : Color -> Attribute msg
 hoverColor c =
-    onPseudo hover [fontColor c]
+    onPseudo hover [ fontColor c ]
 
 
 -- `focusColor` targets `:focus-visible` (safer default — only
@@ -237,29 +237,29 @@ hoverColor c =
 -- rings).
 focusColor : Color -> Attribute msg
 focusColor c =
-    onPseudo focusVisible [fontColor c]
+    onPseudo focusVisible [ fontColor c ]
 
 
 -- Explicit `:focus-visible` alias.
 focusVisibleColor : Color -> Attribute msg
 focusVisibleColor c =
-    onPseudo focusVisible [fontColor c]
+    onPseudo focusVisible [ fontColor c ]
 
 
 -- Text colour while the element is being clicked / tapped.
 activeColor : Color -> Attribute msg
 activeColor c =
-    onPseudo active [fontColor c]
+    onPseudo active [ fontColor c ]
 
 
 -- Text colour when the element has the `disabled` attribute.
 -- Most useful on `<input>` / `<button>`.
 disabledColor : Color -> Attribute msg
 disabledColor c =
-    onPseudo disabled [fontColor c]
+    onPseudo disabled [ fontColor c ]
 
 
 -- Hover-state font size (in px). Mirrors `size`.
 hoverSize : Int -> Attribute msg
 hoverSize n =
-    onPseudo hover [fontSize n]
+    onPseudo hover [ fontSize n ]

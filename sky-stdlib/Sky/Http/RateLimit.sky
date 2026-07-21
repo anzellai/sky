@@ -1,9 +1,6 @@
 -- | Sky.Http.RateLimit — token-bucket rate limiting (Layer 3
 -- Sky source).
-module Sky.Http.RateLimit exposing
-    ( allow
-    )
-
+module Sky.Http.RateLimit exposing (allow)
 
 import Sky.Ffi as Ffi
 
@@ -17,4 +14,5 @@ import Sky.Ffi as Ffi
 --   * `capacity` — bucket size in tokens.
 --   * `refillPerSec` — tokens added per second.
 allow : String -> String -> Int -> Int -> Bool
-allow = Ffi.kernel "RateLimit_allow"
+allow =
+    Ffi.kernel "RateLimit_allow"

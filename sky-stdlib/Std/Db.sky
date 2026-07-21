@@ -34,7 +34,6 @@ module Std.Db exposing
     , defaultMigration
     , withSql
     , migrate
-    -- v0.16.26 — typed SQL value binding (#582)
     , SqlValue(..)
     , fromMaybeString
     , fromMaybeInt
@@ -63,16 +62,13 @@ import Std.Money as Money
 -- `Time` is a Unix-millis Int in Sky's stdlib (Sky.Core.Time has
 -- no opaque type; every entry takes/returns Int). SqlTime carries
 -- raw millis for driver-side `time.UnixMilli(...).UTC()` round-trip.
-
-
 -- ─── Connection lifecycle ──────────────────────────────────────────
-
-
 -- | `open driver dsn` — opens a database connection.
 -- `driver` is `"sqlite"` / `"postgres"`; `dsn` is the connection
 -- string.
 open : String -> String -> Task Error Db
 open =
+    -- v0.16.26 — typed SQL value binding (#582)
     Ffi.kernel "Db_open"
 
 
@@ -89,8 +85,6 @@ close =
 
 
 -- ─── Raw SQL ───────────────────────────────────────────────────────
-
-
 -- | `exec db sql params` — parameterised SQL with bound args.
 -- Returns the affected-row count.
 --
@@ -137,8 +131,6 @@ query =
 
 
 -- ─── Convenience CRUD ──────────────────────────────────────────────
-
-
 -- | `insertRow db table fields` — insert a row built from
 -- `fields` (`Dict String String`).  Returns the new row's `id`.
 insertRow : Db -> String -> Dict String String -> Task Error Int
@@ -218,8 +210,6 @@ getByIdDecode =
 
 
 -- ─── Transactions ──────────────────────────────────────────────────
-
-
 -- | Run a block of database work inside a transaction; commits
 -- on `Ok`, rolls back on `Err`.
 withTransaction : Db -> (Db -> Task Error a) -> Task Error a
@@ -227,8 +217,6 @@ withTransaction =
     Ffi.kernel "Db_withTransaction"
 
 -- ─── Schema migrations ─────────────────────────────────────────────
-
-
 -- | A single schema migration: a unique `name` and the `sql` that
 -- applies it.  `name` is the identity recorded in `_sky_migrations`
 -- — keep it stable once a migration has shipped (a rename reads as
@@ -310,8 +298,6 @@ migrateApply =
 
 
 -- ─── Row accessors (read columns from a row) ───────────────────────
-
-
 -- | Read a field as a String (the canonical row-element shape).
 getField : String -> row -> String
 getField =
@@ -333,8 +319,6 @@ getBool =
     Ffi.kernel "Db_getBool"
 
 -- ─── Typed SQL parameter binding (v0.16.26 — #582) ─────────────────
-
-
 -- | A typed SQL parameter value for prepared-statement binding.
 -- Covers SQLite's 5 storage classes + PostgreSQL's common extensions
 -- (Decimal, Time, Bytes, Money). Lets `List SqlValue` flow
@@ -471,9 +455,8 @@ fromMaybeMoney m =
 
         Nothing ->
             SqlNull (SqlMoney (Money.zero (Money.parseCurrency "USD")))
+
 -- ─── updateFields / insertFields builders ──────────────────────────
-
-
 -- | Per-column "what to do" instruction for partial updates.
 -- `SetField v` includes the column in the SET clause and binds `v`
 -- (which may be `SqlNull witness` for an explicit NULL). `OmitField`
@@ -481,10 +464,11 @@ fromMaybeMoney m =
 -- existing value is unchanged. This is the third "absent" state SQL
 -- requires for PATCH semantics that the per-value `SqlValue` ADT
 -- can't express alone (#582 L3).
-
 type SqlField
     = SetField SqlValue
     | OmitField
+
+
 -- | `updateFields db table whereCols setFields` — PATCH-style update
 -- with dynamically-generated SQL. Each `SetField v` becomes a
 -- `column = ?` clause; `OmitField` columns are dropped from the SQL
@@ -505,8 +489,6 @@ type SqlField
 --     --            , SqlInt 1 ]
 --
 -- Returns the affected-row count.
-
-
 updateFields : Db -> String -> List ( String, SqlValue ) -> List ( String, SqlField ) -> Task Error Int
 updateFields =
     Ffi.kernel "Db_updateFields"

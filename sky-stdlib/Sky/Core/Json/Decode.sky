@@ -4,108 +4,122 @@
 -- a JSON string.  Compose with `field` / `at` / `index` / `map` /
 -- `andThen`; run via `decodeString`.
 module Sky.Core.Json.Decode exposing
-    ( string, int, float, bool
+    ( string
+    , int
+    , float
+    , bool
     , decodeString
-    , field, at, index
+    , field
+    , at
+    , index
     , list
-    , map, andThen, succeed, fail
+    , map
+    , andThen
+    , succeed
+    , fail
     , oneOf
-    , map2, map3, map4
+    , map2
+    , map3
+    , map4
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
 -- ─── Primitive decoders ────────────────────────────────────────────
-
-
 string : Decoder String
-string = Ffi.kernel "JsonDec_string"
+string =
+    Ffi.kernel "JsonDec_string"
 
 
 int : Decoder Int
-int = Ffi.kernel "JsonDec_int"
+int =
+    Ffi.kernel "JsonDec_int"
 
 
 float : Decoder Float
-float = Ffi.kernel "JsonDec_float"
+float =
+    Ffi.kernel "JsonDec_float"
 
 
 bool : Decoder Bool
-bool = Ffi.kernel "JsonDec_bool"
+bool =
+    Ffi.kernel "JsonDec_bool"
 
 
 -- ─── Entry point ───────────────────────────────────────────────────
-
-
 -- | Run a decoder against a JSON string.
 decodeString : Decoder a -> String -> Result Error a
-decodeString = Ffi.kernel "JsonDec_decodeString"
+decodeString =
+    Ffi.kernel "JsonDec_decodeString"
 
 
 -- ─── Field accessors ───────────────────────────────────────────────
-
-
 -- | `field name decoder` — decode the named object field.
 field : String -> Decoder a -> Decoder a
-field = Ffi.kernel "JsonDec_field"
+field =
+    Ffi.kernel "JsonDec_field"
 
 
 -- | `at path decoder` — drill into nested fields.
 at : List String -> Decoder a -> Decoder a
-at = Ffi.kernel "JsonDec_at"
+at =
+    Ffi.kernel "JsonDec_at"
 
 
 -- | `index n decoder` — decode the n-th element of an array.
 index : Int -> Decoder a -> Decoder a
-index = Ffi.kernel "JsonDec_index"
+index =
+    Ffi.kernel "JsonDec_index"
 
 
 -- ─── Collections ───────────────────────────────────────────────────
-
-
 list : Decoder a -> Decoder (List a)
-list = Ffi.kernel "JsonDec_list"
+list =
+    Ffi.kernel "JsonDec_list"
 
 
 -- ─── Combinators ───────────────────────────────────────────────────
-
-
 map : (a -> b) -> Decoder a -> Decoder b
-map = Ffi.kernel "JsonDec_map"
+map =
+    Ffi.kernel "JsonDec_map"
 
 
 andThen : (a -> Decoder b) -> Decoder a -> Decoder b
-andThen = Ffi.kernel "JsonDec_andThen"
+andThen =
+    Ffi.kernel "JsonDec_andThen"
 
 
 -- | A decoder that always succeeds with the given value.
 succeed : a -> Decoder a
-succeed = Ffi.kernel "JsonDec_succeed"
+succeed =
+    Ffi.kernel "JsonDec_succeed"
 
 
 -- | A decoder that always fails with the given error message.
 fail : String -> Decoder a
-fail = Ffi.kernel "JsonDec_fail"
+fail =
+    Ffi.kernel "JsonDec_fail"
 
 
 -- | Try each decoder in turn; succeed with the first to match.
 oneOf : List (Decoder a) -> Decoder a
-oneOf = Ffi.kernel "JsonDec_oneOf"
+oneOf =
+    Ffi.kernel "JsonDec_oneOf"
 
 
 -- ─── Map-N (combine multiple decoders) ─────────────────────────────
-
-
 map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
-map2 = Ffi.kernel "JsonDec_map2"
+map2 =
+    Ffi.kernel "JsonDec_map2"
 
 
 map3 : (a -> b -> c -> d) -> Decoder a -> Decoder b -> Decoder c -> Decoder d
-map3 = Ffi.kernel "JsonDec_map3"
+map3 =
+    Ffi.kernel "JsonDec_map3"
 
 
 map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
-map4 = Ffi.kernel "JsonDec_map4"
+map4 =
+    Ffi.kernel "JsonDec_map4"

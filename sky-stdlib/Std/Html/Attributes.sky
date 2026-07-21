@@ -16,9 +16,7 @@ module Std.Html.Attributes exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 
-
 -- ─── Core types ─────────────────────────────────────────────────
-
 -- A single attribute on an HTML element.  The htmlToVNode FFI
 -- converter pattern-matches these constructors when building the
 -- runtime VNode:
@@ -31,7 +29,6 @@ type Attribute msg
     | BoolAttr String Bool
     | EventAttr (Event msg)
     | NoAttr
-
 
 -- An event handler.  Four shapes cover every DOM event Sky.Live
 -- and Sky.Tui dispatch:
@@ -52,7 +49,6 @@ type Event msg
 
 
 -- ─── String-valued attributes ───────────────────────────────────
-
 class : String -> Attribute msg
 class v =
     Attr "class" v
@@ -220,7 +216,6 @@ style v =
 -- ─── Integer-valued attributes ──────────────────────────────────
 -- These are genuinely numeric in HTML; typing them as `Int` lets
 -- the compiler reject `rows "five"`.  The converter stringifies.
-
 rows : Int -> Attribute msg
 rows n =
     Attr "rows" (String.fromInt n)
@@ -290,7 +285,6 @@ step v =
 
 -- ─── Boolean presence attributes ────────────────────────────────
 -- Render as the bare attribute name when True, omitted when False.
-
 checked : Bool -> Attribute msg
 checked b =
     BoolAttr "checked" b
@@ -342,7 +336,6 @@ spellcheck b =
 
 
 -- ─── Generic escape hatches ─────────────────────────────────────
-
 -- Raw `key="value"` attribute for anything without a dedicated
 -- builder (custom elements, SVG attrs, …).
 attribute : String -> String -> Attribute msg

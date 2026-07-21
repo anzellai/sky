@@ -20,14 +20,10 @@ module Std.Ui.Background exposing
     )
 
 -- Std.Ui.Background — background colour / image / gradient helpers.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
--- Bring Color + Attribute (and the Std.Ui helper functions) into
--- scope unqualified. `import Std.Ui as Ui` alone doesn't make
--- `Ui.Color` unify cleanly with the bare Color type at user call
--- sites — Sky's canonicaliser treats the qualified name as a
--- distinct type-of-type.
 import Std.Ui exposing
     ( Color
     , Attribute
@@ -44,6 +40,11 @@ import Std.Ui exposing
     )
 
 
+-- Bring Color + Attribute (and the Std.Ui helper functions) into
+-- scope unqualified. `import Std.Ui as Ui` alone doesn't make
+-- `Ui.Color` unify cleanly with the bare Color type at user call
+-- sites — Sky's canonicaliser treats the qualified name as a
+-- distinct type-of-type.
 -- Solid background colour. Composes with width/height/padding.
 color : Color -> Attribute msg
 color c =
@@ -58,7 +59,7 @@ color c =
 -- sticky-hover on touch devices.
 hoverColor : Color -> Attribute msg
 hoverColor c =
-    onPseudo hover [bgColor c]
+    onPseudo hover [ bgColor c ]
 
 
 -- `focusColor` targets `:focus-visible` (the safer default — only
@@ -67,21 +68,21 @@ hoverColor c =
 -- behaviour.
 focusColor : Color -> Attribute msg
 focusColor c =
-    onPseudo focusVisible [bgColor c]
+    onPseudo focusVisible [ bgColor c ]
 
 
 -- Explicit `:focus-visible` alias for users who prefer the
 -- spelled-out form.
 focusVisibleColor : Color -> Attribute msg
 focusVisibleColor c =
-    onPseudo focusVisible [bgColor c]
+    onPseudo focusVisible [ bgColor c ]
 
 
 -- `activeColor` — background while the element is being clicked /
 -- tapped. CSS `:active`.
 activeColor : Color -> Attribute msg
 activeColor c =
-    onPseudo active [bgColor c]
+    onPseudo active [ bgColor c ]
 
 
 -- `disabledColor` — background when the element has the
@@ -89,7 +90,7 @@ activeColor c =
 -- silently has no visual effect on other elements.
 disabledColor : Color -> Attribute msg
 disabledColor c =
-    onPseudo disabled [bgColor c]
+    onPseudo disabled [ bgColor c ]
 
 
 -- Background image from a URL. The renderer emits

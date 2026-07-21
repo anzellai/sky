@@ -59,6 +59,7 @@ module Std.Ui.Animation exposing
 -- `respectReducedMotion = False` knob on a `Ui.animate` spec when
 -- the animation is semantically required (loading spinner,
 -- progress indicator).
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -66,10 +67,7 @@ import Std.Ui exposing (Attribute, animateRaw)
 import Std.Ui.Transition as Transition exposing (Easing)
 import Std.Ui.Transform as Transform exposing (Prop)
 
-
 -- ─── Iterations ──────────────────────────────────────────────────
-
-
 -- How many times the animation runs. `Once` is the default for a
 -- typical "fade-in once and stay there" pattern; `Infinite` for
 -- spinners; `Times N` for a fixed count (e.g. blink 3 times).
@@ -107,10 +105,7 @@ iterationsToCss it =
         Times n ->
             String.fromInt n
 
-
 -- ─── FillMode ────────────────────────────────────────────────────
-
-
 -- `animation-fill-mode`: what state the element retains outside
 -- the animation's active period.
 --
@@ -166,8 +161,6 @@ fillModeToCss fm =
 
 
 -- ─── Easing re-exports ───────────────────────────────────────────
-
-
 linear : Easing
 linear =
     Transition.linear
@@ -197,10 +190,7 @@ easingToCss : Easing -> String
 easingToCss e =
     Transition.easingToCss e
 
-
 -- ─── Spec record + attribute entry point ─────────────────────────
-
-
 -- A complete keyframe-animation specification. Pass to
 -- `Animation.attribute` to attach to a Sky.Ui element.
 --
@@ -308,8 +298,7 @@ withKeyframes frames spec =
 -- auto-suffixed name.
 buildShorthandTail : Spec -> String
 buildShorthandTail spec =
-    String.fromInt spec.duration ++ "ms " ++ easingToCss spec.easing
-        ++ " "
+    String.fromInt spec.duration ++ "ms " ++ easingToCss spec.easing ++ " "
         ++ String.fromInt spec.delay
         ++ "ms "
         ++ iterationsToCss spec.iterations
