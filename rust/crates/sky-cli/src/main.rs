@@ -2177,8 +2177,12 @@ fn version_string() -> String {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let ver = repo_root_for(&cwd)
         .and_then(|root| {
-            std::fs::read_to_string(root.join("legacy-haskell-compiler").join("app").join("VERSION"))
-                .ok()
+            std::fs::read_to_string(
+                root.join("legacy-haskell-compiler")
+                    .join("app")
+                    .join("VERSION"),
+            )
+            .ok()
         })
         .map(|s| s.trim().to_string());
     match ver.as_deref() {
