@@ -98,7 +98,13 @@ jobs:
       # check, never by behaviour. The `go` toolchain is already set up above.
       - name: Gate — runtime rt tests (go test)
         # The job's default working-directory is `rust`; runtime-go is a sibling.
-        run: cd ../runtime-go && go test ./rt/...
+        # CGO_ENABLED=0 tests the pure-Go runtime helpers (rt.Coerce / AsTuple /
+        # Dict / panic classification / hub / jobs / telemetry) and selects the
+        # Sky.Webview STUB (webview.go is `cgo && darwin`) — so the gate avoids the
+        # macOS-CI cgo/WebKit ld64 linker assertion (an environment ceiling, the
+        # same class as the Sky.Webview example build). The webview cgo path is
+        # covered by the desktop-example builds, not these behaviour tests.
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
 
       - name: Gate — repro (byte-stable Go across fresh processes, L4)
         run: cargo run -q -p xtask -- repro
