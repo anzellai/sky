@@ -1,0 +1,9 @@
+<ts> INFO Sky TODO - A simple todo manager
+
+Usage:
+  ./app add <title>     Add a new todo
+  ./app list            List all todos
+  ./app done <id>       Mark a todo as done
+  ./app undone <id>     Mark a todo as not done
+  ./app remove <id>     Delete a todo
+  ./app clear           Remove all completed todos

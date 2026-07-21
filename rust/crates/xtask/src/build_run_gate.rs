@@ -122,6 +122,13 @@ struct Row {
     /// For TUI: RUN is "no-panic" rather than a stdout match.
     run_kind: &'static str, // "match" | "no-panic" | "n/a"
     blocker: String,
+    /// Raw stdout captured from the RUST binary (CLI examples only, when run).
+    /// The golden gate normalises this via `normalise_stdout` at compare time.
+    rust_stdout: Option<String>,
+    /// Raw stdout captured from the ORACLE binary (CLI examples, only when
+    /// `--run` verified against an existing `sky-out/app`). Drives the local
+    /// drift check (oracle_normalised vs committed golden).
+    oracle_stdout: Option<String>,
 }
 
 pub fn run(args: &[String], root: &Path) -> i32 {
@@ -137,6 +144,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let do_verify = args.iter().any(|a| a == "--run" || a == "--oracle" || a == "--serve");
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let all = args.iter().any(|a| a == "--all");
+    // `--golden`: compare each CLI example's normalised stdout to its committed
+    // `golden/<name>.stdout` (the CI runtime-correctness gate; NEVER runs the
+    // oracle). `--bless`: capture goldens, but ONLY the oracle-verified ones.
+    let golden = args.iter().any(|a| a == "--golden");
+    let bless = args.iter().any(|a| a == "--bless");
 
     let names: Vec<String> = match &only {
         Some(n) => n.clone(),
@@ -156,12 +168,26 @@ pub fn run(args: &[String], root: &Path) -> i32 {
                 continue;
             }
         }
-        let row = verify_one(root, &dir, name, shape, do_verify, verbose);
+        let row = verify_one(root, &dir, name, shape, do_verify, golden, bless, verbose);
         rows.push(row);
     }
 
     print_table(&rows);
-    gate_result(&rows)
+    let base = gate_result(&rows);
+
+    // ---- golden / bless phase (runtime-correctness) ----
+    // `--bless` captures oracle-verified goldens and returns (a capture run is
+    // not a gate). Otherwise, when `--golden` (compare) or `--run` (drift) is
+    // active, run the golden gate over the committed snapshots.
+    let gphase = if bless {
+        bless_goldens(root, &rows, verbose)
+    } else if golden || do_verify {
+        golden_gate(root, &rows, golden, do_verify, only.is_some())
+    } else {
+        0
+    };
+
+    base.max(gphase)
 }
 
 fn corpus(root: &Path) -> Vec<String> {
@@ -325,11 +351,15 @@ fn verify_one(
     name: &str,
     shape: Shape,
     do_verify: bool,
+    golden: bool,
+    bless: bool,
     verbose: bool,
 ) -> Row {
     // CLI runs through build_example's own run+stdin path; servers/tui build
-    // without the blocking run (we drive the process ourselves).
-    let want_inline_run = do_verify && shape == Shape::Cli;
+    // without the blocking run (we drive the process ourselves). `--golden` /
+    // `--bless` also need the RUST binary to run (they compare/capture its
+    // stdout), so force the inline run for CLI even without `--run`.
+    let want_inline_run = (do_verify || golden || bless) && shape == Shape::Cli;
     let opts = BuildOptions {
         repo_root: root.to_path_buf(),
         example_dir: dir.to_path_buf(),
@@ -354,6 +384,14 @@ fn verify_one(
     let mut run_ok = None;
     let mut matched = None;
     let mut run_kind = "n/a";
+    // Raw RUST stdout, captured whenever the inline CLI run fired (verify OR
+    // golden/bless). The golden gate normalises + compares it. `run_ok` is set
+    // here too, so a golden/bless-only run (no `--run`) still knows the binary ran.
+    let rust_stdout = if want_inline_run { rep.run_stdout.clone() } else { None };
+    let mut oracle_stdout = None;
+    if want_inline_run && !do_verify {
+        run_ok = rep.run_ok;
+    }
 
     if do_verify && rep.go_build_ok {
         match shape {
@@ -374,11 +412,13 @@ fn verify_one(
                 run_kind = "match";
                 run_ok = rep.run_ok;
                 if rep.run_ok == Some(true) {
-                    matched = compare_cli_oracle(
-                        dir,
-                        rep.run_stdout.as_deref().unwrap_or(""),
-                        stdin_for(name),
-                    );
+                    // Run the oracle binary (if present), stash its raw stdout
+                    // for the golden drift check, and compare normalised forms.
+                    oracle_stdout = run_oracle_stdout(dir, stdin_for(name));
+                    if let Some(oracle) = &oracle_stdout {
+                        let rust = rep.run_stdout.as_deref().unwrap_or("");
+                        matched = Some(normalise_stdout(oracle) == normalise_stdout(rust));
+                    }
                     if matched == Some(false) && blocker.is_empty() {
                         blocker = "stdout != oracle".into();
                     }
@@ -430,12 +470,19 @@ fn verify_one(
         matched,
         run_kind,
         blocker,
+        rust_stdout,
+        oracle_stdout,
     }
 }
 
 // ---- CLI oracle compare (stdout) ----------------------------------------
 
-fn compare_cli_oracle(dir: &Path, rust_stdout: &str, stdin: Option<String>) -> Option<bool> {
+/// Run the pre-built ORACLE binary at `<dir>/sky-out/app`, feed `stdin`, and
+/// return its RAW stdout (un-normalised). `None` when no oracle binary exists
+/// (e.g. a fresh CI checkout — the golden gate is deliberately oracle-free) or
+/// the run failed. Used both by the `--run` oracle match and the `--bless`
+/// capture (a golden is only written when rust == oracle here).
+fn run_oracle_stdout(dir: &Path, stdin: Option<String>) -> Option<String> {
     let app = dir.join("sky-out").join("app");
     if !app.exists() {
         return None;
@@ -454,8 +501,32 @@ fn compare_cli_oracle(dir: &Path, rust_stdout: &str, stdin: Option<String>) -> O
         drop(child.stdin.take());
     }
     let out = wait_bounded(&mut child, Duration::from_secs(20))?;
-    let oracle = String::from_utf8_lossy(&out.stdout).to_string();
-    Some(normalise_stdout(&oracle) == normalise_stdout(rust_stdout))
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Run the RUST binary at `<out_dir>/app` (the `sky-out-rust/` build), feed
+/// `stdin`, return its RAW stdout. Used for the `--bless` double-capture guard
+/// (run twice; refuse to bless if the two normalised captures differ).
+fn run_rust_stdout(out_dir: &Path, stdin: Option<String>) -> Option<String> {
+    let app = out_dir.join("app");
+    if !app.exists() {
+        return None;
+    }
+    let mut cmd = Command::new(&app);
+    cmd.current_dir(out_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    if let Some(data) = &stdin {
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(data.as_bytes());
+        }
+    } else {
+        drop(child.stdin.take());
+    }
+    let out = wait_bounded(&mut child, Duration::from_secs(20))?;
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 // ---- server verification (Live / Http) ----------------------------------
@@ -1218,6 +1289,371 @@ fn gate_result(rows: &[Row]) -> i32 {
     0
 }
 
+// ---- golden gate (runtime correctness) -----------------------------------
+//
+// Directory of committed per-example goldens (one file per example → readable
+// PR diffs). Each holds the NORMALISED stdout (via `normalise_stdout`) of an
+// oracle-verified run.
+const GOLDEN_DIR_REL: &str = "rust/crates/xtask/golden";
+
+fn golden_dir(root: &Path) -> std::path::PathBuf {
+    root.join(GOLDEN_DIR_REL)
+}
+
+fn golden_file(root: &Path, name: &str) -> std::path::PathBuf {
+    golden_dir(root).join(format!("{name}.stdout"))
+}
+
+/// Load a committed golden's contents (already normalised at bless time),
+/// trimmed for a stable compare. `None` when the file does not exist.
+fn load_golden(root: &Path, name: &str) -> Option<String> {
+    std::fs::read_to_string(golden_file(root, name))
+        .ok()
+        .map(|s| s.trim_end().to_string())
+}
+
+/// In-scope for the golden gate: a deterministic CLI example. The inherently
+/// nondeterministic ones (`NONDETERMINISTIC_OUTPUT`, e.g. 02-go-stdlib) are
+/// never golden-compared — they short-circuit to no-panic in the run path.
+fn golden_in_scope(row: &Row) -> bool {
+    row.shape == Shape::Cli && !NONDETERMINISTIC_OUTPUT.contains(&row.name.as_str())
+}
+
+/// Names present in the golden directory (as `<name>.stdout` files).
+fn committed_golden_names(root: &Path) -> Vec<String> {
+    let mut ns: Vec<String> = std::fs::read_dir(golden_dir(root))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().to_str().map(String::from))
+                .filter_map(|f| f.strip_suffix(".stdout").map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    ns.sort();
+    ns
+}
+
+/// A normalised golden that leaks a machine-specific path / home / hostname is
+/// NOT portable — refuse to bless it. Returns the offending marker if any.
+fn machine_leak(normalised: &str) -> Option<String> {
+    for marker in ["/Users/", "/home/", "$HOME"] {
+        if normalised.contains(marker) {
+            return Some(marker.to_string());
+        }
+    }
+    if let Ok(host) = std::env::var("HOSTNAME") {
+        if !host.trim().is_empty() && normalised.contains(host.trim()) {
+            return Some(format!("hostname {host}"));
+        }
+    }
+    if let Ok(out) = Command::new("hostname").output() {
+        let host = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !host.is_empty() && normalised.contains(&host) {
+            return Some(format!("hostname {host}"));
+        }
+    }
+    None
+}
+
+/// The `--golden` compare gate (CI runtime-correctness): for each in-scope CLI
+/// example that emitted+built+ran, normalise its RUST stdout and compare to the
+/// committed golden. NEVER runs the oracle — reads only committed goldens.
+///
+/// Additionally, when `do_verify` (local `--run`) captured an oracle stdout,
+/// assert `oracle_normalised == golden` (drift detection) so a stale golden is
+/// caught locally rather than in CI.
+///
+/// `golden_flag` gates the hard failures unique to `--golden` (mismatch,
+/// missing-golden); pure `--run` only performs the additive drift check.
+fn golden_gate(root: &Path, rows: &[Row], golden_flag: bool, do_verify: bool, subset: bool) -> i32 {
+    let scope: Vec<&Row> = rows.iter().filter(|r| golden_in_scope(r)).collect();
+
+    let mut matches: Vec<String> = Vec::new();
+    let mut mismatches: Vec<String> = Vec::new();
+    let mut missing_golden: Vec<String> = Vec::new();
+    let mut not_run: Vec<String> = Vec::new();
+    let mut drift: Vec<String> = Vec::new();
+
+    // header
+    if golden_flag {
+        let w = scope.iter().map(|r| r.name.len()).max().unwrap_or(8).max(8);
+        println!("\ngolden gate — CLI runtime-output correctness (normalised stdout vs committed golden)\n");
+        println!("{:<w$}  {:>8}  STATUS", "EXAMPLE", "GOLDEN", w = w);
+        println!("{}", "-".repeat(w + 24));
+        for r in &scope {
+            let (has_golden, status) = golden_status(root, r);
+            match status {
+                GoldenStatus::Match => matches.push(r.name.clone()),
+                GoldenStatus::Mismatch => mismatches.push(r.name.clone()),
+                GoldenStatus::Missing => missing_golden.push(r.name.clone()),
+                GoldenStatus::NotRun => not_run.push(r.name.clone()),
+            }
+            println!(
+                "{:<w$}  {:>8}  {}",
+                r.name,
+                if has_golden { "yes" } else { "-" },
+                status.label(),
+                w = w
+            );
+        }
+        println!("{}", "-".repeat(w + 24));
+    }
+
+    // drift check (independent of the golden_flag print path): only when we
+    // actually ran the oracle (local `--run` with an existing sky-out/app).
+    if do_verify {
+        for r in &scope {
+            if let (Some(oracle_raw), Some(g)) = (&r.oracle_stdout, load_golden(root, &r.name)) {
+                if normalise_stdout(oracle_raw) != g {
+                    drift.push(r.name.clone());
+                }
+            }
+        }
+    }
+
+    // golden files with no emitting example this run (env-tolerant: report only).
+    let scope_names: std::collections::HashSet<&str> =
+        scope.iter().map(|r| r.name.as_str()).collect();
+    let orphans: Vec<String> = committed_golden_names(root)
+        .into_iter()
+        .filter(|n| !scope_names.contains(n.as_str()))
+        .collect();
+
+    // ---- report ----
+    if !drift.is_empty() {
+        eprintln!(
+            "\ngolden gate: DRIFT — {} example(s) whose ORACLE output no longer matches the \
+             committed golden (re-bless): {}",
+            drift.len(),
+            drift.join(", ")
+        );
+    }
+    if !orphans.is_empty() && !subset {
+        println!(
+            "\ngolden gate: {} committed golden(s) had no emitting example this run \
+             (env-tolerant, not gated): {}",
+            orphans.len(),
+            orphans.join(", ")
+        );
+    }
+
+    let mut fail = false;
+    if golden_flag {
+        if !mismatches.is_empty() {
+            fail = true;
+            eprintln!(
+                "\nGOLDEN GATE: FAIL — {} example(s) whose normalised stdout != committed golden \
+                 (compiles but computes a different answer): {}",
+                mismatches.len(),
+                mismatches.join(", ")
+            );
+        }
+        if !missing_golden.is_empty() {
+            fail = true;
+            eprintln!(
+                "\nGOLDEN GATE: FAIL — {} emitting example(s) with NO golden \
+                 (new example — bless to lock its runtime output): {}",
+                missing_golden.len(),
+                missing_golden.join(", ")
+            );
+        }
+        if !not_run.is_empty() {
+            fail = true;
+            eprintln!(
+                "\nGOLDEN GATE: FAIL — {} in-scope CLI example(s) did not build+run so no output \
+                 could be compared: {}",
+                not_run.len(),
+                not_run.join(", ")
+            );
+        }
+    }
+    // drift is a hard failure regardless of the golden_flag (it means a stale
+    // golden that would silently pass CI).
+    if !drift.is_empty() {
+        fail = true;
+    }
+
+    if golden_flag {
+        if fail {
+            println!("\nGOLDEN GATE: FAIL");
+        } else {
+            println!(
+                "\nGOLDEN GATE: PASS  ({} CLI example(s) matched their committed golden)",
+                matches.len()
+            );
+        }
+    }
+
+    if fail {
+        1
+    } else {
+        0
+    }
+}
+
+enum GoldenStatus {
+    Match,
+    Mismatch,
+    Missing,
+    NotRun,
+}
+
+impl GoldenStatus {
+    fn label(&self) -> &'static str {
+        match self {
+            GoldenStatus::Match => "match",
+            GoldenStatus::Mismatch => "MISMATCH",
+            GoldenStatus::Missing => "MISSING-GOLDEN",
+            GoldenStatus::NotRun => "did-not-run",
+        }
+    }
+}
+
+/// Classify one in-scope CLI row against its committed golden. Returns
+/// `(golden_file_exists, status)`.
+fn golden_status(root: &Path, row: &Row) -> (bool, GoldenStatus) {
+    let rust = match (&row.rust_stdout, row.run_ok) {
+        (Some(s), Some(true)) => s,
+        _ => return (load_golden(root, &row.name).is_some(), GoldenStatus::NotRun),
+    };
+    let rust_norm = normalise_stdout(rust);
+    match load_golden(root, &row.name) {
+        Some(g) if g == rust_norm => (true, GoldenStatus::Match),
+        Some(_) => (true, GoldenStatus::Mismatch),
+        None => (false, GoldenStatus::Missing),
+    }
+}
+
+// ---- bless (oracle-verified golden capture) ------------------------------
+//
+// For each in-scope CLI example: capture RUST twice (double-capture guard),
+// run the ORACLE, and write the golden ONLY when
+// rust_capture_1 == rust_capture_2 == oracle (all normalised). A missing oracle
+// binary → skip+warn (never write an unverified golden). rust != oracle → refuse
+// + report (a real runtime bug, not a bless).
+fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
+    let scope: Vec<&Row> = rows.iter().filter(|r| golden_in_scope(r)).collect();
+    if let Err(e) = std::fs::create_dir_all(golden_dir(root)) {
+        eprintln!("bless: cannot create {GOLDEN_DIR_REL}: {e}");
+        return 1;
+    }
+
+    let mut written: Vec<String> = Vec::new();
+    let mut skipped_no_oracle: Vec<String> = Vec::new();
+    let mut refused_mismatch: Vec<(String, String)> = Vec::new();
+    let mut refused_nondet: Vec<String> = Vec::new();
+    let mut refused_leak: Vec<(String, String)> = Vec::new();
+    let mut skipped_no_run: Vec<String> = Vec::new();
+
+    println!("\nbless — capturing oracle-verified CLI goldens\n");
+
+    for r in &scope {
+        let name = r.name.as_str();
+        // rust capture #1 comes from the inline run recorded on the row.
+        let cap1 = match (&r.rust_stdout, r.run_ok) {
+            (Some(s), Some(true)) => normalise_stdout(s),
+            _ => {
+                skipped_no_run.push(name.to_string());
+                continue;
+            }
+        };
+        // rust capture #2: re-run the rust binary. Nondeterminism → refuse.
+        let out_dir = root.join("examples").join(name).join("sky-out-rust");
+        let cap2 = match run_rust_stdout(&out_dir, stdin_for(name)) {
+            Some(s) => normalise_stdout(&s),
+            None => {
+                skipped_no_run.push(name.to_string());
+                continue;
+            }
+        };
+        if cap1 != cap2 {
+            refused_nondet.push(name.to_string());
+            continue;
+        }
+        // oracle capture — the verification anchor.
+        let dir = root.join("examples").join(name);
+        let oracle = match run_oracle_stdout(&dir, stdin_for(name)) {
+            Some(s) => normalise_stdout(&s),
+            None => {
+                skipped_no_oracle.push(name.to_string());
+                continue;
+            }
+        };
+        if cap1 != oracle {
+            refused_mismatch.push((name.to_string(), "rust_normalized != oracle_normalized".into()));
+            continue;
+        }
+        // machine-specific leak guard.
+        if let Some(marker) = machine_leak(&cap1) {
+            refused_leak.push((name.to_string(), marker));
+            continue;
+        }
+        // write it (verified: rust==rust==oracle, portable).
+        let path = golden_file(root, name);
+        let body = format!("{}\n", cap1.trim_end());
+        match std::fs::write(&path, &body) {
+            Ok(()) => {
+                written.push(name.to_string());
+                if verbose {
+                    println!("  wrote  {name}  ({} bytes, oracle-verified)", body.len());
+                }
+            }
+            Err(e) => {
+                eprintln!("  FAILED to write {name}: {e}");
+                return 1;
+            }
+        }
+    }
+
+    // ---- summary ----
+    println!(
+        "bless summary: {} written (oracle-verified)  |  {} skipped (no oracle)  |  \
+         {} skipped (no run)  |  {} refused (nondeterministic)  |  {} refused (rust != oracle)  \
+         |  {} refused (machine leak)",
+        written.len(),
+        skipped_no_oracle.len(),
+        skipped_no_run.len(),
+        refused_nondet.len(),
+        refused_mismatch.len(),
+        refused_leak.len(),
+    );
+    if !written.is_empty() {
+        println!("  written: {}", written.join(", "));
+    }
+    if !skipped_no_oracle.is_empty() {
+        println!("  skipped (no oracle binary — build it to verify): {}", skipped_no_oracle.join(", "));
+    }
+    if !skipped_no_run.is_empty() {
+        println!("  skipped (rust did not build+run): {}", skipped_no_run.join(", "));
+    }
+    if !refused_nondet.is_empty() {
+        eprintln!("  refused (rust output nondeterministic across two captures): {}", refused_nondet.join(", "));
+    }
+    if !refused_leak.is_empty() {
+        for (n, m) in &refused_leak {
+            eprintln!("  refused (machine-specific leak `{m}`): {n}");
+        }
+    }
+
+    // A rust != oracle mismatch is a REAL runtime bug — fail hard, do not paper
+    // over it (a bless must never write an unverified golden).
+    if !refused_mismatch.is_empty() {
+        eprintln!(
+            "\nBLESS: REFUSED — {} example(s) where the RUST output differs from the ORACLE \
+             (a real runtime-correctness bug, not a bless):",
+            refused_mismatch.len()
+        );
+        for (n, why) in &refused_mismatch {
+            eprintln!("  {n}: {why}");
+        }
+        return 1;
+    }
+    if !refused_nondet.is_empty() {
+        return 1;
+    }
+    0
+}
+
 /// A NATIVE (cgo / C-toolchain) LINK failure — the emitted Go is valid and the
 /// Go compiler accepted it; only the native link stage failed (e.g. a Sky.Webview
 /// example's WebKit link on a runner missing the framework). This is an
@@ -1234,6 +1670,90 @@ fn is_native_link_failure(blocker: &str) -> bool {
         || blocker.contains("ld: ");
     let go_level = blocker.contains(".go:") || blocker.contains("undefined:") || blocker.contains("cannot use");
     native && !go_level
+}
+
+#[cfg(test)]
+mod golden_gate_tests {
+    use super::*;
+
+    fn cli_row(name: &str, stdout: &str) -> Row {
+        Row {
+            name: name.into(),
+            shape: Shape::Cli,
+            emitted: true,
+            build_ok: true,
+            run_ok: Some(true),
+            matched: None,
+            run_kind: "match",
+            blocker: String::new(),
+            rust_stdout: Some(stdout.into()),
+            oracle_stdout: None,
+        }
+    }
+
+    // The teeth, as a unit test: a Row whose normalised stdout equals its
+    // committed golden classifies Match; mutate one byte of the golden and it
+    // classifies Mismatch. Same mechanism the `--golden` gate fails on.
+    #[test]
+    fn golden_status_matches_then_mismatches_on_mutation() {
+        let root = std::env::temp_dir().join(format!("golden-gate-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(golden_dir(&root));
+
+        let stdout = "count = 3\nresult: ok\n";
+        let row = cli_row("99-fixture", stdout);
+        let normalised = normalise_stdout(stdout);
+
+        // committed golden equals the normalised output → Match.
+        std::fs::write(golden_file(&root, "99-fixture"), format!("{normalised}\n")).unwrap();
+        let (has, status) = golden_status(&root, &row);
+        assert!(has, "golden file present");
+        assert!(matches!(status, GoldenStatus::Match), "matching golden → Match");
+
+        // mutate one byte of the golden → Mismatch (the teeth).
+        let mut mutated: Vec<u8> = normalised.into_bytes();
+        assert!(!mutated.is_empty());
+        mutated[0] ^= 0x20; // flip case of the first char — a one-byte change
+        std::fs::write(golden_file(&root, "99-fixture"), {
+            let mut v = mutated.clone();
+            v.push(b'\n');
+            v
+        })
+        .unwrap();
+        let (_, status2) = golden_status(&root, &row);
+        assert!(matches!(status2, GoldenStatus::Mismatch), "mutated golden → Mismatch");
+
+        // no golden file → Missing.
+        let _ = std::fs::remove_file(golden_file(&root, "99-fixture"));
+        let (has3, status3) = golden_status(&root, &row);
+        assert!(!has3);
+        assert!(matches!(status3, GoldenStatus::Missing), "absent golden → Missing");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A row that did not build+run cannot be compared → NotRun (never a false
+    // Match against a stale golden).
+    #[test]
+    fn golden_status_not_run_when_no_stdout() {
+        let root = std::env::temp_dir().join(format!("golden-gate-test-nr-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(golden_dir(&root));
+        std::fs::write(golden_file(&root, "99-fixture"), "whatever\n").unwrap();
+        let mut row = cli_row("99-fixture", "");
+        row.run_ok = Some(false);
+        row.rust_stdout = None;
+        let (_, status) = golden_status(&root, &row);
+        assert!(matches!(status, GoldenStatus::NotRun));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The machine-specific leak guard refuses a golden carrying an absolute
+    // home path (would make the snapshot non-portable across machines/CI).
+    #[test]
+    fn machine_leak_flags_home_path() {
+        assert!(machine_leak("ok\n/Users/alice/project/out\n").is_some());
+        assert!(machine_leak("ok\n/home/bob/x\n").is_some());
+        assert!(machine_leak("count = 3\nresult: ok").is_none());
+    }
 }
 
 #[cfg(test)]

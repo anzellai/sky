@@ -1,0 +1,57 @@
+=== Sky JSON Examples ===
+
+1. Simple encoding:
+{
+  "active": true,
+  "age": 30,
+  "name": "Alice"
+}
+
+2. Complex encoding:
+{
+  "scores": [
+    95,
+    87,
+    92
+  ],
+  "tags": [
+    "admin",
+    "premium"
+  ],
+  "user": {
+    "age": 25,
+    "email": "bob@example.com",
+    "name": "Bob"
+  }
+}
+
+3. Simple decoding (map2):
+Charlie, age 28
+
+4. Pipeline decoding:
+Diana (diana@example.com)
+
+5. Optional fields:
+@skydev, bio: No bio provided, followers: 42
+
+6. Nested at:
+Eve from London
+
+7. List of objects:
+Buy milk, Write Sky
+
+8. Roundtrip:
+Count: 3, Names: Alice, Bob, Charlie
+
+9. oneOf (flexible):
+42 and hello
+
+10. Result.map3 (heterogeneous combine):
+OK: Alice, age 30
+
+11. Result.combine (homogeneous list):
+OK ages: 25, 30, 42
+
+12. Result.traverse:
+Sum of ages: 90
+Done!
