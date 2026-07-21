@@ -1,0 +1,91 @@
+name: Rust CI
+
+# Guards the Rust rewrite's reproducibility + parity invariants on every push to
+# the rewrite branch (and PRs into it). Runs the full xtask gate suite — none of
+# which need the Haskell oracle at gate time (the corpus is oracle-clean offline;
+# the gates run the Rust checker/lowerer in-process). Cross-platform (ubuntu +
+# macos) because byte-stable codegen (repro) is a determinism invariant that must
+# hold on ≥2 platforms.
+
+on:
+  push:
+    branches: ['rewrite/rust-compiler']
+    paths:
+      - 'rust/**'
+      - 'sky-stdlib/**'
+      - 'runtime-go/**'
+      - 'examples/**'
+      - '.github/workflows/rust-ci.yml'
+  pull_request:
+    branches: ['rewrite/rust-compiler']
+    paths:
+      - 'rust/**'
+      - 'sky-stdlib/**'
+      - 'runtime-go/**'
+      - 'examples/**'
+      - '.github/workflows/rust-ci.yml'
+
+# One in-flight run per ref; a newer push cancels the older.
+concurrency:
+  group: rust-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: macos-latest
+            runner: macos-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # ---- build once; every gate below reuses the compiled workspace ----
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Clippy (report; does not fail the build on style warnings yet)
+        run: cargo clippy --workspace --all-targets || true
+
+      - name: Unit + integration tests
+        run: cargo test --workspace --locked
+
+      # ---- Rust-only parity gates (checker/parser, in-process) ----
+      - name: Gate — roundtrip (reprint == source, L8)
+        run: cargo run -q -p xtask -- roundtrip
+
+      - name: Gate — resolve (name-resolution parity)
+        run: cargo run -q -p xtask -- resolve
+
+      - name: Gate — infer (type accept-parity, M3)
+        run: cargo run -q -p xtask -- infer
+
+      - name: Gate — reject (reject-parity)
+        run: cargo run -q -p xtask -- reject
+
+      # ---- codegen determinism + emit (needs the Go toolchain) ----
+      - name: Gate — repro (byte-stable Go across fresh processes, L4)
+        run: cargo run -q -p xtask -- repro
+
+      - name: Gate — build-run (emit + go build every example; FFI examples skipped)
+        run: cargo run -q -p xtask -- build-run --all
