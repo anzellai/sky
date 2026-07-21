@@ -1,0 +1,9 @@
+module Main exposing (main)
+
+
+-- fuzz regression: a top-level value/type decl followed by a stray `import`
+-- (imports must precede decls) once hung the parser forever — err_recover
+-- early-returns at the block boundary without consuming the `import`, spinning
+-- the top-level loop. Must now terminate as diagnostics (grammar.rs source_file).
+x = 1
+import Std.Log exposing (println)

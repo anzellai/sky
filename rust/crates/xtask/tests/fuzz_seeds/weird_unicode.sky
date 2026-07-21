@@ -1,0 +1,2 @@
+module Main exposing (main)
+main = "\u{FFFD}" ++ 日本語 ++ 

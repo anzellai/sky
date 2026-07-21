@@ -1541,6 +1541,7 @@ dependencies = [
  "base",
  "diagnostics",
  "hir",
+ "lower",
  "project",
  "syntax",
  "ty",

@@ -1921,7 +1921,21 @@ impl<'a> Resolver<'a> {
             .chain(self.qual_ctors.keys().cloned());
         for cand in candidates {
             let d = levenshtein(qual, &cand);
-            if d <= 2 && best.as_ref().map(|(bd, _)| d < *bd).unwrap_or(true) {
+            if d > 2 {
+                continue;
+            }
+            // Deterministic selection (L4): the candidate sets are `HashMap`s, so
+            // their key-iteration order varies run-to-run. A strict `d < *bd`
+            // tie-break lets whichever tied candidate is visited FIRST win — i.e.
+            // the suggestion depended on hash-iteration order (the fuzzer caught
+            // `Std.Cmd` suggesting `Sub` on one run and `Set` on the next). Break
+            // ties by the lexicographically smallest name so the suggestion is a
+            // pure function of the input, independent of iteration order.
+            let better = match &best {
+                None => true,
+                Some((bd, bc)) => d < *bd || (d == *bd && cand < *bc),
+            };
+            if better {
                 best = Some((d, cand));
             }
         }

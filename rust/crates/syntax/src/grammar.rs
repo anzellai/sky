@@ -66,9 +66,21 @@ pub(crate) fn source_file(p: &mut Parser) {
         while !p.at_end() {
             if p.at_any(DECL_START) {
                 decl(p);
+            } else if p.at_block_boundary() {
+                // A non-declaration token sitting AT the top-level anchor (col 1
+                // on a fresh line) — e.g. a stray `import` after a decl, or a
+                // mis-indented keyword. `err_recover` early-returns at a block
+                // boundary WITHOUT advancing, so calling it here would spin this
+                // `while !at_end()` loop forever (the token can never start a
+                // declaration and is never consumed). Bump exactly one token to
+                // guarantee forward progress — ill-formed input must terminate as
+                // diagnostics, never hang (L7). Valid programs never reach here:
+                // a well-formed top level is only decls after the imports.
+                p.err_and_bump("expected a declaration");
             } else {
                 // recover to the next declaration anchor rather than eating one
-                // token at a time (doc 04 §11).
+                // token at a time (doc 04 §11). Not at a block boundary here, so
+                // `err_recover` consumes ≥1 token — progress is guaranteed.
                 p.err_recover("expected a declaration", DECL_START);
             }
         }

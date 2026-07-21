@@ -83,6 +83,13 @@ jobs:
       - name: Gate — reject (reject-parity)
         run: cargo run -q -p xtask -- reject
 
+      # Robustness + determinism fuzzer (in-process; no Go toolchain). Feeds the
+      # parse → resolve → check (→ lower) pipeline a large mutated input space and
+      # asserts it never panics (L7) and is byte-deterministic run-to-run (L4).
+      # Bounded (fixed seed + wall-clock budget) so it can never hang CI.
+      - name: Gate — fuzz (robustness + determinism, L7 + L4)
+        run: cargo run -q -p xtask -- fuzz
+
       # ---- codegen determinism + emit (needs the Go toolchain) ----
       - name: Gate — repro (byte-stable Go across fresh processes, L4)
         run: cargo run -q -p xtask -- repro

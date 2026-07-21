@@ -9,6 +9,7 @@
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
 mod build_run_gate;
+mod fuzz_gate;
 mod infer_gate;
 mod reject_gate;
 mod repro_gate;
@@ -30,6 +31,7 @@ fn main() {
         Some("infer") => infer_gate::run(&args[1..], &repo_root()),
         Some("reject") => reject_gate::run(&args[1..], &repo_root()),
         Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
+        Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
         Some("diff") => {
             println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
@@ -38,7 +40,7 @@ fn main() {
         Some("repro") => repro_gate::run(&args[1..], &repo_root()),
         _ => {
             println!("{VERSION}");
-            println!("usage: xtask <roundtrip|diff|repro> [args]");
+            println!("usage: xtask <roundtrip|resolve|infer|reject|build-run|repro|fuzz> [args]");
             0
         }
     };
