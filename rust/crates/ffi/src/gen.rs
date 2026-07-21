@@ -676,6 +676,30 @@ mod tests {
         );
     }
 
+    /// Byte-identity for a committed package's kernel.json. `inspector` is
+    /// already normalised; `generate` requires normalised input, so parse_one
+    /// (idempotent re-normalize) is faithful.
+    fn assert_kernel_json_matches(inspector: &str, golden: &str) {
+        let info = crate::inspect::parse_one(&fixture(inspector)).unwrap();
+        let got = crate::gen::generate(&info).kernel_json;
+        let want = fixture(golden);
+        assert!(!want.is_empty(), "committed golden {golden} is empty");
+        assert_eq!(
+            got, want,
+            "kernel.json for {inspector} differs from committed {golden}"
+        );
+    }
+
+    #[test]
+    fn mux_kernel_json_byte_identical() {
+        assert_kernel_json_matches("mux.inspector.json", "mux.expected.kernel.json");
+    }
+
+    #[test]
+    fn net_http_kernel_json_byte_identical() {
+        assert_kernel_json_matches("net_http.inspector.json", "net_http.expected.kernel.json");
+    }
+
     #[test]
     fn kernel_json_matches_committed_uuid() {
         let mut info = crate::inspect::parse_one(&fixture("uuid.inspector.json")).unwrap();

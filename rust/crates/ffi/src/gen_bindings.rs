@@ -1387,4 +1387,47 @@ mod tests {
             );
         }
     }
+
+    /// Byte-identity for a committed package. `inspector` is already normalised
+    /// (functions name-sorted), so `parse_one` alone is faithful — no re-sort.
+    fn assert_golden_matches(inspector: &str, golden: &str) {
+        let info = crate::inspect::parse_one(&fixture(inspector)).unwrap();
+        let kernel_name = crate::gen::kernel_name_from_pkg(&info.pkg);
+        let got = emit_go_file(&kernel_name, &info);
+        let want = fixture(golden);
+        assert!(!want.is_empty(), "committed golden {golden} is empty");
+        if got != want {
+            panic!(
+                "emit_go_file({kernel_name}) differs from committed {golden}:\n{}",
+                first_diffs(&got, &want)
+            );
+        }
+    }
+
+    // gorilla/mux — methods (Router/Route receiver wrappers), structs, the
+    // Router type. Locks arity / Sky-type / receiver mapping for a real
+    // method-heavy package (was previously uncovered — only uuid was golden).
+    #[test]
+    fn mux_bindings_byte_identical() {
+        assert_golden_matches("mux.inspector.json", "mux.expected_bindings.go");
+    }
+
+    // net/http — interfaces (Handler/ResponseWriter/…) + handler funcs. Locks
+    // the interface-mapping + large-surface path.
+    #[test]
+    fn net_http_bindings_byte_identical() {
+        assert_golden_matches("net_http.inspector.json", "net_http.expected_bindings.go");
+    }
+
+    // Part 2 — determinism: two emissions from the SAME committed inspector must
+    // be byte-identical. Guards against a future HashMap-iteration-order leak in
+    // the generator (alias table / used-import set are the risk sites).
+    #[test]
+    fn emit_go_file_is_deterministic() {
+        let info = crate::inspect::parse_one(&fixture("mux.inspector.json")).unwrap();
+        let kernel_name = crate::gen::kernel_name_from_pkg(&info.pkg);
+        let a = emit_go_file(&kernel_name, &info);
+        let b = emit_go_file(&kernel_name, &info);
+        assert_eq!(a, b, "emit_go_file must be deterministic run-to-run");
+    }
 }
