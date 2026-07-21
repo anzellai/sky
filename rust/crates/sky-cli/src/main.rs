@@ -2161,15 +2161,28 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
     (positional, out)
 }
 
-/// Version string, mirroring `skyVersionString` (`app/Main.hs:1273`): `sky dev`
-/// for a `dev` `app/VERSION`, else `sky v<version>`.
+/// Version string: `sky v<version>` for a release, else `sky dev`.
+///
+/// Release builds bake the tag in at compile time (the release workflow sets
+/// `SKY_BUILD_VERSION`); this is the only source a standalone published binary
+/// has, since it carries no repo tree. Dev builds fall back to the legacy
+/// `app/VERSION` file if present (content is `dev`), otherwise report `sky dev`.
 fn version_string() -> String {
+    if let Some(v) = option_env!("SKY_BUILD_VERSION") {
+        let v = v.trim().trim_start_matches('v');
+        if !v.is_empty() && v != "dev" {
+            return format!("sky v{v}");
+        }
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let ver = repo_root_for(&cwd)
-        .and_then(|root| std::fs::read_to_string(root.join("app").join("VERSION")).ok())
+        .and_then(|root| {
+            std::fs::read_to_string(root.join("legacy-haskell-compiler").join("app").join("VERSION"))
+                .ok()
+        })
         .map(|s| s.trim().to_string());
     match ver.as_deref() {
-        Some("dev") | None => "sky dev".to_string(),
+        Some("dev") | Some("") | None => "sky dev".to_string(),
         Some(v) => format!("sky v{v}"),
     }
 }
