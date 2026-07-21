@@ -152,9 +152,13 @@ func (s *Store) EnablePersistence(path string) error {
 		db.Close()
 		return err
 	}
-	// busy_timeout: tolerate brief contention with the console
-	// mini-app's reader without surfacing SQLITE_BUSY.
-	if _, err := db.Exec(`PRAGMA busy_timeout=2000`); err != nil {
+	// busy_timeout: tolerate contention with the console mini-app's reader
+	// (and WAL checkpoints) without surfacing SQLITE_BUSY. 2s proved too short
+	// under load — a WAL checkpoint / a second writer holding the write lock
+	// briefly could exceed it, surfacing `database is locked` (SQLITE_BUSY) on a
+	// loaded CI runner (TestPersistence_PrunerDropsOldRows flake). 5s is still
+	// short for a background telemetry store yet absorbs the contention.
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
 		db.Close()
 		return err
 	}

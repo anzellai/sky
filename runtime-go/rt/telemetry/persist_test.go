@@ -186,6 +186,11 @@ func TestPersistence_PrunerDropsOldRows(t *testing.T) {
 	// remains.
 	rdb, _ := sql.Open("sqlite", dbPath)
 	defer rdb.Close()
+	// This second connection contends with the store's writer for the WAL write
+	// lock; give it the same busy_timeout so it waits rather than tripping (or
+	// being tripped by) SQLITE_BUSY under CI load.
+	_, _ = rdb.Exec(`PRAGMA busy_timeout=5000`)
+	rdb.SetMaxOpenConns(1)
 	old := time.Now().Add(-48 * time.Hour).UTC().Format("2006-01-02 15:04:05.000")
 	if _, err := rdb.Exec(`INSERT INTO telemetry_log (level, message, created_at) VALUES (?, ?, ?)`,
 		"info", "stale", old); err != nil {
