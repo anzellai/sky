@@ -1,29 +1,20 @@
 name: Rust CI
 
-# Guards the Rust rewrite's reproducibility + parity invariants on every push to
-# the rewrite branch (and PRs into it). Runs the full xtask gate suite — none of
+# The primary CI gate for the Sky compiler. Guards the Rust compiler's
+# reproducibility + parity invariants via the full xtask gate suite — none of
 # which need the Haskell oracle at gate time (the corpus is oracle-clean offline;
 # the gates run the Rust checker/lowerer in-process). Cross-platform (ubuntu +
 # macos) because byte-stable codegen (repro) is a determinism invariant that must
 # hold on ≥2 platforms.
+#
+# Runs on every push/PR to main (no paths filter, so a required status check
+# never deadlocks on a docs-only PR) plus the in-flight rewrite branch.
 
 on:
   push:
-    branches: ['rewrite/rust-compiler']
-    paths:
-      - 'rust/**'
-      - 'sky-stdlib/**'
-      - 'runtime-go/**'
-      - 'examples/**'
-      - '.github/workflows/rust-ci.yml'
+    branches: [main, 'rewrite/rust-compiler']
   pull_request:
-    branches: ['rewrite/rust-compiler']
-    paths:
-      - 'rust/**'
-      - 'sky-stdlib/**'
-      - 'runtime-go/**'
-      - 'examples/**'
-      - '.github/workflows/rust-ci.yml'
+    branches: [main]
 
 # One in-flight run per ref; a newer push cancels the older.
 concurrency:
