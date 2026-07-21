@@ -434,17 +434,20 @@ pub fn render_ty(t: &GoTy) -> String {
 }
 
 fn render_tuple_ty(xs: &[GoTy]) -> String {
-    // Tuples render with erased `any` element types — the runtime standardises
-    // on `rt.T2[any,any]` / `rt.T3[…]` (`SkyTuple2`) and its reflection paths
-    // assert that shape. Concrete element types survive on the GoTy only for
-    // pattern-bind coercion. (Mirror: lower::render_goty.)
+    // Typed-tuple codegen (v0.17 typed-Go ceiling): each element renders to
+    // its concrete Go type, so `(String, Int)` emits `rt.T2[string, int]`. A
+    // `GoTy::Any` element renders to `"any"` (via `render_ty`), so a floor /
+    // type-var position stays `any` — partial typing, e.g. `rt.T2[any, int]`.
+    // The runtime reflection sites (fst/snd/Dict.fromList) were hardened in
+    // Phase 0 to accept these distinct nominal instantiations. (Mirror:
+    // lower::render_goty.)
     match xs.len() {
         // Runtime has typed structs `rt.T2`..`rt.T9`; arity ≥10 is the
         // slice-backed `rt.SkyTupleN`. (Must match `lower::lower_tuple`'s
         // construct + pattern-access split at the same 9/10 boundary.)
         2..=9 => {
             let n = xs.len();
-            let a: Vec<String> = xs.iter().map(|_| "any".to_string()).collect();
+            let a: Vec<String> = xs.iter().map(render_ty).collect();
             format!("rt.T{n}[{}]", a.join(", "))
         }
         _ => "rt.SkyTupleN".to_string(),

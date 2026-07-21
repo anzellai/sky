@@ -79,13 +79,16 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
             }
             GoTy::Func(params, Box::new(sky_ty_to_go_in(ret, env, cur_mod)))
         }
-        // Tuple element types are kept for TYPING (pattern binds need them),
-        // but tuples RENDER as the runtime's `rt.T2[any,any]` (`SkyTuple2`) —
-        // see `render_goty` / codegen `render_ty` — and literals widen their
-        // elements. The runtime's reflection paths (`Dict_fromList`,
-        // `Basics_fst/sndT`) assert `T2[any,any]`; a concretely-typed
-        // `rt.T2[string,int]` value flowing in panics on the interface
-        // conversion.
+        // Tuple element types are kept for TYPING (pattern binds) AND for
+        // typed-tuple codegen (v0.17 typed-Go ceiling): `render_goty` / codegen
+        // `render_ty` now render each element to its concrete Go type, so a
+        // `(String, Int)` tuple emits `rt.T2[string, int]`. A `GoTy::Any`
+        // element (floor / type-var, e.g. Ty::Var below) stays `any` — partial
+        // typing like `rt.T2[Model_R, any]`. The runtime reflection paths
+        // (`Basics_fst/snd`, `Dict_fromList`, `Dict_fromListT/TA`) were hardened
+        // (route through `AsTuple2`/`AsTuple3`) so these distinct nominal
+        // instantiations flow soundly instead of panicking on the `.(SkyTuple2)`
+        // assertion.
         Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| sky_ty_to_go_in(x, env, cur_mod)).collect()),
         Ty::Unit => GoTy::Unit,
         // A remaining rigid/flex var → generic erase to `any` (doc 07 §6 class 8).

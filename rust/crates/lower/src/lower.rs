@@ -4156,9 +4156,14 @@ fn is_cmp(op: &str) -> bool {
 
 fn tuple_type_args(t: &GoTy) -> String {
     if let GoTy::Tuple(xs) = t {
-        // Erased `any` element types — the tuple literal is `rt.T2[any,any]{…}`
-        // (runtime `SkyTuple2`); concrete element values widen in.
-        let parts: Vec<String> = xs.iter().map(|_| "any".to_string()).collect();
+        // Typed-tuple codegen (v0.17 typed-Go ceiling): each element renders
+        // to its concrete Go type, so a `(String, Int)` literal emits
+        // `rt.T2[string, int]{…}`. A floor/type-var element is `GoTy::Any`,
+        // which renders to `"any"` — so a partially-typed tuple keeps that
+        // position `any` (e.g. `rt.T2[any, int]`). Phase 0 hardened the
+        // runtime reflection sites (fst/snd/Dict.fromList) so these typed
+        // instantiations flow soundly.
+        let parts: Vec<String> = xs.iter().map(render_goty).collect();
         format!("[{}]", parts.join(", "))
     } else {
         String::new()
@@ -4184,16 +4189,18 @@ fn render_goty(t: &GoTy) -> String {
             let a: Vec<String> = ps.iter().map(render_goty).collect();
             format!("func({}) {}", a.join(", "), render_goty(r))
         }
-        // Tuples render as the runtime `SkyTuple2/3` shape `rt.TN[any, …]` —
-        // element types erased so reflection paths (`T2[any,any]`) match. Type
-        // info survives on the GoTy for pattern-bind coercion only.
+        // Tuples render as the runtime `rt.TN[…]` generic instantiation with
+        // each element's concrete Go type (typed-tuple codegen, v0.17). A
+        // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
+        // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
+        // hardened the runtime reflection sites to accept these typed shapes.
         GoTy::Tuple(xs) => match xs.len() {
             // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
             // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
             2..=9 => format!(
                 "rt.T{}[{}]",
                 xs.len(),
-                xs.iter().map(|_| "any").collect::<Vec<_>>().join(", ")
+                xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
             ),
             _ => "rt.SkyTupleN".to_string(),
         },
