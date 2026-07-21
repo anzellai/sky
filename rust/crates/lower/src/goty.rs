@@ -90,7 +90,7 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
         Ty::Unit => GoTy::Unit,
         // A remaining rigid/flex var → generic erase to `any` (doc 07 §6 class 8).
         Ty::Var(_) => GoTy::Any,
-        Ty::Record(fields, _) => {
+        Ty::Record(fields, ext) => {
             // resolve to a nominal `_R` alias when the field-name set matches one.
             let mut names: Vec<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
@@ -112,6 +112,19 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
                     return GoTy::Named(model_go.clone(), vec![]);
                 }
             }
+            // NOTE on OPEN records (`ext = Some(ρ)`): most open rows are NOT
+            // row-polymorphic in a way that needs erasure — they are subset rows
+            // over a nominal (resolved above via `record_fieldsets` / the Model
+            // subset check) or a locally-consumed record whose extra fields are
+            // simply dropped at the coercion boundary. Blanket-erasing every open
+            // record to `any` here regresses those (multi-nominal composite apps
+            // whose subset rows match no single Model). The ONE case that needs
+            // `any` — a genuinely row-polymorphic function whose row var flows
+            // from a PARAMETER into the RESULT (`bump r = { r | age = … }`) — is
+            // detected structurally in `lower_def` (via the shared row-var name
+            // across param+result) and erased there, keeping this map total +
+            // baseline-identical for every other record.
+            let _ = ext;
             // else: anonymous Go struct. Field names Go-exported (capitalised).
             // Go anonymous-struct field ORDER is part of the type's identity, so
             // every `Ty::Record` for the same field-set MUST lower to the SAME

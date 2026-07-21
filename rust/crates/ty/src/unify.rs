@@ -355,6 +355,58 @@ impl UnionFind {
         }
     }
 
+    /// Follow a record's extension chain, merging any ext var that has already
+    /// resolved to a concrete `Record` into the field map. Returns the fully
+    /// flattened field set plus the FINAL extension (`None` = genuinely closed;
+    /// `Some(v)` = still open under a flex/unresolved row var `v`).
+    ///
+    /// The row-poly result-access bug: a generalised row-poly function like
+    /// `bump : {age|ρ} -> {age|ρ}` shares ρ between its param and result. At a
+    /// call `bump {name, age}`, unifying the param binds ρ to `Record({name})`,
+    /// so the RESULT node reads as the NESTED `{age | {name}}`. Without
+    /// flattening, `{age | {name}}` is treated as `{age | flex}` for the
+    /// closed/open discipline (the ext var is `Some`, so "open"), and the
+    /// row-carried `name` is invisible — field access on it, and the eventual
+    /// generalised read-back, drop `name`. Flattening makes `{age | {name}}`
+    /// behave as the closed `{age, name}` it really is.
+    ///
+    /// Bounded by a visited set so a recursive row (`ρ` resolving to a record
+    /// whose ext is `ρ` again) terminates. Outer fields win over an inner
+    /// ext-carried field of the same name (they are more specific).
+    pub(crate) fn normalize_record(
+        &mut self,
+        mut fields: BTreeMap<Name, TyVarId>,
+        ext: Option<TyVarId>,
+    ) -> (BTreeMap<Name, TyVarId>, Option<TyVarId>) {
+        let mut cur = ext;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            match cur {
+                None => return (fields, None),
+                Some(e) => {
+                    let r = self.find(e);
+                    if !seen.insert(r) {
+                        return (fields, Some(r));
+                    }
+                    match self.content(r) {
+                        Content::Structure(FlatTy::Record(fs_inner, ext_inner)) => {
+                            for (k, v) in fs_inner {
+                                fields.entry(k).or_insert(v);
+                            }
+                            cur = ext_inner;
+                        }
+                        // Flex/super/rigid/error/non-record structure: the row is
+                        // still open under `r` (or malformed — leave it to the
+                        // caller's unify to clash). This preserves the exact
+                        // pre-fix open/closed status for every case except a
+                        // fully-resolved Record chain.
+                        _ => return (fields, Some(r)),
+                    }
+                }
+            }
+        }
+    }
+
     /// `unify_records` (`Unify.hs:468`) — the closed/open discipline.
     fn unify_records(
         &mut self,
@@ -365,6 +417,11 @@ impl UnionFind {
         fs2: BTreeMap<Name, TyVarId>,
         e2: Option<TyVarId>,
     ) -> Result<(), Mismatch> {
+        // Flatten any resolved-Record extension so the closed/open discipline
+        // sees the record's true field set + true final extension. A no-op when
+        // both ext vars are still flex (the common case at call time).
+        let (fs1, e1) = self.normalize_record(fs1, e1);
+        let (fs2, e2) = self.normalize_record(fs2, e2);
         // shared fields unify pairwise
         let shared: Vec<(TyVarId, TyVarId)> = fs1
             .iter()

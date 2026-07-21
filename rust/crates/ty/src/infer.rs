@@ -1141,6 +1141,14 @@ impl<'a> Infer<'a> {
                 ),
                 FlatTy::Unit => Ty::Unit,
                 FlatTy::Record(fs, ext) => {
+                    // Flatten any resolved-Record extension before reading back.
+                    // A generalised row-poly result (`bump {name, age}` yields
+                    // `{age | {name}}` where the ext var has bound to
+                    // `Record({name})`) must read back as the closed `{age,
+                    // name}` — dropping the ext (the pre-fix behaviour) silently
+                    // lost every row-carried field, closing the scheme to its
+                    // literal fields only. See `UnionFind::normalize_record`.
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
                     let mut fields: Vec<(Name, Ty)> = fs
                         .into_iter()
                         .map(|(n, t)| (n, self.read_back_seen(t, seen, scheme, concretize_super)))

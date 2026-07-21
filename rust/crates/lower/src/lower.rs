@@ -392,6 +392,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         // param type keeps both sides on the nominal `_R` type, so `from == to`
         // and the coercion elides (doc 07 §3 subset-record case).
         let sig_ptys = e.sig.as_ref().map(peel_params);
+        // Row-polymorphic params (row var shared param↔result) must present to
+        // callers as `any` — matching the `any` Go signature `lower_def` emits —
+        // so the caller widens its argument instead of coercing it DOWN to a
+        // closed struct (which would drop the row-carried fields).
+        let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types);
         let mut ptys = Vec::new();
         for (i, p) in e.body.params.iter().enumerate() {
             let inferred = || match &e.body.pats[*p] {
@@ -405,6 +410,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             // the inferred type and would erase to `any` anyway).
             let t = match sig_ptys.as_ref().and_then(|ps| ps.get(i)) {
                 Some(st) if !matches!(st, Ty::Var(_)) => st.clone(),
+                // Row-poly + no concrete annotation → `any`.
+                _ if *rp_params.get(i).unwrap_or(&false) => Ty::Var(Name::new("any")),
                 _ => inferred(),
             };
             ptys.push(t);
@@ -430,8 +437,12 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .sig
             .as_ref()
             .map(|s| sig_result_after(s, e.body.params.len()));
+        let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types);
         let t = match sig_ret {
             Some(st) if !matches!(st, Ty::Var(_)) => Some(st),
+            // Row-poly result + no concrete annotation → `any` (matches the `any`
+            // Go return `lower_def` emits + the reflective `rt.RecordUpdate` body).
+            _ if rp_result => Some(Ty::Var(Name::new("any"))),
             _ => e.types.result.clone(),
         };
         if let Some(t) = t {
@@ -1280,11 +1291,34 @@ impl<'a> Ctx<'a> {
         let mut params = Vec::new();
         let mut param_destructure: Vec<GoStmt> = Vec::new();
         let sig_params = sig.map(peel_params).unwrap_or_default();
+
+        // Row-polymorphism detection (row-poly RESULT access class) — see
+        // `row_poly_flags`. A row var shared between a param record and the
+        // result record marks BOTH positions for `any` erasure so the emitted Go
+        // signature (`bump(r any) any`) + reflective `rt.Field`/`rt.RecordUpdate`
+        // body preserve every row-carried field. The SAME flags drive the
+        // caller-facing `def_param_tys`/`def_result_tys` tables, so both sides of
+        // every call agree.
+        let (rp_params, rp_result) = row_poly_flags(&self.body, &self.types);
+
         for (i, p) in param_pats.iter().enumerate() {
-            let (pname, pty, binds) = self.bind_param(*p, sig_params.get(i));
+            let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i));
+            // Erase a genuinely row-polymorphic param to `any`, and re-register
+            // the local so the body's reads (`r.age` → `rt.Field`) and updates
+            // (`{ r | … }` → `rt.RecordUpdate`) take the reflective any-typed
+            // path. Skipped when the slot has a concrete DECLARED sig type (an
+            // explicit annotation is authoritative).
+            if sig_params.get(i).is_none() && *rp_params.get(i).unwrap_or(&false) {
+                pty = GoTy::Any;
+                if let Pattern::Var(id) = &self.body.pats[*p] {
+                    self.local_tys.insert(*id, GoTy::Any);
+                }
+            }
             params.push(GoParam { name: pname, ty: pty });
             param_destructure.extend(binds);
         }
+        // Whether the RESULT is row-polymorphic (erase the return type to `any`).
+        let result_row_poly = sig.is_none() && rp_result;
 
         if is_main {
             return self.lower_main(name, module);
@@ -1305,15 +1339,21 @@ impl<'a> Ctx<'a> {
         // A CONCRETE declared/inferred return type — used both as the body's
         // expected slot and the emitted Go return type. `None` when neither the
         // sig nor per-def inference pinned it to something better than `any`.
-        let declared_ret: Option<GoTy> = match sig_ret {
-            Some(t) if !matches!(t, Ty::Var(_)) => Some(self.goty(&t)),
-            _ => match &self.types.result {
-                Some(t) => {
-                    let gt = self.goty(t);
-                    (gt != GoTy::Any).then_some(gt)
-                }
-                None => Some(GoTy::Unit),
-            },
+        let declared_ret: Option<GoTy> = if result_row_poly {
+            // Row-polymorphic result: emit `any`, matching the reflective
+            // `rt.RecordUpdate`/`rt.Field` body path (see the param loop above).
+            Some(GoTy::Any)
+        } else {
+            match sig_ret {
+                Some(t) if !matches!(t, Ty::Var(_)) => Some(self.goty(&t)),
+                _ => match &self.types.result {
+                    Some(t) => {
+                        let gt = self.goty(t);
+                        (gt != GoTy::Any).then_some(gt)
+                    }
+                    None => Some(GoTy::Unit),
+                },
+            }
         };
         let root = self.body.root;
         let mut body = param_destructure;
@@ -1773,13 +1813,30 @@ impl<'a> Ctx<'a> {
                         // e.g. `Sky_Test_runMain(tests)`, `Cmd.perform someTask`).
                         // A def WITH params is a genuine function value (HOF
                         // callback) and stays bare.
-                        let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+                        //
+                        // When the def's ACTUAL Go return type is `any` — e.g. a
+                        // row-polymorphic value `ada = bump {name, age}` whose
+                        // callee `bump` returns `any` — but the CALLER's local
+                        // inference typed this reference as a concrete struct
+                        // (`{name}` from a later `ada.name`), the two disagree and
+                        // `go build` rejects `Main_ada().Name` (the func returns
+                        // `any`, which has no fields). Trust the def's real return
+                        // type: emit the call as `any` so field reads route
+                        // through `rt.Field` (see `Expr::Access`). Only overrides
+                        // toward `any` (never away from a concrete type), so every
+                        // ordinary zero-param call is byte-identical.
+                        let def_ret = self.def_result_tys.get(&d).cloned();
+                        let call_ty = match def_ret {
+                            Some(t) if self.goty(&t) == GoTy::Any => GoTy::Any,
+                            _ => actual.clone(),
+                        };
+                        let fn_ty = GoTy::Func(vec![], Box::new(call_ty.clone()));
                         GoExpr::new(
                             GoExprKind::Call(
                                 Box::new(GoExpr::new(GoExprKind::Ident(go), fn_ty)),
                                 vec![],
                             ),
-                            actual.clone(),
+                            call_ty,
                         )
                     } else {
                         GoExpr::new(GoExprKind::Ident(go), actual.clone())
@@ -2922,6 +2979,37 @@ impl<'a> Ctx<'a> {
         // `lower_expr` coerces the block to the caller's `expected` if needed.
         let b = self.lower_expr(base, &GoTy::Any);
         let uty = b.ty.clone();
+        // A ROW-POLYMORPHIC base (`bump r = { r | age = … }`, base lowers to
+        // `any`) has no static Go struct to `_u.Field = v` into. Route the whole
+        // update through the runtime's reflective `rt.RecordUpdate(base,
+        // map[string]any{"Field": v})`, exactly as the oracle does. The updated
+        // values lower with `any` as their expected type (no declared field
+        // types are known) and widen. `rt.RecordUpdate` copies the base
+        // (map- or struct-backed) and overwrites the named fields reflectively.
+        if uty == GoTy::Any {
+            let pairs: Vec<(String, GoExpr)> = fields
+                .iter()
+                .map(|(n, v)| {
+                    let cap = capitalize(n.as_str());
+                    let lowered = widen(self.lower_expr(*v, &GoTy::Any));
+                    (format!("\"{cap}\""), lowered)
+                })
+                .collect();
+            let map_lit = GoExpr::new(
+                GoExprKind::StructLit("map[string]any".to_string(), pairs),
+                GoTy::Any,
+            );
+            return GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(
+                        GoExprKind::Ident("rt.RecordUpdate".into()),
+                        GoTy::Any,
+                    )),
+                    vec![widen(b), map_lit],
+                ),
+                GoTy::Any,
+            );
+        }
         // Declared field types of the base record `_R` — so each updated field's
         // value lowers with its Go field type as `expected` (a kernel `any`
         // return like `rt.Basics_not(...)` is then coerced to the field's `bool`,
@@ -3826,6 +3914,50 @@ impl<'a> Ctx<'a> {
 
 fn int_lit(n: i64) -> GoExpr {
     GoExpr::new(GoExprKind::IntLit(n), GoTy::Bare(Prim::Int))
+}
+
+/// The top-level record extension-variable NAME of an inferred type, if it is an
+/// open record. Read-back names row vars by union-find id, so a name that recurs
+/// across positions is literally the SAME row var.
+fn record_ext_name(ty: Option<&Ty>) -> Option<&Name> {
+    match ty {
+        Some(Ty::Record(_, Some(name))) => Some(name),
+        _ => None,
+    }
+}
+
+/// Row-polymorphism flags for a def: `(per-param, result)`. A position is
+/// row-polymorphic when its inferred type is an OPEN record whose extension-var
+/// name is SHARED with another param/result position (count ≥ 2) — i.e. the row
+/// variable flows between the parameter and the result, as in
+/// `bump r = { r | age = r.age + 1 }` : `{age|ρ} -> {age|ρ}`. Those positions
+/// must lower to `any` (reflective `rt.Field`/`rt.RecordUpdate`) instead of a
+/// closed Go struct, otherwise a caller's wider record has its extra fields
+/// coerced away (the row-poly result-access bug). Single-occurrence open rows
+/// (subset-of-nominal params, locally-consumed records) are NOT row-poly and
+/// keep their concrete struct — baseline-identical.
+fn row_poly_flags(body: &Body, types: &BodyTypes) -> (Vec<bool>, bool) {
+    use std::collections::HashMap as Hm;
+    let param_tys: Vec<Option<Ty>> = body
+        .params
+        .iter()
+        .map(|p| match &body.pats[*p] {
+            Pattern::Var(id) => types.locals.get(id).cloned(),
+            _ => None,
+        })
+        .collect();
+    let mut counts: Hm<Name, u32> = Hm::new();
+    for t in param_tys.iter().map(|t| t.as_ref()).chain(std::iter::once(types.result.as_ref())) {
+        if let Some(name) = record_ext_name(t) {
+            *counts.entry(name.clone()).or_insert(0) += 1;
+        }
+    }
+    let is_rp = |t: Option<&Ty>| {
+        record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2)
+    };
+    let pflags = param_tys.iter().map(|t| is_rp(t.as_ref())).collect();
+    let rflag = is_rp(types.result.as_ref());
+    (pflags, rflag)
 }
 
 /// For every `name := …` short-binding in `binds`, emit a `_ = name` discard
