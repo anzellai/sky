@@ -142,19 +142,17 @@ fn code_title(code: &str) -> &'static str {
 
 /// `-- TITLE -------------------------------- path:line:col`, padded to
 /// [`HEADER_WIDTH`]. When there is no location, the rule fills the whole width.
-fn header_line(title: &str, loc: Option<&str>) -> String {
+fn header_line(title: &str, loc: Option<&str>, code: &str) -> String {
     let prefix = format!("-- {title} ");
-    match loc {
-        Some(loc) => {
-            let tail = loc.len() + 1; // one space before the location
-            let dashes = HEADER_WIDTH.saturating_sub(prefix.len() + tail).max(1);
-            format!("{prefix}{} {loc}", "-".repeat(dashes))
-        }
-        None => {
-            let dashes = HEADER_WIDTH.saturating_sub(prefix.len()).max(1);
-            format!("{prefix}{}", "-".repeat(dashes))
-        }
-    }
+    // Tail carries the location (if known) and always the error code, matching
+    // the oracle's `-- PARSE ERROR ---- src/Main.sky:5:1 [E0001]`.
+    let tail_str = match loc {
+        Some(loc) => format!("{loc} [{code}]"),
+        None => format!("[{code}]"),
+    };
+    let tail = tail_str.len() + 1; // one space before the tail
+    let dashes = HEADER_WIDTH.saturating_sub(prefix.len() + tail).max(1);
+    format!("{prefix}{} {tail_str}", "-".repeat(dashes))
 }
 
 /// The source excerpt + caret for one label span, e.g.
@@ -233,7 +231,7 @@ impl Diagnostic {
         });
 
         let mut out = String::new();
-        out.push_str(&header_line(title, loc.as_deref()));
+        out.push_str(&header_line(title, loc.as_deref(), &self.code.0));
         out.push('\n');
 
         // Primary excerpt (if we can read the file).
@@ -340,7 +338,7 @@ mod tests {
 
         // `"x"` starts at 0-based column 11 → 1-based col 12, on line 2.
         let expected = "\
--- TYPE MISMATCH ----------------------------------------- src/Main.sky:2:12
+-- TYPE MISMATCH --------------------------------- src/Main.sky:2:12 [E2001]
 
 2| main = 1 + \"x\"
               ^^^
