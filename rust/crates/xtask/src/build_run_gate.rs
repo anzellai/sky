@@ -676,11 +676,11 @@ fn verify_tui(out_dir: &Path, _name: &str) -> (bool, String) {
         return (false, "no binary".into());
     }
     // macOS: `script -q /dev/null <cmd>` runs cmd in a pty; stdin is forwarded.
-    // Bound the whole thing with `timeout` so a wedged TUI can't hang the gate.
-    let mut cmd = Command::new("timeout");
-    cmd.arg("6")
-        .arg("script")
-        .arg("-q")
+    // `wait_bounded` (below) bounds a wedged TUI — no external `timeout` wrapper
+    // (absent on macOS, GNU coreutils only), which would also make this spawn a
+    // redundant double-bound.
+    let mut cmd = Command::new("script");
+    cmd.arg("-q")
         .arg("/dev/null")
         .arg("./app")
         .current_dir(out_dir)
