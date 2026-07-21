@@ -128,8 +128,8 @@ import Sky.Build.EmbedDirTH (embedDirRecursive)
 
 
 embeddedRuntime :: [(FilePath, ByteString)]
-embeddedRuntime = $(embedDirRecursive "runtime-go")
+embeddedRuntime = $(embedDirRecursive "../runtime-go")
 
 
 embeddedSkyStdlib :: [(FilePath, ByteString)]
-embeddedSkyStdlib = $(embedDirRecursive "sky-stdlib")
+embeddedSkyStdlib = $(embedDirRecursive "../sky-stdlib")

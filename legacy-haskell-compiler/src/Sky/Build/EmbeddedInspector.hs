@@ -41,7 +41,7 @@ import System.Exit (ExitCode(..))
 -- path. Re-embedded whenever any file changes (file-embed registers
 -- each file via qAddDependentFile).
 embeddedInspectorBytes :: [(FilePath, ByteString)]
-embeddedInspectorBytes = $(embedDir "tools/sky-ffi-inspect")
+embeddedInspectorBytes = $(embedDir "../tools/sky-ffi-inspect")
 
 
 -- | Content hash of the embedded tree. Entries are sorted by path

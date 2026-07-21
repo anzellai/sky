@@ -17,4 +17,4 @@ import Sky.Build.EmbedDirTH (embedDirRecursive)
 
 
 embeddedDocServerApp :: [(FilePath, ByteString)]
-embeddedDocServerApp = $(embedDirRecursive "sky-bundled/doc")
+embeddedDocServerApp = $(embedDirRecursive "../sky-bundled/doc")

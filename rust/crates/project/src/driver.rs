@@ -88,12 +88,14 @@ pub fn project_dir_for(file: &Path) -> PathBuf {
     abs
 }
 
-/// True when `dir` is the Sky *compiler* repo root — it carries the unique
-/// `sky-compiler.cabal` marker. `sky build` refuses to run here because its
-/// output dir (`sky-out/`) would overwrite the compiler binary
-/// (`app/Main.hs:1293`).
+/// True when `dir` is the Sky *compiler* repo root. Identified by the Rust
+/// workspace plus the embedded stdlib/runtime source trees — a combination that
+/// never occurs in a user project. `sky build` refuses to run here because its
+/// output dir (`sky-out/`) would overwrite the oracle binary kept there.
 pub fn is_compiler_repo_root(dir: &Path) -> bool {
-    dir.join("sky-compiler.cabal").is_file()
+    dir.join("rust").join("Cargo.toml").is_file()
+        && dir.join("sky-stdlib").is_dir()
+        && dir.join("runtime-go").is_dir()
 }
 
 /// Derive a Sky module name from a source path relative to one of `roots`

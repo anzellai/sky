@@ -1205,7 +1205,7 @@ fmtTargetArg =
 -- via Template Haskell, so `sky init` works from any release artefact
 -- without needing a templates/ directory beside the binary.
 embeddedClaudeMd :: String
-embeddedClaudeMd = $(embedStringFile "templates/CLAUDE.md")
+embeddedClaudeMd = $(embedStringFile "../templates/CLAUDE.md")
 
 
 -- | Copy a named template into the new project. For CLAUDE.md we use

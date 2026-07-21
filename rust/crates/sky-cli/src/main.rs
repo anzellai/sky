@@ -104,12 +104,12 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    // Repo-root guard (app/Main.hs:1293): refuse to write sky-out/
-    // into the compiler repo root, which would overwrite the compiler binary.
+    // Repo-root guard: refuse to write sky-out/ into the compiler repo root,
+    // which would overwrite the oracle binary kept there.
     if is_compiler_repo_root(&project_dir) && out_override.is_none() {
         eprintln!(
             "sky {}: refusing to run from the Sky compiler repo root\n\
-             (it contains sky-compiler.cabal; output would overwrite the compiler).\n\
+             (output would overwrite sky-out/).\n\
              cd into an example or user project first, e.g.\n  \
              cd examples/01-hello-world && sky {} src/Main.sky",
             verb(check_only),

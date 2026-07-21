@@ -18,32 +18,32 @@ build-type:    Simple
 -- LICENSE + NOTICE travel with the sdist so the binary distribution
 -- carries the licence + attribution required by Apache-2.0 §4(a, c, d).
 extra-source-files:
-    LICENSE
-    NOTICE.md
-    templates/CLAUDE.md
-    runtime-go/go.mod
-    runtime-go/go.sum
-    runtime-go/rt/*.go
+    ../LICENSE
+    ../NOTICE.md
+    ../templates/CLAUDE.md
+    ../runtime-go/go.mod
+    ../runtime-go/go.sum
+    ../runtime-go/rt/*.go
     -- Runtime sub-packages — these must be listed explicitly,
     -- otherwise `cabal install`'s sdist phase silently drops the
     -- subdir contents and the binary's TH-embedded `embeddedRuntime`
     -- only contains top-level files. Result: a published binary
     -- without `rt/jobs/` or `rt/telemetry/`, and user `go build`
     -- fails with `package sky-app/rt/jobs is not in std`. Issue #58.
-    runtime-go/rt/jobs/*.go
-    runtime-go/rt/telemetry/*.go
+    ../runtime-go/rt/jobs/*.go
+    ../runtime-go/rt/telemetry/*.go
     -- v0.16.0 PR 1: inline Sky.Live console UI translated to Go by
     -- scripts/regenerate-console.sh. Committed under runtime-go/rt
     -- so it materialises alongside the rest of the runtime in
     -- user app `sky-out/` (no chicken-and-egg "sky must build the
     -- console at user-install time" problem).
-    runtime-go/rt/console_app/*.go
+    ../runtime-go/rt/console_app/*.go
     -- v0.16.4 Chunk 2+3: hub daemon receiver + SQLite store +
     -- standalone driver. Materialised by runConsoleServe so the
     -- `sky console-serve` subcommand can `go build ./cmd/sky-hub`
     -- against a freshly-extracted tree.
-    runtime-go/rt/hub/*.go
-    runtime-go/cmd/sky-hub/*.go
+    ../runtime-go/rt/hub/*.go
+    ../runtime-go/cmd/sky-hub/*.go
     -- sky-stdlib subdirs MUST be listed explicitly per directory.
     -- Same Issue #58 cause as the runtime-go subdirs above: cabal sdist
     -- does NOT recurse into subdirectories of an extra-source-files
@@ -58,21 +58,21 @@ extra-source-files:
     -- file MUST be reflected here.  When adding a new sub-module
     -- like `Std.Live.Head`, file in this list FIRST (or the new
     -- module silently disappears from released binaries).
-    sky-stdlib/Sky/Core/*.sky
-    sky-stdlib/Sky/Core/Http/*.sky
-    sky-stdlib/Sky/Core/Json/*.sky
-    sky-stdlib/Sky/Core/Json/Decode/*.sky
-    sky-stdlib/Sky/*.sky
-    sky-stdlib/Sky/Http/*.sky
-    sky-stdlib/Sky/Http/Server/*.sky
-    sky-stdlib/Std/*.sky
-    sky-stdlib/Std/Db/*.sky
-    sky-stdlib/Std/Live/*.sky
-    sky-stdlib/Std/Ui/*.sky
-    sky-stdlib/Std/Html/*.sky
-    tools/sky-ffi-inspect/main.go
-    tools/sky-ffi-inspect/go.mod
-    tools/sky-ffi-inspect/go.sum
+    ../sky-stdlib/Sky/Core/*.sky
+    ../sky-stdlib/Sky/Core/Http/*.sky
+    ../sky-stdlib/Sky/Core/Json/*.sky
+    ../sky-stdlib/Sky/Core/Json/Decode/*.sky
+    ../sky-stdlib/Sky/*.sky
+    ../sky-stdlib/Sky/Http/*.sky
+    ../sky-stdlib/Sky/Http/Server/*.sky
+    ../sky-stdlib/Std/*.sky
+    ../sky-stdlib/Std/Db/*.sky
+    ../sky-stdlib/Std/Live/*.sky
+    ../sky-stdlib/Std/Ui/*.sky
+    ../sky-stdlib/Std/Html/*.sky
+    ../tools/sky-ffi-inspect/main.go
+    ../tools/sky-ffi-inspect/go.mod
+    ../tools/sky-ffi-inspect/go.sum
     -- Bundled Sky doc mini-app (sky-bundled/doc/) — embedded via TH
     -- for the `sky doc --serve` CLI subcommand. Listed explicitly so
     -- cabal sdist picks the subdirs up; same issue class as the
@@ -84,8 +84,8 @@ extra-source-files:
     -- scripts/regenerate-console.sh from the Sky source kept on a
     -- maintainer branch). The console mounts in-process per
     -- runtime-go/rt/console.go MountEmbeddedConsole.
-    sky-bundled/doc/sky.toml
-    sky-bundled/doc/src/*.sky
+    ../sky-bundled/doc/sky.toml
+    ../sky-bundled/doc/src/*.sky
     app/VERSION
 
 executable sky
