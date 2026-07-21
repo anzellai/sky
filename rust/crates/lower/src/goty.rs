@@ -112,14 +112,24 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
                     return GoTy::Named(model_go.clone(), vec![]);
                 }
             }
-            // else: anonymous Go struct. Field names Go-exported (capitalised) to
-            // stay consistent with record-literal construction + field access.
-            GoTy::Struct(
-                fields
-                    .iter()
-                    .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), sky_ty_to_go_in(ft, env, cur_mod)))
-                    .collect(),
-            )
+            // else: anonymous Go struct. Field names Go-exported (capitalised).
+            // Go anonymous-struct field ORDER is part of the type's identity, so
+            // every `Ty::Record` for the same field-set MUST lower to the SAME
+            // field order — otherwise two structurally-identical records (e.g. an
+            // annotation's decl-order fields vs a checker-normalised result type)
+            // render as distinct Go types and `go build` rejects the assignment
+            // (`struct{Name;Age;Active}` vs `struct{Active;Age;Name}`). Sort by the
+            // Go field name — the single canonical order shared with
+            // `lower_record`'s all-`any` fallback + record-literal keyed
+            // construction (keyed-literal order is field-name independent) + the
+            // oracle's observed output. Matches the `_fieldIndex` non-regression
+            // rule (field enumeration sorted before any order-dependent emission).
+            let mut go_fields: Vec<(base::Name, GoTy)> = fields
+                .iter()
+                .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), sky_ty_to_go_in(ft, env, cur_mod)))
+                .collect();
+            go_fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            GoTy::Struct(go_fields)
         }
         Ty::Error => GoTy::Any,
     }
