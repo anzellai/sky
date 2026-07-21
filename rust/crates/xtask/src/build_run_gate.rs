@@ -18,7 +18,14 @@
 //!
 //! Webview — BUILD only (macOS GUI; can't headless-verify). RUN = n/a.
 //!
-//! FFI-blocked (05/11/13) — skipped; BLOCKER = "FFI-blocked".
+//! FFI examples — the Rust `sky` generates their Go-package surfaces itself
+//! (`sky install` shells out to the embedded introspector), so they build under
+//! the Rust compiler: 05-mux-server (gorilla/mux) build+run+match; 13-skyshop
+//! (76k Stripe symbols) builds+runs; 11-fyne-stopwatch is cgo build-only
+//! (`Shape::Ffi`, native GUI). Small surfaces are committed (`sky-ffi/`, e.g.
+//! 05); the large 11/13 surfaces are `.gitignore`d and regenerated on demand
+//! (13's Stripe surface is 54 MB). "FFI-blocked" only applies when the local
+//! `go` toolchain can't introspect a package.
 //!
 //! Usage:
 //!   xtask build-run                       # CLI-family, build-only (fast)
