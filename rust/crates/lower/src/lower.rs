@@ -1615,16 +1615,29 @@ impl<'a> Ctx<'a> {
                         GoExprKind::Ident(format!("_ = {tmp}")),
                         GoTy::Unit,
                     )));
+                    // Discard EVERY binder `pattern_test` introduced, not just the
+                    // let-def's top-level `d.binders`. A tuple / nested destructure
+                    // binds intermediate `v_N` temps (`(a, b, c, d) = quad` →
+                    // `v_0..v_3`) that are ABSENT from `d.binders`; when the body
+                    // ignores one (`… use a, b …`), the unused `v_N` tripped Go's
+                    // "declared and not used" and `go build` failed (the oracle
+                    // compiles it). Walk the emitted `Short` binds directly so the
+                    // discard set matches exactly what was bound. `_ = x` is legal
+                    // Go even when `x` is later used (matches the oracle's
+                    // per-binding discard).
+                    let discard_names: Vec<String> = binds
+                        .iter()
+                        .filter_map(|s| match s {
+                            GoStmt::Short(n, _) if n != "_" => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect();
                     out.extend(binds);
-                    for (_bn, lid) in &d.binders {
-                        if let Some(name) = self.local_names.get(lid).cloned() {
-                            if name != "_" {
-                                out.push(GoStmt::Expr(GoExpr::new(
-                                    GoExprKind::Ident(format!("_ = {name}")),
-                                    GoTy::Unit,
-                                )));
-                            }
-                        }
+                    for name in discard_names {
+                        out.push(GoStmt::Expr(GoExpr::new(
+                            GoExprKind::Ident(format!("_ = {name}")),
+                            GoTy::Unit,
+                        )));
                     }
                     return;
                 }

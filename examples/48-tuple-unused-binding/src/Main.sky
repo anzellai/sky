@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- A tuple destructure in a `let` that IGNORES some elements. `pattern_test`
+-- binds every element to an intermediate `v_N` temp; the discard pass must
+-- emit `_ = v_N` for the unused ones (`c` here) or Go rejects the build with
+-- "declared and not used". Before the fix only the let-def's top-level
+-- `d.binders` were discarded, missing the tuple's element temps. (The oracle
+-- handles arity ≤ 3; it panics on arity-4 typed tuples, which the Rust rewrite
+-- runs correctly — a separate better-than-oracle case, see rt.T4.)
+triple : ( Int, String, Bool )
+triple =
+    ( 7, "hi", True )
+
+
+main =
+    let
+        ( a, b, c ) = triple
+    in
+        println (b ++ " " ++ String.fromInt a)
