@@ -3,7 +3,9 @@
 //! dispatch, ADT/record type-decl emission. Scoped to the M4 CLI-family subset;
 //! server/TUI/webview backends are reported as out of scope.
 
-use crate::goty::{sky_ty_to_go, sky_ty_to_go_in, Nominal, NominalKind, TypeEnv};
+use crate::goty::{
+    sky_ty_to_go, sky_ty_to_go_in, sky_ty_to_go_params, Nominal, NominalKind, TypeEnv,
+};
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
@@ -210,11 +212,17 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
 
     // record field-set → `_R` alias index (structural → nominal resolution).
     let mut record_fieldsets: HashMap<Vec<String>, String> = HashMap::new();
+    // `_R` go-name → ordered type-param vars + field templates (for
+    // instantiating a parametric alias resolved via the structural path).
+    let mut record_params: HashMap<String, Vec<Name>> = HashMap::new();
+    let mut record_templates: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
     for d in &type_decls {
         if let TypeDeclKind::Record(fields) = &d.kind {
             let mut names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
             names.sort();
             record_fieldsets.entry(names).or_insert_with(|| d.go_name.clone());
+            record_params.insert(d.go_name.clone(), record_type_params(fields));
+            record_templates.insert(d.go_name.clone(), fields.clone());
         }
     }
     // ---- detect the app's single TEA Model ----
@@ -259,6 +267,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         nominal,
         nominal_by_module,
         record_fieldsets,
+        record_params,
+        record_templates,
         model,
     };
 
@@ -843,6 +853,7 @@ fn collect_types(
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Iota,
                                 opaque,
+                                type_arity: 0,
                             }
                         );
                         TypeDeclKind::Iota(variants.into_iter().map(|(n, _)| n).collect())
@@ -853,6 +864,7 @@ fn collect_types(
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Adt,
                                 opaque: false,
+                                type_arity: 0,
                             }
                         );
                         TypeDeclKind::Adt(variants)
@@ -872,12 +884,18 @@ fn collect_types(
                             .map(|(n, t)| (n, world.expand_ty(&t)))
                             .collect();
                         let go_name = format!("{prefix}_{tname}_R");
+                        // The alias's DISTINCT non-`"any"` type-param vars, in
+                        // first-appearance order across the field types → the Go
+                        // generic arity (`Cfg_R[T1, …]`). `"any"` is the
+                        // per-occurrence wildcard floor, never a real param.
+                        let type_arity = record_type_params(&fields).len();
                         reg!(
                             tname,
                             Nominal {
                                 go_name: go_name.clone(),
                                 kind: NominalKind::Record,
                                 opaque: false,
+                                type_arity,
                             }
                         );
                         decls.push(TypeDecl {
@@ -892,6 +910,22 @@ fn collect_types(
         }
     }
     (nominal, nominal_by_module, decls)
+}
+
+/// The DISTINCT non-`"any"` type-param vars of a record alias's field types, in
+/// first-appearance order (the Go generic param order `T1, T2, …`). `"any"` is
+/// the per-occurrence wildcard floor (`ty::is_polymorphic`), never a real
+/// generic parameter — a `{ onPress : msg, blob : any }` alias has arity 1.
+fn record_type_params(fields: &[(String, Ty)]) -> Vec<Name> {
+    let mut out: Vec<Name> = Vec::new();
+    for (_, t) in fields {
+        for v in t.free_vars() {
+            if v.as_str() != "any" && !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+    out
 }
 
 /// Emit a type declaration's Go items; return the further Go type names its
@@ -916,20 +950,89 @@ fn emit_type_decl(
             more,
         ),
         TypeDeclKind::Record(fields) => {
+            // Type-param vars → generic Go params `T1, T2, …` (Phase 2 typed-Go
+            // ceiling). arity 0 keeps the exact non-generic emission (byte-
+            // identical to the M4 baseline for every concrete record).
+            let param_vars = record_type_params(fields);
+            let param_map: HashMap<Name, GoTy> = param_vars
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (v.clone(), GoTy::TyVar(format!("T{}", i + 1))))
+                .collect();
+            // Field Go types: a type-param field renders as its `Ti`; every
+            // other field renders normally (and drives reachability via
+            // `collect`). Sharing `sky_ty_to_go_params` with the use sites keeps
+            // the decl and every instantiation in exact agreement.
             let go_fields: Vec<(String, GoTy)> = fields
                 .iter()
-                .map(|(n, t)| (capitalize(n), collect(t)))
+                .map(|(n, t)| {
+                    let gt = sky_ty_to_go_params(t, env, None, &param_map);
+                    collect_named(&gt, &mut more);
+                    (capitalize(n), gt)
+                })
                 .collect();
-            let mut items = vec![GoItem::Type(
-                decl.go_name.clone(),
-                GoTypeDef::Struct(go_fields.clone()),
-            )];
-            // gob registration
+
+            if param_vars.is_empty() {
+                // ---- non-generic (baseline, byte-identical) ----
+                let mut items = vec![GoItem::Type(
+                    decl.go_name.clone(),
+                    GoTypeDef::Struct(go_fields.clone()),
+                )];
+                items.push(GoItem::Raw(format!(
+                    "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                    decl.go_name
+                )));
+                let ctor_name = decl.go_name.trim_end_matches("_R").to_string();
+                let params: Vec<String> = go_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, t))| format!("p{i} {}", render_goty(t)))
+                    .collect();
+                let assigns: Vec<String> = go_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (f, _))| format!("{f}: p{i}"))
+                    .collect();
+                items.push(GoItem::Raw(format!(
+                    "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
+                    params.join(", "),
+                    decl.go_name,
+                    decl.go_name,
+                    assigns.join(", ")
+                )));
+                return (items, more);
+            }
+
+            // ---- generic (`Cfg_R[T1 any, …]`) ----
+            // `<T1 any, T2 any, …>` clause + `[T1, T2, …]` arg list + the
+            // gob-registrable `[any, …]` concrete instantiation (gob can't
+            // register a generic type; the wire boundary re-enters as `any` and
+            // is `rt.Coerce`d — the established §8.2 pattern).
+            let clause: String = (0..param_vars.len())
+                .map(|i| format!("T{} any", i + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arglist: String = (0..param_vars.len())
+                .map(|i| format!("T{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let anylist: String = std::iter::repeat("any")
+                .take(param_vars.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let struct_fields: String = go_fields
+                .iter()
+                .map(|(f, t)| format!("{f} {}", render_goty(t)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let mut items = vec![GoItem::Raw(format!(
+                "type {}[{clause}] struct {{ {struct_fields} }}",
+                decl.go_name
+            ))];
             items.push(GoItem::Raw(format!(
-                "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                "func init() {{ rt.RegisterGobType({}[{anylist}]{{}}) }}",
                 decl.go_name
             )));
-            // positional constructor `Prefix_Name(p0, …) Prefix_Name_R`
             let ctor_name = decl.go_name.trim_end_matches("_R").to_string();
             let params: Vec<String> = go_fields
                 .iter()
@@ -942,7 +1045,7 @@ fn emit_type_decl(
                 .map(|(i, (f, _))| format!("{f}: p{i}"))
                 .collect();
             items.push(GoItem::Raw(format!(
-                "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
+                "func {ctor_name}[{clause}]({}) {}[{arglist}] {{ return {}[{arglist}]{{{}}} }}",
                 params.join(", "),
                 decl.go_name,
                 decl.go_name,
@@ -2112,6 +2215,27 @@ impl<'a> Ctx<'a> {
                         NominalKind::Record => {
                             let ctor = go_type.trim_end_matches("_R").to_string();
                             self.used_types.insert(go_type.clone());
+                            // For a GENERIC record ctor (`Cfg_R[T1,…]`) called at
+                            // a generic slot (`Cfg_R[Msg]`), map each type-param
+                            // field to its concrete instantiation so the arg
+                            // coerces to `Msg` (not the erased `any`) and Go's
+                            // call-site inference pins `Cfg(...)` to `Cfg_R[Msg]`.
+                            // The result GoTy is then the honest `Cfg_R[Msg]`.
+                            let generic_subst: HashMap<Name, GoTy> = match actual {
+                                GoTy::Named(n, args) if *n == go_type && !args.is_empty() => self
+                                    .env
+                                    .record_params
+                                    .get(&go_type)
+                                    .map(|params| {
+                                        params
+                                            .iter()
+                                            .cloned()
+                                            .zip(args.iter().cloned())
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                _ => HashMap::new(),
+                            };
                             // Coerce each arg to the record's declared field Go
                             // type (fields are in ctor-param order). A partial
                             // application (`\p1 p2 … -> Overview p1 p2 …`) supplies
@@ -2122,7 +2246,16 @@ impl<'a> Ctx<'a> {
                                 .record_fields
                                 .get(&go_type)
                                 .map(|fs| {
-                                    fs.iter().map(|(_, t)| sky_ty_to_go_in(t, self.env, Some(&self.cur_module))).collect()
+                                    fs.iter()
+                                        .map(|(_, t)| {
+                                            sky_ty_to_go_params(
+                                                t,
+                                                self.env,
+                                                Some(&self.cur_module),
+                                                &generic_subst,
+                                            )
+                                        })
+                                        .collect()
                                 })
                                 .unwrap_or_default();
                             let coerced: Vec<GoExpr> = lowered_args
@@ -2133,7 +2266,12 @@ impl<'a> Ctx<'a> {
                                     None => a,
                                 })
                                 .collect();
-                            call_rt(&ctor, coerced, GoTy::Named(go_type, vec![]))
+                            let res_ty = if generic_subst.is_empty() {
+                                GoTy::Named(go_type.clone(), vec![])
+                            } else {
+                                actual.clone()
+                            };
+                            call_rt(&ctor, coerced, res_ty)
                         }
                     }
                 } else {
@@ -2882,13 +3020,53 @@ impl<'a> Ctx<'a> {
         // emits an *anonymous* Go struct with every field typed `any`
         // (`struct{ Init any; Update any; … }{Init: …, …}`); the runtime
         // reflect-dispatches those fields. Reproduce that exactly.
-        let nominal = matches!(actual, GoTy::Named(_, _));
-        if let GoTy::Named(n, _) = actual {
-            self.used_types.insert(n.clone());
+        // A GENERIC nominal record (`Cfg_R[Msg]`) whose fields include a
+        // FUNCTION type is a TEA cfg destined for kernel reflect-dispatch
+        // (`Webview.app { init, update, view, … }`). Its concrete generic func
+        // fields (`Init func(struct{}) rt.T2[Model, any]`) don't match the raw
+        // Go function VALUES supplied for them (`Main_init_ : func(any) …`), and
+        // no coerce bridges a bare function reference (it claims the slot type).
+        // The non-generic TEA cfg path already emits these as an all-`any`
+        // anonymous struct that the runtime reflect-dispatches — keep that form
+        // here too. Tightly scoped to the newly-generic func-field case so every
+        // other record (incl. non-generic nominal func-field records) is
+        // byte-identical.
+        let generic_func_cfg = matches!(actual, GoTy::Named(n, args)
+            if !args.is_empty()
+                && self
+                    .record_fields
+                    .get(n)
+                    .map(|fs| fs.iter().any(|(_, t)| matches!(t, Ty::Fun(..))))
+                    .unwrap_or(false));
+        let nominal = matches!(actual, GoTy::Named(_, _)) && !generic_func_cfg;
+        if nominal {
+            if let GoTy::Named(n, _) = actual {
+                self.used_types.insert(n.clone());
+            }
         }
+        // For a GENERIC record slot (`Cfg_R[Msg]`), map each type-param var to
+        // its concrete instantiation so a type-param field (`onPress : msg`)
+        // gets its expected Go type (`Msg`) — NOT the erased `any` — matching
+        // the struct's concrete field type `T1 = Msg` (else `go build` rejects
+        // an `any` value assigned into a `T1` field).
+        let generic_subst: HashMap<Name, GoTy> = match actual {
+            GoTy::Named(n, args) if nominal && !args.is_empty() => self
+                .env
+                .record_params
+                .get(n)
+                .map(|params| {
+                    params
+                        .iter()
+                        .cloned()
+                        .zip(args.iter().cloned())
+                        .collect::<HashMap<Name, GoTy>>()
+                })
+                .unwrap_or_default(),
+            _ => HashMap::new(),
+        };
         // declared field types for this record `_R`, if known.
         let field_tys: HashMap<String, Ty> = match actual {
-            GoTy::Named(n, _) => self
+            GoTy::Named(n, _) if nominal => self
                 .record_fields
                 .get(n)
                 .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
@@ -2938,6 +3116,15 @@ impl<'a> Ctx<'a> {
                         .find(|(fn_, _)| *fn_ == cap)
                         .map(|(_, t)| t.clone())
                         .unwrap_or(GoTy::Any)
+                } else if !generic_subst.is_empty() {
+                    // generic slot: resolve type-param fields to their concrete
+                    // instantiation (shares `sky_ty_to_go_params` with the decl).
+                    field_tys
+                        .get(&cap)
+                        .map(|t| {
+                            sky_ty_to_go_params(t, self.env, Some(&self.cur_module), &generic_subst)
+                        })
+                        .unwrap_or(GoTy::Any)
                 } else {
                     field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any)
                 };
@@ -2948,6 +3135,9 @@ impl<'a> Ctx<'a> {
         let mut all_any_fallback = false;
         let go_name = if nominal {
             match actual {
+                // A generic instantiation (`Cfg_R[Msg]`) must render its type
+                // args in the composite literal head, not the bare `Cfg_R`.
+                GoTy::Named(_, args) if !args.is_empty() => render_goty(actual),
                 GoTy::Named(n, _) => n.clone(),
                 _ => unreachable!(),
             }
@@ -3005,6 +3195,18 @@ impl<'a> Ctx<'a> {
         let honest_ty = if all_any_fallback {
             match actual {
                 GoTy::Struct(fts) if fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)) => {
+                    let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
+                    names.sort();
+                    GoTy::Struct(names.into_iter().map(|n| (Name::new(&n), GoTy::Any)).collect())
+                }
+                // A generic func-cfg (`AppCfg_R[Model, Msg]`) emitted as the
+                // all-`any` anonymous struct: claim that anon struct (NOT the
+                // generic nominal) so a concrete destination slot narrows via
+                // `rt.Coerce` instead of asserting the raw anon struct IS the
+                // generic nominal (the check≢build hole). A destination `any`
+                // slot (the kernel TEA-cfg arg) widens either way — byte-
+                // identical there.
+                GoTy::Named(_, args) if !args.is_empty() && generic_func_cfg => {
                     let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
                     names.sort();
                     GoTy::Struct(names.into_iter().map(|n| (Name::new(&n), GoTy::Any)).collect())

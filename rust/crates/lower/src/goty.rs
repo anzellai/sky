@@ -3,6 +3,7 @@
 //! through the `TypeEnv` the lowerer builds from the program's type declarations.
 
 use crate::ir::{GoTy, Prim};
+use base::Name;
 use std::collections::HashMap;
 use ty::Ty;
 
@@ -13,6 +14,14 @@ pub struct Nominal {
     /// `Main_Msg`, `Sky_Core_Error_Error`.
     pub go_name: String,
     pub kind: NominalKind,
+    /// Number of Go generic type parameters (`Cfg_R[T1, …]`). 0 = non-generic
+    /// (the M4 baseline for every ADT / iota + record aliases with no type
+    /// vars). A parametric record alias (`type alias Cfg msg = { … }`) records
+    /// its DISTINCT non-`"any"` field-type vars here (in first-appearance
+    /// order) so the App use site (`Cfg Msg`) propagates `Cfg_R[Msg]` instead
+    /// of erasing to the non-generic `Cfg_R`. Only `NominalKind::Record` is
+    /// ever > 0 in this milestone.
+    pub type_arity: usize,
     /// A phantom opaque-handle type: a single-variant iota enum whose sole
     /// constructor follows the stdlib `<Name>_OPAQUE` convention (`Route`,
     /// `Server`, `Cookie`). The Go type decl renders as `type X = int` (a
@@ -49,6 +58,16 @@ pub struct TypeEnv {
     pub nominal_by_module: HashMap<(String, String), Nominal>,
     /// sorted field-name list → the record alias's Go `_R` type name.
     pub record_fieldsets: HashMap<Vec<String>, String>,
+    /// `_R` Go name → the alias's DISTINCT non-`"any"` type-param vars, in
+    /// first-appearance order across the field types. Empty for a
+    /// non-parametric record alias. Used to (a) instantiate `Cfg_R[Msg]` at a
+    /// structurally-resolved use site by recovering each param's concrete type
+    /// from the matched record's fields, and (b) render the generic decl.
+    pub record_params: HashMap<String, Vec<Name>>,
+    /// `_R` Go name → the alias's field templates (Sky field name → declared
+    /// Sky type, which still carries the type-param `Ty::Var`s). Used to
+    /// recover concrete type args for a structurally-resolved parametric alias.
+    pub record_templates: HashMap<String, Vec<(String, Ty)>>,
     /// The app's single TEA Model, when detected: `(sorted full field-set, `_R`
     /// Go name)`. An unannotated `view`/`update`/`subscriptions` or a Model-taking
     /// helper infers a *subset* row over the Model (only the fields it touches);
@@ -67,17 +86,37 @@ pub fn sky_ty_to_go(t: &Ty, env: &TypeEnv) -> GoTy {
 }
 
 pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
+    let empty: HashMap<Name, GoTy> = HashMap::new();
+    go_ty(t, env, cur_mod, &empty)
+}
+
+/// Map a Sky type to Go, resolving the given type-param `Ty::Var`s to a
+/// caller-supplied target `GoTy` (a Go generic `GoTy::TyVar("T1")` when emitting
+/// a parametric alias's decl; the concrete instantiation `GoTy::Named("Msg")`
+/// when typing a record literal at a `Cfg_R[Msg]` slot). Vars NOT in the map
+/// still erase to `any` (the generic-erase floor). Sharing this single core with
+/// the plain map guarantees the decl form and every use-site form agree exactly.
+pub fn sky_ty_to_go_params(
+    t: &Ty,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
+    go_ty(t, env, cur_mod, params)
+}
+
+fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
     match t {
-        Ty::App(name, args) => app_to_go(name.as_str(), args, env, cur_mod),
+        Ty::App(name, args) => app_to_go(name.as_str(), args, env, cur_mod, params),
         Ty::Fun(a, b) => {
             // Collapse the curried spine into an N-ary Go func.
-            let mut params = vec![sky_ty_to_go_in(a, env, cur_mod)];
+            let mut ps = vec![go_ty(a, env, cur_mod, params)];
             let mut ret = b.as_ref();
             while let Ty::Fun(x, y) = ret {
-                params.push(sky_ty_to_go_in(x, env, cur_mod));
+                ps.push(go_ty(x, env, cur_mod, params));
                 ret = y;
             }
-            GoTy::Func(params, Box::new(sky_ty_to_go_in(ret, env, cur_mod)))
+            GoTy::Func(ps, Box::new(go_ty(ret, env, cur_mod, params)))
         }
         // Tuple element types are kept for TYPING (pattern binds) AND for
         // typed-tuple codegen (v0.17 typed-Go ceiling): `render_goty` / codegen
@@ -89,17 +128,42 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
         // (route through `AsTuple2`/`AsTuple3`) so these distinct nominal
         // instantiations flow soundly instead of panicking on the `.(SkyTuple2)`
         // assertion.
-        Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| sky_ty_to_go_in(x, env, cur_mod)).collect()),
+        Ty::Tuple(xs) => GoTy::Tuple(xs.iter().map(|x| go_ty(x, env, cur_mod, params)).collect()),
         Ty::Unit => GoTy::Unit,
-        // A remaining rigid/flex var → generic erase to `any` (doc 07 §6 class 8).
-        Ty::Var(_) => GoTy::Any,
+        // A type-param var resolves to its caller-supplied target (a Go generic
+        // `T1` for a parametric alias's decl, or the concrete instantiation at a
+        // use site); a var NOT in the map → generic erase to `any` (doc 07 §6
+        // class 8).
+        Ty::Var(n) => params.get(n).cloned().unwrap_or(GoTy::Any),
         Ty::Record(fields, ext) => {
             // resolve to a nominal `_R` alias when the field-name set matches one.
             let mut names: Vec<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
             names.sort();
             if let Some(go_name) = env.record_fieldsets.get(&names) {
-                return GoTy::Named(go_name.clone(), vec![]);
+                // A parametric alias resolved STRUCTURALLY (a record literal /
+                // unannotated value whose inferred closed record matches the
+                // alias's field set): the Go type is generic, so a bare
+                // `Cfg_R` (no type args) would not compile. Recover each type
+                // arg by matching the alias's field templates against this
+                // record's concrete field types. On full recovery emit the
+                // instantiation `Cfg_R[Msg]`; if any arg can't be recovered,
+                // fall through to the anonymous-struct form (safe — never a
+                // dangling generic reference).
+                match instantiate_structural(go_name, fields, env, cur_mod, params) {
+                    Some(gt) => return gt,
+                    None => {
+                        if env
+                            .record_params
+                            .get(go_name)
+                            .map(|p| p.is_empty())
+                            .unwrap_or(true)
+                        {
+                            return GoTy::Named(go_name.clone(), vec![]);
+                        }
+                        // parametric but unrecoverable → fall through to anon struct
+                    }
+                }
             }
             // subset→nominal: an anonymous record whose fields are all present in
             // the app's single TEA Model resolves to the nominal Model `_R`. This
@@ -142,7 +206,7 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
             // rule (field enumeration sorted before any order-dependent emission).
             let mut go_fields: Vec<(base::Name, GoTy)> = fields
                 .iter()
-                .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), sky_ty_to_go_in(ft, env, cur_mod)))
+                .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), go_ty(ft, env, cur_mod, params)))
                 .collect();
             go_fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
             GoTy::Struct(go_fields)
@@ -151,8 +215,82 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
     }
 }
 
-fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
-    let go = |t: &Ty| sky_ty_to_go_in(t, env, cur_mod);
+/// Recover the concrete Go type args for a parametric record alias resolved
+/// structurally. For each declared type-param var, find (by unification against
+/// the alias's field templates) the concrete Sky type this record binds it to,
+/// then lower that to Go. Returns `None` if the alias has no params (caller
+/// handles the non-generic case) or if any param stays unbound.
+fn instantiate_structural(
+    go_name: &str,
+    rec_fields: &[(Name, Ty)],
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> Option<GoTy> {
+    let param_vars = env.record_params.get(go_name)?;
+    if param_vars.is_empty() {
+        return None;
+    }
+    let templates = env.record_templates.get(go_name)?;
+    // field name → concrete inferred type
+    let concrete: HashMap<&str, &Ty> =
+        rec_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    let mut bound: HashMap<Name, Ty> = HashMap::new();
+    for (fname, tmpl) in templates {
+        if let Some(ct) = concrete.get(fname.as_str()) {
+            unify_param(tmpl, ct, param_vars, &mut bound);
+        }
+    }
+    let mut args = Vec::with_capacity(param_vars.len());
+    for pv in param_vars {
+        let bt = bound.get(pv)?; // unbound → give up (None)
+        args.push(go_ty(bt, env, cur_mod, params));
+    }
+    Some(GoTy::Named(go_name.to_string(), args))
+}
+
+/// Structural unification of an alias field TEMPLATE against the concrete
+/// inferred field type, binding any template `Ty::Var` that is one of the
+/// alias's type params. First binding wins (deterministic).
+fn unify_param(tmpl: &Ty, concrete: &Ty, param_vars: &[Name], bound: &mut HashMap<Name, Ty>) {
+    match (tmpl, concrete) {
+        (Ty::Var(v), c) if param_vars.contains(v) => {
+            bound.entry(v.clone()).or_insert_with(|| c.clone());
+        }
+        (Ty::App(_, ta), Ty::App(_, ca)) => {
+            for (a, b) in ta.iter().zip(ca.iter()) {
+                unify_param(a, b, param_vars, bound);
+            }
+        }
+        (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => {
+            unify_param(a1, a2, param_vars, bound);
+            unify_param(b1, b2, param_vars, bound);
+        }
+        (Ty::Tuple(xs), Ty::Tuple(ys)) => {
+            for (a, b) in xs.iter().zip(ys.iter()) {
+                unify_param(a, b, param_vars, bound);
+            }
+        }
+        (Ty::Record(fs1, _), Ty::Record(fs2, _)) => {
+            let m: HashMap<&str, &Ty> = fs2.iter().map(|(n, t)| (n.as_str(), t)).collect();
+            for (n, t) in fs1 {
+                if let Some(c) = m.get(n.as_str()) {
+                    unify_param(t, c, param_vars, bound);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn app_to_go(
+    name: &str,
+    args: &[Ty],
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
+    let go = |t: &Ty| go_ty(t, env, cur_mod, params);
     // A qualified reference (`Counter.Msg`) carries its declaring module in the
     // name — resolve it to THAT module's nominal directly, bypassing the
     // `cur_mod` disambiguation (which would wrongly pick a same-module `Msg`).
@@ -166,6 +304,11 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> G
         {
             if n.opaque {
                 return GoTy::Any;
+            }
+            // Parametric record alias referenced qualified (`Counter.Cfg Msg`):
+            // propagate the type args (see the bare-name path below).
+            if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == args.len() {
+                return GoTy::Named(n.go_name.clone(), args.iter().map(&go).collect());
             }
             return GoTy::Named(n.go_name.clone(), vec![]);
         }
@@ -222,18 +365,30 @@ fn app_to_go(name: &str, args: &[Ty], env: &TypeEnv, cur_mod: Option<&str>) -> G
                 if n.opaque {
                     return GoTy::Any;
                 }
-                // User nominal types are emitted NON-generic in the M4 runtime
+                // A PARAMETRIC record alias (`type alias Cfg msg = { … }`) is
+                // emitted as a Go generic struct `Cfg_R[T1, …]` (Phase 2 of the
+                // typed-Go ceiling), so an application `Cfg Msg` must propagate
+                // its type args → `Cfg_R[Msg]`. The decl + ctor + every use site
+                // share `sky_ty_to_go_params`, so the instantiations agree. A
+                // floor arg (FFI-return / type-var) lowers to `any` here, giving
+                // the correct partial `Cfg_R[any]`. Guard on an exact arity
+                // match; a mismatch (shouldn't happen for a well-typed program)
+                // falls through to the erased bare name.
+                if n.kind == NominalKind::Record
+                    && n.type_arity > 0
+                    && n.type_arity == args.len()
+                {
+                    return GoTy::Named(n.go_name.clone(), args.iter().map(&go).collect());
+                }
+                // Other user nominal types stay NON-generic in the M4 runtime
                 // representation: sealed ADT → `rt.SkyADT` bag (`Fields []any`),
-                // iota enum → `int`, record alias → a plain (non-parametric)
-                // struct whose type-var fields are erased to `any`. So a
-                // parametric application like `ShouldRetry msg` / `Event msg`
-                // renders as the bare Go name — appending `[msg]` would
-                // reference a non-generic type with a type argument and fail
-                // `go build`. The type parameters are erased; ADT payloads flow
-                // as `any` (the generic-erase floor, doc 07 §6 class 8). The
-                // arg types' own reachability is driven by the variant/field
-                // use sites in `emit_type_decl`, so dropping them here is safe.
-                let _ = go; // args intentionally erased
+                // iota enum → `int`, non-parametric record → a plain struct. A
+                // parametric ADT application (`ShouldRetry msg` / `Event msg`)
+                // renders as the bare Go name — its payloads flow as `any` (the
+                // generic-erase floor, doc 07 §6 class 8); the arg types'
+                // reachability is driven by the variant use sites in
+                // `emit_type_decl`, so dropping them here is safe.
+                let _ = go; // ADT/non-parametric args intentionally erased
                 GoTy::Named(n.go_name.clone(), vec![])
             } else {
                 // Unknown nominal (FFI type, unmodelled) → erase to any.
