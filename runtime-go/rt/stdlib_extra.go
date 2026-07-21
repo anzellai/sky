@@ -353,15 +353,22 @@ func JsonEnc_list(args ...any) any {
 func JsonEnc_object(pairs any) any {
 	m := map[string]any{}
 	for _, p := range asList(pairs) {
-		// Expect SkyTuple2 { V0: string, V1: JsonValue }
-		if t, ok := p.(SkyTuple2); ok {
-			key := fmt.Sprintf("%v", t.V0)
-			val := t.V1
-			if jv, ok := val.(JsonValue); ok {
-				m[key] = jv.raw
-			} else {
-				m[key] = val
-			}
+		// Expect a (String, JsonValue) tuple. Typed-tuple codegen (v0.17+)
+		// emits a distinct nominal `rt.T2[string, JsonValue]` here, which the
+		// prior `.(SkyTuple2)` assertion silently skipped — yielding an empty
+		// `{}` object. Route through AsTuple2 (fast-paths SkyTuple2, else
+		// reflect-reboxes a typed T2). A genuine non-tuple yields V0==nil,
+		// preserving the prior silent-skip; a real object key is never nil.
+		t := AsTuple2(p)
+		if t.V0 == nil {
+			continue
+		}
+		key := fmt.Sprintf("%v", t.V0)
+		val := t.V1
+		if jv, ok := val.(JsonValue); ok {
+			m[key] = jv.raw
+		} else {
+			m[key] = val
 		}
 	}
 	return JsonValue{raw: m}

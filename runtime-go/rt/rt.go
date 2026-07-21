@@ -1758,7 +1758,13 @@ func Basics_fst(t any) any {
 	case SkyTuple3:
 		return v.V0
 	}
-	return nil
+	// Typed-tuple codegen (v0.17+) emits distinct nominal generic
+	// instantiations (`T2[string, int]`, `T3[…]`) that miss both cases
+	// above. Route through AsTuple2, which fast-paths SkyTuple2 and
+	// otherwise reflect-reboxes any tuple-shaped struct's first field
+	// (a genuine non-tuple yields a zero SkyTuple2 → nil, same as the
+	// prior `return nil`).
+	return AsTuple2(t).V0
 }
 
 func Basics_snd(t any) any {
@@ -1768,7 +1774,8 @@ func Basics_snd(t any) any {
 	case SkyTuple3:
 		return v.V1
 	}
-	return nil
+	// See Basics_fst — typed T2/T3 instantiations reflect-rebox here.
+	return AsTuple2(t).V1
 }
 
 // List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
@@ -4683,7 +4690,12 @@ func Dict_fromList(list any) any {
 	items := asList(list)
 	result := make(map[string]any, len(items))
 	for _, item := range items {
-		t := item.(SkyTuple2)
+		// Typed-tuple codegen (v0.17+) can pass a distinct nominal
+		// `T2[string, V]` here; `item.(SkyTuple2)` would hard-panic.
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2.
+		// Dict.fromList's Sky type is `List (comparable, v)`, so AsTuple2
+		// always receives a tuple.
+		t := AsTuple2(item)
 		result[fmt.Sprintf("%v", t.V0)] = t.V1
 	}
 	return result
@@ -4801,18 +4813,23 @@ func Dict_map2T[V, W any](fn any, d map[string]V) map[string]W {
 func Dict_fromListT[V any](list []any) map[string]V {
 	out := make(map[string]V, len(list))
 	for _, item := range list {
-		switch t := item.(type) {
-		case SkyTuple2:
-			key := fmt.Sprintf("%v", t.V0)
-			if v, ok := t.V1.(V); ok {
-				out[key] = v
-			} else {
-				// Fall back via reflect coerce for heterogeneous slices
-				out[key] = Coerce[V](t.V1)
-			}
-		default:
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed
+		// `T2[string, V]` (v0.17+ typed-tuple codegen). A genuine
+		// non-tuple yields a zero SkyTuple2 with V0==nil; a real Dict
+		// key is never nil, so the `if t.V0 == nil` guard preserves the
+		// prior `default:` silent-skip semantics.
+		t := AsTuple2(item)
+		if t.V0 == nil {
 			// Unexpected shape — leave key absent. Matches Dict_fromList's
 			// silent-on-bad-pair behaviour (would panic in the type assert).
+			continue
+		}
+		key := fmt.Sprintf("%v", t.V0)
+		if v, ok := t.V1.(V); ok {
+			out[key] = v
+		} else {
+			// Fall back via reflect coerce for heterogeneous slices
+			out[key] = Coerce[V](t.V1)
 		}
 	}
 	return out
@@ -4825,7 +4842,10 @@ func Dict_fromListT[V any](list []any) map[string]V {
 func Dict_fromListTA(list []any) any {
 	out := make(map[string]any, len(list))
 	for _, item := range list {
-		if t, ok := item.(SkyTuple2); ok {
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2;
+		// a non-tuple yields V0==nil, preserving the prior `ok` skip.
+		t := AsTuple2(item)
+		if t.V0 != nil {
 			out[fmt.Sprintf("%v", t.V0)] = t.V1
 		}
 	}
