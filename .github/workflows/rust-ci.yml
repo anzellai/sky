@@ -127,3 +127,15 @@ jobs:
 
       - name: Gate — build-run (emit + go build every example; FFI examples skipped)
         run: cargo run -q -p xtask -- build-run --all
+
+      # Runtime-CORRECTNESS: build-run --all proves the corpus BUILDS; this proves
+      # the deterministic CLI subset COMPUTES THE RIGHT ANSWER. Each CLI example's
+      # normalised stdout is compared to its committed `golden/<name>.stdout` — an
+      # oracle-verified snapshot (blessed locally where the Haskell oracle exists;
+      # rust==oracle was proven at bless time). The gate reads ONLY committed
+      # goldens (no oracle binary on CI), so it catches "compiles but computes the
+      # wrong answer" without a Haskell toolchain. A new CLI example with no golden
+      # FAILS ("bless to lock its runtime output"). Re-bless locally with:
+      #   cargo run -p xtask -- build-run --shape cli --run --golden --bless
+      - name: Gate — golden (runtime-correctness, CLI subset; oracle-parity via committed snapshot)
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
