@@ -1,14 +1,14 @@
 # Sky Compiler — Rust Rewrite (architecture-first)
 
-> **Branch:** `rewrite/rust-compiler`
-> **Status:** TARGET-ARCHITECTURE BLUEPRINT + working bring-up. This directory is
-> the full implementation guide for building the Sky compiler + tooling + LSP in
-> Rust, on the architecture the Haskell journey taught us we needed. It describes
-> the **desired** architecture in the present tense; the `rust/` tree is at an
-> interim milestone that already builds+runs+matches the corpus but does not yet
-> realise every target mechanism. Each doc carries an **"Implementation status (as
-> of `rewrite/rust-compiler`)"** callout distinguishing what is built from what is
-> the target — see the status matrix in [`12`](12-migration-and-milestones.md).
+> **The Rust compiler is the primary Sky compiler.** It lives in `rust/`
+> (crate `sky-cli` → binary `sky`, built via `cargo build --release -p sky-cli`).
+> This directory is its canonical architecture + implementation reference, built on
+> the architecture the Haskell journey taught us we needed. It describes the target
+> architecture in the present tense; a few target mechanisms are still in progress
+> and are called out inline. The Haskell compiler is preserved under
+> `legacy-haskell-compiler/` as reference + differential oracle. Each doc carries an
+> **"Implementation status"** callout distinguishing what is built from what remains
+> a target — see the status matrix in [`12`](12-migration-and-milestones.md).
 
 ## Why a rewrite (not another patch)
 
@@ -42,7 +42,8 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 2. **Every existing example builds AND runs correctly.** The 42 `examples/*`
    are the conformance suite. "Syntax is correct → it must run" — a program that
    `sky check`s must `go build` and must not panic under well-typed semantics.
-   The Haskell compiler is the **differential oracle** during bring-up. See
+   The Haskell compiler, preserved under `legacy-haskell-compiler/`, is the
+   **differential oracle**. See
    [`11-testing-and-verification.md`](11-testing-and-verification.md).
 
 ## Document map (reading order)
@@ -66,16 +67,16 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 
 ## Status
 
-**Blueprint: complete.** Spine docs (00–02) authored inline; subsystem docs
-(03–12) authored against the spine. The docs describe the target architecture.
+**Architecture reference: complete.** Spine docs (00–02) authored inline; subsystem
+docs (03–12) authored against the spine. The docs describe the target architecture.
 
-**Bring-up: interim milestone, verified functional.** The `rust/` Cargo workspace
-exists (all crates in [`02`](02-workspace-and-crates.md)) and is well past a
+**Implementation: the Rust compiler is primary and verified functional.** The `rust/`
+Cargo workspace (all crates in [`02`](02-workspace-and-crates.md)) is well past a
 skeleton: the non-FFI corpus builds+runs and matches the Haskell differential
 oracle, the FFI subsystem scales to the 76k-symbol Stripe SDK, `sky` is a
 standalone binary, the LSP passes its 17/17 Neovim gate (plus broader
 references/rename/semantic-token coverage), and a determinism gate holds. Two
-target mechanisms are **not yet built** and are called out inline where the docs
+target mechanisms are **still in progress** and are called out inline where the docs
 present them in the present tense:
 
 - **The salsa query DAG** ([`01`](01-architecture-overview.md), [`10`](10-lsp-and-tooling.md)).

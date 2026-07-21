@@ -54,7 +54,7 @@ flowchart TD
 | `testrunner` | `sky test` (Sky.Test) runner. | `project` | 10 |
 | `xtask` | Dev automation: run corpus, differential-test vs Haskell oracle, reproducibility gate. | `syntax`, `base`, `hir`, `ty`, `project`, `diagnostics` | 11, 12 |
 
-> **Implementation status (as of `rewrite/rust-compiler`).** The **Key deps**
+> **Implementation status.** The **Key deps**
 > column above reflects the actual `Cargo.toml` of each crate. Note that `lower`,
 > `project`, `sky-lsp`, and `xtask` depend directly on the frontend crates
 > (`hir`/`ty`/`syntax`/`diagnostics`) rather than reaching them only through

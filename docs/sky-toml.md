@@ -1,10 +1,9 @@
 # `sky.toml` — project manifest reference
 
-> **v0.15 state**: type-directed lowering throughout, Go generics on
-> parametric record aliases, same-module polymorphic re-instantiation.
-> Layer-3 stdlib, whole-program DCE (Stripe-SDK scale: −82 % source),
-> LSP 100 % coverage; runtime verification across all 27 examples
-> (120 stdlib assertions + 306 cabal specs). See
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
 > [`compiler/versions.md`](compiler/versions.md) for the changelog.
 
 

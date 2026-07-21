@@ -9,7 +9,7 @@ This doc is the concrete design of law **L9 — a typed lowering IR; coercion is
 the exception**. It is also where **L4** (deterministic fresh-name generation),
 **L3** (interned ids drive iteration order), and the TCO/DCE memory story live.
 
-> **Implementation status (as of `rewrite/rust-compiler`).** The typed IR is
+> **Implementation status.** The typed IR is
 > **partly built**: `rust/crates/lower/src/ir.rs` does carry a structural `GoTy`
 > on every `GoExpr` (the L9 spine is real, and it is why the corpus builds+runs).
 > But the target's stronger claims below — *"coercion is the exception"*, *"no

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 > **Quick orientation.** Sky is an Elm-family functional language
-> compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
+> compiling to typed Go via a Rust compiler. Current
 > release is **v0.17.5** — canonicaliser's explicit-alias-wins rule
 > silently resolves the historical dual-import friction (`import
 > Std.Db as Db` + `import Lib.Db exposing (conn)` now compiles with
@@ -381,7 +381,7 @@ Forbidden patterns:
 
 ### 0.2 Test-cadence discipline — no needless full-suite + wakeup cycles
 
-The slow-progress pattern: edit → full cabal test → schedule
+The slow-progress pattern: edit → full cargo test suite → schedule
 25-30 min wakeup → repeat. **This pattern is FORBIDDEN.**
 
 #### Rules
@@ -427,12 +427,13 @@ Forbidden patterns:
   * Re-running the example sweep more than once per milestone.
 
 Concrete cadence:
-  * **Per change**: `timeout 60 dist-newstyle/.../sky-tests --match
-    "<NarrowSpec>"`
+  * **Per change**: `cargo test -p <crate> <testname>` (narrowest
+    crate + test filter that proves the change)
   * **Per phase boundary (multiple changes)**: rebuild + a couple
-    of representative specs
-  * **Per milestone**: full cabal-test + example-sweep + verify-cli,
-    in background, notified when complete
+    of representative `cargo test -p <crate>` runs
+  * **Per milestone**: full `cargo test --workspace` + the xtask
+    gate suite (`cargo run -p xtask -- <gate>`) + example-sweep +
+    verify-cli, in background, notified when complete
 
 ### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
 
@@ -444,9 +445,12 @@ and judge verdicts.
 #### The five hard rules
 
 1. **Architecture reference is Phase 0.** All compiler-level
-   workflows MUST begin by consulting
-   `docs/architecture/sky-compiler-architecture.md` (and where
-   stdlib semantics are touched, `docs/architecture/sky-stdlib-correctness.md`)
+   workflows MUST begin by consulting `docs/rust-rewrite/` (the
+   primary Rust-compiler architecture reference; the legacy
+   `docs/architecture/sky-compiler-architecture.md` documents the
+   retired Haskell pipeline and is kept for historical context)
+   and, where stdlib semantics are touched,
+   `docs/architecture/sky-stdlib-correctness.md`,
    before claiming a tactic closes a strategic goal. The first
    phase of every compiler workflow's JS DAG is
    `phase('Architecture-Consult')`. Tactics proposed without
@@ -568,19 +572,22 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 
 #### Companion canonical references
 
-- `docs/architecture/sky-compiler-architecture.md` — compiler
-  pipeline (Parse → Canon → Type → Lower → Emit), rt.Coerce
-  origin catalog, architectural levers, irreducible floor,
-  verbatim-goal verdict.
+- `docs/rust-rewrite/` — primary Rust-compiler architecture
+  reference: pipeline (Parse → Canon → Type → Lower → Emit),
+  workspace + crate layout, rt.Coerce origin catalog,
+  architectural levers, irreducible floor, verbatim-goal verdict.
+- `docs/architecture/sky-compiler-architecture.md` — legacy
+  Haskell-pipeline reference, retained for historical context.
 - `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
   algebraic laws, Std.Ui layout invariants, Std.Html + Sky.Live
   TEA architecture, Std.Db + Std.Auth security invariants,
   cross-backend parity, per-module correctness verdicts.
 
 These are the durable ground truth across sessions, agents, and
-workflows. They are the FIRST source consulted on any compiler
-or stdlib change — not the in-memory model, not prior session
-context, not optimistic "we can do it" framing.
+workflows. `docs/rust-rewrite/` is the FIRST source consulted on
+any compiler change (stdlib-correctness for stdlib changes) — not
+the in-memory model, not prior session context, not optimistic
+"we can do it" framing.
 
 ### 0.4 Session methodology — phase pattern + agents + grilling + verify
 
@@ -747,7 +754,7 @@ Mitigations:
 
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
-A runaway `sky` / `cabal` / `ghc` / `haskell-language-server` process
+A runaway `sky` / `cargo` / `rustc` / `rust-analyzer` process
 has previously force-powered-off the host Mac. Treat the absence of
 mem-guard like a missing `set -e`.
 
@@ -757,9 +764,10 @@ disown                                # survives shell exit
 ```
 
 Defaults (16 GB Mac): per-process kill at 6 GB RSS for compiler
-tooling (`sky` / `cabal` / `ghc` / `ghc-iserv` / `cc1` / `ld` /
-`haskell-language-server` / `hls-wrapper` / `gopls` /
-`sky-ffi-inspect`); 10 GB panic tier for the dev-session host
+tooling (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
+`ld` / `go` / `gopls` / `sky-ffi-inspect`; legacy `cabal` / `ghc`
+/ `ghc-iserv` / `haskell-language-server` still covered); 10 GB
+panic tier for the dev-session host
 (`claude` / `node` / `ghostty`); system-pressure floor kicks in
 when free + inactive + speculative memory drops below 1.2 GB. Tune
 via `MEM_GUARD_PROC_MB` / `MEM_GUARD_PANIC_MB` /
@@ -801,10 +809,11 @@ have already lost 7 hours waiting on a stuck `Sky.Cli.Watch`
 subprocess. Never again.
 
 Rules:
-- **`cabal test` MUST run under `timeout`**:
-  `timeout 3600 cabal test` (60 min hard ceiling). If 60 min is
-  not enough, that's a flaky test — bisect it, don't widen the
-  ceiling.
+- **`cargo test` and the xtask gate suite MUST run under
+  `timeout`**: `timeout 3600 cargo test --workspace` /
+  `timeout 3600 cargo run -p xtask -- <gate>` (60 min hard
+  ceiling). If 60 min is not enough, that's a flaky test —
+  bisect it, don't widen the ceiling.
 - **Per-spec timeouts.** Hspec specs that exec subprocesses
   (`sky build` / `sky watch` / `sky test`) MUST wrap the child in
   `timeout 60` or use Hspec's `Test.Hspec.Wai`-style timeout
@@ -985,7 +994,7 @@ build.
    Each is reviewed for security + scalability — UI/UX/DX/security
    are not afterthoughts.
 
-### 8. Non-regression rules (enforced by `cabal test`)
+### 8. Non-regression rules (enforced by `cargo test`)
 
 - **No `Result String a` / `Task String a`** in public surfaces.
   Use `Result Error a` / `Task Error a`.
@@ -1323,7 +1332,7 @@ cd examples/01-hello-world && sky build src/Main.sky
 - Watched scope (strict allowlist, no `.skywatchignore`): `sky.toml`
   + the entry-point's directory (recursive `.sky` walk) + `tests/`
   if present. Generated dirs (`sky-out/`, `.skycache/`, `.skydeps/`,
-  `dist-newstyle/`, `node_modules/`, `.git/`) excluded.
+  `rust/target/`, `dist-newstyle/`, `node_modules/`, `.git/`) excluded.
 - Build-error policy: on a failing rebuild, the previously-running
   binary stays alive. The next successful build kills + respawns.
 - Caches: `.skycache/source.hash` (full short-circuit on
@@ -1333,9 +1342,9 @@ cd examples/01-hello-world && sky build src/Main.sky
 
 ### Release checklist (non-negotiable)
 
-1. Rebuild: `cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky`
+1. Rebuild: `( cd rust && cargo build --release -p sky-cli ) && cp rust/target/release/sky sky-out/sky`
 2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
-3. Cabal test sweep: `cabal test` — zero failures, pending count matches prior
+3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden) — zero failures
 4. Clean-build every example: loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`
 5. **Sky.Live + Sky.Http.Server runtime verify** — `scripts/verify-all-web.sh` (Playwright + the structural-events + round-trip-dispatch checks)
 6. **CLI / Tui / Cli runtime verify** — `scripts/verify-cli.sh`
@@ -2855,18 +2864,24 @@ git push origin main
 ## Project layout
 
 ```
-src/                              -- Sky compiler (Haskell, GHC 9.4+)
-  Sky/Parse/                      -- lexer, layout filter, parser
-  Sky/Canonicalise/               -- name resolution, import validation
-  Sky/Type/                       -- HM inference, exhaustiveness
-  Sky/Build/                      -- orchestration, FFI generator, TCO
-  Sky/Generate/Go/                -- Go IR + printer
-  Sky/Lsp/                        -- language server
-  Sky/Format/                     -- opinionated formatter (Elm-compatible)
-  Sky/Doc/                        -- sky doc — index, terminal, HTTP render
-app/Main.hs                       -- CLI entry point
-runtime-go/rt/                    -- Go runtime (embedded via TH)
-sky-stdlib/                       -- Sky-side stdlib (embedded via TH)
+rust/                             -- Sky compiler (Rust, PRIMARY — cargo workspace)
+  crates/sky-cli/                 -- CLI + `sky` binary entry point
+  crates/syntax/                  -- lexer + parser
+  crates/hir/                     -- name resolution, canonicalisation
+  crates/ty/                      -- HM inference, exhaustiveness
+  crates/lower/                   -- type-directed lowering + IR
+  crates/codegen/                 -- Go IR + printer
+  crates/ffi/                     -- FFI binding generation
+  crates/fmt/                     -- opinionated formatter (Elm-compatible)
+  crates/sky-lsp/                 -- language server
+  crates/xtask/                   -- gate suite (roundtrip/resolve/infer/…/golden)
+  rust-toolchain.toml             -- pinned Rust toolchain
+legacy-haskell-compiler/          -- retired Haskell compiler (historical)
+  src/Sky/…                       -- former Parse/Canonicalise/Type/Build/…
+  app/Main.hs                     -- former CLI entry point
+  sky-compiler.cabal              -- former cabal project
+runtime-go/rt/                    -- Go runtime (embedded)
+sky-stdlib/                       -- Sky-side stdlib (embedded)
 sky-bundled/console/              -- Sky Console mini-app
 sky-bundled/doc/                  -- sky doc HTTP server mini-app
 tools/sky-ffi-inspect/            -- Go package introspector (TH-embedded)

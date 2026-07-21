@@ -1,15 +1,10 @@
 # Sky.Live overview
 
-> **v0.15 state**: type-directed lowering across callback fields,
-> record-field inits, list elements, and call args; Go generics on
-> parametric record aliases (`type alias Cfg msg = {…}` emits
-> `Cfg_R[T1 any]` with per-instance type args so callback fields
-> keep their typed callee param). Whole-program Sky DCE prunes
-> unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 27 examples
-> (`examples/00-standard-libs` ships 120 Sky.Test assertions;
-> ~306 cabal specs). See [`../compiler/journey.md`](../compiler/journey.md)
-> for the changelog.
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
+> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
 **Server-driven UI with the TEA architecture** (`init` / `update` / `view` / `subscriptions`). Sky.Live lets you build interactive web apps where all state, logic, and rendering live on the server. The browser runs no client-side framework — just minimal JavaScript for DOM patching and SSE reconnection.

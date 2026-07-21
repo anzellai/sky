@@ -18,7 +18,7 @@ with `sky build`. This is L2 (`db` is the state, one incremental engine),
 L1 (no globals — the 8 IORefs vanish into inputs), and L8 (every query runs on
 the lossless CST, so hover/goto/completion work on broken code).
 
-> **Implementation status (as of `rewrite/rust-compiler`).** `sky-lsp` is **built
+> **Implementation status.** `sky-lsp` is **built
 > and strong**: `rust/crates/sky-lsp/src/lib.rs` implements `hover` (functions,
 > fields, type names, kernel calls, ctors, lambda params, case patterns),
 > `goto`/definition, `completion` (qualified / field / let-binding), `references`,

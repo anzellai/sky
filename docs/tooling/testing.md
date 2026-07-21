@@ -1,10 +1,9 @@
 # Testing Sky projects
 
-> **v0.15 state**: type-directed lowering throughout, Go generics on
-> parametric record aliases. Layer-3 stdlib, whole-program DCE
-> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
-> verification across all 27 examples (120 stdlib assertions + 306
-> cabal specs + 70 self-test files). See
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
 > [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
 
 
@@ -116,17 +115,17 @@ For end-to-end verification of example projects (build + run + panic detection +
 Every bug that reaches production gets a permanent regression test:
 
 1. Reproduce with a minimal Sky fixture.
-2. Add the failing test under `tests/` (or as a cabal-level `Sky.Build.*Spec` / `runtime-go/rt/*_test.go` if the bug lives in the compiler or runtime).
+2. Add the failing test under `tests/` (or as a Rust `cargo test` spec / `runtime-go/rt/*_test.go` if the bug lives in the compiler or runtime).
 3. Fix the root cause.
 4. Verify the regression test passes with the fix and fails without it.
 
 Current permanent regressions:
 
-- `test/Sky/Build/NestedPatternSpec.hs` — nested `Ok (Just x)` / `Ok True` discrimination.
+- `legacy-haskell-compiler/test/Sky/Build/NestedPatternSpec.hs` — nested `Ok (Just x)` / `Ok True` discrimination.
 - `runtime-go/rt/coerce_test.go` — nested `SkyMaybe[X]` / `[]T` / `map[K]T` shape-mismatch via `ResultCoerce`.
 - `runtime-go/rt/error_adt_shape_test.go` — rt `ErrIo` values are type-compatible with user-side `Sky_Core_Error_Error`.
-- `test/Sky/Format/FormatSpec.hs` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
-- `test/Sky/ErrorUnificationSpec.hs` — forbidden-pattern greps: `Result String`, `Task String`, `IoError`, `RemoteData`.
+- `legacy-haskell-compiler/test/Sky/Format/FormatSpec.hs` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
+- `legacy-haskell-compiler/test/Sky/ErrorUnificationSpec.hs` — forbidden-pattern greps: `Result String`, `Task String`, `IoError`, `RemoteData`.
 - `tests/Core/CoreTest.sky` — 22 stdlib semantic tests (String / List / Dict / Maybe / Result).
 - `tests/Lang/PatternTest.sky` — 10 pattern-matching tests (nested Result/Maybe, enum ADT, Bool-inside-Ok).
 - `tests/Live/CounterTest.sky` — 19 Sky.Live TEA loop tests (init / update / model invariants / event dispatch).

@@ -1,5 +1,7 @@
 # Sky Compiler Architecture — Canonical Reference
 
+> **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
+
 > **This is the durable architectural reference.** Every compiler-level
 > workflow, agent, and judge verdict MUST consult this document before
 > claiming a tactic closes a strategic goal. Tactical feasibility (can

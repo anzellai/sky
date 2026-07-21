@@ -1,14 +1,10 @@
 # Compiler architecture
 
-> **v0.15 state**: type-directed lowering throughout — solver writes
-> per-region types and `LowerCtx` threads the expected Go type through
-> the lowerer for lambdas, record-field inits, list elements, and call
-> args. Go generics on parametric record aliases. Same-module
-> polymorphic call re-instantiation. Layer-3 stdlib, whole-program DCE
-> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
-> verification across all 27 examples (120 stdlib assertions + 306
-> cabal specs). See [`../compiler/versions.md`](versions.md) for the
-> changelog.
+> **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
+
+> Type-directed lowering, Go generics on parametric record aliases,
+> Layer-3 stdlib, and whole-program DCE ship as baseline. See
+> [`versions.md`](versions.md) for the changelog.
 
 
 The Sky compiler is a Haskell program that reads Sky source and emits Go. It has no external dependencies beyond GHC 9.4+ and `cabal`.

@@ -216,7 +216,7 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 
 ## `infer(DefId)` — inference as a salsa query (target)
 
-> **Implementation status (as of `rewrite/rust-compiler`).** HM inference is
+> **Implementation status.** HM inference is
 > **built** (M3: arena union-find, generalisation, exhaustiveness, per-region
 > types; 39/39 non-FFI typecheck-match + reject-parity). The `#[salsa::tracked]`
 > annotations and `db: &dyn Db` signatures in this section are the **target**

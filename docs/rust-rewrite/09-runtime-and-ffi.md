@@ -18,7 +18,7 @@ at arm's length from the query core:
 Everything below treats L4 as the axis the design rotates around, not a
 nice-to-have.
 
-> **Implementation status (as of `rewrite/rust-compiler`).** The FFI subsystem
+> **Implementation status.** The FFI subsystem
 > this doc designs is **built and verified**: `rust/crates/ffi` ports the Haskell
 > `FfiGen`/inspector — a deterministic Go-package inspector (`inspect.rs`, pinned
 > `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`, Go-map-order normalised → byte-stable)

@@ -349,8 +349,8 @@ surface.
 
 The Rust CI extends the existing `.github/workflows/ci.yml` shape (matrix:
 `ubuntu-latest` x64 + `macos-latest` arm64; fail-fast off) rather than replacing
-it — during bring-up **both** compilers build in CI (the oracle stays live, see
-[`12`](12-migration-and-milestones.md)).
+it — **both** compilers build in CI (the oracle stays live under
+`legacy-haskell-compiler/`, see [`12`](12-migration-and-milestones.md)).
 
 | Job / step | Command | Blocks merge? | Proves |
 |---|---|---|---|
@@ -384,7 +384,7 @@ Notes carried from the Haskell CI that stay true:
 Every design law from [`00`](00-goals-and-principles.md) maps to a *test*, not a
 promise. If a law has no gate, it is not enforced.
 
-> **Implementation status (as of `rewrite/rust-compiler`).** Most gates below are
+> **Implementation status.** Most gates below are
 > live: the LSP 17-test suite, the reproducibility gate (§3, byte-stable across
 > seeds), the `HashMap`-in-output lint, reject-parity (§2b), parser reprint, and
 > formatter idempotence all run today. Two rows describe gates whose *target*
@@ -426,5 +426,6 @@ The Rust compiler is *verified-compatible* when, on the CI matrix:
 6. **Fuzzers clean** at milestone grade (§5).
 
 No "but / except / mostly / for the scope of." Compat-or-better means the whole
-list, on every push, with the Haskell oracle still standing behind it until
-cutover ([`12`](12-migration-and-milestones.md) M8).
+list, on every push, with the Haskell oracle — preserved under
+`legacy-haskell-compiler/` — still standing behind it
+([`12`](12-migration-and-milestones.md) M8).

@@ -1,18 +1,21 @@
 # 12 — Migration & Milestones
 
-How the Rust compiler is brought up **without breaking anything that ships
-today**, using the Haskell compiler as a permanent differential oracle. This is a
+How the Rust compiler was brought up **without breaking anything that ships
+today**, using the Haskell compiler as a differential oracle. The Rust compiler
+is now the primary Sky compiler; the Haskell compiler is preserved under
+`legacy-haskell-compiler/` as reference, oracle, and rollback path. This was a
 strangler migration ([`docs/self-host/00`](../self-host/00-feasibility-and-architecture.md)
-§6, the strategy that survived the grill): each phase lands one subsystem that
-diff-matches the oracle before the next begins. Never big-bang.
+§6, the strategy that survived the grill): each phase landed one subsystem that
+diff-matched the oracle before the next began. Never big-bang.
 
-Two facts frame every decision:
+Two facts framed every decision:
 
-- **The Haskell compiler is stage-0 and stays live indefinitely.** It is the
-  bootstrap, the release artifact, and the oracle — all three at once — until the
-  Rust compiler passes 100% of the verification bar ([`11`](11-testing-and-verification.md) §10).
-  SkyDeploy (commercial, [MEMORY: `project_skydeploy_business`]) rides stage-0;
-  the migration must not perturb it.
+- **The Haskell compiler is preserved under `legacy-haskell-compiler/` as the
+  differential oracle + rollback path.** It bootstrapped the Rust compiler and
+  remains available for parity checks; the primary release artifact is now the
+  Rust `sky` binary ([`11`](11-testing-and-verification.md) §10).
+  SkyDeploy (commercial, [MEMORY: `project_skydeploy_business`]) tracks the
+  primary compiler; the migration must not perturb it.
 - **The oracle is only as good as its rejection half.** The single most important
   lesson from the self-host analysis (§7 R1-D1): an accept-only oracle is blind
   to soundness regressions. So the **rejection corpus is built alongside the
@@ -21,12 +24,12 @@ Two facts frame every decision:
 
 ---
 
-## Implementation status (as of `rewrite/rust-compiler`)
+## Implementation status
 
-The milestone plan below (§2, M0–M8) is the roadmap. Here is where the branch
-actually stands, verified via the gate (`cargo run -p xtask -- build-run --all
+The milestone plan below (§2, M0–M8) is the roadmap. Here is where the Rust
+compiler actually stands, verified via the gate (`cargo run -p xtask -- build-run --all
 --run`, `cargo test -p sky-lsp`, the determinism + reject gates). **Functionally
-the bring-up is well advanced** — the non-FFI corpus builds+runs+matches the
+the compiler is well advanced** — the non-FFI corpus builds+runs+matches the
 Haskell oracle, FFI scales to skyshop (76k symbols), `sky` is a standalone binary,
 and the LSP passes 17/17. What remains is largely two *architectural refinements*
 that the functional results do not depend on, plus a handful of narrow items.
@@ -43,7 +46,7 @@ that the functional results do not depend on, plus a handful of narrow items.
 | **M5** full corpus build+run | **Built** | Whole corpus builds; run+match vs a freshly-rebuilt oracle across the non-FFI set + skyshop; `11-fyne` GUI is build-only (headless-unverifiable); `36-composite-server`'s only non-match is a genuine **oracle-side** Haskell bug (Rust serves correctly). |
 | **M6** LSP | **Built (minus 3 endpoints)** | Hover/goto/completion/references/rename/semantic-tokens/document-symbol; 17/17 nvim + broader suite. Runs on `hir::db::SourceDb`, not salsa. `inlayHint`/`signatureHelp`/`formatting` **not implemented** ([`10`](10-lsp-and-tooling.md) status). |
 | **M7** reproducibility gate | **Built** | Byte-stable emission across seeds (37/37); deterministic FFI inspector runs only at `add`/`install`/`update`, never mid-build (L4). |
-| **M8** cutover (Rust default) | **Not started** | This is the rewrite branch only; there is no release and no production risk. Cutover waits on the remaining items below being fully closed. |
+| **M8** cutover (Rust default) | **Landed (refinements ongoing)** | Rust is the primary Sky compiler; the Haskell tree is preserved under `legacy-haskell-compiler/` as oracle + rollback path. The remaining architectural refinements (salsa DAG, structural Go-IR) are tracked above and do not block primacy. |
 
 ### Subsystems (built / interim / target)
 
@@ -62,14 +65,14 @@ that the functional results do not depend on, plus a handful of narrow items.
 | Reject-parity completeness, remaining FFI-surface pinning (`03`/`08`) | **In progress** | See resume notes. |
 
 Everything below (§0 onward) is the **plan**; read it as the intended path, with
-the table above as the ground truth for what is already done on the branch.
+the table above as the ground truth for what is already done.
 
 ---
 
 ## 0. Repo layout: in-tree `rust/` subdir (decided)
 
-**Decision: an in-tree `rust/` subdirectory on branch `rewrite/rust-compiler`,
-not a parallel repo.** Rationale:
+**Decision: an in-tree `rust/` subdirectory, not a parallel repo.** The Haskell
+compiler now lives under `legacy-haskell-compiler/` in the same repo. Rationale:
 
 | Concern | In-tree `rust/` (chosen) | Parallel repo (rejected) |
 |---|---|---|
@@ -144,7 +147,7 @@ stop, re-classify against the architecture docs, escalate — do not attempt a 4
 | | |
 |---|---|
 | **Goal** | The crate DAG ([`02`](02-workspace-and-crates.md)) compiles; salsa `db` exists with `set_source_text` input + one trivial query end-to-end; `xtask` skeleton shells stage-0. |
-| **Entry** | Spine docs 00–10 reviewed; branch `rewrite/rust-compiler`. |
+| **Entry** | Spine docs 00–10 reviewed |
 | **Exit** | `cargo build --workspace` green; `#![forbid(unsafe_code)]` on frontend crates; clippy-deny clean; `xtask diff` can invoke stage-0 and capture its output. |
 | **Proves** | L5 (DAG by construction), L1 (db-is-state scaffold), CI shape (jobs wired, all no-op-green). |
 | **Oracle** | Not yet compared — harness plumbing only. |

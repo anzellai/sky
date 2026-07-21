@@ -7,7 +7,7 @@ finished in `lower`. Codegen's contracts are **determinism** (L4), **fidelity to
 the runtime ABI** (L10), and the **panic-safety floor** (the "if it compiles, it
 works" invariant, 00 §4).
 
-> **Implementation status (as of `rewrite/rust-compiler`).** `rust/crates/codegen`
+> **Implementation status.** `rust/crates/codegen`
 > is built and renders the `lower` IR deterministically — the determinism gate
 > (byte-stable emission across seeds/platforms) holds, and the corpus builds+runs.
 > But codegen renders the **interim** representation described in

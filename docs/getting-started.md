@@ -1,15 +1,10 @@
 # Getting started
 
-> **v0.15 state**: type-directed lowering throughout — lambdas,
-> record-field inits, list elements, and call args all carry the
-> slot's typed Go form. Go generics on parametric record aliases
-> (`type Cfg_R[T1 any] struct{...}`). Same-module polymorphic call
-> re-instantiation. Layer-3 stdlib (every kernel module surfaced as
-> Sky source), whole-program DCE (Stripe-SDK scale: −82 % source),
-> auto-TCO for tail-recursive Sky functions, real runtime
-> verification across all 27 examples (120 stdlib assertions + 306
-> cabal specs). See [`compiler/versions.md`](compiler/versions.md)
-> for the full changelog.
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
+> [`compiler/versions.md`](compiler/versions.md) for the full changelog.
 
 ## Install
 

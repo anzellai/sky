@@ -2,9 +2,9 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure
 functional, ML-family language compiling to Go (with surface syntax that
-is Elm-compatible). The compiler is written in Haskell (GHC 9.4+) and
-ships as a single `sky` binary. Users only need the `sky` binary and
-Go 1.21+ — no Haskell toolchain required to use Sky.
+is Elm-compatible). The compiler is written in Rust and ships as a
+single `sky` binary. Users only need the `sky` binary and Go 1.21+ —
+no Rust toolchain required to use Sky.
 
 **Core principle: if it compiles, it works.** Every side effect flows
 through `Task`, every fallible value returns `Result Error a`, and
@@ -419,12 +419,12 @@ codegen.
 
 **12. Every long-running command MUST be timeout-bounded.** Tests,
 builds, sweeps, even smoke runs of `sky-out/app`. A hung subprocess
-without a timeout will silently steal hours. `cabal test` runs under
-`timeout 3600` (60 min ceiling); per-spec subprocess calls wrap children
-in `timeout 60`; `scripts/example-sweep.sh` already enforces
-`run_with_timeout 10` per example; never `wait $PID` unbounded — kill
-after a finite ceiling. If a test legitimately needs more than 60 min,
-that's a flaky test — bisect, don't widen.
+without a timeout will silently steal hours. Wrap `sky test` and
+project builds under `timeout` (e.g. `timeout 600 sky build src/Main.sky`);
+per-spec subprocess calls wrap children in `timeout 60`; never
+`wait $PID` unbounded — kill after a finite ceiling. If a test
+legitimately needs more than its ceiling, that's a flaky test —
+bisect, don't widen.
 
 **13. No "pre-existing" dismissal — every bug enters the pipeline.**
 When you spot a test failure / sweep failure / runtime panic / log
@@ -4771,9 +4771,9 @@ result = Decode.decodeString userDecoder jsonString
 
 ---
 
-## New Compiler Additions (Haskell-based Sky compiler)
+## New Compiler Additions (Rust-based Sky compiler)
 
-The following features are available in the new Haskell-based compiler.
+The following features are available in the Rust-based compiler.
 Everything in the sections above still applies — this appends new surface.
 
 ### Safety Guarantees (on by default)

@@ -434,5 +434,5 @@ spool channel and chunks would race.
 - `runtime-go/rt/http_stream_test.go` — drain order, body-Err abort,
   empty-stream Ok, unknown-id no-op, registry cleanup.
 - `examples/32-sse-relay` — canonical runnable relay (port 8001).
-- `test/Sky/Build/HttpStreamForEachSpec.hs` — cabal spec pinning the
-  typed kernel routing + non-widened body shape.
+- `legacy-haskell-compiler/test/Sky/Build/HttpStreamForEachSpec.hs` —
+  compiler test spec pinning the typed kernel routing + non-widened body shape.

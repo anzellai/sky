@@ -9,7 +9,7 @@ case, it is the query engine with a different driver.
 This shape is the direct answer to laws L1 (no globals — the `db` *is* the state),
 L2 (incremental for free), and L5 (queries compose along an explicit DAG).
 
-> **Implementation status (as of `rewrite/rust-compiler`).** This salsa query
+> **Implementation status.** This salsa query
 > engine is the **target** architecture, described below in the present tense. It
 > is not yet the running engine. A salsa spike is wired — `skydb` (`rust/crates/skydb/src/lib.rs`)
 > is a real `salsa` 0.28 database with one input (`SourceFile`) and one tracked
