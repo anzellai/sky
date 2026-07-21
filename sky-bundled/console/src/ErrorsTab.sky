@@ -9,6 +9,7 @@ module ErrorsTab exposing (viewErrorsTab)
 -- row per distinct error message. The aggregator on the hub side
 -- counts message frequency over the most recent 500 error-level
 -- log rows; same shape as the un-filtered error rollup.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -104,7 +105,7 @@ scopeBanner selected =
             , Ui.el
                   [ Font.size 14, Font.bold, Font.color textPrimary ]
                   (Ui.text label)
-            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
             , allServicesChip (selected == "")
             ]
 
@@ -143,7 +144,7 @@ errorsPanel rows =
     panel
         "Top errors by frequency"
         (if List.isEmpty rows then
-            [emptyState "No errors for this service — nice work."]
+            [ emptyState "No errors for this service — nice work." ]
 
         else
             List.map errorRowView rows)

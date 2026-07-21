@@ -101,6 +101,6 @@ summaryRow model =
               ]
               (Ui.text ("Total " ++ formatMoney (cartTotalCents model.cart)))
         , Ui.el
-              [Ui.alignRight]
+              [ Ui.alignRight ]
               (Common.primaryButton CheckoutClicked "Checkout")
         ]

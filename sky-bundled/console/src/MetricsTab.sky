@@ -9,6 +9,7 @@ module MetricsTab exposing (viewMetricsTab)
 -- by name). Rows are pre-filtered server-side by service name so
 -- the table is already scoped to whatever `model.selectedService`
 -- is at the time of the fetch.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -99,7 +100,7 @@ scopeBanner selected =
             , Ui.el
                   [ Font.size 14, Font.bold, Font.color textPrimary ]
                   (Ui.text label)
-            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
             , allServicesChip (selected == "")
             ]
 
@@ -138,8 +139,9 @@ metricsPanel rows =
     panel
         "Metrics snapshot"
         (if List.isEmpty rows then
-            [emptyState
-                "No metrics for this service yet — exporters typically push every 2 s."]
+            [ emptyState
+                  "No metrics for this service yet — exporters typically push every 2 s."
+            ]
 
         else
             List.map metricRowView rows)

@@ -32,32 +32,38 @@ import Sky.Test as Test exposing (Test)
 -- annotate the let-binding (followups in v0.16+).
 sumKeysViaToList : Int
 sumKeysViaToList =
-    List.foldl (\( k, _ ) acc -> acc + k) 0
+    List.foldl
+        (\( k, _ ) acc -> acc + k)
+        0
         (Dict.toList (Dict.fromList [ ( 1, "a" ), ( 2, "b" ), ( 3, "c" ) ]))
 
 
 -- | Same but for Float keys — Dict Float v should round-trip.
 sumKeysViaToListFloat : Float
 sumKeysViaToListFloat =
-    List.foldl (\( k, _ ) acc -> acc + k) 0.0
+    List.foldl
+        (\( k, _ ) acc -> acc + k)
+        0.0
         (Dict.toList (Dict.fromList [ ( 1.5, "a" ), ( 2.25, "b" ) ]))
 
 
 tests : List Test
 tests =
-    [ Test.suite "Dict.toList Int-key soundness (Limitation #10)"
-        [ Test.test "sum of Int keys via Dict.toList"
-            (\_ -> Test.equal 6 sumKeysViaToList)
-        , Test.test "sum of Float keys via Dict.toList"
-            (\_ -> Test.equal 3.75 sumKeysViaToListFloat)
-        , Test.test "String-key Dict.toList unchanged (regression baseline)"
-            (\_ ->
-                Test.equal 2
-                    (List.length
-                        (Dict.toList
-                            (Dict.fromList [ ( "x", 1 ), ( "y", 2 ) ])
-                        )
-                    )
-            )
-        ]
+    [ Test.suite
+          "Dict.toList Int-key soundness (Limitation #10)"
+          [ Test.test
+                "sum of Int keys via Dict.toList"
+                (\_ -> Test.equal 6 sumKeysViaToList)
+          , Test.test
+                "sum of Float keys via Dict.toList"
+                (\_ -> Test.equal 3.75 sumKeysViaToListFloat)
+          , Test.test
+                "String-key Dict.toList unchanged (regression baseline)"
+                (\_ ->
+                    Test.equal
+                        2
+                        (List.length
+                            (Dict.toList
+                                (Dict.fromList [ ( "x", 1 ), ( "y", 2 ) ]))))
+          ]
     ]

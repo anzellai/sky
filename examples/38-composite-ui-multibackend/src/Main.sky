@@ -15,6 +15,7 @@ module Main exposing (main)
 -- Per CLAUDE.md, `sky build` flips to CGO_ENABLED=1 when it sees
 -- `rt.Webview_app` in the emitted Go — so this app builds with
 -- cgo on macOS and falls back to the stub on other platforms.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.System as System
@@ -111,7 +112,7 @@ main =
                 , update = update
                 , view = view
                 , subscriptions = subscriptions
-                , routes = [Live.route "/" HomePage]
+                , routes = [ Live.route "/" HomePage ]
                 , notFound = HomePage
                 , head = Head.headFor
                 }

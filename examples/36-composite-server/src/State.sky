@@ -3,6 +3,7 @@ module State exposing (..)
 -- Typed records + ADTs for the composite server. No stdlib effect
 -- imports here — keeps the HM type-checker's heap footprint bounded
 -- (CLAUDE.md Limitation #17).
+
 import Sky.Core.Prelude exposing (..)
 
 type alias User =

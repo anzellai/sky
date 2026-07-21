@@ -12,16 +12,16 @@ import Lib.Games as Games
 import Ui.Layout as Layout
 
 
-viewHome : Model -> (Html Msg)
+viewHome : Model -> Html Msg
 viewHome model =
     Layout.page
         model
         (div
-            [class "home-container"]
-            [ h1 [class "home-title"] [text "♞ SkyChess"]
+            [ class "home-container" ]
+            [ h1 [ class "home-title" ] [ text "♞ SkyChess" ]
             , p
-                  [class "home-subtitle"]
-                  [text "Play chess against the computer. White moves first."]
+                  [ class "home-subtitle" ]
+                  [ text "Play chess against the computer. White moves first." ]
             , viewNotification model
             , viewNameForm model
             , viewStats model
@@ -34,15 +34,15 @@ viewNotification model =
         text ""
 
     else
-        div [class "notification"] [text model.notification]
+        div [ class "notification" ] [ text model.notification ]
 
 
 viewNameForm model =
     div
         [ class "card", style "margin-bottom: 24px" ]
         [ div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Your name"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Your name" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -52,10 +52,11 @@ viewNameForm model =
                     ]
               ]
         , div
-              [class "form-actions"]
-              [button
-                  [ onClick StartNewGame, class "btn btn-primary" ]
-                  [text "New Game"]]
+              [ class "form-actions" ]
+              [ button
+                    [ onClick StartNewGame, class "btn btn-primary" ]
+                    [ text "New Game" ]
+              ]
         ]
 
 
@@ -71,10 +72,10 @@ viewStats model =
             draws = countByResult "stalemate" model.savedGames
         in
             div
-                [style "margin-bottom: 24px"]
-                [ h3 [class "section-title"] [text "Your Stats"]
+                [ style "margin-bottom: 24px" ]
+                [ h3 [ class "section-title" ] [ text "Your Stats" ]
                 , div
-                      [class "stats-grid"]
+                      [ class "stats-grid" ]
                       [ statCard (String.fromInt totalGames) "Games"
                       , statCard (String.fromInt wins) "Wins"
                       , statCard (String.fromInt losses) "Losses"
@@ -90,9 +91,9 @@ countByResult result games =
 
 statCard val label =
     div
-        [class "stat-card"]
-        [ div [class "stat-value"] [text val]
-        , div [class "stat-label"] [text label]
+        [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text val ]
+        , div [ class "stat-label" ] [ text label ]
         ]
 
 
@@ -103,8 +104,8 @@ viewGameList model =
     else
         div
             []
-            [ h3 [class "section-title"] [text "Previous Games"]
-            , div [class "game-list"] (List.map viewGameRow model.savedGames)
+            [ h3 [ class "section-title" ] [ text "Previous Games" ]
+            , div [ class "game-list" ] (List.map viewGameRow model.savedGames)
             ]
 
 
@@ -118,25 +119,25 @@ viewGameRow game =
         displayStatus = formatResult result status
     in
         div
-            [class "game-row"]
+            [ class "game-row" ]
             [ div
-                  [class "game-info"]
-                  [ span [class "game-status"] [text displayStatus]
-                  , span [class "game-moves"] [text (moves ++ " moves")]
-                  , span [class "game-date"] [text date]
+                  [ class "game-info" ]
+                  [ span [ class "game-status" ] [ text displayStatus ]
+                  , span [ class "game-moves" ] [ text (moves ++ " moves") ]
+                  , span [ class "game-date" ] [ text date ]
                   ]
             , div
-                  [class "game-actions"]
+                  [ class "game-actions" ]
                   [ button
                         [ onClick (LoadGame gameId)
                         , class "btn btn-secondary btn-sm"
                         ]
-                        [text "View"]
+                        [ text "View" ]
                   , button
                         [ onClick (DeleteGame gameId)
                         , class "btn btn-ghost btn-sm"
                         ]
-                        [text "Delete"]
+                        [ text "Delete" ]
                   ]
             ]
 

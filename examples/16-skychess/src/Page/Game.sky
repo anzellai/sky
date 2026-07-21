@@ -14,7 +14,7 @@ import Chess.Board as Board
 import Ui.Layout as Layout
 
 
-viewGame : Model -> (Html Msg)
+viewGame : Model -> Html Msg
 viewGame model =
     Layout.page
         model
@@ -22,12 +22,12 @@ viewGame model =
             []
             [ viewStatusBar model
             , div
-                  [class "game-layout"]
+                  [ class "game-layout" ]
                   [ div
-                        [class "board-section"]
+                        [ class "board-section" ]
                         [ viewBoard model, viewGameActions model ]
                   , div
-                        [class "side-panel"]
+                        [ class "side-panel" ]
                         [ viewCaptured "White captures" model.capturedByWhite
                         , viewMoveHistory model
                         , viewCaptured "Black captures" model.capturedByBlack
@@ -41,7 +41,7 @@ viewStatusBar model =
         statusClass = getStatusClass model
         statusText = getStatusText model
     in
-        div [class ("status-bar " ++ statusClass)] [text statusText]
+        div [ class ("status-bar " ++ statusClass) ] [ text statusText ]
 
 
 getStatusClass model =
@@ -77,11 +77,11 @@ getStatusText model =
 
 viewBoard model =
     table
-        [class "chess-board"]
+        [ class "chess-board" ]
         (List.map (\rank -> viewRank rank model) [ 0, 1, 2, 3, 4, 5, 6, 7 ])
 
 
-viewRank : Int -> Model -> (Html Msg)
+viewRank : Int -> Model -> Html Msg
 viewRank rank model =
     tr
         []
@@ -90,7 +90,7 @@ viewRank rank model =
             [ 0, 1, 2, 3, 4, 5, 6, 7 ])
 
 
-viewSquare : Int -> Model -> (Html Msg)
+viewSquare : Int -> Model -> Html Msg
 viewSquare sq model =
     let
         row = sq // 8
@@ -104,7 +104,9 @@ viewSquare sq model =
         sqClass =
             buildSquareClass isLight isSelected isLegal isLast hasPiece
     in
-        td [ class sqClass, onClick (ClickSquare sq) ] [viewPieceContent piece]
+        td
+            [ class sqClass, onClick (ClickSquare sq) ]
+            [ viewPieceContent piece ]
 
 
 hasPieceAt maybePiece =
@@ -163,12 +165,12 @@ addLastClass isLast isSelected =
         ""
 
 
-viewPieceContent : Maybe Piece -> (Html Msg)
+viewPieceContent : Maybe Piece -> Html Msg
 viewPieceContent maybePiece =
     case maybePiece of
 
         Just piece ->
-            span [class "piece"] [text (symbol piece.kind piece.colour)]
+            span [ class "piece" ] [ text (symbol piece.kind piece.colour) ]
 
         Nothing ->
             text ""
@@ -177,34 +179,34 @@ viewPieceContent maybePiece =
 viewGameActions model =
     if model.gameStatus == "playing" then
         div
-            [class "game-actions-bar"]
+            [ class "game-actions-bar" ]
             [ button
                   [ onClick Resign, class "btn btn-danger btn-sm" ]
-                  [text "Resign"]
+                  [ text "Resign" ]
             , button
                   [ onClick BackToHome, class "btn btn-secondary btn-sm" ]
-                  [text "Home"]
+                  [ text "Home" ]
             ]
 
     else
         div
-            [class "game-actions-bar"]
+            [ class "game-actions-bar" ]
             [ button
                   [ onClick StartNewGame, class "btn btn-primary btn-sm" ]
-                  [text "New Game"]
+                  [ text "New Game" ]
             , button
                   [ onClick BackToHome, class "btn btn-secondary btn-sm" ]
-                  [text "Home"]
+                  [ text "Home" ]
             ]
 
 
 viewCaptured label pieces =
     div
-        [class "captured"]
-        [ div [class "captured-label"] [text label]
+        [ class "captured" ]
+        [ div [ class "captured-label" ] [ text label ]
         , div
-              [class "captured-pieces"]
-              [text (String.join "" (List.map capturedSymbol pieces))]
+              [ class "captured-pieces" ]
+              [ text (String.join "" (List.map capturedSymbol pieces)) ]
         ]
 
 
@@ -219,8 +221,8 @@ capturedSymbol kind =
 viewMoveHistory model =
     div
         []
-        [ div [class "section-title"] [text "Moves"]
-        , div [class "move-list"] (viewMoveRows model.moveHistory 1)
+        [ div [ class "section-title" ] [ text "Moves" ]
+        , div [ class "move-list" ] (viewMoveRows model.moveHistory 1)
         ]
 
 
@@ -248,8 +250,8 @@ viewMoveRows moves num =
 
 viewOneMoveRow num white black =
     div
-        [class "move-row"]
-        [ span [class "move-num"] [text (String.fromInt num ++ ".")]
-        , span [class "move-white"] [text white]
-        , span [class "move-black"] [text black]
+        [ class "move-row" ]
+        [ span [ class "move-num" ] [ text (String.fromInt num ++ ".") ]
+        , span [ class "move-white" ] [ text white ]
+        , span [ class "move-black" ] [ text black ]
         ]

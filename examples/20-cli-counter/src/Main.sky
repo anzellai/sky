@@ -24,14 +24,12 @@ import Std.Cli as Cli
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
-
 type Msg
     = Increment
     | Decrement
     | Reset
     | Quit
     | NoOp
-
 
 type alias Model =
     { count : Int }
@@ -45,6 +43,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Increment ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -76,6 +75,7 @@ subscriptions _ =
 onLine : String -> Msg
 onLine line =
     case String.trim line of
+
         "+" ->
             Increment
 

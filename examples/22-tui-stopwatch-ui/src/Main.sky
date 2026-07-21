@@ -33,24 +33,18 @@ import Std.Ui.Background as Background
 import Std.Ui.Font as Font
 import Std.Html.Events as Event
 
-
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Model + Msg
 -- ═══════════════════════════════════════════════════════════════════
-
-
 type alias Model =
     { running : Bool
     , elapsedMs : Int
     }
 
-
 type alias KeyEvent =
     { kind : String
     , value : String
     }
-
 
 type Msg
     = Tick
@@ -68,6 +62,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Tick ->
             if model.running then
                 ( { model | elapsedMs = model.elapsedMs + 100 }, Cmd.none )
@@ -97,12 +92,9 @@ subscriptions model =
         Sub.none
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- View — typed Std.Ui Element tree
 -- ═══════════════════════════════════════════════════════════════════
-
-
 view : Model -> Element Msg
 view model =
     Ui.column
@@ -111,44 +103,53 @@ view model =
         , Background.color (Ui.rgb 24 28 48)
         , Font.color (Ui.rgb 220 220 230)
         ]
-        [ Ui.el [ Font.color (Ui.rgb 142 200 168) ]
-            (Ui.text "Sky TUI Stopwatch — Element view")
-        , Ui.el [ Font.color (Ui.rgb 220 220 230) ]
-            (Ui.text (formatElapsed model.elapsedMs))
-        , Ui.el [ Font.color (Ui.rgb 150 150 170) ]
-            (Ui.text (statusLine model))
+        [ Ui.el
+              [ Font.color (Ui.rgb 142 200 168) ]
+              (Ui.text "Sky TUI Stopwatch — Element view")
+        , Ui.el
+              [ Font.color (Ui.rgb 220 220 230) ]
+              (Ui.text (formatElapsed model.elapsedMs))
+        , Ui.el [ Font.color (Ui.rgb 150 150 170) ] (Ui.text (statusLine model))
         , Ui.row
-            [ Ui.spacing 16 ]
-            [ Ui.button
-                [ Background.color (Ui.rgb 60 90 70)
-                , Font.color (Ui.rgb 240 240 240)
-                , Ui.paddingXY 16 8
-                ]
-                { onPress = Just Toggle
-                , label = Ui.text (toggleLabel model)
-                }
-            , Ui.button
-                [ Background.color (Ui.rgb 90 60 60)
-                , Font.color (Ui.rgb 240 240 240)
-                , Ui.paddingXY 16 8
-                ]
-                { onPress = Just Reset
-                , label = Ui.text "Reset"
-                }
-            ]
-        , Ui.el [ Font.color (Ui.rgb 120 120 140) ]
-            (Ui.text "Tab to switch buttons · Enter / space to activate · r reset · q quit")
+              [ Ui.spacing 16 ]
+              [ Ui.button
+                    [ Background.color (Ui.rgb 60 90 70)
+                    , Font.color (Ui.rgb 240 240 240)
+                    , Ui.paddingXY 16 8
+                    ]
+                    { onPress = Just Toggle
+                    , label = Ui.text (toggleLabel model)
+                    }
+              , Ui.button
+                    [ Background.color (Ui.rgb 90 60 60)
+                    , Font.color (Ui.rgb 240 240 240)
+                    , Ui.paddingXY 16 8
+                    ]
+                    { onPress = Just Reset, label = Ui.text "Reset" }
+              ]
+        , Ui.el
+              [ Font.color (Ui.rgb 120 120 140) ]
+              (Ui.text
+                  "Tab to switch buttons · Enter / space to activate · r reset · q quit")
         ]
 
 
 toggleLabel : Model -> String
 toggleLabel model =
-    if model.running then "Pause" else "Start"
+    if model.running then
+        "Pause"
+
+    else
+        "Start"
 
 
 statusLine : Model -> String
 statusLine model =
-    if model.running then "[ running ]" else "[ paused  ]"
+    if model.running then
+        "[ running ]"
+
+    else
+        "[ paused  ]"
 
 
 formatElapsed : Int -> String
@@ -164,17 +165,19 @@ formatElapsed totalMs =
 
 pad2 : Int -> String
 pad2 n =
-    let s = String.fromInt n
+    let
+        s = String.fromInt n
     in
-        if String.length s < 2 then "0" ++ s else s
+        if String.length s < 2 then
+            "0" ++ s
 
+        else
+            s
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Key dispatch (global hotkeys; in-tree button events come via Tab+Enter)
 -- ═══════════════════════════════════════════════════════════════════
-
-
 onKey : KeyEvent -> Msg
 onKey k =
     if k.kind == "space" then
@@ -193,12 +196,9 @@ onKey k =
         NoOp
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
-
-
 main =
     Tui.app
         { init = init

@@ -1,5 +1,6 @@
--- Pick the best move using 2-ply minimax (look 1 move ahead for each side).
 module Chess.Ai exposing (bestMove)
+
+-- Pick the best move using 2-ply minimax (look 1 move ahead for each side).
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict

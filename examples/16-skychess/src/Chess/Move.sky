@@ -16,7 +16,7 @@ import Chess.Board as Board
 legalMovesForSquare : Int -> Colour -> Dict Int Piece -> Model -> List Int
 legalMovesForSquare sq colour board model =
     let
-    -- Generate pseudo-legal moves (before check validation)
+        -- Generate pseudo-legal moves (before check validation)
         pseudo = pseudoLegalMoves sq colour board model
     in
         filterLegalMoves sq colour board pseudo
@@ -111,7 +111,7 @@ pawnForward sq dir colour board row =
             [ oneStep, twoStep ]
 
         else
-            [oneStep]
+            [ oneStep ]
 
 
 pawnStartRow : Colour -> Int
@@ -149,7 +149,7 @@ pawnCaptureLeft sq dir colour board col =
             target = sq + dir * 8 - 1
         in
             if isEnemyAt target colour board then
-                [target]
+                [ target ]
 
             else
                 []
@@ -164,7 +164,7 @@ pawnCaptureRight sq dir colour board col =
             target = sq + dir * 8 + 1
         in
             if isEnemyAt target colour board then
-                [target]
+                [ target ]
 
             else
                 []
@@ -188,7 +188,7 @@ pawnEnPassant sq dir colour board model col =
 
 pawnEpLeft sq dir col epTarget =
     if col > 0 && sq + dir * 8 - 1 == epTarget then
-        [epTarget]
+        [ epTarget ]
 
     else
         []
@@ -196,7 +196,7 @@ pawnEpLeft sq dir col epTarget =
 
 pawnEpRight sq dir col epTarget =
     if col < 7 && sq + dir * 8 + 1 == epTarget then
-        [epTarget]
+        [ epTarget ]
 
     else
         []
@@ -317,7 +317,7 @@ slideStepCheck target row col dir colour board =
 
         Just piece ->
             if piece.colour /= colour then
-                [target]
+                [ target ]
 
             else
                 []
@@ -380,7 +380,7 @@ whiteKingsideCastle board model =
         []
 
     else
-        [62]
+        [ 62 ]
 
 
 whiteQueensideCastle board model =
@@ -398,7 +398,7 @@ whiteQueensideCastle board model =
         []
 
     else
-        [58]
+        [ 58 ]
 
 
 blackCastling : Dict Int Piece -> Model -> List Int
@@ -424,7 +424,7 @@ blackKingsideCastle board model =
         []
 
     else
-        [6]
+        [ 6 ]
 
 
 blackQueensideCastle board model =
@@ -442,7 +442,7 @@ blackQueensideCastle board model =
         []
 
     else
-        [2]
+        [ 2 ]
 
 
 -- ======================================================

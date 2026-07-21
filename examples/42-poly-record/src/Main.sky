@@ -7,16 +7,22 @@ module Main exposing (main)
 -- must render its concrete `tag` field as `string` too — rendering it all-`any`
 -- (`struct{ Tag any; Val any }`) mismatches the declared return and `go build`
 -- rejects it. See lower_record's mixed-struct case.
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 
-wrap : a -> { val : a, tag : String }
+wrap : a -> { val : a
+, tag : String
+}
 wrap v =
     { val = v, tag = "w" }
 
 
-box : a -> { item : a, name : String, count : Int }
+box : a -> { item : a
+, name : String
+, count : Int
+}
 box v =
     { item = v, name = "b", count = 3 }
 
@@ -26,4 +32,4 @@ main =
         _ = println (wrap "hi").val
         _ = println (wrap "hi").tag
     in
-    println (String.fromInt (box "x").count)
+        println (String.fromInt (box "x").count)

@@ -8,6 +8,7 @@ module Routes.Todos exposing (handleList, handleCreate, handleDelete, todoCreate
 --     from inside a Sky.Http.Server handler, NOT a Sky.Live update
 --     return)
 --   * Sky.Core.Crypto.randomToken (per-todo id)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
@@ -67,7 +68,7 @@ handleList cfg db req =
             Db.query
                 db
                 "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
-                [String.fromInt claims.userId]
+                [ String.fromInt claims.userId ]
                 |> Task.andThen
                        (\rows ->
                            let
@@ -140,7 +141,7 @@ publishTodoCreated todo =
                        _ =
                            Log.warnWith
                                "publish.todoCreated"
-                               [( "error", Error.toString e )]
+                               [ ( "error", Error.toString e ) ]
                    in
                        Task.succeed 0)
         |> Task.andThen
@@ -194,8 +195,6 @@ deleteIfOwned db claims todoId =
 
 
 -- ─── Helpers ───────────────────────────────────────────────────────
-
-
 -- Authenticated-route gate.  Pulls Authorization, verifies the JWT,
 -- routes to `kont` on success or a 401 on failure.  Threads the
 -- current unix-seconds via Time so the JWT exp check sees realtime.
@@ -230,7 +229,7 @@ withAuth cfg req kont =
 errorJson : Int -> String -> Response
 errorJson status message =
     { status = status
-    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    , body = JsonEnc.encode 0 (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
     , headers = Dict.empty
     , contentType = "application/json"
     }

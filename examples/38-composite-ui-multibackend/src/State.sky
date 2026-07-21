@@ -5,6 +5,7 @@ module State exposing (..)
 -- No Std.Ui imports here so the per-module HM heap stays well below
 -- Limitation #17's heap-exhaustion limit. The heavy Std.Ui unification
 -- load lives in the View module.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -79,7 +80,7 @@ seedHistoryHelp today offsets flags acc =
     case ( offsets, flags ) of
 
         ( i :: ix, b :: bs ) ->
-            seedHistoryHelp today ix bs (acc ++ [( today - (6 - i), b )])
+            seedHistoryHelp today ix bs (acc ++ [ ( today - (6 - i), b ) ])
 
         _ ->
             acc
@@ -105,7 +106,7 @@ toggleHabit day habit =
         { habit | history = List.map (toggleOne day) habit.history }
 
     else
-        { habit | history = habit.history ++ [( day, True )] }
+        { habit | history = habit.history ++ [ ( day, True ) ] }
 
 
 toggleOne : Int -> ( Int, Bool ) -> ( Int, Bool )

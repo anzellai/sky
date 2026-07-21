@@ -25,7 +25,7 @@ update msg model =
                         habit =
                             { id = model.nextId, name = name, history = [] }
                     in
-                        ( { model | habits = model.habits ++ [habit]
+                        ( { model | habits = model.habits ++ [ habit ]
                           , nextId = model.nextId + 1
                           , draft = ""
                           }

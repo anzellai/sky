@@ -11,8 +11,6 @@ import Std.Live exposing (app, route)
 import Std.Log as Log
 import Std.Sub as Sub
 
-
-
 -- MULTI-TIER CONSOLE SHOWCASE
 --
 -- A single Sky.Live binary with four logical tiers:
@@ -26,14 +24,11 @@ import Std.Sub as Sub
 -- so the inline /_sky/console can filter signals per-tier. The
 -- console aggregates all tiers' emissions out of
 -- telemetry.Default() — no per-tier wiring required.
-
-
 type Page
     = HostPage
     | BillingPage
     | JobsPage
     | AuthPage
-
 
 type Msg
     = Navigate Page
@@ -42,7 +37,6 @@ type Msg
     | EmitAuthLog
     | EmitErrorLog
     | Tick
-
 
 type alias Model =
     { page : Page
@@ -68,60 +62,77 @@ init _req =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Navigate page ->
             let
                 _ =
-                    Log.infoWith "navigate"
-                        [ "from", pageLabel model.page
-                        , "to", pageLabel page
-                        ]
+                    Log.infoWith
+                        "navigate"
+                        [ "from", pageLabel model.page, "to", pageLabel page ]
             in
-            ( { model | page = page }, Cmd.none )
+                ( { model | page = page }, Cmd.none )
 
         EmitBillingLog ->
             let
                 _ =
-                    Log.infoWith "billing.charge"
-                        [ "service.namespace", "/billing"
-                        , "customer", "cus_demo_42"
-                        , "amount_cents", "1200"
-                        , "currency", "usd"
+                    Log.infoWith
+                        "billing.charge"
+                        [ "service.namespace"
+                        , "/billing"
+                        , "customer"
+                        , "cus_demo_42"
+                        , "amount_cents"
+                        , "1200"
+                        , "currency"
+                        , "usd"
                         ]
             in
-            ( { model | billingHits = model.billingHits + 1 }, Cmd.none )
+                ( { model | billingHits = model.billingHits + 1 }, Cmd.none )
 
         EmitJobsLog ->
             let
                 _ =
-                    Log.infoWith "jobs.enqueue"
-                        [ "service.namespace", "/jobs"
-                        , "queue", "email-blast"
-                        , "job_id", "job_demo_" ++ String.fromInt (model.jobsHits + 1)
+                    Log.infoWith
+                        "jobs.enqueue"
+                        [ "service.namespace"
+                        , "/jobs"
+                        , "queue"
+                        , "email-blast"
+                        , "job_id"
+                        , "job_demo_" ++ String.fromInt (model.jobsHits + 1)
                         ]
             in
-            ( { model | jobsHits = model.jobsHits + 1 }, Cmd.none )
+                ( { model | jobsHits = model.jobsHits + 1 }, Cmd.none )
 
         EmitAuthLog ->
             let
                 _ =
-                    Log.infoWith "auth.signin"
-                        [ "service.namespace", "/auth"
-                        , "user_id", "u_demo_99"
-                        , "method", "oauth.google"
+                    Log.infoWith
+                        "auth.signin"
+                        [ "service.namespace"
+                        , "/auth"
+                        , "user_id"
+                        , "u_demo_99"
+                        , "method"
+                        , "oauth.google"
                         ]
             in
-            ( { model | authHits = model.authHits + 1 }, Cmd.none )
+                ( { model | authHits = model.authHits + 1 }, Cmd.none )
 
         EmitErrorLog ->
             let
                 _ =
-                    Log.errorWith "billing.charge.failed"
-                        [ "service.namespace", "/billing"
-                        , "customer", "cus_demo_42"
-                        , "stripe_error", "card_declined"
+                    Log.errorWith
+                        "billing.charge.failed"
+                        [ "service.namespace"
+                        , "/billing"
+                        , "customer"
+                        , "cus_demo_42"
+                        , "stripe_error"
+                        , "card_declined"
                         ]
             in
-            ( { model | billingHits = model.billingHits + 1 }, Cmd.none )
+                ( { model | billingHits = model.billingHits + 1 }, Cmd.none )
 
         Tick ->
             ( { model | ticks = model.ticks + 1 }, Cmd.none )
@@ -130,6 +141,7 @@ update msg model =
 pageLabel : Page -> String
 pageLabel page =
     case page of
+
         HostPage ->
             "host"
 
@@ -145,15 +157,20 @@ pageLabel page =
 
 view : Model -> Html Msg
 view model =
-    div [ style "max-width: 720px; margin: 40px auto; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; color: #1c1c1c;" ]
+    div
+        [ style
+              "max-width: 720px; margin: 40px auto; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; color: #1c1c1c;"
+        ]
         [ h1 [] [ text "Multi-Tier Console Showcase" ]
-        , p [ style "color: #555; line-height: 1.5;" ]
-            [ text "Single Sky.Live binary serving four logical tiers. Each tier emits logs tagged with "
-            , code [] [ text "service.namespace" ]
-            , text "; the inline console at "
-            , a [ href "/_sky/console" ] [ text "/_sky/console" ]
-            , text " aggregates and filters by namespace."
-            ]
+        , p
+              [ style "color: #555; line-height: 1.5;" ]
+              [ text
+                    "Single Sky.Live binary serving four logical tiers. Each tier emits logs tagged with "
+              , code [] [ text "service.namespace" ]
+              , text "; the inline console at "
+              , a [ href "/_sky/console" ] [ text "/_sky/console" ]
+              , text " aggregates and filters by namespace."
+              ]
         , div [ style "margin: 24px 0;" ] (viewNav model)
         , div [ style "margin-top: 32px;" ] [ viewPage model ]
         ]
@@ -165,24 +182,25 @@ viewNav model =
     , navButton model BillingPage "Billing"
     , navButton model JobsPage "Jobs"
     , navButton model AuthPage "Auth"
-    , a [ href "/_sky/console", style ("margin-left: 16px; padding: 8px 14px; background: #ff6600; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 600; display: inline-block;") ]
-        [ text "Sky Console -" ]
+    , a
+          [ href "/_sky/console"
+          , style
+                ("margin-left: 16px; padding: 8px 14px; background: #ff6600; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 600; display: inline-block;")
+          ]
+          [ text "Sky Console -" ]
     ]
 
 
 navButton : Model -> Page -> String -> Html Msg
 navButton model page label =
     let
-        isActive =
-            model.page == page
-
+        isActive = model.page == page
         bg =
             if isActive then
                 "#1c1c1c"
 
             else
                 "#e8e8e8"
-
         fg =
             if isActive then
                 "#fff"
@@ -190,16 +208,21 @@ navButton model page label =
             else
                 "#1c1c1c"
     in
-    button
-        [ onClick (Navigate page)
-        , style ("margin-right: 8px; padding: 8px 14px; background: " ++ bg ++ "; color: " ++ fg ++ "; border: 1px solid #ccc; cursor: pointer; border-radius: 4px;")
-        ]
-        [ text label ]
+        button
+            [ onClick (Navigate page)
+            , style
+                  ("margin-right: 8px; padding: 8px 14px; background: " ++ bg
+                      ++ "; color: "
+                      ++ fg
+                      ++ "; border: 1px solid #ccc; cursor: pointer; border-radius: 4px;")
+            ]
+            [ text label ]
 
 
 viewPage : Model -> Html Msg
 viewPage model =
     case model.page of
+
         HostPage ->
             viewHost model
 
@@ -215,19 +238,25 @@ viewPage model =
 
 viewHost : Model -> Html Msg
 viewHost model =
-    div []
+    div
+        []
         [ h2 [] [ text "Host" ]
-        , p [ style "color: #555; line-height: 1.5;" ]
-            [ text "The host tier serves the overview. It logs page navigations under the default (host) namespace." ]
+        , p
+              [ style "color: #555; line-height: 1.5;" ]
+              [ text
+                    "The host tier serves the overview. It logs page navigations under the default (host) namespace."
+              ]
         , statsCard model
         ]
 
 
 viewBilling : Model -> Html Msg
 viewBilling model =
-    tierCard "Billing"
-        ("Stripe-style charge events tagged service.namespace=/billing. " ++
-            String.fromInt model.billingHits ++ " hits this session.")
+    tierCard
+        "Billing"
+        ("Stripe-style charge events tagged service.namespace=/billing. "
+            ++ String.fromInt model.billingHits
+            ++ " hits this session.")
         [ tierButton EmitBillingLog "Emit charge.success"
         , tierButton EmitErrorLog "Emit charge.failed (error)"
         ]
@@ -235,25 +264,30 @@ viewBilling model =
 
 viewJobs : Model -> Html Msg
 viewJobs model =
-    tierCard "Jobs"
-        ("Background-task events tagged service.namespace=/jobs. " ++
-            String.fromInt model.jobsHits ++ " hits this session.")
-        [ tierButton EmitJobsLog "Emit enqueue"
-        ]
+    tierCard
+        "Jobs"
+        ("Background-task events tagged service.namespace=/jobs. "
+            ++ String.fromInt model.jobsHits
+            ++ " hits this session.")
+        [ tierButton EmitJobsLog "Emit enqueue" ]
 
 
 viewAuth : Model -> Html Msg
 viewAuth model =
-    tierCard "Auth"
-        ("Sign-in / token events tagged service.namespace=/auth. " ++
-            String.fromInt model.authHits ++ " hits this session.")
-        [ tierButton EmitAuthLog "Emit sign-in"
-        ]
+    tierCard
+        "Auth"
+        ("Sign-in / token events tagged service.namespace=/auth. "
+            ++ String.fromInt model.authHits
+            ++ " hits this session.")
+        [ tierButton EmitAuthLog "Emit sign-in" ]
 
 
 statsCard : Model -> Html Msg
 statsCard model =
-    div [ style "margin-top: 16px; padding: 16px; background: #f6f6f6; border-radius: 4px;" ]
+    div
+        [ style
+              "margin-top: 16px; padding: 16px; background: #f6f6f6; border-radius: 4px;"
+        ]
         [ div [] [ text ("Billing hits: " ++ String.fromInt model.billingHits) ]
         , div [] [ text ("Jobs hits:    " ++ String.fromInt model.jobsHits) ]
         , div [] [ text ("Auth hits:    " ++ String.fromInt model.authHits) ]
@@ -263,15 +297,17 @@ statsCard model =
 
 tierCard : String -> String -> List (Html Msg) -> Html Msg
 tierCard label descr buttons =
-    div []
+    div
+        []
         [ h2 [] [ text label ]
         , p [ style "color: #555; line-height: 1.5;" ] [ text descr ]
         , div [ style "margin-top: 16px;" ] buttons
-        , p [ style "color: #888; margin-top: 24px; font-size: 13px;" ]
-            [ text "After emitting some events, visit "
-            , a [ href "/_sky/console" ] [ text "/_sky/console" ]
-            , text " and filter the Logs tab by this tier's namespace."
-            ]
+        , p
+              [ style "color: #888; margin-top: 24px; font-size: 13px;" ]
+              [ text "After emitting some events, visit "
+              , a [ href "/_sky/console" ] [ text "/_sky/console" ]
+              , text " and filter the Logs tab by this tier's namespace."
+              ]
         ]
 
 
@@ -279,7 +315,8 @@ tierButton : Msg -> String -> Html Msg
 tierButton msg label =
     button
         [ onClick msg
-        , style "margin-right: 8px; padding: 8px 14px; background: #ff6600; color: #fff; border: none; cursor: pointer; border-radius: 4px;"
+        , style
+              "margin-right: 8px; padding: 8px 14px; background: #ff6600; color: #fff; border: none; cursor: pointer; border-radius: 4px;"
         ]
         [ text label ]
 
@@ -295,11 +332,10 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes =
-            [ route "/" HostPage
-            , route "/billing" BillingPage
-            , route "/jobs" JobsPage
-            , route "/auth" AuthPage
-            ]
+        , routes = [ route "/" HostPage
+          , route "/billing" BillingPage
+          , route "/jobs" JobsPage
+          , route "/auth" AuthPage
+          ]
         , notFound = HostPage
         }

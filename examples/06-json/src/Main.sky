@@ -187,7 +187,7 @@ roundtrip =
             Encode.object
                 [ ( "items"
                   , Encode.list
-                        (\n -> Encode.object [( "name", Encode.string n )])
+                        (\n -> Encode.object [ ( "name", Encode.string n ) ])
                         [ "Alice", "Bob", "Charlie" ]
                   )
                 , ( "count", Encode.int 3 )

@@ -78,7 +78,7 @@ main =
         , update = update
         , view = view
         , subscriptions = \_ -> Sub.none
-        , routes = [route "/" MainPage]
+        , routes = [ route "/" MainPage ]
         , notFound = MainPage
         }
 
@@ -92,18 +92,21 @@ view model =
         []
         [ styleNode [] pageStyles
         , div
-              [class "app"]
-              [ h1 [] [text model.title]
+              [ class "app" ]
+              [ h1 [] [ text model.title ]
               , p
                     []
-                    [text
-                        "The counter below is a separate component. Its messages are auto-wired by the compiler."]
+                    [ text
+                          "The counter below is a separate component. Its messages are auto-wired by the compiler."
+                    ]
               , Counter.view CounterMsg model.myCounter
               , p
-                    [class "total"]
-                    [text
-                        ("Total: "
-                            ++ String.fromInt (Counter.getCount model.myCounter))]
+                    [ class "total" ]
+                    [ text
+                          ("Total: "
+                              ++ String.fromInt
+                                     (Counter.getCount model.myCounter))
+                    ]
               ]
         ]
 
@@ -112,10 +115,7 @@ pageStyles =
     stylesheet
         [ rule
               "*, *::before, *::after"
-              [ property "box-sizing" "border-box"
-              , margin zero
-              , padding zero
-              ]
+              [ property "box-sizing" "border-box", margin zero, padding zero ]
         , rule
               "body"
               [ fontFamily
@@ -125,11 +125,8 @@ pageStyles =
               ]
         , rule
               ".app"
-              [ maxWidth (px 500)
-              , margin2 (rem 2.0) auto
-              , padding (rem 2.0)
-              ]
-        , rule ".app h1" [property "margin-bottom" "0.5rem"]
+              [ maxWidth (px 500), margin2 (rem 2.0) auto, padding (rem 2.0) ]
+        , rule ".app h1" [ property "margin-bottom" "0.5rem" ]
         , rule ".app p" [ property "margin-bottom" "1.5rem", color (hex "666") ]
         , rule
               ".counter-component"
@@ -161,12 +158,12 @@ pageStyles =
               , fontSize (rem 1.0)
               , cursor Pointer
               ]
-        , rule ".btn:hover" [property "background" "#1d4ed8"]
-        , rule ".btn:active" [transform "scale(0.95)"]
+        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+        , rule ".btn:active" [ transform "scale(0.95)" ]
         , rule
               ".btn-sm"
               [ property "background" "#6b7280", fontSize (rem 0.85) ]
-        , rule ".btn-sm:hover" [property "background" "#4b5563"]
+        , rule ".btn-sm:hover" [ property "background" "#4b5563" ]
         , rule
               ".total"
               [ fontWeight Bold

@@ -9,6 +9,7 @@ module TracesTab exposing (viewTracesTab)
 -- styled span tree per trace. Same renderer as View.sky's
 -- single-service tracesView; the only delta is scope-banner +
 -- pre-filtered rows.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -111,7 +112,7 @@ scopeBanner selected =
             , Ui.el
                   [ Font.size 14, Font.bold, Font.color textPrimary ]
                   (Ui.text label)
-            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
             , allServicesChip (selected == "")
             ]
 
@@ -204,10 +205,10 @@ tracesPanel query rows =
         panel
             "Recent traces"
             (if List.isEmpty rows then
-                [emptyState "No traces captured for this service yet."]
+                [ emptyState "No traces captured for this service yet." ]
 
             else if List.isEmpty visibleIds then
-                [emptyState "No traces match the filter."]
+                [ emptyState "No traces match the filter." ]
 
             else
                 List.map (traceGroupView rows) visibleIds)
@@ -221,7 +222,7 @@ distinctTraceIds rows =
                 acc
 
             else
-                acc ++ [r.traceId])
+                acc ++ [ r.traceId ])
         []
         rows
 

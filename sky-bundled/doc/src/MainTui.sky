@@ -39,35 +39,31 @@ import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Kernel bindings (registered in src/Sky/Generate/Go/Kernel.hs)
 -- ═══════════════════════════════════════════════════════════════════
-
-
 -- Doc.loadCatalog path : Result Error Int
 -- Synchronous Go-side JSON parse + cache.  Result.Ok carries the
 -- total entry count for the status line.
 loadCatalog : String -> Result Error Int
-loadCatalog = Ffi.kernel "Doc_loadCatalog"
+loadCatalog =
+    Ffi.kernel "Doc_loadCatalog"
 
 
 -- Doc.searchCatalog path query maxShown : (List String, Int)
 -- Returns (top-N pre-formatted display lines, total match count).
 -- Pure compute against the cached blob — no I/O.
 searchCatalog : String -> String -> Int -> ( List String, Int )
-searchCatalog = Ffi.kernel "Doc_searchCatalog"
-
+searchCatalog =
+    Ffi.kernel "Doc_searchCatalog"
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Model + Msg
 -- ═══════════════════════════════════════════════════════════════════
-
-
 maxShown : Int
-maxShown = 20
-
+maxShown =
+    20
 
 type alias Model =
     { path : String
@@ -79,12 +75,10 @@ type alias Model =
     , loadError : String
     }
 
-
 type alias KeyEvent =
     { kind : String
     , value : String
     }
-
 
 type Msg
     = UpdateQuery String
@@ -96,20 +90,14 @@ type Msg
     | NoOp
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Init — synchronous load via the kernel binding
 -- ═══════════════════════════════════════════════════════════════════
-
-
 init : () -> ( Model, Cmd Msg )
 init _ =
     let
-        dir =
-            System.getenvOr "SKY_DOC_DIR" ""
-
-        path =
-            dir ++ "/api/symbols.json"
+        dir = System.getenvOr "SKY_DOC_DIR" ""
+        path = dir ++ "/api/symbols.json"
     in
         if dir == "" then
             ( emptyModel "" "SKY_DOC_DIR not set — run via `sky doc --tui`."
@@ -118,6 +106,7 @@ init _ =
 
         else
             case loadCatalog path of
+
                 Ok total ->
                     let
                         ( lines, count ) = searchCatalog path "" maxShown
@@ -134,10 +123,7 @@ init _ =
                         )
 
                 Err _ ->
-                    ( emptyModel path
-                        ("failed to read " ++ path)
-                    , Cmd.none
-                    )
+                    ( emptyModel path ("failed to read " ++ path), Cmd.none )
 
 
 emptyModel : String -> String -> Model
@@ -152,24 +138,21 @@ emptyModel path err =
     }
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Update
 -- ═══════════════════════════════════════════════════════════════════
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         UpdateQuery q ->
             let
                 ( lines, count ) = searchCatalog model.path q maxShown
             in
-                ( { model
-                    | query = q
-                    , filtered = lines
-                    , filteredCount = count
-                    , selected = 0
+                ( { model | query = q
+                  , filtered = lines
+                  , filteredCount = count
+                  , selected = 0
                   }
                 , Cmd.none
                 )
@@ -203,11 +186,10 @@ update msg model =
             let
                 ( lines, count ) = searchCatalog model.path "" maxShown
             in
-                ( { model
-                    | query = ""
-                    , filtered = lines
-                    , filteredCount = count
-                    , selected = 0
+                ( { model | query = ""
+                  , filtered = lines
+                  , filteredCount = count
+                  , selected = 0
                   }
                 , Cmd.none
                 )
@@ -248,38 +230,37 @@ onKey k =
         NoOp
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Colours
 -- ═══════════════════════════════════════════════════════════════════
-
-
 bg : Ui.Color
-bg = Ui.rgb 16 18 28
+bg =
+    Ui.rgb 16 18 28
 
 
 fg : Ui.Color
-fg = Ui.rgb 220 220 230
+fg =
+    Ui.rgb 220 220 230
 
 
 dim : Ui.Color
-dim = Ui.rgb 130 130 145
+dim =
+    Ui.rgb 130 130 145
 
 
 accent : Ui.Color
-accent = Ui.rgb 142 200 168
+accent =
+    Ui.rgb 142 200 168
 
 
 selBg : Ui.Color
-selBg = Ui.rgb 50 70 100
-
+selBg =
+    Ui.rgb 50 70 100
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- View
 -- ═══════════════════════════════════════════════════════════════════
-
-
 view : Model -> Element Msg
 view model =
     Ui.column
@@ -313,16 +294,18 @@ searchRow model =
         [ Ui.spacing 8, Ui.width Ui.fill ]
         [ Ui.el [ Font.color dim ] (Ui.text "›")
         , Ui.input
-            [ Ui.width Ui.fill
-            , Background.color (Ui.rgb 30 36 60)
-            , Font.color fg
-            , Ui.paddingXY 8 2
-            , Border.color (Ui.rgb 80 100 140)
-            , Border.width 1
-            , Ui.htmlAttribute "value" model.query
-            , Ui.htmlAttribute "placeholder" "filter by name, module or signature…"
-            , Ui.onInput UpdateQuery
-            ]
+              [ Ui.width Ui.fill
+              , Background.color (Ui.rgb 30 36 60)
+              , Font.color fg
+              , Ui.paddingXY 8 2
+              , Border.color (Ui.rgb 80 100 140)
+              , Border.width 1
+              , Ui.htmlAttribute "value" model.query
+              , Ui.htmlAttribute
+                    "placeholder"
+                    "filter by name, module or signature…"
+              , Ui.onInput UpdateQuery
+              ]
         ]
 
 
@@ -344,13 +327,10 @@ statusLine model =
             Ui.el
                 [ Font.color dim ]
                 (Ui.text
-                    (String.fromInt model.filteredCount
-                        ++ " / "
+                    (String.fromInt model.filteredCount ++ " / "
                         ++ String.fromInt model.total
                         ++ " entries"
-                        ++ suffix
-                    )
-                )
+                        ++ suffix))
 
 
 resultsList : Model -> Element Msg
@@ -362,10 +342,8 @@ resultsList model =
                 (if String.isEmpty model.query then
                     ""
 
-                 else
-                    "(no matches)"
-                )
-            )
+                else
+                    "(no matches)"))
 
     else
         Ui.column
@@ -399,12 +377,9 @@ helpLine =
         (Ui.text "↑↓ select · / focus search · esc clear · ctrl-c quit")
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
-
-
 main =
     Tui.app
         { init = init

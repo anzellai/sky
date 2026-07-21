@@ -28,35 +28,36 @@ viewOrders model =
 
             Nothing ->
                 div
-                    [tw [ textCenter, py16 ]]
-                    [a
-                        [ href "/auth/signin"
-                        , attribute "sky-nav" ""
-                        , tw
-                              [ bgBlue600
-                              , textWhite
-                              , px6
-                              , py3
-                              , roundedLg
-                              , fontSemibold
-                              ]
-                        ]
-                        [text (Tr.t model.lang "nav.signin")]]
+                    [ tw [ textCenter, py16 ] ]
+                    [ a
+                          [ href "/auth/signin"
+                          , attribute "sky-nav" ""
+                          , tw
+                                [ bgBlue600
+                                , textWhite
+                                , px6
+                                , py3
+                                , roundedLg
+                                , fontSemibold
+                                ]
+                          ]
+                          [ text (Tr.t model.lang "nav.signin") ]
+                    ]
 
             Just _ ->
                 div
                     []
                     [ Html.h1
-                          [tw [ text3xl, fontBold, mb6 ]]
-                          [text (Tr.t model.lang "order.title")]
+                          [ tw [ text3xl, fontBold, mb6 ] ]
+                          [ text (Tr.t model.lang "order.title") ]
                     , if List.isEmpty model.orders then
                           div
-                              [tw [ textCenter, py16, textGray500 ]]
-                              [text (Tr.t model.lang "order.empty")]
+                              [ tw [ textCenter, py16, textGray500 ] ]
+                              [ text (Tr.t model.lang "order.empty") ]
 
                       else
                           div
-                              [tw [ flexCol, gap4 ]]
+                              [ tw [ flexCol, gap4 ] ]
                               (List.map (viewOrderCard model) model.orders)
                     ])
 
@@ -87,23 +88,29 @@ viewOrderCard model order =
                   , block
                   ]
             ]
-            [div
-                []
-                [ div
-                      [tw [ flex, gap3, itemsCenter, mb2 ]]
-                      [ span
-                            [tw [ fontSemibold, textGray900 ]]
-                            [text (Money.formatPrice totalAmount totalCurrency)]
-                      , span
-                            [ tw [ textXs, px2, py1, roundedFull, fontMedium ]
-                            , stateBg
-                            ]
-                            [text (Tr.tCartState model.lang state)]
-                      ]
-                , span
-                      [tw [ textSm, textGray500 ]]
-                      [text (Tr.t model.lang "order.placed" ++ ": " ++ createdAt)]
-                ]]
+            [ div
+                  []
+                  [ div
+                        [ tw [ flex, gap3, itemsCenter, mb2 ] ]
+                        [ span
+                              [ tw [ fontSemibold, textGray900 ] ]
+                              [ text
+                                    (Money.formatPrice totalAmount totalCurrency)
+                              ]
+                        , span
+                              [ tw [ textXs, px2, py1, roundedFull, fontMedium ]
+                              , stateBg
+                              ]
+                              [ text (Tr.tCartState model.lang state) ]
+                        ]
+                  , span
+                        [ tw [ textSm, textGray500 ] ]
+                        [ text
+                              (Tr.t model.lang "order.placed" ++ ": "
+                                  ++ createdAt)
+                        ]
+                  ]
+            ]
 
 
 stateColor state =
@@ -141,8 +148,8 @@ viewOrder model =
 
             Nothing ->
                 div
-                    [tw [ textCenter, py16, textGray500 ]]
-                    [text (Tr.t model.lang "common.loading")])
+                    [ tw [ textCenter, py16, textGray500 ] ]
+                    [ text (Tr.t model.lang "common.loading") ])
 
 
 viewOrderDetail model order =
@@ -164,98 +171,104 @@ viewOrderDetail model order =
         div
             []
             [ div
-                  [tw [mb4]]
-                  [a
-                      [ href "/orders"
-                      , attribute "sky-nav" ""
-                      , tw [ textSm, textBlue600 ]
-                      ]
-                      [text ("< " ++ Tr.t lang "common.back")]]
+                  [ tw [ mb4 ] ]
+                  [ a
+                        [ href "/orders"
+                        , attribute "sky-nav" ""
+                        , tw [ textSm, textBlue600 ]
+                        ]
+                        [ text ("< " ++ Tr.t lang "common.back") ]
+                  ]
             , div
-                  [tw [ bgWhite, roundedXl, shadow, p6, mb6 ]]
+                  [ tw [ bgWhite, roundedXl, shadow, p6, mb6 ] ]
                   [ div
-                        [tw [ flex, justifyBetween, itemsCenter, mb6 ]]
+                        [ tw [ flex, justifyBetween, itemsCenter, mb6 ] ]
                         [ Html.h1
-                              [tw [ text2xl, fontBold ]]
-                              [text (Tr.t lang "order.detail")]
+                              [ tw [ text2xl, fontBold ] ]
+                              [ text (Tr.t lang "order.detail") ]
                         , span
                               [ tw [ px3, py1, roundedFull, fontMedium, textSm ]
                               , stateColor state
                               ]
-                              [text (Tr.tCartState lang state)]
+                              [ text (Tr.tCartState lang state) ]
                         ]
                   , div
-                        [tw
-                            [ grid
-                            , gridCols1
-                            , Responsive.sm gridCols2
-                            , gap4
-                            , mb6
-                            ]]
+                        [ tw
+                              [ grid
+                              , gridCols1
+                              , Responsive.sm gridCols2
+                              , gap4
+                              , mb6
+                              ]
+                        ]
                         [ div
                               []
                               [ span
-                                    [tw [ textSm, textGray500, block ]]
-                                    [text (Tr.t lang "cart.total")]
+                                    [ tw [ textSm, textGray500, block ] ]
+                                    [ text (Tr.t lang "cart.total") ]
                               , span
-                                    [tw [ text2xl, fontBold ]]
-                                    [text
-                                        (Money.formatPrice
-                                            totalAmount
-                                            totalCurrency)]
+                                    [ tw [ text2xl, fontBold ] ]
+                                    [ text
+                                          (Money.formatPrice
+                                              totalAmount
+                                              totalCurrency)
+                                    ]
                               ]
                         , div
                               []
                               [ span
-                                    [tw [ textSm, textGray500, block ]]
-                                    [text (Tr.t lang "order.placed")]
-                              , span [tw [fontMedium]] [text createdAt]
+                                    [ tw [ textSm, textGray500, block ] ]
+                                    [ text (Tr.t lang "order.placed") ]
+                              , span [ tw [ fontMedium ] ] [ text createdAt ]
                               ]
                         ]
                   , if shippingName != "" then
                         div
-                            [tw [ borderT, borderGray200, pt4, mb4 ]]
+                            [ tw [ borderT, borderGray200, pt4, mb4 ] ]
                             [ Html.h3
-                                  [tw [ fontSemibold, mb2 ]]
-                                  [text (Tr.t lang "order.shipping")]
-                            , p [tw [ textSm, textGray600 ]] [text shippingName]
+                                  [ tw [ fontSemibold, mb2 ] ]
+                                  [ text (Tr.t lang "order.shipping") ]
                             , p
-                                  [tw [ textSm, textGray600 ]]
-                                  [text shippingEmail]
+                                  [ tw [ textSm, textGray600 ] ]
+                                  [ text shippingName ]
                             , p
-                                  [tw [ textSm, textGray600 ]]
-                                  [text shippingPhone]
+                                  [ tw [ textSm, textGray600 ] ]
+                                  [ text shippingEmail ]
                             , p
-                                  [tw [ textSm, textGray600 ]]
-                                  [text
-                                      (shippingLine1 ++ ", " ++ shippingCity
-                                          ++ " "
-                                          ++ shippingPostcode
-                                          ++ ", "
-                                          ++ shippingCountry)]
+                                  [ tw [ textSm, textGray600 ] ]
+                                  [ text shippingPhone ]
+                            , p
+                                  [ tw [ textSm, textGray600 ] ]
+                                  [ text
+                                        (shippingLine1 ++ ", " ++ shippingCity
+                                            ++ " "
+                                            ++ shippingPostcode
+                                            ++ ", "
+                                            ++ shippingCountry)
+                                  ]
                             ]
 
                     else
                         text ""
                   , if remarks != "" then
                         div
-                            [tw [ borderT, borderGray200, pt4, mb4 ]]
+                            [ tw [ borderT, borderGray200, pt4, mb4 ] ]
                             [ Html.h3
-                                  [tw [ fontSemibold, mb2 ]]
-                                  [text "Remarks"]
-                            , p [tw [ textSm, textGray600 ]] [text remarks]
+                                  [ tw [ fontSemibold, mb2 ] ]
+                                  [ text "Remarks" ]
+                            , p [ tw [ textSm, textGray600 ] ] [ text remarks ]
                             ]
 
                     else
                         text ""
                   ]
             , div
-                  [tw [ bgWhite, roundedXl, shadow, p6 ]]
+                  [ tw [ bgWhite, roundedXl, shadow, p6 ] ]
                   [ Html.h2
-                        [tw [ fontSemibold, textLg, mb4 ]]
-                        [text (Tr.t lang "order.items")]
+                        [ tw [ fontSemibold, textLg, mb4 ] ]
+                        [ text (Tr.t lang "order.items") ]
                   , div
-                        [tw [ flexCol, gap3 ]]
+                        [ tw [ flexCol, gap3 ] ]
                         (List.map viewOrderItem model.orderItems)
                   ]
             ]
@@ -277,22 +290,23 @@ viewOrderItem item =
         lineTotal_ = Money.formatPrice (effectivePrice * qty) currency
     in
         div
-            [tw
-                [ flex
-                , justifyBetween
-                , itemsCenter
-                , py3
-                , borderB
-                , borderGray100
-                ]]
+            [ tw
+                  [ flex
+                  , justifyBetween
+                  , itemsCenter
+                  , py3
+                  , borderB
+                  , borderGray100
+                  ]
+            ]
             [ div
                   []
-                  [ span [tw [fontMedium]] [text title]
+                  [ span [ tw [ fontMedium ] ] [ text title ]
                   , span
-                        [tw [ textSm, textGray500, ml2 ]]
-                        [text ("x" ++ String.fromInt qty)]
+                        [ tw [ textSm, textGray500, ml2 ] ]
+                        [ text ("x" ++ String.fromInt qty) ]
                   ]
-            , span [tw [fontSemibold]] [text lineTotal_]
+            , span [ tw [ fontSemibold ] ] [ text lineTotal_ ]
             ]
 
 
@@ -303,77 +317,96 @@ viewOrderSuccess model =
     Layout.page
         model
         (div
-            [tw [ textCenter, py16 ]]
-            [case model.order of
+            [ tw [ textCenter, py16 ] ]
+            [ case model.order of
 
-                Just order ->
-                    let
-                        state = Db.getField "state" order
-                    in
-                        if state == "ordered" || state == "shipped" || state
-                            == "delivered" then
-                            div
-                                []
-                                [ div
-                                      [tw
-                                          [ w16
-                                          , h16
-                                          , bgGreen100
-                                          , roundedFull
-                                          , flex
-                                          , itemsCenter
-                                          , justifyCenter
-                                          , mxAuto
-                                          , mb4
-                                          ]]
-                                      [span
-                                          [tw [ text2xl, textGreen600 ]]
-                                          [text "✓"]]
-                                , Html.h1
-                                      [tw [ text2xl, fontBold, mb4 ]]
-                                      [text (Tr.t model.lang "order.success")]
-                                , a
-                                      [ href
-                                            ("/order/" ++ Db.getField "id" order)
-                                      , attribute "sky-nav" ""
-                                      , tw
-                                            [ bgBlue600
-                                            , textWhite
-                                            , px6
-                                            , py3
-                                            , roundedLg
-                                            , fontSemibold
-                                            , inlineBlock
-                                            ]
-                                      ]
-                                      [text (Tr.t model.lang "order.detail")]
-                                ]
+                  Just order ->
+                      let
+                          state = Db.getField "state" order
+                      in
+                          if state == "ordered" || state == "shipped" || state
+                              == "delivered" then
+                              div
+                                  []
+                                  [ div
+                                        [ tw
+                                              [ w16
+                                              , h16
+                                              , bgGreen100
+                                              , roundedFull
+                                              , flex
+                                              , itemsCenter
+                                              , justifyCenter
+                                              , mxAuto
+                                              , mb4
+                                              ]
+                                        ]
+                                        [ span
+                                              [ tw [ text2xl, textGreen600 ] ]
+                                              [ text "✓" ]
+                                        ]
+                                  , Html.h1
+                                        [ tw [ text2xl, fontBold, mb4 ] ]
+                                        [ text (Tr.t model.lang "order.success")
+                                        ]
+                                  , a
+                                        [ href
+                                              ("/order/"
+                                                  ++ Db.getField "id" order)
+                                        , attribute "sky-nav" ""
+                                        , tw
+                                              [ bgBlue600
+                                              , textWhite
+                                              , px6
+                                              , py3
+                                              , roundedLg
+                                              , fontSemibold
+                                              , inlineBlock
+                                              ]
+                                        ]
+                                        [ text (Tr.t model.lang "order.detail")
+                                        ]
+                                  ]
 
-                        else
-                            div
-                                []
-                                [ Html.h1
-                                      [tw [ text2xl, fontBold, mb4, textRed600 ]]
-                                      [text (Tr.t model.lang "order.failed")]
-                                , p
-                                      [tw [ textGray500, mb4 ]]
-                                      [text
-                                          (Tr.t model.lang "order.status" ++ ": "
-                                              ++ Tr.tCartState model.lang state)]
-                                , a
-                                      [ href "/cart"
-                                      , attribute "sky-nav" ""
-                                      , tw [textBlue600]
-                                      ]
-                                      [text
-                                          (Tr.t
-                                              model.lang
-                                              "cart.continueShopping")]
-                                ]
+                          else
+                              div
+                                  []
+                                  [ Html.h1
+                                        [ tw
+                                              [ text2xl
+                                              , fontBold
+                                              , mb4
+                                              , textRed600
+                                              ]
+                                        ]
+                                        [ text (Tr.t model.lang "order.failed")
+                                        ]
+                                  , p
+                                        [ tw [ textGray500, mb4 ] ]
+                                        [ text
+                                              (Tr.t model.lang "order.status"
+                                                  ++ ": "
+                                                  ++ Tr.tCartState
+                                                         model.lang
+                                                         state)
+                                        ]
+                                  , a
+                                        [ href "/cart"
+                                        , attribute "sky-nav" ""
+                                        , tw [ textBlue600 ]
+                                        ]
+                                        [ text
+                                              (Tr.t
+                                                  model.lang
+                                                  "cart.continueShopping")
+                                        ]
+                                  ]
 
-                Nothing ->
-                    div
-                        []
-                        [p
-                            [tw [textGray500]]
-                            [text (Tr.t model.lang "order.processing")]]])
+                  Nothing ->
+                      div
+                          []
+                          [ p
+                                [ tw [ textGray500 ] ]
+                                [ text (Tr.t model.lang "order.processing") ]
+                          ]
+            ])

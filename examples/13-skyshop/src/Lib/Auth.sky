@@ -28,15 +28,15 @@ adminEmails _ =
         envAdmins =
             Result.withDefault "" (Task.run (System.getenv "ADMIN_EMAILS"))
     in
+        if envAdmins == "" then
+            [ "admin@example.com" ]
+
+        else
+            String.split "," envAdmins
     -- Idempotent upsert using firebase_uid as document ID.
     -- Concurrent calls from onAuthStateChanged can never create duplicates
     -- because Firestore Set with merge is atomic at the document level.
     -- No query-then-create race condition.
-        if envAdmins == "" then
-            ["admin@example.com"]
-
-        else
-            String.split "," envAdmins
 
 
 isAdmin : Dict String String -> Bool
@@ -62,7 +62,7 @@ getAuthClient _ =
                 case Option.withCredentialsFile credFile of
 
                     Ok opt ->
-                        [opt]
+                        [ opt ]
 
                     Err _ ->
                         []
@@ -84,7 +84,7 @@ claimString key claims =
     case Dict.get key claims of
 
         Just val ->
-            Fmt.sprint [val]
+            Fmt.sprint [ val ]
 
         Nothing ->
             ""
@@ -97,8 +97,8 @@ verifyToken idToken =
             case FirebaseAuth.clientVerifyIDToken client ctx idToken of
 
                 Ok token ->
-                -- tokenUID + tokenClaims are FFI getters returning
-                -- Result Error _; unwrap before downstream use.
+                    -- tokenUID + tokenClaims are FFI getters returning
+                    -- Result Error _; unwrap before downstream use.
                     let
                         uid =
                             case FirebaseAuth.tokenUID token of
@@ -157,10 +157,10 @@ findOrCreateUser uid email name =
 
             else
                 "false"
-                -- Set with merge: updates email/name/admin but preserves
-                -- existing fields (phone, address) from previous writes.
         upsertData =
             Dict.fromList
+                -- Set with merge: updates email/name/admin but preserves
+                -- existing fields (phone, address) from previous writes.
                 [ ( "id", uid )
                 , ( "firebase_uid", uid )
                 , ( "email", email )

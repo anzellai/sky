@@ -9,6 +9,7 @@ module Routes.Auth exposing (handleRegister, handleLogin, credentialsDecoder)
 --   * Sky.Core.Time.unixMillis  (via the Server module's caller)
 --   * Sky.Core.Crypto.randomToken (for the user's request id audit log)
 --   * Std.Log.errorWith for structured failures
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
@@ -173,6 +174,6 @@ logAndFail op e =
 -- Closes the workaround documented at Routes.Todos.errorJson.
 errorJson : Int -> String -> Response
 errorJson status message =
-    JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    JsonEnc.encode 0 (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
         |> Server.json
         |> Server.withStatus status

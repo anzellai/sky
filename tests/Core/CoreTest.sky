@@ -42,8 +42,7 @@ tests =
                 (\_ -> Test.equal [ 3, 2, 1 ] (List.reverse [ 1, 2, 3 ]))
           , Test.test
                 "reverse first elem"
-                (\_ ->
-                     Test.equal (Just 3) (List.head (List.reverse [ 1, 2, 3 ])))
+                (\_ -> Test.equal (Just 3) (List.head (List.reverse [ 1, 2, 3 ])))
           , Test.test
                 "head finds first"
                 (\_ -> Test.equal (Just 1) (List.head [ 1, 2, 3 ]))
@@ -60,10 +59,10 @@ tests =
           [ Test.test
                 "empty + insert + get"
                 (\_ ->
-                     let
-                         d = Dict.insert "hello" 42 Dict.empty
-                     in
-                         Test.equal (Just 42) (Dict.get "hello" d))
+                    let
+                        d = Dict.insert "hello" 42 Dict.empty
+                    in
+                        Test.equal (Just 42) (Dict.get "hello" d))
           , Test.test
                 "get missing returns Nothing"
                 (\_ -> Test.equal Nothing (Dict.get "nope" Dict.empty))
@@ -92,67 +91,65 @@ tests =
           "Result/Task bridges"
           [ Test.test
                 "Task.fromResult lifts Ok"
-                (\_ ->
-                     Test.equal (Ok 42) (Task.run (Task.fromResult (Ok 42))))
+                (\_ -> Test.equal (Ok 42) (Task.run (Task.fromResult (Ok 42))))
           , Test.test
                 "Task.fromResult lifts Err"
                 (\_ ->
-                     Test.equal
-                         (Err "boom")
-                         (Task.run (Task.fromResult (Err "boom"))))
+                    Test.equal
+                        (Err "boom")
+                        (Task.run (Task.fromResult (Err "boom"))))
           , Test.test
                 "Task.andThenResult chains Ok→Ok"
                 (\_ ->
-                     Test.equal
-                         (Ok 11)
-                         (Task.run
-                             (Task.andThenResult
-                                 (\n -> Ok (n + 1))
-                                 (Task.succeed 10))))
+                    Test.equal
+                        (Ok 11)
+                        (Task.run
+                            (Task.andThenResult
+                                (\n -> Ok (n + 1))
+                                (Task.succeed 10))))
           , Test.test
                 "Task.andThenResult propagates Task Err"
                 (\_ ->
-                     Test.equal
-                         (Err "task-failed")
-                         (Task.run
-                             (Task.andThenResult
-                                 (\n -> Ok (n + 1))
-                                 (Task.fail "task-failed"))))
+                    Test.equal
+                        (Err "task-failed")
+                        (Task.run
+                            (Task.andThenResult
+                                (\n -> Ok (n + 1))
+                                (Task.fail "task-failed"))))
           , Test.test
                 "Task.andThenResult surfaces Result Err"
                 (\_ ->
-                     Test.equal
-                         (Err "result-failed")
-                         (Task.run
-                             (Task.andThenResult
-                                 (\_ -> Err "result-failed")
-                                 (Task.succeed 10))))
+                    Test.equal
+                        (Err "result-failed")
+                        (Task.run
+                            (Task.andThenResult
+                                (\_ -> Err "result-failed")
+                                (Task.succeed 10))))
           , Test.test
                 "Result.andThenTask chains Ok→Task"
                 (\_ ->
-                     Test.equal
-                         (Ok 20)
-                         (Task.run
-                             (Result.andThenTask
-                                 (\n -> Task.succeed (n * 2))
-                                 (Ok 10))))
+                    Test.equal
+                        (Ok 20)
+                        (Task.run
+                            (Result.andThenTask
+                                (\n -> Task.succeed (n * 2))
+                                (Ok 10))))
           , Test.test
                 "Result.andThenTask short-circuits on Err"
                 (\_ ->
-                     Test.equal
-                         (Err "no")
-                         (Task.run
-                             (Result.andThenTask
-                                 (\n -> Task.succeed (n * 2))
-                                 (Err "no"))))
+                    Test.equal
+                        (Err "no")
+                        (Task.run
+                            (Result.andThenTask
+                                (\n -> Task.succeed (n * 2))
+                                (Err "no"))))
           , Test.test
                 "flat pipeline: Result→Task→Result→Task"
                 (\_ ->
-                     Ok 5
-                         |> Result.andThenTask (\n -> Task.succeed (n + 1))
-                         |> Task.andThenResult (\n -> Ok (n * 2))
-                         |> Task.andThen (\n -> Task.succeed (String.fromInt n))
-                         |> Task.run
-                         |> Test.equal (Ok "12"))
+                    Ok 5 |> Result.andThenTask (\n -> Task.succeed (n + 1))
+                        |> Task.andThenResult (\n -> Ok (n * 2))
+                        |> Task.andThen (\n -> Task.succeed (String.fromInt n))
+                        |> Task.run
+                        |> Test.equal (Ok "12"))
           ]
     ]

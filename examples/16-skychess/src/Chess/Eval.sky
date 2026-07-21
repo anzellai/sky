@@ -1,6 +1,7 @@
+module Chess.Eval exposing (evaluate)
+
 -- Evaluate position from white's perspective
 -- Positive = white advantage, negative = black advantage
-module Chess.Eval exposing (evaluate)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
@@ -70,31 +71,31 @@ tableValue table idx =
 getTable : Kind -> List Int
 getTable kind =
     if kind == Pawn then
-    -- Pawn: encourage central and advanced pawns
         pawnTable
 
     else if kind == Knight then
-    -- Knight: encourage centre
         knightTable
 
     else if kind == Bishop then
-    -- Bishop: encourage long diagonals
         bishopTable
 
     else if kind == Rook then
-    -- Rook: encourage 7th rank and open files
         rookTable
 
     else if kind == Queen then
-    -- Queen: slight central preference
         queenTable
 
     else if kind == King then
-    -- King: encourage castled position (middlegame)
         kingTable
 
     else
         []
+    -- Pawn: encourage central and advanced pawns
+    -- Knight: encourage centre
+    -- Bishop: encourage long diagonals
+    -- Rook: encourage 7th rank and open files
+    -- Queen: slight central preference
+    -- King: encourage castled position (middlegame)
 
 
 pawnTable =

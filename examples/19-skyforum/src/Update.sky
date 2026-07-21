@@ -17,10 +17,10 @@ update msg model =
             )
 
         UpvotePost postId ->
-        -- Anonymous users redirect to login (mirrors SubmitComment).
-        -- The page reroute is the user-visible signal "sign in to vote".
-        -- Toggle semantics: clicking again removes the vote (see
-        -- State.togglePostUpvote).
+            -- Anonymous users redirect to login (mirrors SubmitComment).
+            -- The page reroute is the user-visible signal "sign in to vote".
+            -- Toggle semantics: clicking again removes the vote (see
+            -- State.togglePostUpvote).
             case model.session of
 
                 Nothing ->
@@ -77,13 +77,13 @@ update msg model =
                     )
 
         DoSignIn creds ->
-        -- Form-submit handler. `creds.username` and `creds.password`
-        -- come straight from the wire `<form>` data — case-
-        -- insensitive json.Unmarshal decoded the formData
-        -- {"username":"...","password":"..."} into LoginForm.
-        -- The password lives only in this Msg's record arg until
-        -- the update consumes it; never enters Model so never
-        -- serialises into the session store.
+            -- Form-submit handler. `creds.username` and `creds.password`
+            -- come straight from the wire `<form>` data — case-
+            -- insensitive json.Unmarshal decoded the formData
+            -- {"username":"...","password":"..."} into LoginForm.
+            -- The password lives only in this Msg's record arg until
+            -- the update consumes it; never enters Model so never
+            -- serialises into the session store.
             if String.isEmpty (String.trim creds.username) then
                 ( { model | loginError = "Username is required." }, Cmd.none )
 
@@ -118,7 +118,7 @@ update msg model =
                         ( model, Cmd.none )
 
                     else
-                        ( { model | comments = model.comments ++ [newComment model sess postId]
+                        ( { model | comments = model.comments ++ [ newComment model sess postId ]
                           , posts = List.map (bumpPostComments postId) model.posts
                           , composeBody = ""
                           , replyTo = 0
@@ -130,15 +130,16 @@ update msg model =
 
 newComment : Model -> Session -> Int -> Comment
 newComment model sess postId =
--- Author auto-upvotes their own comment (Reddit convention) — sets
--- the seed score to 0 and adds them to upvoters so the displayed
--- score is 1. Clicking "upvoted" later removes themselves cleanly.
     { id = model.nextCommentId
     , postId = postId
     , parentId = model.replyTo
     , author = sess.username
     , body = String.trim model.composeBody
     , votes = 0
-    , upvoters = [sess.username]
+    , upvoters = [ sess.username ]
     , downvoters = []
     }
+
+-- Author auto-upvotes their own comment (Reddit convention) — sets
+-- the seed score to 0 and adds them to upvoters so the displayed
+-- score is 1. Clicking "upvoted" later removes themselves cleanly.

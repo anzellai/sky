@@ -13,7 +13,7 @@ import Ui.Layout as Layout
 import Ui.Charts as Charts
 
 
-viewMonitorDetail : String -> Model -> (Html Msg)
+viewMonitorDetail : String -> Model -> Html Msg
 viewMonitorDetail monId model =
     let
         monitor =
@@ -30,7 +30,7 @@ viewMonitorDetail monId model =
                     viewNotFound)
 
 
-viewMonitorContent : Monitor -> (Html Msg)
+viewMonitorContent : Monitor -> Html Msg
 viewMonitorContent mon =
     div
         []
@@ -41,46 +41,52 @@ viewMonitorContent mon =
         ]
 
 
-viewBackButton : (Html Msg)
+viewBackButton : Html Msg
 viewBackButton =
     button
         [ onClick (Navigate DashboardPage)
         , class "btn btn-ghost btn-sm"
         , style "margin-bottom: 16px"
         ]
-        [text "← Back to Dashboard"]
+        [ text "← Back to Dashboard" ]
 
 
-viewMonitorHeader : Monitor -> (Html Msg)
+viewMonitorHeader : Monitor -> Html Msg
 viewMonitorHeader mon =
     div
         [ class "card", style "margin-bottom: 24px" ]
-        [div
-            [style
-                "display: flex; justify-content: space-between; align-items: center"]
-            [ div
-                  []
-                  [ h2
-                        [style
-                            "font-size: 24px; color: #f1f5f9; margin-bottom: 4px"]
-                        [text mon.name]
-                  , p [style "color: #64748b; font-size: 13px"] [text mon.url]
-                  ]
-            , viewStatusBadge mon.status
-            ]]
+        [ div
+              [ style
+                    "display: flex; justify-content: space-between; align-items: center"
+              ]
+              [ div
+                    []
+                    [ h2
+                          [ style
+                                "font-size: 24px; color: #f1f5f9; margin-bottom: 4px"
+                          ]
+                          [ text mon.name ]
+                    , p
+                          [ style "color: #64748b; font-size: 13px" ]
+                          [ text mon.url ]
+                    ]
+              , viewStatusBadge mon.status
+              ]
+        ]
 
 
-viewStatusBadge : MonitorStatus -> (Html Msg)
+viewStatusBadge : MonitorStatus -> Html Msg
 viewStatusBadge status =
     let
         color = statusColor status
         label = statusLabel status
     in
         span
-            [style
-                ("padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 13px; background: "
-                    ++ color)]
-            [text label]
+            [ style
+                  ("padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 13px; background: "
+                      ++ color)
+            ]
+            [ text label ]
 
 
 statusColor : MonitorStatus -> String
@@ -115,7 +121,7 @@ statusLabel s =
         "? Unknown"
 
 
-viewMonitorStats : Monitor -> (Html Msg)
+viewMonitorStats : Monitor -> Html Msg
 viewMonitorStats mon =
     div
         [ class "grid", style "margin-bottom: 24px" ]
@@ -131,20 +137,20 @@ viewMonitorStats mon =
         ]
 
 
-statCard : String -> String -> String -> (Html Msg)
+statCard : String -> String -> String -> Html Msg
 statCard value label color =
     div
-        [class "card"]
+        [ class "card" ]
         [ div
               [ class "card-value"
               , style ("font-size: 24px; color: " ++ color)
               ]
-              [text value]
-        , div [class "card-subtitle"] [text label]
+              [ text value ]
+        , div [ class "card-subtitle" ] [ text label ]
         ]
 
 
-viewMonitorHistory : String -> (Html Msg)
+viewMonitorHistory : String -> Html Msg
 viewMonitorHistory monId =
     let
         history = Monitors.getMonitorHistory monId 50
@@ -155,58 +161,64 @@ viewMonitorHistory monId =
         statuses = List.map (\r -> Database.getField "status" r) history
     in
         div
-            [class "card"]
+            [ class "card" ]
             [ h3
-                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
-                  [text "Response Time History"]
+                  [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"
+                  ]
+                  [ text "Response Time History" ]
             , Charts.sparkline 600 60 (List.reverse responseTimes)
             , div
-                  [style "margin-top: 16px"]
+                  [ style "margin-top: 16px" ]
                   [ h4
-                        [style
-                            "font-size: 14px; color: #94a3b8; margin-bottom: 8px"]
-                        [text "Status History"]
+                        [ style
+                              "font-size: 14px; color: #94a3b8; margin-bottom: 8px"
+                        ]
+                        [ text "Status History" ]
                   , Charts.statusBar 8 (List.reverse statuses)
                   ]
             , viewHistoryTable history
             ]
 
 
-viewHistoryTable : List (Dict String String) -> (Html Msg)
+viewHistoryTable : List (Dict String String) -> Html Msg
 viewHistoryTable history =
     if List.isEmpty history then
         p
-            [style "color: #64748b; margin-top: 16px"]
-            [text "No history yet — checks will appear after the first interval."]
+            [ style "color: #64748b; margin-top: 16px" ]
+            [ text
+                  "No history yet — checks will appear after the first interval."
+            ]
 
     else
         div
-            [style "margin-top: 16px; max-height: 300px; overflow-y: auto"]
-            [table
-                [class "table"]
-                [ node
-                      "thead"
-                      []
-                      [tr
-                          []
-                          [ th [] [text "Time"]
-                          , th [] [text "Status"]
-                          , th [] [text "Response"]
-                          ]]
-                , node
-                      "tbody"
-                      []
-                      (List.map viewHistoryRow (List.take 20 history))
-                ]]
+            [ style "margin-top: 16px; max-height: 300px; overflow-y: auto" ]
+            [ table
+                  [ class "table" ]
+                  [ node
+                        "thead"
+                        []
+                        [ tr
+                              []
+                              [ th [] [ text "Time" ]
+                              , th [] [ text "Status" ]
+                              , th [] [ text "Response" ]
+                              ]
+                        ]
+                  , node
+                        "tbody"
+                        []
+                        (List.map viewHistoryRow (List.take 20 history))
+                  ]
+            ]
 
 
-viewHistoryRow : Dict String String -> (Html Msg)
+viewHistoryRow : Dict String String -> Html Msg
 viewHistoryRow row =
     tr
         []
         [ td
-              [style "color: #64748b; font-size: 12px"]
-              [text (Database.getField "checked_at" row)]
+              [ style "color: #64748b; font-size: 12px" ]
+              [ text (Database.getField "checked_at" row) ]
         , td
               []
               [ span
@@ -217,18 +229,18 @@ viewHistoryRow row =
                     []
               , text (Database.getField "status" row)
               ]
-        , td [] [text (Database.getField "response_time" row ++ "ms")]
+        , td [] [ text (Database.getField "response_time" row ++ "ms") ]
         ]
 
 
-viewNotFound : (Html Msg)
+viewNotFound : Html Msg
 viewNotFound =
     div
-        [class "empty-state"]
-        [ h3 [] [text "Monitor not found"]
+        [ class "empty-state" ]
+        [ h3 [] [ text "Monitor not found" ]
         , button
               [ onClick (Navigate DashboardPage), class "btn btn-primary" ]
-              [text "Back to Dashboard"]
+              [ text "Back to Dashboard" ]
         ]
 
 

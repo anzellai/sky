@@ -54,7 +54,7 @@ viewHero model =
                   [ tw [ textSm, uppercase, fontBold, textBlue400, mb3 ]
                   , style "letter-spacing:.1em"
                   ]
-                  [text (Tr.t lang "hero.badge")]
+                  [ text (Tr.t lang "hero.badge") ]
             , Html.h1
                   [ tw
                         [ text3xl
@@ -65,7 +65,7 @@ viewHero model =
                         ]
                   , style "line-height:1.1;letter-spacing:-.025em"
                   ]
-                  [text (Tr.t lang "app.name")]
+                  [ text (Tr.t lang "app.name") ]
             , p
                   [ tw
                         [ textBase
@@ -76,33 +76,34 @@ viewHero model =
                         ]
                   , style "max-width:480px"
                   ]
-                  [text (Tr.t lang "hero.subtitle")]
+                  [ text (Tr.t lang "hero.subtitle") ]
             , div
-                  [tw [ flex, justifyCenter, gap3 ]]
-                  [a
-                      [ href "/products"
-                      , attribute "sky-nav" ""
-                      , tw
-                            [ inlineFlex
-                            , itemsCenter
-                            , gap2
-                            , bgWhite
-                            , textGray900
-                            , px6
-                            , py3
-                            , roundedMd
-                            , fontSemibold
-                            , textSm
-                            , hover bgGray100
-                            ]
-                      ]
-                      [text (Tr.t lang "hero.cta")]]
+                  [ tw [ flex, justifyCenter, gap3 ] ]
+                  [ a
+                        [ href "/products"
+                        , attribute "sky-nav" ""
+                        , tw
+                              [ inlineFlex
+                              , itemsCenter
+                              , gap2
+                              , bgWhite
+                              , textGray900
+                              , px6
+                              , py3
+                              , roundedMd
+                              , fontSemibold
+                              , textSm
+                              , hover bgGray100
+                              ]
+                        ]
+                        [ text (Tr.t lang "hero.cta") ]
+                  ]
             ]
 
 
 viewCategoryBar model =
     div
-        [tw [ mb8, flex, flexWrap, gap2, justifyCenter ]]
+        [ tw [ mb8, flex, flexWrap, gap2, justifyCenter ] ]
         (List.map
             (\cat ->
                 a
@@ -122,7 +123,7 @@ viewCategoryBar model =
                           , hover textGray900
                           ]
                     ]
-                    [text (Tr.tCategory model.lang cat)])
+                    [ text (Tr.tCategory model.lang cat) ])
             (List.take 6 allCategories))
 
 
@@ -133,16 +134,16 @@ viewFeaturedProducts model =
         div
             []
             [ div
-                  [tw [ flex, justifyBetween, itemsCenter, mb6 ]]
+                  [ tw [ flex, justifyBetween, itemsCenter, mb6 ] ]
                   [ Html.h2
-                        [tw [ text2xl, fontBold, textGray900 ]]
-                        [text (Tr.t model.lang "home.featured")]
+                        [ tw [ text2xl, fontBold, textGray900 ] ]
+                        [ text (Tr.t model.lang "home.featured") ]
                   , a
                         [ href "/products"
                         , attribute "sky-nav" ""
                         , tw [ textSm, fontSemibold, textBlue600 ]
                         ]
-                        [text (Tr.t model.lang "home.viewAll")]
+                        [ text (Tr.t model.lang "home.viewAll") ]
                   ]
             , viewProductGrid model featured
             ]
@@ -157,13 +158,13 @@ viewProducts model =
         (div
             []
             [ div
-                  [tw [mb8]]
+                  [ tw [ mb8 ] ]
                   [ Html.h1
-                        [tw [ text3xl, fontBold, textGray900 ]]
-                        [text (Tr.t model.lang "nav.products")]
+                        [ tw [ text3xl, fontBold, textGray900 ] ]
+                        [ text (Tr.t model.lang "nav.products") ]
                   , p
-                        [tw [ textGray500, mt1 ]]
-                        [text (Tr.t model.lang "hero.browse")]
+                        [ tw [ textGray500, mt1 ] ]
+                        [ text (Tr.t model.lang "hero.browse") ]
                   ]
             , viewToolbar model
             , viewProductGrid model model.products
@@ -175,7 +176,7 @@ viewToolbar model =
         lang = model.lang
     in
         div
-            [tw [ mb8, flex, flexCol, gap4 ]]
+            [ tw [ mb8, flex, flexCol, gap4 ] ]
             [ input
                   [ type_ "text"
                   , placeholder (Tr.t lang "product.search")
@@ -184,8 +185,12 @@ viewToolbar model =
                   , Layout.formInput
                   ]
             , div
-                  [tw [ flex, flexWrap, gap2 ]]
-                  ([filterBtn "all" (Tr.t lang "product.all") model.categoryFilter]
+                  [ tw [ flex, flexWrap, gap2 ] ]
+                  ([ filterBtn
+                        "all"
+                        (Tr.t lang "product.all")
+                        model.categoryFilter
+                  ]
                       ++ List.map
                              (\cat ->
                                  filterBtn
@@ -194,10 +199,10 @@ viewToolbar model =
                                      model.categoryFilter)
                              allCategories)
             , div
-                  [tw [ flex, gap2, itemsCenter ]]
+                  [ tw [ flex, gap2, itemsCenter ] ]
                   [ span
-                        [tw [ textSm, textGray500, mr2 ]]
-                        [text (Tr.t lang "product.sortBy")]
+                        [ tw [ textSm, textGray500, mr2 ] ]
+                        [ text (Tr.t lang "product.sortBy") ]
                   , sortBtn
                         "newest"
                         (Tr.t lang "product.sort.newest")
@@ -212,12 +217,13 @@ viewToolbar model =
                         model.sortBy
                   , button
                         [ onClick ToggleSortDir, Layout.qtyBtn ]
-                        [text
-                            (if model.sortDir == "asc" then
-                                "↑"
+                        [ text
+                              (if model.sortDir == "asc" then
+                                  "↑"
 
-                            else
-                                "↓")]
+                              else
+                                  "↓")
+                        ]
                   ]
             ]
 
@@ -252,7 +258,7 @@ filterBtn filterValue label activeFilter =
                   , hover borderGray400
                   ]
         ]
-        [text label]
+        [ text label ]
 
 
 sortBtn sortValue label activeSort =
@@ -285,7 +291,7 @@ sortBtn sortValue label activeSort =
                   , hover borderGray400
                   ]
         ]
-        [text label]
+        [ text label ]
 
 
 -- ══════════════════════════════════════════════════════
@@ -294,9 +300,11 @@ sortBtn sortValue label activeSort =
 viewProductGrid model products =
     if List.isEmpty products then
         div
-            [tw [ textCenter, py16 ]]
-            [ div [Layout.emptyIcon] [text "~"]
-            , p [tw [textGray500]] [text (Tr.t model.lang "product.noResults")]
+            [ tw [ textCenter, py16 ] ]
+            [ div [ Layout.emptyIcon ] [ text "~" ]
+            , p
+                  [ tw [ textGray500 ] ]
+                  [ text (Tr.t model.lang "product.noResults") ]
             ]
 
     else
@@ -339,18 +347,19 @@ viewProductCard model product =
             , class "product-card"
             ]
             [ div
-                  [style "aspect-ratio:4/3;overflow:hidden"]
-                  [if firstImage != "" then
-                      img [ src firstImage, alt title, Layout.objectCover_ ]
+                  [ style "aspect-ratio:4/3;overflow:hidden" ]
+                  [ if firstImage != "" then
+                        img [ src firstImage, alt title, Layout.objectCover_ ]
 
-                  else
-                      div
-                          [ Layout.imgPlaceholder, style "aspect-ratio:4/3" ]
-                          [text "No image"]]
+                    else
+                        div
+                            [ Layout.imgPlaceholder, style "aspect-ratio:4/3" ]
+                            [ text "No image" ]
+                  ]
             , div
-                  [tw [p4]]
+                  [ tw [ p4 ] ]
                   [ div
-                        [tw [ flex, justifyBetween, itemsCenter, mb2 ]]
+                        [ tw [ flex, justifyBetween, itemsCenter, mb2 ] ]
                         [ span
                               [ tw
                                     [ textXs
@@ -360,10 +369,12 @@ viewProductCard model product =
                                     ]
                               , style "letter-spacing:.1em"
                               ]
-                              [text (Tr.tCategory model.lang category)]
+                              [ text (Tr.tCategory model.lang category) ]
                         , viewStockDot stock
                         ]
-                  , Html.h3 [tw [ fontSemibold, textGray900, mb2 ]] [text title]
+                  , Html.h3
+                        [ tw [ fontSemibold, textGray900, mb2 ] ]
+                        [ text title ]
                   , viewPrice pricing
                   ]
             ]
@@ -372,25 +383,28 @@ viewProductCard model product =
 viewPrice pricing =
     if pricing.hasDiscount then
         div
-            [tw [ flex, gap2, itemsCenter ]]
+            [ tw [ flex, gap2, itemsCenter ] ]
             [ span
-                  [tw [ fontBold, textLg, textRed600 ]]
-                  [text pricing.discounted]
+                  [ tw [ fontBold, textLg, textRed600 ] ]
+                  [ text pricing.discounted ]
             , span
                   [ tw [ textSm, textGray400 ], class "line-through" ]
-                  [text pricing.original]
+                  [ text pricing.original ]
             ]
 
     else
         div
             []
-            [span [tw [ fontBold, textLg, textGray900 ]] [text pricing.original]]
+            [ span
+                  [ tw [ fontBold, textLg, textGray900 ] ]
+                  [ text pricing.original ]
+            ]
 
 
-viewStockDot : Int -> (Html Msg)
+viewStockDot : Int -> Html Msg
 viewStockDot stock =
     if stock == 0 then
-        span [tw [ w2, Layout.h2_, roundedFull, bgRed500, inlineBlock ]] []
+        span [ tw [ w2, Layout.h2_, roundedFull, bgRed500, inlineBlock ] ] []
 
     else
-        span [tw [ w2, Layout.h2_, roundedFull, bgGreen500, inlineBlock ]] []
+        span [ tw [ w2, Layout.h2_, roundedFull, bgGreen500, inlineBlock ] ] []

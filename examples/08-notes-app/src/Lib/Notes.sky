@@ -34,7 +34,7 @@ getNotes : String -> Result Error (List (Dict String String))
 getNotes userId =
     Db.query
         "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
-        [userId]
+        [ userId ]
 
 
 -- getNote : Result Error (Maybe Row). Outer for DB failure, inner for

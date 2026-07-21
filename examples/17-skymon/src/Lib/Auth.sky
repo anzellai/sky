@@ -102,7 +102,7 @@ getSession : String -> Result Error (Dict String String)
 getSession sessionId =
     case Database.query
              "SELECT * FROM sessions WHERE id = ? LIMIT 1"
-             [sessionId] of
+             [ sessionId ] of
 
         Err e ->
             let
@@ -130,7 +130,7 @@ deleteSession sessionId =
             Database.execOrLog
                 "Auth.deleteSession"
                 "DELETE FROM sessions WHERE id = ?"
-                [sessionId]
+                [ sessionId ]
     in
         ()
 

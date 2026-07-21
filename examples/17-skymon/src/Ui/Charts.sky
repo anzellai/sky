@@ -8,7 +8,7 @@ import Std.Html.Attributes exposing (..)
 
 
 -- Render a sparkline SVG from a list of values (most recent last).
-sparkline : Int -> Int -> List Int -> (Html Msg)
+sparkline : Int -> Int -> List Int -> Html Msg
 sparkline width height values =
     if List.isEmpty values then
         text ""
@@ -37,14 +37,15 @@ sparkline width height values =
                           ++ String.fromInt height)
                 , class "sparkline"
                 ]
-                [node
-                    "polyline"
-                    [ attribute "points" points
-                    , attribute "fill" "none"
-                    , attribute "stroke" "#38bdf8"
-                    , attribute "stroke-width" "1.5"
-                    ]
-                    []]
+                [ node
+                      "polyline"
+                      [ attribute "points" points
+                      , attribute "fill" "none"
+                      , attribute "stroke" "#38bdf8"
+                      , attribute "stroke-width" "1.5"
+                      ]
+                      []
+                ]
 
 
 buildSparklinePoints : Int -> Int -> Int -> List Int -> Int -> String
@@ -71,7 +72,7 @@ buildSparklinePoints width height maxVal values idx =
 
 
 -- Render a status bar showing recent check history as colored blocks.
-statusBar : Int -> List String -> (Html Msg)
+statusBar : Int -> List String -> Html Msg
 statusBar blockWidth statuses =
     node
         "svg"

@@ -5,6 +5,7 @@ module View exposing (view, viewElement)
 -- agnostic Element tree; `view` wraps it with `Ui.layout` for the
 -- HTML-shaped backends (Live + Webview). Tui consumes
 -- `viewElement` directly.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -296,8 +297,9 @@ barChart model =
             (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 160
                 |> Chart.withTitle "Daily completion rate (%)"
                 |> Chart.withYRange 0.0 100.0)
-            [Chart.series points |> Chart.withSeriesLabel "% complete"
-                |> Chart.withSeriesColor okGreen]
+            [ Chart.series points |> Chart.withSeriesLabel "% complete"
+                  |> Chart.withSeriesColor okGreen
+            ]
 
 
 ratesToPoints : List Int -> List ( Float, Float )
@@ -331,7 +333,7 @@ textSummary : Model -> Element Msg
 textSummary model =
     Ui.paragraph
         [ Font.size 12, Font.color muted ]
-        [Ui.text (summaryText model)]
+        [ Ui.text (summaryText model) ]
 
 
 summaryText : Model -> String

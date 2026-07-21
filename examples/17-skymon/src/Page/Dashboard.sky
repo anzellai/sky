@@ -12,7 +12,7 @@ import Ui.Layout as Layout
 import Ui.Charts as Charts
 
 
-viewDashboard : Model -> (Html Msg)
+viewDashboard : Model -> Html Msg
 viewDashboard model =
     Layout.page
         model
@@ -24,7 +24,7 @@ viewDashboard model =
             ])
 
 
-viewOverview : Model -> (Html Msg)
+viewOverview : Model -> Html Msg
 viewOverview model =
     let
         totalMonitors = List.length model.monitors
@@ -43,129 +43,133 @@ viewOverview model =
             ]
 
 
-overviewCard : String -> String -> String -> (Html Msg)
+overviewCard : String -> String -> String -> Html Msg
 overviewCard value label color =
     div
-        [class "card"]
-        [ div [ class "card-value", style ("color: " ++ color) ] [text value]
-        , div [class "card-subtitle"] [text label]
+        [ class "card" ]
+        [ div [ class "card-value", style ("color: " ++ color) ] [ text value ]
+        , div [ class "card-subtitle" ] [ text label ]
         ]
 
 
-viewMonitorsSection : Model -> (Html Msg)
+viewMonitorsSection : Model -> Html Msg
 viewMonitorsSection model =
     div
-        [style "margin-bottom: 32px"]
+        [ style "margin-bottom: 32px" ]
         [ div
-              [style
-                  "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px"]
+              [ style
+                    "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px"
+              ]
               [ h2
                     [ class "section-title", style "margin-bottom: 0" ]
-                    [text "Monitors"]
+                    [ text "Monitors" ]
               , viewAdminButton model "Add Monitor"
               ]
         , viewMonitorGrid model
         ]
 
 
-viewMonitorGrid : Model -> (Html Msg)
+viewMonitorGrid : Model -> Html Msg
 viewMonitorGrid model =
     let
         visible = filterVisible model.session model.monitors
     in
         if List.isEmpty visible then
             div
-                [class "empty-state"]
-                [ h3 [] [text "No monitors yet"]
-                , p [] [text "Add an endpoint to start monitoring"]
+                [ class "empty-state" ]
+                [ h3 [] [ text "No monitors yet" ]
+                , p [] [ text "Add an endpoint to start monitoring" ]
                 ]
 
         else
-            div [class "grid"] (List.map viewMonitorCard visible)
+            div [ class "grid" ] (List.map viewMonitorCard visible)
 
 
-viewMonitorCard : Monitor -> (Html Msg)
+viewMonitorCard : Monitor -> Html Msg
 viewMonitorCard monitor =
     div
         [ class "card monitor-card"
         , onClick (Navigate (MonitorDetailPage monitor.id))
         ]
         [ div
-              [class "card-header"]
-              [ span [class "monitor-name"] [text monitor.name]
+              [ class "card-header" ]
+              [ span [ class "monitor-name" ] [ text monitor.name ]
               , span
-                    [class ("status-dot status-" ++ statusString monitor.status)]
+                    [ class
+                          ("status-dot status-" ++ statusString monitor.status)
+                    ]
                     []
               ]
-        , div [class "monitor-url"] [text monitor.url]
+        , div [ class "monitor-url" ] [ text monitor.url ]
         , div
-              [class "monitor-stats"]
+              [ class "monitor-stats" ]
               [ span
-                    [class "monitor-stat"]
+                    [ class "monitor-stat" ]
                     [ text "Response: "
                     , node
                           "strong"
                           []
-                          [text (String.fromInt monitor.responseTime ++ "ms")]
+                          [ text (String.fromInt monitor.responseTime ++ "ms") ]
                     ]
               , span
-                    [class "monitor-stat"]
+                    [ class "monitor-stat" ]
                     [ text "Last: "
-                    , node "strong" [] [text monitor.lastChecked]
+                    , node "strong" [] [ text monitor.lastChecked ]
                     ]
               ]
         ]
 
 
-viewMetricsSection : Model -> (Html Msg)
+viewMetricsSection : Model -> Html Msg
 viewMetricsSection model =
     div
-        [style "margin-bottom: 32px"]
+        [ style "margin-bottom: 32px" ]
         [ div
-              [style
-                  "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px"]
+              [ style
+                    "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px"
+              ]
               [ h2
                     [ class "section-title", style "margin-bottom: 0" ]
-                    [text "Metrics"]
+                    [ text "Metrics" ]
               , viewAdminButton model "Add Metric"
               ]
         , viewMetricGrid model
         ]
 
 
-viewMetricGrid : Model -> (Html Msg)
+viewMetricGrid : Model -> Html Msg
 viewMetricGrid model =
     let
         visible = filterVisibleMetrics model.session model.metrics
     in
         if List.isEmpty visible then
             div
-                [class "empty-state"]
-                [ h3 [] [text "No metrics yet"]
-                , p [] [text "Add a SQL query or API endpoint to track"]
+                [ class "empty-state" ]
+                [ h3 [] [ text "No metrics yet" ]
+                , p [] [ text "Add a SQL query or API endpoint to track" ]
                 ]
 
         else
-            div [class "grid"] (List.map viewMetricCard visible)
+            div [ class "grid" ] (List.map viewMetricCard visible)
 
 
-viewMetricCard : Metric -> (Html Msg)
+viewMetricCard : Metric -> Html Msg
 viewMetricCard metric =
     div
         [ class "card", onClick (Navigate (MetricDetailPage metric.id)) ]
         [ div
-              [class "card-header"]
-              [ span [class "card-title"] [text metric.name]
+              [ class "card-header" ]
+              [ span [ class "card-title" ] [ text metric.name ]
               , viewVisibilityBadge metric.visibility
               ]
-        , div [class "card-value"] [text metric.lastValue]
+        , div [ class "card-value" ] [ text metric.lastValue ]
         , div
-              [class "card-subtitle"]
-              [text (metric.sourceType ++ " • " ++ metric.lastUpdated)]
+              [ class "card-subtitle" ]
+              [ text (metric.sourceType ++ " • " ++ metric.lastUpdated) ]
         ]
 
 
-viewAdminButton : Model -> String -> (Html Msg)
+viewAdminButton : Model -> String -> Html Msg
 viewAdminButton model label =
     case model.session of
 
@@ -175,7 +179,7 @@ viewAdminButton model label =
                     [ onClick (Navigate SettingsPage)
                     , class "btn btn-primary btn-sm"
                     ]
-                    [text label]
+                    [ text label ]
 
             else
                 text ""
@@ -184,18 +188,18 @@ viewAdminButton model label =
             text ""
 
 
-viewVisibilityBadge : Visibility -> (Html Msg)
+viewVisibilityBadge : Visibility -> Html Msg
 viewVisibilityBadge vis =
     case vis of
 
         VisPublic ->
-            span [class "badge badge-public"] [text "public"]
+            span [ class "badge badge-public" ] [ text "public" ]
 
         VisAdmin ->
-            span [class "badge badge-admin"] [text "admin"]
+            span [ class "badge badge-admin" ] [ text "admin" ]
 
         VisUser ->
-            span [class "badge badge-user"] [text "user"]
+            span [ class "badge badge-user" ] [ text "user" ]
 
         _ ->
             text ""

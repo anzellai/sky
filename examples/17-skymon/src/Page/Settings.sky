@@ -13,13 +13,13 @@ import Lib.Database as Database
 import Ui.Layout as Layout
 
 
-viewSettings : Model -> (Html Msg)
+viewSettings : Model -> Html Msg
 viewSettings model =
     Layout.page
         model
         (div
             []
-            [ h2 [class "section-title"] [text "Settings"]
+            [ h2 [ class "section-title" ] [ text "Settings" ]
             , viewAddMonitorForm model
             , viewMonitorList model
             , viewAddMetricForm model
@@ -27,16 +27,16 @@ viewSettings model =
             ])
 
 
-viewAddMonitorForm : Model -> (Html Msg)
+viewAddMonitorForm : Model -> Html Msg
 viewAddMonitorForm model =
     div
         [ class "card", style "margin-bottom: 24px" ]
         [ h3
-              [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
-              [text "Add Monitor"]
+              [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
+              [ text "Add Monitor" ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Name"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Name" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -49,8 +49,8 @@ viewAddMonitorForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "URL"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "URL" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -63,8 +63,8 @@ viewAddMonitorForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Visibility"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Visibility" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -78,45 +78,47 @@ viewAddMonitorForm model =
               ]
         , button
               [ onClick AddMonitor, class "btn btn-primary" ]
-              [text "Add Monitor"]
+              [ text "Add Monitor" ]
         ]
 
 
-viewMonitorList : Model -> (Html Msg)
+viewMonitorList : Model -> Html Msg
 viewMonitorList model =
     if List.isEmpty model.monitors then
         text ""
 
     else
         div
-            [style "margin-bottom: 24px"]
+            [ style "margin-bottom: 24px" ]
             [ h3
-                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"]
-                  [text "Existing Monitors"]
+                  [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"
+                  ]
+                  [ text "Existing Monitors" ]
             , table
-                  [class "table"]
+                  [ class "table" ]
                   [ node
                         "thead"
                         []
-                        [tr
-                            []
-                            [ th [] [text "Name"]
-                            , th [] [text "URL"]
-                            , th [] [text "Status"]
-                            , th [] [text "Visibility"]
-                            , th [] [text ""]
-                            ]]
+                        [ tr
+                              []
+                              [ th [] [ text "Name" ]
+                              , th [] [ text "URL" ]
+                              , th [] [ text "Status" ]
+                              , th [] [ text "Visibility" ]
+                              , th [] [ text "" ]
+                              ]
+                        ]
                   , node "tbody" [] (List.map viewMonitorRow model.monitors)
                   ]
             ]
 
 
-viewMonitorRow : Monitor -> (Html Msg)
+viewMonitorRow : Monitor -> Html Msg
 viewMonitorRow monitor =
     tr
         []
-        [ td [style "font-weight: 600"] [text monitor.name]
-        , td [style "color: #64748b; font-size: 12px"] [text monitor.url]
+        [ td [ style "font-weight: 600" ] [ text monitor.name ]
+        , td [ style "color: #64748b; font-size: 12px" ] [ text monitor.url ]
         , td
               []
               [ span
@@ -126,27 +128,28 @@ viewMonitorRow monitor =
                     []
               , text (statusStr monitor.status)
               ]
-        , td [] [viewVisBadge monitor.visibility]
+        , td [] [ viewVisBadge monitor.visibility ]
         , td
               []
-              [button
-                  [ onClick (DeleteMonitor monitor.id)
-                  , class "btn btn-danger btn-sm"
-                  ]
-                  [text "Delete"]]
+              [ button
+                    [ onClick (DeleteMonitor monitor.id)
+                    , class "btn btn-danger btn-sm"
+                    ]
+                    [ text "Delete" ]
+              ]
         ]
 
 
-viewAddMetricForm : Model -> (Html Msg)
+viewAddMetricForm : Model -> Html Msg
 viewAddMetricForm model =
     div
         [ class "card", style "margin-bottom: 24px" ]
         [ h3
-              [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
-              [text "Add Metric"]
+              [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
+              [ text "Add Metric" ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Name"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Name" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -159,8 +162,8 @@ viewAddMetricForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Type (http, sql, api)"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Type (http, sql, api)" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -173,8 +176,8 @@ viewAddMetricForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "URL / DSN"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "URL / DSN" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -188,8 +191,8 @@ viewAddMetricForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "SQL Query (for sql type)"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "SQL Query (for sql type)" ]
               , node
                     "textarea"
                     [ class "form-textarea"
@@ -197,14 +200,15 @@ viewAddMetricForm model =
                           "SELECT COUNT(*) FROM orders WHERE created_at > datetime('now', '-1 hour')"
                     , onInput InputMetricQuery
                     ]
-                    [text
-                        (Maybe.withDefault
-                            ""
-                            (Dict.get "metric_query" model.configInput))]
+                    [ text
+                          (Maybe.withDefault
+                              ""
+                              (Dict.get "metric_query" model.configInput))
+                    ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Visibility"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Visibility" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -217,10 +221,10 @@ viewAddMetricForm model =
                     ]
               ]
         , div
-              [class "form-group"]
+              [ class "form-group" ]
               [ label
-                    [class "form-label"]
-                    [text "JSON Field Path (for api type)"]
+                    [ class "form-label" ]
+                    [ text "JSON Field Path (for api type)" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -234,54 +238,59 @@ viewAddMetricForm model =
               ]
         , button
               [ onClick AddMetric, class "btn btn-primary" ]
-              [text "Add Metric"]
+              [ text "Add Metric" ]
         ]
 
 
-viewMetricList : Model -> (Html Msg)
+viewMetricList : Model -> Html Msg
 viewMetricList model =
     if List.isEmpty model.metrics then
         text ""
 
     else
         div
-            [style "margin-bottom: 24px"]
+            [ style "margin-bottom: 24px" ]
             [ h3
-                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"]
-                  [text "Existing Metrics"]
+                  [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"
+                  ]
+                  [ text "Existing Metrics" ]
             , table
-                  [class "table"]
+                  [ class "table" ]
                   [ node
                         "thead"
                         []
-                        [tr
-                            []
-                            [ th [] [text "Name"]
-                            , th [] [text "Type"]
-                            , th [] [text "Value"]
-                            , th [] [text "Visibility"]
-                            , th [] [text ""]
-                            ]]
+                        [ tr
+                              []
+                              [ th [] [ text "Name" ]
+                              , th [] [ text "Type" ]
+                              , th [] [ text "Value" ]
+                              , th [] [ text "Visibility" ]
+                              , th [] [ text "" ]
+                              ]
+                        ]
                   , node "tbody" [] (List.map viewMetricRow model.metrics)
                   ]
             ]
 
 
-viewMetricRow : Metric -> (Html Msg)
+viewMetricRow : Metric -> Html Msg
 viewMetricRow metric =
     tr
         []
-        [ td [style "font-weight: 600"] [text metric.name]
-        , td [style "color: #64748b"] [text metric.sourceType]
-        , td [style "color: #38bdf8; font-weight: 600"] [text metric.lastValue]
-        , td [] [viewVisBadge metric.visibility]
+        [ td [ style "font-weight: 600" ] [ text metric.name ]
+        , td [ style "color: #64748b" ] [ text metric.sourceType ]
+        , td
+              [ style "color: #38bdf8; font-weight: 600" ]
+              [ text metric.lastValue ]
+        , td [] [ viewVisBadge metric.visibility ]
         , td
               []
-              [button
-                  [ onClick (DeleteMetric metric.id)
-                  , class "btn btn-danger btn-sm"
-                  ]
-                  [text "Delete"]]
+              [ button
+                    [ onClick (DeleteMetric metric.id)
+                    , class "btn btn-danger btn-sm"
+                    ]
+                    [ text "Delete" ]
+              ]
         ]
 
 
@@ -302,15 +311,15 @@ statusStr s =
             "unknown"
 
 
-viewVisBadge : Visibility -> (Html Msg)
+viewVisBadge : Visibility -> Html Msg
 viewVisBadge vis =
     case vis of
 
         VisPublic ->
-            span [class "badge badge-public"] [text "public"]
+            span [ class "badge badge-public" ] [ text "public" ]
 
         VisAdmin ->
-            span [class "badge badge-admin"] [text "admin"]
+            span [ class "badge badge-admin" ] [ text "admin" ]
 
         VisUser ->
-            span [class "badge badge-user"] [text "user"]
+            span [ class "badge badge-user" ] [ text "user" ]

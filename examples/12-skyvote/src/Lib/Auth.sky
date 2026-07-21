@@ -25,11 +25,11 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
--- Auth.verifyPassword returns Result Error Bool — collapse with
--- withDefault False (auth-deny on internal error, not auth-grant).
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
+-- Auth.verifyPassword returns Result Error Bool — collapse with
+-- withDefault False (auth-deny on internal error, not auth-grant).
 -- createUser : returns Result Error UserId. Surfaces unique-key /
 -- DB failures as ValidationError so the form can show them inline,
 -- and other DbError variants for unexpected infra issues.
@@ -64,7 +64,7 @@ authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
              "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
-             [email] of
+             [ email ] of
 
         Err e ->
             Err e
@@ -115,7 +115,7 @@ getUserById : String -> Result Error (Maybe (Dict String String))
 getUserById userId =
     case Db.query
              "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
-             [userId] of
+             [ userId ] of
 
         Err e ->
             Err e

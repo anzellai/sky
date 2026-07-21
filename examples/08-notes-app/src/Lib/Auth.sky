@@ -34,11 +34,11 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
--- Auth.verifyPassword returns Result Error Bool — collapse with
--- withDefault False (auth-deny on internal error, not auth-grant).
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
+-- Auth.verifyPassword returns Result Error Bool — collapse with
+-- withDefault False (auth-deny on internal error, not auth-grant).
 generateToken _ =
     Result.withDefault "" (Uuid.newString ())
 
@@ -103,7 +103,7 @@ authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
              "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
-             [email] of
+             [ email ] of
 
         Err e ->
             Err e
@@ -146,7 +146,7 @@ getSessionUser : String -> Result Error (Maybe (Dict String String))
 getSessionUser sessionToken =
     case Db.query
              "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
-             [sessionToken] of
+             [ sessionToken ] of
 
         Err e ->
             Err e
@@ -162,7 +162,7 @@ verifyEmail : String -> Result Error String
 verifyEmail token =
     case Db.exec
              "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
-             [token] of
+             [ token ] of
 
         Ok _ ->
             Ok "Your email has been verified! You can now sign in."

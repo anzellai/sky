@@ -11,6 +11,7 @@ module Main exposing (main)
 -- The shared View.sky calls only Std.Ui primitives, so it renders
 -- identically here — the Sky.Tui runtime walks the same Element
 -- tree, computes character-cell layout, paints to the terminal.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Tui as Tui
@@ -46,15 +47,15 @@ update msg model =
 
         Tick ->
             ( model, Cmd.none )
+
         -- Tui variant doesn't fetch (no HTTP wire in terminal mode);
         -- ignore the response Msgs that the Live variant uses.
-
         GotOverview _ ->
             ( model, Cmd.none )
+
         -- Tui variant has no HTTP wire + no filter UI — every other
         -- Msg (GotMetrics/Traces/Errors, LogFilter*, TraceFilterQuery)
         -- is a no-op here.
-
         GotLogs _ ->
             ( model, Cmd.none )
 

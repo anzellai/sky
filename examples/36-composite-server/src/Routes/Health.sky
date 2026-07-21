@@ -7,6 +7,7 @@ module Routes.Health exposing (handleHealth, handleExport, uptimeBody)
 --   * Std.Csv.encode (RFC 4180 quoting on todo text)
 --   * Sky.Core.Time.{unixMillis, format} for uptime computation
 --   * Sky.Core.Encoding.base64Encode for the build-info opaque hash
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
@@ -110,7 +111,7 @@ streamCsv db claims =
     Db.query
         db
         "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
-        [String.fromInt claims.userId]
+        [ String.fromInt claims.userId ]
         |> Task.andThen
                (\rows ->
                    let
@@ -152,7 +153,7 @@ rowToCells row =
 errorJson : Int -> String -> Response
 errorJson status message =
     { status = status
-    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    , body = JsonEnc.encode 0 (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
     , headers = Dict.empty
     , contentType = "application/json"
     }

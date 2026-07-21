@@ -26,7 +26,8 @@ import Std.Time as Stime
 import Sky.Test as Test exposing (Test)
 
 
-main = Test.runMain tests
+main =
+    Test.runMain tests
 
 
 tests : List Test
@@ -49,386 +50,560 @@ tests =
 
 
 -- ─── Task.retryWith ───────────────────────────────────────────────
-
-
 taskRetrySuite : Test
 taskRetrySuite =
-    Test.suite "Task.retryWith"
-        [ Test.test "Ok body runs once" (\_ ->
-            case Task.perform (Task.retryWith (Task.linearBackoff 5 1) (Task.succeed 42)) of
-                Ok v -> Test.equal 42 v
-                Err _ -> Test.isFalse True)
-        , Test.test "Err body retries to maxAttempts" (\_ ->
-            case Task.perform (Task.retryWith (Task.linearBackoff 2 1) (Task.fail (Error.io "transient"))) of
-                Err _ -> Test.isTrue True
-                Ok _ -> Test.isFalse True)
-        , Test.test "Exponential policy survives" (\_ ->
-            case Task.perform (Task.retryWith (Task.exponentialBackoff 1 1) (Task.succeed "ok")) of
-                Ok v -> Test.equal "ok" v
-                Err _ -> Test.isFalse True)
-        , Test.test "withJitter composes" (\_ ->
-            let
-                policy = Task.exponentialBackoff 1 1 |> Task.withJitter
-            in
-                case Task.perform (Task.retryWith policy (Task.succeed "j")) of
-                    Ok v -> Test.equal "j" v
-                    Err _ -> Test.isFalse True)
-        , Test.test "retryOn predicate short-circuits" (\_ ->
-            -- v0.15.50: ShouldRetry e ADT. retryOn wraps the predicate in
-            -- RetryWhen; when it returns False, retryWith stops the loop
-            -- after the first failure rather than honouring maxAttempts.
-            let
-                policy =
-                    Task.linearBackoff 5 1
-                        |> Task.retryOn (\_ -> False)
-            in
-                case Task.perform (Task.retryWith policy (Task.fail (Error.io "no-retry"))) of
-                    Err _ -> Test.isTrue True
-                    Ok _ -> Test.isFalse True)
-        , Test.test "defaultRetryPolicy builder chain" (\_ ->
-            -- v0.15.51: defaultRetryPolicy + with* helpers mirror
-            -- Http.defaultRequest's builder convention. withRetryOn is
-            -- the clearer alias for retryOn — same RetryWhen wrap.
-            let
-                policy =
-                    Task.defaultRetryPolicy
-                        |> Task.withMaxAttempts 5
-                        |> Task.withBaseMs 1
-                        |> Task.withKind 0
-                        |> Task.withRetryOn (\_ -> True)
-            in
-                case Task.perform (Task.retryWith policy (Task.succeed "built")) of
-                    Ok v -> Test.equal "built" v
-                    Err _ -> Test.isFalse True)
+    Test.suite
+        "Task.retryWith"
+        [ Test.test
+              "Ok body runs once"
+              (\_ ->
+                  case Task.perform
+                           (Task.retryWith
+                               (Task.linearBackoff 5 1)
+                               (Task.succeed 42)) of
+
+                      Ok v ->
+                          Test.equal 42 v
+
+                      Err _ ->
+                          Test.isFalse True)
+        , Test.test
+              "Err body retries to maxAttempts"
+              (\_ ->
+                  case Task.perform
+                           (Task.retryWith
+                               (Task.linearBackoff 2 1)
+                               (Task.fail (Error.io "transient"))) of
+
+                      Err _ ->
+                          Test.isTrue True
+
+                      Ok _ ->
+                          Test.isFalse True)
+        , Test.test
+              "Exponential policy survives"
+              (\_ ->
+                  case Task.perform
+                           (Task.retryWith
+                               (Task.exponentialBackoff 1 1)
+                               (Task.succeed "ok")) of
+
+                      Ok v ->
+                          Test.equal "ok" v
+
+                      Err _ ->
+                          Test.isFalse True)
+        , Test.test
+              "withJitter composes"
+              (\_ ->
+                  let
+                      policy =
+                          Task.exponentialBackoff 1 1 |> Task.withJitter
+                  in
+                      case Task.perform
+                               (Task.retryWith policy (Task.succeed "j")) of
+
+                          Ok v ->
+                              Test.equal "j" v
+
+                          Err _ ->
+                              Test.isFalse True)
+        , Test.test
+              "retryOn predicate short-circuits"
+              (\_ ->
+                  -- v0.15.50: ShouldRetry e ADT. retryOn wraps the predicate in
+                  -- RetryWhen; when it returns False, retryWith stops the loop
+                  -- after the first failure rather than honouring maxAttempts.
+                  let
+                      policy =
+                          Task.linearBackoff 5 1 |> Task.retryOn (\_ -> False)
+                  in
+                      case Task.perform
+                               (Task.retryWith
+                                   policy
+                                   (Task.fail (Error.io "no-retry"))) of
+
+                          Err _ ->
+                              Test.isTrue True
+
+                          Ok _ ->
+                              Test.isFalse True)
+        , Test.test
+              "defaultRetryPolicy builder chain"
+              (\_ ->
+                  -- v0.15.51: defaultRetryPolicy + with* helpers mirror
+                  -- Http.defaultRequest's builder convention. withRetryOn is
+                  -- the clearer alias for retryOn — same RetryWhen wrap.
+                  let
+                      policy =
+                          Task.defaultRetryPolicy |> Task.withMaxAttempts 5
+                              |> Task.withBaseMs 1
+                              |> Task.withKind 0
+                              |> Task.withRetryOn (\_ -> True)
+                  in
+                      case Task.perform
+                               (Task.retryWith policy (Task.succeed "built")) of
+
+                          Ok v ->
+                              Test.equal "built" v
+
+                          Err _ ->
+                              Test.isFalse True)
         ]
 
 
 -- ─── String ────────────────────────────────────────────────────────
-
 stringSuite : Test
 stringSuite =
-    Test.suite "String"
-        [ Test.test "trim outer space" (\_ ->
-            Test.equal "hello" (String.trim "  hello  "))
-        , Test.test "toUpper" (\_ ->
-            Test.equal "HELLO" (String.toUpper "hello"))
-        , Test.test "toLower" (\_ ->
-            Test.equal "hello" (String.toLower "HELLO"))
-        , Test.test "reverse" (\_ ->
-            Test.equal "olleh" (String.reverse "hello"))
-        , Test.test "length counts runes" (\_ ->
-            Test.equal 5 (String.length "hello"))
-        , Test.test "contains" (\_ ->
-            Test.isTrue (String.contains "ell" "hello"))
-        , Test.test "startsWith" (\_ ->
-            Test.isTrue (String.startsWith "he" "hello"))
-        , Test.test "endsWith" (\_ ->
-            Test.isTrue (String.endsWith "lo" "hello"))
-        , Test.test "replace" (\_ ->
-            Test.equal "hExxo" (String.replace "ll" "xx" "hExxo"))
-        , Test.test "split on comma yields 3" (\_ ->
-            Test.equal 3 (List.length (String.split "," "a,b,c")))
-        , Test.test "join" (\_ ->
-            Test.equal "a-b-c" (String.join "-" [ "a", "b", "c" ]))
-        , Test.test "toInt accepts digits" (\_ ->
-            case String.toInt "42" of
-                Just n ->
-                    Test.equal 42 n
+    Test.suite
+        "String"
+        [ Test.test
+              "trim outer space"
+              (\_ -> Test.equal "hello" (String.trim "  hello  "))
+        , Test.test
+              "toUpper"
+              (\_ -> Test.equal "HELLO" (String.toUpper "hello"))
+        , Test.test
+              "toLower"
+              (\_ -> Test.equal "hello" (String.toLower "HELLO"))
+        , Test.test
+              "reverse"
+              (\_ -> Test.equal "olleh" (String.reverse "hello"))
+        , Test.test
+              "length counts runes"
+              (\_ -> Test.equal 5 (String.length "hello"))
+        , Test.test
+              "contains"
+              (\_ -> Test.isTrue (String.contains "ell" "hello"))
+        , Test.test
+              "startsWith"
+              (\_ -> Test.isTrue (String.startsWith "he" "hello"))
+        , Test.test
+              "endsWith"
+              (\_ -> Test.isTrue (String.endsWith "lo" "hello"))
+        , Test.test
+              "replace"
+              (\_ -> Test.equal "hExxo" (String.replace "ll" "xx" "hExxo"))
+        , Test.test
+              "split on comma yields 3"
+              (\_ -> Test.equal 3 (List.length (String.split "," "a,b,c")))
+        , Test.test
+              "join"
+              (\_ -> Test.equal "a-b-c" (String.join "-" [ "a", "b", "c" ]))
+        , Test.test
+              "toInt accepts digits"
+              (\_ ->
+                  case String.toInt "42" of
 
-                Nothing ->
-                    Test.fail "expected Just 42")
-        , Test.test "toInt rejects junk" (\_ ->
-            case String.toInt "abc" of
-                Just _ ->
-                    Test.fail "expected Nothing"
+                      Just n ->
+                          Test.equal 42 n
 
-                Nothing ->
-                    Test.pass)
-        , Test.test "fromInt" (\_ ->
-            Test.equal "42" (String.fromInt 42))
-        , Test.test "fromFloat" (\_ ->
-            Test.equal "3.14" (String.fromFloat 3.14))
-        , Test.test "isEmpty true" (\_ ->
-            Test.isTrue (String.isEmpty ""))
-        , Test.test "isEmpty false" (\_ ->
-            Test.isFalse (String.isEmpty "x"))
+                      Nothing ->
+                          Test.fail "expected Just 42")
+        , Test.test
+              "toInt rejects junk"
+              (\_ ->
+                  case String.toInt "abc" of
+
+                      Just _ ->
+                          Test.fail "expected Nothing"
+
+                      Nothing ->
+                          Test.pass)
+        , Test.test "fromInt" (\_ -> Test.equal "42" (String.fromInt 42))
+        , Test.test
+              "fromFloat"
+              (\_ -> Test.equal "3.14" (String.fromFloat 3.14))
+        , Test.test "isEmpty true" (\_ -> Test.isTrue (String.isEmpty ""))
+        , Test.test "isEmpty false" (\_ -> Test.isFalse (String.isEmpty "x"))
         ]
 
 
 -- ─── List ──────────────────────────────────────────────────────────
-
 listSuite : Test
 listSuite =
-    Test.suite "List"
+    Test.suite
+        "List"
         -- Typed-container comparisons use scalar projections
         -- (length, head, sum) — the more idiomatic test shape AND
         -- the form that exercises the v0.14 typed case-pattern
         -- binding (`Just n` binds `n` at the inferred typed shape,
         -- not `any`, so downstream `Test.equal` mono routes cleanly).
-        [ Test.test "length" (\_ ->
-            Test.equal 3 (List.length [ 1, 2, 3 ]))
-        , Test.test "reverse head" (\_ ->
-            case List.head (List.reverse [ 1, 2, 3 ]) of
-                Just n ->
-                    Test.equal 3 n
+        [ Test.test "length" (\_ -> Test.equal 3 (List.length [ 1, 2, 3 ]))
+        , Test.test
+              "reverse head"
+              (\_ ->
+                  case List.head (List.reverse [ 1, 2, 3 ]) of
 
-                Nothing ->
-                    Test.fail "reverse produced empty")
-        , Test.test "head finds first" (\_ ->
-            case List.head [ 1, 2, 3 ] of
-                Just n ->
-                    Test.equal 1 n
+                      Just n ->
+                          Test.equal 3 n
 
-                Nothing ->
-                    Test.fail "head on non-empty")
-        , Test.test "head on empty list is Nothing" (\_ ->
-            case List.head [] of
-                Nothing ->
-                    Test.pass
+                      Nothing ->
+                          Test.fail "reverse produced empty")
+        , Test.test
+              "head finds first"
+              (\_ ->
+                  case List.head [ 1, 2, 3 ] of
 
-                Just _ ->
-                    Test.fail "head on empty should be Nothing")
-        , Test.test "tail drops first (length 2 left)" (\_ ->
-            case List.tail [ 1, 2, 3 ] of
-                Just xs ->
-                    Test.equal 2 (List.length xs)
+                      Just n ->
+                          Test.equal 1 n
 
-                Nothing ->
-                    Test.fail "tail on non-empty")
-        , Test.test "take 2 produces length 2" (\_ ->
-            Test.equal 2 (List.length (List.take 2 [ 1, 2, 3, 4 ])))
-        , Test.test "drop 2 produces length 2" (\_ ->
-            Test.equal 2 (List.length (List.drop 2 [ 1, 2, 3, 4 ])))
-        , Test.test "map double via sum" (\_ ->
-            -- map (*2) [1,2,3] = [2,4,6], sum = 12
-            Test.equal 12
-                (List.foldl (\x acc -> acc + x)
-                    0
-                    (List.map (\x -> x * 2) [ 1, 2, 3 ])))
-        , Test.test "filter evens count" (\_ ->
-            Test.equal 2
-                (List.length
-                    (List.filter (\x -> modBy 2 x == 0) [ 1, 2, 3, 4 ])))
-        , Test.test "foldl sum" (\_ ->
-            Test.equal 6 (List.foldl (\x acc -> acc + x) 0 [ 1, 2, 3 ]))
-        , Test.test "append length" (\_ ->
-            Test.equal 4 (List.length (List.append [ 1, 2 ] [ 3, 4 ])))
-        , Test.test "member found" (\_ ->
-            Test.isTrue (List.member 2 [ 1, 2, 3 ]))
-        , Test.test "member missing" (\_ ->
-            Test.isFalse (List.member 9 [ 1, 2, 3 ]))
-        , Test.test "isEmpty empty" (\_ ->
-            Test.isTrue (List.isEmpty []))
-        , Test.test "isEmpty non-empty" (\_ ->
-            Test.isFalse (List.isEmpty [ 1 ]))
-        , Test.test "concat length" (\_ ->
-            Test.equal 4
-                (List.length (List.concat [ [ 1, 2 ], [ 3, 4 ] ])))
-        , Test.test "range length" (\_ ->
-            Test.equal 3 (List.length (List.range 1 3)))
+                      Nothing ->
+                          Test.fail "head on non-empty")
+        , Test.test
+              "head on empty list is Nothing"
+              (\_ ->
+                  case List.head [] of
+
+                      Nothing ->
+                          Test.pass
+
+                      Just _ ->
+                          Test.fail "head on empty should be Nothing")
+        , Test.test
+              "tail drops first (length 2 left)"
+              (\_ ->
+                  case List.tail [ 1, 2, 3 ] of
+
+                      Just xs ->
+                          Test.equal 2 (List.length xs)
+
+                      Nothing ->
+                          Test.fail "tail on non-empty")
+        , Test.test
+              "take 2 produces length 2"
+              (\_ -> Test.equal 2 (List.length (List.take 2 [ 1, 2, 3, 4 ])))
+        , Test.test
+              "drop 2 produces length 2"
+              (\_ -> Test.equal 2 (List.length (List.drop 2 [ 1, 2, 3, 4 ])))
+        , Test.test
+              "map double via sum"
+              (\_ ->
+                  -- map (*2) [1,2,3] = [2,4,6], sum = 12
+                  Test.equal
+                      12
+                      (List.foldl
+                          (\x acc -> acc + x)
+                          0
+                          (List.map (\x -> x * 2) [ 1, 2, 3 ])))
+        , Test.test
+              "filter evens count"
+              (\_ ->
+                  Test.equal
+                      2
+                      (List.length
+                          (List.filter (\x -> modBy 2 x == 0) [ 1, 2, 3, 4 ])))
+        , Test.test
+              "foldl sum"
+              (\_ -> Test.equal 6 (List.foldl (\x acc -> acc + x) 0 [ 1, 2, 3 ]))
+        , Test.test
+              "append length"
+              (\_ -> Test.equal 4 (List.length (List.append [ 1, 2 ] [ 3, 4 ])))
+        , Test.test
+              "member found"
+              (\_ -> Test.isTrue (List.member 2 [ 1, 2, 3 ]))
+        , Test.test
+              "member missing"
+              (\_ -> Test.isFalse (List.member 9 [ 1, 2, 3 ]))
+        , Test.test "isEmpty empty" (\_ -> Test.isTrue (List.isEmpty []))
+        , Test.test
+              "isEmpty non-empty"
+              (\_ -> Test.isFalse (List.isEmpty [ 1 ]))
+        , Test.test
+              "concat length"
+              (\_ ->
+                  Test.equal
+                      4
+                      (List.length (List.concat [ [ 1, 2 ], [ 3, 4 ] ])))
+        , Test.test
+              "range length"
+              (\_ -> Test.equal 3 (List.length (List.range 1 3)))
         ]
 
 
 -- ─── Dict ──────────────────────────────────────────────────────────
-
 dictSuite : Test
 dictSuite =
-    Test.suite "Dict"
-        [ Test.test "empty has no keys" (\_ ->
-            Test.equal 0 (List.length (Dict.keys Dict.empty)))
-        , Test.test "insert + get" (\_ ->
-            case Dict.get "a" (Dict.insert "a" 1 Dict.empty) of
-                Just n ->
-                    Test.equal 1 n
+    Test.suite
+        "Dict"
+        [ Test.test
+              "empty has no keys"
+              (\_ -> Test.equal 0 (List.length (Dict.keys Dict.empty)))
+        , Test.test
+              "insert + get"
+              (\_ ->
+                  case Dict.get "a" (Dict.insert "a" 1 Dict.empty) of
 
-                Nothing ->
-                    Test.fail "expected Just 1")
-        , Test.test "get missing → Nothing" (\_ ->
-            case Dict.get "x" Dict.empty of
-                Nothing ->
-                    Test.pass
+                      Just n ->
+                          Test.equal 1 n
 
-                Just _ ->
-                    Test.fail "expected Nothing on empty dict")
-        , Test.test "remove drops key" (\_ ->
-            let
-                d = Dict.insert "a" 1 (Dict.insert "b" 2 Dict.empty)
-                d2 = Dict.remove "a" d
-            in
-                case Dict.get "a" d2 of
-                    Nothing ->
-                        Test.pass
+                      Nothing ->
+                          Test.fail "expected Just 1")
+        , Test.test
+              "get missing → Nothing"
+              (\_ ->
+                  case Dict.get "x" Dict.empty of
 
-                    Just _ ->
-                        Test.fail "expected Nothing after remove")
-        , Test.test "member" (\_ ->
-            Test.isTrue (Dict.member "a" (Dict.insert "a" 1 Dict.empty)))
-        , Test.test "fromList round-trip" (\_ ->
-            let
-                d = Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ]
-                got = Dict.get "b" d
-            in
-                case got of
-                    Just n ->
-                        Test.equal 2 n
+                      Nothing ->
+                          Test.pass
 
-                    Nothing ->
-                        Test.fail "expected Just 2")
+                      Just _ ->
+                          Test.fail "expected Nothing on empty dict")
+        , Test.test
+              "remove drops key"
+              (\_ ->
+                  let
+                      d = Dict.insert "a" 1 (Dict.insert "b" 2 Dict.empty)
+                      d2 = Dict.remove "a" d
+                  in
+                      case Dict.get "a" d2 of
+
+                          Nothing ->
+                              Test.pass
+
+                          Just _ ->
+                              Test.fail "expected Nothing after remove")
+        , Test.test
+              "member"
+              (\_ -> Test.isTrue (Dict.member "a" (Dict.insert "a" 1 Dict.empty)))
+        , Test.test
+              "fromList round-trip"
+              (\_ ->
+                  let
+                      d = Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ]
+                      got = Dict.get "b" d
+                  in
+                      case got of
+
+                          Just n ->
+                              Test.equal 2 n
+
+                          Nothing ->
+                              Test.fail "expected Just 2")
         ]
 
 
 -- ─── Maybe ─────────────────────────────────────────────────────────
-
 maybeSuite : Test
 maybeSuite =
-    Test.suite "Maybe"
-        [ Test.test "withDefault on Nothing" (\_ ->
-            Test.equal 0 (Maybe.withDefault 0 Nothing))
-        , Test.test "withDefault on Just" (\_ ->
-            Test.equal 7 (Maybe.withDefault 0 (Just 7)))
-        , Test.test "map on Just doubles via withDefault" (\_ ->
-            Test.equal 4
-                (Maybe.withDefault 0
-                    (Maybe.map (\x -> x * 2) (Just 2))))
-        , Test.test "map on Nothing stays Nothing" (\_ ->
-            Test.equal 0
-                (Maybe.withDefault 0
-                    (Maybe.map (\x -> x * 2) Nothing)))
-        , Test.test "andThen chains" (\_ ->
-            Test.equal 10
-                (Maybe.withDefault 0
-                    (Maybe.andThen (\x -> Just (x + 5)) (Just 5))))
+    Test.suite
+        "Maybe"
+        [ Test.test
+              "withDefault on Nothing"
+              (\_ -> Test.equal 0 (Maybe.withDefault 0 Nothing))
+        , Test.test
+              "withDefault on Just"
+              (\_ -> Test.equal 7 (Maybe.withDefault 0 (Just 7)))
+        , Test.test
+              "map on Just doubles via withDefault"
+              (\_ ->
+                  Test.equal
+                      4
+                      (Maybe.withDefault 0 (Maybe.map (\x -> x * 2) (Just 2))))
+        , Test.test
+              "map on Nothing stays Nothing"
+              (\_ ->
+                  Test.equal
+                      0
+                      (Maybe.withDefault 0 (Maybe.map (\x -> x * 2) Nothing)))
+        , Test.test
+              "andThen chains"
+              (\_ ->
+                  Test.equal
+                      10
+                      (Maybe.withDefault
+                          0
+                          (Maybe.andThen (\x -> Just (x + 5)) (Just 5))))
         ]
 
 
 -- ─── Result ────────────────────────────────────────────────────────
-
 resultSuite : Test
 resultSuite =
-    Test.suite "Result"
-        [ Test.test "withDefault on Err" (\_ ->
-            Test.equal 0 (Result.withDefault 0 (Err (Error.unexpected "x"))))
-        , Test.test "withDefault on Ok" (\_ ->
-            Test.equal 7 (Result.withDefault 0 (Ok 7)))
-        , Test.test "map on Ok doubles" (\_ ->
-            Test.equal 4
-                (Result.withDefault 0
-                    (Result.map (\x -> x * 2) (Ok 2))))
-        , Test.test "andThen chains" (\_ ->
-            Test.equal 6
-                (Result.withDefault 0
-                    (Result.andThen (\x -> Ok (x + 1)) (Ok 5))))
-        , Test.test "mapError preserves message via wrapper" (\_ ->
-            let
-                wrapped =
-                    Result.mapError
-                        (\_ -> Error.unexpected "wrapped")
-                        (Err (Error.unexpected "inner"))
-            in
-                case wrapped of
-                    Err e ->
-                        Test.isTrue
-                            (String.contains "wrapped" (Error.toString e))
+    Test.suite
+        "Result"
+        [ Test.test
+              "withDefault on Err"
+              (\_ ->
+                  Test.equal
+                      0
+                      (Result.withDefault 0 (Err (Error.unexpected "x"))))
+        , Test.test
+              "withDefault on Ok"
+              (\_ -> Test.equal 7 (Result.withDefault 0 (Ok 7)))
+        , Test.test
+              "map on Ok doubles"
+              (\_ ->
+                  Test.equal
+                      4
+                      (Result.withDefault 0 (Result.map (\x -> x * 2) (Ok 2))))
+        , Test.test
+              "andThen chains"
+              (\_ ->
+                  Test.equal
+                      6
+                      (Result.withDefault
+                          0
+                          (Result.andThen (\x -> Ok (x + 1)) (Ok 5))))
+        , Test.test
+              "mapError preserves message via wrapper"
+              (\_ ->
+                  let
+                      wrapped =
+                          Result.mapError
+                              (\_ -> Error.unexpected "wrapped")
+                              (Err (Error.unexpected "inner"))
+                  in
+                      case wrapped of
 
-                    Ok _ ->
-                        Test.fail "expected Err")
+                          Err e ->
+                              Test.isTrue
+                                  (String.contains "wrapped" (Error.toString e))
+
+                          Ok _ ->
+                              Test.fail "expected Err")
         ]
 
 
 -- ─── Math ──────────────────────────────────────────────────────────
-
 mathSuite : Test
 mathSuite =
-    Test.suite "Math"
-        [ Test.test "abs negative" (\_ ->
-            Test.equal 5 (Math.abs (-5)))
-        , Test.test "min" (\_ ->
-            Test.equal 1 (Math.min 1 7))
-        , Test.test "max" (\_ ->
-            Test.equal 7 (Math.max 1 7))
-        , Test.test "sqrt" (\_ ->
-            Test.equal 4.0 (Math.sqrt 16.0))
-        , Test.test "pow" (\_ ->
-            Test.equal 8.0 (Math.pow 2.0 3.0))
-        , Test.test "floor" (\_ ->
-            Test.equal 3 (Math.floor 3.7))
-        , Test.test "ceil" (\_ ->
-            Test.equal 4 (Math.ceil 3.2))
-        , Test.test "round" (\_ ->
-            Test.equal 4 (Math.round 3.5))
+    Test.suite
+        "Math"
+        [ Test.test "abs negative" (\_ -> Test.equal 5 (Math.abs (-5)))
+        , Test.test "min" (\_ -> Test.equal 1 (Math.min 1 7))
+        , Test.test "max" (\_ -> Test.equal 7 (Math.max 1 7))
+        , Test.test "sqrt" (\_ -> Test.equal 4.0 (Math.sqrt 16.0))
+        , Test.test "pow" (\_ -> Test.equal 8.0 (Math.pow 2.0 3.0))
+        , Test.test "floor" (\_ -> Test.equal 3 (Math.floor 3.7))
+        , Test.test "ceil" (\_ -> Test.equal 4 (Math.ceil 3.2))
+        , Test.test "round" (\_ -> Test.equal 4 (Math.round 3.5))
         ]
 
 
 -- ─── Crypto ────────────────────────────────────────────────────────
-
 cryptoSuite : Test
 cryptoSuite =
-    Test.suite "Crypto"
-        [ Test.test "sha256 known vector" (\_ ->
-            -- sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
-            Test.equal
-                "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-                (Crypto.sha256 "hello"))
-        , Test.test "md5 known vector" (\_ ->
-            -- md5("hello") = 5d41402abc4b2a76b9719d911017c592
-            Test.equal "5d41402abc4b2a76b9719d911017c592" (Crypto.md5 "hello"))
-        , Test.test "hmacSha256 produces 64 hex chars" (\_ ->
-            Test.equal 64 (String.length (Crypto.hmacSha256 "secret" "msg")))
-        , Test.test "constantTimeEqual equal strings" (\_ ->
-            Test.isTrue (Crypto.constantTimeEqual "abc" "abc"))
-        , Test.test "constantTimeEqual differing strings" (\_ ->
-            Test.isFalse (Crypto.constantTimeEqual "abc" "abd"))
-        , Test.test "sha1 known vector" (\_ ->
-            -- sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
-            Test.equal
-                "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-                (Crypto.sha1 "hello"))
-        , Test.test "hmacSha512 produces 128 hex chars" (\_ ->
-            Test.equal 128 (String.length (Crypto.hmacSha512 "secret" "msg")))
-        , Test.test "aesKeyFromPassword derivation succeeds round-trip" (\_ ->
-            let
-                key = Crypto.aesKeyFromPassword "p" "salt"
-            in
-                case Crypto.aesGcmEncrypt key "x" of
-                    Ok _ -> Test.isTrue True
-                    Err _ -> Test.isFalse True)
-        , Test.test "aesGcm round-trip" (\_ ->
-            let
-                key = Crypto.aesKeyFromPassword "hunter2" "salt"
-            in
-                case Crypto.aesGcmEncrypt key "hello world" of
-                    Ok ct ->
-                        case Crypto.aesGcmDecrypt key ct of
-                            Ok pt -> Test.equal "hello world" pt
-                            Err _ -> Test.isFalse True
-                    Err _ -> Test.isFalse True)
-        , Test.test "aesGcm tamper detection" (\_ ->
-            let
-                key = Crypto.aesKeyFromPassword "hunter2" "salt"
-                tampered = "AAAAAAAAAAAAAAAAAAAAAAAAA"
-            in
-                case Crypto.aesGcmDecrypt key tampered of
-                    Ok _ -> Test.isFalse True
-                    Err _ -> Test.isTrue True)
-        , Test.test "chacha20 round-trip" (\_ ->
-            let
-                key = Crypto.chachaKeyFromPassword "pw" "saltsalt"
-            in
-                case Crypto.chacha20Encrypt key "another payload" of
-                    Ok ct ->
-                        case Crypto.chacha20Decrypt key ct of
-                            Ok pt -> Test.equal "another payload" pt
-                            Err _ -> Test.isFalse True
-                    Err _ -> Test.isFalse True)
-        , Test.test "aesGcm short-key rejected" (\_ ->
-            case Crypto.aesGcmEncrypt "short" "x" of
-                Err _ -> Test.isTrue True
-                Ok _ -> Test.isFalse True)
+    Test.suite
+        "Crypto"
+        [ Test.test
+              "sha256 known vector"
+              (\_ ->
+                  -- sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+                  Test.equal
+                      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                      (Crypto.sha256 "hello"))
+        , Test.test
+              "md5 known vector"
+              (\_ ->
+                  -- md5("hello") = 5d41402abc4b2a76b9719d911017c592
+                  Test.equal
+                      "5d41402abc4b2a76b9719d911017c592"
+                      (Crypto.md5 "hello"))
+        , Test.test
+              "hmacSha256 produces 64 hex chars"
+              (\_ ->
+                  Test.equal
+                      64
+                      (String.length (Crypto.hmacSha256 "secret" "msg")))
+        , Test.test
+              "constantTimeEqual equal strings"
+              (\_ -> Test.isTrue (Crypto.constantTimeEqual "abc" "abc"))
+        , Test.test
+              "constantTimeEqual differing strings"
+              (\_ -> Test.isFalse (Crypto.constantTimeEqual "abc" "abd"))
+        , Test.test
+              "sha1 known vector"
+              (\_ ->
+                  -- sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+                  Test.equal
+                      "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+                      (Crypto.sha1 "hello"))
+        , Test.test
+              "hmacSha512 produces 128 hex chars"
+              (\_ ->
+                  Test.equal
+                      128
+                      (String.length (Crypto.hmacSha512 "secret" "msg")))
+        , Test.test
+              "aesKeyFromPassword derivation succeeds round-trip"
+              (\_ ->
+                  let
+                      key = Crypto.aesKeyFromPassword "p" "salt"
+                  in
+                      case Crypto.aesGcmEncrypt key "x" of
+
+                          Ok _ ->
+                              Test.isTrue True
+
+                          Err _ ->
+                              Test.isFalse True)
+        , Test.test
+              "aesGcm round-trip"
+              (\_ ->
+                  let
+                      key = Crypto.aesKeyFromPassword "hunter2" "salt"
+                  in
+                      case Crypto.aesGcmEncrypt key "hello world" of
+
+                          Ok ct ->
+                              case Crypto.aesGcmDecrypt key ct of
+
+                                  Ok pt ->
+                                      Test.equal "hello world" pt
+
+                                  Err _ ->
+                                      Test.isFalse True
+
+                          Err _ ->
+                              Test.isFalse True)
+        , Test.test
+              "aesGcm tamper detection"
+              (\_ ->
+                  let
+                      key = Crypto.aesKeyFromPassword "hunter2" "salt"
+                      tampered = "AAAAAAAAAAAAAAAAAAAAAAAAA"
+                  in
+                      case Crypto.aesGcmDecrypt key tampered of
+
+                          Ok _ ->
+                              Test.isFalse True
+
+                          Err _ ->
+                              Test.isTrue True)
+        , Test.test
+              "chacha20 round-trip"
+              (\_ ->
+                  let
+                      key = Crypto.chachaKeyFromPassword "pw" "saltsalt"
+                  in
+                      case Crypto.chacha20Encrypt key "another payload" of
+
+                          Ok ct ->
+                              case Crypto.chacha20Decrypt key ct of
+
+                                  Ok pt ->
+                                      Test.equal "another payload" pt
+
+                                  Err _ ->
+                                      Test.isFalse True
+
+                          Err _ ->
+                              Test.isFalse True)
+        , Test.test
+              "aesGcm short-key rejected"
+              (\_ ->
+                  case Crypto.aesGcmEncrypt "short" "x" of
+
+                      Err _ ->
+                          Test.isTrue True
+
+                      Ok _ ->
+                          Test.isFalse True)
         ]
 
 
 -- ─── Jwt ───────────────────────────────────────────────────────────
-
 jwtClaimSet : Jwt.Claims
 jwtClaimSet =
     Jwt.claims |> Jwt.subject "alice" |> Jwt.expiresAt 9999999999
@@ -442,6 +617,7 @@ jwtHsToken =
 jwtDecodeOk : String -> Int -> String -> Bool
 jwtDecodeOk secret now tok =
     case Jwt.decode (Jwt.hs256 secret) now tok of
+
         Ok _ ->
             True
 
@@ -451,173 +627,232 @@ jwtDecodeOk secret now tok =
 
 jwtSuite : Test
 jwtSuite =
-    Test.suite "Jwt"
-        [ Test.test "HS256 encode yields three segments" (\_ ->
-            case jwtHsToken of
-                Ok tok ->
-                    Test.equal 3 (List.length (String.split "." tok))
+    Test.suite
+        "Jwt"
+        [ Test.test
+              "HS256 encode yields three segments"
+              (\_ ->
+                  case jwtHsToken of
 
-                Err _ ->
-                    Test.isTrue False)
-        , Test.test "HS256 verify round-trips" (\_ ->
-            case jwtHsToken of
-                Ok tok ->
-                    Test.isTrue (jwtDecodeOk "topsecret" 1000 tok)
+                      Ok tok ->
+                          Test.equal 3 (List.length (String.split "." tok))
 
-                Err _ ->
-                    Test.isTrue False)
-        , Test.test "rejects a forged signature (wrong key)" (\_ ->
-            case jwtHsToken of
-                Ok tok ->
-                    Test.isFalse (jwtDecodeOk "wrong-key" 1000 tok)
+                      Err _ ->
+                          Test.isTrue False)
+        , Test.test
+              "HS256 verify round-trips"
+              (\_ ->
+                  case jwtHsToken of
 
-                Err _ ->
-                    Test.isTrue False)
-        , Test.test "rejects an expired token" (\_ ->
-            case jwtHsToken of
-                Ok tok ->
-                    Test.isFalse (jwtDecodeOk "topsecret" 99999999999 tok)
+                      Ok tok ->
+                          Test.isTrue (jwtDecodeOk "topsecret" 1000 tok)
 
-                Err _ ->
-                    Test.isTrue False)
+                      Err _ ->
+                          Test.isTrue False)
+        , Test.test
+              "rejects a forged signature (wrong key)"
+              (\_ ->
+                  case jwtHsToken of
+
+                      Ok tok ->
+                          Test.isFalse (jwtDecodeOk "wrong-key" 1000 tok)
+
+                      Err _ ->
+                          Test.isTrue False)
+        , Test.test
+              "rejects an expired token"
+              (\_ ->
+                  case jwtHsToken of
+
+                      Ok tok ->
+                          Test.isFalse (jwtDecodeOk "topsecret" 99999999999 tok)
+
+                      Err _ ->
+                          Test.isTrue False)
         ]
 
 
 -- ─── Encoding ──────────────────────────────────────────────────────
-
 encodingSuite : Test
 encodingSuite =
-    Test.suite "Encoding"
-        [ Test.test "base64 round-trip" (\_ ->
-            let
-                encoded = Encoding.base64Encode "hello"
-            in
-                case Encoding.base64Decode encoded of
-                    Ok s ->
-                        Test.equal "hello" s
+    Test.suite
+        "Encoding"
+        [ Test.test
+              "base64 round-trip"
+              (\_ ->
+                  let
+                      encoded = Encoding.base64Encode "hello"
+                  in
+                      case Encoding.base64Decode encoded of
 
-                    Err _ ->
-                        Test.fail "base64 decode failed")
-        , Test.test "hex round-trip" (\_ ->
-            let
-                encoded = Encoding.hexEncode "abc"
-            in
-                case Encoding.hexDecode encoded of
-                    Ok s ->
-                        Test.equal "abc" s
+                          Ok s ->
+                              Test.equal "hello" s
 
-                    Err _ ->
-                        Test.fail "hex decode failed")
-        , Test.test "urlEncode escapes space as + (QueryEscape semantics)" (\_ ->
-            Test.equal "a+b" (Encoding.urlEncode "a b"))
-        , Test.test "urlDecode reverses + back to space" (\_ ->
-            case Encoding.urlDecode "a+b" of
-                Ok s ->
-                    Test.equal "a b" s
+                          Err _ ->
+                              Test.fail "base64 decode failed")
+        , Test.test
+              "hex round-trip"
+              (\_ ->
+                  let
+                      encoded = Encoding.hexEncode "abc"
+                  in
+                      case Encoding.hexDecode encoded of
 
-                Err _ ->
-                    Test.fail "url decode failed")
-        , Test.test "urlDecode also accepts %20-encoded space" (\_ ->
-            case Encoding.urlDecode "a%20b" of
-                Ok s ->
-                    Test.equal "a b" s
+                          Ok s ->
+                              Test.equal "abc" s
 
-                Err _ ->
-                    Test.fail "url decode failed")
+                          Err _ ->
+                              Test.fail "hex decode failed")
+        , Test.test
+              "urlEncode escapes space as + (QueryEscape semantics)"
+              (\_ -> Test.equal "a+b" (Encoding.urlEncode "a b"))
+        , Test.test
+              "urlDecode reverses + back to space"
+              (\_ ->
+                  case Encoding.urlDecode "a+b" of
+
+                      Ok s ->
+                          Test.equal "a b" s
+
+                      Err _ ->
+                          Test.fail "url decode failed")
+        , Test.test
+              "urlDecode also accepts %20-encoded space"
+              (\_ ->
+                  case Encoding.urlDecode "a%20b" of
+
+                      Ok s ->
+                          Test.equal "a b" s
+
+                      Err _ ->
+                          Test.fail "url decode failed")
         ]
 
 
 -- ─── Json ──────────────────────────────────────────────────────────
-
 jsonSuite : Test
 jsonSuite =
-    Test.suite "Json"
-        [ Test.test "encode string" (\_ ->
-            Test.equal "\"hi\"" (JsonEnc.encode 0 (JsonEnc.string "hi")))
-        , Test.test "encode int" (\_ ->
-            Test.equal "42" (JsonEnc.encode 0 (JsonEnc.int 42)))
-        , Test.test "encode bool" (\_ ->
-            Test.equal "true" (JsonEnc.encode 0 (JsonEnc.bool True)))
-        , Test.test "encode object" (\_ ->
-            let
-                json =
-                    JsonEnc.encode 0
-                        (JsonEnc.object
-                            [ ( "n", JsonEnc.int 1 )
-                            , ( "s", JsonEnc.string "x" )
-                            ])
-            in
-                Test.isTrue (String.contains "\"n\":1" json))
-        , Test.test "decode int" (\_ ->
-            case JsonDec.decodeString JsonDec.int "42" of
-                Ok n ->
-                    Test.equal 42 n
+    Test.suite
+        "Json"
+        [ Test.test
+              "encode string"
+              (\_ -> Test.equal "\"hi\"" (JsonEnc.encode 0 (JsonEnc.string "hi")))
+        , Test.test
+              "encode int"
+              (\_ -> Test.equal "42" (JsonEnc.encode 0 (JsonEnc.int 42)))
+        , Test.test
+              "encode bool"
+              (\_ -> Test.equal "true" (JsonEnc.encode 0 (JsonEnc.bool True)))
+        , Test.test
+              "encode object"
+              (\_ ->
+                  let
+                      json =
+                          JsonEnc.encode
+                              0
+                              (JsonEnc.object
+                                  [ ( "n", JsonEnc.int 1 )
+                                  , ( "s", JsonEnc.string "x" )
+                                  ])
+                  in
+                      Test.isTrue (String.contains "\"n\":1" json))
+        , Test.test
+              "decode int"
+              (\_ ->
+                  case JsonDec.decodeString JsonDec.int "42" of
 
-                Err _ ->
-                    Test.fail "int decode failed")
-        , Test.test "decode field" (\_ ->
-            case JsonDec.decodeString (JsonDec.field "x" JsonDec.int) "{\"x\":7}" of
-                Ok n ->
-                    Test.equal 7 n
+                      Ok n ->
+                          Test.equal 42 n
 
-                Err _ ->
-                    Test.fail "field decode failed")
+                      Err _ ->
+                          Test.fail "int decode failed")
+        , Test.test
+              "decode field"
+              (\_ ->
+                  case JsonDec.decodeString
+                           (JsonDec.field "x" JsonDec.int)
+                           "{\"x\":7}" of
+
+                      Ok n ->
+                          Test.equal 7 n
+
+                      Err _ ->
+                          Test.fail "field decode failed")
         ]
 
 
 -- ─── Std.Decimal ───────────────────────────────────────────────────
-
 decimalSuite : Test
 decimalSuite =
-    Test.suite "Std.Decimal"
-        [ Test.test "fromString accepts decimal literal" (\_ ->
-            Test.ok (Dec.fromString "3.14"))
-        , Test.test "fromString rejects junk" (\_ ->
-            Test.err (Dec.fromString "abc"))
-        , Test.test "exact 0.1 + 0.2 == 0.3" (\_ ->
-            let
-                a = decOrZero "0.1"
-                b = decOrZero "0.2"
-                expected = decOrZero "0.3"
-            in
-                Test.isTrue (Dec.eq expected (Dec.add a b)))
-        , Test.test "add commutative" (\_ ->
-            let
-                a = Dec.fromInt 3
-                b = Dec.fromInt 4
-            in
-                Test.isTrue (Dec.eq (Dec.add a b) (Dec.add b a)))
-        , Test.test "div by zero is Err" (\_ ->
-            Test.err (Dec.div (Dec.fromInt 1) Dec.zero))
-        , Test.test "div by non-zero is Ok" (\_ ->
-            Test.ok (Dec.div (Dec.fromInt 10) (Dec.fromInt 4)))
-        , Test.test "neg flips sign" (\_ ->
-            Test.isTrue
-                (Dec.eq
-                    (Dec.fromInt (-7))
-                    (Dec.neg (Dec.fromInt 7))))
-        , Test.test "abs of negative" (\_ ->
-            Test.isTrue
-                (Dec.eq (Dec.fromInt 7) (Dec.abs (Dec.fromInt (-7)))))
-        , Test.test "round 2dp banker's" (\_ ->
-            -- 1.235 → 1.24 (round-half-to-even rounds to nearest even)
-            Test.equal "1.24"
-                (Dec.toString (Dec.round 2 (decOrZero "1.235"))))
-        , Test.test "compare" (\_ ->
-            Test.equal (-1) (Dec.compare (Dec.fromInt 1) (Dec.fromInt 2)))
-        , Test.test "fromMinor 2dp" (\_ ->
-            Test.equal "123.45" (Dec.toString (Dec.fromMinor 2 12345)))
-        , Test.test "percentOf 10% of 100" (\_ ->
-            Test.isTrue
-                (Dec.eq
-                    (Dec.fromInt 10)
-                    (Dec.percentOf (Dec.fromInt 10) (Dec.fromInt 100))))
-        , Test.test "isZero on zero" (\_ ->
-            Test.isTrue (Dec.isZero Dec.zero))
-        , Test.test "isPositive on 5" (\_ ->
-            Test.isTrue (Dec.isPositive (Dec.fromInt 5)))
-        , Test.test "isNegative on -5" (\_ ->
-            Test.isTrue (Dec.isNegative (Dec.fromInt (-5))))
+    Test.suite
+        "Std.Decimal"
+        [ Test.test
+              "fromString accepts decimal literal"
+              (\_ -> Test.ok (Dec.fromString "3.14"))
+        , Test.test
+              "fromString rejects junk"
+              (\_ -> Test.err (Dec.fromString "abc"))
+        , Test.test
+              "exact 0.1 + 0.2 == 0.3"
+              (\_ ->
+                  let
+                      a = decOrZero "0.1"
+                      b = decOrZero "0.2"
+                      expected = decOrZero "0.3"
+                  in
+                      Test.isTrue (Dec.eq expected (Dec.add a b)))
+        , Test.test
+              "add commutative"
+              (\_ ->
+                  let
+                      a = Dec.fromInt 3
+                      b = Dec.fromInt 4
+                  in
+                      Test.isTrue (Dec.eq (Dec.add a b) (Dec.add b a)))
+        , Test.test
+              "div by zero is Err"
+              (\_ -> Test.err (Dec.div (Dec.fromInt 1) Dec.zero))
+        , Test.test
+              "div by non-zero is Ok"
+              (\_ -> Test.ok (Dec.div (Dec.fromInt 10) (Dec.fromInt 4)))
+        , Test.test
+              "neg flips sign"
+              (\_ ->
+                  Test.isTrue
+                      (Dec.eq (Dec.fromInt (-7)) (Dec.neg (Dec.fromInt 7))))
+        , Test.test
+              "abs of negative"
+              (\_ ->
+                  Test.isTrue
+                      (Dec.eq (Dec.fromInt 7) (Dec.abs (Dec.fromInt (-7)))))
+        , Test.test
+              "round 2dp banker's"
+              (\_ ->
+                  -- 1.235 → 1.24 (round-half-to-even rounds to nearest even)
+                  Test.equal
+                      "1.24"
+                      (Dec.toString (Dec.round 2 (decOrZero "1.235"))))
+        , Test.test
+              "compare"
+              (\_ ->
+                  Test.equal (-1) (Dec.compare (Dec.fromInt 1) (Dec.fromInt 2)))
+        , Test.test
+              "fromMinor 2dp"
+              (\_ -> Test.equal "123.45" (Dec.toString (Dec.fromMinor 2 12345)))
+        , Test.test
+              "percentOf 10% of 100"
+              (\_ ->
+                  Test.isTrue
+                      (Dec.eq
+                          (Dec.fromInt 10)
+                          (Dec.percentOf (Dec.fromInt 10) (Dec.fromInt 100))))
+        , Test.test "isZero on zero" (\_ -> Test.isTrue (Dec.isZero Dec.zero))
+        , Test.test
+              "isPositive on 5"
+              (\_ -> Test.isTrue (Dec.isPositive (Dec.fromInt 5)))
+        , Test.test
+              "isNegative on -5"
+              (\_ -> Test.isTrue (Dec.isNegative (Dec.fromInt (-5))))
         ]
 
 
@@ -628,85 +863,121 @@ decOrZero s =
 
 
 -- ─── Std.Money ─────────────────────────────────────────────────────
-
 moneySuite : Test
 moneySuite =
-    Test.suite "Std.Money"
-        [ Test.test "fromMajor builds $100" (\_ ->
-            let
-                m = Money.fromMajor Money.USD 100
-            in
-                Test.equal "$100.00" (Money.format m))
-        , Test.test "fromMinor 1234 cents = $12.34" (\_ ->
-            let
-                m = Money.fromMinor Money.USD 1234
-            in
-                Test.equal "$12.34" (Money.format m))
-        , Test.test "JPY has 0 minor units (no cents)" (\_ ->
-            Test.equal 0 (Money.minorUnits Money.JPY))
-        , Test.test "USD has 2 minor units" (\_ ->
-            Test.equal 2 (Money.minorUnits Money.USD))
-        , Test.test "BHD has 3 minor units" (\_ ->
-            Test.equal 3 (Money.minorUnits Money.BHD))
-        , Test.test "add same-currency sums" (\_ ->
-            let
-                a = Money.fromMajor Money.USD 10
-                b = Money.fromMajor Money.USD 5
-            in
-                Test.equal "$15.00" (Money.format (Money.add a b)))
-        , Test.test "percentOf 10% of $100 = $10" (\_ ->
-            let
-                price = Money.fromMajor Money.USD 100
-                pct = Dec.fromInt 10
-            in
-                Test.equal "$10.00" (Money.format (Money.percentOf pct price)))
-        , Test.test "allocate $100 over 3 → sum preserved" (\_ ->
-            let
-                parts = Money.allocate 3 (Money.fromMajor Money.USD 100)
-                total = Money.sumOf Money.USD parts
-            in
-                Test.equal "$100.00" (Money.format total))
-        , Test.test "allocate $100 over 3 yields 3 parts" (\_ ->
-            Test.equal 3
-                (List.length (Money.allocate 3 (Money.fromMajor Money.USD 100))))
-        , Test.test "symbol lookup USD" (\_ ->
-            Test.equal "$" (Money.symbol Money.USD))
-        , Test.test "symbol lookup EUR" (\_ ->
-            Test.equal "€" (Money.symbol Money.EUR))
-        , Test.test "knownCurrency USD ctor is True" (\_ ->
-            Test.isTrue (Money.knownCurrency Money.USD))
-        , Test.test "knownCurrency (CurrencyRaw \"XYZ\") is False" (\_ ->
-            Test.isFalse (Money.knownCurrency (Money.CurrencyRaw "XYZ")))
-        , Test.test "isKnownCode \"USD\" (raw-string check)" (\_ ->
-            Test.isTrue (Money.isKnownCode "USD"))
-        , Test.test "isKnownCode \"XYZ\" rejects unknown code" (\_ ->
-            Test.isFalse (Money.isKnownCode "XYZ"))
-        , Test.test "currencyCode JPY" (\_ ->
-            Test.equal "JPY" (Money.currencyCode Money.JPY))
-        , Test.test "isZero on zero USD" (\_ ->
-            Test.isTrue (Money.isZero (Money.zero Money.USD)))
+    Test.suite
+        "Std.Money"
+        [ Test.test
+              "fromMajor builds $100"
+              (\_ ->
+                  let
+                      m = Money.fromMajor Money.USD 100
+                  in
+                      Test.equal "$100.00" (Money.format m))
+        , Test.test
+              "fromMinor 1234 cents = $12.34"
+              (\_ ->
+                  let
+                      m = Money.fromMinor Money.USD 1234
+                  in
+                      Test.equal "$12.34" (Money.format m))
+        , Test.test
+              "JPY has 0 minor units (no cents)"
+              (\_ -> Test.equal 0 (Money.minorUnits Money.JPY))
+        , Test.test
+              "USD has 2 minor units"
+              (\_ -> Test.equal 2 (Money.minorUnits Money.USD))
+        , Test.test
+              "BHD has 3 minor units"
+              (\_ -> Test.equal 3 (Money.minorUnits Money.BHD))
+        , Test.test
+              "add same-currency sums"
+              (\_ ->
+                  let
+                      a = Money.fromMajor Money.USD 10
+                      b = Money.fromMajor Money.USD 5
+                  in
+                      Test.equal "$15.00" (Money.format (Money.add a b)))
+        , Test.test
+              "percentOf 10% of $100 = $10"
+              (\_ ->
+                  let
+                      price = Money.fromMajor Money.USD 100
+                      pct = Dec.fromInt 10
+                  in
+                      Test.equal
+                          "$10.00"
+                          (Money.format (Money.percentOf pct price)))
+        , Test.test
+              "allocate $100 over 3 → sum preserved"
+              (\_ ->
+                  let
+                      parts =
+                          Money.allocate 3 (Money.fromMajor Money.USD 100)
+                      total = Money.sumOf Money.USD parts
+                  in
+                      Test.equal "$100.00" (Money.format total))
+        , Test.test
+              "allocate $100 over 3 yields 3 parts"
+              (\_ ->
+                  Test.equal
+                      3
+                      (List.length
+                          (Money.allocate 3 (Money.fromMajor Money.USD 100))))
+        , Test.test
+              "symbol lookup USD"
+              (\_ -> Test.equal "$" (Money.symbol Money.USD))
+        , Test.test
+              "symbol lookup EUR"
+              (\_ -> Test.equal "€" (Money.symbol Money.EUR))
+        , Test.test
+              "knownCurrency USD ctor is True"
+              (\_ -> Test.isTrue (Money.knownCurrency Money.USD))
+        , Test.test
+              "knownCurrency (CurrencyRaw \"XYZ\") is False"
+              (\_ -> Test.isFalse (Money.knownCurrency (Money.CurrencyRaw "XYZ")))
+        , Test.test
+              "isKnownCode \"USD\" (raw-string check)"
+              (\_ -> Test.isTrue (Money.isKnownCode "USD"))
+        , Test.test
+              "isKnownCode \"XYZ\" rejects unknown code"
+              (\_ -> Test.isFalse (Money.isKnownCode "XYZ"))
+        , Test.test
+              "currencyCode JPY"
+              (\_ -> Test.equal "JPY" (Money.currencyCode Money.JPY))
+        , Test.test
+              "isZero on zero USD"
+              (\_ -> Test.isTrue (Money.isZero (Money.zero Money.USD)))
         ]
 
 
 -- ─── Std.Time ──────────────────────────────────────────────────────
-
 timeSuite : Test
 timeSuite =
-    Test.suite "Std.Time"
-        [ Test.test "isLeapYear 2024" (\_ ->
-            Test.isTrue (Stime.isLeapYear 2024))
-        , Test.test "isLeapYear 2023" (\_ ->
-            Test.isFalse (Stime.isLeapYear 2023))
-        , Test.test "isLeapYear 2000 (div by 400)" (\_ ->
-            Test.isTrue (Stime.isLeapYear 2000))
-        , Test.test "isLeapYear 1900 (div by 100 not 400)" (\_ ->
-            Test.isFalse (Stime.isLeapYear 1900))
-        , Test.test "daysInMonth Jan = 31" (\_ ->
-            Test.equal 31 (Stime.daysInMonth 2024 1))
-        , Test.test "daysInMonth Feb 2024 = 29" (\_ ->
-            Test.equal 29 (Stime.daysInMonth 2024 2))
-        , Test.test "daysInMonth Feb 2023 = 28" (\_ ->
-            Test.equal 28 (Stime.daysInMonth 2023 2))
-        , Test.test "daysInMonth Apr = 30" (\_ ->
-            Test.equal 30 (Stime.daysInMonth 2024 4))
+    Test.suite
+        "Std.Time"
+        [ Test.test
+              "isLeapYear 2024"
+              (\_ -> Test.isTrue (Stime.isLeapYear 2024))
+        , Test.test
+              "isLeapYear 2023"
+              (\_ -> Test.isFalse (Stime.isLeapYear 2023))
+        , Test.test
+              "isLeapYear 2000 (div by 400)"
+              (\_ -> Test.isTrue (Stime.isLeapYear 2000))
+        , Test.test
+              "isLeapYear 1900 (div by 100 not 400)"
+              (\_ -> Test.isFalse (Stime.isLeapYear 1900))
+        , Test.test
+              "daysInMonth Jan = 31"
+              (\_ -> Test.equal 31 (Stime.daysInMonth 2024 1))
+        , Test.test
+              "daysInMonth Feb 2024 = 29"
+              (\_ -> Test.equal 29 (Stime.daysInMonth 2024 2))
+        , Test.test
+              "daysInMonth Feb 2023 = 28"
+              (\_ -> Test.equal 28 (Stime.daysInMonth 2023 2))
+        , Test.test
+              "daysInMonth Apr = 30"
+              (\_ -> Test.equal 30 (Stime.daysInMonth 2024 4))
         ]

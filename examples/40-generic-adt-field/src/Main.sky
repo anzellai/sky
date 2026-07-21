@@ -11,14 +11,15 @@ module Main exposing (main)
 -- instantiation (`Box Int`), the field read must be narrowed
 -- (`rt.AsInt`) or `go build` rejects the uncoerced `any` in the
 -- `int` return slot.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-
 type alias Payload a =
-    { value : a, tag : String }
-
+    { value : a
+    , tag : String
+    }
 
 type Box a
     = Empty
@@ -28,6 +29,7 @@ type Box a
 getInt : Box Int -> Int
 getInt b =
     case b of
+
         Empty ->
             0
 
@@ -37,6 +39,7 @@ getInt b =
 
 main =
     let
-        _ = println (String.fromInt (getInt (Filled { value = 9, tag = "x" })))
+        _ =
+            println (String.fromInt (getInt (Filled { value = 9, tag = "x" })))
     in
-    println (String.fromInt (getInt Empty))
+        println (String.fromInt (getInt Empty))

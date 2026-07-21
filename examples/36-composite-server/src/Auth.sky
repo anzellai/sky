@@ -5,6 +5,7 @@ module Auth exposing (hashPassword, verifyPassword, mintToken, verifyBearer, cla
 -- verifyPassword / signToken / verifyToken) and the typed-builder
 -- alternative (Jwt.encode / Jwt.decode) so a regression in either
 -- surface lands here.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Result as Result

@@ -32,7 +32,7 @@ viewSubmitButton model =
                 , attribute "sky-nav" ""
                 , class "btn btn-primary"
                 ]
-                [text "+ Submit Idea"]
+                [ text "+ Submit Idea" ]
 
         Nothing ->
             a
@@ -40,7 +40,7 @@ viewSubmitButton model =
                 , attribute "sky-nav" ""
                 , class "btn btn-secondary"
                 ]
-                [text "Sign in to vote"]
+                [ text "Sign in to vote" ]
 
 
 viewBoard model =
@@ -52,14 +52,15 @@ viewBoard model =
             (div
                 []
                 [ div
-                      [class "board-header"]
+                      [ class "board-header" ]
                       [ div
                             []
-                            [ h1 [class "page-title"] [text "Feature Board"]
+                            [ h1 [ class "page-title" ] [ text "Feature Board" ]
                             , p
-                                  [class "page-subtitle"]
-                                  [text
-                                      "Vote on ideas you care about. The best ones rise to the top."]
+                                  [ class "page-subtitle" ]
+                                  [ text
+                                        "Vote on ideas you care about. The best ones rise to the top."
+                                  ]
                             ]
                       , viewSubmitButton model
                       ]
@@ -70,9 +71,9 @@ viewBoard model =
 
 viewIdeaList model userId =
     div
-        [class "idea-list"]
+        [ class "idea-list" ]
         (if List.isEmpty model.ideas then
-            [emptyState "No ideas yet. Be the first to submit one!"]
+            [ emptyState "No ideas yet. Be the first to submit one!" ]
 
         else
             List.map (\idea -> ideaCard idea userId) model.ideas)
@@ -80,7 +81,7 @@ viewIdeaList model userId =
 
 viewToolbar model =
     div
-        [class "toolbar"]
+        [ class "toolbar" ]
         [ input
               [ type_ "text"
               , class "search-input"
@@ -89,14 +90,14 @@ viewToolbar model =
               , onInput SetSearch
               ]
         , div
-              [class "filter-group"]
+              [ class "filter-group" ]
               [ filterBtn "all" "All" model.filterCategory
               , filterBtn "feature" "Features" model.filterCategory
               , filterBtn "bug" "Bugs" model.filterCategory
               , filterBtn "improvement" "Improvements" model.filterCategory
               ]
         , div
-              [class "filter-group"]
+              [ class "filter-group" ]
               [ sortBtn "newest" "Newest" model.sortBy
               , sortBtn "votes" "Top Voted" model.sortBy
               , sortBtn "comments" "Most Discussed" model.sortBy
@@ -114,7 +115,7 @@ filterBtn filterValue label activeFilter =
               else
                   "filter-btn")
         ]
-        [text label]
+        [ text label ]
 
 
 sortBtn sortValue label activeSort =
@@ -127,4 +128,4 @@ sortBtn sortValue label activeSort =
               else
                   "filter-btn")
         ]
-        [text label]
+        [ text label ]

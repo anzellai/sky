@@ -16,6 +16,7 @@ module Main exposing (main)
 -- in-memory counter rendered in the page.  Realistic-shaped log
 -- lines (request_id / customer_id / amount) so the bundled console
 -- screenshots look like a real billing surface.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Random as Random
 import Sky.Core.Task as Task
@@ -85,9 +86,9 @@ emitInvoiceLog seq =
 view : Model -> Html Msg
 view model =
     div
-        [style "font-family: system-ui, sans-serif; padding: 24px"]
-        [ h1 [] [text "customer-42 / billing-app"]
-        , p [] [text "Sky.Live app pushing telemetry to the hub."]
+        [ style "font-family: system-ui, sans-serif; padding: 24px" ]
+        [ h1 [] [ text "customer-42 / billing-app" ]
+        , p [] [ text "Sky.Live app pushing telemetry to the hub." ]
         , p [] [ text "Ticks: ", text (String.fromInt model.tickCount) ]
         , p
               []
@@ -95,11 +96,11 @@ view model =
               , text (String.fromInt model.lastAmount)
               ]
         , p
-              [style "color: #888"]
+              [ style "color: #888" ]
               [ text "Open the hub at "
               , a
-                    [href "http://localhost:8025/"]
-                    [text "http://localhost:8025/"]
+                    [ href "http://localhost:8025/" ]
+                    [ text "http://localhost:8025/" ]
               , text " to see this app's logs alongside the frontend-app."
               ]
         ]
@@ -116,6 +117,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [route "/" HomePage]
+        , routes = [ route "/" HomePage ]
         , notFound = HomePage
         }

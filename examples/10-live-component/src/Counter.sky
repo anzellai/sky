@@ -62,18 +62,18 @@ update msg counter =
 view : (Msg -> parentMsg) -> Counter -> Html parentMsg
 view toMsg counter =
     div
-        [class "counter-component"]
-        [ h3 [] [text counter.label]
+        [ class "counter-component" ]
+        [ h3 [] [ text counter.label ]
         , div
-              [class "counter-display"]
-              [span [class "count"] [text (String.fromInt counter.count)]]
+              [ class "counter-display" ]
+              [ span [ class "count" ] [ text (String.fromInt counter.count) ] ]
         , div
-              [class "counter-buttons"]
-              [ button [ onClick (toMsg Decrement), class "btn" ] [text "-"]
+              [ class "counter-buttons" ]
+              [ button [ onClick (toMsg Decrement), class "btn" ] [ text "-" ]
               , button
                     [ onClick (toMsg Reset), class "btn btn-sm" ]
-                    [text "Reset"]
-              , button [ onClick (toMsg Increment), class "btn" ] [text "+"]
+                    [ text "Reset" ]
+              , button [ onClick (toMsg Increment), class "btn" ] [ text "+" ]
               ]
         ]
 

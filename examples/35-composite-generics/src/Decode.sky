@@ -6,6 +6,7 @@ module Decode exposing (..)
 --   * Json.Decode.Pipeline (required / optional)
 --   * Result.combine
 --   * Maybe and Result combinators
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List

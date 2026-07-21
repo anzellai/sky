@@ -12,6 +12,7 @@ module Main exposing (main)
 -- wire (SSE + POST /_sky/event). Multi-module split so the
 -- type-checker stays well below the heap-exhaustion limit
 -- (CLAUDE.md Limitation #17).
+
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -24,12 +25,12 @@ import View exposing (view)
 
 init : a -> ( Model, Cmd Msg )
 init _req =
-    ( { tab      = Overview
+    ( { tab = Overview
       , overview = mockOverview
-      , logs     = mockLogs
-      , metrics  = mockMetrics
-      , traces   = mockTraces
-      , errors   = mockErrors
+      , logs = mockLogs
+      , metrics = mockMetrics
+      , traces = mockTraces
+      , errors = mockErrors
       }
     , Cmd.none
     )
@@ -38,6 +39,7 @@ init _req =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         SelectTab tab ->
             ( { model | tab = tab }, Cmd.none )
 
@@ -60,10 +62,10 @@ viewWrapped model =
 
 main =
     app
-        { init          = init
-        , update        = update
-        , view          = viewWrapped
+        { init = init
+        , update = update
+        , view = viewWrapped
         , subscriptions = subscriptions
-        , routes        = [ route "/" () ]
-        , notFound      = ()
+        , routes = [ route "/" () ]
+        , notFound = ()
         }

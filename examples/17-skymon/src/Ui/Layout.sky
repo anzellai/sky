@@ -9,42 +9,43 @@ import State exposing (..)
 import Ui.Styles exposing (globalStyles)
 
 
-page : Model -> (Html Msg) -> (Html Msg)
+page : Model -> Html Msg -> Html Msg
 page model content =
     div
         []
-        [ node "style" [] [text globalStyles]
+        [ node "style" [] [ text globalStyles ]
         , viewHeader model
-        , div [class "app"] [content]
+        , div [ class "app" ] [ content ]
         ]
 
 
-viewHeader : Model -> (Html Msg)
+viewHeader : Model -> Html Msg
 viewHeader model =
     node
         "header"
-        [class "header"]
-        [div
-            [class "header-inner"]
-            [ a [ href "/", class "logo" ] [text "☀ SkyMon"]
-            , nav
-                  [class "nav"]
-                  [ a [ href "/", class "nav-link" ] [text "Dashboard"]
-                  , a [ href "/status", class "nav-link" ] [text "Status"]
-                  , viewSettingsLink model
-                  , viewAlertsLink model
-                  , viewAuthNav model
-                  ]
-            ]]
+        [ class "header" ]
+        [ div
+              [ class "header-inner" ]
+              [ a [ href "/", class "logo" ] [ text "☀ SkyMon" ]
+              , nav
+                    [ class "nav" ]
+                    [ a [ href "/", class "nav-link" ] [ text "Dashboard" ]
+                    , a [ href "/status", class "nav-link" ] [ text "Status" ]
+                    , viewSettingsLink model
+                    , viewAlertsLink model
+                    , viewAuthNav model
+                    ]
+              ]
+        ]
 
 
-viewSettingsLink : Model -> (Html Msg)
+viewSettingsLink : Model -> Html Msg
 viewSettingsLink model =
     case model.session of
 
         Just session ->
             if session.role == Admin then
-                a [ href "/settings", class "nav-link" ] [text "Settings"]
+                a [ href "/settings", class "nav-link" ] [ text "Settings" ]
 
             else
                 text ""
@@ -53,18 +54,18 @@ viewSettingsLink model =
             text ""
 
 
-viewAlertsLink : Model -> (Html Msg)
+viewAlertsLink : Model -> Html Msg
 viewAlertsLink model =
     case model.session of
 
         Just _ ->
-            a [ href "/alerts", class "nav-link" ] [text "Alerts"]
+            a [ href "/alerts", class "nav-link" ] [ text "Alerts" ]
 
         Nothing ->
             text ""
 
 
-viewAuthNav : Model -> (Html Msg)
+viewAuthNav : Model -> Html Msg
 viewAuthNav model =
     case model.session of
 
@@ -72,30 +73,30 @@ viewAuthNav model =
             viewLoggedIn session
 
         Nothing ->
-            a [ href "/auth", class "nav-link" ] [text "Sign In"]
+            a [ href "/auth", class "nav-link" ] [ text "Sign In" ]
 
 
-viewLoggedIn : UserSession -> (Html Msg)
+viewLoggedIn : UserSession -> Html Msg
 viewLoggedIn session =
     div
-        [class "user-info"]
-        [ span [] [text session.username]
+        [ class "user-info" ]
+        [ span [] [ text session.username ]
         , viewRoleBadge session.role
         , button
               [ onClick SignOut, class "btn btn-ghost btn-sm" ]
-              [text "Sign Out"]
+              [ text "Sign Out" ]
         ]
 
 
-viewRoleBadge : Role -> (Html Msg)
+viewRoleBadge : Role -> Html Msg
 viewRoleBadge role =
     case role of
 
         Admin ->
-            span [class "badge badge-admin"] [text "admin"]
+            span [ class "badge badge-admin" ] [ text "admin" ]
 
         User ->
-            span [class "badge badge-user"] [text "user"]
+            span [ class "badge badge-user" ] [ text "user" ]
 
         Public ->
             text ""

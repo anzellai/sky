@@ -6,16 +6,17 @@ module Main exposing (main)
 -- N-ary func; the lambda spine must be collapsed to match (see `lower_lambda`),
 -- and both over-application (`q 1 2 3 4`) and stepwise partial application
 -- (`((makeAdder 1) 2) 3`) of the result must work.
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 
-q : Int -> Int -> (Int -> (Int -> Int))
+q : Int -> Int -> Int -> Int -> Int
 q a b =
     \c -> \d -> a * b * c * d
 
 
-makeAdder : Int -> (Int -> (Int -> Int))
+makeAdder : Int -> Int -> Int -> Int
 makeAdder a =
     \b -> \c -> a + b + c
 
@@ -25,4 +26,4 @@ main =
         _ = println (String.fromInt (q 1 2 3 4))
         _ = println (String.fromInt (makeAdder 1 2 3))
     in
-    println (String.fromInt (((makeAdder 1) 2) 3))
+        println (String.fromInt (((makeAdder 1) 2) 3))

@@ -10,6 +10,7 @@ module Middleware exposing (withCors, withLogging, withRateLimit, withBasicAuth)
 -- (Filed as a finding in the v0.16.2 composite-server work; until
 -- the stdlib module exports a typed Handler alias, this re-binding
 -- via `Ffi.kernel` is the canonical workaround.)
+
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Http.Server exposing (Request, Response)

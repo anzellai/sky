@@ -8,6 +8,7 @@ module ChessPrimitivesTest exposing (tests)
 -- If these pass, the bug is further up the stack (move generation,
 -- negamax scoring, or Sky.Live dispatch). If any fails, we've
 -- caught the regression at its source.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Test as Test exposing (Test)

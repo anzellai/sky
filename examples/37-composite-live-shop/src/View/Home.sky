@@ -52,8 +52,9 @@ hero =
               (Ui.text "Carefully made things")
         , Ui.paragraph
               [ Font.color (Ui.rgb 220 220 230), Font.size 14 ]
-              [Ui.text
-                  "A tiny demo storefront exercising Sky.Live, Std.Ui, charts and pub/sub. Every primitive on this page is a Std.Ui call."]
+              [ Ui.text
+                    "A tiny demo storefront exercising Sky.Live, Std.Ui, charts and pub/sub. Every primitive on this page is a Std.Ui call."
+              ]
         ]
 
 
@@ -69,7 +70,7 @@ controlBar model =
         , Border.color Common.hairline
         ]
         [ Input.text
-              [Ui.width (Ui.px 240)]
+              [ Ui.width (Ui.px 240) ]
               { onChange = FilterChanged
               , text = model.filter
               , placeholder = Just (Input.placeholder [] (Ui.text "Search products…"))
@@ -78,7 +79,7 @@ controlBar model =
                     (Ui.text "Filter")
               }
         , Input.slider
-              [Ui.width (Ui.px 200)]
+              [ Ui.width (Ui.px 200) ]
               { onChange = MaxPriceChanged
               , value = ToString.fromInt (model.maxPrice // 100)
               , min = "0"
@@ -108,7 +109,7 @@ controlBar model =
               , icon = checkmarkIcon
               , checked = model.notifyOnRestock
               , label = Input.labelLeft
-                    [Font.size 12]
+                    [ Font.size 12 ]
                     (Ui.text "Notify me when stock returns")
               }
         ]
@@ -133,11 +134,12 @@ checkmarkIcon checked =
         , Font.bold
         , Font.alignCenter
         ]
-        (Ui.text (if checked then
-            "✓"
+        (Ui.text
+            (if checked then
+                "✓"
 
-        else
-            ""))
+            else
+                ""))
 
 
 gridSection : List Product -> Element Msg
@@ -150,7 +152,7 @@ gridSection products =
     else
         Keyed.column
             [ Ui.spacing 16, Ui.width Ui.fill ]
-            [( "grid", productGrid products )]
+            [ ( "grid", productGrid products ) ]
 
 
 productGrid : List Product -> Element Msg
@@ -193,14 +195,14 @@ productCard p =
               { url = "/products/" ++ p.slug, label = Ui.text p.name }
         , Ui.paragraph
               [ Font.color Common.muted, Font.size 12 ]
-              [Ui.text p.description]
+              [ Ui.text p.description ]
         , Ui.row
-              [Ui.width Ui.fill]
+              [ Ui.width Ui.fill ]
               [ Ui.el
                     [ Font.color Common.brand, Font.bold, Font.size 16 ]
                     (Ui.text (formatMoney p.priceCents))
               , Ui.el
-                    [Ui.alignRight]
+                    [ Ui.alignRight ]
                     (Common.primaryButton (AddToCart p.id) "Add")
               ]
         ]

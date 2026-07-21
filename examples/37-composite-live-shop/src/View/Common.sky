@@ -105,7 +105,7 @@ sessionPill maybe =
 
         Just sess ->
             Ui.row
-                [Ui.spacing 8]
+                [ Ui.spacing 8 ]
                 [ Ui.el
                       [ Font.color (Ui.rgb 255 255 255), Font.size 12 ]
                       (Ui.text sess.email)
@@ -135,8 +135,8 @@ topNav model =
         , navLink HomePage "Shop"
         , navLink AnalyticsPage "Analytics"
         , navLink CartPage "Cart"
-        , Ui.el [Ui.alignRight] (cartPill (cartCount model.cart))
-        , Ui.el [Ui.alignRight] (sessionPill model.session)
+        , Ui.el [ Ui.alignRight ] (cartPill (cartCount model.cart))
+        , Ui.el [ Ui.alignRight ] (sessionPill model.session)
         ]
 
 
@@ -209,4 +209,7 @@ flashBanner text =
             , Ui.paddingXY 12 8
             , Ui.spacing 12
             ]
-            [Ui.el [ Font.color (Ui.rgb 30 80 30), Font.size 13 ] (Ui.text text)]
+            [ Ui.el
+                  [ Font.color (Ui.rgb 30 80 30), Font.size 13 ]
+                  (Ui.text text)
+            ]
