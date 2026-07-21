@@ -186,7 +186,12 @@ fn assemble_and_emit_with(
     // map keys straight off `check_ids`.
     let src_map: std::collections::HashMap<base::FileId, String> = check_ids
         .iter()
-        .map(|m| (base::FileId(m.index()), db.source_file(*m).text(&db).to_string()))
+        .map(|m| {
+            (
+                base::FileId(m.index()),
+                db.source_file(*m).text(&db).to_string(),
+            )
+        })
         .collect();
 
     // Halt on any app-module parse error BEFORE entry detection, typecheck,
@@ -615,7 +620,11 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            section = line.trim_matches(['[', ']']).trim().trim_matches('"').to_string();
+            section = line
+                .trim_matches(['[', ']'])
+                .trim()
+                .trim_matches('"')
+                .to_string();
             continue;
         }
         let Some((k, v)) = line.split_once('=') else {
@@ -727,7 +736,10 @@ fn inject_ffi_deps(
         if module_required(&existing, path) {
             continue;
         }
-        let spec = match oracle_mod.as_deref().and_then(|m| required_version(m, path)) {
+        let spec = match oracle_mod
+            .as_deref()
+            .and_then(|m| required_version(m, path))
+        {
             Some(v) => format!("{path}@{v}"),
             None => path.clone(),
         };
@@ -747,7 +759,9 @@ fn inject_ffi_deps(
 /// segment carries a dot (`github.com/…`, `gopkg.in/…`). Stdlib paths (`io`,
 /// `net/http`, `os`) never do.
 fn is_external_module(path: &str) -> bool {
-    path.split('/').next().is_some_and(|head| head.contains('.'))
+    path.split('/')
+        .next()
+        .is_some_and(|head| head.contains('.'))
 }
 
 /// Whether `go.mod` text already pins `path` in a require directive.
@@ -843,7 +857,10 @@ fn load_skydeps(
 ) -> Vec<(String, skydb::SourceFile)> {
     let mut out = Vec::new();
     let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
-        Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect(),
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir())
+            .collect(),
         Err(_) => return out,
     };
     pkgs.sort();
@@ -938,7 +955,11 @@ fn load_dir(
 
 fn module_name(parse: &syntax::Parse, path: &Path) -> String {
     let tree = parse.tree();
-    if let Some(n) = tree.module_header().and_then(|h| h.name()).map(|n| n.text()) {
+    if let Some(n) = tree
+        .module_header()
+        .and_then(|h| h.name())
+        .map(|n| n.text())
+    {
         if !n.is_empty() {
             return n;
         }

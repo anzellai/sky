@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 pub fn run(_args: &[String], root: &Path) -> i32 {
     let stdlib = load_dir(&root.join("sky-stdlib"), "sky-stdlib");
     if stdlib.is_empty() {
-        eprintln!("resolve: no stdlib modules found under {}/sky-stdlib", root.display());
+        eprintln!(
+            "resolve: no stdlib modules found under {}/sky-stdlib",
+            root.display()
+        );
         return 1;
     }
 
@@ -70,9 +73,7 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
 
     let total_a: usize = rows.iter().map(|r| r.class_a).sum();
     let total_b: usize = rows.iter().map(|r| r.class_b).sum();
-    println!(
-        "\nTOTALS: class-(a) genuine gaps = {total_a} | class-(b) FFI refs = {total_b}"
-    );
+    println!("\nTOTALS: class-(a) genuine gaps = {total_a} | class-(b) FFI refs = {total_b}");
     if total_a == 0 {
         println!("M2 GATE: PASS  (zero class-(a) unresolved names across the corpus)");
         0
@@ -138,12 +139,23 @@ fn qualified(b: &ClassB) -> String {
 
 fn print_table(rows: &[ExampleRow]) {
     let w = rows.iter().map(|r| r.name.len()).max().unwrap_or(7).max(7);
-    println!("{:<w$}  {:>7}  {:>8}  {:>8}", "EXAMPLE", "MODULES", "CLASS_A", "CLASS_B", w = w);
+    println!(
+        "{:<w$}  {:>7}  {:>8}  {:>8}",
+        "EXAMPLE",
+        "MODULES",
+        "CLASS_A",
+        "CLASS_B",
+        w = w
+    );
     println!("{}", "-".repeat(w + 30));
     for r in rows {
         println!(
             "{:<w$}  {:>7}  {:>8}  {:>8}",
-            r.name, r.modules, r.class_a, r.class_b, w = w
+            r.name,
+            r.modules,
+            r.class_a,
+            r.class_b,
+            w = w
         );
     }
 }
@@ -184,10 +196,16 @@ fn print_class_b(all: &BTreeSet<(String, String, String)>) {
         packages.len()
     );
     for pkg in &packages {
-        let examples: BTreeSet<&String> =
-            all.iter().filter(|(p, _, _)| &p == pkg).map(|(_, e, _)| e).collect();
-        let names: BTreeSet<&String> =
-            all.iter().filter(|(p, _, _)| &p == pkg).map(|(_, _, n)| n).collect();
+        let examples: BTreeSet<&String> = all
+            .iter()
+            .filter(|(p, _, _)| &p == pkg)
+            .map(|(_, e, _)| e)
+            .collect();
+        let names: BTreeSet<&String> = all
+            .iter()
+            .filter(|(p, _, _)| &p == pkg)
+            .map(|(_, _, n)| n)
+            .collect();
         let ex_list: Vec<&str> = examples.iter().map(|s| s.as_str()).collect();
         let name_list: Vec<&str> = names.iter().take(8).map(|s| s.as_str()).collect();
         let more = if names.len() > 8 {
@@ -225,7 +243,11 @@ fn load_dir(dir: &Path, root_marker: &str) -> Vec<(String, syntax::Parse)> {
 
 fn module_name(parse: &syntax::Parse, path: &Path, root_marker: &str) -> String {
     let tree = parse.tree();
-    if let Some(n) = tree.module_header().and_then(|h| h.name()).map(|n| n.text()) {
+    if let Some(n) = tree
+        .module_header()
+        .and_then(|h| h.name())
+        .map(|n| n.text())
+    {
         if !n.is_empty() {
             return n;
         }

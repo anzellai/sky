@@ -105,7 +105,9 @@ mod tests {
     fn tab_counts_as_four() {
         let src = "x =\n\ty";
         let p = ptoks(src);
-        let y = p.iter().find(|t| t.kind == SyntaxKind::LowerIdent && t.newline_before);
+        let y = p
+            .iter()
+            .find(|t| t.kind == SyntaxKind::LowerIdent && t.newline_before);
         assert_eq!(y.unwrap().col, 5); // 1 + 4
     }
 

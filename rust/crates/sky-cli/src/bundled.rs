@@ -78,7 +78,10 @@ pub fn ensure_built(
     materialise(src_dir, &app_dir, keep_entry)
         .map_err(|e| format!("sky {name}: could not materialise bundled source: {e}"))?;
 
-    println!("sky {name}: building bundled app (one-time per version, into {})...", app_dir.display());
+    println!(
+        "sky {name}: building bundled app (one-time per version, into {})...",
+        app_dir.display()
+    );
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
         example_dir: app_dir.clone(),
@@ -121,7 +124,11 @@ fn materialise(src_dir: &Path, app_dir: &Path, keep_entry: &str) -> std::io::Res
     }
     std::fs::create_dir_all(&dst_src)?;
 
-    let drop_entry = if keep_entry == ENTRY_LIVE { ENTRY_TUI } else { ENTRY_LIVE };
+    let drop_entry = if keep_entry == ENTRY_LIVE {
+        ENTRY_TUI
+    } else {
+        ENTRY_LIVE
+    };
     copy_src(&src_dir.join("src"), &dst_src, drop_entry)?;
 
     // Carry sky.toml (the `[live] port`, `[source]`, dep pins the build reads).

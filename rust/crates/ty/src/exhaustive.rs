@@ -157,7 +157,9 @@ fn check_case(
         out.push(diagnostics::Diagnostic {
             severity: diagnostics::Severity::Warning,
             code: diagnostics::Code("E3001".to_string()),
-            message: "This `case` does not cover all cases — literal patterns need a catch-all `_` arm".to_string(),
+            message:
+                "This `case` does not cover all cases — literal patterns need a catch-all `_` arm"
+                    .to_string(),
             labels: subject_label("this `case` is not exhaustive"),
             suggestion: None,
         });

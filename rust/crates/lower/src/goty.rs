@@ -210,7 +210,12 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
             // rule (field enumeration sorted before any order-dependent emission).
             let mut go_fields: Vec<(base::Name, GoTy)> = fields
                 .iter()
-                .map(|(n, ft)| (base::Name::new(&cap(n.as_str())), go_ty(ft, env, cur_mod, params)))
+                .map(|(n, ft)| {
+                    (
+                        base::Name::new(&cap(n.as_str())),
+                        go_ty(ft, env, cur_mod, params),
+                    )
+                })
                 .collect();
             go_fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
             GoTy::Struct(go_fields)
@@ -237,8 +242,7 @@ fn instantiate_structural(
     }
     let templates = env.record_templates.get(go_name)?;
     // field name → concrete inferred type
-    let concrete: HashMap<&str, &Ty> =
-        rec_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    let concrete: HashMap<&str, &Ty> = rec_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
     let mut bound: HashMap<Name, Ty> = HashMap::new();
     for (fname, tmpl) in templates {
         if let Some(ct) = concrete.get(fname.as_str()) {
@@ -358,7 +362,10 @@ fn app_to_go(
             // one (disambiguates a `Msg`/`Model` declared in several modules);
             // fall back to the flat map otherwise.
             let nominal = cur_mod
-                .and_then(|m| env.nominal_by_module.get(&(m.to_string(), bare.to_string())))
+                .and_then(|m| {
+                    env.nominal_by_module
+                        .get(&(m.to_string(), bare.to_string()))
+                })
                 .or_else(|| env.nominal.get(bare));
             if let Some(n) = nominal {
                 // Phantom opaque-handle types (`Route`/`Server`/`Cookie`):
@@ -378,10 +385,7 @@ fn app_to_go(
                 // the correct partial `Cfg_R[any]`. Guard on an exact arity
                 // match; a mismatch (shouldn't happen for a well-typed program)
                 // falls through to the erased bare name.
-                if n.kind == NominalKind::Record
-                    && n.type_arity > 0
-                    && n.type_arity == args.len()
-                {
+                if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == args.len() {
                     return GoTy::Named(n.go_name.clone(), args.iter().map(&go).collect());
                 }
                 // Other user nominal types stay NON-generic in the M4 runtime

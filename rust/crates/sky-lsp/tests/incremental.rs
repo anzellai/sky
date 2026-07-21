@@ -135,7 +135,10 @@ fn unrelated_edit_does_not_re_resolve_dependent() {
 #[test]
 fn same_revision_request_reuses_memo() {
     let (a, log) = engine();
-    let pos = Position { line: 6, character: 7 }; // `msg` in `    in msg`
+    let pos = Position {
+        line: 6,
+        character: 7,
+    }; // `msg` in `    in msg`
 
     // First request populates the resolve + world memos.
     let first = a.hover(&url("App"), pos);

@@ -208,7 +208,11 @@ impl LanguageServer for Backend {
         let p = params.text_document_position;
         let include_decl = params.context.include_declaration;
         let a = self.analysis.lock().await;
-        Ok(Some(a.references(&p.text_document.uri, p.position, include_decl)))
+        Ok(Some(a.references(
+            &p.text_document.uri,
+            p.position,
+            include_decl,
+        )))
     }
 
     async fn symbol(
@@ -278,10 +282,7 @@ impl LanguageServer for Backend {
         )))
     }
 
-    async fn signature_help(
-        &self,
-        params: SignatureHelpParams,
-    ) -> Result<Option<SignatureHelp>> {
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let p = params.text_document_position_params;
         let a = self.analysis.lock().await;
         Ok(a.signature_help(&p.text_document.uri, p.position))

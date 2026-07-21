@@ -122,8 +122,12 @@ pub struct PackageInfo {
 /// signature) and Go returns `scope.Names()` sorted, so those are left intact.
 pub fn normalize(info: &mut PackageInfo) {
     info.functions.sort_by(|a, b| {
-        (&a.name, &a.recv_type, &a.method_name, &a.is_field_set)
-            .cmp(&(&b.name, &b.recv_type, &b.method_name, &b.is_field_set))
+        (&a.name, &a.recv_type, &a.method_name, &a.is_field_set).cmp(&(
+            &b.name,
+            &b.recv_type,
+            &b.method_name,
+            &b.is_field_set,
+        ))
     });
     for vs in info.implements.values_mut() {
         vs.sort();
@@ -187,7 +191,11 @@ pub fn run_inspector(
             if !errs.is_empty() {
                 return Err(format!(
                     "inspector error for {}: {}",
-                    if info.pkg.is_empty() { "<pkg>" } else { &info.pkg },
+                    if info.pkg.is_empty() {
+                        "<pkg>"
+                    } else {
+                        &info.pkg
+                    },
                     errs.join("; ")
                 ));
             }
@@ -263,7 +271,8 @@ fn collect_tool_sources(src_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .into_owned();
-            let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            let bytes =
+                std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
             out.push((rel, bytes));
         }
     }
@@ -318,7 +327,8 @@ fn build_inspector(
     for (rel, bytes) in files {
         let dst = cache_root.join(rel);
         if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
         std::fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
     }

@@ -147,7 +147,12 @@ fn roundtrip(args: &[String]) -> i32 {
     }
 
     // ---- report ----
-    let name_w = results.iter().map(|r| r.rel.len()).max().unwrap_or(4).max(4);
+    let name_w = results
+        .iter()
+        .map(|r| r.rel.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     println!(
         "{:<width$}  {:>10}  {:>11}  {:>6}",
         "FILE",

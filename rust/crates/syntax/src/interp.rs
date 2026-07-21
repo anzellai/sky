@@ -29,7 +29,11 @@ pub(crate) fn multiline(p: &mut Parser) {
     let bytes = text.as_bytes();
     let n = bytes.len();
     let open = 3.min(n);
-    let close = if n >= 6 && text.ends_with("\"\"\"") { n - 3 } else { n };
+    let close = if n >= 6 && text.ends_with("\"\"\"") {
+        n - 3
+    } else {
+        n
+    };
 
     // opening `"""`
     if open > 0 {
@@ -68,7 +72,11 @@ pub(crate) fn multiline(p: &mut Parser) {
     }
 
     if chunk_start < close {
-        p.emit_slice(StringChunk, start + chunk_start as u32, start + close as u32);
+        p.emit_slice(
+            StringChunk,
+            start + chunk_start as u32,
+            start + close as u32,
+        );
     }
     if close < n {
         p.emit_slice(StringChunk, start + close as u32, end);
@@ -86,7 +94,13 @@ fn find_close(hay: &[u8]) -> Option<usize> {
     None
 }
 
-fn emit_interpolation(p: &mut Parser, open_at: u32, expr_start: u32, expr_end: u32, close_end: u32) {
+fn emit_interpolation(
+    p: &mut Parser,
+    open_at: u32,
+    expr_start: u32,
+    expr_end: u32,
+    close_end: u32,
+) {
     let m = p.start();
     p.emit_slice(InterpOpen, open_at, expr_start); // `{{`
     p.parse_interp_expr(expr_start, expr_end);

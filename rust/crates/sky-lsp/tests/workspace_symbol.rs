@@ -43,7 +43,9 @@ fn workspace_symbol_finds_update_across_two_modules() {
         updates.len(),
         2,
         "expected `update` from both Counter + Timer; got {:?}",
-        syms.iter().map(|s| (&s.name, s.location.uri.as_str())).collect::<Vec<_>>()
+        syms.iter()
+            .map(|s| (&s.name, s.location.uri.as_str()))
+            .collect::<Vec<_>>()
     );
 
     // Each points at its own file's declaration line.
@@ -73,13 +75,21 @@ fn workspace_symbol_subsequence_and_kinds() {
     // Subsequence match: `Mdl` matches `Model` (the type alias in Counter).
     let syms = a.workspace_symbol("Mdl");
     let model = syms.iter().find(|s| s.name == "Model");
-    assert!(model.is_some(), "subsequence `Mdl` should match `Model`; got {syms:?}");
-    assert_eq!(model.unwrap().kind, SymbolKind::STRUCT, "type alias → STRUCT");
+    assert!(
+        model.is_some(),
+        "subsequence `Mdl` should match `Model`; got {syms:?}"
+    );
+    assert_eq!(
+        model.unwrap().kind,
+        SymbolKind::STRUCT,
+        "type alias → STRUCT"
+    );
 
     // `reset` (Timer value) is reachable by name.
     let r = a.workspace_symbol("reset");
     assert!(
-        r.iter().any(|s| s.name == "reset" && s.location.uri == url("Timer")),
+        r.iter()
+            .any(|s| s.name == "reset" && s.location.uri == url("Timer")),
         "reset should be found in Timer.sky; got {r:?}"
     );
 }

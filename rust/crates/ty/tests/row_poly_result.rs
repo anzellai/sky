@@ -29,12 +29,17 @@ fn repo_root() -> PathBuf {
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
         if p.components().any(|c| {
-            matches!(c.as_os_str().to_str(), Some("sky-out") | Some(".skycache") | Some(".skydeps"))
+            matches!(
+                c.as_os_str().to_str(),
+                Some("sky-out") | Some(".skycache") | Some(".skydeps")
+            )
         }) {
             continue;
         }
@@ -51,7 +56,9 @@ fn type_errors(root: &Path, src: &str) -> usize {
     collect_sky(&root.join("sky-stdlib"), &mut files);
     let mut db = SourceDb::new();
     for path in files {
-        let Ok(s) = std::fs::read_to_string(&path) else { continue };
+        let Ok(s) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let parse = syntax::parse(&s, base::FileId(0));
         let name = parse
             .tree()

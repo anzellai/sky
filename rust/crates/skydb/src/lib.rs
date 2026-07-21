@@ -615,7 +615,11 @@ mod tests {
     #[test]
     fn one_input_one_parse_query_end_to_end() {
         let db = SkyDatabase::default();
-        let file = SourceFile::new(&db, 0, "module Main exposing (main)\n\nmain = 1\n".to_string());
+        let file = SourceFile::new(
+            &db,
+            0,
+            "module Main exposing (main)\n\nmain = 1\n".to_string(),
+        );
         // The tracked query returns a reference to the memoised value in 0.28.
         let p = parse(&db, file);
         assert_eq!(p.error_node_count(), 0);

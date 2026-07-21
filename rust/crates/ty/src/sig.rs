@@ -164,10 +164,7 @@ impl World {
                 if let ast::Decl::Alias(a) = &decl {
                     if let Some(name) = a.name().map(|t| t.text().to_string()) {
                         let params = decl_type_vars(a.syntax());
-                        let body = a
-                            .ty()
-                            .map(|t| ast_type_to_ty(&t))
-                            .unwrap_or(Ty::Error);
+                        let body = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
                         world.aliases.insert(name, AliasDef { params, body });
                     }
                 }
@@ -420,12 +417,7 @@ impl World {
     /// pass computed). A zero-param, unannotated def whose body infers a CLOSED
     /// record is admitted; everything else yields `None`. Shared by the bulk pass
     /// (eager full build) and the per-def salsa query (`record_result_scheme_for`).
-    fn admit_record_result(
-        &self,
-        db: &dyn SkyDb,
-        def: DefId,
-        body: &hir::Body,
-    ) -> Option<Scheme> {
+    fn admit_record_result(&self, db: &dyn SkyDb, def: DefId, body: &hir::Body) -> Option<Scheme> {
         use crate::infer::Infer;
         // Zero-param + unannotated (an annotated def already resolves to its full
         // record via `value_sigs`).
@@ -491,14 +483,29 @@ impl World {
             // audit #3 — List HOFs (unchanged).
             ("map", fun(fun(a(), b()), fun(list(a()), list(b())))),
             ("filter", fun(fun(a(), bool_()), fun(list(a()), list(a())))),
-            ("foldl", fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b())))),
-            ("foldr", fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b())))),
-            ("concatMap", fun(fun(a(), list(b())), fun(list(a()), list(b())))),
-            ("filterMap", fun(fun(a(), maybe(b())), fun(list(a()), list(b())))),
+            (
+                "foldl",
+                fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b()))),
+            ),
+            (
+                "foldr",
+                fun(fun(a(), fun(b(), b())), fun(b(), fun(list(a()), b()))),
+            ),
+            (
+                "concatMap",
+                fun(fun(a(), list(b())), fun(list(a()), list(b()))),
+            ),
+            (
+                "filterMap",
+                fun(fun(a(), maybe(b())), fun(list(a()), list(b()))),
+            ),
             ("find", fun(fun(a(), bool_()), fun(list(a()), maybe(a())))),
             ("any", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
             ("all", fun(fun(a(), bool_()), fun(list(a()), bool_()))),
-            ("indexedMap", fun(fun(int_(), fun(a(), b())), fun(list(a()), list(b())))),
+            (
+                "indexedMap",
+                fun(fun(int_(), fun(a(), b())), fun(list(a()), list(b()))),
+            ),
             // F8 — List core ops (element/type-precise, verified against List.sky).
             ("reverse", fun(list(a()), list(a()))),
             ("take", fun(int_(), fun(list(a()), list(a())))),
@@ -538,7 +545,10 @@ impl World {
         let maybe_specs: Vec<(&str, Ty)> = vec![
             ("withDefault", fun(a(), fun(maybe(a()), a()))),
             ("map", fun(fun(a(), b()), fun(maybe(a()), maybe(b())))),
-            ("andThen", fun(fun(a(), maybe(b())), fun(maybe(a()), maybe(b())))),
+            (
+                "andThen",
+                fun(fun(a(), maybe(b())), fun(maybe(a()), maybe(b()))),
+            ),
         ];
 
         for (pseudo, path, specs) in [
@@ -642,10 +652,10 @@ impl World {
         // depending on how the name resolved. Deliberately NOT value_sigs — the
         // lowerer must not treat an inferred scheme as a user annotation.
         for (def, pseudo, name, scheme) in inferred {
-            self.inferred_sigs.entry(def).or_insert_with(|| scheme.clone());
-            self.kernel_sigs
-                .entry((pseudo, name))
-                .or_insert(scheme);
+            self.inferred_sigs
+                .entry(def)
+                .or_insert_with(|| scheme.clone());
+            self.kernel_sigs.entry((pseudo, name)).or_insert(scheme);
         }
     }
 
@@ -793,12 +803,9 @@ fn record_ctor_scheme(record: &Ty) -> Scheme {
     // expands `R` to the record too), so a constructed value unifies with any
     // `R`-typed slot.
     if let Ty::Record(fields, _) = record {
-        let ty = fields
-            .iter()
-            .rev()
-            .fold(record.clone(), |acc, (_, ft)| {
-                Ty::Fun(Box::new(ft.clone()), Box::new(acc))
-            });
+        let ty = fields.iter().rev().fold(record.clone(), |acc, (_, ft)| {
+            Ty::Fun(Box::new(ft.clone()), Box::new(acc))
+        });
         Scheme::generalize(ty)
     } else {
         Scheme::generalize(record.clone())
@@ -808,17 +815,13 @@ fn record_ctor_scheme(record: &Ty) -> Scheme {
 fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
     match ty {
         Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| ty.clone()),
-        Ty::Fun(a, b) => Ty::Fun(
-            Box::new(substitute(a, sub)),
-            Box::new(substitute(b, sub)),
-        ),
-        Ty::App(n, args) => Ty::App(
-            n.clone(),
-            args.iter().map(|a| substitute(a, sub)).collect(),
-        ),
+        Ty::Fun(a, b) => Ty::Fun(Box::new(substitute(a, sub)), Box::new(substitute(b, sub))),
+        Ty::App(n, args) => Ty::App(n.clone(), args.iter().map(|a| substitute(a, sub)).collect()),
         Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| substitute(x, sub)).collect()),
         Ty::Record(fs, ext) => Ty::Record(
-            fs.iter().map(|(n, t)| (n.clone(), substitute(t, sub))).collect(),
+            fs.iter()
+                .map(|(n, t)| (n.clone(), substitute(t, sub)))
+                .collect(),
             ext.clone(),
         ),
         other => other.clone(),
@@ -961,7 +964,11 @@ fn topo_order(
     deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
     skip: &std::collections::HashSet<ModuleId>,
 ) -> Vec<ModuleId> {
-    let working: Vec<ModuleId> = nodes.iter().copied().filter(|m| !skip.contains(m)).collect();
+    let working: Vec<ModuleId> = nodes
+        .iter()
+        .copied()
+        .filter(|m| !skip.contains(m))
+        .collect();
     let working_set: std::collections::HashSet<ModuleId> = working.iter().copied().collect();
 
     // remaining in-degree = number of deps still inside the working set.
@@ -1055,7 +1062,10 @@ fn ast_type_to_ty_impl(t: &ast::Type, preserve_qual: bool) -> Ty {
         ),
         ast::Type::Qual(q) => {
             let (qual, name) = dotted_parts(q.syntax());
-            Ty::App(Name::new(&qual_name(preserve_qual, &qual, &name)), Vec::new())
+            Ty::App(
+                Name::new(&qual_name(preserve_qual, &qual, &name)),
+                Vec::new(),
+            )
         }
         ast::Type::App(app) => {
             let parts = child_types(app.syntax());
@@ -1067,9 +1077,10 @@ fn ast_type_to_ty_impl(t: &ast::Type, preserve_qual: bool) -> Ty {
                 .map(|x| ast_type_to_ty_impl(x, preserve_qual))
                 .collect();
             match head {
-                ast::Type::Con(c) => {
-                    Ty::App(Name::new(&first_upper(c.syntax()).unwrap_or_default()), args)
-                }
+                ast::Type::Con(c) => Ty::App(
+                    Name::new(&first_upper(c.syntax()).unwrap_or_default()),
+                    args,
+                ),
                 ast::Type::Qual(q) => {
                     let (qual, name) = dotted_parts(q.syntax());
                     Ty::App(Name::new(&qual_name(preserve_qual, &qual, &name)), args)
@@ -1136,7 +1147,10 @@ fn ast_type_to_ty_impl(t: &ast::Type, preserve_qual: bool) -> Ty {
 
 /// The argument types of a union variant (for the lowerer's ADT emission).
 pub fn variant_arg_types(variant_syntax: &SyntaxNode) -> Vec<Ty> {
-    child_types(variant_syntax).iter().map(ast_type_to_ty).collect()
+    child_types(variant_syntax)
+        .iter()
+        .map(ast_type_to_ty)
+        .collect()
 }
 
 /// Like [`variant_arg_types`] but preserves qualifiers on cross-module type
@@ -1155,7 +1169,8 @@ pub fn record_alias_fields(alias_syntax: &SyntaxNode) -> Vec<(String, Ty)> {
     // find the outermost record node (first node carrying TypeRecordField
     // children) and take ITS direct fields — avoids picking up nested records.
     let record = alias_syntax.descendants().find(|n| {
-        n.children().any(|c| c.kind() == SyntaxKind::TypeRecordField)
+        n.children()
+            .any(|c| c.kind() == SyntaxKind::TypeRecordField)
     });
     let mut out = Vec::new();
     if let Some(record) = record {

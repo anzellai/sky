@@ -258,7 +258,12 @@ impl Analysis {
     /// pass-3 inferred scheme, then the body-inferred result; `Res::Kernel` /
     /// `Res::Ctor` read their scheme; `Res::Local` reads the owning body's
     /// per-local table (doc 10 §"resolve at call head → infer signature").
-    fn ref_type_string(&self, typer: &Typer, resolved: &ResolveResult, o: &RefOcc) -> Option<String> {
+    fn ref_type_string(
+        &self,
+        typer: &Typer,
+        resolved: &ResolveResult,
+        o: &RefOcc,
+    ) -> Option<String> {
         match &o.res {
             Res::Def(d) => self.def_sig_string(typer, resolved, *d),
             Res::Kernel { module, func } => typer
@@ -434,7 +439,11 @@ impl Analysis {
         let ty = match &cand.res {
             Res::Local(l) => {
                 let body = resolved.bodies.get(&cand.owner)?;
-                typer.body_types_annotated(cand.owner, body).locals.get(l).cloned()
+                typer
+                    .body_types_annotated(cand.owner, body)
+                    .locals
+                    .get(l)
+                    .cloned()
             }
             Res::Def(d) => typer.value_sig(*d).map(|s| s.ty.clone()),
             _ => None,
@@ -509,7 +518,9 @@ impl Analysis {
         out.extend(resolved.diagnostics.iter().cloned());
         let checked = ty::check_modules(db, &[module]);
         out.extend(checked.diagnostics);
-        out.into_iter().map(|d| to_lsp_diag(&self.docs, text, &d)).collect()
+        out.into_iter()
+            .map(|d| to_lsp_diag(&self.docs, text, &d))
+            .collect()
     }
 
     // ---- references / rename target resolution -------------------------
@@ -659,7 +670,12 @@ impl Analysis {
     /// Every occurrence span of `target` across the workspace. Declarations are
     /// included iff `include_decl`. Deterministic order: (file, start) sorted,
     /// deduplicated (L4).
-    fn collect_occurrences(&self, db: &dyn SkyDb, target: &Target, include_decl: bool) -> Vec<Span> {
+    fn collect_occurrences(
+        &self,
+        db: &dyn SkyDb,
+        target: &Target,
+        include_decl: bool,
+    ) -> Vec<Span> {
         let mut out: Vec<Span> = Vec::new();
         match target {
             Target::Local { owner, local } => {
@@ -717,7 +733,11 @@ impl Analysis {
                     let m = ModuleId(mi as u32);
                     let r = db.resolve(m);
                     for o in &r.ref_occs {
-                        if let Res::Kernel { module: km, func: kf } = &o.res {
+                        if let Res::Kernel {
+                            module: km,
+                            func: kf,
+                        } = &o.res
+                        {
                             if km.as_str() == module && kf.as_str() == func {
                                 out.push(self.narrow_to_name(o.span));
                             }
@@ -1169,7 +1189,10 @@ impl Analysis {
         let end = position_at(text, text.len() as u32);
         Some(vec![TextEdit {
             range: Range {
-                start: Position { line: 0, character: 0 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
                 end,
             },
             new_text: formatted,
@@ -1254,7 +1277,8 @@ impl Analysis {
                 if e < lo || s > hi {
                     continue;
                 }
-                let Some(binder) = resolved.binders.iter().find(|bd| bd.span.range == (s, e)) else {
+                let Some(binder) = resolved.binders.iter().find(|bd| bd.span.range == (s, e))
+                else {
                     continue;
                 };
                 let Some(obody) = resolved.bodies.get(&binder.owner) else {
@@ -1379,7 +1403,10 @@ impl Analysis {
             .iter()
             .filter(|o| contains(o.span, head_off))
             .min_by_key(|o| span_len(o.span))?;
-        let name = self.slice(self.narrow_to_name(head_occ.span)).trim().to_string();
+        let name = self
+            .slice(self.narrow_to_name(head_occ.span))
+            .trim()
+            .to_string();
         let typer = Typer::new(db);
         let ty = self.ref_type_string(&typer, &resolved, head_occ)?;
 
@@ -1429,8 +1456,22 @@ fn is_valid_ident(name: &str, upper: bool) -> bool {
     }
     !matches!(
         name,
-        "module" | "import" | "exposing" | "as" | "type" | "alias" | "foreign" | "if" | "then"
-            | "else" | "case" | "of" | "let" | "in" | "True" | "False"
+        "module"
+            | "import"
+            | "exposing"
+            | "as"
+            | "type"
+            | "alias"
+            | "foreign"
+            | "if"
+            | "then"
+            | "else"
+            | "case"
+            | "of"
+            | "let"
+            | "in"
+            | "True"
+            | "False"
     )
 }
 
@@ -1538,7 +1579,9 @@ fn classify_token(
         LowerIdent | UpperIdent => {
             // A module qualifier (`M.`) is a namespace, not the thing after it.
             if t.kind() == UpperIdent
-                && next_significant(tokens, i).map(|n| n.kind() == Dot).unwrap_or(false)
+                && next_significant(tokens, i)
+                    .map(|n| n.kind() == Dot)
+                    .unwrap_or(false)
             {
                 return Some(TOK_NAMESPACE);
             }
@@ -1586,7 +1629,11 @@ fn def_span(db: &dyn SkyDb, resolved: &ResolveResult, this: ModuleId, d: DefId) 
         .map(|(_, s)| *s)
 }
 
-fn field_span(resolved: &ResolveResult, field: &str, recv_fields: Option<&[String]>) -> Option<Span> {
+fn field_span(
+    resolved: &ResolveResult,
+    field: &str,
+    recv_fields: Option<&[String]>,
+) -> Option<Span> {
     let cands: Vec<&hir::FieldDecl> = resolved
         .field_decls
         .iter()
@@ -1596,10 +1643,10 @@ fn field_span(resolved: &ResolveResult, field: &str, recv_fields: Option<&[Strin
         return None;
     }
     if let Some(rf) = recv_fields {
-        if let Some(f) = cands
-            .iter()
-            .find(|f| rf.iter().all(|n| f.siblings.iter().any(|s| s.as_str() == n)))
-        {
+        if let Some(f) = cands.iter().find(|f| {
+            rf.iter()
+                .all(|n| f.siblings.iter().any(|s| s.as_str() == n))
+        }) {
             return Some(f.span);
         }
     }
@@ -1649,7 +1696,10 @@ enum Cand<'a> {
     /// annotation `foo : T` name (recovered separately). Maps to the SAME
     /// `Target::Global(def)` a use site of the symbol resolves to, so
     /// hover/goto/references/rename all answer from the declaration too (bug (a)).
-    Def { def: DefId, span: Span },
+    Def {
+        def: DefId,
+        span: Span,
+    },
 }
 
 /// The smallest span containing `off` across the occurrence channels — smallest
@@ -1687,7 +1737,13 @@ fn best_candidate(resolved: &ResolveResult, off: u32) -> Option<Cand<'_>> {
         if contains(*span, off) {
             let len = span_len(*span);
             if best.as_ref().map(|(l, _)| len < *l).unwrap_or(true) {
-                best = Some((len, Cand::Def { def: *d, span: *span }));
+                best = Some((
+                    len,
+                    Cand::Def {
+                        def: *d,
+                        span: *span,
+                    },
+                ));
             }
         }
     }
@@ -1987,8 +2043,14 @@ fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnos
         .first()
         .map(|l| span_to_range(text, l.span))
         .unwrap_or(Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
         });
     let severity = match d.severity {
         diagnostics::Severity::Error => DiagnosticSeverity::ERROR,
@@ -2011,11 +2073,17 @@ fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnos
             })
         })
         .collect();
-    let related_information = if related.is_empty() { None } else { Some(related) };
+    let related_information = if related.is_empty() {
+        None
+    } else {
+        Some(related)
+    };
     Diagnostic {
         range,
         severity: Some(severity),
-        code: Some(tower_lsp::lsp_types::NumberOrString::String(d.code.0.clone())),
+        code: Some(tower_lsp::lsp_types::NumberOrString::String(
+            d.code.0.clone(),
+        )),
         message: d.message.clone(),
         source: Some("sky".to_string()),
         related_information,
@@ -2057,7 +2125,11 @@ fn split_qualified(before: &str) -> Option<(String, String)> {
 
 fn module_name(parse: &syntax::Parse, path: Option<&str>) -> String {
     let tree = parse.tree();
-    if let Some(n) = tree.module_header().and_then(|h| h.name()).map(|n| n.text()) {
+    if let Some(n) = tree
+        .module_header()
+        .and_then(|h| h.name())
+        .map(|n| n.text())
+    {
         if !n.is_empty() {
             return n;
         }
@@ -2075,7 +2147,10 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
     entries.sort();
     for path in entries {
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if matches!(name, "sky-out" | ".skycache" | ".skydeps" | "node_modules" | ".git") {
+        if matches!(
+            name,
+            "sky-out" | ".skycache" | ".skydeps" | "node_modules" | ".git"
+        ) {
             continue;
         }
         if path.is_dir() {

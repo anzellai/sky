@@ -17,9 +17,7 @@
 //! the whole file back to a lossless reprint when any comment would be lost, so
 //! no data is ever dropped (closing the oracle's `Format.hs:18` hole).
 
-use syntax::ast::{
-    AstNode, Decl, Expr, Import, Pattern, SourceFile, Type,
-};
+use syntax::ast::{AstNode, Decl, Expr, Import, Pattern, SourceFile, Type};
 use syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 const MAX: usize = 80;
@@ -72,7 +70,9 @@ impl Printer {
         }
         let mut comments = Vec::new();
         for elem in root.descendants_with_tokens() {
-            let Some(tok) = elem.into_token() else { continue };
+            let Some(tok) = elem.into_token() else {
+                continue;
+            };
             let k = tok.kind();
             if k != SyntaxKind::LineComment && k != SyntaxKind::BlockComment {
                 continue;
@@ -278,7 +278,11 @@ impl Printer {
             Decl::Foreign(f) => {
                 // No opinionated shape yet: reprint verbatim (safety net will
                 // fall the file back if this ever loses a comment).
-                (f.syntax().text().to_string().trim_end().to_string(), true, 1)
+                (
+                    f.syntax().text().to_string().trim_end().to_string(),
+                    true,
+                    1,
+                )
             }
         }
     }
@@ -308,7 +312,10 @@ impl Printer {
         let prefix = format!("import {name}{alias}");
         let exposing = match imp.exposing() {
             Some(e) if exposing_is_all(e.syntax()) => {
-                format!(" exposing{}", self.exposing_clause(width(&prefix) + 9, e.syntax()))
+                format!(
+                    " exposing{}",
+                    self.exposing_clause(width(&prefix) + 9, e.syntax())
+                )
             }
             Some(e) => {
                 let items = exposed_items(e.syntax());
@@ -327,11 +334,11 @@ impl Printer {
     // ---- declarations ----------------------------------------------------
 
     fn fmt_anno(&self, anno: &syntax::ast::TypeAnnoDecl) -> String {
-        let name = anno.name().map(|t| t.text().to_string()).unwrap_or_default();
-        let ty = anno
-            .ty()
-            .map(|t| self.fmt_type(0, &t))
+        let name = anno
+            .name()
+            .map(|t| t.text().to_string())
             .unwrap_or_default();
+        let ty = anno.ty().map(|t| self.fmt_type(0, &t)).unwrap_or_default();
         format!("{name} : {ty}")
     }
 
@@ -371,10 +378,7 @@ impl Printer {
         } else {
             format!(" {}", vars.join(" "))
         };
-        let body = a
-            .ty()
-            .map(|t| self.fmt_type(STEP, &t))
-            .unwrap_or_default();
+        let body = a.ty().map(|t| self.fmt_type(STEP, &t)).unwrap_or_default();
         format!("type alias {name}{vars_str} =\n{}{body}", indent(STEP))
     }
 
@@ -422,7 +426,11 @@ impl Printer {
             Type::Fun(f) => {
                 let parts = type_children(f.syntax());
                 if let [a, b] = parts.as_slice() {
-                    format!("{} -> {}", self.fmt_type_atom(col, a), self.fmt_type(col, b))
+                    format!(
+                        "{} -> {}",
+                        self.fmt_type_atom(col, a),
+                        self.fmt_type(col, b)
+                    )
                 } else {
                     self.fmt_type_atom(col, &u)
                 }
@@ -541,8 +549,10 @@ impl Printer {
                 }
             }
             Pattern::List(l) => {
-                let ps: Vec<String> =
-                    pattern_children(l.syntax()).iter().map(|x| self.fmt_pattern(x)).collect();
+                let ps: Vec<String> = pattern_children(l.syntax())
+                    .iter()
+                    .map(|x| self.fmt_pattern(x))
+                    .collect();
                 format!("[{}]", ps.join(", "))
             }
             Pattern::Cons(c) => {
@@ -554,8 +564,10 @@ impl Printer {
                 }
             }
             Pattern::Tuple(t) => {
-                let ps: Vec<String> =
-                    pattern_children(t.syntax()).iter().map(|x| self.fmt_pattern(x)).collect();
+                let ps: Vec<String> = pattern_children(t.syntax())
+                    .iter()
+                    .map(|x| self.fmt_pattern(x))
+                    .collect();
                 format!("( {} )", ps.join(", "))
             }
             Pattern::Record(r) => {
@@ -628,7 +640,9 @@ impl Printer {
                     None => "()".to_string(),
                 }
             }
-            Expr::List(l) => self.fmt_collection(col, "[ ", ", ", "]", "[]", expr_children(l.syntax())),
+            Expr::List(l) => {
+                self.fmt_collection(col, "[ ", ", ", "]", "[]", expr_children(l.syntax()))
+            }
             Expr::Tuple(t) => {
                 self.fmt_collection(col, "( ", ", ", ")", "()", expr_children(t.syntax()))
             }
@@ -685,7 +699,10 @@ impl Printer {
         let elem_col = col + 2;
         let mut pairs: Vec<(String, String)> = Vec::new();
         for (name_node, value) in &fields {
-            let line = line_of(&self.line_starts, usize::from(name_node.text_range().start()));
+            let line = line_of(
+                &self.line_starts,
+                usize::from(name_node.text_range().start()),
+            );
             let drained = self.drain_before(col, line);
             let name = name_node.text().to_string();
             let s = match value {
@@ -698,7 +715,11 @@ impl Printer {
         let items: Vec<&String> = pairs.iter().map(|(_, s)| s).collect();
         let one_line = format!(
             "{{ {} }}",
-            items.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         let fits = !any_drained
             && col + width(&one_line) <= MAX
@@ -716,7 +737,10 @@ impl Printer {
         let elem_col = col + 2;
         let mut pairs: Vec<(String, String)> = Vec::new();
         for (name_node, value) in &fields {
-            let line = line_of(&self.line_starts, usize::from(name_node.text_range().start()));
+            let line = line_of(
+                &self.line_starts,
+                usize::from(name_node.text_range().start()),
+            );
             let drained = self.drain_before(col, line);
             let name = name_node.text().to_string();
             let s = match value {
@@ -729,7 +753,11 @@ impl Printer {
         let items: Vec<&String> = pairs.iter().map(|(_, s)| s).collect();
         let one_line = format!(
             "{{ {base} | {} }}",
-            items.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         let fits = !any_drained && col + width(&one_line) <= MAX;
         if fits {
@@ -740,11 +768,7 @@ impl Printer {
         let mut out = if d0.is_empty() {
             format!("{open}{i0}")
         } else {
-            format!(
-                "{}{}{open}{i0}",
-                strip_leading_indent(col, d0),
-                indent(col)
-            )
+            format!("{}{}{open}{i0}", strip_leading_indent(col, d0), indent(col))
         };
         for (d, i) in &pairs[1..] {
             out.push_str(&format!("\n{d}{}, {i}", indent(col)));
@@ -935,7 +959,9 @@ impl Printer {
                 .first()
                 .map(|p| self.fmt_pattern(p))
                 .unwrap_or_default();
-            let body = expr_children(b).first().map(|e| self.fmt_expr(col + STEP, e));
+            let body = expr_children(b)
+                .first()
+                .map(|e| self.fmt_expr(col + STEP, e));
             return self.binding_body(col, &pat, body);
         }
         // Value binding: `name pat* = expr`.
@@ -950,7 +976,9 @@ impl Printer {
         } else {
             format!("{name} {params}")
         };
-        let body = expr_children(b).first().map(|e| self.fmt_expr(col + STEP, e));
+        let body = expr_children(b)
+            .first()
+            .map(|e| self.fmt_expr(col + STEP, e));
         self.binding_body(col, &lhs, body)
     }
 
@@ -1237,7 +1265,9 @@ fn exposed_items(node: &SyntaxNode) -> Vec<String> {
                     .find(|t| t.kind() == SyntaxKind::UpperIdent)
                     .map(|t| t.text().to_string())
                     .unwrap_or_default();
-                let ctor_list = n.children().find(|c| c.kind() == SyntaxKind::ExposedCtorList);
+                let ctor_list = n
+                    .children()
+                    .find(|c| c.kind() == SyntaxKind::ExposedCtorList);
                 match ctor_list {
                     None => Some(name),
                     Some(cl) => {
@@ -1279,10 +1309,7 @@ fn binding_is_anno(node: &SyntaxNode) -> bool {
     // `name : Type` — a Colon token and no `=`.
     let mut has_colon = false;
     let mut has_eq = false;
-    for t in node
-        .children_with_tokens()
-        .filter_map(|e| e.into_token())
-    {
+    for t in node.children_with_tokens().filter_map(|e| e.into_token()) {
         match t.kind() {
             SyntaxKind::Colon => has_colon = true,
             SyntaxKind::Eq => has_eq = true,

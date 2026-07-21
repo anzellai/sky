@@ -227,7 +227,11 @@ fn load_golden(root: &Path) -> std::io::Result<BTreeMap<String, usize>> {
 }
 
 /// Write the current counts as the new golden (sorted, one line per example).
-fn bless_golden(root: &Path, counts: &BTreeMap<String, Counts>, no_emit: &[(String, String)]) -> i32 {
+fn bless_golden(
+    root: &Path,
+    counts: &BTreeMap<String, Counts>,
+    no_emit: &[(String, String)],
+) -> i32 {
     let mut out = String::new();
     out.push_str(
         "# coerce-floor golden — emitted-Go runtime-narrowing token counts.\n\
@@ -253,7 +257,11 @@ fn bless_golden(root: &Path, counts: &BTreeMap<String, Counts>, no_emit: &[(Stri
                 println!(
                     "  ({} non-emitting example(s) omitted: {})",
                     no_emit.len(),
-                    no_emit.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+                    no_emit
+                        .iter()
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
             0
@@ -283,7 +291,14 @@ fn diff_and_gate(
         .max()
         .unwrap_or(8)
         .max(8);
-    println!("{:<w$}  {:>7}  {:>7}  {:>7}  STATUS", "EXAMPLE", "COUNT", "GOLDEN", "DELTA", w = w);
+    println!(
+        "{:<w$}  {:>7}  {:>7}  {:>7}  STATUS",
+        "EXAMPLE",
+        "COUNT",
+        "GOLDEN",
+        "DELTA",
+        w = w
+    );
     println!("{}", "-".repeat(w + 40));
 
     let mut increases: Vec<(String, usize, usize)> = Vec::new();
@@ -308,20 +323,32 @@ fn diff_and_gate(
                 };
                 println!(
                     "{:<w$}  {:>7}  {:>7}  {:>7}  {}",
-                    name, c.total, g, delta, tag, w = w
+                    name,
+                    c.total,
+                    g,
+                    delta,
+                    tag,
+                    w = w
                 );
             }
             None => {
                 missing_from_golden.push(name.clone());
                 println!(
                     "{:<w$}  {:>7}  {:>7}  {:>7}  NOT-IN-GOLDEN",
-                    name, c.total, "-", "-", w = w
+                    name,
+                    c.total,
+                    "-",
+                    "-",
+                    w = w
                 );
             }
         }
         if verbose && !c.per_family.is_empty() {
-            let fams: Vec<String> =
-                c.per_family.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            let fams: Vec<String> = c
+                .per_family
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
             println!("        {}", fams.join("  "));
         }
     }
@@ -362,7 +389,10 @@ fn diff_and_gate(
         println!("  hint: `cargo run -p xtask -- coerce-floor --bless`");
     }
     if !no_emit.is_empty() {
-        println!("\ncoerce-floor: {} example(s) did not emit (not gated):", no_emit.len());
+        println!(
+            "\ncoerce-floor: {} example(s) did not emit (not gated):",
+            no_emit.len()
+        );
         for (n, why) in no_emit {
             println!("  {n}: {why}");
         }
@@ -406,7 +436,11 @@ fn diff_and_gate(
             "\nCOERCE-FLOOR GATE: FAIL — {} golden entr(y/ies) have no emitting example \
              (removed/renamed example — re-bless): {}",
             golden_orphans.len(),
-            golden_orphans.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            golden_orphans
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -460,11 +494,23 @@ v := rt.AsInt(e) + rt.AsIntOrZero(f)
 u := rt.AsList[int](g); t := rt.AsListT[int](h)
 ";
         let c = count_tokens(src);
-        assert_eq!(c.per_family.get("Coerce").copied(), Some(1), "rt.Coerce only");
+        assert_eq!(
+            c.per_family.get("Coerce").copied(),
+            Some(1),
+            "rt.Coerce only"
+        );
         assert_eq!(c.per_family.get("CoerceString").copied(), Some(1));
-        assert_eq!(c.per_family.get("AsInt").copied(), Some(1), "AsInt != AsIntOrZero");
+        assert_eq!(
+            c.per_family.get("AsInt").copied(),
+            Some(1),
+            "AsInt != AsIntOrZero"
+        );
         assert_eq!(c.per_family.get("AsIntOrZero").copied(), Some(1));
-        assert_eq!(c.per_family.get("AsList").copied(), Some(1), "AsList != AsListT");
+        assert_eq!(
+            c.per_family.get("AsList").copied(),
+            Some(1),
+            "AsList != AsListT"
+        );
         assert_eq!(c.per_family.get("AsListT").copied(), Some(1));
         // rt.CoerceZ (untracked) and art.Coerce (embedded rt) contribute nothing.
         assert_eq!(c.total, 6);
@@ -486,11 +532,17 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         let mut counts = BTreeMap::new();
         counts.insert(
             "01-hello".to_string(),
-            Counts { total: 3, per_family: BTreeMap::new() },
+            Counts {
+                total: 3,
+                per_family: BTreeMap::new(),
+            },
         );
         counts.insert(
             "02-world".to_string(),
-            Counts { total: 0, per_family: BTreeMap::new() },
+            Counts {
+                total: 0,
+                per_family: BTreeMap::new(),
+            },
         );
         assert_eq!(bless_golden(&dir, &counts, &[]), 0);
         let loaded = load_golden(&dir).expect("golden readable");

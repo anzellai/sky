@@ -346,7 +346,10 @@ mod tests {
 
 [Main] Type mismatch — expected Int, found String
 ";
-        assert_eq!(rendered, expected, "\n--- got ---\n{rendered}\n--- want ---\n{expected}");
+        assert_eq!(
+            rendered, expected,
+            "\n--- got ---\n{rendered}\n--- want ---\n{expected}"
+        );
     }
 
     #[test]
@@ -373,7 +376,10 @@ mod tests {
 
         // No path in the map → bare `line:col` header.
         assert!(rendered.contains("-- TYPE MISMATCH "), "header: {rendered}");
-        assert!(rendered.contains(" 1:1"), "bare line:col header: {rendered}");
+        assert!(
+            rendered.contains(" 1:1"),
+            "bare line:col header: {rendered}"
+        );
         assert!(rendered.contains("primary message"));
         assert!(rendered.contains("also relevant here"));
         assert!(rendered.contains("Try: rename `b`"));

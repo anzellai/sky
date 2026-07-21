@@ -135,13 +135,20 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let only: Option<Vec<String>> = args
         .iter()
         .find_map(|a| a.strip_prefix("--only="))
-        .map(|s| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect());
+        .map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        });
     let shape_filter = args
         .iter()
         .position(|a| a == "--shape")
         .and_then(|i| args.get(i + 1))
         .and_then(|s| Shape::from_flag(s));
-    let do_verify = args.iter().any(|a| a == "--run" || a == "--oracle" || a == "--serve");
+    let do_verify = args
+        .iter()
+        .any(|a| a == "--run" || a == "--oracle" || a == "--serve");
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let all = args.iter().any(|a| a == "--all");
     // `--golden`: compare each CLI example's normalised stdout to its committed
@@ -276,7 +283,10 @@ fn whole_example_shape(src: &Path) -> Option<Shape> {
             blob.push('\n');
         }
     }
-    if blob.contains("Server.listen") || blob.contains("HttpServer.listen") || blob.contains("listenAndServe") {
+    if blob.contains("Server.listen")
+        || blob.contains("HttpServer.listen")
+        || blob.contains("listenAndServe")
+    {
         Some(Shape::Http)
     } else if blob.contains("Live.app") {
         Some(Shape::Live)
@@ -297,8 +307,12 @@ fn entry_source(src: &Path) -> Option<String> {
     files.sort();
     let mut fallback = None;
     for f in &files {
-        let Ok(s) = std::fs::read_to_string(f) else { continue };
-        let has_main = s.lines().any(|l| l.starts_with("main ") || l == "main" || l.starts_with("main="));
+        let Ok(s) = std::fs::read_to_string(f) else {
+            continue;
+        };
+        let has_main = s
+            .lines()
+            .any(|l| l.starts_with("main ") || l == "main" || l.starts_with("main="));
         if has_main {
             if f.file_name().and_then(|n| n.to_str()) == Some("Main.sky") {
                 return Some(s);
@@ -378,7 +392,10 @@ fn verify_one(
         blocker = first_go_error(&rep.go_build_stderr);
     }
     if verbose && !rep.go_build_ok && !rep.go_build_stderr.is_empty() {
-        eprintln!("  [{name}] go build stderr:\n{}", indent(&rep.go_build_stderr, 6));
+        eprintln!(
+            "  [{name}] go build stderr:\n{}",
+            indent(&rep.go_build_stderr, 6)
+        );
     }
 
     let mut run_ok = None;
@@ -387,7 +404,11 @@ fn verify_one(
     // Raw RUST stdout, captured whenever the inline CLI run fired (verify OR
     // golden/bless). The golden gate normalises + compares it. `run_ok` is set
     // here too, so a golden/bless-only run (no `--run`) still knows the binary ran.
-    let rust_stdout = if want_inline_run { rep.run_stdout.clone() } else { None };
+    let rust_stdout = if want_inline_run {
+        rep.run_stdout.clone()
+    } else {
+        None
+    };
     let mut oracle_stdout = None;
     if want_inline_run && !do_verify {
         run_ok = rep.run_ok;
@@ -544,7 +565,10 @@ fn verify_server(
     let rust_app = out_dir.join("app");
     let rust = serve_and_fetch(&rust_app, out_dir, port, shape, name);
     if verbose {
-        eprintln!("  [{name}] rust: started={} port={:?}", rust.started, rust.port);
+        eprintln!(
+            "  [{name}] rust: started={} port={:?}",
+            rust.started, rust.port
+        );
     }
     if !rust.started {
         return (false, None, truncate(&rust.note, 60));
@@ -557,14 +581,25 @@ fn verify_server(
     }
     let oracle = serve_and_fetch(&oracle_app, &dir.join("sky-out"), port, shape, name);
     if verbose {
-        eprintln!("  [{name}] oracle: started={} port={:?}", oracle.started, oracle.port);
+        eprintln!(
+            "  [{name}] oracle: started={} port={:?}",
+            oracle.started, oracle.port
+        );
     }
     if !oracle.started {
-        return (true, None, format!("oracle failed: {}", truncate(&oracle.note, 40)));
+        return (
+            true,
+            None,
+            format!("oracle failed: {}", truncate(&oracle.note, 40)),
+        );
     }
 
     let m = normalise_html(&rust.body) == normalise_html(&oracle.body);
-    let note = if m { String::new() } else { "page != oracle".into() };
+    let note = if m {
+        String::new()
+    } else {
+        "page != oracle".into()
+    };
     (true, Some(m), note)
 }
 
@@ -601,7 +636,12 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape, name: &str
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            return ServerRun { started: false, port: None, body: String::new(), note: format!("spawn: {e}") }
+            return ServerRun {
+                started: false,
+                port: None,
+                body: String::new(),
+                note: format!("spawn: {e}"),
+            }
         }
     };
 
@@ -670,13 +710,20 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape, name: &str
     let note = if started {
         String::new()
     } else {
-        let stderr = erx.recv_timeout(Duration::from_millis(500)).unwrap_or_default();
+        let stderr = erx
+            .recv_timeout(Duration::from_millis(500))
+            .unwrap_or_default();
         panic_reason(&stderr).unwrap_or_else(|| match port {
             Some(p) => format!("no response on :{p}"),
             None => "server exited on start".into(),
         })
     };
-    ServerRun { started, port, body, note }
+    ServerRun {
+        started,
+        port,
+        body,
+        note,
+    }
 }
 
 /// Extra runtime env a specific example needs to boot. Empty for every example
@@ -721,7 +768,10 @@ fn free_port() -> Option<u16> {
 /// Parse the trailing `:<digits>` of a "listening on …:PORT" line.
 fn last_colon_number(s: &str) -> Option<u16> {
     let idx = s.rfind(':')?;
-    let digits: String = s[idx + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = s[idx + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
@@ -791,7 +841,9 @@ fn verify_tui(out_dir: &Path, _name: &str) -> (bool, String) {
 
 /// Extract a short reason from a Sky runtime panic line, if present.
 fn panic_reason(stderr: &str) -> Option<String> {
-    let line = stderr.lines().find(|l| l.contains("Sky panic:") || l.contains("panicKind="))?;
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("Sky panic:") || l.contains("panicKind="))?;
     // prefer the `panicKind=<Kind>` token; else the text after "Sky panic:".
     if let Some(pos) = line.find("panicKind=") {
         let kind: String = line[pos + "panicKind=".len()..]
@@ -1133,7 +1185,10 @@ fn truncate(s: &str, n: usize) -> String {
 
 fn indent(s: &str, n: usize) -> String {
     let pad = " ".repeat(n);
-    s.lines().map(|l| format!("{pad}{l}")).collect::<Vec<_>>().join("\n")
+    s.lines()
+        .map(|l| format!("{pad}{l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -1164,13 +1219,24 @@ fn print_table(rows: &[Row]) {
     let w = rows.iter().map(|r| r.name.len()).max().unwrap_or(8).max(8);
     println!(
         "{:<w$}  {:>7}  {:>7}  {:>5}  {:>8}  {:>6}  BLOCKER",
-        "EXAMPLE", "SHAPE", "EMITTED", "BUILD", "RUN", "MATCH",
+        "EXAMPLE",
+        "SHAPE",
+        "EMITTED",
+        "BUILD",
+        "RUN",
+        "MATCH",
         w = w
     );
     println!("{}", "-".repeat(w + 60));
     let (mut nb, mut nr, mut nm, mut denom, mut mdenom) = (0, 0, 0, 0, 0);
     for r in rows {
-        let build = if r.build_ok { "ok" } else if r.emitted { "FAIL" } else { "-" };
+        let build = if r.build_ok {
+            "ok"
+        } else if r.emitted {
+            "FAIL"
+        } else {
+            "-"
+        };
         if r.build_ok {
             nb += 1;
         }
@@ -1180,7 +1246,11 @@ fn print_table(rows: &[Row]) {
         let run = match r.run_ok {
             Some(true) => {
                 nr += 1;
-                if r.run_kind == "no-panic" { "no-panic" } else { "ok" }
+                if r.run_kind == "no-panic" {
+                    "no-panic"
+                } else {
+                    "ok"
+                }
             }
             Some(false) => "FAIL",
             None => "-",
@@ -1580,7 +1650,10 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
             }
         };
         if cap1 != oracle {
-            refused_mismatch.push((name.to_string(), "rust_normalized != oracle_normalized".into()));
+            refused_mismatch.push((
+                name.to_string(),
+                "rust_normalized != oracle_normalized".into(),
+            ));
             continue;
         }
         // machine-specific leak guard.
@@ -1621,13 +1694,22 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
         println!("  written: {}", written.join(", "));
     }
     if !skipped_no_oracle.is_empty() {
-        println!("  skipped (no oracle binary — build it to verify): {}", skipped_no_oracle.join(", "));
+        println!(
+            "  skipped (no oracle binary — build it to verify): {}",
+            skipped_no_oracle.join(", ")
+        );
     }
     if !skipped_no_run.is_empty() {
-        println!("  skipped (rust did not build+run): {}", skipped_no_run.join(", "));
+        println!(
+            "  skipped (rust did not build+run): {}",
+            skipped_no_run.join(", ")
+        );
     }
     if !refused_nondet.is_empty() {
-        eprintln!("  refused (rust output nondeterministic across two captures): {}", refused_nondet.join(", "));
+        eprintln!(
+            "  refused (rust output nondeterministic across two captures): {}",
+            refused_nondet.join(", ")
+        );
     }
     if !refused_leak.is_empty() {
         for (n, m) in &refused_leak {
@@ -1668,7 +1750,9 @@ fn is_native_link_failure(blocker: &str) -> bool {
         || blocker.contains("clang: error")
         || blocker.contains("clang++: error")
         || blocker.contains("ld: ");
-    let go_level = blocker.contains(".go:") || blocker.contains("undefined:") || blocker.contains("cannot use");
+    let go_level = blocker.contains(".go:")
+        || blocker.contains("undefined:")
+        || blocker.contains("cannot use");
     native && !go_level
 }
 
@@ -1707,7 +1791,10 @@ mod golden_gate_tests {
         std::fs::write(golden_file(&root, "99-fixture"), format!("{normalised}\n")).unwrap();
         let (has, status) = golden_status(&root, &row);
         assert!(has, "golden file present");
-        assert!(matches!(status, GoldenStatus::Match), "matching golden → Match");
+        assert!(
+            matches!(status, GoldenStatus::Match),
+            "matching golden → Match"
+        );
 
         // mutate one byte of the golden → Mismatch (the teeth).
         let mut mutated: Vec<u8> = normalised.into_bytes();
@@ -1720,13 +1807,19 @@ mod golden_gate_tests {
         })
         .unwrap();
         let (_, status2) = golden_status(&root, &row);
-        assert!(matches!(status2, GoldenStatus::Mismatch), "mutated golden → Mismatch");
+        assert!(
+            matches!(status2, GoldenStatus::Mismatch),
+            "mutated golden → Mismatch"
+        );
 
         // no golden file → Missing.
         let _ = std::fs::remove_file(golden_file(&root, "99-fixture"));
         let (has3, status3) = golden_status(&root, &row);
         assert!(!has3);
-        assert!(matches!(status3, GoldenStatus::Missing), "absent golden → Missing");
+        assert!(
+            matches!(status3, GoldenStatus::Missing),
+            "absent golden → Missing"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

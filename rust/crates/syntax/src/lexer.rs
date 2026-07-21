@@ -275,13 +275,12 @@ mod tests {
     #[test]
     fn keywords_and_idents() {
         use SyntaxKind::*;
-        assert_eq!(
-            kinds("module Main"),
-            vec![ModuleKw, Whitespace, UpperIdent]
-        );
+        assert_eq!(kinds("module Main"), vec![ModuleKw, Whitespace, UpperIdent]);
         assert_eq!(kinds("let in case of"), {
             use SyntaxKind::*;
-            vec![LetKw, Whitespace, InKw, Whitespace, CaseKw, Whitespace, OfKw]
+            vec![
+                LetKw, Whitespace, InKw, Whitespace, CaseKw, Whitespace, OfKw,
+            ]
         });
     }
 
@@ -289,8 +288,14 @@ mod tests {
     fn operators_maximal_munch() {
         use SyntaxKind::*;
         assert_eq!(kinds("a<|b"), vec![LowerIdent, Op, LowerIdent]);
-        assert_eq!(kinds("x :: xs"), vec![LowerIdent, Whitespace, Colon2, Whitespace, LowerIdent]);
-        assert_eq!(kinds("a -> b"), vec![LowerIdent, Whitespace, Arrow, Whitespace, LowerIdent]);
+        assert_eq!(
+            kinds("x :: xs"),
+            vec![LowerIdent, Whitespace, Colon2, Whitespace, LowerIdent]
+        );
+        assert_eq!(
+            kinds("a -> b"),
+            vec![LowerIdent, Whitespace, Arrow, Whitespace, LowerIdent]
+        );
         assert_eq!(kinds(".."), vec![DotDot]);
         assert_eq!(kinds("xs.field"), vec![LowerIdent, Dot, LowerIdent]);
     }

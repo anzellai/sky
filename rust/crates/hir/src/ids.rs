@@ -3,8 +3,8 @@
 //! `DefId` space plus an exhaustive resolution enum (L6). `Res::Error` is a
 //! first-class recovery value (L7) — never a silent `VarLocal` fall-through.
 
-use base::{DefId, ModuleId, Name};
 use base::Interner;
+use base::{DefId, ModuleId, Name};
 
 /// What a `DefId` names. Part of the interner key so a value and a type of the
 /// same name in the same module get distinct ids (doc 05 §2).

@@ -20,11 +20,10 @@ mod infer;
 mod sig;
 mod unify;
 
-pub use check::{check_modules, BodyTypes, CheckOutput, DefType, Typer, TypeErrorKind};
+pub use check::{check_modules, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer};
 pub use db::{compute_body_types, TyDb};
 pub use sig::{
-    record_alias_fields, update_base_defs, variant_arg_types, variant_arg_types_qualified,
-    World,
+    record_alias_fields, update_base_defs, variant_arg_types, variant_arg_types_qualified, World,
 };
 pub use unify::{SuperType, UnionFind};
 
@@ -159,7 +158,10 @@ pub struct Scheme {
 impl Scheme {
     /// A monomorphic scheme (no quantifiers).
     pub fn mono(ty: Ty) -> Self {
-        Scheme { vars: Vec::new(), ty }
+        Scheme {
+            vars: Vec::new(),
+            ty,
+        }
     }
 
     /// Generalise a type over its free vars (except `"any"`).
@@ -201,7 +203,11 @@ mod tests {
             Box::new(Ty::var("a")),
             Box::new(Ty::app("List", vec![Ty::var("b"), Ty::var("a")])),
         );
-        let fvs: Vec<String> = t.free_vars().iter().map(|n| n.as_str().to_string()).collect();
+        let fvs: Vec<String> = t
+            .free_vars()
+            .iter()
+            .map(|n| n.as_str().to_string())
+            .collect();
         assert_eq!(fvs, vec!["a", "b"]);
     }
 

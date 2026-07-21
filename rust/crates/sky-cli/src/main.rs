@@ -156,7 +156,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         println!("No errors found.");
     } else {
         println!("Compilation successful");
-        println!("Build complete: {}/app", project_dir.join(&out_dir_name).display());
+        println!(
+            "Build complete: {}/app",
+            project_dir.join(&out_dir_name).display()
+        );
     }
     ExitCode::SUCCESS
 }
@@ -239,7 +242,11 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
         }
         let out = format_source(&src);
         if check {
-            return if out == src { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+            return if out == src {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
         }
         print!("{out}");
         return ExitCode::SUCCESS;
@@ -318,7 +325,11 @@ fn cmd_test(args: &[String]) -> ExitCode {
 /// stdin/stdout/stderr.
 fn cmd_lsp(args: &[String]) -> ExitCode {
     let bin = match std::env::current_exe() {
-        Ok(exe) => exe.with_file_name(if cfg!(windows) { "sky-lsp.exe" } else { "sky-lsp" }),
+        Ok(exe) => exe.with_file_name(if cfg!(windows) {
+            "sky-lsp.exe"
+        } else {
+            "sky-lsp"
+        }),
         Err(e) => {
             eprintln!("sky lsp: cannot locate executable dir: {e}");
             return ExitCode::FAILURE;
@@ -523,7 +534,12 @@ fn cmd_doc_serve(port: u16) -> ExitCode {
         return bundled_missing("doc");
     };
     let out_dir = match bundled::ensure_built(
-        &repo_root, &src_dir, "doc", "live", bundled::ENTRY_LIVE, &version_slug(),
+        &repo_root,
+        &src_dir,
+        "doc",
+        "live",
+        bundled::ENTRY_LIVE,
+        &version_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -540,7 +556,10 @@ fn cmd_doc_serve(port: u16) -> ExitCode {
         &out_dir,
         &[
             ("SKY_LIVE_PORT".to_string(), port.to_string()),
-            ("SKY_DOC_DIR".to_string(), doc_out.to_string_lossy().into_owned()),
+            (
+                "SKY_DOC_DIR".to_string(),
+                doc_out.to_string_lossy().into_owned(),
+            ),
         ],
     )
 }
@@ -564,7 +583,12 @@ fn cmd_doc_tui() -> ExitCode {
         return bundled_missing("doc");
     };
     let out_dir = match bundled::ensure_built(
-        &repo_root, &src_dir, "doc", "tui", bundled::ENTRY_TUI, &version_slug(),
+        &repo_root,
+        &src_dir,
+        "doc",
+        "tui",
+        bundled::ENTRY_TUI,
+        &version_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -576,7 +600,10 @@ fn cmd_doc_tui() -> ExitCode {
     println!("sky doc: starting terminal browser (Ctrl-C to exit)...");
     spawn_foreground(
         &out_dir,
-        &[("SKY_DOC_DIR".to_string(), doc_out.to_string_lossy().into_owned())],
+        &[(
+            "SKY_DOC_DIR".to_string(),
+            doc_out.to_string_lossy().into_owned(),
+        )],
     )
 }
 
@@ -604,7 +631,12 @@ fn cmd_console(args: &[String]) -> ExitCode {
         ("live", bundled::ENTRY_LIVE)
     };
     let out_dir = match bundled::ensure_built(
-        &repo_root, &src_dir, "console", variant, entry, &version_slug(),
+        &repo_root,
+        &src_dir,
+        "console",
+        variant,
+        entry,
+        &version_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -617,13 +649,8 @@ fn cmd_console(args: &[String]) -> ExitCode {
         println!("sky console: starting terminal console (Ctrl-C to exit)...");
         spawn_foreground(&out_dir, &[])
     } else {
-        println!(
-            "sky console: serving on http://127.0.0.1:{port} (Ctrl-C to stop)"
-        );
-        spawn_foreground(
-            &out_dir,
-            &[("SKY_LIVE_PORT".to_string(), port.to_string())],
-        )
+        println!("sky console: serving on http://127.0.0.1:{port} (Ctrl-C to stop)");
+        spawn_foreground(&out_dir, &[("SKY_LIVE_PORT".to_string(), port.to_string())])
     }
 }
 
@@ -660,7 +687,12 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let runtime_go = repo_root.join("runtime-go");
-    if !runtime_go.join("cmd").join("sky-hub").join("main.go").is_file() {
+    if !runtime_go
+        .join("cmd")
+        .join("sky-hub")
+        .join("main.go")
+        .is_file()
+    {
         eprintln!(
             "sky console-serve: runtime-go/cmd/sky-hub not found under {}.\n\
              The hub source is embedded in the binary and extracted on first use;\n\
@@ -709,9 +741,12 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     }
 
     let mut child_args: Vec<String> = vec![
-        "--port".to_string(), port.to_string(),
-        "--data-dir".to_string(), data_dir,
-        "--auth".to_string(), auth,
+        "--port".to_string(),
+        port.to_string(),
+        "--data-dir".to_string(),
+        data_dir,
+        "--auth".to_string(),
+        auth,
     ];
     if let (Some(c), Some(k)) = (tls_cert, tls_key) {
         child_args.extend(["--tls-cert".to_string(), c, "--tls-key".to_string(), k]);
@@ -769,7 +804,13 @@ fn version_slug() -> String {
     version_string()
         .trim_start_matches("sky ")
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -896,7 +937,10 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     // Watched roots: the entry's directory, the project's tests/ (if present),
     // and the project root (to catch sky.toml). notify watches recursively; the
     // event filter prunes generated dirs + non-source files.
-    let entry_dir = file.parent().map(Path::to_path_buf).unwrap_or_else(|| project_dir.clone());
+    let entry_dir = file
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_dir.clone());
     let mut roots: Vec<PathBuf> = vec![entry_dir.clone()];
     let tests_dir = project_dir.join("tests");
     if tests_dir.is_dir() {
@@ -934,7 +978,10 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         }
     }
 
-    println!("[watch] watching {} for changes (Ctrl-C to stop)", entry_dir.display());
+    println!(
+        "[watch] watching {} for changes (Ctrl-C to stop)",
+        entry_dir.display()
+    );
     let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run);
 
     // Debounce loop: coalesce a burst of save events, rebuild once.
@@ -992,7 +1039,10 @@ fn watch_build_and_spawn(
         eprintln!("[watch] warning: {w}");
     }
     if !report.emitted {
-        eprintln!("[watch] build failed: {} (keeping previous binary)", report.note);
+        eprintln!(
+            "[watch] build failed: {} (keeping previous binary)",
+            report.note
+        );
         return None;
     }
     if !report.go_build_ok {
@@ -1022,8 +1072,14 @@ fn is_watched_change(path: &Path) -> bool {
     let excluded = path.components().any(|c| {
         matches!(
             c.as_os_str().to_str(),
-            Some("sky-out") | Some("sky-out-rust") | Some(".skycache") | Some(".skydeps")
-                | Some("dist-newstyle") | Some(".git") | Some("node_modules") | Some(".vscode")
+            Some("sky-out")
+                | Some("sky-out-rust")
+                | Some(".skycache")
+                | Some(".skydeps")
+                | Some("dist-newstyle")
+                | Some(".git")
+                | Some("node_modules")
+                | Some(".vscode")
                 | Some(".idea")
         )
     });
@@ -1185,16 +1241,27 @@ fn cmd_doctor(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let count = |s: Severity| findings.iter().filter(|f| f.severity == s).count();
-    let (n_err, n_warn, n_info) = (count(Severity::Error), count(Severity::Warn), count(Severity::Info));
+    let (n_err, n_warn, n_info) = (
+        count(Severity::Error),
+        count(Severity::Warn),
+        count(Severity::Info),
+    );
     let parts: Vec<String> = [(n_err, "errors"), (n_warn, "warnings"), (n_info, "info")]
         .iter()
         .filter(|(n, _)| *n > 0)
         .map(|(n, label)| format!("{n} {label}"))
         .collect();
-    let issues = if parts.is_empty() { "no issues".to_string() } else { parts.join(", ") };
+    let issues = if parts.is_empty() {
+        "no issues".to_string()
+    } else {
+        parts.join(", ")
+    };
     if do_fix {
         let n = applied.len();
-        println!("{issues}; applied {n} auto-fix{}.", if n == 1 { "" } else { "es" });
+        println!(
+            "{issues}; applied {n} auto-fix{}.",
+            if n == 1 { "" } else { "es" }
+        );
     } else {
         println!("{issues} — run with --fix to auto-apply safe remediations.");
     }
@@ -1235,7 +1302,8 @@ fn check_sky_toml(root: &Path) -> Vec<Finding> {
             check: "sky-toml-unreadable",
             severity: Severity::Error,
             message: format!("sky.toml could not be read: {e}"),
-            hint: "ensure file permissions allow reading; recreate from `sky init` if corrupt".into(),
+            hint: "ensure file permissions allow reading; recreate from `sky init` if corrupt"
+                .into(),
             fix: None,
         }],
         Ok(m) if m.len() == 0 => vec![Finding {
@@ -1295,7 +1363,10 @@ fn check_go_toolchain() -> Vec<Finding> {
             severity: Severity::Warn,
             message: format!(
                 "`go version` failed: {}",
-                String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("")
+                String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
             ),
             hint: "check `go` is installed + on PATH".into(),
             fix: None,
@@ -1379,7 +1450,9 @@ fn check_missing_ffi(root: &Path) -> Vec<Finding> {
     let mut files = Vec::new();
     collect_sky_files(&src, &mut files);
     for f in &files {
-        let Ok(c) = std::fs::read_to_string(f) else { continue };
+        let Ok(c) = std::fs::read_to_string(f) else {
+            continue;
+        };
         for line in c.lines() {
             let mut it = line.split_whitespace();
             if it.next() == Some("import") {
@@ -1397,7 +1470,10 @@ fn check_missing_ffi(root: &Path) -> Vec<Finding> {
     let ffi_cache = root.join(".skycache").join("ffi");
     let cached: Vec<String> = if ffi_cache.is_dir() {
         std::fs::read_dir(&ffi_cache)
-            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned())).collect())
+            .map(|rd| {
+                rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+                    .collect()
+            })
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -1460,19 +1536,17 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
             Ok(()) => format!("✓ deleted {}", dir.display()),
             Err(e) => format!("✗ {check}: fix failed — {e}"),
         },
-        Fix::Install => {
-            match assets_root_for(root) {
-                Some(repo_root) => {
-                    let r = project::ffi_install(root, &repo_root);
-                    if r.ok {
-                        format!("✓ {check}: ran `sky install`")
-                    } else {
-                        format!("✗ {check}: `sky install` reported problems")
-                    }
+        Fix::Install => match assets_root_for(root) {
+            Some(repo_root) => {
+                let r = project::ffi_install(root, &repo_root);
+                if r.ok {
+                    format!("✓ {check}: ran `sky install`")
+                } else {
+                    format!("✗ {check}: `sky install` reported problems")
                 }
-                None => format!("✗ {check}: could not resolve assets to run `sky install`"),
             }
-        }
+            None => format!("✗ {check}: could not resolve assets to run `sky install`"),
+        },
     }
 }
 
@@ -1584,7 +1658,11 @@ fn cmd_verify(args: &[String]) -> ExitCode {
 
     let mut failures = 0usize;
     for dir in &targets {
-        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string();
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
         let Some(repo_root) = assets_root_for(dir) else {
             println!("  FAIL assets: {name}");
             failures += 1;
@@ -1617,7 +1695,14 @@ fn cmd_verify(args: &[String]) -> ExitCode {
         // Run (bounded).
         let out_dir = dir.join(&out_dir_name);
         match run_verify_target(&name, dir, &out_dir) {
-            Ok(note) => println!("  ok: {name}{}", if note.is_empty() { String::new() } else { format!(" ({note})") }),
+            Ok(note) => println!(
+                "  ok: {name}{}",
+                if note.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({note})")
+                }
+            ),
             Err(reason) => {
                 println!("  FAIL run: {name} ({reason})");
                 failures += 1;
@@ -1655,7 +1740,9 @@ fn resolve_verify_targets(cwd: &Path, target: Option<&str>) -> Result<Vec<PathBu
         if ex.join("sky.toml").is_file() {
             return Ok(vec![ex]);
         }
-        return Err(format!("target `{t}` is not a project dir or a known example"));
+        return Err(format!(
+            "target `{t}` is not a project dir or a known example"
+        ));
     }
     // No target: all examples if examples/ exists, else the cwd project.
     if examples.is_dir() {
@@ -1839,7 +1926,11 @@ fn run_process_bounded(app: &Path, cwd: &Path, shape: Shape) -> Result<String, S
     };
     let out_rx = spawn_drain(child.stdout.take());
     let err_rx = spawn_drain(child.stderr.take());
-    let timeout = if shape == Shape::Cli { Duration::from_secs(60) } else { Duration::from_secs(3) };
+    let timeout = if shape == Shape::Cli {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(3)
+    };
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
@@ -1908,7 +1999,9 @@ fn collect_drains(rxs: &[std::sync::mpsc::Receiver<String>]) -> String {
 
 /// Extract a short reason from a Sky runtime panic line, if present.
 fn panic_reason(s: &str) -> Option<String> {
-    let line = s.lines().find(|l| l.contains("panic:") || l.contains("panicKind="))?;
+    let line = s
+        .lines()
+        .find(|l| l.contains("panic:") || l.contains("panicKind="))?;
     if let Some(pos) = line.find("panicKind=") {
         let kind: String = line[pos + "panicKind=".len()..]
             .chars()
@@ -1917,7 +2010,10 @@ fn panic_reason(s: &str) -> Option<String> {
         return Some(format!("panic: {kind}"));
     }
     let after = line.split("panic:").nth(1).unwrap_or(line).trim();
-    Some(format!("panic: {}", after.chars().take(60).collect::<String>()))
+    Some(format!(
+        "panic: {}",
+        after.chars().take(60).collect::<String>()
+    ))
 }
 
 /// A free TCP port on loopback (bind :0, read the assigned port, drop).
@@ -1988,7 +2084,9 @@ fn toml_entry(root: &Path) -> Option<String> {
 }
 
 fn collect_sky_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -2006,7 +2104,9 @@ fn file_mtime(p: &Path) -> Option<std::time::SystemTime> {
 fn newest_mtime(dir: &Path) -> Option<std::time::SystemTime> {
     let mut newest: Option<std::time::SystemTime> = None;
     fn walk(dir: &Path, newest: &mut Option<std::time::SystemTime>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -2111,8 +2211,14 @@ mod tests {
 
     #[test]
     fn go_version_parses_major_minor() {
-        assert_eq!(parse_go_version("go version go1.22.3 darwin/arm64"), Some((1, 22)));
-        assert_eq!(parse_go_version("go version go1.21.0 linux/amd64"), Some((1, 21)));
+        assert_eq!(
+            parse_go_version("go version go1.22.3 darwin/arm64"),
+            Some((1, 22))
+        );
+        assert_eq!(
+            parse_go_version("go version go1.21.0 linux/amd64"),
+            Some((1, 21))
+        );
         assert_eq!(parse_go_version("go version go2.0.1 x"), Some((2, 0)));
         assert_eq!(parse_go_version("garbage"), None);
     }
@@ -2138,7 +2244,11 @@ mod tests {
     fn toml_entry_reads_entry_key() {
         let dir = std::env::temp_dir().join(format!("sky-doctor-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("sky.toml"), "name = \"x\"\nentry = \"src/App.sky\"\n").unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\nentry = \"src/App.sky\"\n",
+        )
+        .unwrap();
         assert_eq!(toml_entry(&dir).as_deref(), Some("src/App.sky"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2157,8 +2267,14 @@ mod tests {
     #[test]
     fn flag_value_reads_space_and_eq_forms() {
         let sp = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
-        assert_eq!(flag_value(&sp("--data-dir /tmp/x"), "--data-dir").as_deref(), Some("/tmp/x"));
-        assert_eq!(flag_value(&sp("--auth=off"), "--auth").as_deref(), Some("off"));
+        assert_eq!(
+            flag_value(&sp("--data-dir /tmp/x"), "--data-dir").as_deref(),
+            Some("/tmp/x")
+        );
+        assert_eq!(
+            flag_value(&sp("--auth=off"), "--auth").as_deref(),
+            Some("off")
+        );
         assert_eq!(flag_value(&sp("--port 1"), "--auth"), None);
     }
 

@@ -298,7 +298,14 @@ impl AstNode for Type {
         use SyntaxKind::*;
         matches!(
             kind,
-            TypeFun | TypeApp | TypeVar | TypeCon | TypeQual | TypeRecord | TypeTuple | TypeUnit
+            TypeFun
+                | TypeApp
+                | TypeVar
+                | TypeCon
+                | TypeQual
+                | TypeRecord
+                | TypeTuple
+                | TypeUnit
                 | TypeParen
         )
     }
@@ -463,8 +470,7 @@ impl Import {
         support::child(&self.0)
     }
     pub fn alias(&self) -> Option<SyntaxToken> {
-        support::child::<ImportAlias>(&self.0)
-            .and_then(|a| support::token(a.syntax(), UpperIdent))
+        support::child::<ImportAlias>(&self.0).and_then(|a| support::token(a.syntax(), UpperIdent))
     }
     pub fn exposing(&self) -> Option<ImportExposing> {
         support::child(&self.0)
@@ -834,7 +840,9 @@ mod tests {
         );
         let tree = p.tree();
         assert_eq!(
-            tree.module_header().and_then(|h| h.name()).map(|n| n.text()),
+            tree.module_header()
+                .and_then(|h| h.name())
+                .map(|n| n.text()),
             Some("Main".to_string())
         );
         assert_eq!(tree.imports().count(), 1);
@@ -876,7 +884,10 @@ mod tests {
     fn int_literal_in_range() {
         // i64::MAX must classify as InRange and keep its exact value.
         let l = body_literal("x =\n    9223372036854775807\n");
-        assert_eq!(l.int_literal(), Some(IntLiteral::InRange(9223372036854775807)));
+        assert_eq!(
+            l.int_literal(),
+            Some(IntLiteral::InRange(9223372036854775807))
+        );
         // hex is an integer form too.
         let l = body_literal("x =\n    0xFF\n");
         assert_eq!(l.int_literal(), Some(IntLiteral::InRange(255)));
@@ -894,10 +905,16 @@ mod tests {
         }
         // One past i64::MAX also overflows.
         let l = body_literal("x =\n    9223372036854775808\n");
-        assert!(matches!(l.int_literal(), Some(IntLiteral::OutOfRange { .. })));
+        assert!(matches!(
+            l.int_literal(),
+            Some(IntLiteral::OutOfRange { .. })
+        ));
         // Oversized hex overflows too.
         let l = body_literal("x =\n    0xFFFFFFFFFFFFFFFFFF\n");
-        assert!(matches!(l.int_literal(), Some(IntLiteral::OutOfRange { .. })));
+        assert!(matches!(
+            l.int_literal(),
+            Some(IntLiteral::OutOfRange { .. })
+        ));
     }
 
     #[test]

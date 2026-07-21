@@ -28,8 +28,7 @@ const ARG_START: TokenSet = TokenSet::new(&[
     Dot,
 ]);
 
-const TYPE_ATOM_START: TokenSet =
-    TokenSet::new(&[LowerIdent, UpperIdent, LParen, LBrace]);
+const TYPE_ATOM_START: TokenSet = TokenSet::new(&[LowerIdent, UpperIdent, LParen, LBrace]);
 
 const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     Underscore,
@@ -48,8 +47,7 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
-const DECL_START: TokenSet =
-    TokenSet::new(&[TypeKw, ForeignKw, LowerIdent, UpperIdent]);
+const DECL_START: TokenSet = TokenSet::new(&[TypeKw, ForeignKw, LowerIdent, UpperIdent]);
 
 // ---- entry ---------------------------------------------------------------
 
@@ -113,7 +111,7 @@ fn module_header(p: &mut Parser) {
 fn exposing_list(p: &mut Parser, kind: SyntaxKind) {
     let m = p.start();
     p.bump(); // exposing
-    // `exposing` and `(` may be separated by a newline.
+              // `exposing` and `(` may be separated by a newline.
     p.expect(LParen);
     p.with_indent(0, |p| {
         if p.eat(DotDot) {
@@ -296,7 +294,7 @@ fn variant(p: &mut Parser) {
 fn foreign_decl(p: &mut Parser) {
     let m = p.start();
     p.bump(); // foreign
-    // consume the rest of the foreign line + indented continuations.
+              // consume the rest of the foreign line + indented continuations.
     p.with_indent(1, |p| {
         while !p.at_end() && p.at_continuation() {
             p.bump();

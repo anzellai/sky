@@ -6,9 +6,7 @@
 
 use sky_lsp::Analysis;
 use std::path::{Path, PathBuf};
-use tower_lsp::lsp_types::{
-    InlayHintLabel, ParameterLabel, Position, Range, Url,
-};
+use tower_lsp::lsp_types::{InlayHintLabel, ParameterLabel, Position, Range, Url};
 
 // Same fixture the 17-scenario suite uses (0-based line, UTF-16 char columns).
 const FIXTURE: &str = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task\nimport Sky.Core.String as String\nimport Std.Log exposing (println)\nimport Std.Ui as Ui\n\ntype alias Model = { count : Int, label : String }\n\nstringify : Model -> String\nstringify model =\n    String.fromInt model.count\n\nletDemo : Int\nletDemo =\n    let abcLocal = 1\n    in abcLocal\n\ntype Msg = Increment | Decrement | SetCount Int\n\napplyMsg : Msg -> Int -> Int\napplyMsg msg current =\n    case msg of\n        Increment -> current + 1\n        Decrement -> current - 1\n        SetCount n -> n\n\ndoubleIt : Int -> Int\ndoubleIt = \\x -> x * 2\n\nmain =\n    Task.run (Task.succeed (applyMsg Increment 41))\n";
@@ -36,8 +34,14 @@ fn analysis_with(src: &str) -> Analysis {
 /// the document end inside the engine's offset conversion.
 fn whole_doc() -> Range {
     Range {
-        start: Position { line: 0, character: 0 },
-        end: Position { line: u32::MAX, character: 0 },
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: u32::MAX,
+            character: 0,
+        },
     }
 }
 
@@ -51,9 +55,18 @@ fn formatting_normalises_whitespace() {
     let edits = a.formatting(&main_url()).expect("formatting returns edits");
     assert_eq!(edits.len(), 1, "one whole-file replacement edit");
     let out = &edits[0].new_text;
-    assert!(out.contains("println \"hi\""), "collapsed spaces; got: {out:?}");
+    assert!(
+        out.contains("println \"hi\""),
+        "collapsed spaces; got: {out:?}"
+    );
     // The replacement covers from the start of the document.
-    assert_eq!(edits[0].range.start, Position { line: 0, character: 0 });
+    assert_eq!(
+        edits[0].range.start,
+        Position {
+            line: 0,
+            character: 0
+        }
+    );
 }
 
 #[test]
@@ -66,7 +79,10 @@ fn formatting_already_formatted_is_noop() {
     let a2 = analysis_with(&once);
     let _ = a; // first analysis unused beyond documenting intent
     let edits = a2.formatting(&main_url()).expect("some");
-    assert!(edits.is_empty(), "already-formatted → no edits; got {edits:?}");
+    assert!(
+        edits.is_empty(),
+        "already-formatted → no edits; got {edits:?}"
+    );
 }
 
 #[test]
@@ -104,10 +120,13 @@ fn inlay_hint_on_let_binding() {
         "let-binding inlay hint; got {label:?} (all: {:?})",
         hints
             .iter()
-            .map(|h| (h.position.line, match &h.label {
-                InlayHintLabel::String(s) => s.clone(),
-                _ => String::new(),
-            }))
+            .map(|h| (
+                h.position.line,
+                match &h.label {
+                    InlayHintLabel::String(s) => s.clone(),
+                    _ => String::new(),
+                }
+            ))
             .collect::<Vec<_>>()
     );
 }
@@ -145,7 +164,13 @@ fn signature_help_on_kernel_call() {
     // signature of `Task.run` (`Task a -> …`).
     let a = analysis_with(FIXTURE);
     let sh = a
-        .signature_help(&main_url(), Position { line: 32, character: 14 })
+        .signature_help(
+            &main_url(),
+            Position {
+                line: 32,
+                character: 14,
+            },
+        )
         .expect("signature help at a call site");
     assert_eq!(sh.signatures.len(), 1);
     let label = &sh.signatures[0].label;
@@ -153,7 +178,10 @@ fn signature_help_on_kernel_call() {
         label.starts_with("run :") || label.starts_with("Task.run :"),
         "label names the callee + type; got {label:?}"
     );
-    assert!(label.contains("Task"), "Task.run type mentions Task; got {label:?}");
+    assert!(
+        label.contains("Task"),
+        "Task.run type mentions Task; got {label:?}"
+    );
     // At least one parameter slot (the arrow LHS) is reported.
     let params = sh.signatures[0].parameters.as_ref().expect("params");
     assert!(!params.is_empty(), "at least one parameter slot");
@@ -171,12 +199,25 @@ fn signature_help_active_parameter_advances() {
     let line = "    Task.run (Task.succeed (applyMsg Increment 41))";
     let col = line.find("41").unwrap() as u32;
     let sh = a
-        .signature_help(&main_url(), Position { line: 32, character: col })
+        .signature_help(
+            &main_url(),
+            Position {
+                line: 32,
+                character: col,
+            },
+        )
         .expect("signature help inside applyMsg call");
     let label = &sh.signatures[0].label;
-    assert!(label.starts_with("applyMsg :"), "callee is applyMsg; got {label:?}");
+    assert!(
+        label.starts_with("applyMsg :"),
+        "callee is applyMsg; got {label:?}"
+    );
     // One argument (`Increment`) is fully before the cursor → active param 1.
-    assert_eq!(sh.active_parameter, Some(1), "active parameter after first arg");
+    assert_eq!(
+        sh.active_parameter,
+        Some(1),
+        "active parameter after first arg"
+    );
 }
 
 #[test]
@@ -184,8 +225,14 @@ fn signature_help_none_outside_call() {
     // A position on the module header is not inside any call.
     let a = analysis_with(FIXTURE);
     assert!(
-        a.signature_help(&main_url(), Position { line: 0, character: 3 })
-            .is_none(),
+        a.signature_help(
+            &main_url(),
+            Position {
+                line: 0,
+                character: 3
+            }
+        )
+        .is_none(),
         "no signature help outside a call"
     );
 }
@@ -202,7 +249,13 @@ fn signature_help_none_outside_call() {
 const UNANNOTATED_SRC: &str = "module M exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.String as String\nimport Std.Log exposing (println)\n\ntype Msg = Inc | Dec\n\nstep : Msg -> Int -> Int\nstep msg n =\n    case msg of\n        Inc -> n + 1\n        Dec -> n - 1\n\nadd x y = x + y\n\nbump n = step Inc n\n\ngreet name = String.append \"hi \" name\n\nmain =\n    println (greet \"a\")\n";
 
 fn hover_md(a: &Analysis, line: u32, ch: u32) -> String {
-    match a.hover(&main_url(), Position { line, character: ch }) {
+    match a.hover(
+        &main_url(),
+        Position {
+            line,
+            character: ch,
+        },
+    ) {
         Some(h) => match h.contents {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => String::new(),
@@ -236,7 +289,11 @@ fn inlay_hint_unannotated_function_shows_full_arrow() {
         "unannotated 2-arg fn must hint its full arrow, not the body result; got {add:?}"
     );
     // Regression guard: the old bug rendered the body-root type only (` : t0`).
-    assert_ne!(add.as_deref(), Some(" : t0"), "must NOT be body-result only");
+    assert_ne!(
+        add.as_deref(),
+        Some(" : t0"),
+        "must NOT be body-result only"
+    );
 
     // `bump n = step Inc n` (line 16): concrete `Int -> Int` (task's Int-arrow case).
     let bump = inlay_label(&a, 16);

@@ -31,7 +31,9 @@ fn scan_runtime_exports(rt_dir: &Path) -> BTreeSet<String> {
 }
 
 fn scan_dir(dir: &Path, out: &mut BTreeSet<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
@@ -128,12 +130,7 @@ pub fn extract_rt_refs(src: &str) -> Vec<String> {
             continue;
         }
         // `rt.<Ident>` at a token boundary.
-        if boundary
-            && c == 'r'
-            && i + 2 < n
-            && bytes[i + 1] == 't'
-            && bytes[i + 2] == '.'
-        {
+        if boundary && c == 'r' && i + 2 < n && bytes[i + 1] == 't' && bytes[i + 2] == '.' {
             let start = i + 3;
             let mut j = start;
             while j < n && is_ident_char(bytes[j]) {
@@ -213,15 +210,30 @@ mod tests {
         assert!(!refs.contains(&"NotAReference".to_string()));
         assert!(!refs.contains(&"AlsoNotAReference".to_string()));
         assert!(!refs.contains(&"SkyTask".to_string()) || !refs.contains(&"Foo".to_string()));
-        assert!(!refs.contains(&"Foo".to_string()), "field access leaked: {refs:?}");
+        assert!(
+            !refs.contains(&"Foo".to_string()),
+            "field access leaked: {refs:?}"
+        );
     }
 
     #[test]
     fn top_level_names_skip_methods() {
-        assert_eq!(extract_top_level_name("func Add(a, b any) any {"), Some("Add".into()));
-        assert_eq!(extract_top_level_name("func Coerce[T any](x any) T {"), Some("Coerce".into()));
-        assert_eq!(extract_top_level_name("type SkyTupleN struct{ Vs []any }"), Some("SkyTupleN".into()));
-        assert_eq!(extract_top_level_name("var _defaultBroker = newBroker()"), Some("_defaultBroker".into()));
+        assert_eq!(
+            extract_top_level_name("func Add(a, b any) any {"),
+            Some("Add".into())
+        );
+        assert_eq!(
+            extract_top_level_name("func Coerce[T any](x any) T {"),
+            Some("Coerce".into())
+        );
+        assert_eq!(
+            extract_top_level_name("type SkyTupleN struct{ Vs []any }"),
+            Some("SkyTupleN".into())
+        );
+        assert_eq!(
+            extract_top_level_name("var _defaultBroker = newBroker()"),
+            Some("_defaultBroker".into())
+        );
         // method — no top-level name
         assert_eq!(extract_top_level_name("func (r *Reader) Read() {"), None);
         // indented — not top-level

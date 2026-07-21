@@ -31,7 +31,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
@@ -57,7 +59,9 @@ fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
     collect_sky(&root.join("sky-stdlib"), &mut files);
     let mut out = Vec::new();
     for path in files {
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let parse = syntax::parse(&src, base::FileId(0));
         let name = parse
             .tree()
@@ -74,7 +78,10 @@ fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
 /// (rejected?, known_leniency?)
 fn check(file: &Path, stdlib: &[(String, syntax::Parse)]) -> (bool, bool) {
     let src = std::fs::read_to_string(file).unwrap_or_default();
-    let known_leniency = src.lines().take(3).any(|l| l.contains("gate: known-leniency"));
+    let known_leniency = src
+        .lines()
+        .take(3)
+        .any(|l| l.contains("gate: known-leniency"));
 
     let mut db = SourceDb::new();
     for (n, parse) in stdlib {
@@ -138,5 +145,7 @@ fn rejection_corpus_is_rejected() {
         "SOUNDNESS HOLE — Rust checker ACCEPTED oracle-rejected program(s): {holes:?}"
     );
     assert!(hard >= 13, "expected >= 13 hard-gate programs, ran {hard}");
-    eprintln!("reject corpus: {hard} hard-gate programs all rejected; {lenient} documented leniency");
+    eprintln!(
+        "reject corpus: {hard} hard-gate programs all rejected; {lenient} documented leniency"
+    );
 }

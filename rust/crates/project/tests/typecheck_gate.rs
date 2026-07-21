@@ -19,7 +19,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -144,7 +147,10 @@ fn driver_rejects_non_exhaustive_case() {
         "driver EMITTED a non-exhaustive `case` — the exhaustiveness gate is not wired in; note: {}",
         report.note
     );
-    assert!(!report.go_build_ok, "go build must not run on an exhaustiveness error");
+    assert!(
+        !report.go_build_ok,
+        "go build must not run on an exhaustiveness error"
+    );
     assert!(
         report.note.contains("MISSING PATTERNS"),
         "expected an [E3001] non-exhaustive diagnostic in the note, got: {}",
@@ -233,7 +239,10 @@ fn driver_rejects_duplicate_toplevel_binding() {
         "driver EMITTED a duplicate top-level binding (`x` twice) — the name gate is not wired in; note: {}",
         report.note
     );
-    assert!(!report.go_build_ok, "go build must not run on a redefinition");
+    assert!(
+        !report.go_build_ok,
+        "go build must not run on a redefinition"
+    );
     assert!(
         report.note.contains("DUPLICATE DEFINITION"),
         "expected an [E1002] duplicate-definition diagnostic in the note, got: {}",
@@ -392,7 +401,10 @@ fn driver_rejects_parse_error_op_section() {
         "driver EMITTED a program with a bare operator section `(+)` — the parse-error gate is not wired in; note: {}",
         report.note
     );
-    assert!(!report.go_build_ok, "go build must not run on a parse error");
+    assert!(
+        !report.go_build_ok,
+        "go build must not run on a parse error"
+    );
     assert!(
         report.note.contains("PARSE ERROR"),
         "expected an [E0001] parse-error diagnostic in the note, got: {}",

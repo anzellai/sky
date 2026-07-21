@@ -6,7 +6,7 @@
 use crate::cst;
 use crate::db::{ImportSource, SkyDb};
 use crate::exports::ModuleExports;
-use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId};
+use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
     kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS, KERNEL_IMPLICIT_TYPES,
@@ -396,9 +396,7 @@ impl<'a> Resolver<'a> {
 
         // ---- exposing binding (still happens even if the qualifier was
         // suppressed by explicit-alias-wins — C1) ----
-        let clause = imp
-            .exposing()
-            .map(|e| cst::read_exposing(e.syntax()));
+        let clause = imp.exposing().map(|e| cst::read_exposing(e.syntax()));
         match (&source, clause) {
             (ImportSource::Dep(dep), Some(c)) => {
                 let exports = self.db.module_exports(*dep);
@@ -651,8 +649,7 @@ impl<'a> Resolver<'a> {
                     }
                     let arity = cst::decl_type_vars(u.syntax()).len() as u16;
                     let type_ = self.def(self.module, &tn, DefKind::TypeCon);
-                    self.types
-                        .insert(tn.clone(), TypeRes { con: type_, arity });
+                    self.types.insert(tn.clone(), TypeRes { con: type_, arity });
                     if let Some(t) = u.name() {
                         self.result
                             .def_spans
@@ -706,8 +703,7 @@ impl<'a> Resolver<'a> {
                         .map(|t| matches!(t, ast::Type::Record(_)))
                         .unwrap_or(false);
                     let con = self.def(self.module, &an, DefKind::TypeAlias);
-                    self.types
-                        .insert(an.clone(), TypeRes { con, arity });
+                    self.types.insert(an.clone(), TypeRes { con, arity });
                     if let Some(t) = a.name() {
                         self.result
                             .def_spans
@@ -903,10 +899,7 @@ impl<'a> Resolver<'a> {
                                             i64::MAX
                                         ),
                                     )
-                                    .with_label(
-                                        span,
-                                        "value does not fit in a 64-bit Int",
-                                    ),
+                                    .with_label(span, "value does not fit in a 64-bit Int"),
                                 );
                             }
                             Expr::Error
@@ -1024,10 +1017,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             ast::Expr::Ref(r) => {
-                let name = r
-                    .name()
-                    .map(|t| t.text().to_string())
-                    .unwrap_or_default();
+                let name = r.name().map(|t| t.text().to_string()).unwrap_or_default();
                 let res = self.resolve_var(&name);
                 if let Some(t) = r.name() {
                     self.record_ref(t.text_range(), res.clone());
@@ -1180,8 +1170,7 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::If(i) => {
                 let parts = i.parts();
-                let mut ids: Vec<ExprId> =
-                    parts.iter().map(|e| self.resolve_expr(e)).collect();
+                let mut ids: Vec<ExprId> = parts.iter().map(|e| self.resolve_expr(e)).collect();
                 // [cond, then, else] — fold to a 1-arm If; nested else-if is a
                 // nested IfExpr already handled recursively.
                 let els = ids.pop().unwrap_or_else(|| self.body.expr(Expr::Error));
@@ -1234,15 +1223,19 @@ impl<'a> Resolver<'a> {
         for child in l.syntax().children() {
             match child.kind() {
                 SyntaxKind::LetBinding => {
-                    let Some(b) = ast::LetBinding::cast(child) else { continue };
+                    let Some(b) = ast::LetBinding::cast(child) else {
+                        continue;
+                    };
                     let i = binding_ix;
                     binding_ix += 1;
                     let binders = match (b.name(), binder_ids.get(i).copied().flatten()) {
                         (Some(n), Some(id)) => vec![(Name::new(n.text()), id)],
                         _ => Vec::new(),
                     };
-                    let params_node =
-                        b.syntax().children().find(|c| c.kind() == SyntaxKind::ParamList);
+                    let params_node = b
+                        .syntax()
+                        .children()
+                        .find(|c| c.kind() == SyntaxKind::ParamList);
                     let has_body = b.body().is_some();
                     if let Some(pl) = params_node {
                         self.push_scope();
@@ -1285,7 +1278,9 @@ impl<'a> Resolver<'a> {
                     // for forward references; reuse those ids so the pattern's
                     // `Var` ids match what sibling bindings + body point to.
                     self.reuse_binders = true;
-                    let pat = cst::child_pats(&child).first().map(|p| self.resolve_pattern(p));
+                    let pat = cst::child_pats(&child)
+                        .first()
+                        .map(|p| self.resolve_pattern(p));
                     self.reuse_binders = false;
                     let val = cst::child_exprs(&child)
                         .first()
@@ -1479,9 +1474,7 @@ impl<'a> Resolver<'a> {
                 // -> …` matched only the empty command.
                 self.body.pat(Pattern::Str(s.value().into_boxed_str()))
             }
-            ast::Pattern::Char(c) => {
-                self.body.pat(Pattern::Chr(c.value().into_boxed_str()))
-            }
+            ast::Pattern::Char(c) => self.body.pat(Pattern::Chr(c.value().into_boxed_str())),
             ast::Pattern::Bool(b) => {
                 let val = cst::first_token_is_true(b.syntax());
                 self.body.pat(Pattern::Bool(val))
@@ -1704,7 +1697,12 @@ impl<'a> Resolver<'a> {
                         })
                     }
                     TypeResEntry::Foreign(pkg) => {
-                        self.track_class_b(pkg.clone(), Some(qual.to_string()), name, RefKind::Type);
+                        self.track_class_b(
+                            pkg.clone(),
+                            Some(qual.to_string()),
+                            name,
+                            RefKind::Type,
+                        );
                         return self.body.ty(Type::Foreign {
                             package: Name::new(&pkg),
                             name: Name::new(name),
@@ -1738,7 +1736,9 @@ impl<'a> Resolver<'a> {
             }),
             Some(ImportSource::Dep(dep)) => {
                 let exports = self.db.module_exports(dep);
-                let con = exports.type_(name).map(|(def, arity)| TypeRes { con: def, arity });
+                let con = exports
+                    .type_(name)
+                    .map(|(def, arity)| TypeRes { con: def, arity });
                 self.body.ty(Type::Con {
                     con,
                     name: Name::new(name),
@@ -1853,7 +1853,8 @@ impl<'a> Resolver<'a> {
                     RefKind::Value,
                     &format!(
                         "unknown qualifier{}",
-                        hint.map(|h| format!(" (did you mean `{h}`?)")).unwrap_or_default()
+                        hint.map(|h| format!(" (did you mean `{h}`?)"))
+                            .unwrap_or_default()
                     ),
                 );
                 Res::Error
@@ -1890,7 +1891,13 @@ impl<'a> Resolver<'a> {
 
     // ---- diagnostics + tracking -----------------------------------------
 
-    fn track_class_a(&mut self, qualifier: Option<String>, name: &str, kind: RefKind, reason: &str) {
+    fn track_class_a(
+        &mut self,
+        qualifier: Option<String>,
+        name: &str,
+        kind: RefKind,
+        reason: &str,
+    ) {
         if self.quiet > 0 {
             return;
         }

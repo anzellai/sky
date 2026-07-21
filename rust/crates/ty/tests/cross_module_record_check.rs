@@ -39,7 +39,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
@@ -65,7 +67,9 @@ fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
     collect_sky(&root.join("sky-stdlib"), &mut files);
     let mut out = Vec::new();
     for path in files {
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let parse = syntax::parse(&src, base::FileId(0));
         let name = parse
             .tree()
@@ -111,9 +115,15 @@ const HDR: &str = "module Main exposing (v)\nimport Geo exposing (mkPt, origin)\
 fn cross_module_record_valid_use_accepts() {
     let root = repo_root();
     let a = type_errors_for_main(&root, &format!("{HDR}v = (mkPt \"s\").px\n"));
-    assert_eq!(a, 0, "OVER-EAGER — valid `(mkPt \"s\").px` was REJECTED ({a} errs)");
+    assert_eq!(
+        a, 0,
+        "OVER-EAGER — valid `(mkPt \"s\").px` was REJECTED ({a} errs)"
+    );
     let b = type_errors_for_main(&root, &format!("{HDR}v = origin.py\n"));
-    assert_eq!(b, 0, "OVER-EAGER — valid `origin.py` was REJECTED ({b} errs)");
+    assert_eq!(
+        b, 0,
+        "OVER-EAGER — valid `origin.py` was REJECTED ({b} errs)"
+    );
 }
 
 #[test]

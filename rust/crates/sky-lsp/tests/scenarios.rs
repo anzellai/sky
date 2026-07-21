@@ -7,9 +7,7 @@
 
 use sky_lsp::Analysis;
 use std::path::{Path, PathBuf};
-use tower_lsp::lsp_types::{
-    DocumentHighlightKind, Position, SemanticTokensResult, Url,
-};
+use tower_lsp::lsp_types::{DocumentHighlightKind, Position, SemanticTokensResult, Url};
 
 // NB: written as a single literal with explicit `\n` — a `\`-continuation would
 // strip each line's leading indentation and corrupt the fixture's columns.
@@ -37,7 +35,13 @@ fn analysis_with(src: &str) -> Analysis {
 }
 
 fn hover_text(a: &Analysis, line: u32, ch: u32) -> String {
-    match a.hover(&main_url(), Position { line, character: ch }) {
+    match a.hover(
+        &main_url(),
+        Position {
+            line,
+            character: ch,
+        },
+    ) {
         Some(h) => match h.contents {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => String::new(),
@@ -47,11 +51,22 @@ fn hover_text(a: &Analysis, line: u32, ch: u32) -> String {
 }
 
 fn goto_line(a: &Analysis, line: u32, ch: u32) -> Option<u32> {
-    a.goto(&main_url(), Position { line, character: ch })
-        .map(|loc| loc.range.start.line)
+    a.goto(
+        &main_url(),
+        Position {
+            line,
+            character: ch,
+        },
+    )
+    .map(|loc| loc.range.start.line)
 }
 
-fn completion_labels(a: &Analysis, src_override: Option<&str>, line: u32, ch: u32) -> Vec<(String, Option<String>)> {
+fn completion_labels(
+    a: &Analysis,
+    src_override: Option<&str>,
+    line: u32,
+    ch: u32,
+) -> Vec<(String, Option<String>)> {
     let a2;
     let a = match src_override {
         Some(s) => {
@@ -60,10 +75,16 @@ fn completion_labels(a: &Analysis, src_override: Option<&str>, line: u32, ch: u3
         }
         None => a,
     };
-    a.completion(&main_url(), Position { line, character: ch })
-        .into_iter()
-        .map(|i| (i.label, i.insert_text))
-        .collect()
+    a.completion(
+        &main_url(),
+        Position {
+            line,
+            character: ch,
+        },
+    )
+    .into_iter()
+    .map(|i| (i.label, i.insert_text))
+    .collect()
 }
 
 // ---- HOVER (7) --------------------------------------------------------
@@ -128,7 +149,10 @@ fn goto_def_type_name() {
 fn goto_def_function() {
     let a = analysis_with(FIXTURE);
     let l = goto_line(&a, 32, 30);
-    assert!(l == Some(21) || l == Some(22), "goto-def-function got {l:?}");
+    assert!(
+        l == Some(21) || l == Some(22),
+        "goto-def-function got {l:?}"
+    );
 }
 
 #[test]
@@ -172,9 +196,8 @@ fn completion_qualified_insert_text() {
 
 #[test]
 fn completion_field() {
-    let src = format!(
-        "{FIXTURE}\ndescribe : Model -> String\ndescribe m =\n    String.fromInt m.\n"
-    );
+    let src =
+        format!("{FIXTURE}\ndescribe : Model -> String\ndescribe m =\n    String.fromInt m.\n");
     // appended: line33="", 34=anno, 35="describe m =", 36="    String.fromInt m."
     let items = completion_labels(&Analysis::new(), Some(&src), 36, 21);
     let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
@@ -187,7 +210,10 @@ fn completion_let_binding() {
     let a = analysis_with(FIXTURE);
     let items = completion_labels(&a, None, 17, 9);
     let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
-    assert!(labels.contains(&"abcLocal"), "abcLocal missing; got {labels:?}");
+    assert!(
+        labels.contains(&"abcLocal"),
+        "abcLocal missing; got {labels:?}"
+    );
 }
 
 // ---- REFERENCES (2) ---------------------------------------------------
@@ -195,7 +221,14 @@ fn completion_let_binding() {
 /// Sorted start-lines of the reference locations at a position.
 fn ref_lines(a: &Analysis, line: u32, ch: u32, include_decl: bool) -> Vec<u32> {
     let mut ls: Vec<u32> = a
-        .references(&main_url(), Position { line, character: ch }, include_decl)
+        .references(
+            &main_url(),
+            Position {
+                line,
+                character: ch,
+            },
+            include_decl,
+        )
         .into_iter()
         .map(|l| l.range.start.line)
         .collect();
@@ -228,16 +261,27 @@ fn references_top_level_function() {
 
 /// Total edit count across all files in the rename WorkspaceEdit.
 fn rename_edit_count(a: &Analysis, line: u32, ch: u32, new: &str) -> Option<usize> {
-    a.rename(&main_url(), Position { line, character: ch }, new)
-        .and_then(|w| w.changes)
-        .map(|c| c.values().map(|v| v.len()).sum())
+    a.rename(
+        &main_url(),
+        Position {
+            line,
+            character: ch,
+        },
+        new,
+    )
+    .and_then(|w| w.changes)
+    .map(|c| c.values().map(|v| v.len()).sum())
 }
 
 #[test]
 fn rename_local_binding() {
     let a = analysis_with(FIXTURE);
     // abcLocal has 2 occurrences (binder + use).
-    assert_eq!(rename_edit_count(&a, 17, 8, "renamed"), Some(2), "rename-local");
+    assert_eq!(
+        rename_edit_count(&a, 17, 8, "renamed"),
+        Some(2),
+        "rename-local"
+    );
 }
 
 #[test]
@@ -246,13 +290,23 @@ fn rename_top_level_function() {
     // applyMsg: annotation + decl + use = 3 edit sites, and every edit carries
     // the new name.
     let edit = a
-        .rename(&main_url(), Position { line: 32, character: 30 }, "applyMsgV2")
+        .rename(
+            &main_url(),
+            Position {
+                line: 32,
+                character: 30,
+            },
+            "applyMsgV2",
+        )
         .expect("rename should produce an edit");
     let changes = edit.changes.expect("changes");
     let total: usize = changes.values().map(|v| v.len()).sum();
     assert_eq!(total, 3, "rename-function edit count");
     assert!(
-        changes.values().flatten().all(|e| e.new_text == "applyMsgV2"),
+        changes
+            .values()
+            .flatten()
+            .all(|e| e.new_text == "applyMsgV2"),
         "every edit uses the new name"
     );
 }
@@ -262,11 +316,37 @@ fn rename_builtin_is_rejected() {
     let a = analysis_with(FIXTURE);
     // Cursor on the builtin `Int` in `letDemo : Int` (line 14) — a Prelude type
     // with no Sky definition site, so it is not renameable.
-    assert!(a.rename(&main_url(), Position { line: 14, character: 11 }, "Foo").is_none());
+    assert!(a
+        .rename(
+            &main_url(),
+            Position {
+                line: 14,
+                character: 11
+            },
+            "Foo"
+        )
+        .is_none());
     // prepareRename must also decline it.
-    assert!(a.prepare_rename(&main_url(), Position { line: 14, character: 11 }).is_none());
+    assert!(a
+        .prepare_rename(
+            &main_url(),
+            Position {
+                line: 14,
+                character: 11
+            }
+        )
+        .is_none());
     // A malformed identifier is rejected even on a renameable target (local).
-    assert!(a.rename(&main_url(), Position { line: 17, character: 8 }, "1bad").is_none());
+    assert!(a
+        .rename(
+            &main_url(),
+            Position {
+                line: 17,
+                character: 8
+            },
+            "1bad"
+        )
+        .is_none());
 }
 
 // ---- DOCUMENT HIGHLIGHT (2) -------------------------------------------
@@ -274,7 +354,13 @@ fn rename_builtin_is_rejected() {
 /// Sorted (start-line, kind) of the document highlights at a position.
 fn highlight_lines(a: &Analysis, line: u32, ch: u32) -> Vec<(u32, DocumentHighlightKind)> {
     let mut v: Vec<(u32, DocumentHighlightKind)> = a
-        .document_highlight(&main_url(), Position { line, character: ch })
+        .document_highlight(
+            &main_url(),
+            Position {
+                line,
+                character: ch,
+            },
+        )
         .into_iter()
         .map(|h| (h.range.start.line, h.kind.expect("kind set")))
         .collect();
@@ -333,8 +419,14 @@ fn completion_unqualified_exposing_and_prelude() {
     let src = format!("{FIXTURE}probe = i\n");
     let items = completion_labels(&Analysis::new(), Some(&src), 33, 9);
     let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
-    assert!(labels.contains(&"println"), "println missing; got {labels:?}");
-    assert!(labels.contains(&"Just"), "Prelude `Just` missing; got {labels:?}");
+    assert!(
+        labels.contains(&"println"),
+        "println missing; got {labels:?}"
+    );
+    assert!(
+        labels.contains(&"Just"),
+        "Prelude `Just` missing; got {labels:?}"
+    );
     assert!(
         labels.contains(&"identity"),
         "Prelude `identity` missing; got {labels:?}"
@@ -391,10 +483,18 @@ fn semantic_tokens_kernel_call_is_function() {
     let toks = decoded_tokens(&a);
     // `fromInt` in `String.fromInt` at line 12, char 11 → function.
     let hit = toks.iter().find(|(l, c, _)| *l == 12 && *c == 11);
-    assert_eq!(hit.map(|(_, _, t)| *t), Some(T_FUNCTION), "fromInt should be function; toks={toks:?}");
+    assert_eq!(
+        hit.map(|(_, _, t)| *t),
+        Some(T_FUNCTION),
+        "fromInt should be function; toks={toks:?}"
+    );
     // `count` field at line 12, char 25 → property.
     let field = toks.iter().find(|(l, c, _)| *l == 12 && *c == 25);
-    assert_eq!(field.map(|(_, _, t)| *t), Some(T_PROPERTY), "count should be property");
+    assert_eq!(
+        field.map(|(_, _, t)| *t),
+        Some(T_PROPERTY),
+        "count should be property"
+    );
 }
 
 #[test]
@@ -403,7 +503,11 @@ fn semantic_tokens_type_name_is_type() {
     let toks = decoded_tokens(&a);
     // `Model` in the annotation `stringify : Model -> String` at line 10, char 12.
     let hit = toks.iter().find(|(l, c, _)| *l == 10 && *c == 12);
-    assert_eq!(hit.map(|(_, _, t)| *t), Some(T_TYPE), "Model should be type; toks={toks:?}");
+    assert_eq!(
+        hit.map(|(_, _, t)| *t),
+        Some(T_TYPE),
+        "Model should be type; toks={toks:?}"
+    );
 }
 
 // ---- DOCUMENT SYMBOLS (1) ---------------------------------------------
@@ -414,10 +518,18 @@ fn document_symbols_top_level() {
     let a = analysis_with(FIXTURE);
     let syms = a.document_symbols(&main_url());
     let by_name = |n: &str| syms.iter().find(|s| s.name == n).map(|s| s.kind);
-    assert_eq!(by_name("stringify"), Some(SymbolKind::FUNCTION), "stringify fn");
+    assert_eq!(
+        by_name("stringify"),
+        Some(SymbolKind::FUNCTION),
+        "stringify fn"
+    );
     assert_eq!(by_name("Model"), Some(SymbolKind::STRUCT), "Model alias");
     assert_eq!(by_name("Msg"), Some(SymbolKind::ENUM), "Msg union");
-    assert_eq!(by_name("applyMsg"), Some(SymbolKind::FUNCTION), "applyMsg fn");
+    assert_eq!(
+        by_name("applyMsg"),
+        Some(SymbolKind::FUNCTION),
+        "applyMsg fn"
+    );
     // Constructors are not surfaced as top-level symbols.
     assert!(syms.iter().all(|s| s.name != "Increment"), "ctors excluded");
 }
@@ -437,8 +549,14 @@ fn hover_on_value_def_name() {
     // Cursor ON the `applyMsg` VALUE-def name (line 22) — not a use.
     let a = analysis_with(FIXTURE);
     let md = hover_text(&a, 22, 3);
-    assert!(md.contains("applyMsg"), "hover on def name names it; got {md:?}");
-    assert!(md.contains("Msg -> Int -> Int"), "hover on def name shows its type; got {md:?}");
+    assert!(
+        md.contains("applyMsg"),
+        "hover on def name names it; got {md:?}"
+    );
+    assert!(
+        md.contains("Msg -> Int -> Int"),
+        "hover on def name shows its type; got {md:?}"
+    );
 }
 
 #[test]
@@ -446,7 +564,10 @@ fn hover_on_annotation_name() {
     // Cursor ON the `applyMsg` ANNOTATION name (line 21) — the `foo : T` site.
     let a = analysis_with(FIXTURE);
     let md = hover_text(&a, 21, 3);
-    assert!(md.contains("Msg -> Int -> Int"), "hover on annotation name; got {md:?}");
+    assert!(
+        md.contains("Msg -> Int -> Int"),
+        "hover on annotation name; got {md:?}"
+    );
 }
 
 #[test]
@@ -454,7 +575,10 @@ fn hover_on_type_decl_names() {
     let a = analysis_with(FIXTURE);
     // `Model` alias decl name (line 8, char 13).
     let model = hover_text(&a, 8, 13);
-    assert!(model.contains("Model"), "hover on alias decl name; got {model:?}");
+    assert!(
+        model.contains("Model"),
+        "hover on alias decl name; got {model:?}"
+    );
     // `Msg` union decl name (line 19, char 6).
     let msg = hover_text(&a, 19, 6);
     assert!(msg.contains("Msg"), "hover on union decl name; got {msg:?}");
@@ -468,12 +592,22 @@ fn references_from_decl_equal_references_from_use() {
     assert_eq!(from_use, vec![21, 22, 32], "baseline from-use");
     // From the VALUE-def name (line 22) — identical set.
     let from_def = ref_lines(&a, 22, 3, true);
-    assert_eq!(from_def, from_use, "references from value-def name == from use");
+    assert_eq!(
+        from_def, from_use,
+        "references from value-def name == from use"
+    );
     // From the ANNOTATION name (line 21) — identical set.
     let from_anno = ref_lines(&a, 21, 3, true);
-    assert_eq!(from_anno, from_use, "references from annotation name == from use");
+    assert_eq!(
+        from_anno, from_use,
+        "references from annotation name == from use"
+    );
     // include_decl == false from the decl is still just the use.
-    assert_eq!(ref_lines(&a, 22, 3, false), vec![32], "excl-decl from def name");
+    assert_eq!(
+        ref_lines(&a, 22, 3, false),
+        vec![32],
+        "excl-decl from def name"
+    );
 }
 
 #[test]
@@ -482,15 +616,29 @@ fn references_from_type_decl_equal_from_use() {
     // `Model` used in `stringify : Model -> String` (line 10) + declared (line 8).
     let from_use = ref_lines(&a, 10, 13, true);
     let from_decl = ref_lines(&a, 8, 13, true);
-    assert_eq!(from_decl, from_use, "type references from decl == from use; got {from_decl:?} vs {from_use:?}");
-    assert!(from_decl.contains(&8) && from_decl.contains(&10), "covers decl+use; got {from_decl:?}");
+    assert_eq!(
+        from_decl, from_use,
+        "type references from decl == from use; got {from_decl:?} vs {from_use:?}"
+    );
+    assert!(
+        from_decl.contains(&8) && from_decl.contains(&10),
+        "covers decl+use; got {from_decl:?}"
+    );
 }
 
 #[test]
 fn rename_from_decl_name() {
     // Rename initiated ON the value-def name (line 22) renames all 3 sites.
     let a = analysis_with(FIXTURE);
-    assert_eq!(rename_edit_count(&a, 22, 3, "renamedFn"), Some(3), "rename from def name");
+    assert_eq!(
+        rename_edit_count(&a, 22, 3, "renamedFn"),
+        Some(3),
+        "rename from def name"
+    );
     // And from the annotation name (line 21).
-    assert_eq!(rename_edit_count(&a, 21, 3, "renamedFn"), Some(3), "rename from annotation name");
+    assert_eq!(
+        rename_edit_count(&a, 21, 3, "renamedFn"),
+        Some(3),
+        "rename from annotation name"
+    );
 }

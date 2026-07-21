@@ -147,7 +147,13 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
         };
         let mut functions = BTreeMap::new();
         for f in kj.functions {
-            functions.insert(f.name, FfiFnInfo { arity: f.arity, sky_type: f.sky_type });
+            functions.insert(
+                f.name,
+                FfiFnInfo {
+                    arity: f.arity,
+                    sky_type: f.sky_type,
+                },
+            );
         }
         reg.packages.insert(
             kj.module_name.clone(),

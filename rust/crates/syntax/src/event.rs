@@ -20,9 +20,7 @@ pub(crate) enum Event {
     /// Close the current node.
     Finish,
     /// Emit one significant token (its trivia is flushed just before it).
-    Token {
-        kind: SyntaxKind,
-    },
+    Token { kind: SyntaxKind },
     /// Emit a synthetic leaf whose text is a byte slice of the source (used for
     /// the multiline-interpolation interior split — doc 04 §9). `start..end` is
     /// an absolute byte range into the source.

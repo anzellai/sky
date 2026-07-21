@@ -71,7 +71,6 @@ impl Marker {
         p.events.push(Event::Finish);
         CompletedMarker { pos: self.pos }
     }
-
 }
 
 impl Drop for Marker {

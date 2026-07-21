@@ -69,9 +69,12 @@ impl ModuleExports {
             .map(|(_, d)| *d)
     }
     pub fn ctor(&self, name: &str) -> Option<(&ExportedUnion, &ExportedCtor)> {
-        self.unions
-            .iter()
-            .find_map(|u| u.ctors.iter().find(|c| c.name.as_str() == name).map(|c| (u, c)))
+        self.unions.iter().find_map(|u| {
+            u.ctors
+                .iter()
+                .find(|c| c.name.as_str() == name)
+                .map(|c| (u, c))
+        })
     }
     pub fn type_(&self, name: &str) -> Option<(DefId, u16)> {
         if let Some(u) = self.unions.iter().find(|u| u.name.as_str() == name) {

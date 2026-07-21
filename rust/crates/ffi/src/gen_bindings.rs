@@ -38,7 +38,10 @@ fn is_name_char(c: char) -> bool {
 }
 /// Type-term delimiter (FfiGen.hs:691 / 750).
 fn is_boundary(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '*' | '[' | ']' | '(' | ')' | ',' | '<' | '>')
+    matches!(
+        c,
+        ' ' | '\t' | '\n' | '*' | '[' | ']' | '(' | ')' | ',' | '<' | '>'
+    )
 }
 
 /// `unlines` — join with `\n` AND append a trailing `\n` (Haskell semantics).
@@ -170,7 +173,9 @@ fn path_to_alias(path: &str) -> String {
 }
 
 fn sanitise(s: &str) -> String {
-    s.chars().map(|c| if is_alnum(c) { c } else { '_' }).collect()
+    s.chars()
+        .map(|c| if is_alnum(c) { c } else { '_' })
+        .collect()
 }
 
 /// `isVersionSegment` (FfiGen.hs:645) — `v` followed by digits (possibly none).
@@ -433,7 +438,11 @@ fn pack_results(vs: &[String]) -> String {
 }
 
 /// `emitTypedCall` (FfiGen.hs:1320) — body of the any/any DirectCall wrapper.
-fn emit_typed_call(fn_: &Function, params: &[(String, String)], results: &[(String, String)]) -> String {
+fn emit_typed_call(
+    fn_: &Function,
+    params: &[(String, String)],
+    results: &[(String, String)],
+) -> String {
     let name = &fn_.name;
     let method_n = &fn_.method_name;
     let n_params = params.len();
@@ -465,7 +474,8 @@ fn emit_typed_call(fn_: &Function, params: &[(String, String)], results: &[(Stri
             if t == "error" {
                 unlines(&[
                     format!("\terr := {call}"),
-                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }".to_string(),
+                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
+                        .to_string(),
                     "\tout = Ok[any, any](struct{}{})".to_string(),
                 ])
             } else {
@@ -486,7 +496,8 @@ fn emit_typed_call(fn_: &Function, params: &[(String, String)], results: &[(Stri
             if last_ty == "error" {
                 unlines(&[
                     assign_line,
-                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }".to_string(),
+                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
+                        .to_string(),
                     format!("\tout = Ok[any, any]({})", pack_results(&bind_vars)),
                 ])
             } else {
@@ -744,8 +755,16 @@ enum WrapperClass {
 }
 
 /// `wrapperClass` (FfiGen.hs:1256).
-fn wrapper_class(fn_: &Function, rparams: &[(String, String)], rresults: &[(String, String)]) -> WrapperClass {
-    let all_types: Vec<&String> = rparams.iter().map(|(_, t)| t).chain(rresults.iter().map(|(_, t)| t)).collect();
+fn wrapper_class(
+    fn_: &Function,
+    rparams: &[(String, String)],
+    rresults: &[(String, String)],
+) -> WrapperClass {
+    let all_types: Vec<&String> = rparams
+        .iter()
+        .map(|(_, t)| t)
+        .chain(rresults.iter().map(|(_, t)| t))
+        .collect();
     let has_generic = all_types.iter().any(|t| crate::gen::is_generic_type(t))
         || all_types.iter().any(|t| has_generic_marker(t));
     let has_internal = all_types.iter().any(|t| touches_internal(t));
@@ -773,7 +792,10 @@ fn has_generic_marker(t: &str) -> bool {
 }
 
 fn touches_internal(t: &str) -> bool {
-    t.contains("/internal.") || t.contains("/internal/") || t.contains("/vendor.") || t.contains("/vendor/")
+    t.contains("/internal.")
+        || t.contains("/internal/")
+        || t.contains("/vendor.")
+        || t.contains("/vendor/")
 }
 
 // ---------------------------------------------------------------------------
@@ -810,7 +832,9 @@ fn classify_typed_result(results: &[(String, String)]) -> Option<(String, bool)>
         [t, "error"] if *t != "error" => Some((t.to_string(), true)),
         [t, "bool"] if *t != "error" && *t != "bool" => Some((format!("SkyMaybe[{t}]"), false)),
         [t1, t2] if *t1 != "error" && *t2 != "error" => Some(("SkyTuple2".to_string(), false)),
-        [t1, t2, "error"] if *t1 != "error" && *t2 != "error" => Some(("SkyTuple2".to_string(), true)),
+        [t1, t2, "error"] if *t1 != "error" && *t2 != "error" => {
+            Some(("SkyTuple2".to_string(), true))
+        }
         [t1, t2, t3] if *t1 != "error" && *t2 != "error" && *t3 != "error" => {
             Some(("SkyTuple3".to_string(), false))
         }
@@ -919,7 +943,9 @@ fn emit_typed_variant(
             // single `error`
             vec![
                 format!("\terr := {call}"),
-                format!("\tif err != nil {{ out = Err[any,{ok_type}](ErrFfi(err.Error())); return }}"),
+                format!(
+                    "\tif err != nil {{ out = Err[any,{ok_type}](ErrFfi(err.Error())); return }}"
+                ),
                 format!("\tout = Ok[any,{ok_type}](struct{{}}{{}})"),
             ]
         } else {
@@ -928,7 +954,9 @@ fn emit_typed_variant(
             lhs_vars.push("err".to_string());
             vec![
                 format!("\t{} := {call}", join(", ", &lhs_vars)),
-                format!("\tif err != nil {{ out = Err[any,{ok_type}](ErrFfi(err.Error())); return }}"),
+                format!(
+                    "\tif err != nil {{ out = Err[any,{ok_type}](ErrFfi(err.Error())); return }}"
+                ),
                 format!("\tout = Ok[any,{ok_type}]({})", pack_tuple(&r_names)),
             ]
         }
@@ -957,8 +985,13 @@ fn emit_typed_variant(
 
     let mut lines: Vec<String> = Vec::new();
     lines.extend(alias_lines);
-    lines.push(format!("// [{}] typed wrapper for {any_name} (P7 adaptor target)", fn_.effect));
-    lines.push(format!("func {typed_name}({param_decls}) (out SkyResult[any, {ok_type}]) {{"));
+    lines.push(format!(
+        "// [{}] typed wrapper for {any_name} (P7 adaptor target)",
+        fn_.effect
+    ));
+    lines.push(format!(
+        "func {typed_name}({param_decls}) (out SkyResult[any, {ok_type}]) {{"
+    ));
     lines.push(recover_line);
     if let Some(nrc) = nil_recv_check {
         lines.push(nrc);
@@ -974,7 +1007,11 @@ fn emit_typed_variant(
 // Per-function wrapper (FfiGen.hs:967).
 // ---------------------------------------------------------------------------
 
-fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_: &Function) -> String {
+fn emit_typed_wrapper(
+    kernel_name: &str,
+    aliases: &BTreeMap<String, String>,
+    fn_: &Function,
+) -> String {
     let go_fn_name = &fn_.name;
     let sky_name = lower_first(go_fn_name);
     let wrapper_name = format!("{kernel_name}_{sky_name}");
@@ -991,8 +1028,8 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
         .map(|p| (p.name.clone(), rewrite_type(aliases, &p.ty)))
         .collect();
 
-    let has_generic =
-        rparams.iter().any(|(_, t)| crate::gen::is_generic_type(t)) || rresults.iter().any(|(_, t)| crate::gen::is_generic_type(t));
+    let has_generic = rparams.iter().any(|(_, t)| crate::gen::is_generic_type(t))
+        || rresults.iter().any(|(_, t)| crate::gen::is_generic_type(t));
     let is_identity_pointer = has_generic
         && rparams.len() == 1
         && rresults.len() == 1
@@ -1074,7 +1111,10 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
             quote(field_name)
         );
         return if params_ok {
-            format!("{}{typed_decl_set}{any_decl_set}", unlines(&typed_alias_set))
+            format!(
+                "{}{typed_decl_set}{any_decl_set}",
+                unlines(&typed_alias_set)
+            )
         } else {
             any_decl_set
         };
@@ -1105,7 +1145,8 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
             match emit_typed_variant(&known_aliases, &wrapper_name, fn_, &rparams, &rresults) {
                 Some(s) => s,
                 None => {
-                    let param_list: Vec<String> = (0..n_args).map(|i| format!("arg{i} any")).collect();
+                    let param_list: Vec<String> =
+                        (0..n_args).map(|i| format!("arg{i} any")).collect();
                     let param_list = join(", ", &param_list);
                     let unit_sink = if fn_.params.is_empty() {
                         "\t_ = arg0\n".to_string()
@@ -1114,7 +1155,10 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
                     };
                     let body = format!("{unit_sink}{}", emit_typed_call(fn_, &rparams, &rresults));
                     unlines(&[
-                        format!("// [{}] {kernel_name}.{sky_name} → pkg.{go_fn_name}", fn_.effect),
+                        format!(
+                            "// [{}] {kernel_name}.{sky_name} → pkg.{go_fn_name}",
+                            fn_.effect
+                        ),
                         format!("func {wrapper_name}({param_list}) (out any) {{"),
                         "\tdefer SkyFfiRecover(&out)()".to_string(),
                         body,
@@ -1126,10 +1170,19 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
         }
         WrapperClass::ReflectTopLevel => {
             let target = format!("reflect.ValueOf(pkg.{go_fn_name})");
-            reflect_call(kernel_name, &sky_name, &wrapper_name, n_args, &fn_.effect, has_err, &target)
+            reflect_call(
+                kernel_name,
+                &sky_name,
+                &wrapper_name,
+                n_args,
+                &fn_.effect,
+                has_err,
+                &target,
+            )
         }
         WrapperClass::ReflectGeneric => {
-            let underscore_param_list: Vec<String> = (0..n_args).map(|_| "_ any".to_string()).collect();
+            let underscore_param_list: Vec<String> =
+                (0..n_args).map(|_| "_ any".to_string()).collect();
             let underscore_param_list = join(", ", &underscore_param_list);
             unlines(&[
                 format!("// [{}] {kernel_name}.{sky_name} — generic with unknown constraint; stubbed as Err", fn_.effect),
@@ -1143,7 +1196,8 @@ fn emit_typed_wrapper(kernel_name: &str, aliases: &BTreeMap<String, String>, fn_
             ])
         }
         WrapperClass::ReflectMethod(method_name) => {
-            let reflect_param_list: Vec<String> = (0..n_args).map(|i| format!("arg{i} any")).collect();
+            let reflect_param_list: Vec<String> =
+                (0..n_args).map(|i| format!("arg{i} any")).collect();
             let reflect_param_list = join(", ", &reflect_param_list);
             let reflect_method_args: Vec<String> = (1..n_args).map(|i| format!("arg{i}")).collect();
             let reflect_method_args_list = format!("[]any{{{}}}", join(", ", &reflect_method_args));
@@ -1299,7 +1353,9 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
     ));
     lines.push(format!("// Re-run `sky add {}` to regenerate.", info.pkg));
     lines.push("//".to_string());
-    lines.push("// Wrapper functions are in `package rt` with names <Kernel>_<lowerFn>.".to_string());
+    lines.push(
+        "// Wrapper functions are in `package rt` with names <Kernel>_<lowerFn>.".to_string(),
+    );
     lines.push(format!(
         "// Sky source resolves `import {module_name} as X` and calls `X.<lowerFn>` — the canonicaliser routes it via"
     ));

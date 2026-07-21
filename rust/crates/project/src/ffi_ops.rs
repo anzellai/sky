@@ -23,7 +23,10 @@ pub struct FfiReport {
 
 impl FfiReport {
     fn new() -> Self {
-        FfiReport { lines: Vec::new(), ok: true }
+        FfiReport {
+            lines: Vec::new(),
+            ok: true,
+        }
     }
     fn say(&mut self, m: impl Into<String>) {
         self.lines.push(m.into());
@@ -63,7 +66,11 @@ pub fn add(project_dir: &Path, repo_root: &Path, pkg: &str) -> FfiReport {
         Err(e) => return r.fail(format!("sky add: {e}")),
     };
 
-    r.say(format!("Inspecting {pkg} (GOOS={}/{}, normalised)…", ffi::inspect::PIN_GOOS, ffi::inspect::PIN_GOARCH));
+    r.say(format!(
+        "Inspecting {pkg} (GOOS={}/{}, normalised)…",
+        ffi::inspect::PIN_GOOS,
+        ffi::inspect::PIN_GOARCH
+    ));
     let info = match ffi::run_inspector(&bin, &sky_out, &[pkg.to_string()]) {
         Ok(mut v) if !v.is_empty() => v.remove(0),
         Ok(_) => return r.fail(format!("sky add: inspector returned no package for {pkg}")),
@@ -71,12 +78,16 @@ pub fn add(project_dir: &Path, repo_root: &Path, pkg: &str) -> FfiReport {
     };
 
     match write_surface(project_dir, &info) {
-        Ok(slug) => r.say(format!("  wrote sky-ffi/{slug}.{{kernel.json,skyi}} + go/{slug}_bindings.go")),
+        Ok(slug) => r.say(format!(
+            "  wrote sky-ffi/{slug}.{{kernel.json,skyi}} + go/{slug}_bindings.go"
+        )),
         Err(e) => return r.fail(format!("sky add: {e}")),
     }
 
     match append_go_dependency(&project_dir.join("sky.toml"), pkg) {
-        Ok(true) => r.say(format!("  recorded {pkg} in sky.toml [\"go.dependencies\"]")),
+        Ok(true) => r.say(format!(
+            "  recorded {pkg} in sky.toml [\"go.dependencies\"]"
+        )),
         Ok(false) => r.say(format!("  {pkg} already in sky.toml")),
         Err(e) => r.say(format!("  warn: sky.toml update: {e}")),
     }
@@ -105,7 +116,9 @@ pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
             }
         }
     } else {
-        r.say(format!("  no committed surface found for {pkg} (nothing to delete)"));
+        r.say(format!(
+            "  no committed surface found for {pkg} (nothing to delete)"
+        ));
     }
 
     let sky_out = project_dir.join("sky-out");
@@ -288,12 +301,18 @@ fn write_surface(project_dir: &Path, info: &ffi::PackageInfo) -> Result<String, 
     let go_dir = ffi_dir.join("go");
     std::fs::create_dir_all(&go_dir).map_err(|e| format!("mkdir sky-ffi/go: {e}"))?;
     let slug = &surface.slug;
-    std::fs::write(ffi_dir.join(format!("{slug}.kernel.json")), &surface.kernel_json)
-        .map_err(|e| format!("write {slug}.kernel.json: {e}"))?;
+    std::fs::write(
+        ffi_dir.join(format!("{slug}.kernel.json")),
+        &surface.kernel_json,
+    )
+    .map_err(|e| format!("write {slug}.kernel.json: {e}"))?;
     std::fs::write(ffi_dir.join(format!("{slug}.skyi")), &surface.skyi)
         .map_err(|e| format!("write {slug}.skyi: {e}"))?;
-    std::fs::write(go_dir.join(format!("{slug}_bindings.go")), &surface.bindings_go)
-        .map_err(|e| format!("write {slug}_bindings.go: {e}"))?;
+    std::fs::write(
+        go_dir.join(format!("{slug}_bindings.go")),
+        &surface.bindings_go,
+    )
+    .map_err(|e| format!("write {slug}_bindings.go: {e}"))?;
     Ok(slug.clone())
 }
 
@@ -305,7 +324,10 @@ fn slug_for_package(project_dir: &Path, pkg: &str) -> Option<String> {
     entries.sort();
     let needle = format!("\"package\": \"{pkg}\"");
     for p in entries {
-        let is_kj = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".kernel.json"));
+        let is_kj = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".kernel.json"));
         if !is_kj {
             continue;
         }
@@ -343,7 +365,10 @@ fn ensure_go_mod(repo_root: &Path, sky_out: &Path) -> Result<(), String> {
 fn go_get(sky_out: &Path, pkgs: &[String]) -> Result<(), String> {
     let mut args = vec!["get".to_string()];
     args.extend(pkgs.iter().cloned());
-    run_go(sky_out, &args.iter().map(String::as_str).collect::<Vec<_>>())
+    run_go(
+        sky_out,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
 }
 
 fn run_go(dir: &Path, args: &[&str]) -> Result<(), String> {
@@ -365,7 +390,9 @@ fn run_go(dir: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 fn is_external_module(path: &str) -> bool {
-    path.split('/').next().is_some_and(|head| head.contains('.'))
+    path.split('/')
+        .next()
+        .is_some_and(|head| head.contains('.'))
 }
 
 fn module_required(sky_out: &Path, path: &str) -> bool {

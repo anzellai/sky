@@ -422,7 +422,12 @@ impl<'a> Infer<'a> {
     /// `kernelAttr k v = Attr.href v : Attribute msg`) is left unpinned, matching
     /// the oracle, which also does not pin a wildcard result whose body is
     /// polymorphic. Populated into `World::any_result_check_sigs` (check-only).
-    pub fn infer_any_result_pin(&mut self, body: &Body, anno: &Ty, concretize: bool) -> Option<Scheme> {
+    pub fn infer_any_result_pin(
+        &mut self,
+        body: &Body,
+        anno: &Ty,
+        concretize: bool,
+    ) -> Option<Scheme> {
         let root = body.root?;
         let param_vars: Vec<TyVarId> = body
             .params
@@ -528,7 +533,9 @@ impl<'a> Infer<'a> {
                 }
                 // base must be an open record carrying at least the updated fields
                 let row = self.uf.fresh_flex();
-                let constraint = self.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
+                let constraint = self
+                    .uf
+                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
                 self.unify(tb, constraint);
                 // D2 (lowering-path only): if the base is an unannotated sibling
                 // `Res::Def`, it resolved to a fresh flex above, so `tb`'s row
@@ -557,8 +564,10 @@ impl<'a> Infer<'a> {
                 ti
             }
             Expr::Lambda { params, body: lb } => {
-                let param_vars: Vec<TyVarId> =
-                    params.iter().map(|&p| self.infer_pat_fresh(body, p)).collect();
+                let param_vars: Vec<TyVarId> = params
+                    .iter()
+                    .map(|&p| self.infer_pat_fresh(body, p))
+                    .collect();
                 let rb = self.infer_expr(body, *lb);
                 param_vars
                     .into_iter()
@@ -598,13 +607,18 @@ impl<'a> Infer<'a> {
                 // pre-bind binder names for forward reference / recursion.
                 for d in defs {
                     for (_, lid) in &d.binders {
-                        self.locals.entry(*lid).or_insert_with(|| self.uf.fresh_flex());
+                        self.locals
+                            .entry(*lid)
+                            .or_insert_with(|| self.uf.fresh_flex());
                     }
                 }
                 for d in defs {
                     // parameters (function let-binding) get fresh vars, then body.
-                    let param_vars: Vec<TyVarId> =
-                        d.params.iter().map(|&p| self.infer_pat_fresh(body, p)).collect();
+                    let param_vars: Vec<TyVarId> = d
+                        .params
+                        .iter()
+                        .map(|&p| self.infer_pat_fresh(body, p))
+                        .collect();
                     let tv = self.infer_expr(body, d.body);
                     let full = param_vars
                         .into_iter()
@@ -645,7 +659,9 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(field.clone(), fv);
-                let rec = self.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
+                let rec = self
+                    .uf
+                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
                 self.fun(rec, fv)
             }
             Expr::Access(base, field) => {
@@ -654,7 +670,9 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(field.clone(), fv);
-                let rec = self.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
+                let rec = self
+                    .uf
+                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
                 self.unify(tb, rec);
                 fv
             }
@@ -756,10 +774,7 @@ impl<'a> Infer<'a> {
                 if let Some(s) = self.world.ctors_by_def.get(&cr.def).cloned() {
                     return self.instantiate(&s);
                 }
-                let name = self
-                    .db
-                    .def_loc(cr.def)
-                    .map(|l| l.name.as_str().to_string());
+                let name = self.db.def_loc(cr.def).map(|l| l.name.as_str().to_string());
                 match name.and_then(|n| self.world.ctors.get(&n).cloned()) {
                     Some(s) => self.instantiate(&s),
                     None => self.uf.fresh_flex(),
@@ -848,7 +863,11 @@ impl<'a> Infer<'a> {
             }
             // composition: (a->b) >> (b->c) => a->c  ; (b->c) << (a->b) => a->c
             ">>" => {
-                let (a, b, c) = (self.uf.fresh_flex(), self.uf.fresh_flex(), self.uf.fresh_flex());
+                let (a, b, c) = (
+                    self.uf.fresh_flex(),
+                    self.uf.fresh_flex(),
+                    self.uf.fresh_flex(),
+                );
                 let ab = self.fun(a, b);
                 let bc = self.fun(b, c);
                 self.unify(tl, ab);
@@ -856,7 +875,11 @@ impl<'a> Infer<'a> {
                 self.fun(a, c)
             }
             "<<" => {
-                let (a, b, c) = (self.uf.fresh_flex(), self.uf.fresh_flex(), self.uf.fresh_flex());
+                let (a, b, c) = (
+                    self.uf.fresh_flex(),
+                    self.uf.fresh_flex(),
+                    self.uf.fresh_flex(),
+                );
                 let bc = self.fun(b, c);
                 let ab = self.fun(a, b);
                 self.unify(tl, bc);
@@ -883,7 +906,10 @@ impl<'a> Infer<'a> {
             Pattern::Anything => {}
             Pattern::Var(id) => {
                 let id = *id;
-                self.locals.insert(id, expected); if self.record_exprs { self.local_vars.push((id, expected)); }
+                self.locals.insert(id, expected);
+                if self.record_exprs {
+                    self.local_vars.push((id, expected));
+                }
             }
             Pattern::Unit => {
                 let u = self.uf.fresh(Content::Structure(FlatTy::Unit));
@@ -914,17 +940,25 @@ impl<'a> Infer<'a> {
                 let mut map = std::collections::BTreeMap::new();
                 for (n, id) in binders {
                     let fv = self.uf.fresh_flex();
-                    self.locals.insert(*id, fv); if self.record_exprs { self.local_vars.push((*id, fv)); }
+                    self.locals.insert(*id, fv);
+                    if self.record_exprs {
+                        self.local_vars.push((*id, fv));
+                    }
                     map.insert(n.clone(), fv);
                 }
                 let row = self.uf.fresh_flex();
-                let rec = self.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
+                let rec = self
+                    .uf
+                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
                 self.unify(expected, rec);
             }
             Pattern::Alias(inner, id) => {
                 let inner = *inner;
                 let id = *id;
-                self.locals.insert(id, expected); if self.record_exprs { self.local_vars.push((id, expected)); }
+                self.locals.insert(id, expected);
+                if self.record_exprs {
+                    self.local_vars.push((id, expected));
+                }
                 self.infer_pat_against(body, inner, expected);
             }
             Pattern::Tuple(pats) => {

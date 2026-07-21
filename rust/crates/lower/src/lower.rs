@@ -9,7 +9,7 @@ use crate::goty::{
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
 use base::{DefId, ModuleId, Name};
-use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, Pattern, PatId, Res, SkyDb};
+use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ty::{BodyTypes, Ty, TyDb, Typer};
 
@@ -220,7 +220,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         if let TypeDeclKind::Record(fields) = &d.kind {
             let mut names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
             names.sort();
-            record_fieldsets.entry(names).or_insert_with(|| d.go_name.clone());
+            record_fieldsets
+                .entry(names)
+                .or_insert_with(|| d.go_name.clone());
             record_params.insert(d.go_name.clone(), record_type_params(fields));
             record_templates.insert(d.go_name.clone(), fields.clone());
         }
@@ -260,7 +262,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             let mut names: Vec<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
             names.sort();
-            record_fieldsets.get(&names).map(|go| (names.clone(), go.clone()))
+            record_fieldsets
+                .get(&names)
+                .map(|go| (names.clone(), go.clone()))
         })
     };
     let env = TypeEnv {
@@ -286,7 +290,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let ambiguous_names: HashSet<String> = {
         let mut per_name: HashMap<String, HashSet<String>> = HashMap::new();
         for (module, name) in env.nominal_by_module.keys() {
-            per_name.entry(name.clone()).or_default().insert(module.clone());
+            per_name
+                .entry(name.clone())
+                .or_default()
+                .insert(module.clone());
         }
         per_name
             .into_iter()
@@ -304,9 +311,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         .filter_map(|d| match &d.kind {
             TypeDeclKind::Adt(variants)
                 if should_seal_prefix(&d.go_name)
-                    && variants
-                        .iter()
-                        .all(|(_, args)| args.iter().all(|t| !ty_refs_ambiguous(t, &ambiguous_names))) =>
+                    && variants.iter().all(|(_, args)| {
+                        args.iter().all(|t| !ty_refs_ambiguous(t, &ambiguous_names))
+                    }) =>
             {
                 Some(d.go_name.clone())
             }
@@ -321,7 +328,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         if let TypeDeclKind::Record(fields) = &d.kind {
             record_fields.insert(
                 d.go_name.clone(),
-                fields.iter().map(|(n, t)| (capitalize(n), t.clone())).collect(),
+                fields
+                    .iter()
+                    .map(|(n, t)| (capitalize(n), t.clone()))
+                    .collect(),
             );
         }
     }
@@ -361,8 +371,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 for (i, v) in vs.iter().enumerate() {
                     ctor_owner.insert(v.clone(), (d.go_name.clone(), NominalKind::Iota));
                     ctor_arity.insert(v.clone(), 0);
-                    ctor_in_union
-                        .insert((d.go_name.clone(), v.clone()), (NominalKind::Iota, i));
+                    ctor_in_union.insert((d.go_name.clone(), v.clone()), (NominalKind::Iota, i));
                     ctor_arity_in_union.insert((d.go_name.clone(), v.clone()), 0);
                 }
             }
@@ -371,8 +380,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                     ctor_owner.insert(cn.clone(), (d.go_name.clone(), NominalKind::Adt));
                     ctor_tag.insert(cn.clone(), i);
                     ctor_arity.insert(cn.clone(), args.len());
-                    ctor_in_union
-                        .insert((d.go_name.clone(), cn.clone()), (NominalKind::Adt, i));
+                    ctor_in_union.insert((d.go_name.clone(), cn.clone()), (NominalKind::Adt, i));
                     ctor_arity_in_union.insert((d.go_name.clone(), cn.clone()), args.len());
                     ctor_field_gotys.insert(
                         (d.go_name.clone(), cn.clone()),
@@ -383,8 +391,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             TypeDeclKind::Record(fields) => {
                 ctor_owner.insert(d.name.clone(), (d.go_name.clone(), NominalKind::Record));
                 ctor_arity.insert(d.name.clone(), fields.len());
-                ctor_in_union
-                    .insert((d.go_name.clone(), d.name.clone()), (NominalKind::Record, 0));
+                ctor_in_union.insert(
+                    (d.go_name.clone(), d.name.clone()),
+                    (NominalKind::Record, 0),
+                );
                 ctor_arity_in_union.insert((d.go_name.clone(), d.name.clone()), fields.len());
             }
         }
@@ -417,9 +427,12 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         let mut ptys = Vec::new();
         for (i, p) in e.body.params.iter().enumerate() {
             let inferred = || match &e.body.pats[*p] {
-                Pattern::Var(lid) => {
-                    e.types.locals.get(lid).cloned().unwrap_or(Ty::Var(Name::new("any")))
-                }
+                Pattern::Var(lid) => e
+                    .types
+                    .locals
+                    .get(lid)
+                    .cloned()
+                    .unwrap_or(Ty::Var(Name::new("any"))),
                 _ => Ty::Var(Name::new("any")),
             };
             // Take the sig param type when it is concrete enough to be useful
@@ -581,7 +594,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             continue;
         }
         // record type names carry the `_R` suffix in Go usage.
-        let decl = type_by_go.get(&gn).or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
+        let decl = type_by_go
+            .get(&gn)
+            .or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
         if let Some(decl) = decl {
             let (items, more) = emit_type_decl(decl, &env, &sealed_unions);
             for m in more {
@@ -696,13 +711,72 @@ fn top_go_name(module: &str, name: &str) -> String {
 }
 
 const RESERVED: &[&str] = &[
-    "init", "string", "error", "any", "bool", "byte", "rune", "int", "int8", "int16", "int32",
-    "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "true", "false",
-    "nil", "iota", "len", "cap", "make", "new", "append", "copy", "delete", "panic", "recover",
-    "print", "println", "close", "min", "max", "complex", "real", "imag", "clear", "for", "func",
-    "type", "range", "return", "if", "else", "switch", "case", "default", "var", "const", "map",
-    "struct", "interface", "chan", "go", "select", "package", "import", "goto", "break", "continue",
-    "fallthrough", "defer",
+    "init",
+    "string",
+    "error",
+    "any",
+    "bool",
+    "byte",
+    "rune",
+    "int",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float32",
+    "float64",
+    "true",
+    "false",
+    "nil",
+    "iota",
+    "len",
+    "cap",
+    "make",
+    "new",
+    "append",
+    "copy",
+    "delete",
+    "panic",
+    "recover",
+    "print",
+    "println",
+    "close",
+    "min",
+    "max",
+    "complex",
+    "real",
+    "imag",
+    "clear",
+    "for",
+    "func",
+    "type",
+    "range",
+    "return",
+    "if",
+    "else",
+    "switch",
+    "case",
+    "default",
+    "var",
+    "const",
+    "map",
+    "struct",
+    "interface",
+    "chan",
+    "go",
+    "select",
+    "package",
+    "import",
+    "goto",
+    "break",
+    "continue",
+    "fallthrough",
+    "defer",
 ];
 
 fn reserved_rewrite(name: &str) -> String {
@@ -861,8 +935,7 @@ fn collect_types(
                         // Its runtime value is a kernel struct handle, so it
                         // resolves to `any` in `sky_ty_to_go` — never the `int`
                         // the placeholder decl aliases.
-                        let opaque = variants.len() == 1
-                            && variants[0].0.ends_with("_OPAQUE");
+                        let opaque = variants.len() == 1 && variants[0].0.ends_with("_OPAQUE");
                         reg!(
                             tname,
                             Nominal {
@@ -1088,8 +1161,7 @@ fn emit_type_decl(
                     .enumerate()
                     .map(|(j, t)| format!("v{j} {}", render_goty(t)))
                     .collect();
-                let assigns: Vec<String> =
-                    (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
+                let assigns: Vec<String> = (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
                 items.push(GoItem::Raw(format!(
                     "func {}_{}({}) {} {{ return {}{{{}}} }}",
                     decl.go_name,
@@ -1246,8 +1318,7 @@ fn should_seal_prefix(go_name: &str) -> bool {
 fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
     match t {
         Ty::App(n, args) => {
-            ambiguous.contains(n.as_str())
-                || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
+            ambiguous.contains(n.as_str()) || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
         }
         Ty::Fun(a, b) => ty_refs_ambiguous(a, ambiguous) || ty_refs_ambiguous(b, ambiguous),
         Ty::Tuple(xs) => xs.iter().any(|x| ty_refs_ambiguous(x, ambiguous)),
@@ -1405,13 +1476,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn lower_def(
-        &mut self,
-        name: &str,
-        module: &str,
-        sig: Option<&Ty>,
-        is_main: bool,
-    ) -> GoItem {
+    fn lower_def(&mut self, name: &str, module: &str, sig: Option<&Ty>, is_main: bool) -> GoItem {
         // bind params
         let param_pats: Vec<PatId> = self.body.params.clone();
         let mut params = Vec::new();
@@ -1440,7 +1505,10 @@ impl<'a> Ctx<'a> {
                     self.local_tys.insert(*id, GoTy::Any);
                 }
             }
-            params.push(GoParam { name: pname, ty: pty });
+            params.push(GoParam {
+                name: pname,
+                ty: pty,
+            });
             param_destructure.extend(binds);
         }
         // Whether the RESULT is row-polymorphic (erase the return type to `any`).
@@ -1712,7 +1780,10 @@ impl<'a> Ctx<'a> {
         for p in params {
             let (pname, pty, binds) = self.bind_param(*p, None);
             ptys.push(pty.clone());
-            gparams.push(GoParam { name: pname, ty: pty });
+            gparams.push(GoParam {
+                name: pname,
+                ty: pty,
+            });
             destructure.extend(binds);
         }
         let ret_ty = self.expr_ty(body);
@@ -1782,10 +1853,7 @@ impl<'a> Ctx<'a> {
             Expr::Str(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
             Expr::Bool(b) => GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool)),
             Expr::Chr(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
-            Expr::Unit => GoExpr::new(
-                GoExprKind::Ident("struct{}{}".into()),
-                GoTy::Unit,
-            ),
+            Expr::Unit => GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Unit),
             Expr::Var(res) => self.lower_var(res.clone(), actual),
             Expr::Call(callee, args) => self.lower_call(*callee, args, actual),
             Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
@@ -1837,9 +1905,10 @@ impl<'a> Ctx<'a> {
                 // field's DECLARED Go type is `any` and the use slot is concrete —
                 // concrete-typed fields keep byte-identical emission.
                 let declared_field_ty: Option<GoTy> = match &b.ty {
-                    GoTy::Struct(fs) => {
-                        fs.iter().find(|(n, _)| n.as_str() == cap).map(|(_, t)| t.clone())
-                    }
+                    GoTy::Struct(fs) => fs
+                        .iter()
+                        .find(|(n, _)| n.as_str() == cap)
+                        .map(|(_, t)| t.clone()),
                     GoTy::Named(n, _) => {
                         let sky = self
                             .record_fields
@@ -1851,10 +1920,7 @@ impl<'a> Ctx<'a> {
                     _ => None,
                 };
                 if declared_field_ty.as_ref() == Some(&GoTy::Any) && *actual != GoTy::Any {
-                    let sel = GoExpr::new(
-                        GoExprKind::Selector(Box::new(b), cap),
-                        GoTy::Any,
-                    );
+                    let sel = GoExpr::new(GoExprKind::Selector(Box::new(b), cap), GoTy::Any);
                     return self.coerce_if_needed(sel, actual);
                 }
                 // A func-typed struct field (`OnChange func(bool) any`) accessed
@@ -1873,10 +1939,7 @@ impl<'a> Ctx<'a> {
                     _ => None,
                 }
                 .unwrap_or_else(|| actual.clone());
-                GoExpr::new(
-                    GoExprKind::Selector(Box::new(b), cap),
-                    field_ty,
-                )
+                GoExpr::new(GoExprKind::Selector(Box::new(b), cap), field_ty)
             }
             Expr::Record(fields) => self.lower_record(fields, actual),
             Expr::Update { base, fields } => self.lower_update(*base, fields, actual),
@@ -1888,12 +1951,15 @@ impl<'a> Ctx<'a> {
                 // `.field` as a function value → func(x any) any { return x.Field }
                 let f = capitalize(field.as_str());
                 GoExpr::new(
-                    GoExprKind::Ident(format!("func(_r any) any {{ return rt.Field(_r, \"{f}\") }}")),
+                    GoExprKind::Ident(format!(
+                        "func(_r any) any {{ return rt.Field(_r, \"{f}\") }}"
+                    )),
                     GoTy::Any,
                 )
             }
             Expr::Error => {
-                self.warnings.push("lowered an Expr::Error recovery node".into());
+                self.warnings
+                    .push("lowered an Expr::Error recovery node".into());
                 GoExpr::new(GoExprKind::Nil, GoTy::Any)
             }
         }
@@ -1915,7 +1981,11 @@ impl<'a> Ctx<'a> {
                 // slot type — the outer `lower_expr` coerces to `expected`. A
                 // param declared `RetryPolicy_R` must not report itself as a
                 // body-inferred subset record.
-                let ty = self.local_tys.get(&id).cloned().unwrap_or_else(|| actual.clone());
+                let ty = self
+                    .local_tys
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| actual.clone());
                 GoExpr::new(GoExprKind::Ident(name), ty)
             }
             Res::Def(d) => {
@@ -1997,8 +2067,11 @@ impl<'a> Ctx<'a> {
                 self.lower_ctor_value(cr.def, actual, pin)
             }
             Res::Foreign { package, name } => {
-                self.warnings
-                    .push(format!("foreign ref {}.{}", package.as_str(), name.as_str()));
+                self.warnings.push(format!(
+                    "foreign ref {}.{}",
+                    package.as_str(),
+                    name.as_str()
+                ));
                 GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
             }
             Res::Error => GoExpr::new(GoExprKind::Nil, GoTy::Any),
@@ -2065,7 +2138,11 @@ impl<'a> Ctx<'a> {
         // Match the expected function shape when known; else `any` params.
         let (param_tys, ret): (Vec<GoTy>, GoTy) = match actual {
             GoTy::Func(ps, r) if ps.len() == arity => {
-                let ps = if adt_like { vec![GoTy::Any; arity] } else { ps.clone() };
+                let ps = if adt_like {
+                    vec![GoTy::Any; arity]
+                } else {
+                    ps.clone()
+                };
                 (ps, (**r).clone())
             }
             _ => (vec![GoTy::Any; arity], GoTy::Any),
@@ -2075,7 +2152,10 @@ impl<'a> Ctx<'a> {
         for pty in param_tys.iter().take(arity) {
             let pname = format!("_p{}", self.local_counter);
             self.local_counter += 1;
-            gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
             // ADT/iota ctor params are the untyped `Fields []any` bag; record
             // ctor params are typed. `ctor_emit` widens/coerces per kind, so
             // hand it the raw typed ident and let it decide.
@@ -2108,7 +2188,10 @@ impl<'a> Ctx<'a> {
         // call to <Ctor>" (examples 16/18). Builtin container ctors keep their
         // fixed arity handling in `ctor_emit`.
         let arity = self.ctor_arity_pinned(&cname, pin.as_deref());
-        let builtin = matches!(cname.as_str(), "Ok" | "Err" | "Just" | "Nothing" | "True" | "False");
+        let builtin = matches!(
+            cname.as_str(),
+            "Ok" | "Err" | "Just" | "Nothing" | "True" | "False"
+        );
         if !builtin && args.len() < arity {
             return (true, self.ctor_partial(&cname, args, arity, actual, pin));
         }
@@ -2123,7 +2206,10 @@ impl<'a> Ctx<'a> {
                 .enumerate()
                 .map(|(i, a)| self.lower_expr(*a, ftys.get(i).unwrap_or(&GoTy::Any)))
                 .collect(),
-            None => args.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect(),
+            None => args
+                .iter()
+                .map(|a| self.lower_expr(*a, &GoTy::Any))
+                .collect(),
         };
         let expr = self.ctor_emit(&cname, lowered_args, actual, pin.as_deref());
         (true, expr)
@@ -2152,8 +2238,10 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
         pin: Option<String>,
     ) -> GoExpr {
-        let mut arg_exprs: Vec<GoExpr> =
-            given.iter().map(|a| self.lower_expr(*a, &GoTy::Any)).collect();
+        let mut arg_exprs: Vec<GoExpr> = given
+            .iter()
+            .map(|a| self.lower_expr(*a, &GoTy::Any))
+            .collect();
         let n_rest = arity - given.len();
         let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
             GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
@@ -2163,7 +2251,10 @@ impl<'a> Ctx<'a> {
         for pty in &rest_tys {
             let pname = format!("_p{}", self.local_counter);
             self.local_counter += 1;
-            gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
             arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
         }
         let ctor_val = self.ctor_emit(cname, arg_exprs, &ret, pin.as_deref());
@@ -2187,9 +2278,10 @@ impl<'a> Ctx<'a> {
         // type args for the generic container constructors (Go can't infer the
         // unused type param, e.g. `E` in `Ok`).
         let (res_ea, maybe_a) = match actual {
-            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => {
-                (format!("[{}, {}]", render_goty(&ts[0]), render_goty(&ts[1])), String::new())
-            }
+            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => (
+                format!("[{}, {}]", render_goty(&ts[0]), render_goty(&ts[1])),
+                String::new(),
+            ),
             GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
                 (String::new(), format!("[{}]", render_goty(&ts[0])))
             }
@@ -2201,10 +2293,15 @@ impl<'a> Ctx<'a> {
             "Just" => call_rt(&format!("rt.Just{maybe_a}"), lowered_args, actual.clone()),
             "Nothing" => {
                 let a = match actual {
-                    GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => render_goty(&ts[0]),
+                    GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
+                        render_goty(&ts[0])
+                    }
                     _ => "any".to_string(),
                 };
-                GoExpr::new(GoExprKind::Ident(format!("rt.Nothing[{a}]()")), actual.clone())
+                GoExpr::new(
+                    GoExprKind::Ident(format!("rt.Nothing[{a}]()")),
+                    actual.clone(),
+                )
             }
             "True" => GoExpr::new(GoExprKind::BoolLit(true), GoTy::Bare(Prim::Bool)),
             "False" => GoExpr::new(GoExprKind::BoolLit(false), GoTy::Bare(Prim::Bool)),
@@ -2246,7 +2343,11 @@ impl<'a> Ctx<'a> {
                             } else {
                                 lowered_args
                             };
-                            call_rt(&format!("{go_type}_{cname}"), args_out, GoTy::Named(go_type, vec![]))
+                            call_rt(
+                                &format!("{go_type}_{cname}"),
+                                args_out,
+                                GoTy::Named(go_type, vec![]),
+                            )
                         }
                         NominalKind::Record => {
                             let ctor = go_type.trim_end_matches("_R").to_string();
@@ -2263,11 +2364,7 @@ impl<'a> Ctx<'a> {
                                     .record_params
                                     .get(&go_type)
                                     .map(|params| {
-                                        params
-                                            .iter()
-                                            .cloned()
-                                            .zip(args.iter().cloned())
-                                            .collect()
+                                        params.iter().cloned().zip(args.iter().cloned()).collect()
                                     })
                                     .unwrap_or_default(),
                                 _ => HashMap::new(),
@@ -2353,7 +2450,10 @@ impl<'a> Ctx<'a> {
     /// `Res::Def` carry no union pin).
     fn ctor_arity_pinned(&self, cname: &str, pin: Option<&str>) -> usize {
         if let Some(gt) = pin {
-            if let Some(a) = self.ctor_arity_in_union.get(&(gt.to_string(), cname.to_string())) {
+            if let Some(a) = self
+                .ctor_arity_in_union
+                .get(&(gt.to_string(), cname.to_string()))
+            {
                 return *a;
             }
         }
@@ -2465,7 +2565,9 @@ impl<'a> Ctx<'a> {
                     .map(|e| e.module_name.clone())
                     .unwrap_or_else(|| self.cur_module.clone());
                 let ps = self.def_param_tys.get(&d).cloned().map(|ptys| {
-                    ptys.iter().map(|t| self.goty_in(t, &callee_mod)).collect::<Vec<_>>()
+                    ptys.iter()
+                        .map(|t| self.goty_in(t, &callee_mod))
+                        .collect::<Vec<_>>()
                 });
                 let ret = self
                     .def_result_tys
@@ -2495,9 +2597,9 @@ impl<'a> Ctx<'a> {
         let combinator_elem: Option<GoTy> =
             if args.len() >= 2 && matches!(&self.body.exprs[args[0]], Expr::Lambda { .. }) {
                 // Invariant: guarded by `args.len() >= 2`, so `last()` is `Some`.
-                let last = args
-                    .last()
-                    .unwrap_or_else(|| base::bug!("combinator arg list emptied under len>=2 guard"));
+                let last = args.last().unwrap_or_else(|| {
+                    base::bug!("combinator arg list emptied under len>=2 guard")
+                });
                 match self.expr_ty(*last) {
                     GoTy::Slice(e) => Some(*e),
                     _ => None,
@@ -2644,15 +2746,21 @@ impl<'a> Ctx<'a> {
                 .unwrap_or(GoTy::Any);
             let pname = format!("_p{}", self.local_counter);
             self.local_counter += 1;
-            rest_params.push(GoParam { name: pname.clone(), ty: GoTy::Any });
+            rest_params.push(GoParam {
+                name: pname.clone(),
+                ty: GoTy::Any,
+            });
             let arg_ref = GoExpr::new(GoExprKind::Ident(pname), GoTy::Any);
             call_args.push(self.coerce_if_needed(arg_ref, &pty));
         }
-        let body_call =
-            GoExpr::new(GoExprKind::Call(Box::new(callee), call_args), ret.clone());
+        let body_call = GoExpr::new(GoExprKind::Call(Box::new(callee), call_args), ret.clone());
         let fn_ty = GoTy::Func(vec![GoTy::Any; n_rest], Box::new(ret.clone()));
         GoExpr::new(
-            GoExprKind::FuncLit(rest_params, ret.clone(), vec![GoStmt::Return(Some(body_call))]),
+            GoExprKind::FuncLit(
+                rest_params,
+                ret.clone(),
+                vec![GoStmt::Return(Some(body_call))],
+            ),
             fn_ty,
         )
     }
@@ -2709,8 +2817,8 @@ impl<'a> Ctx<'a> {
             "float64" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Float)),
             "[]byte" => self.coerce_if_needed(e, &GoTy::Bare(Prim::Bytes)),
             // Go integer widths Sky's `Int` (Go `int`) must be CONVERTED to.
-            "int64" | "int32" | "int16" | "int8" | "uint" | "uint64" | "uint32"
-            | "uint16" | "uint8" | "byte" | "rune" | "uintptr" => {
+            "int64" | "int32" | "int16" | "int8" | "uint" | "uint64" | "uint32" | "uint16"
+            | "uint8" | "byte" | "rune" | "uintptr" => {
                 let base = if is_any {
                     self.coerce_if_needed(e, &GoTy::Bare(Prim::Int))
                 } else {
@@ -2774,7 +2882,10 @@ impl<'a> Ctx<'a> {
                 if typed {
                     continue;
                 }
-                largs.push(GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Any));
+                largs.push(GoExpr::new(
+                    GoExprKind::Ident("struct{}{}".into()),
+                    GoTy::Any,
+                ));
                 pi += 1;
                 continue;
             }
@@ -2922,7 +3033,11 @@ impl<'a> Ctx<'a> {
                 let rty = self.expr_ty(rhs);
                 let l = self.lower_expr(lhs, &lty);
                 let r = self.lower_expr(rhs, &rty);
-                let helper = if op == ">>" { "rt.ComposeL" } else { "rt.ComposeR" };
+                let helper = if op == ">>" {
+                    "rt.ComposeL"
+                } else {
+                    "rt.ComposeR"
+                };
                 call_rt(helper, vec![l, r], actual.clone())
             }
             _ => {
@@ -2952,7 +3067,11 @@ impl<'a> Ctx<'a> {
                     let float_arith =
                         l.ty == GoTy::Bare(Prim::Float) && matches!(op, "+" | "-" | "*");
                     if both_prim && !float_arith {
-                        let ty = if is_cmp(op) { GoTy::Bare(Prim::Bool) } else { l.ty.clone() };
+                        let ty = if is_cmp(op) {
+                            GoTy::Bare(Prim::Bool)
+                        } else {
+                            l.ty.clone()
+                        };
                         return GoExpr::new(GoExprKind::Binary(b, Box::new(l), Box::new(r)), ty);
                     }
                     if op == "&&" || op == "||" {
@@ -3166,7 +3285,10 @@ impl<'a> Ctx<'a> {
                         })
                         .unwrap_or(GoTy::Any)
                 } else {
-                    field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any)
+                    field_tys
+                        .get(&cap)
+                        .map(|t| self.goty(t))
+                        .unwrap_or(GoTy::Any)
                 };
                 let lowered = self.lower_expr(*v, &expected);
                 (cap, lowered)
@@ -3240,7 +3362,12 @@ impl<'a> Ctx<'a> {
                 GoTy::Struct(fts) if fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)) => {
                     let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
                     names.sort();
-                    GoTy::Struct(names.into_iter().map(|n| (Name::new(&n), GoTy::Any)).collect())
+                    GoTy::Struct(
+                        names
+                            .into_iter()
+                            .map(|n| (Name::new(&n), GoTy::Any))
+                            .collect(),
+                    )
                 }
                 // A generic func-cfg (`AppCfg_R[Model, Msg]`) emitted as the
                 // all-`any` anonymous struct: claim that anon struct (NOT the
@@ -3252,7 +3379,12 @@ impl<'a> Ctx<'a> {
                 GoTy::Named(_, args) if !args.is_empty() && generic_func_cfg => {
                     let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
                     names.sort();
-                    GoTy::Struct(names.into_iter().map(|n| (Name::new(&n), GoTy::Any)).collect())
+                    GoTy::Struct(
+                        names
+                            .into_iter()
+                            .map(|n| (Name::new(&n), GoTy::Any))
+                            .collect(),
+                    )
                 }
                 _ => actual.clone(),
             }
@@ -3318,7 +3450,10 @@ impl<'a> Ctx<'a> {
         let uref = GoExpr::new(GoExprKind::Ident("_u".into()), uty.clone());
         for (n, v) in fields {
             let cap = capitalize(n.as_str());
-            let expected = field_tys.get(&cap).map(|t| self.goty(t)).unwrap_or(GoTy::Any);
+            let expected = field_tys
+                .get(&cap)
+                .map(|t| self.goty(t))
+                .unwrap_or(GoTy::Any);
             let lowered = self.lower_expr(*v, &expected);
             stmts.push(GoStmt::AssignField(uref.clone(), cap, lowered));
         }
@@ -3402,7 +3537,11 @@ impl<'a> Ctx<'a> {
         // params.len()` so the loop never runs → byte-identical. (audit #7b)
         let mut body = body;
         while params.len() < pt.len() {
-            if let Expr::Lambda { params: inner, body: ib } = &self.body.exprs[body] {
+            if let Expr::Lambda {
+                params: inner,
+                body: ib,
+            } = &self.body.exprs[body]
+            {
                 let inner = inner.clone();
                 let ib = *ib;
                 params.extend(inner);
@@ -3496,17 +3635,17 @@ impl<'a> Ctx<'a> {
             for pty in &eta_extra {
                 let pname = format!("_eta{}", self.local_counter);
                 self.local_counter += 1;
-                gparams.push(GoParam { name: pname.clone(), ty: pty.clone() });
+                gparams.push(GoParam {
+                    name: pname.clone(),
+                    ty: pty.clone(),
+                });
                 extra_args.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
             }
             GoExpr::new(GoExprKind::Call(Box::new(bexpr), extra_args), rt.clone())
         };
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
-        GoExpr::new(
-            GoExprKind::FuncLit(gparams, rt, stmts),
-            actual.clone(),
-        )
+        GoExpr::new(GoExprKind::FuncLit(gparams, rt, stmts), actual.clone())
     }
 
     fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
@@ -3756,9 +3895,13 @@ impl<'a> Ctx<'a> {
                 )),
                 vec![],
             ),
-            Pattern::Ctor { ctor, name, args } => {
-                self.ctor_pattern(subj, subj_ty, ctor.as_ref().map(|c| c.def), name.as_str(), args)
-            }
+            Pattern::Ctor { ctor, name, args } => self.ctor_pattern(
+                subj,
+                subj_ty,
+                ctor.as_ref().map(|c| c.def),
+                name.as_str(),
+                args,
+            ),
             Pattern::Alias(inner, id) => {
                 let inner = *inner;
                 let name = self.fresh_local_named(*id, None);
@@ -3773,13 +3916,16 @@ impl<'a> Ctx<'a> {
                 let cond = GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Ge,
-                        Box::new(call_rt("rt.SkyLen", vec![subj.clone()], GoTy::Bare(Prim::Int))),
+                        Box::new(call_rt(
+                            "rt.SkyLen",
+                            vec![subj.clone()],
+                            GoTy::Bare(Prim::Int),
+                        )),
                         Box::new(int_lit(1)),
                     ),
                     GoTy::Bare(Prim::Bool),
                 );
-                let head_raw =
-                    call_rt("rt.SkyElem", vec![subj.clone(), int_lit(0)], GoTy::Any);
+                let head_raw = call_rt("rt.SkyElem", vec![subj.clone(), int_lit(0)], GoTy::Any);
                 let head = self.coerce_if_needed(head_raw, &elem);
                 // `rt.SkyTailSlice` returns `[]any`; type it as such so a use
                 // in a `[]T` slot narrows via `rt.AsListT`.
@@ -3800,15 +3946,22 @@ impl<'a> Ctx<'a> {
                 let mut cond = Some(GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Eq,
-                        Box::new(call_rt("rt.SkyLen", vec![subj.clone()], GoTy::Bare(Prim::Int))),
+                        Box::new(call_rt(
+                            "rt.SkyLen",
+                            vec![subj.clone()],
+                            GoTy::Bare(Prim::Int),
+                        )),
                         Box::new(int_lit(pats.len() as i64)),
                     ),
                     GoTy::Bare(Prim::Bool),
                 ));
                 let mut binds = Vec::new();
                 for (i, sp) in pats.iter().enumerate() {
-                    let raw =
-                        call_rt("rt.SkyElem", vec![subj.clone(), int_lit(i as i64)], GoTy::Any);
+                    let raw = call_rt(
+                        "rt.SkyElem",
+                        vec![subj.clone(), int_lit(i as i64)],
+                        GoTy::Any,
+                    );
                     let el = self.coerce_if_needed(raw, &elem);
                     let (c, b) = self.pattern_test(&el, &elem, *sp);
                     cond = and_opt(cond, c);
@@ -3839,7 +3992,10 @@ impl<'a> Ctx<'a> {
                         GoExpr::new(
                             GoExprKind::Index(
                                 Box::new(vs),
-                                Box::new(GoExpr::new(GoExprKind::IntLit(i as i64), GoTy::Bare(Prim::Int))),
+                                Box::new(GoExpr::new(
+                                    GoExprKind::IntLit(i as i64),
+                                    GoTy::Bare(Prim::Int),
+                                )),
                             ),
                             GoTy::Any,
                         )
@@ -3873,7 +4029,12 @@ impl<'a> Ctx<'a> {
                         .get(gn)
                         .map(|fs| {
                             fs.iter()
-                                .map(|(cap, t)| (cap.clone(), sky_ty_to_go_in(t, self.env, Some(&self.cur_module))))
+                                .map(|(cap, t)| {
+                                    (
+                                        cap.clone(),
+                                        sky_ty_to_go_in(t, self.env, Some(&self.cur_module)),
+                                    )
+                                })
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -3887,10 +4048,7 @@ impl<'a> Ctx<'a> {
                     self.local_tys.insert(*lid, fty.clone());
                     binds.push(GoStmt::Short(
                         name,
-                        GoExpr::new(
-                            GoExprKind::Selector(Box::new(subj.clone()), cap),
-                            fty,
-                        ),
+                        GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), cap), fty),
                     ));
                 }
                 (None, binds)
@@ -3937,7 +4095,11 @@ impl<'a> Ctx<'a> {
         };
         match cname {
             "Ok" | "Just" => {
-                let field = if cname == "Ok" { "OkValue" } else { "JustValue" };
+                let field = if cname == "Ok" {
+                    "OkValue"
+                } else {
+                    "JustValue"
+                };
                 let (subc, binds) = self.bind_field_pat(subj, &args, field, &a_ty);
                 (and_opt(Some(tag_eq(subj, 0)), subc), binds)
             }
@@ -3952,7 +4114,10 @@ impl<'a> Ctx<'a> {
                     GoExprKind::Binary(
                         GoBin::Eq,
                         Box::new(subj.clone()),
-                        Box::new(GoExpr::new(GoExprKind::BoolLit(false), GoTy::Bare(Prim::Bool))),
+                        Box::new(GoExpr::new(
+                            GoExprKind::BoolLit(false),
+                            GoTy::Bare(Prim::Bool),
+                        )),
                     ),
                     GoTy::Bare(Prim::Bool),
                 )),
@@ -4011,7 +4176,8 @@ impl<'a> Ctx<'a> {
                             GoExprKind::TypeAssert(Box::new(subj.clone()), vstruct_ty.clone()),
                             vstruct_ty,
                         );
-                        let (subcond, binds) = self.adt_variant_binds(&struct_val, go, cname, &args);
+                        let (subcond, binds) =
+                            self.adt_variant_binds(&struct_val, go, cname, &args);
                         return (and_opt(Some(tag_cond), subcond), binds);
                     }
                 }
@@ -4037,9 +4203,7 @@ impl<'a> Ctx<'a> {
                         // needs its payload field coerced from `any` to the
                         // sub-pattern's own ADT type, else the recursive
                         // `_subj.Fields[i].Tag` reads `.Tag` off `any` (27/28).
-                        p @ (Pattern::Ctor { .. }
-                        | Pattern::Tuple(_)
-                        | Pattern::Record(_)) => {
+                        p @ (Pattern::Ctor { .. } | Pattern::Tuple(_) | Pattern::Record(_)) => {
                             self.pattern_nominal_ty(p).unwrap_or(GoTy::Any)
                         }
                         _ => GoTy::Any,
@@ -4143,9 +4307,7 @@ impl<'a> Ctx<'a> {
                     "rt.SkyResult".into(),
                     vec![GoTy::Any, GoTy::Any],
                 )),
-                "Just" | "Nothing" => {
-                    Some(GoTy::Named("rt.SkyMaybe".into(), vec![GoTy::Any]))
-                }
+                "Just" | "Nothing" => Some(GoTy::Named("rt.SkyMaybe".into(), vec![GoTy::Any])),
                 "True" | "False" => Some(GoTy::Bare(Prim::Bool)),
                 other => self
                     .ctor_owner
@@ -4185,7 +4347,8 @@ impl<'a> Ctx<'a> {
             // `pattern_test` reads `.Tag` off a concrete `rt.SkyMaybe` / ADT
             // rather than off `any`. Mirrors the sealed-ADT `Fields[i]` arm.
             let sub_ty = if *ty == GoTy::Any {
-                self.pattern_nominal_ty(&self.body.pats[*a]).unwrap_or(GoTy::Any)
+                self.pattern_nominal_ty(&self.body.pats[*a])
+                    .unwrap_or(GoTy::Any)
             } else {
                 ty.clone()
             };
@@ -4194,7 +4357,10 @@ impl<'a> Ctx<'a> {
                 GoTy::Any,
             );
             let field_expr = if sub_ty == GoTy::Any {
-                GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), field.into()), ty.clone())
+                GoExpr::new(
+                    GoExprKind::Selector(Box::new(subj.clone()), field.into()),
+                    ty.clone(),
+                )
             } else {
                 GoExpr::new(
                     GoExprKind::Coerce {
@@ -4247,7 +4413,11 @@ fn row_poly_flags(body: &Body, types: &BodyTypes) -> (Vec<bool>, bool) {
         })
         .collect();
     let mut counts: Hm<Name, u32> = Hm::new();
-    for t in param_tys.iter().map(|t| t.as_ref()).chain(std::iter::once(types.result.as_ref())) {
+    for t in param_tys
+        .iter()
+        .map(|t| t.as_ref())
+        .chain(std::iter::once(types.result.as_ref()))
+    {
         if let Some(name) = record_ext_name(t) {
             *counts.entry(name.clone()).or_insert(0) += 1;
         }
@@ -4341,7 +4511,10 @@ fn sig_result_after(sig: &Ty, n: usize) -> Ty {
 fn any_task_run(expr: GoExpr) -> GoExpr {
     GoExpr::new(
         GoExprKind::Call(
-            Box::new(GoExpr::new(GoExprKind::Ident("rt.AnyTaskRun".into()), GoTy::Any)),
+            Box::new(GoExpr::new(
+                GoExprKind::Ident("rt.AnyTaskRun".into()),
+                GoTy::Any,
+            )),
             vec![expr],
         ),
         GoTy::Any,
@@ -4558,7 +4731,9 @@ mod qualified_type_tests {
         );
         db.add_module(
             "B",
-            parse_mod("module B exposing (..)\n\nimport A as C\n\ntype Msg = BLocal | Wrap C.Msg\n"),
+            parse_mod(
+                "module B exposing (..)\n\nimport A as C\n\ntype Msg = BLocal | Wrap C.Msg\n",
+            ),
         );
 
         let (nominal, nominal_by_module, decls) = collect_types(&db);

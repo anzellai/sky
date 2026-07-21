@@ -208,13 +208,22 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
         GoStmt::Expr(e) => w.line(&render_expr(e)),
         GoStmt::Short(name, e) => w.line(&format!("{name} := {}", render_expr(e))),
         GoStmt::Discard(e) => w.line(&format!("_ = {}", render_expr(e))),
-        GoStmt::AssignField(base, field, val) => {
-            w.line(&format!("{}.{} = {}", render_expr(base), field, render_expr(val)))
-        }
+        GoStmt::AssignField(base, field, val) => w.line(&format!(
+            "{}.{} = {}",
+            render_expr(base),
+            field,
+            render_expr(val)
+        )),
         GoStmt::Return(None) => w.line("return"),
         GoStmt::Return(Some(e)) => w.line(&format!("return {}", render_expr(e))),
         GoStmt::Comment(c) => w.line(&format!("// {c}")),
-        GoStmt::IfTypeAssert { binder, ok, subj, ty, then } => {
+        GoStmt::IfTypeAssert {
+            binder,
+            ok,
+            subj,
+            ty,
+            then,
+        } => {
             w.line(&format!(
                 "if {binder}, {ok} := {}.({}); {ok} {{",
                 render_expr(subj),
@@ -298,7 +307,12 @@ pub fn render_expr(e: &GoExpr) -> String {
             s
         }
         GoExprKind::Binary(op, l, r) => {
-            format!("({} {} {})", render_expr(l), render_bin(*op), render_expr(r))
+            format!(
+                "({} {} {})",
+                render_expr(l),
+                render_bin(*op),
+                render_expr(r)
+            )
         }
         GoExprKind::Block(stmts) => {
             let ret = render_ty(&e.ty);
@@ -322,7 +336,11 @@ pub fn render_expr(e: &GoExpr) -> String {
                     render_expr(inner)
                 ),
                 GoTy::Named(n, args) if n == "rt.SkyMaybe" && args.len() == 1 => {
-                    format!("rt.MaybeCoerce[{}]({})", render_ty(&args[0]), render_expr(inner))
+                    format!(
+                        "rt.MaybeCoerce[{}]({})",
+                        render_ty(&args[0]),
+                        render_expr(inner)
+                    )
                 }
                 GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => format!(
                     "rt.ResultCoerce[{}, {}]({})",
@@ -360,20 +378,33 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
             GoStmt::Expr(e) => parts.push(render_expr(e)),
             GoStmt::Short(n, e) => parts.push(format!("{n} := {}", render_expr(e))),
             GoStmt::Discard(e) => parts.push(format!("_ = {}", render_expr(e))),
-            GoStmt::AssignField(base, field, val) => {
-                parts.push(format!("{}.{} = {}", render_expr(base), field, render_expr(val)))
-            }
+            GoStmt::AssignField(base, field, val) => parts.push(format!(
+                "{}.{} = {}",
+                render_expr(base),
+                field,
+                render_expr(val)
+            )),
             GoStmt::Return(None) => parts.push("return".to_string()),
             GoStmt::Return(Some(e)) => parts.push(format!("return {}", render_expr(e))),
             GoStmt::Comment(c) => parts.push(format!("/* {c} */")),
             GoStmt::If(cond, then, els) => {
-                let mut s = format!("if {} {{ {} }}", render_expr(cond), render_stmts_inline(then));
+                let mut s = format!(
+                    "if {} {{ {} }}",
+                    render_expr(cond),
+                    render_stmts_inline(then)
+                );
                 if !els.is_empty() {
                     s.push_str(&format!(" else {{ {} }}", render_stmts_inline(els)));
                 }
                 parts.push(s);
             }
-            GoStmt::IfTypeAssert { binder, ok, subj, ty, then } => {
+            GoStmt::IfTypeAssert {
+                binder,
+                ok,
+                subj,
+                ty,
+                then,
+            } => {
                 parts.push(format!(
                     "if {binder}, {ok} := {}.({}); {ok} {{ {} }}",
                     render_expr(subj),

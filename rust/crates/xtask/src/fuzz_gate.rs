@@ -56,7 +56,9 @@ const FUZZ_SEED: u64 = 0x5169_4C61_695F_5359; // "SkyLai_SY"
 /// by an uncatchable failure (stack overflow / OOM) names its last input. Enabled
 /// by `SKY_FUZZ_TRACE=1`; off in CI.
 fn trace_inputs() -> bool {
-    std::env::var("SKY_FUZZ_TRACE").map(|v| v == "1").unwrap_or(false)
+    std::env::var("SKY_FUZZ_TRACE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Deterministic mutants generated per valid seed file (Property 1, no-stdlib).
@@ -128,9 +130,9 @@ impl SplitMix64 {
 /// A snippet library the injector splices in — the tokens most likely to expose a
 /// recovery/robustness bug (unbalanced delimiters, keywords in wrong positions).
 const INJECT: &[&str] = &[
-    "(", ")", "[", "]", "{", "}", "\"", "\\", "->", "|>", "<|", "::", "=", ",",
-    "let", "in", "case", "of", "type", "module", "exposing", "import", "if",
-    "then", "else", "\n", "\t", "..", "0x", "-", " ",
+    "(", ")", "[", "]", "{", "}", "\"", "\\", "->", "|>", "<|", "::", "=", ",", "let", "in",
+    "case", "of", "type", "module", "exposing", "import", "if", "then", "else", "\n", "\t", "..",
+    "0x", "-", " ",
 ];
 
 #[derive(Clone, Copy)]
@@ -231,7 +233,11 @@ fn mutate(src: &str, m: Mutation, rng: &mut SplitMix64) -> String {
         }
         Mutation::Inject => {
             let b = src.as_bytes();
-            let at = if b.is_empty() { 0 } else { rng.below(b.len() + 1) };
+            let at = if b.is_empty() {
+                0
+            } else {
+                rng.below(b.len() + 1)
+            };
             let ins = INJECT[rng.below(INJECT.len())];
             // Snap `at` to a char boundary so slicing is valid.
             let at = floor_char_boundary(src, at);
@@ -265,7 +271,11 @@ fn random_blob(rng: &mut SplitMix64) -> String {
         let byte = if r < 80 {
             0x20 + (rng.byte() % 0x5f) // printable ASCII
         } else if r < 90 {
-            b"\n\t (){}[]\"".iter().copied().nth(rng.below(9)).unwrap_or(b' ')
+            b"\n\t (){}[]\""
+                .iter()
+                .copied()
+                .nth(rng.below(9))
+                .unwrap_or(b' ')
         } else {
             rng.byte()
         };
@@ -410,14 +420,21 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     // marker before each so an uncatchable hang/OOM localises to a stage.
     if let Some(f) = args.iter().find_map(|a| a.strip_prefix("--one=")) {
         let with_stdlib = args.iter().any(|a| a == "--stdlib");
-        let stdlib = if with_stdlib { load_stdlib(&root.join("sky-stdlib")) } else { Vec::new() };
+        let stdlib = if with_stdlib {
+            load_stdlib(&root.join("sky-stdlib"))
+        } else {
+            Vec::new()
+        };
         return debug_one(f, &stdlib);
     }
     let start = Instant::now();
     println!("fuzz gate — compiler-robustness + determinism (L7 + L4)\n");
     println!("seed         = {:#018x} (fixed → reproducible)", FUZZ_SEED);
     println!("mutants/seed = {MUTANTS_PER_SEED}   random-blobs = {RANDOM_BLOBS}");
-    println!("wall-budget  = {}s   input-cap = {MAX_ROBUSTNESS_INPUTS}\n", WALL_BUDGET.as_secs());
+    println!(
+        "wall-budget  = {}s   input-cap = {MAX_ROBUSTNESS_INPUTS}\n",
+        WALL_BUDGET.as_secs()
+    );
 
     // ---- load the valid seed corpus (examples/*/src + sky-stdlib/**) ----
     let mut seeds: Vec<(String, String)> = Vec::new(); // (origin, source)
@@ -469,14 +486,22 @@ pub fn run(args: &[String], root: &Path) -> i32 {
                     message: capture.take().unwrap_or_default(),
                     snippet: broken.into(),
                 });
-                RunFingerprint { type_errors: 0, name_errors: 0, exhaustiveness: 0, diags: vec![], lowered: None }
+                RunFingerprint {
+                    type_errors: 0,
+                    name_errors: 0,
+                    exhaustiveness: 0,
+                    diags: vec![],
+                    lowered: None,
+                }
             }
         }
     };
     let broken_diags = broken_fp.diags.len();
     let broken_names = broken_fp.name_errors;
     let trivial_ok = {
-        let r = panic::catch_unwind(AssertUnwindSafe(|| run_pipeline("module Main exposing (main)\nmain = 1", &[])));
+        let r = panic::catch_unwind(AssertUnwindSafe(|| {
+            run_pipeline("module Main exposing (main)\nmain = 1", &[])
+        }));
         matches!(r, Ok(fp) if fp.diags.is_empty())
     };
     println!(
@@ -496,7 +521,10 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 
     // Regression seeds first (always exercised — locked cases).
     for (origin, src) in &regression {
-        if over_budget(&start, ROBUSTNESS_BUDGET) { budget_hit = true; break; }
+        if over_budget(&start, ROBUSTNESS_BUDGET) {
+            budget_hit = true;
+            break;
+        }
         robustness_inputs += 1;
         exercise_robust(src, &[], origin, "regression", &capture, &mut panics);
     }
@@ -507,14 +535,18 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         if src.len() > MAX_SEED_MUTATE_BYTES {
             continue;
         }
-        if over_budget(&start, ROBUSTNESS_BUDGET) { budget_hit = true; break; }
+        if over_budget(&start, ROBUSTNESS_BUDGET) {
+            budget_hit = true;
+            break;
+        }
         // The valid seed itself (no-stdlib) — exercises the resolver's
         // unresolved-name path on a real program.
         robustness_inputs += 1;
         exercise_robust(src, &[], origin, "seed-verbatim", &capture, &mut panics);
 
         for _ in 0..MUTANTS_PER_SEED {
-            if over_budget(&start, ROBUSTNESS_BUDGET) || robustness_inputs >= MAX_ROBUSTNESS_INPUTS {
+            if over_budget(&start, ROBUSTNESS_BUDGET) || robustness_inputs >= MAX_ROBUSTNESS_INPUTS
+            {
                 budget_hit = over_budget(&start, ROBUSTNESS_BUDGET);
                 break 'outer;
             }
@@ -525,18 +557,27 @@ pub fn run(args: &[String], root: &Path) -> i32 {
             exercise_robust(&mutant, &[], origin, m.name(), &capture, &mut panics);
         }
         if robustness_inputs % 400 == 0 {
-            progress(&format!("robustness: {robustness_inputs} inputs, {} panics", panics.len()));
+            progress(&format!(
+                "robustness: {robustness_inputs} inputs, {} panics",
+                panics.len()
+            ));
         }
     }
 
     // Pure-random blobs.
     for _ in 0..RANDOM_BLOBS {
-        if over_budget(&start, ROBUSTNESS_BUDGET) { budget_hit = true; break; }
+        if over_budget(&start, ROBUSTNESS_BUDGET) {
+            budget_hit = true;
+            break;
+        }
         let blob = random_blob(&mut rng);
         robustness_inputs += 1;
         exercise_robust(&blob, &[], "<random-blob>", "random", &capture, &mut panics);
     }
-    progress(&format!("robustness phase done: {robustness_inputs} inputs, {} panics", panics.len()));
+    progress(&format!(
+        "robustness phase done: {robustness_inputs} inputs, {} panics",
+        panics.len()
+    ));
 
     // ==== Property 2 — DETERMINISM (L4) ====
     // Run the SAME input through the checker (and `lower`, for accepted programs)
@@ -565,20 +606,44 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     ];
     for (i, s) in accepted_snippets.iter().enumerate() {
         det_runs += 1;
-        exercise_determinism(s, &format!("<accepted-snippet-{i}>"), "accepted", &capture, &mut det_findings, &mut panics);
+        exercise_determinism(
+            s,
+            &format!("<accepted-snippet-{i}>"),
+            "accepted",
+            &capture,
+            &mut det_findings,
+            &mut panics,
+        );
     }
 
     // A deterministic sample of the valid corpus (checker determinism) — small
     // files only so each in-process pair stays in the low-ms range.
-    let small_seeds: Vec<&(String, String)> =
-        seeds.iter().filter(|(_, s)| s.len() <= MAX_SEED_MUTATE_BYTES).collect();
-    let corpus_sample: Vec<&&(String, String)> = sample(&small_seeds, DET_CORPUS_SAMPLE, FUZZ_SEED ^ 0xABCD);
-    progress(&format!("determinism phase: {} accepted snippets + {} corpus + up to {DET_MUTANT_SAMPLE} mutants", accepted_snippets.len(), corpus_sample.len()));
+    let small_seeds: Vec<&(String, String)> = seeds
+        .iter()
+        .filter(|(_, s)| s.len() <= MAX_SEED_MUTATE_BYTES)
+        .collect();
+    let corpus_sample: Vec<&&(String, String)> =
+        sample(&small_seeds, DET_CORPUS_SAMPLE, FUZZ_SEED ^ 0xABCD);
+    progress(&format!(
+        "determinism phase: {} accepted snippets + {} corpus + up to {DET_MUTANT_SAMPLE} mutants",
+        accepted_snippets.len(),
+        corpus_sample.len()
+    ));
     for pair in corpus_sample {
-        if over_budget(&start, WALL_BUDGET) { budget_hit = true; break; }
+        if over_budget(&start, WALL_BUDGET) {
+            budget_hit = true;
+            break;
+        }
         let (origin, src) = &**pair;
         det_runs += 1;
-        exercise_determinism(src, origin, "corpus", &capture, &mut det_findings, &mut panics);
+        exercise_determinism(
+            src,
+            origin,
+            "corpus",
+            &capture,
+            &mut det_findings,
+            &mut panics,
+        );
     }
 
     // A deterministic sample of MUTANTS (separate RNG stream) — determinism must
@@ -599,10 +664,20 @@ pub fn run(args: &[String], root: &Path) -> i32 {
             let mutant = mutate(src, m, &mut mrng);
             det_mutants += 1;
             det_runs += 1;
-            exercise_determinism(&mutant, origin, m.name(), &capture, &mut det_findings, &mut panics);
+            exercise_determinism(
+                &mutant,
+                origin,
+                m.name(),
+                &capture,
+                &mut det_findings,
+                &mut panics,
+            );
         }
     }
-    progress(&format!("determinism phase done: {det_runs} pairs, {} violations", det_findings.len()));
+    progress(&format!(
+        "determinism phase done: {det_runs} pairs, {} violations",
+        det_findings.len()
+    ));
 
     drop(capture); // restore the previous panic hook
 
@@ -615,8 +690,20 @@ pub fn run(args: &[String], root: &Path) -> i32 {
          {det_runs} determinism pairs ({det_mutants} of them mutants)",
         regression.len()
     );
-    println!("wall-clock: {:.1}s{}", elapsed.as_secs_f64(), if budget_hit { "  (budget/cap reached — bounded stop)" } else { "" });
-    println!("panics: {}   determinism violations: {}", panics.len(), det_findings.len());
+    println!(
+        "wall-clock: {:.1}s{}",
+        elapsed.as_secs_f64(),
+        if budget_hit {
+            "  (budget/cap reached — bounded stop)"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "panics: {}   determinism violations: {}",
+        panics.len(),
+        det_findings.len()
+    );
     println!("{}", "-".repeat(72));
 
     if !panics.is_empty() {
@@ -641,9 +728,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         0
     } else {
         if broken_diags < 1 || !trivial_ok {
-            println!("\nfuzz: self-check FAILED — the harness is not exercising the checker as expected");
+            println!(
+                "\nfuzz: self-check FAILED — the harness is not exercising the checker as expected"
+            );
         }
-        println!("\nFUZZ GATE: FAIL ({} panic(s), {} determinism violation(s))", panics.len(), det_findings.len());
+        println!(
+            "\nFUZZ GATE: FAIL ({} panic(s), {} determinism violation(s))",
+            panics.len(),
+            det_findings.len()
+        );
         1
     }
 }
@@ -653,11 +746,19 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 fn debug_one(file: &str, stdlib: &[(String, syntax::Parse)]) -> i32 {
     use std::io::Write as _;
     let src = std::fs::read_to_string(file).unwrap_or_default();
-    eprintln!("[stage] parse ({} bytes, stdlib={})…", src.len(), stdlib.len());
+    eprintln!(
+        "[stage] parse ({} bytes, stdlib={})…",
+        src.len(),
+        stdlib.len()
+    );
     let _ = std::io::stderr().flush();
     let parse = syntax::parse(&src, base::FileId(0));
     let parse_err_nodes = parse.error_node_count();
-    eprintln!("[stage] parse done: {} error nodes, {} diags", parse_err_nodes, parse.errors().len());
+    eprintln!(
+        "[stage] parse done: {} error nodes, {} diags",
+        parse_err_nodes,
+        parse.errors().len()
+    );
     let _ = std::io::stderr().flush();
     let mut db = SourceDb::new();
     for (n, p) in stdlib {
@@ -674,13 +775,21 @@ fn debug_one(file: &str, stdlib: &[(String, syntax::Parse)]) -> i32 {
     eprintln!("[stage] resolve+check…");
     let _ = std::io::stderr().flush();
     let out = ty::check_modules(&db, &[mid]);
-    eprintln!("[stage] check done: {} type / {} name / {} exh", out.type_errors, out.name_errors, out.exhaustiveness_warnings);
+    eprintln!(
+        "[stage] check done: {} type / {} name / {} exh",
+        out.type_errors, out.name_errors, out.exhaustiveness_warnings
+    );
     let _ = std::io::stderr().flush();
     let accepted = out.type_errors == 0 && out.name_errors == 0 && parse_err_nodes == 0;
     eprintln!("[stage] lower (accepted={accepted})…");
     let _ = std::io::stderr().flush();
     let lo = lower::lower_program(&db, mid);
-    eprintln!("[stage] lower done: entry_ok={}, {} items, {} errors", lo.entry_ok, lo.items.len(), lo.errors.len());
+    eprintln!(
+        "[stage] lower done: entry_ok={}, {} items, {} errors",
+        lo.entry_ok,
+        lo.items.len(),
+        lo.errors.len()
+    );
     0
 }
 
@@ -710,7 +819,9 @@ fn exercise_robust(
         panics.push(PanicFinding {
             origin: origin.into(),
             mutation: mutation.into(),
-            message: capture.take().unwrap_or_else(|| "<no message captured>".into()),
+            message: capture
+                .take()
+                .unwrap_or_else(|| "<no message captured>".into()),
             snippet: src.into(),
         });
     }
@@ -748,7 +859,9 @@ fn exercise_determinism(
             panics.push(PanicFinding {
                 origin: origin.into(),
                 mutation: mutation.into(),
-                message: capture.take().unwrap_or_else(|| "<no message captured>".into()),
+                message: capture
+                    .take()
+                    .unwrap_or_else(|| "<no message captured>".into()),
                 snippet: src.into(),
             });
         }
@@ -762,17 +875,30 @@ fn describe_divergence(a: &RunFingerprint, b: &RunFingerprint) -> String {
     {
         return format!(
             "counts differ — run1(te={},ne={},ex={}) vs run2(te={},ne={},ex={})",
-            a.type_errors, a.name_errors, a.exhaustiveness, b.type_errors, b.name_errors, b.exhaustiveness
+            a.type_errors,
+            a.name_errors,
+            a.exhaustiveness,
+            b.type_errors,
+            b.name_errors,
+            b.exhaustiveness
         );
     }
     if a.diags != b.diags {
         // find first differing diagnostic
         for (i, (x, y)) in a.diags.iter().zip(&b.diags).enumerate() {
             if x != y {
-                return format!("diagnostic #{i} differs:\n       run1: {}\n       run2: {}", trunc(x, 90), trunc(y, 90));
+                return format!(
+                    "diagnostic #{i} differs:\n       run1: {}\n       run2: {}",
+                    trunc(x, 90),
+                    trunc(y, 90)
+                );
             }
         }
-        return format!("diagnostic count differs: {} vs {}", a.diags.len(), b.diags.len());
+        return format!(
+            "diagnostic count differs: {} vs {}",
+            a.diags.len(),
+            b.diags.len()
+        );
     }
     if a.lowered != b.lowered {
         return "lowered Go IR differs between the two runs".into();
@@ -825,7 +951,11 @@ fn collect_sources(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
     collect_sky(dir, &mut files);
     for path in files {
         if let Ok(src) = std::fs::read_to_string(&path) {
-            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().into_owned();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
             out.push((rel, src));
         }
     }
@@ -838,7 +968,9 @@ fn load_stdlib(dir: &Path) -> Vec<(String, syntax::Parse)> {
     collect_sky(dir, &mut files);
     let mut out = Vec::new();
     for path in files {
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let parse = syntax::parse(&src, base::FileId(0));
         let name = module_name(&parse, &path, "sky-stdlib");
         out.push((name, parse));
@@ -847,13 +979,22 @@ fn load_stdlib(dir: &Path) -> Vec<(String, syntax::Parse)> {
 }
 
 fn module_name(parse: &syntax::Parse, path: &Path, root_marker: &str) -> String {
-    if let Some(n) = parse.tree().module_header().and_then(|h| h.name()).map(|n| n.text()) {
+    if let Some(n) = parse
+        .tree()
+        .module_header()
+        .and_then(|h| h.name())
+        .map(|n| n.text())
+    {
         if !n.is_empty() {
             return n;
         }
     }
     let comps: Vec<&str> = path.iter().filter_map(|c| c.to_str()).collect();
-    let start = comps.iter().rposition(|c| *c == root_marker).map(|i| i + 1).unwrap_or(0);
+    let start = comps
+        .iter()
+        .rposition(|c| *c == root_marker)
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let mut segs: Vec<String> = comps[start..].iter().map(|s| s.to_string()).collect();
     if let Some(last) = segs.last_mut() {
         *last = last.trim_end_matches(".sky").to_string();

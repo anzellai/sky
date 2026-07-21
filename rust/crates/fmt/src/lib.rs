@@ -153,8 +153,7 @@ mod tests {
         let src = "module M exposing (a, b)\n\na =\n    1\nb =\n    2\n";
         let out = format_source(src);
         assert_eq!(
-            out,
-            "module M exposing (a, b)\n\n\na =\n    1\n\n\nb =\n    2\n",
+            out, "module M exposing (a, b)\n\n\na =\n    1\n\n\nb =\n    2\n",
             "got: {out:?}"
         );
         idempotent(src);
@@ -186,7 +185,8 @@ mod tests {
 
     #[test]
     fn type_record_two_fields_break_multiline() {
-        let src = "module M exposing (Model)\n\ntype alias Model = { count : Int, name : String }\n";
+        let src =
+            "module M exposing (Model)\n\ntype alias Model = { count : Int, name : String }\n";
         let out = format_source(src);
         assert!(
             out.contains("type alias Model =\n    { count : Int\n    , name : String\n    }\n"),
@@ -216,10 +216,15 @@ mod tests {
         let src = "baz z =\n    z |> add 1 |> add 2 |> add 3 |> add 4 |> add 5 |> add 6 |> add 7 |> add 8 |> add 9\n";
         let out = format_source(src);
         assert!(
-            out.contains("z |> add 1 |> add 2 |> add 3 |> add 4 |> add 5 |> add 6 |> add 7 |> add 8\n"),
+            out.contains(
+                "z |> add 1 |> add 2 |> add 3 |> add 4 |> add 5 |> add 6 |> add 7 |> add 8\n"
+            ),
             "first line should greedy-fill; got: {out:?}"
         );
-        assert!(out.contains("        |> add 9\n"), "overflow wraps at op-col; got: {out:?}");
+        assert!(
+            out.contains("        |> add 9\n"),
+            "overflow wraps at op-col; got: {out:?}"
+        );
         idempotent(src);
     }
 
@@ -227,7 +232,10 @@ mod tests {
     fn call_args_break_all_or_nothing() {
         let src = "a a1 =\n    reallyLongFunctionName argumentOne argumentTwo argumentThree argumentFour argFive argSix\n";
         let out = format_source(src);
-        assert!(out.contains("reallyLongFunctionName\n        argumentOne\n"), "got: {out:?}");
+        assert!(
+            out.contains("reallyLongFunctionName\n        argumentOne\n"),
+            "got: {out:?}"
+        );
         idempotent(src);
     }
 

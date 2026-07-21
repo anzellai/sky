@@ -76,7 +76,9 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         if !dir.is_dir() {
             continue;
         }
-        rows.push(check_one(&worker, root, &dir, name, seeds, no_build, verbose));
+        rows.push(check_one(
+            &worker, root, &dir, name, seeds, no_build, verbose,
+        ));
     }
 
     print_table(&rows, seeds);

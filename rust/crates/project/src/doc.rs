@@ -21,14 +21,19 @@ use syntax::ast::{AstNode, Decl};
 /// under `repo_root/sky-stdlib` and the project's `project_dir/src`. Returns the
 /// formatted page, or `Err` with a user-facing message when the module can't be
 /// found.
-pub fn render_module(repo_root: &Path, project_dir: &Path, module_arg: &str) -> Result<String, String> {
+pub fn render_module(
+    repo_root: &Path,
+    project_dir: &Path,
+    module_arg: &str,
+) -> Result<String, String> {
     let Some(path) = resolve_module_file(repo_root, project_dir, module_arg) else {
         return Err(format!(
             "sky doc: no module named `{module_arg}` under sky-stdlib/ or src/.\n\
              Try `sky doc --list` to see every documented module."
         ));
     };
-    let src = std::fs::read_to_string(&path).map_err(|e| format!("sky doc: cannot read {}: {e}", path.display()))?;
+    let src = std::fs::read_to_string(&path)
+        .map_err(|e| format!("sky doc: cannot read {}: {e}", path.display()))?;
     Ok(render_source(&src))
 }
 
@@ -41,7 +46,11 @@ pub fn render_module(repo_root: &Path, project_dir: &Path, module_arg: &str) -> 
 /// `Sky.Doc.Render.renderToDir`; the page rendering reuses the same terminal
 /// projection (`render_source`) wrapped in HTML so the content matches
 /// `sky doc <Module>`.
-pub fn render_doc_site(repo_root: &Path, project_dir: &Path, out_dir: &Path) -> std::io::Result<()> {
+pub fn render_doc_site(
+    repo_root: &Path,
+    project_dir: &Path,
+    out_dir: &Path,
+) -> std::io::Result<()> {
     let mut mods = collect_module_files(repo_root, project_dir);
     mods.sort_by(|a, b| a.0.cmp(&b.0));
     mods.dedup_by(|a, b| a.0 == b.0);
@@ -202,7 +211,10 @@ fn render_source(src: &str) -> String {
         match decl {
             Decl::TypeAnno(d) => {
                 if let (Some(name), Some(ty)) = (d.name(), d.ty()) {
-                    sigs.insert(name.text().to_string(), normalize_ws(&ty.syntax().text().to_string()));
+                    sigs.insert(
+                        name.text().to_string(),
+                        normalize_ws(&ty.syntax().text().to_string()),
+                    );
                 }
             }
             Decl::Value(d) => {
@@ -217,8 +229,11 @@ fn render_source(src: &str) -> String {
             }
             Decl::Union(d) => {
                 if let Some(name) = d.name() {
-                    let variants: Vec<String> =
-                        d.variants().iter().filter_map(|v| v.name().map(|t| t.text().to_string())).collect();
+                    let variants: Vec<String> = d
+                        .variants()
+                        .iter()
+                        .filter_map(|v| v.name().map(|t| t.text().to_string()))
+                        .collect();
                     if variants.is_empty() {
                         types.push(format!("type {}", name.text()));
                     } else {
@@ -286,7 +301,10 @@ fn render_source(src: &str) -> String {
 /// The set of names in the module's `exposing (…)` list, or `None` when the
 /// module exposes `(..)` (everything). Constructor `(..)` after a type name is
 /// ignored — we key on the top-level exposed names only.
-fn exposing_set(_src: &str, tree: &syntax::ast::SourceFile) -> Option<std::collections::BTreeSet<String>> {
+fn exposing_set(
+    _src: &str,
+    tree: &syntax::ast::SourceFile,
+) -> Option<std::collections::BTreeSet<String>> {
     let exposing = tree.module_header()?.exposing()?;
     let text = exposing.syntax().text().to_string();
     if text.contains("..") && !text.contains("(..)") {
@@ -324,7 +342,10 @@ fn doc_comments(src: &str) -> BTreeMap<String, String> {
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim_start();
-        if let Some(rest) = trimmed.strip_prefix("-- |").or_else(|| trimmed.strip_prefix("--|")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("-- |")
+            .or_else(|| trimmed.strip_prefix("--|"))
+        {
             let summary = rest.trim().to_string();
             // Skip the rest of the comment block.
             let mut j = i + 1;
@@ -410,7 +431,10 @@ mod tests {
         let page = render_source(src);
         assert!(page.contains("add : Int -> Int -> Int"), "page:\n{page}");
         assert!(page.contains("sum."), "doc missing:\n{page}");
-        assert!(page.contains("type Color = Red | Green"), "union missing:\n{page}");
+        assert!(
+            page.contains("type Color = Red | Green"),
+            "union missing:\n{page}"
+        );
     }
 
     #[test]
@@ -464,15 +488,27 @@ mod tests {
         render_doc_site(&root, &proj, &out).unwrap();
 
         let index = std::fs::read_to_string(out.join("index.html")).unwrap();
-        assert!(index.contains("/m/Sky.Core.List"), "index links module:\n{index}");
-        assert!(index.contains("/m/App"), "index links project module:\n{index}");
+        assert!(
+            index.contains("/m/Sky.Core.List"),
+            "index links module:\n{index}"
+        );
+        assert!(
+            index.contains("/m/App"),
+            "index links project module:\n{index}"
+        );
 
         let list_page = std::fs::read_to_string(out.join("m").join("Sky.Core.List.html")).unwrap();
-        assert!(list_page.contains("map : (a -&gt; b)"), "per-module page:\n{list_page}");
+        assert!(
+            list_page.contains("map : (a -&gt; b)"),
+            "per-module page:\n{list_page}"
+        );
 
         let symbols = std::fs::read_to_string(out.join("api").join("symbols.json")).unwrap();
         assert!(symbols.starts_with('[') && symbols.ends_with(']'));
-        assert!(symbols.contains("\"module\":\"Sky.Core.List\""), "symbols:\n{symbols}");
+        assert!(
+            symbols.contains("\"module\":\"Sky.Core.List\""),
+            "symbols:\n{symbols}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

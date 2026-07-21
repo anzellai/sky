@@ -38,7 +38,8 @@ const LIB_V1: &str = "module Lib exposing (greeting)\n\ngreeting = \"hi\"\n";
 // V2 adds an EXPORT (`shout`) — an exports change a dependent must observe.
 const LIB_V2: &str =
     "module Lib exposing (greeting, shout)\n\ngreeting = \"hi\"\n\nshout = \"HI\"\n";
-const APP: &str = "module App exposing (main)\n\nimport Lib exposing (greeting)\n\nmain = greeting\n";
+const APP: &str =
+    "module App exposing (main)\n\nimport Lib exposing (greeting)\n\nmain = greeting\n";
 // Other is an unrelated sibling — imports nothing from Lib/App.
 const OTHER_V1: &str = "module Other exposing (x)\n\nx = 1\n";
 const OTHER_V2: &str = "module Other exposing (x, y)\n\nx = 1\n\ny = 2\n";
@@ -308,7 +309,10 @@ fn same_revision_resolution_is_stable() {
     fx.clear_log();
     let second = project(&fx.db, &fx.db.resolve(fx.app_id));
     let logs = fx.take_log();
-    assert_eq!(first, second, "same-revision resolution must be byte-stable");
+    assert_eq!(
+        first, second,
+        "same-revision resolution must be byte-stable"
+    );
     assert!(
         !executed(&logs, "resolve_query"),
         "re-demanding App.resolve in the same revision must hit the memo; log={logs:?}"
@@ -383,8 +387,14 @@ fn type_world_and_infer_are_memoised_within_a_revision() {
     let bt2 = project_bt(&fx.db.body_types_of(fx.app_id, main_def));
     let logs = fx.take_log();
 
-    assert!(*w1 == *w2, "type_world must be value-stable within a revision");
-    assert_eq!(bt1, bt2, "infer(App.main) must be byte-stable within a revision");
+    assert!(
+        *w1 == *w2,
+        "type_world must be value-stable within a revision"
+    );
+    assert_eq!(
+        bt1, bt2,
+        "infer(App.main) must be byte-stable within a revision"
+    );
     assert!(
         !executed(&logs, "type_world_query"),
         "re-demanding type_world in the same revision must hit the memo; log={logs:?}"
@@ -425,7 +435,9 @@ fn body_edit_recomputes_only_that_defs_infer() {
     let _ = fx.db.body_types_of(fx.other_id, x_def);
 
     // Edit ONLY Other's body.
-    fx.other.set_text(&mut fx.db).to(OTHER_BODY_EDIT.to_string());
+    fx.other
+        .set_text(&mut fx.db)
+        .to(OTHER_BODY_EDIT.to_string());
 
     // Window 1: demand the UNRELATED def. `type_world` re-executes (its `parse`
     // dep changed) but BACKDATES; App's resolve is untouched → infer(App.main)
@@ -473,7 +485,8 @@ fn body_edit_recomputes_only_that_defs_infer() {
 
 // A `Lib` carrying an ANNOTATED export — editing an annotation changes the
 // sig-world's VALUE (unlike a body edit), so `type_world` does NOT backdate.
-const LIB_ANNO_V1: &str = "module Lib exposing (greeting)\n\ngreeting : String\n\ngreeting = \"hi\"\n";
+const LIB_ANNO_V1: &str =
+    "module Lib exposing (greeting)\n\ngreeting : String\n\ngreeting = \"hi\"\n";
 // V2 adds a NEW annotated export (`shout`) → a new `value_sigs` entry → the world
 // value differs → no backdate → dependents' `infer` re-executes.
 const LIB_ANNO_V2: &str = "module Lib exposing (greeting, shout)\n\ngreeting : String\n\ngreeting = \"hi\"\n\nshout : String\n\nshout = \"HI\"\n";
@@ -604,7 +617,9 @@ fn body_edit_reexecutes_go_program_byte_correct() {
     // Correctness: incremental == fresh-from-scratch on the FINAL sources.
     let fresh = Fixture::build(LIB_BODY_EDIT, APP, OTHER_V1);
     let fresh_cfg = BuildConfig::new(&fresh.db, LowerConfig::default());
-    let fresh_src = go_program(&fresh.db, fresh.app_id, fresh_cfg).source.clone();
+    let fresh_src = go_program(&fresh.db, fresh.app_id, fresh_cfg)
+        .source
+        .clone();
     assert_eq!(
         after, fresh_src,
         "incremental go_program diverged from a fresh build after a body edit"

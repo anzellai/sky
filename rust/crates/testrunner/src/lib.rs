@@ -4,7 +4,9 @@
 //! [`project`] driver, and propagates the exit code so CI sees failures
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
-use project::{build_project, module_name_from_path, project_dir_for, repo_root_for, run_app, BuildOptions};
+use project::{
+    build_project, module_name_from_path, project_dir_for, repo_root_for, run_app, BuildOptions,
+};
 use std::path::Path;
 
 /// A summary of a `sky test` run.

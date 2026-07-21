@@ -45,7 +45,10 @@ fn main() {
     // + cmd/sky-hub (the pure-Go console hub `sky console-serve` builds).
     stage_runtime(&repo.join("runtime-go"), &dest.join("runtime-go"));
     // tools/sky-ffi-inspect/ — the Go introspector source (ensure_inspector).
-    stage(&repo.join("tools").join("sky-ffi-inspect"), &dest.join("tools").join("sky-ffi-inspect"));
+    stage(
+        &repo.join("tools").join("sky-ffi-inspect"),
+        &dest.join("tools").join("sky-ffi-inspect"),
+    );
     // templates/ — CLAUDE.md et al. (copied by `sky init`).
     stage(&repo.join("templates"), &dest.join("templates"));
     // sky-bundled/ — the console + doc bundled Sky apps `sky console` /
@@ -116,9 +119,11 @@ fn stage_runtime(src: &Path, dst: &Path) {
 
 fn copy_file(src: &Path, dst: &Path) {
     if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent).unwrap_or_else(|e| panic!("mkdir {}: {e}", parent.display()));
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("mkdir {}: {e}", parent.display()));
     }
-    std::fs::copy(src, dst).unwrap_or_else(|e| panic!("copy {} -> {}: {e}", src.display(), dst.display()));
+    std::fs::copy(src, dst)
+        .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", src.display(), dst.display()));
 }
 
 /// Non-embeddable files: Go test files, the committed inspector binary, OS +

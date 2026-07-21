@@ -118,9 +118,7 @@ impl SourceDb {
     pub fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         let tree = self.modules[m.index() as usize].parse.tree();
         let defs = &self.defs;
-        let exports = compute_exports(m, &tree, &mut |mm, n, k| {
-            defs.borrow_mut().intern(mm, n, k)
-        });
+        let exports = compute_exports(m, &tree, &mut |mm, n, k| defs.borrow_mut().intern(mm, n, k));
         Rc::new(exports)
     }
 

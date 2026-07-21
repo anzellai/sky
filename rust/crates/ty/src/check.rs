@@ -232,7 +232,8 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
         }
     }
     // stable order for the type table (L4)
-    out.def_types
-        .sort_by(|a, b| (a.module.as_str(), a.name.as_str()).cmp(&(b.module.as_str(), b.name.as_str())));
+    out.def_types.sort_by(|a, b| {
+        (a.module.as_str(), a.name.as_str()).cmp(&(b.module.as_str(), b.name.as_str()))
+    });
     out
 }

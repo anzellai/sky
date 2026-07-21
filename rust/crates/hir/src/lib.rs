@@ -19,9 +19,7 @@ mod resolve;
 
 pub use db::{ImportSource, SkyDb, SourceDb};
 pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
-pub use hir::{
-    Body, CaseBranch, Expr, ExprId, LocalDef, Pattern, PatId, TopDef, Type, TypeId,
-};
+pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED};
 pub use resolve::{
@@ -153,17 +151,17 @@ mod tests {
         let db = db_with(&[("Main", src)]);
         let m = db.module_by_name("Main").unwrap();
         let r = resolve(&db, m);
-        let body = r
-            .bodies
-            .values()
-            .next()
-            .expect("one def body for `foo`");
+        let body = r.bodies.values().next().expect("one def body for `foo`");
         let root = body.root.expect("foo has a root expression");
         let span = body.expr_span(root).expect("root expr has a recorded span");
         let (start, end) = (span.range.0 as usize, span.range.1 as usize);
         // The wrapper stores `e.syntax().text_range()` — the full CST node range,
         // which attaches the leading trivia after `=`, so it slices to " 1 + 2".
-        assert_eq!(&src[start..end], " 1 + 2", "span {span:?} sliced wrong text");
+        assert_eq!(
+            &src[start..end],
+            " 1 + 2",
+            "span {span:?} sliced wrong text"
+        );
         assert_eq!(src[start..end].trim(), "1 + 2");
         // "foo =" is 5 bytes → node range [5, 11) (leading space is node trivia).
         assert_eq!((start, end), (5, 11), "unexpected byte range {span:?}");

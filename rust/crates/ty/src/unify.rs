@@ -87,9 +87,7 @@ pub struct UnionFind {
 
 impl UnionFind {
     pub fn new() -> Self {
-        UnionFind {
-            slots: Vec::new(),
-        }
+        UnionFind { slots: Vec::new() }
     }
 
     /// Allocate a fresh variable with the given content. Deterministic (L4):
@@ -266,9 +264,7 @@ impl UnionFind {
                     self.union(ra, rb, Content::FlexSuper(s));
                     Ok(())
                 }
-                None => Err(Mismatch::new(format!(
-                    "cannot unify {s1:?} with {s2:?}"
-                ))),
+                None => Err(Mismatch::new(format!("cannot unify {s1:?} with {s2:?}"))),
             },
             (Content::FlexSuper(s), Content::Structure(ft))
             | (Content::Structure(ft), Content::FlexSuper(s)) => {
@@ -276,15 +272,10 @@ impl UnionFind {
                     self.union(ra, rb, Content::Structure(ft));
                     Ok(())
                 } else {
-                    Err(Mismatch::new(format!(
-                        "{} is not a {s:?}",
-                        flat_label(&ft)
-                    )))
+                    Err(Mismatch::new(format!("{} is not a {s:?}", flat_label(&ft))))
                 }
             }
-            (Content::Structure(f1), Content::Structure(f2)) => {
-                self.unify_flat(ra, rb, f1, f2)
-            }
+            (Content::Structure(f1), Content::Structure(f2)) => self.unify_flat(ra, rb, f1, f2),
         }
     }
 
@@ -545,15 +536,19 @@ fn super_matches(s: SuperType, ft: &FlatTy) -> bool {
     match s {
         SuperType::Number => matches!(name, Some("Int") | Some("Float")),
         SuperType::Comparable => {
-            matches!(name, Some("Int") | Some("Float") | Some("String") | Some("Char"))
-                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+            matches!(
+                name,
+                Some("Int") | Some("Float") | Some("String") | Some("Char")
+            ) || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
                 || matches!(ft, FlatTy::Tuple(_))
         }
         SuperType::Appendable => {
-            matches!(name, Some("String")) || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+            matches!(name, Some("String"))
+                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
         }
         SuperType::CompAppend => {
-            matches!(name, Some("String")) || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+            matches!(name, Some("String"))
+                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
         }
     }
 }
@@ -568,7 +563,9 @@ mod tests {
         let a = uf.fresh_flex();
         let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
         assert!(uf.unify(a, int).is_ok());
-        assert!(matches!(uf.content(a), Content::Structure(FlatTy::App(n, _)) if n.as_str() == "Int"));
+        assert!(
+            matches!(uf.content(a), Content::Structure(FlatTy::App(n, _)) if n.as_str() == "Int")
+        );
     }
 
     #[test]
@@ -587,7 +584,10 @@ mod tests {
     #[test]
     fn distinct_nominal_types_do_not_unify() {
         let mut uf = UnionFind::new();
-        let customer = uf.fresh(Content::Structure(FlatTy::App(Name::new("Customer"), vec![])));
+        let customer = uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Customer"),
+            vec![],
+        )));
         let widget = uf.fresh(Content::Structure(FlatTy::App(Name::new("Widget"), vec![])));
         assert!(
             uf.unify(customer, widget).is_err(),

@@ -25,12 +25,17 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         return infer_file(file.trim_start_matches("--file="), root);
     }
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
-    let dump = args.iter().find(|a| a.starts_with("--dump="))
+    let dump = args
+        .iter()
+        .find(|a| a.starts_with("--dump="))
         .map(|a| a.trim_start_matches("--dump=").to_string());
 
     let stdlib = load_dir(&root.join("sky-stdlib"), "sky-stdlib");
     if stdlib.is_empty() {
-        eprintln!("infer: no stdlib modules under {}/sky-stdlib", root.display());
+        eprintln!(
+            "infer: no stdlib modules under {}/sky-stdlib",
+            root.display()
+        );
         return 1;
     }
 
@@ -59,7 +64,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         // record-subset pattern false-positived under the precise List sigs while
         // the real app was clean). `build_run_gate` already scopes to `src/`.
         let src_dir = dir.join("src");
-        let load_root = if src_dir.is_dir() { src_dir } else { dir.clone() };
+        let load_root = if src_dir.is_dir() {
+            src_dir
+        } else {
+            dir.clone()
+        };
         let locals = load_dir(&load_root, "src");
         if locals.is_empty() {
             continue;
@@ -159,7 +168,10 @@ fn check_example(
     let messages: Vec<String> = out
         .diagnostics
         .iter()
-        .filter(|d| d.severity == diagnostics::Severity::Error || d.severity == diagnostics::Severity::Warning)
+        .filter(|d| {
+            d.severity == diagnostics::Severity::Error
+                || d.severity == diagnostics::Severity::Warning
+        })
         .map(|d| match d.severity {
             diagnostics::Severity::Warning => format!("(warn) {}", d.message),
             _ => d.message.clone(),
@@ -180,7 +192,11 @@ fn print_table(rows: &[Row], verbose: bool) {
     let w = rows.iter().map(|r| r.name.len()).max().unwrap_or(8).max(8);
     println!(
         "{:<w$}  {:>7}  {:>11}  {:>8}  {:>7}",
-        "EXAMPLE", "MODULES", "TYPE_ERRORS", "WARNINGS", "STATUS",
+        "EXAMPLE",
+        "MODULES",
+        "TYPE_ERRORS",
+        "WARNINGS",
+        "STATUS",
         w = w
     );
     println!("{}", "-".repeat(w + 42));
@@ -192,11 +208,23 @@ fn print_table(rows: &[Row], verbose: bool) {
         } else {
             "ERRORS"
         };
-        let te = if r.blocked { "-".to_string() } else { r.type_errors.to_string() };
-        let wn = if r.blocked { "-".to_string() } else { r.warnings.to_string() };
+        let te = if r.blocked {
+            "-".to_string()
+        } else {
+            r.type_errors.to_string()
+        };
+        let wn = if r.blocked {
+            "-".to_string()
+        } else {
+            r.warnings.to_string()
+        };
         println!(
             "{:<w$}  {:>7}  {:>11}  {:>8}  {:>7}",
-            r.name, r.modules, te, wn, status,
+            r.name,
+            r.modules,
+            te,
+            wn,
+            status,
             w = w
         );
         if r.type_errors > 0 || (verbose && !r.messages.is_empty()) {
@@ -217,7 +245,11 @@ fn verdict(rows: &[Row]) -> i32 {
     let total = non_ffi.len();
     let total_errors: usize = non_ffi.iter().map(|r| r.type_errors).sum();
     let total_warnings: usize = non_ffi.iter().map(|r| r.warnings).sum();
-    let blocked: Vec<&str> = rows.iter().filter(|r| r.blocked).map(|r| r.name.as_str()).collect();
+    let blocked: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.blocked)
+        .map(|r| r.name.as_str())
+        .collect();
 
     println!("{}", "-".repeat(60));
     println!(

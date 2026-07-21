@@ -253,7 +253,11 @@ fn is_star_bare_param(t: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn emit_kernel_json(module_name: &str, kernel_name: &str, info: &PackageInfo) -> String {
-    let fns: Vec<&Function> = info.functions.iter().filter(|f| !should_skip_fn(f)).collect();
+    let fns: Vec<&Function> = info
+        .functions
+        .iter()
+        .filter(|f| !should_skip_fn(f))
+        .collect();
     let fn_entries: Vec<String> = fns
         .iter()
         .map(|fn_| {
@@ -335,7 +339,11 @@ pub fn wrapper_sky_type(fn_: &Function) -> String {
     let param_sig = if fn_.params.is_empty() {
         "()".to_string()
     } else {
-        fn_.params.iter().map(&resolve).collect::<Vec<_>>().join(" -> ")
+        fn_.params
+            .iter()
+            .map(&resolve)
+            .collect::<Vec<_>>()
+            .join(" -> ")
     };
 
     let non_err: Vec<&Param> = fn_.results.iter().filter(|p| p.ty != "error").collect();
@@ -347,9 +355,8 @@ pub fn wrapper_sky_type(fn_: &Function) -> String {
         "()".to_string()
     } else if non_err.len() == 1 {
         // comma-ok: (T, bool) with T != bool → Maybe T
-        let is_comma_ok = fn_.results.len() == 2
-            && fn_.results[1].ty == "bool"
-            && fn_.results[0].ty != "bool";
+        let is_comma_ok =
+            fn_.results.len() == 2 && fn_.results[1].ty == "bool" && fn_.results[0].ty != "bool";
         if is_comma_ok {
             format!("Maybe {}", wrap_if_multi(&resolve(non_err[0])))
         } else {
@@ -358,7 +365,11 @@ pub fn wrapper_sky_type(fn_: &Function) -> String {
     } else {
         format!(
             "({})",
-            non_err.iter().map(|p| resolve(p)).collect::<Vec<_>>().join(", ")
+            non_err
+                .iter()
+                .map(|p| resolve(p))
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     };
 
@@ -381,7 +392,15 @@ fn wrap_if_multi(s: &str) -> String {
 /// Reject Sky-type strings that still carry Go residue (channels, inline
 /// struct/interface, un-stripped `func(`). Mirrors `isSkyParseable`.
 pub fn is_sky_parseable(s: &str) -> bool {
-    const BAD: [&str; 7] = ["<-", " chan ", "chan ", "interface{", "struct{", "func(", "{}"];
+    const BAD: [&str; 7] = [
+        "<-",
+        " chan ",
+        "chan ",
+        "interface{",
+        "struct{",
+        "func(",
+        "{}",
+    ];
     !BAD.iter().any(|b| s.contains(b))
 }
 
@@ -410,7 +429,10 @@ pub fn go_type_to_sky(t: &str) -> String {
     if let Some(rest) = t.strip_prefix("map[") {
         // map[K]V, K != string — surface as Dict String V.
         let (_k, v) = split_map_bracket(rest);
-        return format!("Dict String {}", wrap_if_composite(&go_type_to_sky(v.trim())));
+        return format!(
+            "Dict String {}",
+            wrap_if_composite(&go_type_to_sky(v.trim()))
+        );
     }
     match t {
         "string" => "String".to_string(),
@@ -560,7 +582,10 @@ fn go_results_to_sky(rs: &[Param]) -> String {
         [one] => go_type_to_sky(&one.ty),
         many => format!(
             "({})",
-            many.iter().map(|p| go_type_to_sky(&p.ty)).collect::<Vec<_>>().join(", ")
+            many.iter()
+                .map(|p| go_type_to_sky(&p.ty))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }
@@ -598,7 +623,10 @@ mod tests {
 
     #[test]
     fn name_transforms() {
-        assert_eq!(pkg_to_module_name("github.com/google/uuid"), "Github.Com.Google.Uuid");
+        assert_eq!(
+            pkg_to_module_name("github.com/google/uuid"),
+            "Github.Com.Google.Uuid"
+        );
         assert_eq!(
             pkg_to_module_name("github.com/stripe/stripe-go/v84"),
             "Github.Com.Stripe.StripeGo.V84"
@@ -607,7 +635,10 @@ mod tests {
         assert_eq!(kernel_name_from_pkg("github.com/google/uuid"), "Go_Uuid");
         // capOf sanitises the hyphen to `_` (matches the committed stripe
         // surface `Go_Stripe_goV84` — hyphen-fold camel is module-name only).
-        assert_eq!(kernel_name_from_pkg("github.com/stripe/stripe-go/v84"), "Go_Stripe_goV84");
+        assert_eq!(
+            kernel_name_from_pkg("github.com/stripe/stripe-go/v84"),
+            "Go_Stripe_goV84"
+        );
         assert_eq!(slugify("uuid"), "uuid");
     }
 
@@ -618,7 +649,10 @@ mod tests {
         assert_eq!(go_type_to_sky("[]byte"), "Bytes");
         assert_eq!(go_type_to_sky("[]string"), "List String");
         assert_eq!(go_type_to_sky("map[string]int"), "Dict String Int");
-        assert_eq!(go_type_to_sky("UUID@github.com/google/uuid"), "UUID@github.com/google/uuid");
+        assert_eq!(
+            go_type_to_sky("UUID@github.com/google/uuid"),
+            "UUID@github.com/google/uuid"
+        );
     }
 
     #[test]
@@ -630,8 +664,14 @@ mod tests {
         let err_param = Function {
             name: "Must".to_string(),
             params: vec![
-                Param { ty: "github.com/google/uuid.UUID".to_string(), ..Default::default() },
-                Param { ty: "error".to_string(), ..Default::default() },
+                Param {
+                    ty: "github.com/google/uuid.UUID".to_string(),
+                    ..Default::default()
+                },
+                Param {
+                    ty: "error".to_string(),
+                    ..Default::default()
+                },
             ],
             results: vec![Param {
                 ty: "github.com/google/uuid.UUID".to_string(),
@@ -648,14 +688,26 @@ mod tests {
         // An `error` RESULT is fine — it peels into `Result Error`.
         let err_result = Function {
             name: "Parse".to_string(),
-            params: vec![Param { ty: "string".to_string(), ..Default::default() }],
+            params: vec![Param {
+                ty: "string".to_string(),
+                ..Default::default()
+            }],
             results: vec![
-                Param { ty: "github.com/google/uuid.UUID".to_string(), ..Default::default() },
-                Param { ty: "error".to_string(), ..Default::default() },
+                Param {
+                    ty: "github.com/google/uuid.UUID".to_string(),
+                    ..Default::default()
+                },
+                Param {
+                    ty: "error".to_string(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
-        assert!(!should_skip_fn(&err_result), "error-result fn must NOT be skipped");
+        assert!(
+            !should_skip_fn(&err_result),
+            "error-result fn must NOT be skipped"
+        );
 
         // End-to-end over the committed uuid inspector fixture: the generated
         // kernel.json drops `must` (error param) but keeps `mustParse`.

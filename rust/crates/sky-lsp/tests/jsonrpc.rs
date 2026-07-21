@@ -280,8 +280,13 @@ impl Client {
         arr.iter()
             .map(|i| {
                 (
-                    i.get("label").and_then(Value::as_str).unwrap_or("").to_string(),
-                    i.get("insertText").and_then(Value::as_str).map(String::from),
+                    i.get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    i.get("insertText")
+                        .and_then(Value::as_str)
+                        .map(String::from),
                 )
             })
             .collect()
@@ -327,7 +332,13 @@ impl Client {
         );
         let r = self.await_response(id);
         let changes = r.get("changes")?.as_object()?;
-        Some(changes.values().filter_map(Value::as_array).map(|v| v.len()).sum())
+        Some(
+            changes
+                .values()
+                .filter_map(Value::as_array)
+                .map(|v| v.len())
+                .sum(),
+        )
     }
 
     fn document_symbol_names(&mut self) -> Vec<String> {
@@ -434,7 +445,10 @@ impl Client {
             .get("label")?
             .as_str()?
             .to_string();
-        let active = r.get("activeParameter").and_then(Value::as_u64).unwrap_or(0);
+        let active = r
+            .get("activeParameter")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         Some((label, active))
     }
 
@@ -539,9 +553,16 @@ fn breadth_capabilities_over_jsonrpc() {
     let syms = c.document_symbol_names();
     check(
         "document-symbols",
-        ["stringify", "letDemo", "Model", "Msg", "applyMsg", "doubleIt"]
-            .iter()
-            .all(|n| syms.iter().any(|s| s == n)),
+        [
+            "stringify",
+            "letDemo",
+            "Model",
+            "Msg",
+            "applyMsg",
+            "doubleIt",
+        ]
+        .iter()
+        .all(|n| syms.iter().any(|s| s == n)),
         &mut pass,
         &mut fails,
     );
@@ -551,13 +572,15 @@ fn breadth_capabilities_over_jsonrpc() {
     let toks = c.semantic_tokens();
     check(
         "semantic-tokens-kernel-function",
-        toks.iter().any(|&(l, ch, t)| l == 12 && ch == 11 && t == T_FUNCTION),
+        toks.iter()
+            .any(|&(l, ch, t)| l == 12 && ch == 11 && t == T_FUNCTION),
         &mut pass,
         &mut fails,
     );
     check(
         "semantic-tokens-type-name",
-        toks.iter().any(|&(l, ch, t)| l == 10 && ch == 12 && t == T_TYPE),
+        toks.iter()
+            .any(|&(l, ch, t)| l == 10 && ch == 12 && t == T_TYPE),
         &mut pass,
         &mut fails,
     );
@@ -594,7 +617,9 @@ fn new_endpoints_over_jsonrpc() {
     let fmt = c.formatting_text();
     check(
         "formatting-collapses-whitespace",
-        fmt.as_deref().map(|t| t.contains("println \"hi\"")).unwrap_or(false),
+        fmt.as_deref()
+            .map(|t| t.contains("println \"hi\""))
+            .unwrap_or(false),
         &mut pass,
         &mut fails,
     );
@@ -613,7 +638,9 @@ fn new_endpoints_over_jsonrpc() {
     let sig = c.signature_help(32, 14);
     check(
         "signature-help-task-run",
-        sig.as_ref().map(|(l, _)| l.contains("Task")).unwrap_or(false),
+        sig.as_ref()
+            .map(|(l, _)| l.contains("Task"))
+            .unwrap_or(false),
         &mut pass,
         &mut fails,
     );
@@ -640,7 +667,9 @@ fn code_action_over_jsonrpc() {
     c.shutdown();
 
     assert!(
-        titles.iter().any(|t| t.starts_with("Add type annotation: main")),
+        titles
+            .iter()
+            .any(|t| t.starts_with("Add type annotation: main")),
         "expected an add-annotation fix for unannotated `main`; got {titles:?}"
     );
     assert!(
@@ -670,23 +699,93 @@ fn seventeen_scenarios_over_jsonrpc() {
     };
 
     // ---- hover (7) ----
-    check("hover-task-run", c.hover(32, 9).contains("Task"), &mut pass, &mut fails);
-    check("hover-field", c.hover(12, 25).contains("Int"), &mut pass, &mut fails);
-    check("hover-type-name", c.hover(10, 13).contains("Model"), &mut pass, &mut fails);
-    check("hover-function-use", c.hover(32, 30).contains("Int"), &mut pass, &mut fails);
-    check("hover-ctor-use", c.hover(32, 37).contains("Msg"), &mut pass, &mut fails);
-    check("hover-lambda-param", c.hover(29, 12).contains("Int"), &mut pass, &mut fails);
-    check("hover-case-pattern", c.hover(26, 17).contains("Int"), &mut pass, &mut fails);
-    check("hover-kernel-call", c.hover(12, 14).contains("Int"), &mut pass, &mut fails);
+    check(
+        "hover-task-run",
+        c.hover(32, 9).contains("Task"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-field",
+        c.hover(12, 25).contains("Int"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-type-name",
+        c.hover(10, 13).contains("Model"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-function-use",
+        c.hover(32, 30).contains("Int"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-ctor-use",
+        c.hover(32, 37).contains("Msg"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-lambda-param",
+        c.hover(29, 12).contains("Int"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-case-pattern",
+        c.hover(26, 17).contains("Int"),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "hover-kernel-call",
+        c.hover(12, 14).contains("Int"),
+        &mut pass,
+        &mut fails,
+    );
 
     // ---- goto-def (7) ----
-    check("goto-def-type-name", c.definition_line(10, 13) == Some(8), &mut pass, &mut fails);
+    check(
+        "goto-def-type-name",
+        c.definition_line(10, 13) == Some(8),
+        &mut pass,
+        &mut fails,
+    );
     let f = c.definition_line(32, 30);
-    check("goto-def-function", f == Some(21) || f == Some(22), &mut pass, &mut fails);
-    check("goto-def-ctor", c.definition_line(32, 37) == Some(19), &mut pass, &mut fails);
-    check("goto-def-let-binding", c.definition_line(17, 8) == Some(16), &mut pass, &mut fails);
-    check("goto-def-lambda-param", c.definition_line(29, 17) == Some(29), &mut pass, &mut fails);
-    check("goto-def-field", c.definition_line(12, 25) == Some(8), &mut pass, &mut fails);
+    check(
+        "goto-def-function",
+        f == Some(21) || f == Some(22),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "goto-def-ctor",
+        c.definition_line(32, 37) == Some(19),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "goto-def-let-binding",
+        c.definition_line(17, 8) == Some(16),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "goto-def-lambda-param",
+        c.definition_line(29, 17) == Some(29),
+        &mut pass,
+        &mut fails,
+    );
+    check(
+        "goto-def-field",
+        c.definition_line(12, 25) == Some(8),
+        &mut pass,
+        &mut fails,
+    );
 
     // ---- completion (3) — the two field/qualified cases need an edited buffer ----
     c.change(&format!("{FIXTURE}x = Ui.\n"));
@@ -694,7 +793,9 @@ fn seventeen_scenarios_over_jsonrpc() {
     let ui_layout = items.iter().find(|(l, _)| l == "Ui.layout");
     check(
         "completion-qualified-insert-text",
-        ui_layout.map(|(_, it)| it.as_deref() == Some("layout")).unwrap_or(false),
+        ui_layout
+            .map(|(_, it)| it.as_deref() == Some("layout"))
+            .unwrap_or(false),
         &mut pass,
         &mut fails,
     );
@@ -743,8 +844,14 @@ fn declaration_matches_definition_over_jsonrpc() {
     let def = c.definition_line(32, 30);
     let decl = c.declaration_line(32, 30);
     assert!(def.is_some(), "definition resolves the applyMsg use");
-    assert_eq!(decl, def, "declaration must resolve to the same site as definition");
-    assert!(decl == Some(21) || decl == Some(22), "declaration lands on the def; got {decl:?}");
+    assert_eq!(
+        decl, def,
+        "declaration must resolve to the same site as definition"
+    );
+    assert!(
+        decl == Some(21) || decl == Some(22),
+        "declaration lands on the def; got {decl:?}"
+    );
 
     // A second case: the `Model` type name use (line 10) → its decl (line 8).
     assert_eq!(

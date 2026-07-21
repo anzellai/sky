@@ -30,8 +30,14 @@ fn analysis_with(src: &str) -> Analysis {
 
 fn whole_doc() -> Range {
     Range {
-        start: Position { line: 0, character: 0 },
-        end: Position { line: u32::MAX, character: 0 },
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: u32::MAX,
+            character: 0,
+        },
     }
 }
 
@@ -62,7 +68,10 @@ fn edit_for(actions: &[CodeActionOrCommand], prefix: &str) -> TextEdit {
             }
         }
     }
-    panic!("no action titled with prefix {prefix:?}; got {:?}", titles(actions));
+    panic!(
+        "no action titled with prefix {prefix:?}; got {:?}",
+        titles(actions)
+    );
 }
 
 // Imports deliberately UNSORTED (Std.Log before Sky.Core.*) so organize fires.
@@ -100,8 +109,20 @@ fn add_annotation_edit_inserts_sig_line_above_decl() {
     let actions = a.code_actions(&main_url(), whole_doc(), &ctx());
     let e = edit_for(&actions, "Add type annotation: answer");
     // `answer =` is on line 5 (0-based); the sig is inserted at col 0 of that line.
-    assert_eq!(e.range.start, Position { line: 5, character: 0 });
-    assert_eq!(e.range.end, Position { line: 5, character: 0 });
+    assert_eq!(
+        e.range.start,
+        Position {
+            line: 5,
+            character: 0
+        }
+    );
+    assert_eq!(
+        e.range.end,
+        Position {
+            line: 5,
+            character: 0
+        }
+    );
     assert_eq!(e.new_text, "answer : Int\n");
 }
 
@@ -111,7 +132,8 @@ fn add_annotation_not_offered_for_annotated_value() {
     let actions = a.code_actions(&main_url(), whole_doc(), &ctx());
     let ts = titles(&actions);
     assert!(
-        !ts.iter().any(|t| t.starts_with("Add type annotation: label")),
+        !ts.iter()
+            .any(|t| t.starts_with("Add type annotation: label")),
         "`label` is already annotated — must not be offered; got {ts:?}"
     );
 }
@@ -121,8 +143,14 @@ fn add_annotation_range_gated_to_intersecting_decl() {
     let a = analysis_with(SRC);
     // A zero-width range on line 5 (`answer =`) only.
     let at_answer = Range {
-        start: Position { line: 5, character: 0 },
-        end: Position { line: 5, character: 6 },
+        start: Position {
+            line: 5,
+            character: 0,
+        },
+        end: Position {
+            line: 5,
+            character: 6,
+        },
     };
     let actions = a.code_actions(&main_url(), at_answer, &ctx());
     let ts = titles(&actions);
@@ -131,7 +159,8 @@ fn add_annotation_range_gated_to_intersecting_decl() {
         "answer decl intersects the range; got {ts:?}"
     );
     assert!(
-        !ts.iter().any(|t| t.starts_with("Add type annotation: main")),
+        !ts.iter()
+            .any(|t| t.starts_with("Add type annotation: main")),
         "main decl is outside the range — must not be offered; got {ts:?}"
     );
 }
@@ -150,7 +179,9 @@ fn organize_imports_offered_when_unsorted() {
         e.new_text
     );
     assert!(
-        e.new_text.trim_end().ends_with("import Std.Log exposing (println)"),
+        e.new_text
+            .trim_end()
+            .ends_with("import Std.Log exposing (println)"),
         "Std.Log sorts last; got {:?}",
         e.new_text
     );

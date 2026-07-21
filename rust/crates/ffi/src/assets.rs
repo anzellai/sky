@@ -56,25 +56,17 @@ pub fn embedded_bundled() -> Option<&'static Dir<'static>> {
 /// `~/.cache/sky`).
 pub fn extract_assets_root() -> Result<PathBuf, String> {
     let hash = assets_hash();
-    let root = crate::inspect::xdg_cache_sky()
-        .join("assets")
-        .join(hash);
+    let root = crate::inspect::xdg_cache_sky().join("assets").join(hash);
     let marker = root.join(MARKER);
     if marker.is_file() {
         return Ok(root);
     }
     if let Some(parent) = root.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     // Extract into a unique sibling temp dir, then atomically rename into place —
     // so a concurrent `sky` invocation never observes a half-written root.
-    let tmp = root.with_file_name(format!(
-        "{}.tmp-{}-{}",
-        hash,
-        std::process::id(),
-        nanos()
-    ));
+    let tmp = root.with_file_name(format!("{}.tmp-{}-{}", hash, std::process::id(), nanos()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {}: {e}", tmp.display()))?;
     EMBEDDED
@@ -184,7 +176,10 @@ mod tests {
     #[test]
     fn runtime_has_gomod_and_rt() {
         let rt = embedded_runtime().expect("runtime embedded");
-        assert!(rt.get_file("runtime-go/go.mod").is_some(), "go.mod embedded");
+        assert!(
+            rt.get_file("runtime-go/go.mod").is_some(),
+            "go.mod embedded"
+        );
         assert!(rt.get_dir("runtime-go/rt").is_some(), "rt/ embedded");
     }
 
@@ -214,7 +209,8 @@ mod tests {
         // Both bundled apps' entry source + sky.toml present.
         for name in ["console", "doc"] {
             assert!(
-                b.get_file(format!("sky-bundled/{name}/src/Main.sky")).is_some(),
+                b.get_file(format!("sky-bundled/{name}/src/Main.sky"))
+                    .is_some(),
                 "sky-bundled/{name}/src/Main.sky embedded"
             );
             assert!(
@@ -227,7 +223,8 @@ mod tests {
         collect(&EMBEDDED, &mut files);
         for (p, _) in &files {
             assert!(
-                !p.contains("sky-bundled/") || (!p.contains("/sky-out/") && !p.contains("/.skycache/")),
+                !p.contains("sky-bundled/")
+                    || (!p.contains("/sky-out/") && !p.contains("/.skycache/")),
                 "bundled build artefact leaked into embed: {p}"
             );
         }

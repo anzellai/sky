@@ -35,7 +35,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
@@ -61,7 +63,9 @@ fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
     collect_sky(&root.join("sky-stdlib"), &mut files);
     let mut out = Vec::new();
     for path in files {
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let parse = syntax::parse(&src, base::FileId(0));
         let name = parse
             .tree()
@@ -122,7 +126,10 @@ fn assert_accepted(name: &str, body: &str) {
 #[test]
 fn confirmed_list_reverse_element_misuse_rejected() {
     // List.reverse [1,2,3] : List Int, fed to String.join's List String.
-    assert_rejected("List.reverse", "println (String.join \",\" (List.reverse [ 1, 2, 3 ]))");
+    assert_rejected(
+        "List.reverse",
+        "println (String.join \",\" (List.reverse [ 1, 2, 3 ]))",
+    );
 }
 
 #[test]
@@ -144,7 +151,10 @@ fn confirmed_fst_type_misuse_rejected() {
 
 #[test]
 fn confirmed_valid_controls_accept() {
-    assert_accepted("List.reverse", "println (String.join \",\" (List.reverse [ \"a\", \"b\" ]))");
+    assert_accepted(
+        "List.reverse",
+        "println (String.join \",\" (List.reverse [ \"a\", \"b\" ]))",
+    );
     assert_accepted("snd", "println (String.fromInt (snd ( \"a\", 1 )))");
 }
 
@@ -152,27 +162,78 @@ fn confirmed_valid_controls_accept() {
 
 #[test]
 fn list_core_ops_misuse_rejected() {
-    assert_rejected("List.take", "println (String.join \",\" (List.take 2 [ 1, 2, 3 ]))");
-    assert_rejected("List.drop", "println (String.join \",\" (List.drop 1 [ 1, 2, 3 ]))");
-    assert_rejected("List.append", "println (String.join \",\" (List.append [ \"a\" ] [ 1 ]))");
-    assert_rejected("List.concat", "println (String.join \",\" (List.concat [ [ 1 ], [ 2 ] ]))");
-    assert_rejected("List.member", "println (String.join \",\" (List.member 1 [ 1, 2 ]))");
-    assert_rejected("List.length", "println (String.fromInt (String.length (List.length [ 1, 2 ])))");
-    assert_rejected("List.isEmpty", "println (String.join \",\" (List.isEmpty [ 1 ]))");
-    assert_rejected("List.head", "println (String.fromInt (Maybe.withDefault 0 (List.head [ \"a\" ])))");
-    assert_rejected("List.tail", "println (String.join \",\" (Maybe.withDefault [] (List.tail [ 1, 2 ])))");
-    assert_rejected("List.cons", "println (String.join \",\" (List.cons 1 [ \"a\" ]))");
-    assert_rejected("List.zip", "println (String.join \",\" (List.zip [ 1 ] [ 2 ]))");
+    assert_rejected(
+        "List.take",
+        "println (String.join \",\" (List.take 2 [ 1, 2, 3 ]))",
+    );
+    assert_rejected(
+        "List.drop",
+        "println (String.join \",\" (List.drop 1 [ 1, 2, 3 ]))",
+    );
+    assert_rejected(
+        "List.append",
+        "println (String.join \",\" (List.append [ \"a\" ] [ 1 ]))",
+    );
+    assert_rejected(
+        "List.concat",
+        "println (String.join \",\" (List.concat [ [ 1 ], [ 2 ] ]))",
+    );
+    assert_rejected(
+        "List.member",
+        "println (String.join \",\" (List.member 1 [ 1, 2 ]))",
+    );
+    assert_rejected(
+        "List.length",
+        "println (String.fromInt (String.length (List.length [ 1, 2 ])))",
+    );
+    assert_rejected(
+        "List.isEmpty",
+        "println (String.join \",\" (List.isEmpty [ 1 ]))",
+    );
+    assert_rejected(
+        "List.head",
+        "println (String.fromInt (Maybe.withDefault 0 (List.head [ \"a\" ])))",
+    );
+    assert_rejected(
+        "List.tail",
+        "println (String.join \",\" (Maybe.withDefault [] (List.tail [ 1, 2 ])))",
+    );
+    assert_rejected(
+        "List.cons",
+        "println (String.join \",\" (List.cons 1 [ \"a\" ]))",
+    );
+    assert_rejected(
+        "List.zip",
+        "println (String.join \",\" (List.zip [ 1 ] [ 2 ]))",
+    );
 }
 
 #[test]
 fn list_core_ops_valid_accepts() {
-    assert_accepted("List.take", "println (String.join \",\" (List.take 2 [ \"a\", \"b\" ]))");
-    assert_accepted("List.append", "println (String.join \",\" (List.append [ \"a\" ] [ \"b\" ]))");
-    assert_accepted("List.concat", "println (String.join \",\" (List.concat [ [ \"a\" ], [ \"b\" ] ]))");
-    assert_accepted("List.length", "println (String.fromInt (List.length [ 1, 2 ]))");
-    assert_accepted("List.head", "println (String.fromInt (Maybe.withDefault 0 (List.head [ 1, 2 ])))");
-    assert_accepted("List.cons", "println (String.join \",\" (List.cons \"z\" [ \"a\" ]))");
+    assert_accepted(
+        "List.take",
+        "println (String.join \",\" (List.take 2 [ \"a\", \"b\" ]))",
+    );
+    assert_accepted(
+        "List.append",
+        "println (String.join \",\" (List.append [ \"a\" ] [ \"b\" ]))",
+    );
+    assert_accepted(
+        "List.concat",
+        "println (String.join \",\" (List.concat [ [ \"a\" ], [ \"b\" ] ]))",
+    );
+    assert_accepted(
+        "List.length",
+        "println (String.fromInt (List.length [ 1, 2 ]))",
+    );
+    assert_accepted(
+        "List.head",
+        "println (String.fromInt (Maybe.withDefault 0 (List.head [ 1, 2 ])))",
+    );
+    assert_accepted(
+        "List.cons",
+        "println (String.join \",\" (List.cons \"z\" [ \"a\" ]))",
+    );
 }
 
 #[test]
