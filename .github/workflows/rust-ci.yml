@@ -97,7 +97,8 @@ jobs:
       # runtime regression was caught only by the ABI guard's symbol-existence
       # check, never by behaviour. The `go` toolchain is already set up above.
       - name: Gate — runtime rt tests (go test)
-        run: cd runtime-go && go test ./rt/...
+        # The job's default working-directory is `rust`; runtime-go is a sibling.
+        run: cd ../runtime-go && go test ./rt/...
 
       - name: Gate — repro (byte-stable Go across fresh processes, L4)
         run: cargo run -q -p xtask -- repro
