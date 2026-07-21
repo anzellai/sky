@@ -58,6 +58,9 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
     )
 }
 
+// determinism (L4): lookup-only kernel dispatch table. Built once from the
+// ordered `KERNEL_TABLE` slice and consulted purely via `.get()` — its iteration
+// order is never observed, so a `HashMap` is sound here.
 fn table() -> &'static HashMap<(&'static str, &'static str), &'static str> {
     static T: OnceLock<HashMap<(&'static str, &'static str), &'static str>> = OnceLock::new();
     T.get_or_init(|| {

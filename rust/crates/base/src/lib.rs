@@ -10,6 +10,31 @@ use indexmap::IndexSet;
 use smol_str::SmolStr;
 use std::hash::Hash;
 
+/// Signal a violated **compiler invariant** — a "this cannot happen unless the
+/// compiler itself is buggy" condition. Use ONLY for internal invariants that are
+/// NOT reachable from ill-formed user input (user-facing failures must be
+/// diagnostics / `Result`s). The robustness fuzzer proves 0 panics reach these on
+/// arbitrary input, so a `bug!` firing in the field is a genuine compiler bug.
+///
+/// Panics with a structured, greppable message that mirrors the runtime's
+/// `CompilerBug` panic class (`runtime-go/rt/panic_recover.go`):
+/// `internal compiler error (please report): <msg> [file:line]`.
+///
+/// This is a thin wrapper over [`panic!`] — it still UNWINDS, so the fuzzer's
+/// `catch_unwind` and the top-level handler catch it exactly as before; only the
+/// panic *message* changes (into the greppable, actionable form).
+#[macro_export]
+macro_rules! bug {
+    ($($arg:tt)*) => {
+        ::std::panic!(
+            "internal compiler error (please report): {} [{}:{}]",
+            ::std::format_args!($($arg)*),
+            ::std::file!(),
+            ::std::line!(),
+        )
+    };
+}
+
 /// Declares a transparent `u32` newtype id: Copy, cheap, `==`-comparable (L3).
 macro_rules! id_newtype {
     ($(#[$m:meta])* $name:ident) => {
@@ -136,5 +161,24 @@ mod tests {
     fn ids_are_cheap_and_comparable() {
         assert_eq!(FileId(3).index(), 3);
         assert_eq!(Span::new(FileId(0), 1, 4).range, (1, 4));
+    }
+
+    #[test]
+    fn bug_macro_unwinds_with_greppable_prefix() {
+        // The macro must UNWIND (so catch_unwind / the top-level handler catch it,
+        // exactly like a bare panic!) and carry the CompilerBug-class prefix.
+        let caught = std::panic::catch_unwind(|| {
+            bug!("impossible state {}", 42);
+        });
+        let payload = caught.expect_err("bug! must panic");
+        let msg = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .expect("bug! payload is a formatted message");
+        assert!(
+            msg.starts_with("internal compiler error (please report): impossible state 42 ["),
+            "unexpected bug! message: {msg}"
+        );
     }
 }

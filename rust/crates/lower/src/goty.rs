@@ -46,6 +46,10 @@ pub enum NominalKind {
 /// transparent alias expansion, `ty::sig::World::expand`) back to its named `_R`
 /// alias — so records emit + assign as nominal Go types (the positional-ABI
 /// contract, doc 08 §_fieldIndex).
+///
+/// determinism (L4): every `HashMap` field below is consulted lookup-only
+/// (`.get()` / `.contains_key()`); their iteration order never reaches emitted Go
+/// or diagnostics, so `HashMap` is sound here despite its randomized order.
 #[derive(Default)]
 pub struct TypeEnv {
     pub nominal: HashMap<String, Nominal>,

@@ -276,6 +276,13 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // multi-module app). A qualified type reference (`Counter.Msg`) drops its
     // qualifier at `ast_type_to_ty`, so an ambiguous name can't be resolved to
     // the right Go union — its `sky_ty_to_go` result is unreliable.
+    // determinism (L4): the ONLY HashMap iteration in the lowering pipeline, and
+    // it is order-INDEPENDENT — it counts, per type name, how many modules declare
+    // it, then keeps names with count > 1. Both the `per_name` build and the
+    // `filter/map/collect` produce set-valued results whose CONTENTS don't depend
+    // on `nominal_by_module`'s (randomized) key order. `ambiguous_names` is then
+    // used lookup-only (`ty_refs_ambiguous` → `.contains`), so no order reaches
+    // emitted Go / diagnostics.
     let ambiguous_names: HashSet<String> = {
         let mut per_name: HashMap<String, HashSet<String>> = HashMap::new();
         for (module, name) in env.nominal_by_module.keys() {
@@ -537,6 +544,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             cur_module: e.module_name.clone(),
         };
         let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
+        // determinism (L4): `discovered` is a Vec (ordered), and the two set
+        // drains below are order-INDEPENDENT — they only union into another
+        // set/BTreeSet, so the resulting membership is identical regardless of the
+        // (randomized) HashSet iteration order. `used_go_types` is sorted before it
+        // drives emission (see `tqueue.sort()`); `ffi_used` is a BTreeSet.
         for r in cx.discovered {
             if !seen.contains(&r) {
                 work.push(r);
@@ -554,6 +566,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     }
 
     // ---- type-decl reachability: BFS over Go type names used in emitted code ----
+    // determinism (L4): `type_by_go` and `seen_types` are lookup-only (iteration
+    // order never reaches output). `used_go_types` (a HashSet) IS drained into a
+    // Vec here, but `tqueue.sort()` immediately makes the drive order
+    // deterministic; `type_items` is likewise sorted below before emission.
     let type_by_go: HashMap<String, &TypeDecl> =
         type_decls.iter().map(|t| (t.go_name.clone(), t)).collect();
     let mut type_items: Vec<(String, Vec<GoItem>)> = Vec::new();
@@ -1242,6 +1258,13 @@ fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
 
 // ---- per-def lowering context ------------------------------------------
 
+// determinism (L4): every `HashMap`/`HashSet` field below (both the shared `&'a`
+// lookup tables and the per-def scratch maps `local_names` / `local_tys` /
+// `used_types`) is consulted lookup-only — `.get()` / `.contains` / `.insert`.
+// None is ITERATED into emitted Go, GoIR order, or diagnostics: emission order is
+// driven by `defs` (a `BTreeMap`), the `discovered` Vec, and the sorted
+// `tqueue` / `type_items`. `used_types` is drained only via a set-union that a
+// later `.sort()` re-orders. So `HashMap` is sound here despite randomized order.
 struct Ctx<'a> {
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
@@ -2471,7 +2494,11 @@ impl<'a> Ctx<'a> {
         // strip the fields a record update needs, 18-job-queue).
         let combinator_elem: Option<GoTy> =
             if args.len() >= 2 && matches!(&self.body.exprs[args[0]], Expr::Lambda { .. }) {
-                match self.expr_ty(*args.last().unwrap()) {
+                // Invariant: guarded by `args.len() >= 2`, so `last()` is `Some`.
+                let last = args
+                    .last()
+                    .unwrap_or_else(|| base::bug!("combinator arg list emptied under len>=2 guard"));
+                match self.expr_ty(*last) {
                     GoTy::Slice(e) => Some(*e),
                     _ => None,
                 }
@@ -3152,7 +3179,10 @@ impl<'a> Ctx<'a> {
                 // args in the composite literal head, not the bare `Cfg_R`.
                 GoTy::Named(_, args) if !args.is_empty() => render_goty(actual),
                 GoTy::Named(n, _) => n.clone(),
-                _ => unreachable!(),
+                // Invariant: `nominal` is set iff `actual` is a `GoTy::Named`
+                // (established where `nominal`/`actual` are computed above); a
+                // non-Named here means that invariant was broken upstream.
+                other => base::bug!("nominal record literal with non-Named actual GoTy: {other:?}"),
             }
         } else if concrete_struct.is_some() {
             // Render the concrete struct type so the literal's Go type equals the
