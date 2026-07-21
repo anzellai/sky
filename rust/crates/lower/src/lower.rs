@@ -2945,6 +2945,7 @@ impl<'a> Ctx<'a> {
                 (cap, lowered)
             })
             .collect();
+        let mut all_any_fallback = false;
         let go_name = if nominal {
             match actual {
                 GoTy::Named(n, _) => n.clone(),
@@ -2958,6 +2959,7 @@ impl<'a> Ctx<'a> {
             // Anonymous struct type with every field `any`, field names sorted
             // (L4 deterministic emission). Keyed composite-literal order is
             // independent of the type decl's field order, so sorting is safe.
+            all_any_fallback = true;
             let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
             names.sort();
             let decls = names
@@ -2967,7 +2969,52 @@ impl<'a> Ctx<'a> {
                 .join("; ");
             format!("struct{{ {decls} }}")
         };
-        GoExpr::new(GoExprKind::StructLit(go_name, fs), actual.clone())
+        // Honest type of the emitted literal — the type its RENDERED Go form
+        // genuinely has, so the OUTER `lower_expr` `coerce_if_needed(node,
+        // expected)` (the ONLY caller of `lower_expr_inner`, line 1613) can bridge
+        // it to the destination slot correctly.
+        //
+        // For the nominal (`_R`) / `concrete_struct` branches the rendered literal
+        // IS `actual` (fields rendered concretely / keyed against the `_R` decl),
+        // so `actual.clone()` is honest.
+        //
+        // For the all-`any` fallback the literal is `struct{…any…}`. Claiming the
+        // CONCRETE `actual` here (this happens when `actual` is a `GoTy::Struct`
+        // with a func field — the `concrete_struct` guard rejects func fields
+        // because Sky function values are runtime `func(any)any` and can't be
+        // assigned to a concretely-typed Go func field) was the check≢build hole:
+        // the outer `coerce_if_needed` saw `ty == expected` and inserted nothing,
+        // so the raw all-`any` literal reached a concrete param and `go build`
+        // rejected it (`struct{Flag any;…}` vs `struct{Flag bool;…}`). Claiming
+        // the HONEST all-`any` struct type instead lets the outer machinery decide:
+        //   * destination is a CONCRETE struct (`apply : {…} -> …` param) → the
+        //     outer coerce narrows via `rt.Coerce[<concrete struct>](struct{…any…}{…})`
+        //     — the runtime narrows field-by-field, incl. func fields (the oracle's
+        //     `apply(rt.Coerce[Anon_R_…](struct{…any…}{…}))`).
+        //   * destination is `any` (the TEA cfg record passed to
+        //     `Live_app`/`Tui_app`/`Webview_app` — `kernel_call` lowers the arg with
+        //     `expected == Any` then `widen`s) → the outer coerce no-ops
+        //     (`expected == Any`) and `widen` wraps `any(struct{…any…}{…})`. Since
+        //     `widen` wraps whenever `ty != Any` (true for BOTH the old concrete
+        //     claim and this all-`any` claim), the emitted bytes are IDENTICAL to
+        //     before this fix — the TEA cfg path is preserved byte-for-byte.
+        // NOTE: we DON'T call `coerce_if_needed` here — doing so against the
+        // record's OWN `actual` would force a coerce even when the true destination
+        // is `any` (over-coercing every TEA cfg). The outer `coerce_if_needed`
+        // knows the real destination slot; defer to it.
+        let honest_ty = if all_any_fallback {
+            match actual {
+                GoTy::Struct(fts) if fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)) => {
+                    let mut names: Vec<String> = fs.iter().map(|(c, _)| c.clone()).collect();
+                    names.sort();
+                    GoTy::Struct(names.into_iter().map(|n| (Name::new(&n), GoTy::Any)).collect())
+                }
+                _ => actual.clone(),
+            }
+        } else {
+            actual.clone()
+        };
+        GoExpr::new(GoExprKind::StructLit(go_name, fs), honest_ty)
     }
 
     fn lower_update(&mut self, base: ExprId, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {

@@ -1139,11 +1139,47 @@ fn print_table(rows: &[Row]) {
     );
 }
 
-/// Gate: hello-world must build (+ run when verified). Non-zero on regression.
+/// Gate: hello-world must build + run, AND no non-FFI example may emit yet fail
+/// `go build`. Non-zero on regression.
 fn gate_result(rows: &[Row]) -> i32 {
-    match rows.iter().find(|r| r.name == "01-hello-world") {
-        Some(r) if r.build_ok && r.run_ok != Some(false) => 0,
-        Some(_) => 1,
-        None => 0, // hello-world not in this selection; nothing to assert.
+    // Hard floor: hello-world must build (+ run when verified).
+    let hello_bad = matches!(
+        rows.iter().find(|r| r.name == "01-hello-world"),
+        Some(r) if !(r.build_ok && r.run_ok != Some(false))
+    );
+    if hello_bad {
+        return 1;
     }
+
+    // A non-FFI example that EMITTED but fails `go build` is a check≢build
+    // regression — `sky check ≡ sky build` is a hard non-negotiable ("if it
+    // compiles it works"). The gate MUST fail on it rather than let it silently
+    // drop out of the `build N/N` count.
+    //
+    // Historically the gate asserted ONLY hello-world, so 26-ui-showcase (whose
+    // `Input.multiline` config record has a func field — the func-field-record →
+    // concrete-struct check≢build hole) failed `go build` yet the gate still
+    // exited 0. Its red build never failed CI, so the regression rotted
+    // undetected. Now EVERY emitting non-FFI example's `go build` is a hard gate
+    // condition — this covers 26-ui-showcase and 47-func-field-record (the
+    // regression lock for that class) going forward, with no silent exclusion.
+    //
+    // `Shape::Ffi` (native macOS GUI via cgo — e.g. 11-fyne-stopwatch) is the
+    // documented build-only ceiling and is excluded, matching the `denom`
+    // accounting in `print_table`. An example that does NOT emit (a genuine FFI
+    // surface not yet expressible) is likewise not a `go build` regression.
+    let build_regressions: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.emitted && !r.build_ok && r.shape != Shape::Ffi)
+        .map(|r| r.name.as_str())
+        .collect();
+    if !build_regressions.is_empty() {
+        eprintln!(
+            "BUILD-RUN GATE: FAIL — {} non-FFI example(s) emitted but failed `go build`: {}",
+            build_regressions.len(),
+            build_regressions.join(", ")
+        );
+        return 1;
+    }
+    0
 }
