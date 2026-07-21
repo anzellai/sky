@@ -1168,18 +1168,93 @@ fn gate_result(rows: &[Row]) -> i32 {
     // documented build-only ceiling and is excluded, matching the `denom`
     // accounting in `print_table`. An example that does NOT emit (a genuine FFI
     // surface not yet expressible) is likewise not a `go build` regression.
-    let build_regressions: Vec<&str> = rows
+    //
+    // ONE further distinction: a NATIVE (cgo) LINK failure is NOT a check≢build
+    // hole. The emitted Go is valid and the Go COMPILER accepts it; only the
+    // final native link stage fails — e.g. a Sky.Webview example (macOS-cgo-only,
+    // WKWebView) whose WebKit link fails on a particular runner
+    // (`clang++: error: linker command failed`). That is an ENVIRONMENT ceiling
+    // (the same category Webview/Fyne already occupy as "build-only"), not the
+    // Sky compiler emitting Go that `go build` rejects. The gate must still
+    // hard-fail on a GO-COMPILER rejection (`./main.go:…`, `cannot use…`) or a
+    // GO-LINKER missing symbol (`undefined: rt.X` — the ABI-guard class, a real
+    // hole), so `is_native_link_failure` matches ONLY the C/native toolchain and
+    // never those. Native-link ceilings are logged (never silently dropped) so a
+    // regression there stays visible without falsely reding a compiler gate.
+    let (link_ceilings, build_regressions): (Vec<&str>, Vec<&str>) = rows
         .iter()
         .filter(|r| r.emitted && !r.build_ok && r.shape != Shape::Ffi)
         .map(|r| r.name.as_str())
-        .collect();
+        .partition(|name| {
+            rows.iter()
+                .find(|r| r.name == *name)
+                .is_some_and(|r| is_native_link_failure(&r.blocker))
+        });
+    if !link_ceilings.is_empty() {
+        eprintln!(
+            "BUILD-RUN: {} example(s) hit a native cgo-link ceiling (emitted Go is \
+             valid + compiles; only the native link failed — environment, not a \
+             compiler hole): {}",
+            link_ceilings.len(),
+            link_ceilings.join(", ")
+        );
+    }
     if !build_regressions.is_empty() {
         eprintln!(
-            "BUILD-RUN GATE: FAIL — {} non-FFI example(s) emitted but failed `go build`: {}",
+            "BUILD-RUN GATE: FAIL — {} non-FFI example(s) emitted but failed `go build` \
+             at the Go-compile/link stage (check≢build hole): {}",
             build_regressions.len(),
             build_regressions.join(", ")
         );
         return 1;
     }
     0
+}
+
+/// A NATIVE (cgo / C-toolchain) LINK failure — the emitted Go is valid and the
+/// Go compiler accepted it; only the native link stage failed (e.g. a Sky.Webview
+/// example's WebKit link on a runner missing the framework). This is an
+/// environment build-only ceiling, NOT a `sky check ≢ sky build` compiler hole.
+///
+/// Deliberately EXCLUDES the two real-hole classes that also surface at "build"
+/// time: a Go-COMPILER rejection (carries a `./main.go:LINE:COL:` diagnostic or
+/// `cannot use`) and a Go-LINKER missing symbol (`undefined: rt.X` — the
+/// ABI-guard class). Both must still hard-fail.
+fn is_native_link_failure(blocker: &str) -> bool {
+    let native = blocker.contains("linker command failed")
+        || blocker.contains("clang: error")
+        || blocker.contains("clang++: error")
+        || blocker.contains("ld: ");
+    let go_level = blocker.contains(".go:") || blocker.contains("undefined:") || blocker.contains("cannot use");
+    native && !go_level
+}
+
+#[cfg(test)]
+mod gate_classification_tests {
+    use super::is_native_link_failure;
+
+    // A native cgo/WebKit LINK failure (Sky.Webview on a runner missing the
+    // framework) — environment ceiling, NOT a compiler hole. This is the exact
+    // shape example 38-composite-ui-multibackend produced on macOS CI.
+    #[test]
+    fn native_cgo_link_failure_is_a_ceiling() {
+        assert!(is_native_link_failure(
+            "clang++: error: linker command failed with exit code 1 (use -v to see invocation)"
+        ));
+        assert!(is_native_link_failure("ld: framework not found WebKit"));
+    }
+
+    // The real check≢build holes that ALSO surface at "go build" time must NOT be
+    // classified as ceilings — they stay hard gate failures.
+    #[test]
+    fn go_compiler_and_linker_holes_are_not_ceilings() {
+        // Go COMPILER rejection (the func-field / 26-ui-showcase class).
+        assert!(!is_native_link_failure(
+            "./main.go:71:114: cannot use struct{Flag any}{…} as struct{Flag bool} value"
+        ));
+        // Go LINKER missing symbol (the ABI-guard class).
+        assert!(!is_native_link_failure("undefined: rt.RecordUpdate"));
+        // A clean build has no blocker.
+        assert!(!is_native_link_failure(""));
+    }
 }
