@@ -20,7 +20,7 @@ use syntax::ast::{self, AstNode};
 use syntax::SyntaxKind;
 
 /// Prelude-exposed type + constructor names a user-defined ADT/alias may NOT
-/// shadow (oracle: Canonicalise audit §3.2, CLAUDE.md v0.15.42). A user
+/// shadow (oracle: Canonicalise audit §3.2). A user
 /// `type Result a = Just a | Nothing` (or any type/ctor reusing one of these
 /// names) is a hard canonicalise-time rejection — it silently shadows the
 /// Prelude entry and produces confusing downstream errors. The canonical

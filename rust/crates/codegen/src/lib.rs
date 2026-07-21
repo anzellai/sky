@@ -465,7 +465,7 @@ pub fn render_ty(t: &GoTy) -> String {
 }
 
 fn render_tuple_ty(xs: &[GoTy]) -> String {
-    // Typed-tuple codegen (v0.17 typed-Go ceiling): each element renders to
+    // Typed-tuple codegen: each element renders to
     // its concrete Go type, so `(String, Int)` emits `rt.T2[string, int]`. A
     // `GoTy::Any` element renders to `"any"` (via `render_ty`), so a floor /
     // type-var position stays `any` — partial typing, e.g. `rt.T2[any, int]`.

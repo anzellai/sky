@@ -704,7 +704,7 @@ pub fn kernel_functions(pseudo: &str) -> Option<&'static [&'static str]> {
         .map(|(_, fns)| *fns)
 }
 
-/// Kernel-implicit Prelude types (#576, Module.hs:520): globally-available
+/// Kernel-implicit Prelude types (Module.hs:520): globally-available
 /// runtime types with no `type alias` in any `.sky` source. Accepted as a no-op
 /// in `exposing (…)` and resolvable unqualified (C12).
 pub const KERNEL_IMPLICIT_TYPES: &[&str] = &[

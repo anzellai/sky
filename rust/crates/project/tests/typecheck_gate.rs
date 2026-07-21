@@ -288,7 +288,7 @@ fn driver_rejects_duplicate_param() {
 
 /// A user ADT shadowing a Prelude name (`type Result a = Just a | Nothing`) is
 /// REJECTED before emit with `[E1004]` — the oracle rejects it at canonicalise
-/// time (audit §3.2 / CLAUDE.md v0.15.42).
+/// time (audit §3.2).
 #[test]
 fn driver_rejects_prelude_shadow_adt() {
     let repo = repo_root();

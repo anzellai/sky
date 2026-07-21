@@ -1426,7 +1426,7 @@ impl<'a> Ctx<'a> {
     /// typed-key kernel entry point (`rt.Dict_toListIntKey` /
     /// `rt.Dict_toListFloatKey`) — the underlying runtime map is `map[string]V`,
     /// so the default `rt.Dict_toList` leaks stringified keys and any downstream
-    /// `rt.AsInt` on a key panics with TypeMismatch (Limitation #10). The key
+    /// `rt.AsInt` on a key panics with TypeMismatch. The key
     /// type is read from the argument's HM-inferred `Dict k v` shape at the call
     /// site (oracle: `rt.Dict_toListIntKey(byCounts)` vs
     /// `rt.Dict_toList(rt.AsMapAny(totals))`).
@@ -4582,7 +4582,7 @@ fn is_cmp(op: &str) -> bool {
 
 fn tuple_type_args(t: &GoTy) -> String {
     if let GoTy::Tuple(xs) = t {
-        // Typed-tuple codegen (v0.17 typed-Go ceiling): each element renders
+        // Typed-tuple codegen: each element renders
         // to its concrete Go type, so a `(String, Int)` literal emits
         // `rt.T2[string, int]{…}`. A floor/type-var element is `GoTy::Any`,
         // which renders to `"any"` — so a partially-typed tuple keeps that
@@ -4616,7 +4616,7 @@ fn render_goty(t: &GoTy) -> String {
             format!("func({}) {}", a.join(", "), render_goty(r))
         }
         // Tuples render as the runtime `rt.TN[…]` generic instantiation with
-        // each element's concrete Go type (typed-tuple codegen, v0.17). A
+        // each element's concrete Go type (typed-tuple codegen). A
         // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
         // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
         // hardened the runtime reflection sites to accept these typed shapes.

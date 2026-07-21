@@ -123,7 +123,7 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
             GoTy::Func(ps, Box::new(go_ty(ret, env, cur_mod, params)))
         }
         // Tuple element types are kept for TYPING (pattern binds) AND for
-        // typed-tuple codegen (v0.17 typed-Go ceiling): `render_goty` / codegen
+        // typed-tuple codegen: `render_goty` / codegen
         // `render_ty` now render each element to its concrete Go type, so a
         // `(String, Int)` tuple emits `rt.T2[string, int]`. A `GoTy::Any`
         // element (floor / type-var, e.g. Ty::Var below) stays `any` — partial

@@ -104,7 +104,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    // Repo-root guard (task #662 / app/Main.hs:1293): refuse to write sky-out/
+    // Repo-root guard (app/Main.hs:1293): refuse to write sky-out/
     // into the compiler repo root, which would overwrite the compiler binary.
     if is_compiler_repo_root(&project_dir) && out_override.is_none() {
         eprintln!(
@@ -611,8 +611,8 @@ fn cmd_doc_tui() -> ExitCode {
 
 /// `sky console [--port N] [--tui]` — build + spawn the bundled Sky Console
 /// (`sky-bundled/console`): Sky.Live on `SKY_LIVE_PORT` (default 8025), or the
-/// Sky.Tui backend with `--tui`. Foreground; Ctrl-C stops. Mirrors the pre-
-/// v0.16 `SpawnSkyConsole` build+spawn shape (`app/Main.hs` `runConsole`).
+/// Sky.Tui backend with `--tui`. Foreground; Ctrl-C stops. Mirrors the
+/// `SpawnSkyConsole` build+spawn shape (`app/Main.hs` `runConsole`).
 fn cmd_console(args: &[String]) -> ExitCode {
     let tui = args.iter().any(|a| a == "--tui");
     let port = parse_port(args, 8025);

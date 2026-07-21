@@ -576,7 +576,7 @@ mod tests {
         assert!(uf.unify(int, s).is_err());
     }
 
-    /// The v0.7 self-host killer guard (self-host §7 R1-D2): two DISTINCT
+    /// The self-host killer guard (self-host §7 R1-D2): two DISTINCT
     /// nominal/opaque types must NOT unify. The legacy `Unify.sky:99-100`
     /// `isOpaqueFfiType a && isOpaqueFfiType b -> Ok emptySub` made every pair
     /// of unrelated FFI types unify (`Customer` ≡ `Widget`). This unifier has NO

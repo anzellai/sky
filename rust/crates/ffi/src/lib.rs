@@ -1,8 +1,7 @@
 //! `ffi` — deterministic Go-package inspection → pinned `.skyi` surface;
 //! reproducible, committed (doc 02, doc 09). The platform-variant inspector runs
-//! *once*, is pinned + committed, and never runs mid-build — this is the
-//! `f6e3ecdd` reproducibility killer, closed by committing what was gitignored
-//! (doc 01, L4).
+//! *once*, is pinned + committed, and never runs mid-build — this closes the
+//! reproducibility killer by committing what was gitignored (doc 01, L4).
 //!
 //! M0 stub: the serde-serialisable surface type is seeded. M5 wires the pinned
 //! `.skyi` load path.

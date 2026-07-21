@@ -90,8 +90,8 @@ pub fn project_dir_for(file: &Path) -> PathBuf {
 
 /// True when `dir` is the Sky *compiler* repo root — it carries the unique
 /// `sky-compiler.cabal` marker. `sky build` refuses to run here because its
-/// output dir (`sky-out/`) would overwrite the compiler binary (task #662,
-/// `app/Main.hs:1293`).
+/// output dir (`sky-out/`) would overwrite the compiler binary
+/// (`app/Main.hs:1293`).
 pub fn is_compiler_repo_root(dir: &Path) -> bool {
     dir.join("sky-compiler.cabal").is_file()
 }

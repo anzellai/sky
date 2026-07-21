@@ -61,7 +61,7 @@ pub struct World {
     /// `String`, `Int -> {px:Int, py:Int}`) — every polymorphic/Unit-spine app
     /// helper is excluded to preserve accept-parity. Record-typed monomorphic
     /// sigs ARE admitted (the record-free clause was lifted once record
-    /// row-polymorphism became sound, commit 2702553a) so cross-module record
+    /// row-polymorphism became sound) so cross-module record
     /// misuse is caught. Empty until pass 5 populates it.
     pub app_check_sigs: HashMap<DefId, Scheme>,
     /// CHECK-ONLY pins of a wildcard-`any` RESULT to the body-inferred concrete
@@ -317,7 +317,7 @@ impl World {
                 // HISTORY — two earlier clauses, both LIFTED after empirical P0
                 // experiments proved them vestigial (accept-parity held):
                 //   * record-free — lifted once record row-polymorphism became
-                //     sound + oracle-parity (leniency valve retired, 2702553a);
+                //     sound + oracle-parity (leniency valve retired);
                 //     unlocked cross-module record misuse detection (F1c).
                 //   * monomorphic-only (`!scheme.vars.is_empty()`) — lifted here
                 //     (gap2). It was meant to guard "under-generalisation", but an
