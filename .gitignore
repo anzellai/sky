@@ -129,6 +129,8 @@ _verify/
 # Rust-compiler M4 build outputs (xtask build-run)
 examples/*/sky-out-rust/
 
-# Heavy generated FFI surfaces (Stripe 54MB, Fyne) — regenerate via sky install; too large to commit
-examples/13-skyshop/sky-ffi/
-examples/11-fyne-stopwatch/sky-ffi/
+# Generated Go-FFI surface — a build artifact (kernel.json + .skyi + go bindings),
+# regenerated from the sky.toml [go.dependencies] declaration via `sky install`
+# (out of band; never in the build path). Not committed: rebuilding is from a
+# clean slate, and version drift can't produce a committed-surface clash.
+sky-ffi/
