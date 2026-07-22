@@ -1,55 +1,59 @@
-# AUTONOMOUS MANDATE — v1-blocker closure before merging the Rust compiler
+# AUTONOMOUS MANDATE — LSP 100% reliable for EXTERNAL dependency resolution
 
 **Set:** 2026-07-22. **Branch:** `rewrite/rust-compiler`. **Mode:** fully
-autonomous. Directive: **"don't stop midway."**
+autonomous. Directive: **"use agents + grilling + autonomous mode"**, don't stop
+midway.
 
-> Supersedes the 2026-07-18 M0→M4 rewrite mandate (that work shipped — the Rust
-> compiler builds+runs the corpus at oracle parity: 265/265 tests, 40/40 oracle
-> byte-match). PR #154 is open (merge-with-caveats). This mandate closes v1
-> blockers before that merge lands.
+> Follows the v1-blocker closure mandate (complete, Judge-verified) + a series of
+> LSP hover fixes: internal cross-module hover now works annotated + unannotated
+> (`d5e02fbd`). This mandate closes EXTERNAL dependency resolution in the LSP.
 
 ## Verbatim user goal (the authority on "done")
 
-> ok use agents + grilling + autonomous mode please. don't stop midway, until
-> getting whole repo tested + verified + ready for merge, get as close to v1 as
-> possible with options we picked.
+> yes we need LSP 100% reliable, in real practical terms... so external deps
+> resolution is a must.
+>
+> use agents + grilling + autonomous mode now
 
-## The picked options (AskUserQuestion, 2026-07-22)
+## Scope
 
-- **Scope**: CLOSE 5 + auto-TCO + multiline-interp. Merge (PR #154) HELD until done.
-- **Import-cycle posture**: Elm-like REJECT (verified 0 cycles across 86 example +
-  77 stdlib modules — breaks nothing).
-- server-shape CI verification + known-divergences enforcement gate = post-merge
-  follow-up PRs (NOT in this mandate).
+Make the Rust LSP fully resolve + type + hover references to BOTH classes of
+external dependency, so no external ref shows `?` or a spurious "unresolved"
+diagnostic in-editor:
 
-## Definition of done — all on `rewrite/rust-compiler`, all verified green
+1. **External Sky modules** (`sky add --sky` → `.skydeps/<slug>/src/*.sky`) —
+   currently excluded from the LSP's module load (lib.rs:2183), so refs don't
+   resolve. Load them; the cross-module hover fix (`d5e02fbd`) then covers hover
+   (annotated + unannotated).
+2. **Go FFI** (`Uuid.newString`, Stripe, …) — `Res::Foreign` hover returns None
+   (lib.rs:310) and the LSP never loads the FFI surface, so FFI imports don't
+   typecheck in-editor. Load the FFI surface types (parse `sky-ffi/*.kernel.json`
+   / `.skyi` via the `ffi` crate) so imports resolve + typecheck, and wire the
+   `Res::Foreign` hover arm to the `(package, func) → skyType`.
 
-- **A1 fmt comment-safety** — already shipped (verified `is_safe` 4-part gate). ✅
-- **A2 §8 forbidden-pattern gate** — `xtask s8` + CI. ✅ (f7a6f615)
-- **A3 char-literal strictness** — reject `''`/`'ab'`/`'\x41'`, oracle parity. ✅ (impl done, test+commit pending)
-- **A4 import-cycle rejection** — Elm-like E-code at name resolution (SCC>1, first-party).
-- **A5 nvim 17/17 LSP gate** — real Neovim client wired to xtask + CI.
-- **B1 auto-TCO** — user tail-recursion → `for{}`/continue; no stack overflow on
-  well-typed Sky. Port `legacy-haskell-compiler/src/Sky/Build/TailCallOpt.hs`.
-  Re-bless `coerce-floor` (with written justification).
-- **B2 multiline `{{expr}}` interpolation** — route bodies through the real
-  expression parser; scope = parser-routing only (auto-toString OUT); roundtrip-clean.
+## Definition of done — "100% reliable, real practical terms"
 
-## Final gate (whole repo, before "done")
+For a project that uses BOTH an external Sky dep and a Go FFI dep:
+- Hover on an external-Sky-module ref (annotated + unannotated) → shows its type.
+- Hover on a Go-FFI ref (`Uuid.newString`) → shows its FFI type (not `?`).
+- Goto-def / completion behave sanely for both where applicable.
+- NO spurious "unresolved name" diagnostics on external imports/refs in-editor
+  (the LSP diagnostics must match what `sky build` accepts).
+- All existing LSP guarantees intact: nvim 17/17 gate + full `cargo test -p
+  sky-lsp` green; whole-repo gate unaffected (LSP is additive — zero
+  compiler/codegen/runtime change).
+- Regression tests for both external classes.
+- Independent Judge verifies against this file before "done".
 
-`cargo test --workspace` · `xtask` {roundtrip, resolve, infer, reject, build-run,
-coerce-floor, repro, s8} · golden gate · `build-run --all --run` oracle parity.
-Then an INDEPENDENT Judge agent verifies against this file before I declare done.
+## Method
 
-## Honest ceiling (state, never hide)
+Agents + grilling per CLAUDE.md §0.3/§0.4: architecture-consult (how the BUILD
+path loads FFI surfaces + skydeps + types `Res::Foreign`, so the LSP mirrors it)
+→ adversarial grill (does the plan reach the 100%-reliable bar? spurious
+diagnostics? offline?) → implement → Judge.
 
-Even at done this is **merge-primary, oracle-retained — NOT a v1 tag**. Remaining
-post-merge: server wire-decode floor (any-typed ADT ctor params, TEA Msg
-decode/dispatch), dead-click coverage, oracle removal.
+## Resume protocol
 
-## Resume protocol (if compacted / new session)
-
-1. Read THIS file + `docs/v0.18/v1-blocker-closure-pr154.md` (the tracker).
-2. `git log --oneline -20` on `rewrite/rust-compiler` — last committed item = resume point.
-3. Continue the next unchecked item A3→A4→A5→B1→B2, then the final gate + Judge.
-   Do NOT narrow the scope. The oracle + corpus + xtask gates are acceptance truth.
+Read THIS file + `git log --oneline -15` on `rewrite/rust-compiler`. LSP code:
+`rust/crates/sky-lsp/src/lib.rs` (`load_project`/`load_dir` ~192-215, dir-walk
+skip ~2183, `ref_type_string` `Res::Foreign` ~310). FFI parsing: `rust/crates/ffi/`.
