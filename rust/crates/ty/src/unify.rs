@@ -1,5 +1,9 @@
 //! The arena union-find — the L3 centrepiece (doc 06 §"The arena union-find").
 //!
+//! Derivative work adapted from elm/compiler's `Type.UnionFind`, `Type.Type`,
+//! and `Type.Occurs` (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause).
+//! See NOTICE.md at the repo root for the full attribution and licence text.
+//!
 //! Type-variable identity stops being a pointer (`UF.Point`, `UnionFind.hs:61`)
 //! and becomes a dense integer index [`TyVarId`] into a `Vec` local to one
 //! inference run (never a global — L1). `find` is path-compressed; `union` is by

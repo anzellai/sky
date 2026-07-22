@@ -3,6 +3,10 @@
 //! it flows into as it is built — the current Haskell solver is already
 //! value-threaded (`solveHelp`), so interleaving is the honest translation.
 //!
+//! Derivative work adapted from elm/compiler's `Type.Unify` and `Type.Solve`
+//! (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See NOTICE.md at the
+//! repo root for the full attribution and licence text.
+//!
 //! Leniency contract (the accept-parity discipline): an unknown name — a kernel
 //! function with no stdlib sig, a Go-FFI reference, an unannotated cross-module
 //! def — resolves to a **fresh flexible var**, never an error. That is what keeps
