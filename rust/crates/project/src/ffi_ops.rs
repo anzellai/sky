@@ -328,7 +328,9 @@ pub fn add_smart(project_dir: &Path, repo_root: &Path, pkg: &str, spec: Option<&
                 r.say(format!(
                     "  {pkg} is a Sky package (has [lib]) → adding as a Sky dependency"
                 ));
-                r.say(format!("  cloned into .skydeps/{slug}/ (resolved {resolved})"));
+                r.say(format!(
+                    "  cloned into .skydeps/{slug}/ (resolved {resolved})"
+                ));
                 return merge_reports(r, record_sky_dep(project_dir, pkg, spec, resolved));
             }
             // Cloned, but not a library — discard and treat as a Go module.

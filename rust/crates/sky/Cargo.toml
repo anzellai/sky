@@ -16,3 +16,8 @@ fmt = { path = "../fmt" }
 testrunner = { path = "../testrunner" }
 sky-lsp = { path = "../sky-lsp" }
 notify = "8"
+
+[target.'cfg(unix)'.dependencies]
+# Safe SIGTERM wrapper for `sky watch --kill-timeout` graceful shutdown — the
+# crate forbids `unsafe`, so we use nix's safe `kill` rather than raw `libc`.
+nix = { version = "0.29", features = ["signal"] }

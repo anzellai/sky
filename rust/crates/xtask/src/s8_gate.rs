@@ -72,7 +72,10 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
         return 0;
     }
 
-    println!("S8 GATE: FAIL — {} forbidden-pattern use(s):", violations.len());
+    println!(
+        "S8 GATE: FAIL — {} forbidden-pattern use(s):",
+        violations.len()
+    );
     for v in &violations {
         let rel = v.file.strip_prefix(repo_root).unwrap_or(&v.file);
         println!("  {}:{}  [{}]", rel.display(), v.line_no, v.label);
@@ -148,7 +151,10 @@ mod tests {
     #[test]
     fn strips_line_comments() {
         assert_eq!(strip_comment("foo -- Result String bar"), "foo ");
-        assert_eq!(strip_comment("x : Result String Int"), "x : Result String Int");
+        assert_eq!(
+            strip_comment("x : Result String Int"),
+            "x : Result String Int"
+        );
         // A `--` inside a string literal is not a comment.
         assert_eq!(strip_comment("s = \"a -- b\""), "s = \"a -- b\"");
     }

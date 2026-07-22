@@ -90,6 +90,7 @@ pub fn ensure_built(
         run: false,
         stdin: None,
         entry_module: None,
+        progress: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {

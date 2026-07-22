@@ -36,6 +36,12 @@ pub struct BuildOptions {
     /// `None` falls back to the `Main`/`main` heuristic — so a renamed entry
     /// module (`module App`) still builds when the CLI derives + supplies it.
     pub entry_module: Option<String>,
+    /// When true, emit the phased pipeline progress log (`-- Discovering
+    /// modules` / `-- Parsing` / `-- Canonicalising` / `-- Type Checking` /
+    /// `-- Generating Go` / `Sky lowering succeeded`) to stdout — the
+    /// interactive `sky build`/`run`/`check` UX, mirroring the Haskell oracle.
+    /// Batch gates + synthesised-entry verbs leave it `false` for quiet builds.
+    pub progress: bool,
 }
 
 #[derive(Default)]
@@ -76,7 +82,7 @@ struct Emitted {
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
 /// clock, no environment reads reach the emitted bytes.
 fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, String> {
-    assemble_and_emit_with(repo_root, example_dir, &[], None)
+    assemble_and_emit_with(repo_root, example_dir, &[], None, false)
 }
 
 /// [`assemble_and_emit`] with two additive knobs used by `sky test`
@@ -90,6 +96,7 @@ fn assemble_and_emit_with(
     example_dir: &Path,
     extra_dirs: &[PathBuf],
     entry_module: Option<&str>,
+    progress: bool,
 ) -> Result<Emitted, String> {
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
@@ -142,6 +149,11 @@ fn assemble_and_emit_with(
     }
     if locals.is_empty() {
         return Err("no .sky under src/".into());
+    }
+    if progress {
+        println!("-- Discovering modules");
+        println!("   Found {} project module(s)", locals.len());
+        println!("-- Parsing");
     }
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
@@ -226,6 +238,12 @@ fn assemble_and_emit_with(
         });
     };
 
+    if progress {
+        println!("-- Canonicalising");
+        println!("   Names resolved");
+        println!("-- Type Checking");
+    }
+
     // ---- typecheck (accept/reject gate) ----
     // `sky check ≡ sky build` (CLAUDE.md §8): an ill-typed program the oracle
     // rejects MUST NOT reach lowering/emit. `ty::check_modules` was previously
@@ -286,6 +304,10 @@ fn assemble_and_emit_with(
         .collect();
     if !exhaustive_diags.is_empty() {
         return Err(render_diags(&exhaustive_diags, &src_map));
+    }
+    if progress {
+        println!("   Types OK ({} module(s))", check_ids.len());
+        println!("-- Generating Go");
     }
 
     // ---- lower + emit ----
@@ -375,6 +397,7 @@ fn build_inner(
         &opts.example_dir,
         extra_dirs,
         entry_module,
+        opts.progress,
     ) {
         Ok(e) => {
             report.warnings = e.warnings;
@@ -396,6 +419,13 @@ fn build_inner(
     if let Err(e) = write_out(&opts.repo_root, &out_dir, &source, console_needed) {
         report.note = format!("write failed: {e}");
         return report;
+    }
+    if opts.progress {
+        // Match the oracle's audit §3.4 contract: `Sky lowering succeeded` prints
+        // once the Go is written, BEFORE `go build` runs; the CLI only prints
+        // `Compilation successful` after `go build` returns 0.
+        println!("   Wrote {}/main.go", out_dir.display());
+        println!("Sky lowering succeeded");
     }
     // Materialise the Go wrapper for every FFI package the program actually
     // calls into `sky-out/rt/` (package rt), so `rt.Go_<Pkg>_<fn>T` resolves.

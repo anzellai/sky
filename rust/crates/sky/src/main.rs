@@ -222,6 +222,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         run: false,
         stdin: None,
         entry_module: entry_module_name(file),
+        progress: true,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -294,6 +295,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         run: false,
         stdin: None,
         entry_module: entry_module_name(file),
+        progress: true,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -310,6 +312,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
     if let Some(note) = &report.cgo_note {
         eprintln!("sky run: go build {note}");
     }
+    println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
     match run_app(&out_dir, &[]) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
@@ -438,7 +441,7 @@ fn cmd_lsp(_args: &[String]) -> ExitCode {
 fn cmd_clean(_args: &[String]) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut removed = Vec::new();
-    for name in ["sky-out", ".skycache", "dist"] {
+    for name in ["sky-out", ".skycache", ".skydeps", "dist"] {
         let dir = cwd.join(name);
         if dir.is_dir() && std::fs::remove_dir_all(&dir).is_ok() {
             removed.push(name);
@@ -965,6 +968,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         run: false,
         stdin: None,
         entry_module: entry_module_name(file),
+        progress: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -1000,11 +1004,21 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};
 
-    let no_run = args.iter().any(|a| a == "--no-run");
-    let Some(file) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky watch <file.sky> [--no-run]");
+    let opts = match WatchOpts::parse(args) {
+        Ok(o) => o,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::from(2);
+        }
+    };
+    let Some(file) = opts.file.as_deref() else {
+        eprintln!(
+            "usage: sky watch <file.sky> [--no-run] [--clear] [--debounce=MS]\n       \
+             [--interval=MS] [--kill-timeout=MS] [--watch=PATH ...]"
+        );
         return ExitCode::from(2);
     };
+    let no_run = opts.no_run;
     let file = Path::new(file);
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
@@ -1015,8 +1029,9 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     }
 
     // Watched roots: the entry's directory, the project's tests/ (if present),
-    // and the project root (to catch sky.toml). notify watches recursively; the
-    // event filter prunes generated dirs + non-source files.
+    // the project root (to catch sky.toml), plus any `--watch=PATH` extras.
+    // notify watches recursively; the event filter prunes generated dirs +
+    // non-source files.
     let entry_dir = file
         .parent()
         .map(Path::to_path_buf)
@@ -1029,6 +1044,9 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     // The project root covers sky.toml; only add it if it isn't already covered.
     if !roots.iter().any(|r| project_dir.starts_with(r)) {
         roots.push(project_dir.clone());
+    }
+    for extra in &opts.extra_watch {
+        roots.push(extra.clone());
     }
     roots.sort();
     roots.dedup();
@@ -1044,14 +1062,28 @@ fn cmd_watch(args: &[String]) -> ExitCode {
             }
         }
     };
-    let mut watcher: notify::RecommendedWatcher = match notify::recommended_watcher(handler) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("sky watch: could not create file watcher: {e}");
-            return ExitCode::FAILURE;
+    // `--interval=MS` selects the polling backend (meaningful on network / fuse
+    // filesystems where native fs-events don't fire); otherwise the superior
+    // event-driven backend. Boxed behind `dyn Watcher` so both share one path.
+    let mut watcher: Box<dyn notify::Watcher> = match opts.interval_ms {
+        Some(ms) => {
+            let cfg = notify::Config::default().with_poll_interval(Duration::from_millis(ms));
+            match notify::PollWatcher::new(handler, cfg) {
+                Ok(w) => Box::new(w),
+                Err(e) => {
+                    eprintln!("sky watch: could not create poll watcher: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
+        None => match notify::recommended_watcher(handler) {
+            Ok(w) => Box::new(w),
+            Err(e) => {
+                eprintln!("sky watch: could not create file watcher: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
     };
-    use notify::Watcher;
     for root in &roots {
         if let Err(e) = watcher.watch(root, notify::RecursiveMode::Recursive) {
             eprintln!("sky watch: could not watch {}: {e}", root.display());
@@ -1070,30 +1102,117 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         if rx.recv().is_err() {
             break;
         }
-        // Drain further events for a short debounce window.
-        let deadline = Instant::now() + Duration::from_millis(200);
+        // Drain further events for the debounce window (`--debounce=MS`).
+        let deadline = Instant::now() + Duration::from_millis(opts.debounce_ms);
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
             if rx.recv_timeout(remaining).is_err() {
                 break;
             }
+        }
+        if opts.clear {
+            // Clear screen + home cursor (ANSI) so each rebuild starts fresh.
+            use std::io::Write as _;
+            print!("\x1b[2J\x1b[H");
+            let _ = std::io::stdout().flush();
         }
         println!("[watch] change detected — rebuilding…");
         // Build-error policy: only replace the running child when the rebuild
         // produced a fresh binary. A failing rebuild returns None → the old
         // binary keeps running.
         if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run) {
-            if let Some(mut old) = child.take() {
-                let _ = old.kill();
-                let _ = old.wait();
+            if let Some(old) = child.take() {
+                terminate_child(old, opts.kill_timeout_ms);
             }
             child = Some(fresh);
         }
     }
-    if let Some(mut c) = child.take() {
-        let _ = c.kill();
-        let _ = c.wait();
+    if let Some(c) = child.take() {
+        terminate_child(c, 0);
     }
     ExitCode::SUCCESS
+}
+
+/// Parsed `sky watch` options. Mirrors the oracle's `watchOptsParser` +
+/// `docs/tooling/cli.md` §watch: `--no-run`, `--clear`, `--debounce=MS`,
+/// `--interval=MS`, `--kill-timeout=MS`, and repeatable `--watch=PATH`.
+struct WatchOpts {
+    file: Option<String>,
+    no_run: bool,
+    clear: bool,
+    debounce_ms: u64,
+    interval_ms: Option<u64>,
+    kill_timeout_ms: u64,
+    extra_watch: Vec<PathBuf>,
+}
+
+impl WatchOpts {
+    fn parse(args: &[String]) -> Result<WatchOpts, String> {
+        let mut o = WatchOpts {
+            file: None,
+            no_run: false,
+            clear: false,
+            debounce_ms: 150,
+            interval_ms: None,
+            kill_timeout_ms: 5000,
+            extra_watch: Vec::new(),
+        };
+        for a in args {
+            if let Some(v) = a.strip_prefix("--debounce=") {
+                o.debounce_ms = v
+                    .parse()
+                    .map_err(|_| format!("sky watch: invalid --debounce value: {v}"))?;
+            } else if let Some(v) = a.strip_prefix("--interval=") {
+                o.interval_ms = Some(
+                    v.parse()
+                        .map_err(|_| format!("sky watch: invalid --interval value: {v}"))?,
+                );
+            } else if let Some(v) = a.strip_prefix("--kill-timeout=") {
+                o.kill_timeout_ms = v
+                    .parse()
+                    .map_err(|_| format!("sky watch: invalid --kill-timeout value: {v}"))?;
+            } else if let Some(v) = a.strip_prefix("--watch=") {
+                o.extra_watch.push(PathBuf::from(v));
+            } else if a == "--no-run" {
+                o.no_run = true;
+            } else if a == "--clear" {
+                o.clear = true;
+            } else if a.starts_with('-') {
+                return Err(format!("sky watch: unknown flag: {a}"));
+            } else if o.file.is_none() {
+                o.file = Some(a.clone());
+            }
+        }
+        Ok(o)
+    }
+}
+
+/// Terminate a spawned child, honouring `--kill-timeout` (SIGTERM grace before
+/// SIGKILL on Unix). A `timeout_ms` of 0 kills immediately (session teardown).
+fn terminate_child(mut child: std::process::Child, timeout_ms: u64) {
+    #[cfg(unix)]
+    if timeout_ms > 0 {
+        // Ask the child to exit cleanly first (SIGTERM), then wait up to the
+        // grace window, escalating to SIGKILL only if it's still alive.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(child.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(_) => break,
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// One watch iteration: build the entry, and on success (re)spawn the binary.
@@ -1114,6 +1233,7 @@ fn watch_build_and_spawn(
         run: false,
         stdin: None,
         entry_module: entry_module_name(file),
+        progress: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -1805,6 +1925,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             run: false,
             stdin: None,
             entry_module: None,
+            progress: false,
         };
         let report = build_example(&opts);
         if !report.emitted {

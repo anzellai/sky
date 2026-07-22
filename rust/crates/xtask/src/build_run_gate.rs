@@ -395,6 +395,7 @@ fn verify_one(
         run: want_inline_run,
         stdin: stdin_for(name),
         entry_module: None,
+        progress: false,
     };
     let rep = build_example(&opts);
     let out_dir = dir.join("sky-out-rust");

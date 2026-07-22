@@ -57,6 +57,7 @@ fn opts_for(repo: &Path, project: &Path, out: &Path) -> BuildOptions {
         run: false,
         stdin: None,
         entry_module: None,
+        progress: false,
     }
 }
 
@@ -279,6 +280,7 @@ fn driver_honours_non_main_entry_module() {
     let out = project.join("sky-out-test");
     let opts = BuildOptions {
         entry_module: Some("App".to_string()),
+        progress: false,
         ..opts_for(&repo, &project, &out)
     };
     let report = build_example(&opts);
