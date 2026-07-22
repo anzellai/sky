@@ -563,6 +563,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
             cur_module: e.module_name.clone(),
+            cur_def: d,
+            tco: None,
         };
         let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         // determinism (L4): `discovered` is a Vec (ordered), and the two set
@@ -1388,6 +1390,31 @@ struct Ctx<'a> {
     /// runtime element (a nominal `_R`, or `any` for an erased list). `None`
     /// outside a combinator-closure arg. See `lower_lambda` + `lower_call`.
     closure_elem: Option<GoTy>,
+    /// The `DefId` of the def currently being lowered — identifies self-calls
+    /// for the tail-call optimiser.
+    cur_def: DefId,
+    /// Set while lowering a tail-recursive def body in the TCO statement path.
+    /// `Some` iff the enclosing def qualified for TCO (see `is_tail_recursive`);
+    /// a saturated self-call reached in tail position under this context becomes
+    /// a param-reassignment + `continue` instead of a recursive Go call.
+    tco: Option<TcoCtx>,
+}
+
+/// The tail-call-optimisation context for one def. Present only while the def's
+/// body is lowered through the statement-path tail-walk (`lower_tail_stmts`).
+#[derive(Clone)]
+struct TcoCtx {
+    /// The def whose saturated tail self-calls become `continue` jumps.
+    def: DefId,
+    /// Value-param count — a call must be saturated (`args.len() == arity`) to
+    /// be a tail jump; anything else is a value capture / partial application
+    /// and stays a normal call.
+    arity: usize,
+    /// The emitted Go signature params `(name, go-type)`, in order. The jump
+    /// reassigns each from the corresponding call arg (coerced to the param's
+    /// Go type via the same path `lower_call` uses). A `_` name is an unused
+    /// param — its arg is dropped (Go forbids assigning to `_`).
+    params: Vec<(String, GoTy)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -1568,10 +1595,34 @@ impl<'a> Ctx<'a> {
         let ret_ty = match root {
             Some(r) => {
                 let expected = declared_ret.clone().unwrap_or(GoTy::Any);
-                let e = self.lower_expr(r, &expected);
-                let bt = e.ty.clone();
-                body.push(GoStmt::Return(Some(e)));
-                declared_ret.unwrap_or(bt)
+                // Tail-call optimisation (Limitation #8 in the oracle): a def
+                // whose ONLY self-references are saturated calls in tail
+                // position lowers to a `for {}` loop where each tail self-call
+                // becomes param-reassignment + `continue` — constant Go stack
+                // regardless of recursion depth. Gated on simple params
+                // (`body.is_empty()` ⇒ no destructure to re-run per iteration).
+                let arity = param_pats.len();
+                if body.is_empty() && self.is_tail_recursive(r, self.cur_def, arity) {
+                    let ret = declared_ret.clone().unwrap_or_else(|| self.expr_ty(r));
+                    self.tco = Some(TcoCtx {
+                        def: self.cur_def,
+                        arity,
+                        params: params
+                            .iter()
+                            .map(|p| (p.name.clone(), p.ty.clone()))
+                            .collect(),
+                    });
+                    let mut loop_body: Vec<GoStmt> = Vec::new();
+                    self.lower_tail_stmts(r, &ret, &mut loop_body);
+                    self.tco = None;
+                    body.push(GoStmt::Loop(loop_body));
+                    ret
+                } else {
+                    let e = self.lower_expr(r, &expected);
+                    let bt = e.ty.clone();
+                    body.push(GoStmt::Return(Some(e)));
+                    declared_ret.unwrap_or(bt)
+                }
             }
             None => declared_ret.unwrap_or(GoTy::Unit),
         };
@@ -3170,6 +3221,243 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    // ---- tail-call optimisation (Limitation #8) ---------------------------
+
+    /// True iff `root` references `def` (via a `Res::Def` call) at least once,
+    /// and EVERY such reference is a saturated call in tail position. Mirrors
+    /// the oracle `Sky.Build.TailCallOpt.isTailRecursive`:
+    /// `countTailSelfCalls > 0 && countNonTailSelfCalls == 0`.
+    fn is_tail_recursive(&self, root: ExprId, def: DefId, arity: usize) -> bool {
+        let tail = self.count_tail_self(root, def, arity, true);
+        let non_tail = self.count_nontail_self(root, def, arity, true);
+        tail > 0 && non_tail == 0
+    }
+
+    /// `callee` resolves to the top-level def `def` (a self-reference).
+    fn is_self_call(&self, callee: ExprId, def: DefId) -> bool {
+        matches!(&self.body.exprs[callee], Expr::Var(Res::Def(d)) if *d == def)
+    }
+
+    /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
+    /// let-def RHS bodies (a self-call there is non-tail) and `if` conditions.
+    /// New AST variants MUST get an arm here — a missing child → a missed
+    /// self-call → a misclassified (and thus miscompiled) TCO candidate.
+    fn expr_children(&self, e: ExprId) -> Vec<ExprId> {
+        match &self.body.exprs[e] {
+            Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Var(_)
+            | Expr::Accessor(_)
+            | Expr::Error => vec![],
+            Expr::List(es) | Expr::Tuple(es) => es.clone(),
+            Expr::Record(fs) => fs.iter().map(|(_, v)| *v).collect(),
+            Expr::Update { base, fields } => {
+                let mut v = vec![*base];
+                v.extend(fields.iter().map(|(_, x)| *x));
+                v
+            }
+            Expr::Negate(x) => vec![*x],
+            Expr::Access(x, _) => vec![*x],
+            Expr::Lambda { body, .. } => vec![*body],
+            Expr::Call(c, args) => {
+                let mut v = vec![*c];
+                v.extend(args.iter().copied());
+                v
+            }
+            Expr::Binop { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Expr::If { arms, els } => {
+                let mut v = Vec::new();
+                for (c, b) in arms {
+                    v.push(*c);
+                    v.push(*b);
+                }
+                v.push(*els);
+                v
+            }
+            Expr::Let { defs, body } => {
+                let mut v: Vec<ExprId> = defs.iter().map(|d| d.body).collect();
+                v.push(*body);
+                v
+            }
+            Expr::Case { subject, branches } => {
+                let mut v = vec![*subject];
+                v.extend(branches.iter().map(|b| b.body));
+                v
+            }
+        }
+    }
+
+    /// Count self-references in TAIL position. Tail-position propagators
+    /// (`if`/`case`/`let` bodies) recurse in tail; every other node breaks tail
+    /// context and its children are walked NON-tail (arg positions never count).
+    fn count_tail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
+        match &self.body.exprs[e] {
+            Expr::If { arms, els } if in_tail => {
+                arms.iter()
+                    .map(|(_, b)| self.count_tail_self(*b, def, arity, true))
+                    .sum::<usize>()
+                    + self.count_tail_self(*els, def, arity, true)
+            }
+            Expr::Let { body, .. } if in_tail => self.count_tail_self(*body, def, arity, true),
+            Expr::Case { branches, .. } if in_tail => branches
+                .iter()
+                .map(|b| self.count_tail_self(b.body, def, arity, true))
+                .sum(),
+            Expr::Call(callee, args)
+                if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
+            {
+                1 + args
+                    .iter()
+                    .map(|a| self.count_tail_self(*a, def, arity, false))
+                    .sum::<usize>()
+            }
+            _ => self
+                .expr_children(e)
+                .iter()
+                .map(|c| self.count_tail_self(*c, def, arity, false))
+                .sum(),
+        }
+    }
+
+    /// Count self-references in NON-tail position. Any self-call that is not a
+    /// saturated tail call (wrong arity, or outside tail position) counts —
+    /// a non-zero result disqualifies TCO.
+    fn count_nontail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
+        match &self.body.exprs[e] {
+            Expr::If { arms, els } if in_tail => {
+                arms.iter()
+                    .map(|(_, b)| self.count_nontail_self(*b, def, arity, true))
+                    .sum::<usize>()
+                    + self.count_nontail_self(*els, def, arity, true)
+            }
+            Expr::Let { body, .. } if in_tail => self.count_nontail_self(*body, def, arity, true),
+            Expr::Case { branches, .. } if in_tail => branches
+                .iter()
+                .map(|b| self.count_nontail_self(b.body, def, arity, true))
+                .sum(),
+            // Saturated tail call: don't count, but walk its args non-tail.
+            Expr::Call(callee, args)
+                if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
+            {
+                args.iter()
+                    .map(|a| self.count_nontail_self(*a, def, arity, false))
+                    .sum()
+            }
+            // Any other self-call (non-tail position, or wrong arity): count it.
+            Expr::Call(callee, args) if self.is_self_call(*callee, def) => {
+                1 + args
+                    .iter()
+                    .map(|a| self.count_nontail_self(*a, def, arity, false))
+                    .sum::<usize>()
+            }
+            _ => self
+                .expr_children(e)
+                .iter()
+                .map(|c| self.count_nontail_self(*c, def, arity, false))
+                .sum(),
+        }
+    }
+
+    /// Lower `e` at a TAIL position of a TCO'd def, pushing statements into
+    /// `out` (a `for {}` loop block). Control-flow propagators recurse in
+    /// statement form (so `continue` stays inside the loop, never inside a
+    /// scoping IIFE); a saturated self-call becomes a `continue` jump; every
+    /// other leaf is a `return`.
+    fn lower_tail_stmts(&mut self, e: ExprId, ret: &GoTy, out: &mut Vec<GoStmt>) {
+        match self.body.exprs[e].clone() {
+            Expr::If { arms, els } => self.build_tail_if_chain(&arms, els, ret, out),
+            Expr::Let { defs, body } => {
+                // Pre-register binders (forward refs). Def RHSs are lowered
+                // normally — a self-call in a let-RHS stays a recursive call
+                // (correct; only tail-position calls become jumps).
+                for d in &defs {
+                    for (bn, lid) in &d.binders {
+                        let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+                    }
+                }
+                for d in &defs {
+                    self.lower_let_def(d, out);
+                }
+                self.lower_tail_stmts(body, ret, out);
+            }
+            Expr::Case {
+                subject, branches, ..
+            } => {
+                self.emit_case(subject, &branches, ret, true, out);
+            }
+            _ => {
+                if let Some(js) = self.try_tail_jump(e) {
+                    out.extend(js);
+                } else {
+                    let g = self.lower_expr(e, ret);
+                    out.push(GoStmt::Return(Some(g)));
+                }
+            }
+        }
+    }
+
+    /// The tail-position `if`-chain of a TCO'd def: like `build_if_chain`, but
+    /// each `then`/`else` branch is walked by `lower_tail_stmts` instead of
+    /// terminating in a plain `return`.
+    fn build_tail_if_chain(
+        &mut self,
+        arms: &[(ExprId, ExprId)],
+        els: ExprId,
+        ret: &GoTy,
+        out: &mut Vec<GoStmt>,
+    ) {
+        if let Some(((cond, then), rest)) = arms.split_first() {
+            let c = self.lower_expr(*cond, &GoTy::Bare(Prim::Bool));
+            let mut then_stmts: Vec<GoStmt> = Vec::new();
+            self.lower_tail_stmts(*then, ret, &mut then_stmts);
+            let mut els_stmts: Vec<GoStmt> = Vec::new();
+            self.build_tail_if_chain(rest, els, ret, &mut els_stmts);
+            out.push(GoStmt::If(c, then_stmts, els_stmts));
+        } else {
+            self.lower_tail_stmts(els, ret, out);
+        }
+    }
+
+    /// If `e` is a saturated self-call under the active TCO context, emit the
+    /// tail jump: compute each new param value into a temporary (clobber-safe —
+    /// a later arg may read an earlier param), assign every param from its
+    /// temporary, then `continue`. Args are coerced to the param's Go type via
+    /// the same `lower_expr(expected)` path `lower_call` uses. Returns `None`
+    /// when `e` is not a tail jump (the caller then emits a normal `return`).
+    fn try_tail_jump(&mut self, e: ExprId) -> Option<Vec<GoStmt>> {
+        let tco = self.tco.clone()?;
+        let (callee, args) = match &self.body.exprs[e] {
+            Expr::Call(c, a) => (*c, a.clone()),
+            _ => return None,
+        };
+        if !self.is_self_call(callee, tco.def) || args.len() != tco.arity {
+            return None;
+        }
+        let mut stmts: Vec<GoStmt> = Vec::new();
+        let mut assigns: Vec<GoStmt> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let (pname, pty) = tco.params[i].clone();
+            if pname == "_" {
+                // Unused param — its arg is dead and Go forbids assigning `_`.
+                continue;
+            }
+            let val = self.lower_expr(*a, &pty);
+            let tmp = self.fresh_temp();
+            stmts.push(GoStmt::Short(tmp.clone(), val));
+            assigns.push(GoStmt::Assign(
+                pname,
+                GoExpr::new(GoExprKind::Ident(tmp), pty),
+            ));
+        }
+        stmts.extend(assigns);
+        stmts.push(GoStmt::Continue);
+        Some(stmts)
+    }
+
     fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
         let defs = defs.to_vec();
         // Pre-register every binder's Go name BEFORE lowering any body, so a
@@ -3674,7 +3962,37 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
+        let mut stmts: Vec<GoStmt> = Vec::new();
+        self.emit_case(subject, branches, actual, false, &mut stmts);
+        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
+    }
+
+    /// Lower a `case` as statements pushed into `out`. `tail` = the case sits in
+    /// the tail position of a TCO'd def: each branch body is walked by
+    /// `lower_tail_stmts` (so a tail self-call becomes `continue`, and nested
+    /// control-flow stays in statement form), and the subject binder gets a
+    /// FRESH name so a sibling/nested case in the same flat loop scope does not
+    /// redeclare `_subj`. In non-tail mode this is byte-identical to the prior
+    /// `lower_case` (fixed `_subj` binder, branch bodies end in `return`).
+    fn emit_case(
+        &mut self,
+        subject: ExprId,
+        branches: &[CaseBranch],
+        actual: &GoTy,
+        tail: bool,
+        out: &mut Vec<GoStmt>,
+    ) {
         let branches = branches.to_vec();
+        // In tail mode the case is emitted directly into the loop block (not a
+        // scoping IIFE), so `_subj` would collide with a sibling / enclosing
+        // case. Give each tail case its own subject binder.
+        let subj_name = if tail {
+            let n = format!("_subj{}", self.local_counter);
+            self.local_counter += 1;
+            n
+        } else {
+            "_subj".to_string()
+        };
         let subj = self.lower_expr(subject, &GoTy::Any);
         // `_subj := subj` binds `_subj` to EXACTLY the lowered subject's Go type,
         // so that is the authoritative type for payload extraction — it can be
@@ -3724,17 +4042,16 @@ impl<'a> Ctx<'a> {
         } else {
             subj
         };
-        let mut stmts = vec![GoStmt::Short("_subj".into(), subj)];
-        let subj_ref = GoExpr::new(GoExprKind::Ident("_subj".into()), subj_ty.clone());
+        out.push(GoStmt::Short(subj_name.clone(), subj));
+        let subj_ref = GoExpr::new(GoExprKind::Ident(subj_name), subj_ty.clone());
         for br in &branches {
-            self.lower_case_branch(&subj_ref, &subj_ty, br, actual, &mut stmts);
+            self.lower_case_branch(&subj_ref, &subj_ty, br, actual, tail, out);
         }
         // fallthrough guard (exhaustiveness should prevent reaching here).
-        stmts.push(GoStmt::Expr(GoExpr::new(
+        out.push(GoStmt::Expr(GoExpr::new(
             GoExprKind::Ident("panic(rt.Unreachable(\"case\"))".into()),
             GoTy::Unit,
         )));
-        GoExpr::new(GoExprKind::Block(stmts), actual.clone())
     }
 
     /// The nominal Go type implied by a case's branch patterns — the owning ADT
@@ -3789,6 +4106,7 @@ impl<'a> Ctx<'a> {
         subj_ty: &GoTy,
         br: &CaseBranch,
         actual: &GoTy,
+        tail: bool,
         out: &mut Vec<GoStmt>,
     ) {
         // Sealed-ADT top-level ctor pattern → idiomatic comma-ok type-switch case:
@@ -3817,8 +4135,12 @@ impl<'a> Ctx<'a> {
                     let discards = discard_binds(&binds);
                     let mut then_inner: Vec<GoStmt> = binds;
                     then_inner.extend(discards);
-                    let body = self.lower_expr(br.body, actual);
-                    then_inner.push(GoStmt::Return(Some(body)));
+                    if tail {
+                        self.lower_tail_stmts(br.body, actual, &mut then_inner);
+                    } else {
+                        let body = self.lower_expr(br.body, actual);
+                        then_inner.push(GoStmt::Return(Some(body)));
+                    }
                     let then = match subcond {
                         Some(c) => vec![GoStmt::If(c, then_inner, vec![])],
                         None => then_inner,
@@ -3842,8 +4164,12 @@ impl<'a> Ctx<'a> {
         let discards = discard_binds(&binds);
         let mut then: Vec<GoStmt> = binds;
         then.extend(discards);
-        let body = self.lower_expr(br.body, actual);
-        then.push(GoStmt::Return(Some(body)));
+        if tail {
+            self.lower_tail_stmts(br.body, actual, &mut then);
+        } else {
+            let body = self.lower_expr(br.body, actual);
+            then.push(GoStmt::Return(Some(body)));
+        }
         match cond {
             Some(c) => out.push(GoStmt::If(c, then, vec![])),
             None => out.extend(then),
@@ -4782,6 +5108,85 @@ mod qualified_type_tests {
         assert_eq!(
             sky_ty_to_go(&wrap_args[0], &env),
             GoTy::Named("A_Msg".to_string(), vec![])
+        );
+    }
+}
+
+#[cfg(test)]
+mod tco_tests {
+    //! Regression: a tail-recursive user function lowers to a `for {}` loop
+    //! (param-reassignment + `continue`), NOT a recursive Go self-call — the
+    //! Limitation #8 auto-TCO pass. Ported from the oracle
+    //! `Sky.Build.TailCallOpt`.
+    use super::*;
+    use hir::SourceDb;
+
+    fn parse_mod(src: &str) -> syntax::Parse {
+        syntax::parse(src, base::FileId(0))
+    }
+
+    /// Recursively test whether any `GoStmt` in `body` (or nested) matches `f`.
+    fn any_stmt(body: &[GoStmt], f: &dyn Fn(&GoStmt) -> bool) -> bool {
+        body.iter().any(|s| {
+            f(s)
+                || match s {
+                    GoStmt::Loop(b) => any_stmt(b, f),
+                    GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
+                    GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
+                    _ => false,
+                }
+        })
+    }
+
+    #[test]
+    fn tail_recursive_def_emits_loop_not_recursion() {
+        let mut db = SourceDb::new();
+        let src = "module Main exposing (main)\n\
+                   \n\
+                   countDown : Int -> Int -> Int\n\
+                   countDown n acc =\n\
+                   \x20   if n <= 0 then acc else countDown (n - 1) (acc + 1)\n\
+                   \n\
+                   main : Int\n\
+                   main = countDown 5 0\n";
+        let mid = db.add_module("Main", parse_mod(src));
+        let out = lower_program(&db, mid);
+
+        let f = out
+            .items
+            .iter()
+            .find_map(|it| match it {
+                GoItem::Func(fd) if fd.name == "Main_countDown" => Some(fd),
+                _ => None,
+            })
+            .expect("Main_countDown must be lowered (reachable from main)");
+
+        // (1) The body is a single forever-loop — the TCO wrap.
+        assert!(
+            matches!(f.body.as_slice(), [GoStmt::Loop(_)]),
+            "tail-recursive body must be wrapped in a single `for {{}}` loop, got: {:?}",
+            f.body
+        );
+
+        // (2) A tail self-call became a `continue` jump.
+        assert!(
+            any_stmt(&f.body, &|s| matches!(s, GoStmt::Continue)),
+            "the tail self-call must lower to `continue`"
+        );
+
+        // (3) A param is reassigned before the jump (loop state update).
+        assert!(
+            any_stmt(&f.body, &|s| matches!(s, GoStmt::Assign(_, _))),
+            "the tail jump must reassign a parameter"
+        );
+
+        // (4) No recursive Go self-call survives anywhere in the emitted func —
+        // the whole point of TCO. `Main_countDown` must not appear in the body's
+        // debug rendering (params are `v_*`; the name field is separate).
+        let body_dbg = format!("{:?}", f.body);
+        assert!(
+            !body_dbg.contains("Main_countDown"),
+            "TCO'd body must contain NO recursive call to Main_countDown; body: {body_dbg}"
         );
     }
 }

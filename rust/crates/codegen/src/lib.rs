@@ -214,6 +214,17 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
             field,
             render_expr(val)
         )),
+        GoStmt::Assign(name, e) => w.line(&format!("{name} = {}", render_expr(e))),
+        GoStmt::Loop(body) => {
+            w.line("for {");
+            w.indent += 1;
+            for s in body {
+                emit_stmt(w, s);
+            }
+            w.indent -= 1;
+            w.line("}");
+        }
+        GoStmt::Continue => w.line("continue"),
         GoStmt::Return(None) => w.line("return"),
         GoStmt::Return(Some(e)) => w.line(&format!("return {}", render_expr(e))),
         GoStmt::Comment(c) => w.line(&format!("// {c}")),
@@ -384,6 +395,9 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
                 field,
                 render_expr(val)
             )),
+            GoStmt::Assign(n, e) => parts.push(format!("{n} = {}", render_expr(e))),
+            GoStmt::Loop(body) => parts.push(format!("for {{ {} }}", render_stmts_inline(body))),
+            GoStmt::Continue => parts.push("continue".to_string()),
             GoStmt::Return(None) => parts.push("return".to_string()),
             GoStmt::Return(Some(e)) => parts.push(format!("return {}", render_expr(e))),
             GoStmt::Comment(c) => parts.push(format!("/* {c} */")),

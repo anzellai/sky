@@ -174,6 +174,15 @@ pub enum GoStmt {
     Discard(GoExpr),
     /// `base.field = value` — record-update field assignment.
     AssignField(GoExpr, String, GoExpr),
+    /// `name = expr` — plain assignment to an existing local (used by the TCO
+    /// pass to reassign a function parameter before `continue`).
+    Assign(String, GoExpr),
+    /// `for { <body> }` — an unconditional forever-loop wrapping a TCO'd
+    /// tail-recursive function body. Every tail leaf is a `Return`; every tail
+    /// self-call is param-reassignment + `Continue`.
+    Loop(Vec<GoStmt>),
+    /// `continue` — the TCO jump back to the top of the enclosing `Loop`.
+    Continue,
     Return(Option<GoExpr>),
     /// `if cond { then } else { els }`.
     If(GoExpr, Vec<GoStmt>, Vec<GoStmt>),
