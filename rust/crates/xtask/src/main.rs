@@ -15,6 +15,7 @@ mod infer_gate;
 mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
+mod s8_gate;
 
 use std::path::{Path, PathBuf};
 
@@ -40,10 +41,11 @@ fn main() {
             0
         }
         Some("repro") => repro_gate::run(&args[1..], &repo_root()),
+        Some("s8") => s8_gate::run(&args[1..], &repo_root()),
         _ => {
             println!("{VERSION}");
             println!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|repro|fuzz> [args]"
+                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|repro|s8|fuzz> [args]"
             );
             0
         }
