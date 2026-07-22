@@ -19,8 +19,10 @@ node_modules/
 !.env.example
 firebaseadminsdk*.json
 
-# AI agent config
-.claude/
+# AI agent config. Use `.claude/*` (contents), NOT `.claude/` (the dir), so the
+# negation below can re-include a file — git cannot re-include a path whose
+# PARENT DIRECTORY is excluded.
+.claude/*
 # Exception: AUTONOMOUS_GOAL.md is tracked so live autonomous mandates
 # survive clones / new sessions per CLAUDE.md non-negotiable #0.
 !.claude/AUTONOMOUS_GOAL.md
