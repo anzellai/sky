@@ -580,7 +580,17 @@ pub fn update(project_dir: &Path, repo_root: &Path) -> FfiReport {
     let deps = read_go_dependencies(&sky_toml);
     let sky_deps = read_sky_dependencies(&sky_toml);
     if deps.is_empty() && sky_deps.is_empty() {
-        r.say("sky update: no declared surfaces to regenerate.");
+        // No user-declared surfaces, but if the project has already been built
+        // there's a runtime go.mod worth tidying (drop stale requires, sync the
+        // sum) — a useful action rather than a bare no-op. Absent a build, the
+        // honest note stands.
+        let sky_out = project_dir.join("sky-out");
+        if sky_out.join("go.mod").is_file() {
+            let _ = run_go(&sky_out, &["mod", "tidy"]);
+            r.say("sky update: no declared surfaces; tidied sky-out/go.mod.");
+        } else {
+            r.say("sky update: no declared surfaces to regenerate (run `sky build` first).");
+        }
         return r;
     }
     if !deps.is_empty() {

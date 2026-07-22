@@ -130,15 +130,33 @@ fn json_string(s: &str) -> String {
 }
 
 /// List every module name discoverable under the stdlib + project `src/`, one
-/// per line, sorted. Backs `sky doc --list`.
+/// per line, sorted, grouped under `── project ──` / `── stdlib ──` headers
+/// (a module under the project's own `src/` is a project module; everything
+/// under `sky-stdlib/` is stdlib). Backs `sky doc --list`.
 pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
-    let mut names: Vec<String> = collect_module_files(repo_root, project_dir)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    names.sort();
-    names.dedup();
-    names.join("\n")
+    let src_root = project_dir.join("src");
+    let mut project: Vec<String> = Vec::new();
+    let mut stdlib: Vec<String> = Vec::new();
+    for (name, path) in collect_module_files(repo_root, project_dir) {
+        if path.starts_with(&src_root) {
+            project.push(name);
+        } else {
+            stdlib.push(name);
+        }
+    }
+    for v in [&mut project, &mut stdlib] {
+        v.sort();
+        v.dedup();
+    }
+    let mut out = String::new();
+    if !project.is_empty() {
+        out.push_str("── project ──\n");
+        out.push_str(&project.join("\n"));
+        out.push_str("\n\n");
+    }
+    out.push_str("── stdlib ──\n");
+    out.push_str(&stdlib.join("\n"));
+    out
 }
 
 /// Enumerate `(module_name, path)` for every `.sky` under `sky-stdlib/` and

@@ -433,10 +433,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         println!("No errors found.");
     } else {
         println!("Compilation successful");
-        println!(
-            "Build complete: {}/app",
-            project_dir.join(&out_dir_name).display()
-        );
+        println!("Build complete: {out_dir_name}/app");
     }
     ExitCode::SUCCESS
 }
@@ -666,17 +663,23 @@ fn cmd_init(args: &[String]) -> ExitCode {
          root = \"src\"\n\n\
          # [live]            # Sky.Live runtime (uncomment to configure)\n\
          # port         = 8000\n\
-         # store        = \"memory\"   # memory | sqlite | postgres | redis\n\
-         # storePath    = \"sky.db\"\n\
-         # ttl          = 1800\n\n\
+         # store        = \"memory\"   # memory | sqlite | postgres | redis | firestore\n\
+         # storePath    = \"sky.db\"      # sqlite file, or DATABASE_URL / REDIS_URL\n\
+         # ttl          = 1800          # session TTL in seconds\n\
+         # static       = \"public\"      # directory served at /static\n\
+         # maxBodyBytes = 5242880       # POST cap on /_sky/event (5 MiB)\n\n\
          # [auth]            # Std.Auth configuration (uncomment to use)\n\
          # driver     = \"jwt\"\n\
-         # secret     = \"change-me\"\n\n\
+         # secret     = \"change-me\"     # prefer SKY_AUTH_TOKEN_SECRET (>=32 bytes)\n\
+         # tokenTtl   = \"24h\"\n\
+         # cookieName = \"sky_sid\"\n\n\
          # [database]        # Std.Db configuration (uncomment to use)\n\
          # driver = \"sqlite\"\n\
          # path   = \"app.db\"\n\n\
-         # [\"go.dependencies\"]        # `sky add <pkg>` records these here\n\n\
-         # [dependencies]              # Sky-source dependencies (from git)\n"
+         # [\"go.dependencies\"]        # `sky add <pkg>` records these here\n\
+         # \"github.com/google/uuid\" = \"latest\"\n\n\
+         # [dependencies]              # Sky-source dependencies (from git)\n\
+         # \"github.com/anzellai/sky-tailwind\" = \"latest\"\n"
     );
     let main_sky = format!(
         "module Main exposing (main)\n\n\
