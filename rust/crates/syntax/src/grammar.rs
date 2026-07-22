@@ -527,6 +527,9 @@ fn pattern_atom(p: &mut Parser) -> CompletedMarker {
         }
         Char => {
             let m = p.start();
+            if !valid_char_literal(p.cur_text()) {
+                p.error(char_error_msg());
+            }
             p.bump();
             m.complete(p, PatChar)
         }
@@ -740,10 +743,39 @@ fn postfix(p: &mut Parser, mut cm: CompletedMarker) -> CompletedMarker {
     cm
 }
 
+/// A well-formed Sky character literal contains exactly one character: either a
+/// single non-backslash codepoint (`'a'`, `'é'`) or a backslash followed by
+/// exactly one codepoint (`'\n'`, `'\\'`, `'\''`). The lexer scans to the next
+/// quote of any length, so `''` (empty), `'ab'` (multi), and `'\x41'`
+/// (multi-codepoint escape) reach the parser as `Char` tokens — the oracle
+/// rejects all three at parse, so we do too. Checking the RAW inner structure
+/// (not a decoded value) is deliberate: decoding would accept `\x41`/`\u{}` the
+/// oracle rejects and could reject `\d` the oracle accepts.
+fn valid_char_literal(text: &str) -> bool {
+    let Some(inner) = text.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) else {
+        return false; // unterminated / not a well-formed `'…'`
+    };
+    let n = inner.chars().count();
+    (n == 1 && !inner.starts_with('\\')) || (n == 2 && inner.starts_with('\\'))
+}
+
+fn char_error_msg() -> &'static str {
+    "a character literal must contain exactly one character — e.g. `'a'` or an \
+     escape like `'\\n'` / `'\\\\'`"
+}
+
 fn atom(p: &mut Parser) -> CompletedMarker {
     match p.current() {
-        Int | HexInt | Float | String | Char => {
+        Int | HexInt | Float | String => {
             let m = p.start();
+            p.bump();
+            m.complete(p, Literal)
+        }
+        Char => {
+            let m = p.start();
+            if !valid_char_literal(p.cur_text()) {
+                p.error(char_error_msg());
+            }
             p.bump();
             m.complete(p, Literal)
         }

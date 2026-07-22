@@ -15,7 +15,7 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
 |---|------|----------|--------|
 | A1 | **fmt comment-safety** — verify the multiset gate already ships | fmt | ✅ already shipped (`fmt/src/lib.rs:61` `is_safe` 4-part gate; `format_source` falls back to lossless reprint; audit claim was wrong) |
 | A2 | **s8 forbidden-pattern gate** — Result String / Task String / Std.IoError / RemoteData, as an xtask gate + wired into CI | xtask, CI | ✅ `xtask s8` (`s8_gate.rs`) + rust-ci.yml step; PASS 244 files/0 |
-| A3 | **char-literal strictness** — reject empty / multi-codepoint char literals at parse (check raw inner structure, NOT decode-then-count) | syntax | ⬜ |
+| A3 | **char-literal strictness** — reject `''` / `'ab'` / `'\x41'` at parse (raw inner-structure check) | syntax | ✅ grammar.rs `valid_char_literal`; parse-test + roundtrip green |
 | A4 | **import-cycle rejection** — Elm-like E-code at name resolution (SCC>1 over first-party modules). Posture: reject (verified 0 cycles) | hir/ty | ⬜ |
 | A5 | **nvim 17/17 LSP gate** — wire the real Neovim client run into xtask/CI | scripts, xtask, CI | ⬜ |
 

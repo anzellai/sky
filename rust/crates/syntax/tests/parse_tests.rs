@@ -194,3 +194,41 @@ main =
     let parse = assert_clean(src);
     insta::assert_snapshot!("let_pipeline", tree_dump(&parse));
 }
+
+#[test]
+fn char_literal_strictness_matches_oracle() {
+    // Valid: exactly one codepoint, or backslash + exactly one codepoint.
+    for ok in [
+        "x =\n    'a'\n",
+        "x =\n    '\\n'\n",
+        "x =\n    '\\\\'\n",
+        "x =\n    '\\d'\n", // backslash + one char — the oracle accepts this
+    ] {
+        let parse = p(ok);
+        assert_eq!(
+            parse.errors().len(),
+            0,
+            "should ACCEPT char literal {ok:?}, got {:?}",
+            parse.errors()
+        );
+    }
+    // Invalid: empty, multi-char, and multi-codepoint escapes (`\x41`, `\u{..}`)
+    // — the oracle rejects all of these at parse.
+    for bad in [
+        "x =\n    ''\n",
+        "x =\n    'ab'\n",
+        "x =\n    '\\x41'\n",
+    ] {
+        let parse = p(bad);
+        assert!(
+            !parse.errors().is_empty(),
+            "should REJECT char literal {bad:?}"
+        );
+    }
+    // Pattern position rejects too (the merged Char arm was split at both sites).
+    let pat_bad = p("f c =\n    case c of\n        'ab' ->\n            1\n\n        _ ->\n            0\n");
+    assert!(
+        !pat_bad.errors().is_empty(),
+        "should REJECT multi-char literal in a pattern"
+    );
+}
