@@ -62,30 +62,210 @@ fn main() -> ExitCode {
     }
 }
 
-/// `sky upgrade` — self-update the `sky` binary. The Haskell `sky` downloads the
-/// matching tagged release from GitHub (`anzellai/sky`) and replaces the binary.
-/// The Rust compiler is a rewrite/dev build not yet published as a `sky` release,
-/// so there is nothing newer to fetch — be honest about that (and how to update)
-/// rather than a silent no-op or an "unimplemented" stub.
-fn cmd_upgrade(_args: &[String]) -> ExitCode {
+/// `sky upgrade [--force]` — self-update the `sky` binary from the latest GitHub
+/// release (`anzellai/sky`), mirroring the Haskell `sky`. Resolves the platform
+/// asset (`sky-darwin-arm64` / `sky-linux-x64` / `sky-linux-arm64` /
+/// `sky-windows-x64`, per `.github/workflows/release.yml`), downloads the
+/// packaged tarball, and atomically replaces the running binary in place.
+///
+/// A dev build refuses by default (self-replacing a local dev binary with a
+/// published release would throw away local work); `--force` overrides for users
+/// who explicitly want the latest published binary.
+fn cmd_upgrade(args: &[String]) -> ExitCode {
+    let force = args.iter().any(|a| a == "--force");
     let ver = version_string();
+    let is_dev = ver == "sky dev" || ver.contains("dev");
+
     println!("sky upgrade — current version: {ver}");
-    if ver == "sky dev" || ver.contains("dev") {
-        println!(
-            "This is a rewrite/dev build of the Rust `sky`, not a published release, so \
-             there is no newer binary to fetch.\n\
-             Update it by rebuilding from source (in the sky repo):\n  \
-             cargo build -p sky --bin sky\n\
-             Self-update from GitHub releases activates once the Rust `sky` ships a tagged \
-             release."
+
+    let Some(artifact) = platform_artifact() else {
+        eprintln!(
+            "sky upgrade: no prebuilt binary is published for this platform ({}/{}).\n\
+             Build from source in the sky repo:  cargo build -p sky --release --bin sky",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
         );
-    } else {
+        return ExitCode::FAILURE;
+    };
+
+    if is_dev && !force {
         println!(
-            "Self-update for released Rust `sky` builds is not wired yet; download the \
-             latest release from https://github.com/anzellai/sky/releases."
+            "This is a rewrite/dev build of the Rust `sky`, not a published release.\n\
+             Rebuild from source (in the sky repo):  cargo build -p sky --release --bin sky\n\
+             Or run `sky upgrade --force` to install the latest published release anyway."
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    println!("Checking the latest release on github.com/anzellai/sky …");
+    let tag = match latest_release_tag() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "sky upgrade: {e}\n\
+                 Download the latest release manually from \
+                 https://github.com/anzellai/sky/releases"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Skip the download when the running binary is already the latest tag (a
+    // forced dev upgrade always proceeds so `--force` is never a silent no-op).
+    let latest = format!("sky v{}", tag.trim_start_matches('v'));
+    if !is_dev && ver == latest {
+        println!("Already up to date ({ver}).");
+        return ExitCode::SUCCESS;
+    }
+
+    println!("Downloading {artifact} @ {tag} …");
+    match download_and_replace_binary(&tag, artifact) {
+        Ok(dest) => {
+            println!("Upgraded to {tag} — {}", dest.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!(
+                "sky upgrade: {e}\n\
+                 Download {artifact} from \
+                 https://github.com/anzellai/sky/releases/tag/{tag} and replace the binary \
+                 manually."
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The published release asset base-name for the host platform, or `None` when
+/// no prebuilt binary is published (build-from-source path). Matches the
+/// `matrix.artifact` values in `.github/workflows/release.yml`.
+fn platform_artifact() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("sky-darwin-arm64"),
+        ("linux", "x86_64") => Some("sky-linux-x64"),
+        ("linux", "aarch64") => Some("sky-linux-arm64"),
+        ("windows", "x86_64") => Some("sky-windows-x64"),
+        _ => None,
+    }
+}
+
+/// Query the GitHub API for the latest `anzellai/sky` release tag. Shells out to
+/// `curl` (ubiquitous on macOS + Linux) rather than pulling a TLS stack into the
+/// compiler. Returns the `tag_name` (e.g. `v0.18.0`).
+fn latest_release_tag() -> Result<String, String> {
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "https://api.github.com/repos/anzellai/sky/releases/latest",
+        ])
+        .output()
+        .map_err(|e| format!("could not run curl ({e}); is curl installed?"))?;
+    if !out.status.success() {
+        return Err("could not reach the GitHub releases API".into());
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    // Minimal field extraction (no serde): find `"tag_name"` then its string
+    // value. The API response always quotes both key and value.
+    json_string_field(&body, "tag_name")
+        .ok_or_else(|| "no `tag_name` in the GitHub API response".to_string())
+}
+
+/// Extract a top-level `"key": "value"` string from a JSON blob without a JSON
+/// dependency. Returns the first match's value.
+fn json_string_field(json: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let start = json.find(&needle)? + needle.len();
+    let rest = &json[start..];
+    let colon = rest.find(':')?;
+    let after = &rest[colon + 1..];
+    let q1 = after.find('"')?;
+    let after_q1 = &after[q1 + 1..];
+    let q2 = after_q1.find('"')?;
+    Some(after_q1[..q2].to_string())
+}
+
+/// Download the release tarball for `artifact` @ `tag`, extract the binary, and
+/// atomically replace the running executable. Returns the replaced path.
+fn download_and_replace_binary(tag: &str, artifact: &str) -> Result<PathBuf, String> {
+    let is_windows = artifact.contains("windows");
+    if is_windows {
+        return Err(
+            "in-place self-update is not supported on Windows (a running .exe can't be \
+             replaced); download and swap the binary manually"
+                .into(),
         );
     }
-    ExitCode::SUCCESS
+    let url = format!("https://github.com/anzellai/sky/releases/download/{tag}/{artifact}.tar.gz");
+    let tmp = std::env::temp_dir().join(format!("sky-upgrade-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("could not create temp dir: {e}"))?;
+    let archive = tmp.join(format!("{artifact}.tar.gz"));
+
+    // Download the tarball.
+    let dl = std::process::Command::new("curl")
+        .args(["-fSL", "-o"])
+        .arg(&archive)
+        .arg(&url)
+        .status()
+        .map_err(|e| format!("could not run curl ({e})"))?;
+    if !dl.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!("download failed ({url})"));
+    }
+
+    // Extract (tarball holds `<artifact>` + `sky-ffi-inspect-<artifact>`).
+    let ex = std::process::Command::new("tar")
+        .arg("xzf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&tmp)
+        .status()
+        .map_err(|e| format!("could not run tar ({e})"))?;
+    if !ex.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err("could not extract the release tarball".into());
+    }
+
+    let new_bin = tmp.join(artifact);
+    if !new_bin.is_file() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!("release tarball did not contain `{artifact}`"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&new_bin, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // Atomically replace the running executable. On Unix, renaming over the
+    // running binary is safe (the live process keeps its open inode). Stage the
+    // new binary as a sibling of the destination so the final rename is
+    // same-filesystem (atomic); fall back to a copy across filesystems.
+    let cur = std::env::current_exe().map_err(|e| format!("could not locate current exe: {e}"))?;
+    let staged = cur.with_extension("sky-upgrade-new");
+    if std::fs::rename(&new_bin, &staged).is_err() {
+        std::fs::copy(&new_bin, &staged).map_err(|e| {
+            format!(
+                "could not stage the new binary next to {}: {e}",
+                cur.display()
+            )
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    std::fs::rename(&staged, &cur).map_err(|e| {
+        let _ = std::fs::remove_file(&staged);
+        format!(
+            "could not replace {} ({e}); you may need elevated permissions",
+            cur.display()
+        )
+    })?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(cur)
 }
 
 // ---- build / check -------------------------------------------------------
@@ -2471,6 +2651,36 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrade_json_tag_extraction() {
+        // The shape the GitHub releases API returns.
+        let body = r#"{"url":"...","tag_name": "v0.18.0","name":"Sky v0.18.0"}"#;
+        assert_eq!(
+            json_string_field(body, "tag_name").as_deref(),
+            Some("v0.18.0")
+        );
+        // Missing key → None (caller surfaces an actionable error).
+        assert_eq!(json_string_field("{}", "tag_name"), None);
+    }
+
+    #[test]
+    fn upgrade_platform_artifact_is_host_specific() {
+        // Whatever the host, the artifact (when Some) matches a real release
+        // asset base-name from .github/workflows/release.yml.
+        if let Some(a) = platform_artifact() {
+            assert!(
+                [
+                    "sky-darwin-arm64",
+                    "sky-linux-x64",
+                    "sky-linux-arm64",
+                    "sky-windows-x64"
+                ]
+                .contains(&a),
+                "unexpected artifact name: {a}"
+            );
+        }
+    }
 
     #[test]
     fn toml_entry_parsed_and_scoped_above_sections() {
