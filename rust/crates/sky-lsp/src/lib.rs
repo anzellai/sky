@@ -2394,12 +2394,47 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 /// path equals the dep path. So `import Mylib` matches `github.com/org/mylib`,
 /// and `import Foo` matches `foo` — the module a `sky add` produces.
 fn dep_matches_import(dep: &str, import_path: &str) -> bool {
+    // Normalise a slug/module segment for the common repo↔module conventions:
+    // lowercase, drop a leading `sky-`/`sky_` (the `sky-<name>` repo → `<Name>`
+    // module convention, e.g. `sky-tailwind` → `Tailwind`), and strip `-`/`_`
+    // separators (`my-utils` → `myutils`). Purely for the unfetched-dep HINT, so
+    // a heuristic match is fine — it never gates resolution or a hard diagnostic.
+    fn norm(s: &str) -> String {
+        let lower = s.to_ascii_lowercase();
+        let core = lower
+            .strip_prefix("sky-")
+            .or_else(|| lower.strip_prefix("sky_"))
+            .unwrap_or(&lower);
+        core.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+    }
     if dep.eq_ignore_ascii_case(import_path) {
         return true;
     }
-    let dep_last = dep.rsplit('/').next().unwrap_or(dep);
-    let imp_last = import_path.rsplit('.').next().unwrap_or(import_path);
-    !imp_last.is_empty() && dep_last.eq_ignore_ascii_case(imp_last)
+    let dep_last = norm(dep.rsplit('/').next().unwrap_or(dep));
+    if dep_last.is_empty() {
+        return false;
+    }
+    // Match the dep against the import's FIRST or LAST dotted segment, so both
+    // `import Tailwind` and `import Tailwind.Spacing` map to `sky-tailwind`.
+    let imp_first = norm(import_path.split('.').next().unwrap_or(import_path));
+    let imp_last = norm(import_path.rsplit('.').next().unwrap_or(import_path));
+    dep_last == imp_first || dep_last == imp_last
+}
+
+#[cfg(test)]
+mod dep_match_tests {
+    use super::dep_matches_import;
+    #[test]
+    fn sky_prefix_and_segments() {
+        // the `sky-<name>` repo convention → `<Name>` module
+        assert!(dep_matches_import("github.com/anzellai/sky-tailwind", "Tailwind"));
+        assert!(dep_matches_import("github.com/anzellai/sky-tailwind", "Tailwind.Spacing"));
+        // plain + separator conventions
+        assert!(dep_matches_import("github.com/x/my-utils", "MyUtils"));
+        assert!(dep_matches_import("github.com/x/widgets", "Widgets"));
+        // non-matches must not false-fire the hint
+        assert!(!dep_matches_import("github.com/x/sky-tailwind", "Router"));
+    }
 }
 
 /// The newest modification time anywhere under `<proj>/.skydeps/` +
