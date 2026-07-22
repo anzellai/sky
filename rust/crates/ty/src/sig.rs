@@ -963,7 +963,10 @@ fn modules_in_cycle(
     nodes: &[ModuleId],
     deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
 ) -> std::collections::HashSet<ModuleId> {
-    scc_cycle_groups(nodes, deps_of).into_iter().flatten().collect()
+    scc_cycle_groups(nodes, deps_of)
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Build the APP-module import graph and return its cycles as groups. Same graph
