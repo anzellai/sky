@@ -297,9 +297,14 @@ Overrides, in probe order:
 2. `bin/sky-ffi-inspect` in the cwd or any ancestor (dev workflow).
 3. Embedded fallback (default for installed binaries).
 
-### `sky remove <pkg>`
+### `sky remove [--go|--sky] <pkg>`
 
-Drops the dependency from `sky.toml` and prunes the Go module cache.
+Drops a dependency. With no flag it routes by which `sky.toml` section declares
+the package: a `[dependencies]` entry (Sky package) removes the `[dependencies]`
+line and its `.skydeps/<slug>/` tree; a `["go.dependencies"]` entry (Go module)
+removes the line, the generated `sky-ffi/<slug>.*` surface, and the `go.mod`
+require (`go mod tidy`). The routing is a local section lookup — no probe.
+`--go` / `--sky` force one path.
 
 ### `sky install`
 

@@ -172,6 +172,23 @@ pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
     r
 }
 
+/// `sky remove <pkg>` with neither `--go` nor `--sky` — route by which section
+/// declares the package: `[dependencies]` (a Sky package) → the Sky remove;
+/// otherwise the Go remove (which also covers `["go.dependencies"]` and a
+/// no-op "nothing to remove"). Purely local — reads `sky.toml`, no network — so
+/// unlike `add` there is no probe, just a deterministic section lookup.
+pub fn remove_smart(project_dir: &Path, pkg: &str) -> FfiReport {
+    let sky_toml = project_dir.join("sky.toml");
+    let is_sky_dep = read_sky_dependencies(&sky_toml)
+        .iter()
+        .any(|(p, _)| p == pkg);
+    if is_sky_dep {
+        remove_sky(project_dir, pkg)
+    } else {
+        remove(project_dir, pkg)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // sky add --sky / sky remove --sky  (Sky external packages)
 // ---------------------------------------------------------------------------
@@ -1261,6 +1278,33 @@ mod tests {
         ));
         assert_eq!(read_go_dependencies(&toml).len(), 2);
         assert!(remove_go_dependency(&toml, "github.com/google/uuid").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_smart_routes_by_declaring_section() {
+        let dir = std::env::temp_dir().join(format!("sky-rm-smart-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = dir.join("sky.toml");
+        // Both sections populated: a Sky dep and a Go dep.
+        std::fs::write(
+            &toml,
+            "name = \"x\"\n\n[dependencies]\n\"github.com/anzellai/sky-tailwind\" = \"latest\"\n\n[\"go.dependencies\"]\n\"github.com/google/uuid\" = \"v1.6.0\"\n",
+        )
+        .unwrap();
+
+        // Removing the Sky dep with no flag must drop it from [dependencies] and
+        // leave the Go dep intact (previously it hit the Go path and no-op'd).
+        let r = remove_smart(&dir, "github.com/anzellai/sky-tailwind");
+        assert!(r.ok);
+        assert!(read_sky_dependencies(&toml).is_empty(), "sky dep removed");
+        assert_eq!(read_go_dependencies(&toml).len(), 1, "go dep untouched");
+
+        // Removing the Go dep with no flag must drop it from ["go.dependencies"].
+        let r = remove_smart(&dir, "github.com/google/uuid");
+        assert!(r.ok);
+        assert!(read_go_dependencies(&toml).is_empty(), "go dep removed");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

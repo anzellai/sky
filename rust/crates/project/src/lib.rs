@@ -21,7 +21,8 @@ pub use driver::{
 pub use ffi::extract_template;
 pub use ffi_ops::{
     add as ffi_add, add_sky as ffi_add_sky, add_smart as ffi_add_smart, install as ffi_install,
-    remove as ffi_remove, remove_sky as ffi_remove_sky, update as ffi_update, FfiReport,
+    remove as ffi_remove, remove_sky as ffi_remove_sky, remove_smart as ffi_remove_smart,
+    update as ffi_update, FfiReport,
 };
 
 use skydb::{parse, SkyDatabase, SourceFile};

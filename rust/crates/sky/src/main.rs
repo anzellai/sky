@@ -1154,8 +1154,8 @@ fn is_watched_change(path: &Path) -> bool {
 // ---- FFI verbs (add / remove / install / update) -------------------------
 
 use project::{
-    ffi_add, ffi_add_sky, ffi_add_smart, ffi_install, ffi_remove, ffi_remove_sky, ffi_update,
-    FfiReport,
+    ffi_add, ffi_add_sky, ffi_add_smart, ffi_install, ffi_remove, ffi_remove_sky,
+    ffi_remove_smart, ffi_update, FfiReport,
 };
 
 /// Resolve `(repo_root, project_dir)` for an FFI verb run from the cwd. The
@@ -1214,18 +1214,27 @@ fn cmd_add(args: &[String]) -> ExitCode {
 }
 
 fn cmd_remove(args: &[String]) -> ExitCode {
+    let force_go = args.iter().any(|a| a == "--go");
+    let force_sky = args.iter().any(|a| a == "--sky");
+    if force_go && force_sky {
+        eprintln!("sky remove: choose one of --go / --sky, not both");
+        return ExitCode::from(2);
+    }
     let Some(pkg) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky remove [--sky] <import-path>");
+        eprintln!("usage: sky remove [--go|--sky] <import-path>");
         return ExitCode::from(2);
     };
     let Some((_repo_root, project_dir)) = resolve_ffi_ctx() else {
         return ExitCode::FAILURE;
     };
-    if args.iter().any(|a| a == "--sky") {
-        emit_ffi_report(ffi_remove_sky(&project_dir, pkg))
-    } else {
-        emit_ffi_report(ffi_remove(&project_dir, pkg))
-    }
+    // `--go`/`--sky` force a path; neither → route by which sky.toml section
+    // declares the package (deterministic, local — no probe needed for remove).
+    let report = match (force_go, force_sky) {
+        (true, _) => ffi_remove(&project_dir, pkg),
+        (_, true) => ffi_remove_sky(&project_dir, pkg),
+        (false, false) => ffi_remove_smart(&project_dir, pkg),
+    };
+    emit_ffi_report(report)
 }
 
 fn cmd_install(_args: &[String]) -> ExitCode {
