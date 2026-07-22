@@ -1,0 +1,10 @@
+module Foo exposing (bar, baz)
+
+-- An ANNOTATED export: hover must render `String`.
+bar : String
+bar = "bar-value"
+
+-- An UNANNOTATED export: hover must render its INFERRED signature
+-- (`Int -> Int`), never `?`.
+baz n =
+    n + 1

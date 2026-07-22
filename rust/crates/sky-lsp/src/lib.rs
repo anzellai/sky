@@ -202,10 +202,42 @@ impl Analysis {
     }
 
     /// Load every `.sky` under a project's `src/` + `tests/` so sibling-module
-    /// imports resolve even before the editor opens them.
+    /// imports resolve even before the editor opens them, PLUS the external Sky
+    /// modules fetched under `.skydeps/` so a `import Foo exposing (bar)` from a
+    /// dependency resolves exactly as the build path resolves it (via
+    /// `classify_import` → `ImportSource::Dep`).
+    ///
+    /// **Order is load-bearing.** `.skydeps/` loads FIRST, then `src/`+`tests/`.
+    /// `set_document` updates a same-named module IN PLACE (keeping its index), so
+    /// loading the project's own `src/` module last lets it OVERRIDE a
+    /// same-named dependency module — never the reverse.
     pub fn load_project(&mut self, root: &Path) {
+        self.load_skydeps(&root.join(".skydeps"));
         for sub in ["src", "tests"] {
             self.load_dir(&root.join(sub));
+        }
+    }
+
+    /// Register every fetched external Sky module under `<root>/.skydeps/` into
+    /// the salsa db (via `set_document`, the sole correct registration path), so
+    /// cross-module refs into a dependency resolve as `ImportSource::Dep` — the
+    /// same classification the build path gives them. Reuses the build's
+    /// `enumerate_skydep_files` (no fork). A dependency ships its own demo
+    /// `module Main`; those are DROPPED here (build.rs parity) so they can never
+    /// shadow the consuming project's own entry point.
+    fn load_skydeps(&mut self, skydeps: &Path) {
+        for path in project::enumerate_skydep_files(skydeps) {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let parse = syntax::parse(&text, FileId(0));
+            let name = module_name(&parse, path.to_str());
+            if name == "Main" || name == "main" {
+                continue;
+            }
+            if let Ok(url) = Url::from_file_path(&path) {
+                self.set_document(url, text);
+            }
         }
     }
 
@@ -606,9 +638,77 @@ impl Analysis {
         out.extend(resolved.diagnostics.iter().cloned());
         let checked = ty::check_modules(db, &[module]);
         out.extend(checked.diagnostics);
+        out.extend(self.unfetched_dep_hints(db, module, url));
         out.into_iter()
             .map(|d| to_lsp_diag(&self.docs, text, &d))
             .collect()
+    }
+
+    /// Hint diagnostics for a `import Foo …` whose module resolves `Foreign` (not
+    /// loaded as a `Dep`) AND names a declared-but-unfetched Sky dependency: a
+    /// `sky.toml [dependencies]` entry whose `.skydeps/<slug>` tree is missing.
+    /// The actionable fix is `sky install`, so this is an INFO hint (not the bare
+    /// `[E1001]` an unknown qualifier would raise) pointing at the import.
+    ///
+    /// Pure Go-FFI foreign imports are left untouched (lenient): they are declared
+    /// under `[go.dependencies]` with a `sky-ffi/` surface — never matched here —
+    /// and one already resolved in `self.ffi` is skipped explicitly.
+    fn unfetched_dep_hints(
+        &self,
+        db: &dyn SkyDb,
+        module: ModuleId,
+        url: &Url,
+    ) -> Vec<diagnostics::Diagnostic> {
+        let mut out = Vec::new();
+        let Some(proj) = url
+            .to_file_path()
+            .ok()
+            .map(|p| project::project_dir_for(&p))
+        else {
+            return out;
+        };
+        // Declared Sky deps whose fetched tree is missing on disk.
+        let missing: Vec<String> = project::read_sky_dependencies(&proj.join("sky.toml"))
+            .into_iter()
+            .map(|(path, _)| path)
+            .filter(|path| !proj.join(".skydeps").join(path.replace('/', "_")).is_dir())
+            .collect();
+        if missing.is_empty() {
+            return out;
+        }
+        let tree = db.module_parse(module);
+        for imp in tree.tree().imports() {
+            let Some(nm) = imp.name() else { continue };
+            let path = nm.text();
+            if !matches!(db.classify_import(&path), ImportSource::Foreign(_)) {
+                continue;
+            }
+            // A resolved Go-FFI package is a real import — never an unfetched dep.
+            if self.ffi.resolve(&path).is_some() {
+                continue;
+            }
+            let Some(dep) = missing.iter().find(|d| dep_matches_import(d, &path)) else {
+                continue;
+            };
+            let r = nm.syntax().text_range();
+            let span = Span::new(
+                FileId(module.index()),
+                u32::from(r.start()),
+                u32::from(r.end()),
+            );
+            let mut d = diagnostics::Diagnostic {
+                severity: diagnostics::Severity::Info,
+                code: diagnostics::Code("SKY-DEP-UNFETCHED".to_string()),
+                message: format!(
+                    "`{path}` is declared in sky.toml [dependencies] (`{dep}`) but not fetched — run `sky install`"
+                ),
+                labels: Vec::new(),
+                suggestion: Some("sky install".to_string()),
+            };
+            d = d.with_label(span, "unfetched dependency");
+            out.push(d);
+        }
+        out
     }
 
     // ---- references / rename target resolution -------------------------
@@ -2247,6 +2347,22 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// Whether a `[dependencies]` entry `dep` (a git import path like `foo` or
+/// `github.com/org/mylib`) plausibly provides the Sky module named by a Foreign
+/// `import` path. Since an UNfetched dep's source can't be read to learn its real
+/// module names, this matches heuristically: the import's last dotted segment
+/// equals (case-insensitively) the dep's last `/`-segment, OR the whole import
+/// path equals the dep path. So `import Mylib` matches `github.com/org/mylib`,
+/// and `import Foo` matches `foo` — the module a `sky add` produces.
+fn dep_matches_import(dep: &str, import_path: &str) -> bool {
+    if dep.eq_ignore_ascii_case(import_path) {
+        return true;
+    }
+    let dep_last = dep.rsplit('/').next().unwrap_or(dep);
+    let imp_last = import_path.rsplit('.').next().unwrap_or(import_path);
+    !imp_last.is_empty() && dep_last.eq_ignore_ascii_case(imp_last)
 }
 
 /// The newest modification time anywhere under `<proj>/.skydeps/` +

@@ -1,0 +1,20 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Foo exposing (bar)
+import Github.Com.Google.Uuid as Uuid
+
+
+main =
+    let
+        greeting =
+            bar
+
+        computed =
+            Foo.baz 41
+
+        newId =
+            Uuid.newString ()
+    in
+    println (String.append greeting (String.fromInt computed))

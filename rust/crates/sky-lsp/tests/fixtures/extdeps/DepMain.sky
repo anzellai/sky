@@ -1,0 +1,7 @@
+module Main exposing (main)
+
+-- A dependency ships its own demo entry point. This DECOY `module Main`
+-- must be DROPPED by the skydeps loader so it can never shadow the
+-- consuming project's real `Main` (build.rs parity).
+main =
+    "dep-demo-should-be-dropped"

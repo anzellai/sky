@@ -1,0 +1,9 @@
+name = "extdeps-fixture"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[dependencies]
+foo = "latest"
+
+["go.dependencies"]
+"github.com/google/uuid" = "latest"
