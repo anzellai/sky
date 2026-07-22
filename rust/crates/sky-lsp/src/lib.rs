@@ -396,7 +396,18 @@ impl Analysis {
                     .get(l)
                     .map(|t| t.render_pretty())
             }
-            Res::Foreign { .. } | Res::Error => None,
+            // A Go-FFI symbol (`Uuid.newString`): render the pinned HM signature
+            // the build path uses, read VERBATIM from the loaded FFI surface (no
+            // `@package` stripping). The `is_empty` guard drops inspector entries
+            // that omit `skyType` (`requestCancel`, …) so hover falls back to `?`
+            // rather than an empty type — never a spurious blank.
+            Res::Foreign { package, name } => self
+                .ffi
+                .resolve(package.as_str())
+                .and_then(|p| p.functions.get(name.as_str()))
+                .map(|f| f.sky_type.clone())
+                .filter(|s| !s.is_empty()),
+            Res::Error => None,
         }
     }
 
@@ -530,6 +541,19 @@ impl Analysis {
             // Qualified module member: `M.` → enumerate M's exports.
             if let Some(ImportSource::Dep(dep)) = resolved.qualifiers.get(&recv) {
                 return module_completion(db, *dep, &recv);
+            }
+            // Go-FFI alias member: `Uuid.` → enumerate the package's pinned
+            // symbols from the loaded FFI surface (each with its `skyType` as
+            // detail when non-empty). Turns a previously-empty list into the full
+            // member set.
+            if let Some(ImportSource::Foreign(pkg)) = resolved.qualifiers.get(&recv) {
+                if let Some(p) = self.ffi.resolve(pkg) {
+                    return p
+                        .functions
+                        .iter()
+                        .map(|(name, info)| ffi_member_item(&recv, name, &info.sky_type))
+                        .collect();
+                }
             }
             // Record field: `record.` → the receiver type's fields.
             if let Some(items) = self.field_completion(db, &resolved, &recv, off as usize) {
@@ -1965,6 +1989,19 @@ fn qualified_item(qualifier: &str, name: &str) -> CompletionItem {
         label: format!("{qualifier}.{name}"),
         insert_text: Some(name.to_string()),
         kind: Some(CompletionItemKind::FUNCTION),
+        ..Default::default()
+    }
+}
+
+/// A Go-FFI member completion: `M.name` label, bare `name` insert (so accepting
+/// after `M.` doesn't double the prefix), FUNCTION kind, and the pinned `skyType`
+/// as `detail` when non-empty.
+fn ffi_member_item(qualifier: &str, name: &str, sky_type: &str) -> CompletionItem {
+    CompletionItem {
+        label: format!("{qualifier}.{name}"),
+        insert_text: Some(name.to_string()),
+        kind: Some(CompletionItemKind::FUNCTION),
+        detail: (!sky_type.is_empty()).then(|| sky_type.to_string()),
         ..Default::default()
     }
 }
