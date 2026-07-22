@@ -22,6 +22,7 @@ ty = { path = "../ty" }
 fmt = { path = "../fmt" }
 skydb = { path = "../skydb" }
 project = { path = "../project" }
+ffi = { path = "../ffi" }
 diagnostics = { path = "../diagnostics" }
 tower-lsp.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time"] }

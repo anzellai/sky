@@ -88,6 +88,18 @@ pub struct Analysis {
     /// Project roots whose `src/`+`tests/` have already been loaded, so opening
     /// a second file in the same project doesn't re-walk it.
     loaded_projects: std::collections::HashSet<PathBuf>,
+    /// The merged Go-FFI surface across every loaded project (keyed by Sky module
+    /// path). Loaded by [`Analysis::ensure_project_for`] from each project's
+    /// `sky-ffi/` (or `.skycache/ffi/`) via the BUILD path's `load_ffi_surface`,
+    /// so hover / completion on a Go-FFI alias (`Uuid.newString`) render the
+    /// pinned HM signature the build uses — never a fork.
+    ffi: ffi::FfiRegistry,
+    /// Per-root newest-mtime snapshot of `.skydeps/` + `sky-ffi/`, taken at the
+    /// last load. When a subsequent `ensure_project_for` finds the newest mtime
+    /// has advanced (a mid-session `sky add` / `install` / `update` rewrote a
+    /// dep), the root is reloaded before serving — the #1 staleness gap. `None`
+    /// snapshot means neither tree existed at load time.
+    project_scan: HashMap<PathBuf, Option<std::time::SystemTime>>,
 }
 
 impl Default for Analysis {
@@ -118,6 +130,8 @@ impl Analysis {
             by_path: HashMap::new(),
             stdlib_loaded: false,
             loaded_projects: std::collections::HashSet::new(),
+            ffi: ffi::FfiRegistry::default(),
+            project_scan: HashMap::new(),
         }
     }
 
@@ -205,7 +219,50 @@ impl Analysis {
         self.load_stdlib(Some(&proj));
         if self.loaded_projects.insert(proj.clone()) {
             self.load_project(&proj);
+            self.load_ffi_for(&proj);
+            let snap = newest_dep_mtime(&proj);
+            self.project_scan.insert(proj.clone(), snap);
+        } else if self.dep_trees_advanced(&proj) {
+            // Mid-session `sky add`/`install`/`update` rewrote a dep tree —
+            // reload so the new external Sky modules + FFI surface resolve
+            // without an editor restart (the #1 staleness gap).
+            self.reload_project(&proj);
         }
+    }
+
+    /// Whether `proj`'s `.skydeps/`+`sky-ffi/` newest mtime has advanced since the
+    /// snapshot taken at its last (re)load. An absent snapshot (root not tracked)
+    /// is treated as "not advanced" — `ensure_project_for` only reaches here after
+    /// the root is already in `loaded_projects`, which always records a snapshot.
+    fn dep_trees_advanced(&self, proj: &Path) -> bool {
+        let now = newest_dep_mtime(proj);
+        match self.project_scan.get(proj) {
+            Some(prev) => now > *prev,
+            None => false,
+        }
+    }
+
+    /// Re-run a project's load after its dependency trees changed on disk: drop
+    /// the loaded-marker so `load_project` re-walks `.skydeps/`+`src/`+`tests/`
+    /// (`set_document` updates each module in place, preserving indices), reload
+    /// the FFI surface merging into `self.ffi`, and re-snapshot the mtime. The
+    /// stdlib stays loaded (it never changes mid-session).
+    pub fn reload_project(&mut self, proj: &Path) {
+        self.load_project(proj);
+        self.load_ffi_for(proj);
+        let snap = newest_dep_mtime(proj);
+        self.project_scan.insert(proj.to_path_buf(), snap);
+        self.loaded_projects.insert(proj.to_path_buf());
+    }
+
+    /// Load `proj`'s pinned Go-FFI surface via the BUILD path's loader and merge
+    /// it into `self.ffi`. Reusing `project::load_ffi_surface` (not a fork) keeps
+    /// the LSP's rendered FFI signatures byte-identical to what `sky build` sees.
+    /// Later projects' packages extend the map; a re-add of the same package key
+    /// overwrites with the freshly-read surface (post-`sky add` refresh).
+    fn load_ffi_for(&mut self, proj: &Path) {
+        let reg = project::load_ffi_surface(proj);
+        self.ffi.packages.extend(reg.packages);
     }
 
     fn load_dir(&mut self, dir: &Path) {
@@ -2189,6 +2246,41 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
             out.push(path);
         }
+    }
+}
+
+/// The newest modification time anywhere under `<proj>/.skydeps/` +
+/// `<proj>/sky-ffi/` (recursively), or `None` when neither tree exists. Used as
+/// a cheap change-detector: a mid-session `sky add`/`install`/`update` rewrites
+/// files under one of these trees, advancing the max mtime, which triggers an
+/// LSP reload. Directory mtimes are included so an added/removed file (which may
+/// not itself be newer than an existing sibling) is still detected via its parent
+/// dir's touch.
+fn newest_dep_mtime(proj: &Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    for sub in [".skydeps", "sky-ffi"] {
+        walk_mtime(&proj.join(sub), &mut newest);
+    }
+    newest
+}
+
+fn walk_mtime(dir: &Path, newest: &mut Option<std::time::SystemTime>) {
+    let Ok(md) = std::fs::metadata(dir) else {
+        return;
+    };
+    if let Ok(m) = md.modified() {
+        if newest.map(|n| m > n).unwrap_or(true) {
+            *newest = Some(m);
+        }
+    }
+    if !md.is_dir() {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        walk_mtime(&entry.path(), newest);
     }
 }
 

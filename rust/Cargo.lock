@@ -1114,6 +1114,7 @@ version = "0.1.0"
 dependencies = [
  "base",
  "diagnostics",
+ "ffi",
  "fmt",
  "hir",
  "project",

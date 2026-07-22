@@ -668,7 +668,7 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
 /// Locate the pinned FFI surface for an example: prefer the committed
 /// `sky-ffi/` layout (doc 09 §C.1); fall back to the oracle's `.skycache/`
 /// cache. Returns the loaded registry (empty when neither exists).
-fn load_ffi_surface(example_dir: &Path) -> ffi::FfiRegistry {
+pub fn load_ffi_surface(example_dir: &Path) -> ffi::FfiRegistry {
     let pinned_ffi = example_dir.join("sky-ffi");
     let pinned_go = pinned_ffi.join("go");
     if pinned_ffi.is_dir() {
@@ -900,29 +900,38 @@ fn load_skydeps(
     skydeps: &Path,
 ) -> Vec<(String, skydb::SourceFile)> {
     let mut out = Vec::new();
+    for path in enumerate_skydep_files(skydeps) {
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let (n, file) = parse_via_salsa(sdb, next_id, src, &path);
+        if n == "Main" || n == "main" {
+            continue;
+        }
+        out.push((n, file));
+    }
+    out
+}
+
+/// Enumerate every `.sky` source file under `<skydeps>/<pkg>/src/`, sorted, over
+/// all package directories (sorted). The single source of truth for which files
+/// a project's fetched Sky dependencies contribute — shared by the build's
+/// [`load_skydeps`] and the LSP's external-dep loader so the two never drift.
+/// Absent `.skydeps/` → empty (the common no-deps case). `collect_sky` (via
+/// `load_dir`) deliberately prunes any path under `.skydeps/`, so this walks the
+/// dep `src/` trees directly with the unfiltered collector.
+pub fn enumerate_skydep_files(skydeps: &Path) -> Vec<PathBuf> {
     let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.is_dir())
             .collect(),
-        Err(_) => return out,
+        Err(_) => return Vec::new(),
     };
     pkgs.sort();
+    let mut out = Vec::new();
     for pkg in pkgs {
-        // `collect_sky` (via `load_dir`) prunes any path under `.skydeps/`, so
-        // enumerate the dep's src tree directly here.
-        let mut files = Vec::new();
-        collect_sky_unfiltered(&pkg.join("src"), &mut files);
-        for path in files {
-            let Ok(src) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let (n, file) = parse_via_salsa(sdb, next_id, src, &path);
-            if n == "Main" || n == "main" {
-                continue;
-            }
-            out.push((n, file));
-        }
+        collect_sky_unfiltered(&pkg.join("src"), &mut out);
     }
     out
 }

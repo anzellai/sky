@@ -10,7 +10,10 @@ mod build;
 mod doc;
 mod driver;
 mod ffi_ops;
-pub use build::{build_example, build_project, emit_example_source, BuildOptions, BuildReport};
+pub use build::{
+    build_example, build_project, emit_example_source, enumerate_skydep_files, load_ffi_surface,
+    BuildOptions, BuildReport,
+};
 pub use doc::{list_modules, render_doc_site, render_module};
 pub use driver::{
     assets_root_for, is_compiler_repo_root, module_name_from_path, project_dir_for, repo_root_for,
@@ -26,6 +29,16 @@ pub use ffi_ops::{
 };
 
 use skydb::{parse, SkyDatabase, SourceFile};
+use std::path::Path;
+
+/// The Sky external-package dependencies declared under `[dependencies]` in a
+/// project's `sky.toml`, as `(import-path, version-spec)` pairs. Re-exported for
+/// the LSP's unfetched-dependency hint (a declared dep whose `.skydeps/<slug>`
+/// tree is missing → "run `sky install`"). Absent / unreadable `sky.toml` →
+/// empty.
+pub fn read_sky_dependencies(sky_toml: &Path) -> Vec<(String, String)> {
+    ffi_ops::read_sky_dependencies(sky_toml)
+}
 
 /// The build driver's project handle. Owns the salsa db — the single state
 /// holder (L1). The CLI and LSP are two front-ends over this same db (doc 01).
