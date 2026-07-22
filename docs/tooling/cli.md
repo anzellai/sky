@@ -239,6 +239,23 @@ sky add github.com/stripe/stripe-go/v84
   `vX.Y.Z`, a branch, or a commit SHA. Non-Go semver *constraints* (`>=`, `~`,
   `^`) are rejected (Go uses MVS, not constraint solving).
 
+**Sky-source packages — `sky add --sky <path>[@ref]`:**
+
+```bash
+sky add --sky github.com/anzellai/sky-tailwind        # pin-by-default to the
+                                                       # resolved tag/commit
+sky add --sky github.com/anzellai/sky-tailwind@v1.2.0 # pin a tag / branch / SHA
+sky add --sky github.com/anzellai/sky-tailwind@latest # explicit float
+```
+
+A Sky package (a repo with a top-level `src/` of `.sky` source) is `git clone`d
+into the gitignored `.skydeps/<slug>/` and recorded under `[dependencies]`, with
+the same version semantics as Go deps (pin-by-default; `latest`/branch float;
+exact tag/SHA pin). `sky install` fetches every declared `[dependencies]`;
+`sky build` is read-only and errors *`run 'sky install'`* if a declared Sky dep
+isn't fetched; `sky remove --sky <path>` drops the entry and its `.skydeps/`
+tree.
+
 The FFI inspector (`sky-ffi-inspect`) is embedded in the `sky`
 binary and self-provisions into `$XDG_CACHE_HOME/sky/tools/` on
 first use — no separate install required. Cold start costs one

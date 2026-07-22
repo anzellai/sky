@@ -20,7 +20,8 @@ pub use driver::{
 /// when running standalone, outside the repo tree (doc 09 §E).
 pub use ffi::extract_template;
 pub use ffi_ops::{
-    add as ffi_add, install as ffi_install, remove as ffi_remove, update as ffi_update, FfiReport,
+    add as ffi_add, add_sky as ffi_add_sky, install as ffi_install, remove as ffi_remove,
+    remove_sky as ffi_remove_sky, update as ffi_update, FfiReport,
 };
 
 use skydb::{parse, SkyDatabase, SourceFile};

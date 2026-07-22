@@ -114,6 +114,20 @@ fn assemble_and_emit_with(
     // falling through to a `Basics` kernel guess. Loaded BEFORE the example's
     // own src so a dep module named `Main` (packages ship their own demo entry)
     // is overwritten by — and never shadows — the example's real `Main`.
+    // Read-only guard: `sky build` never network-clones. A declared
+    // `[dependencies]` whose `.skydeps/<slug>/` tree is absent means the Sky
+    // package was never fetched — surface an actionable error pointing at `sky
+    // install` rather than silently mis-resolving `import <Pkg>` to a kernel
+    // guess. An empty/absent `[dependencies]` section is a no-op (the ~48
+    // no-Sky-dep examples must not regress).
+    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
+        let slug = path.replace('/', "_");
+        if !example_dir.join(".skydeps").join(&slug).is_dir() {
+            return Err(format!(
+                "Sky dependency {path} not fetched — run 'sky install'"
+            ));
+        }
+    }
     for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
         db.add_module(&n, file);
     }

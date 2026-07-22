@@ -1153,7 +1153,9 @@ fn is_watched_change(path: &Path) -> bool {
 
 // ---- FFI verbs (add / remove / install / update) -------------------------
 
-use project::{ffi_add, ffi_install, ffi_remove, ffi_update, FfiReport};
+use project::{
+    ffi_add, ffi_add_sky, ffi_install, ffi_remove, ffi_remove_sky, ffi_update, FfiReport,
+};
 
 /// Resolve `(repo_root, project_dir)` for an FFI verb run from the cwd. The
 /// project dir is the cwd (where `sky.toml` + `sky-out/` live, matching the
@@ -1181,11 +1183,11 @@ fn emit_ffi_report(r: FfiReport) -> ExitCode {
 
 fn cmd_add(args: &[String]) -> ExitCode {
     let Some(raw) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky add <go-import-path>[@version]");
+        eprintln!("usage: sky add [--sky] <import-path>[@version]");
         return ExitCode::from(2);
     };
-    // Split an optional version off the LAST `@` — Go import paths never contain
-    // one, so `github.com/foo/bar@v1.2.3` → (`github.com/foo/bar`, `v1.2.3`).
+    // Split an optional version off the LAST `@` — import paths never contain one,
+    // so `github.com/foo/bar@v1.2.3` → (`github.com/foo/bar`, `v1.2.3`).
     let (pkg, spec) = match raw.rfind('@') {
         Some(i) => (&raw[..i], Some(&raw[i + 1..])),
         None => (raw.as_str(), None),
@@ -1193,18 +1195,28 @@ fn cmd_add(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
         return ExitCode::FAILURE;
     };
-    emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg, spec))
+    // `--sky` routes to the Sky external-package lifecycle ([dependencies] +
+    // `.skydeps/`); otherwise the Go FFI path ([go.dependencies] + sky-ffi/).
+    if args.iter().any(|a| a == "--sky") {
+        emit_ffi_report(ffi_add_sky(&project_dir, pkg, spec))
+    } else {
+        emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg, spec))
+    }
 }
 
 fn cmd_remove(args: &[String]) -> ExitCode {
     let Some(pkg) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky remove <go-import-path>");
+        eprintln!("usage: sky remove [--sky] <import-path>");
         return ExitCode::from(2);
     };
     let Some((_repo_root, project_dir)) = resolve_ffi_ctx() else {
         return ExitCode::FAILURE;
     };
-    emit_ffi_report(ffi_remove(&project_dir, pkg))
+    if args.iter().any(|a| a == "--sky") {
+        emit_ffi_report(ffi_remove_sky(&project_dir, pkg))
+    } else {
+        emit_ffi_report(ffi_remove(&project_dir, pkg))
+    }
 }
 
 fn cmd_install(_args: &[String]) -> ExitCode {
