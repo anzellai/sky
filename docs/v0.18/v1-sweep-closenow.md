@@ -73,7 +73,8 @@ the dominant gap was build-pipeline logging. Closed this session:
 | C2 | `sky clean` removes `.skydeps` too | ✅ |
 | C3 | `sky init` scaffolds the helpful commented sky.toml keys | ✅ |
 | C4 | `Build complete:` path relative not absolute | ✅ |
-| B4 | type-error diagnostic: RHS-anchored span + filename + source-context window (agent in flight) | 🔄 |
+| B4 | type-error diagnostic: RHS-anchored span + filename + source-context window + `TYPE ERROR` header | ✅ (reject 59/59, infer 49/49) |
+| #5 | call-arg mismatch span (subsumed by B4 — app-arg spans now filename+context) | ✅ |
 
 Remaining scan items (lower priority, not check≡build violations):
 - **B2** — CLI-level incremental short-circuit / `-- Incremental: source unchanged`

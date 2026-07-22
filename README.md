@@ -2,11 +2,13 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/)
 
-> **Status: v0.17.x release candidate.** Public APIs are stable for the
+> **Status: v0.18.x release candidate.** Public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
 > still change between minor versions. The compiler is now written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
-> "if it compiles, it works" guarantee carry over unchanged.
+> "if it compiles, it works" guarantee carry over unchanged. The
+> retired Haskell compiler stays under `legacy-haskell-compiler/` as
+> the differential oracle.
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,

@@ -1,26 +1,28 @@
 # CLAUDE.md
 
 > **Quick orientation.** Sky is an Elm-family functional language
-> compiling to typed Go via a Rust compiler. Current
-> release is **v0.17.5** — canonicaliser's explicit-alias-wins rule
-> silently resolves the historical dual-import friction (`import
-> Std.Db as Db` + `import Lib.Db exposing (conn)` now compiles with
-> the explicit alias winning) and every `main` entry-point sheds its
-> redundant trailing `|> Task.run` (runtime auto-forces Task-typed
-> main); v0.17.4 diagnostic wording carries forward; v0.17.3 LSP
-> FFI-alias false-positive + 5-round canonicalise+solve fixpoint in
-> `typecheckWorkspace`; v0.17.2 T-var identity-recovery gate;
-> v0.17.1 security + List.sortWith + Math.min/max Float fix;
-> v0.17.0 typed-emit fix, documented rt.Coerce residual surface
-> across 8 sound safety classes, `scopeStateRef` IORef contract +
-> audit spec, and per-panic-class emission-time regression locks
-> stay baseline. v0.15 type-directed lowering, Go generics on
-> parametric record aliases, same-module polymorphic
-> re-instantiation, and the wildcard-`any` soundness gate all carry
-> forward as baseline. The verification sweep (40 examples +
-> Sky.Test assertions + 410+ cabal specs + 17/17 Neovim LSP
-> integration tests) is the source of truth — green-everywhere is a
-> hard release gate.
+> compiling to typed Go. The compiler is now the **Rust rewrite**
+> (cargo workspace at `rust/`, primary); the retired Haskell
+> compiler lives under `legacy-haskell-compiler/` and serves as the
+> **differential oracle** (`sky-out/sky`). Current line is
+> **v0.18.x** — the Rust compiler drives every verb (`build` /
+> `run` / `check` / `watch` / `test` / `fmt` / `lsp` / `doc` / the
+> FFI + dep verbs), emits the same phased pipeline log the oracle
+> prints, and reproduces the oracle's Elm-style type-error output
+> (RHS-anchored span + filename + source-context window). `sky
+> upgrade` self-updates from GitHub releases; `sky watch` honours
+> `--clear`/`--debounce`/`--interval`/`--kill-timeout`/`--watch`.
+> All the language/runtime baselines carry forward unchanged:
+> type-directed lowering + Go generics on parametric record
+> aliases, same-module polymorphic re-instantiation, the
+> wildcard-`any` soundness gate, auto-TCO + CPS list ops on
+> constant Go stack, the documented rt.Coerce residual surface,
+> and "if it compiles it works". The Rust verification sweep
+> (`cargo test --workspace` + the xtask gate suite
+> roundtrip/resolve/infer/reject/build-run/coerce-floor/repro/fuzz +
+> golden + the example sweep, cross-checked byte-for-byte against
+> the oracle) is the source of truth — green-everywhere is a hard
+> release gate.
 
 ## Import qualifier rules (v0.17.5+)
 
