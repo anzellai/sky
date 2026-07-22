@@ -90,17 +90,91 @@ fn cmd_upgrade(_args: &[String]) -> ExitCode {
 
 // ---- build / check -------------------------------------------------------
 
+/// Resolve the entry `.sky` when a command is invoked with no file argument:
+/// walk up from the current directory to the nearest `sky.toml`, read its
+/// `entry` field (default `src/Main.sky`), and return that path. `Ok(None)`
+/// means no `sky.toml` was found; `Err` means one was found but its entry file
+/// is missing.
+fn entry_from_sky_toml() -> Result<Option<PathBuf>, PathBuf> {
+    let Ok(cwd) = std::env::current_dir() else {
+        return Ok(None);
+    };
+    let mut dir = cwd.as_path();
+    loop {
+        let manifest = dir.join("sky.toml");
+        if manifest.is_file() {
+            let entry_rel = std::fs::read_to_string(&manifest)
+                .ok()
+                .and_then(|s| parse_toml_entry(&s))
+                .unwrap_or_else(|| "src/Main.sky".to_string());
+            let entry = dir.join(entry_rel);
+            return if entry.is_file() { Ok(Some(entry)) } else { Err(entry) };
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => return Ok(None),
+        }
+    }
+}
+
+/// Extract the top-level `entry = "..."` value from a `sky.toml` (the entry key
+/// lives above any `[section]` header).
+fn parse_toml_entry(toml: &str) -> Option<String> {
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("entry") {
+            let val = rest
+                .trim_start()
+                .strip_prefix('=')?
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'');
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the positional entry file, falling back to `sky.toml`'s `entry` when
+/// omitted. Returns the exit code to use on failure.
+fn resolve_entry_arg(positional: &[String], usage: &str) -> Result<PathBuf, ExitCode> {
+    if let Some(f) = positional.first() {
+        return Ok(PathBuf::from(f));
+    }
+    match entry_from_sky_toml() {
+        Ok(Some(entry)) => Ok(entry),
+        Ok(None) => {
+            eprintln!("{usage}");
+            Err(ExitCode::from(2))
+        }
+        Err(missing) => {
+            eprintln!("sky: sky.toml entry '{}' not found", missing.display());
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
 /// `sky build <file>` (and, with `check_only`, `sky check <file>`). Both emit Go
 /// and run `go build`; build reports the produced binary, check reports "No
 /// errors found." and never runs the program — the `sky check ≡ sky build`
 /// invariant (doc 10).
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
-    let Some(file) = positional.first() else {
-        eprintln!("usage: sky {} <file.sky> [--out <dir>]", verb(check_only));
-        return ExitCode::from(2);
+    let file = match resolve_entry_arg(
+        &positional,
+        &format!(
+            "usage: sky {} <file.sky> [--out <dir>]  (or run inside a project directory with a sky.toml)",
+            verb(check_only)
+        ),
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
     };
-    let file = Path::new(file);
+    let file = file.as_path();
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
@@ -178,11 +252,14 @@ fn verb(check_only: bool) -> &'static str {
 /// stdio, propagating its exit code.
 fn cmd_run(args: &[String]) -> ExitCode {
     let (positional, out_override) = parse_out(args);
-    let Some(file) = positional.first() else {
-        eprintln!("usage: sky run <file.sky>");
-        return ExitCode::from(2);
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky run <file.sky>  (or run inside a project directory with a sky.toml)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
     };
-    let file = Path::new(file);
+    let file = file.as_path();
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
@@ -2225,6 +2302,27 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toml_entry_parsed_and_scoped_above_sections() {
+        // Standard shape.
+        assert_eq!(
+            parse_toml_entry("name = \"x\"\nentry = \"src/Main.sky\"\n\n[live]\nport = 8000\n"),
+            Some("src/Main.sky".to_string())
+        );
+        // Custom path + single quotes + extra spacing.
+        assert_eq!(
+            parse_toml_entry("entry   =   'app/Start.sky'\n"),
+            Some("app/Start.sky".to_string())
+        );
+        // No top-level entry key → None (caller applies the src/Main.sky default).
+        assert_eq!(parse_toml_entry("name = \"x\"\n[source]\nroot = \"src\"\n"), None);
+        // An `entry` inside a section must NOT be picked up (scan stops at `[`).
+        assert_eq!(
+            parse_toml_entry("name = \"x\"\n[weird]\nentry = \"nope.sky\"\n"),
+            None
+        );
+    }
 
     #[test]
     fn go_version_parses_major_minor() {
