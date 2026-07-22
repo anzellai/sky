@@ -7335,7 +7335,13 @@ func String_words(s any) any {
 }
 
 func String_repeat(n any, s any) any {
-	return strings.Repeat(fmt.Sprintf("%v", s), AsInt(n))
+	// A non-positive count is "" (Elm semantics) — `strings.Repeat` panics on a
+	// negative count, and well-typed Sky must never panic.
+	count := AsInt(n)
+	if count <= 0 {
+		return ""
+	}
+	return strings.Repeat(fmt.Sprintf("%v", s), count)
 }
 
 // runeCount returns the number of Unicode code points in s.
