@@ -32,6 +32,10 @@ pub struct BuildOptions {
     pub run: bool,
     /// stdin to feed the binary when `run` is set.
     pub stdin: Option<String>,
+    /// The entry module name (from the entry file's `module <Name>` header).
+    /// `None` falls back to the `Main`/`main` heuristic — so a renamed entry
+    /// module (`module App`) still builds when the CLI derives + supplies it.
+    pub entry_module: Option<String>,
 }
 
 #[derive(Default)]
@@ -345,7 +349,7 @@ pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<Strin
 
 /// Build one example directory, returning a structured report (never panics).
 pub fn build_example(opts: &BuildOptions) -> BuildReport {
-    build_inner(opts, &[], None)
+    build_inner(opts, &[], opts.entry_module.as_deref())
 }
 
 /// Like [`build_example`], but with extra source roots (e.g. the project's

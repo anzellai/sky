@@ -307,6 +307,7 @@ fn go_builds(root: &Path, dir: &Path, name: &str) -> bool {
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: None,
     };
     // build_example never panics + returns a report; go build is the signal.
     let _ = name;

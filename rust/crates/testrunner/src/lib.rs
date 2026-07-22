@@ -94,6 +94,7 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         out_dir_abs: Some(out_dir.clone()),
         run: false,
         stdin: None,
+        entry_module: None,
     };
     // Extra source roots: the project's `tests/` tree (carries the suite when it
     // lives under tests/) and the scratch dir (carries the synth entry).

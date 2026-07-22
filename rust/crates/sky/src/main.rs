@@ -166,6 +166,23 @@ fn resolve_entry_arg(positional: &[String], usage: &str) -> Result<PathBuf, Exit
 /// and run `go build`; build reports the produced binary, check reports "No
 /// errors found." and never runs the program — the `sky check ≡ sky build`
 /// invariant (doc 10).
+/// The entry module's declared name, from its `module <Name> exposing …` header
+/// — so a renamed entry module (`module App`, not `Main`) still builds. `None`
+/// when the file is unreadable or has no header (the build falls back to the
+/// `Main` heuristic).
+fn entry_module_name(file: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("module ") {
+            let name = rest.split_whitespace().next().unwrap_or("");
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
     let file = match resolve_entry_arg(
@@ -204,6 +221,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: entry_module_name(file),
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -275,6 +293,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: entry_module_name(file),
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -945,6 +964,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: entry_module_name(file),
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -1083,7 +1103,7 @@ fn cmd_watch(args: &[String]) -> ExitCode {
 fn watch_build_and_spawn(
     repo_root: &Path,
     project_dir: &Path,
-    _file: &Path,
+    file: &Path,
     no_run: bool,
 ) -> Option<std::process::Child> {
     let opts = BuildOptions {
@@ -1093,6 +1113,7 @@ fn watch_build_and_spawn(
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: entry_module_name(file),
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -1154,8 +1175,8 @@ fn is_watched_change(path: &Path) -> bool {
 // ---- FFI verbs (add / remove / install / update) -------------------------
 
 use project::{
-    ffi_add, ffi_add_sky, ffi_add_smart, ffi_install, ffi_remove, ffi_remove_sky,
-    ffi_remove_smart, ffi_update, FfiReport,
+    ffi_add, ffi_add_sky, ffi_add_smart, ffi_install, ffi_remove, ffi_remove_sky, ffi_remove_smart,
+    ffi_update, FfiReport,
 };
 
 /// Resolve `(repo_root, project_dir)` for an FFI verb run from the cwd. The
@@ -1783,6 +1804,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             out_dir_abs: None,
             run: false,
             stdin: None,
+            entry_module: None,
         };
         let report = build_example(&opts);
         if !report.emitted {

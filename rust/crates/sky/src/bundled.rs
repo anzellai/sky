@@ -89,6 +89,7 @@ pub fn ensure_built(
         out_dir_abs: None,
         run: false,
         stdin: None,
+        entry_module: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {

@@ -56,6 +56,7 @@ fn opts_for(repo: &Path, project: &Path, out: &Path) -> BuildOptions {
         out_dir_abs: Some(out.to_path_buf()),
         run: false,
         stdin: None,
+        entry_module: None,
     }
 }
 
@@ -239,6 +240,54 @@ fn driver_pointfree_def_go_builds() {
         "point-free def must emit AND go build (was `Main_inc()()(41)`); note: {}",
         report.note
     );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// The entry module is derived from the file's `module <Name>` header, NOT
+/// hardcoded to `Main`. A project whose entry declares `module App` must build
+/// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and
+/// rejected it with `no entry module named Main`. `BuildOptions.entry_module`
+/// carries the CLI-derived header name.
+#[test]
+fn driver_honours_non_main_entry_module() {
+    let repo = repo_root();
+    // A single-module project whose entry file declares `module App`, not Main.
+    let uniq = format!(
+        "sky-entry-mod-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let project = std::env::temp_dir().join(uniq);
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("sky.toml"),
+        "name = \"entry-mod\"\nversion = \"0.1.0\"\nentry = \"src/App.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src").join("App.sky"),
+        "module App exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    println \"from App\"\n",
+    )
+    .unwrap();
+
+    let out = project.join("sky-out-test");
+    let opts = BuildOptions {
+        entry_module: Some("App".to_string()),
+        ..opts_for(&repo, &project, &out)
+    };
+    let report = build_example(&opts);
+    assert!(
+        report.emitted,
+        "driver rejected a non-`Main` entry module (`module App`) — entry detection is still hardcoded to Main; note: {}",
+        report.note
+    );
+
     let _ = std::fs::remove_dir_all(&project);
 }
 
