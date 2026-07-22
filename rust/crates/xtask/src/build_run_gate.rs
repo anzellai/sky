@@ -376,6 +376,17 @@ fn verify_one(
     // `--bless` also need the RUST binary to run (they compare/capture its
     // stdout), so force the inline run for CLI even without `--run`.
     let want_inline_run = (do_verify || golden || bless) && shape == Shape::Cli;
+    // The generated FFI surface (`sky-ffi/`) is a gitignored build artifact, so
+    // a fresh clone / CI has none. When we intend to actually RUN/verify an
+    // example (CLI golden, server verify) it must resolve its FFI symbols, so
+    // generate any absent surface first — exactly what a user runs (`sky
+    // install`) before building an FFI project. Build-only paths (`--all` with
+    // no `--run`) deliberately skip this and let a surface-less FFI example
+    // FFI-block, so the heavy 13-skyshop (Stripe) surface is never regenerated
+    // on the CI build sweep.
+    if want_inline_run || do_verify {
+        ensure_ffi_surface(root, dir);
+    }
     let opts = BuildOptions {
         repo_root: root.to_path_buf(),
         example_dir: dir.to_path_buf(),
@@ -496,6 +507,63 @@ fn verify_one(
         rust_stdout,
         oracle_stdout,
     }
+}
+
+/// Generate the FFI surface for an example that declares deps but whose surface
+/// is absent (gitignored artifact — missing on a fresh clone). Idempotent + only
+/// hits the network/inspector when a surface is genuinely missing, so a warm
+/// tree is a no-op. Failures are non-fatal: the subsequent `build_example` will
+/// surface the real blocker if the surface is still unresolved.
+fn ensure_ffi_surface(root: &Path, dir: &Path) {
+    let Ok(text) = std::fs::read_to_string(dir.join("sky.toml")) else {
+        return;
+    };
+    let (declares_go, declares_sky) = declares_real_deps(&text);
+    if !declares_go && !declares_sky {
+        return;
+    }
+    // Present iff sky-ffi/ holds at least one generated kernel.json.
+    let ffi_present = std::fs::read_dir(dir.join("sky-ffi"))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok()).any(|e| {
+                e.path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(".kernel.json"))
+            })
+        })
+        .unwrap_or(false);
+    let skydeps_present = dir.join(".skydeps").is_dir();
+    let need = (declares_go && !ffi_present) || (declares_sky && !skydeps_present);
+    if need {
+        // Non-fatal: a failed install leaves the surface absent and the build
+        // reports the concrete blocker.
+        let _ = project::ffi_install(dir, root);
+    }
+}
+
+/// Does `sky.toml` declare a REAL dependency (a non-comment `"pkg" = "..."`
+/// entry) under `["go.dependencies"]` / `[dependencies]`? Returns `(go, sky)`.
+/// Mirrors `project`'s section parser so a fresh-init project's COMMENTED
+/// section headers never count as declared deps.
+fn declares_real_deps(toml_text: &str) -> (bool, bool) {
+    let (mut in_go, mut in_sky, mut go, mut sky) = (false, false, false, false);
+    for raw in toml_text.lines() {
+        let l = raw.trim();
+        if l.starts_with('[') && l.ends_with(']') {
+            in_go = l == "[\"go.dependencies\"]";
+            in_sky = l == "[dependencies]";
+            continue;
+        }
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if l.contains('=') {
+            go |= in_go;
+            sky |= in_sky;
+        }
+    }
+    (go, sky)
 }
 
 // ---- CLI oracle compare (stdout) ----------------------------------------
