@@ -2760,7 +2760,16 @@ impl<'a> Ctx<'a> {
     ) -> GoExpr {
         let mut it = largs.into_iter();
         let base: Vec<GoExpr> = it.by_ref().take(arity).collect();
-        let mut call = GoExpr::new(GoExprKind::Call(Box::new(callee), base), ret.clone());
+        // For an arity-0 function-valued def (`greet = String.append "hi "`),
+        // `callee` is ALREADY the forced CAF (`Main_greet()`) that RETURNS the
+        // function — wrapping it in an empty `Call` would double-force it to
+        // `Main_greet()()`, which `go build` rejects. Start from `callee`
+        // directly and apply the args to it.
+        let mut call = if arity == 0 {
+            callee
+        } else {
+            GoExpr::new(GoExprKind::Call(Box::new(callee), base), ret.clone())
+        };
         let mut cur = ret.clone();
         // Apply the remaining args by BATCHING each round to the running func's
         // arity — a curried return whose lambda body was spine-collapsed to a flat

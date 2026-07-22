@@ -214,6 +214,34 @@ fn driver_accepts_well_typed_and_emits() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A point-free (arity-0) function-valued top-level def applied at a call site
+/// (`inc = mkAdder 1` then `inc 41`) must EMIT and `go build`. The lowerer used
+/// to wrap the already-forced CAF in an empty call → `Main_inc()()(41)`, which
+/// `go build` rejects — a `sky check ≢ go build` hole.
+#[test]
+fn driver_pointfree_def_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "pointfree",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         mkAdder : Int -> Int -> Int\n\
+         mkAdder n =\n    \\m -> n + m\n\n\
+         inc : Int -> Int\n\
+         inc =\n    mkAdder 1\n\n\
+         main =\n    println (String.fromInt (inc 41))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "point-free def must emit AND go build (was `Main_inc()()(41)`); note: {}",
+        report.note
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A `case` whose only arm is a wildcard (`case n of _ -> …`) never reads the
 /// subject. The lowerer used to unconditionally bind `_subj := subj`, so Go
 /// rejected it (`declared and not used: _subj`) — valid Sky emitted un-buildable
