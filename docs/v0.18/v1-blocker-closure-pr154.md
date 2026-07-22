@@ -23,7 +23,7 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
 
 | # | Item | Crate(s) | Status |
 |---|------|----------|--------|
-| B1 | **auto-TCO** — port `TailCallOpt.hs`: GoStmt::Loop/Continue/Assign + tail-detection walk + clobber-safe param reassignment. Closes stack-overflow-on-well-typed-Sky. **Needs `coerce-floor --bless` (justified).** | lower/ir, codegen | ⬜ |
+| B1 | **auto-TCO** — GoStmt::Loop/Continue/Assign + tail-detection walk + clobber-safe reassignment | lower/ir, codegen | 🔄 impl 8fd93e8b (deep-recursion no overflow, build-run 40/40, coerce-floor neutral); grilling |
 | B2 | **multiline `{{expr}}` interpolation** — route bodies through the real expression parser; scope = parser-routing only (auto-toString OUT). Closes silent `{{user.name}}`→nil miscompile. **Must pass roundtrip gate.** | syntax, hir | ⬜ |
 
 ## Parity guardrail (end-of-batch re-verify)
