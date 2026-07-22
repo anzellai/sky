@@ -51,6 +51,13 @@ jobs:
         with:
           workspaces: rust
 
+      # Neovim for the editor-parity LSP gate (drives the real nvim LSP client
+      # against `sky lsp`). A recent nvim (not distro-pinned) so vim.lsp.start is
+      # available on both runners.
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+
       # ---- build once; every gate below reuses the compiled workspace ----
       - name: Build workspace
         run: cargo build --workspace --locked
@@ -79,6 +86,13 @@ jobs:
       # no `RemoteData`. Restores the enforcement the Haskell sky verify carried.
       - name: Gate — s8 (forbidden public-surface patterns)
         run: cargo run -q -p xtask -- s8
+
+      # Editor-parity: drives the REAL Neovim LSP client (17 tests: hover /
+      # completion / goto-def across every symbol class) against `sky lsp` —
+      # catches editor-level bugs the in-process JSON-RPC tests miss (doc 10
+      # non-negotiable floor).
+      - name: Gate — lsp (Neovim editor-parity, 17/17)
+        run: cargo run -q -p xtask -- lsp
 
       # Robustness + determinism fuzzer (in-process; no Go toolchain). Feeds the
       # parse → resolve → check (→ lower) pipeline a large mutated input space and

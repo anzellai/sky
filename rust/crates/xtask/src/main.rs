@@ -12,6 +12,7 @@ mod build_run_gate;
 mod coerce_floor_gate;
 mod fuzz_gate;
 mod infer_gate;
+mod lsp_gate;
 mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
@@ -42,10 +43,11 @@ fn main() {
         }
         Some("repro") => repro_gate::run(&args[1..], &repo_root()),
         Some("s8") => s8_gate::run(&args[1..], &repo_root()),
+        Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
         _ => {
             println!("{VERSION}");
             println!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|repro|s8|fuzz> [args]"
+                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|repro|s8|lsp|fuzz> [args]"
             );
             0
         }
