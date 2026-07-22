@@ -3953,7 +3953,12 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	`#sky-root{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
 	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
 	`button,input,select,textarea{font:inherit;color:inherit}` +
-	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
+	// Buttons keep their native chrome (border / background / padding) so a raw
+	// Std.Html `button` looks like a button out of the box. Std.Ui buttons set
+	// their own background/border/padding inline, which overrides the native
+	// look — so this only affects unstyled buttons, giving them a sensible
+	// default instead of rendering as bare inline text.
+	`button{cursor:pointer}` +
 	`a{color:inherit;text-decoration:none}` +
 	`img,video,canvas,svg{display:block;max-width:100%}`
 
