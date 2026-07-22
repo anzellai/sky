@@ -1018,7 +1018,8 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::Ref(r) => {
                 let name = r.name().map(|t| t.text().to_string()).unwrap_or_default();
-                let res = self.resolve_var(&name);
+                let span = r.name().map(|t| self.span_of(t.text_range()));
+                let res = self.resolve_var(&name, span);
                 if let Some(t) = r.name() {
                     self.record_ref(t.text_range(), res.clone());
                 }
@@ -1026,7 +1027,8 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::QualRef(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
-                let res = self.resolve_qual_var(&qual, &name);
+                let span = Some(self.span_of(q.syntax().text_range()));
+                let res = self.resolve_qual_var(&qual, &name, span);
                 self.record_ref(q.syntax().text_range(), res.clone());
                 self.body.expr(Expr::Var(res))
             }
@@ -1088,7 +1090,7 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::RecordUpdate(ru) => {
                 let base_name = cst::first_lower(ru.syntax()).unwrap_or_default();
-                let res = self.resolve_var(&base_name);
+                let res = self.resolve_var(&base_name, Some(self.span_of(ru.syntax().text_range())));
                 if let Some(tok) = ru
                     .syntax()
                     .children_with_tokens()
@@ -1767,7 +1769,7 @@ impl<'a> Resolver<'a> {
 
     // ---- name resolution primitives (doc 05 §4, §9) ---------------------
 
-    fn resolve_var(&mut self, name: &str) -> Res {
+    fn resolve_var(&mut self, name: &str, span: Option<Span>) -> Res {
         if let Some(id) = self.lookup_local(name) {
             return Res::Local(id);
         }
@@ -1794,11 +1796,11 @@ impl<'a> Resolver<'a> {
                 name: Name::new(name),
             };
         }
-        self.track_class_a(None, name, RefKind::Value, "undefined name");
+        self.track_class_a(None, name, RefKind::Value, "undefined name", span);
         Res::Error
     }
 
-    fn resolve_qual_var(&mut self, qual: &str, name: &str) -> Res {
+    fn resolve_qual_var(&mut self, qual: &str, name: &str, span: Option<Span>) -> Res {
         if let Some(c) = self.qual_ctors.get(qual).and_then(|m| m.get(name)) {
             return Res::Ctor(c.clone());
         }
@@ -1851,6 +1853,7 @@ impl<'a> Resolver<'a> {
                         name,
                         RefKind::Value,
                         "name not exported by module",
+                        span,
                     );
                     Res::Error
                 }
@@ -1866,6 +1869,7 @@ impl<'a> Resolver<'a> {
                         hint.map(|h| format!(" (did you mean `{h}`?)"))
                             .unwrap_or_default()
                     ),
+                    span,
                 );
                 Res::Error
             }
@@ -1895,6 +1899,7 @@ impl<'a> Resolver<'a> {
             name,
             RefKind::Ctor,
             "unknown qualified constructor",
+            None,
         );
         None
     }
@@ -1907,6 +1912,7 @@ impl<'a> Resolver<'a> {
         name: &str,
         kind: RefKind,
         reason: &str,
+        span: Option<Span>,
     ) {
         if self.quiet > 0 {
             return;
@@ -1915,10 +1921,15 @@ impl<'a> Resolver<'a> {
             Some(q) => format!("{q}.{name}"),
             None => name.to_string(),
         };
-        self.result.diagnostics.push(Diagnostic::error(
-            "E1001",
-            format!("Undefined name: {full} ({reason})"),
-        ));
+        // Attach the reference's source span so the renderer shows the line +
+        // caret + excerpt (the E2001 path already does). `reason` stays on the
+        // structured `class_a` entry — it was a redundant parenthetical in the
+        // user-facing message.
+        let mut diag = Diagnostic::error("E1001", format!("Undefined name: {full}"));
+        if let Some(sp) = span {
+            diag = diag.with_label(sp, "not defined");
+        }
+        self.result.diagnostics.push(diag);
         self.result.class_a.push(ClassA {
             qualifier,
             name: name.to_string(),
