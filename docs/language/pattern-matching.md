@@ -1,6 +1,6 @@
 # Pattern matching
 
-> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See

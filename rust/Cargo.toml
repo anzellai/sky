@@ -13,7 +13,7 @@ members = [
     "crates/project",
     "crates/fmt",
     "crates/testrunner",
-    "crates/sky-cli",
+    "crates/sky",
     "crates/sky-lsp",
     "crates/xtask",
 ]

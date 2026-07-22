@@ -25,7 +25,7 @@ flowchart TD
     codegen --> project["project (build driver, sky.toml, ffi, go build)"]
     db --> project
     ffi["ffi (deterministic Go inspector interface)"] --> project
-    project --> cli["sky-cli (build/run/check/fmt/doc/test/watch)"]
+    project --> cli["sky (build/run/check/fmt/doc/test/watch)"]
     db --> lsp["sky-lsp"]
     ty --> lsp
     project --> lsp
@@ -49,7 +49,7 @@ flowchart TD
 | `ffi` | Deterministic Go-package inspection → pinned `.skyi` surface; reproducible, committed. | `base`, `serde`, `serde_json`, `include_dir` | 09 |
 | `project` | `sky.toml`, module discovery, dependency graph, driver that runs the build + `go build`, stdlib embedding. | `skydb`, `codegen`, `lower`, `hir`, `ty`, `syntax`, `base`, `ffi` | 08, 09 |
 | `fmt` | `sky fmt` — opinionated formatter over the CST (idempotent, trivia-safe). | `syntax` | 04, 10 |
-| `sky-cli` | The `sky` binary: build/run/check/fmt/doc/test/watch/add/etc. | `project`, `fmt`, `testrunner` | 10 |
+| `sky` | The `sky` binary: build/run/check/fmt/doc/test/watch/add/etc. | `project`, `fmt`, `testrunner` | 10 |
 | `sky-lsp` | LSP server over the resolution db (target: the same `skydb`). Hover/goto/completion/diagnostics/references/rename/semantic-tokens. | `base`, `syntax`, `hir`, `ty`, `skydb`, `project`, `diagnostics`, `tower-lsp`, `tokio` | 10 |
 | `testrunner` | `sky test` (Sky.Test) runner. | `project` | 10 |
 | `xtask` | Dev automation: run corpus, differential-test vs Haskell oracle, reproducibility gate. | `syntax`, `base`, `hir`, `ty`, `project`, `diagnostics` | 11, 12 |

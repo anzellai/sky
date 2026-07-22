@@ -75,7 +75,7 @@ fn cmd_upgrade(_args: &[String]) -> ExitCode {
             "This is a rewrite/dev build of the Rust `sky`, not a published release, so \
              there is no newer binary to fetch.\n\
              Update it by rebuilding from source (in the sky repo):\n  \
-             cargo build -p sky-cli --bin sky\n\
+             cargo build -p sky --bin sky\n\
              Self-update from GitHub releases activates once the Rust `sky` ships a tagged \
              release."
         );

@@ -94,7 +94,7 @@ sky/
   scripts/             # verify-*, sweep, lsp, fuzz (shared, reused as-is)
   rust/                # the rewrite — Cargo workspace (02-workspace-and-crates)
     Cargo.toml
-    crates/{base,syntax,hir,ty,skydb,lower,codegen,ffi,project,fmt,sky-cli,sky-lsp,testrunner}
+    crates/{base,syntax,hir,ty,skydb,lower,codegen,ffi,project,fmt,sky,sky-lsp,testrunner}
     xtask/             # differential + reproducibility harness
     tests/reject/      # THE REJECTION CORPUS (grows per milestone)
 ```

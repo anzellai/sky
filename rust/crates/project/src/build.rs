@@ -894,7 +894,7 @@ fn load_skydeps(
 /// Render a batch of Sky-frontend diagnostics as Elm-style terminal blocks,
 /// one per diagnostic, separated by a blank line. `src_map` supplies each span's
 /// source line for the caret excerpt (`Diagnostic::render_cli`). The joined
-/// string becomes the `BuildReport.note` printed by `sky-cli`.
+/// string becomes the `BuildReport.note` printed by `sky`.
 fn render_diags(
     diags: &[diagnostics::Diagnostic],
     src_map: &std::collections::HashMap<base::FileId, String>,

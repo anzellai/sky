@@ -1342,7 +1342,7 @@ cd examples/01-hello-world && sky build src/Main.sky
 
 ### Release checklist (non-negotiable)
 
-1. Rebuild: `( cd rust && cargo build --release -p sky-cli ) && cp rust/target/release/sky sky-out/sky`
+1. Rebuild: `( cd rust && cargo build --release -p sky ) && cp rust/target/release/sky sky-out/sky`
 2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
 3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden) — zero failures
 4. Clean-build every example: loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`
@@ -2865,7 +2865,7 @@ git push origin main
 
 ```
 rust/                             -- Sky compiler (Rust, PRIMARY — cargo workspace)
-  crates/sky-cli/                 -- CLI + `sky` binary entry point
+  crates/sky/                 -- CLI + `sky` binary entry point
   crates/syntax/                  -- lexer + parser
   crates/hir/                     -- name resolution, canonicalisation
   crates/ty/                      -- HM inference, exhaustiveness

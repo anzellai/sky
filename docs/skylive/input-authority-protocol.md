@@ -1,6 +1,6 @@
 # Sky.Live input authority protocol
 
-> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky-cli`)
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
@@ -568,7 +568,7 @@ Manual smoke checklist (for the follow-up automation):
 
 ### Step 7 — Verify on a downstream app
 
-Rebuild a downstream app's compiler binary (`cargo build --release -p sky-cli` in sky repo), rebuild the downstream app (`sky build src/Main.sky`). Manual check:
+Rebuild a downstream app's compiler binary (`cargo build --release -p sky` in sky repo), rebuild the downstream app (`sky build src/Main.sky`). Manual check:
 
 - signIn → signUp transition: no duplicated inputs.
 - Type email, navigate away, come back: server remembers last typed value (via `inputState` flush).

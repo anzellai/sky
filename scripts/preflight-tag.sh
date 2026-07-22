@@ -51,7 +51,7 @@ fail() {
 }
 
 step "1/6 — Rebuild compiler from clean state"
-( cd rust && cargo build --release --locked -p sky-cli ) 2>&1 | tail -5
+( cd rust && cargo build --release --locked -p sky ) 2>&1 | tail -5
 mkdir -p ./sky-out
 cp rust/target/release/sky ./sky-out/sky
 [ -x ./sky-out/sky ] || fail "compiler binary missing after cargo build"

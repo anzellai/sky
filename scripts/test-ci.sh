@@ -64,7 +64,7 @@ phase_compiler_build() {
     echo "--- phase: compiler build ---"
     local t0; t0=$(date +%s)
     if [ ! -x "$ROOT/sky-out/sky" ] || [ -n "${SKY_REBUILD:-}" ]; then
-        ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky-cli ) \
+        ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky ) \
             && cp "$ROOT/rust/target/release/sky" "$ROOT/sky-out/sky"
     else
         echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"

@@ -1,6 +1,6 @@
 # 10 — LSP & Tooling
 
-The tooling — `sky-lsp`, `sky-cli`, `fmt`, `testrunner`, `sky doc` — is where
+The tooling — `sky-lsp`, `sky`, `fmt`, `testrunner`, `sky doc` — is where
 law **L2** stops being a slogan and becomes the whole design. Today's LSP is the
 single clearest scar in the tree: because the Haskell compiler is a batch
 pipeline, the LSP had to grow its own parallel universe — **8 `IORef`s**, a
@@ -59,7 +59,7 @@ Studied so the rewrite reproduces the surface and closes the holes.
 | `sky doc` | `src/Sky/Doc/{Index,Render,Terminal,Markdown}.hs` | Doc index is a **"thin re-projection of the LSP index"** (`Doc/Index.hs:5–9,38`); HTML+JSON site (`Render.hs`) + terminal | Becomes queries over `skydb` directly — `module_items` + `infer` give sig/doc/loc |
 | `sky test` | `app/Main.hs:1413–1467` | Synthesises `SkyTestEntry__.sky` importing the suite + `Test.runMain Suite.tests`, builds+runs, propagates exit code | Same shape, in a `testrunner` crate over `project` |
 | `sky watch` | `src/Sky/Cli/Watch.hs` | Polls an allowlist every 200 ms, debounces 150 ms (`Watch.hs:8–19`), runs the **same compile pipeline as `sky run`** | Watcher just `set_source_text`; salsa recomputes only what changed |
-| CLI dispatch | `app/Main.hs:977–1034` (parser), `runCommand` (`app/Main.hs:1280`) | optparse-applicative subparser → `runCommand` case | One-to-one to `sky-cli` verbs over the `project` crate |
+| CLI dispatch | `app/Main.hs:977–1034` (parser), `runCommand` (`app/Main.hs:1280`) | optparse-applicative subparser → `runCommand` case | One-to-one to `sky` verbs over the `project` crate |
 
 The through-line: **every hole is the same hole** — the compiler was batch-only,
 so the LSP and the doc server and the watch loop each reinvented incremental
@@ -528,7 +528,7 @@ concern.
 
 ## The full CLI verb surface → `project` crate
 
-`sky-cli` is a thin `clap` front-end (replacing the optparse-applicative
+`sky` is a thin `clap` front-end (replacing the optparse-applicative
 subparser at `app/Main.hs:977–1034`) over the `project` crate. Every verb the
 Haskell `runCommand` dispatches (`app/Main.hs:1280+`) maps one-to-one:
 
@@ -550,8 +550,8 @@ Haskell `runCommand` dispatches (`app/Main.hs:1280+`) maps one-to-one:
 | `sky console-serve` | hub daemon (`Main.hs:1021`) | `project` spawns the hub (unchanged runtime, L10) |
 | `sky clean` | rm `sky-out/` + `.skycache/` (`Main.hs:1009`) | `project::clean` |
 | `sky lsp` | `runLsp` (`Main.hs:1011`) | `sky-lsp::serve` (`tower-lsp`, above) |
-| `sky upgrade` / `upgrade-claude` | self-update / template refresh | `sky-cli` (binary self-management) |
-| `sky --version` / `version` | print version (`Main.hs:1281`) | `sky-cli` |
+| `sky upgrade` / `upgrade-claude` | self-update / template refresh | `sky` (binary self-management) |
+| `sky --version` / `version` | print version (`Main.hs:1281`) | `sky` |
 | `sky verify [example]` | build+run+panic-check corpus (`Main.hs:993`) | `xtask` / `project::verify` — the conformance driver ([`11`](11-testing-and-verification.md)) |
 
 `sky check ≡ sky build` (both run `go build` on the emitted Go) remains a hard

@@ -74,7 +74,7 @@ if [ "${SKY_REGEN_SKIP_BUILD:-0}" = "1" ]; then
     fi
 else
     say "building local sky binary via cargo build (this can take ~2 min on cold cache)..."
-    ( cd rust && cargo build --release --locked -p sky-cli ) >&2
+    ( cd rust && cargo build --release --locked -p sky ) >&2
     mkdir -p ./sky-out
     cp rust/target/release/sky ./sky-out/sky
 fi

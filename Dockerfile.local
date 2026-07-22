@@ -39,7 +39,7 @@ COPY . ./
 ARG SKY_GIT_BRANCH=unknown
 ARG SKY_GIT_SHA=unknown
 RUN SKY_BUILD_VERSION="local-${SKY_GIT_BRANCH}-${SKY_GIT_SHA}" \
-        cargo build --release --locked --manifest-path rust/Cargo.toml -p sky-cli \
+        cargo build --release --locked --manifest-path rust/Cargo.toml -p sky \
  && mkdir -p /build/bin \
  && cp rust/target/release/sky /build/bin/sky \
  && /build/bin/sky --version

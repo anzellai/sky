@@ -69,7 +69,7 @@ mkdir -p sky-out bin
 # cabal-test spec (Sky.Build.EmbeddedRuntimeSpec) guards against drift.
 
 say "building sky compiler (cargo)"
-( cd rust && cargo build --release --locked -p sky-cli )
+( cd rust && cargo build --release --locked -p sky )
 mkdir -p sky-out && cp rust/target/release/sky sky-out/sky
 
 chmod +x sky-out/sky

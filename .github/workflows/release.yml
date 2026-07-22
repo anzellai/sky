@@ -55,12 +55,12 @@ jobs:
         shell: bash
         working-directory: rust
         run: |
-          # Bake the tag into the binary at compile time (sky-cli build.rs +
+          # Bake the tag into the binary at compile time (sky build.rs +
           # option_env!("SKY_BUILD_VERSION")). A standalone released binary
           # carries no repo tree, so this is its only version source; the smoke
           # test below fails loudly if it still reports "sky dev".
           export SKY_BUILD_VERSION="${GITHUB_REF_NAME#v}"
-          cargo build --release --locked -p sky-cli
+          cargo build --release --locked -p sky
           mkdir -p ../dist
           cp "target/release/sky${{ matrix.ext }}" "../dist/${{ matrix.artifact }}${{ matrix.ext }}"
           chmod +x "../dist/${{ matrix.artifact }}${{ matrix.ext }}" || true

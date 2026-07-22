@@ -46,7 +46,7 @@ spec = do
 
         it "sky build of a well-typed program exits 0" $ do
             sky <- findSky
-            withSystemTempDirectory "sky-cli-ok" $ \dir -> do
+            withSystemTempDirectory "sky-ok" $ \dir -> do
                 writeProject dir $ unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
@@ -58,7 +58,7 @@ spec = do
 
         it "sky build of a syntactically-broken program exits non-zero" $ do
             sky <- findSky
-            withSystemTempDirectory "sky-cli-syntax" $ \dir -> do
+            withSystemTempDirectory "sky-syntax" $ \dir -> do
                 writeProject dir "module Main exposing (main"  -- missing closing paren
                 (ec, _, _) <- readCreateProcessWithExitCode
                     (proc sky ["build", "src/Main.sky"]) { cwd = Just dir } ""
@@ -73,7 +73,7 @@ spec = do
             -- must follow suit — a green Sky type-check that
             -- produces invalid Go MUST surface as non-zero exit.
             sky <- findSky
-            withSystemTempDirectory "sky-cli-go-err" $ \dir -> do
+            withSystemTempDirectory "sky-go-err" $ \dir -> do
                 writeProject dir $ unlines
                     [ "module Main exposing (main)"
                     , "main ="
@@ -88,7 +88,7 @@ spec = do
 
         it "sky check of a well-typed program exits 0" $ do
             sky <- findSky
-            withSystemTempDirectory "sky-cli-check-ok" $ \dir -> do
+            withSystemTempDirectory "sky-check-ok" $ \dir -> do
                 writeProject dir $ unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"

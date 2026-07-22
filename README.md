@@ -127,9 +127,9 @@ curl -fsSL https://sky-lang.org/install | bash
 
 # or build from source (Rust toolchain required to build the compiler)
 git clone https://github.com/anzellai/sky
-cd sky/rust && cargo build --release -p sky-cli
+cd sky/rust && cargo build --release -p sky
 # or install straight to ~/.local/bin:
-#   cargo install --path rust/crates/sky-cli --root ~/.local --locked
+#   cargo install --path rust/crates/sky --root ~/.local --locked
 ```
 
 The `sky` binary embeds the runtime, stdlib, and Sky Console.

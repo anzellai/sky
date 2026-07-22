@@ -1,7 +1,7 @@
 # Sky Compiler — Rust Rewrite (architecture-first)
 
 > **The Rust compiler is the primary Sky compiler.** It lives in `rust/`
-> (crate `sky-cli` → binary `sky`, built via `cargo build --release -p sky-cli`).
+> (crate `sky` → binary `sky`, built via `cargo build --release -p sky`).
 > This directory is its canonical architecture + implementation reference, built on
 > the architecture the Haskell journey taught us we needed. It describes the target
 > architecture in the present tense; a few target mechanisms are still in progress

@@ -47,8 +47,8 @@
             echo "  rustc $(rustc --version | awk '{print $2}')"
             echo "  go    $(go version | awk '{print $3}')"
             echo
-            echo "build:         ./scripts/build.sh   (cargo build --release -p sky-cli → sky-out/sky)"
-            echo "quick rebuild: ( cd rust && cargo build --release -p sky-cli )"
+            echo "build:         ./scripts/build.sh   (cargo build --release -p sky → sky-out/sky)"
+            echo "quick rebuild: ( cd rust && cargo build --release -p sky )"
           '';
         };
 
@@ -72,7 +72,7 @@
           src = ./.;
           cargoLock.lockFile = ./rust/Cargo.lock;
           buildAndTestSubdir = "rust";
-          cargoBuildFlags = [ "-p" "sky-cli" ];
+          cargoBuildFlags = [ "-p" "sky" ];
           # xtask gates need the Go toolchain + network; run them in the
           # devShell / CI, not in the sandboxed package build.
           doCheck = false;

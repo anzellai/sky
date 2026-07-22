@@ -6,7 +6,7 @@
 //! ISOLATION and could not catch this — the hole was in the *driver seam*.
 //!
 //! This test drives the REAL `project::build_example` entry point (the exact
-//! function `sky-cli` calls) on an ill-typed project and asserts the driver
+//! function `sky` calls) on an ill-typed project and asserts the driver
 //! halts BEFORE emit — so no Go is written and `go build` never runs. It needs
 //! no `go` toolchain because a type error short-circuits ahead of emission.
 

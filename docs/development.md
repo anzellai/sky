@@ -1,7 +1,7 @@
 # Development
 
 > **Compiler**: Sky's compiler is written in **Rust** (cargo workspace
-> at `rust/`, crate `sky-cli` builds the `sky` binary). The retired
+> at `rust/`, crate `sky` builds the `sky` binary). The retired
 > Haskell compiler lives under `legacy-haskell-compiler/` for
 > historical reference. Type-directed lowering, Go generics on
 > parametric record aliases, Layer-3 stdlib, and whole-program DCE all
@@ -34,7 +34,7 @@ go    version             # 1.21+
 ./scripts/build.sh --clean
 ```
 
-This runs `cargo build --release -p sky-cli` and produces:
+This runs `cargo build --release -p sky` and produces:
 
 - `sky-out/sky` — the Sky compiler (Rust). **The only artefact
   end users need.**
@@ -53,10 +53,10 @@ Flags:
 
 The full `scripts/build.sh` clean-copies the binary and runs the
 hygiene checks — overkill for iterative work. For a fast rebuild of
-just the compiler, build the `sky-cli` crate directly:
+just the compiler, build the `sky` crate directly:
 
 ```bash
-( cd rust && cargo build --release -p sky-cli )
+( cd rust && cargo build --release -p sky )
 cp rust/target/release/sky sky-out/sky
 # macOS: re-sign the copy so the kernel's code-signing cache
 # doesn't flag the new binary
@@ -64,7 +64,7 @@ codesign -s - sky-out/sky
 sky-out/sky --version
 ```
 
-Debug builds (`cargo build -p sky-cli`, no `--release`) compile
+Debug builds (`cargo build -p sky`, no `--release`) compile
 faster and land in `rust/target/debug/sky` — handy for `cargo test`
 iteration.
 
@@ -128,7 +128,7 @@ nix build .#sky
 ./result/bin/sky --version
 ```
 
-This runs the `cargo build -p sky-cli` pipeline (via
+This runs the `cargo build -p sky` pipeline (via
 `rustPlatform.buildRustPackage`) inside the Nix sandbox and puts the
 result in `./result/bin/sky`. The embedded-runtime and
 embedded-inspector splices still bundle the Go source trees into the
