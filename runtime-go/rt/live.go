@@ -847,6 +847,13 @@ func buildPseudoClassStyleText(skyID, encoded string) string {
 		}
 		safeCSS := strings.ReplaceAll(css, "</style", "")
 		safeCSS = strings.ReplaceAll(safeCSS, "</STYLE", "")
+		// Std.Ui sets an element's BASE styles as an inline `style=""`
+		// attribute (specificity 1,0,0,0 — the maximum). A pseudo-class rule
+		// selects via `[sky-id="…"]:hover`, which loses to inline every time —
+		// so a `:hover` / `:active` colour would emit but never apply. Mark each
+		// declaration `!important` so it overrides the inline base (the standard
+		// elm-ui-style inline-first fix).
+		safeCSS = markImportant(safeCSS)
 		// One rule per pseudo. `:hover` wrapped in `@media (hover:
 		// hover)` to suppress sticky-hover on touch devices.
 		if hoverGated {
@@ -865,6 +872,29 @@ func buildPseudoClassStyleText(skyID, encoded string) string {
 		}
 	}
 	return strings.TrimSpace(sb.String())
+}
+
+// markImportant appends `!important` to every declaration in a CSS property
+// string, so a pseudo-class rule (`[sky-id]:hover { … }`) overrides the
+// element's inline base `style=""` (which otherwise wins by specificity).
+// Declarations are `;`-separated; rgba()/hsl() values contain no `;`, so a
+// naive split is safe. Idempotent — a declaration already carrying `!important`
+// is left as-is.
+func markImportant(css string) string {
+	var b strings.Builder
+	for _, decl := range strings.Split(css, ";") {
+		t := strings.TrimSpace(decl)
+		if t == "" {
+			continue
+		}
+		b.WriteByte(' ')
+		b.WriteString(t)
+		if !strings.Contains(t, "!important") {
+			b.WriteString(" !important")
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 // pseudoSelectorForTag maps a wire-format pseudo-class tag (single
