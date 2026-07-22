@@ -1,59 +1,54 @@
-# AUTONOMOUS MANDATE — LSP 100% reliable for EXTERNAL dependency resolution
+# AUTONOMOUS MANDATE — sweep for ALL achievable v1 improvements/fixes in this patch
 
-**Set:** 2026-07-22. **Branch:** `rewrite/rust-compiler`. **Mode:** fully
-autonomous. Directive: **"use agents + grilling + autonomous mode"**, don't stop
-midway.
+**Set:** 2026-07-22. **Branch:** `rewrite/rust-compiler` (PR #154). **Mode:**
+fully autonomous, agents + grilling. Directive: don't stop midway.
 
-> Follows the v1-blocker closure mandate (complete, Judge-verified) + a series of
-> LSP hover fixes: internal cross-module hover now works annotated + unannotated
-> (`d5e02fbd`). This mandate closes EXTERNAL dependency resolution in the LSP.
+> Follows a chain of shipped v1-closure work (v1-blockers, `_subj` hole,
+> pseudo-class runtime fix, cross-module hover, external-deps LSP resolution).
+> The pattern: we keep finding small gaps + missed things one at a time. This
+> mandate SYSTEMATICALLY discovers everything achievable, so we stop trickling.
 
 ## Verbatim user goal (the authority on "done")
 
-> yes we need LSP 100% reliable, in real practical terms... so external deps
-> resolution is a must.
->
-> use agents + grilling + autonomous mode now
+> you see, we keep finding small things we could improve on, and something we've
+> missed. could you again run agents + grilling + autonomous mode to find out
+> what can be done for this patch to improve/fix as much as we can for our v1
+> goals?
 
 ## Scope
 
-Make the Rust LSP fully resolve + type + hover references to BOTH classes of
-external dependency, so no external ref shows `?` or a spurious "unresolved"
-diagnostic in-editor:
+DISCOVER every issue/improvement that is ACHIEVABLE IN THIS PATCH (small→medium,
+self-contained, low-risk, LSP/tooling/diagnostics/edge-case-correctness) and
+advances v1, then FIX as many as verified-safe. Explicitly OUT: the deep §8
+irreducible floor (FFI-return / wire-decode / TEA reflect-dispatch), server-shape
+CI verification, known-divergences enforcement gate — those are post-merge.
 
-1. **External Sky modules** (`sky add --sky` → `.skydeps/<slug>/src/*.sky`) —
-   currently excluded from the LSP's module load (lib.rs:2183), so refs don't
-   resolve. Load them; the cross-module hover fix (`d5e02fbd`) then covers hover
-   (annotated + unannotated).
-2. **Go FFI** (`Uuid.newString`, Stripe, …) — `Res::Foreign` hover returns None
-   (lib.rs:310) and the LSP never loads the FFI surface, so FFI imports don't
-   typecheck in-editor. Load the FFI surface types (parse `sky-ffi/*.kernel.json`
-   / `.skyi` via the `ffi` crate) so imports resolve + typecheck, and wire the
-   `Res::Foreign` hover arm to the `(package, func) → skyType`.
-
-## Definition of done — "100% reliable, real practical terms"
-
-For a project that uses BOTH an external Sky dep and a Go FFI dep:
-- Hover on an external-Sky-module ref (annotated + unannotated) → shows its type.
-- Hover on a Go-FFI ref (`Uuid.newString`) → shows its FFI type (not `?`).
-- Goto-def / completion behave sanely for both where applicable.
-- NO spurious "unresolved name" diagnostics on external imports/refs in-editor
-  (the LSP diagnostics must match what `sky build` accepts).
-- All existing LSP guarantees intact: nvim 17/17 gate + full `cargo test -p
-  sky-lsp` green; whole-repo gate unaffected (LSP is additive — zero
-  compiler/codegen/runtime change).
-- Regression tests for both external classes.
-- Independent Judge verifies against this file before "done".
+Surfaces to audit (real repros via the pre-built `~/.cargo/bin/debug/sky` +
+differential vs oracle `sky-out/sky`, NOT speculation):
+LSP completeness (every feature × symbol class × edge case) · diagnostics
+quality (message + location + missing/wrong) · parser/syntax edge cases ·
+type-checker accept-wrong / reject-valid / bad-inference · codegen/runtime
+well-typed-miscompile or panic (closable) · tooling papercuts (fmt/doc/test/db/
+add/install/watch/doctor) · stdlib correctness/completeness · DX / "if it
+compiles it works" residual closable gaps.
 
 ## Method
 
-Agents + grilling per CLAUDE.md §0.3/§0.4: architecture-consult (how the BUILD
-path loads FFI surfaces + skydeps + types `Res::Foreign`, so the LSP mirrors it)
-→ adversarial grill (does the plan reach the 100%-reliable bar? spurious
-diagnostics? offline?) → implement → Judge.
+Workflow: parallel discovery agents (each a surface, with REAL repros) → grill
+each finding (real? achievable-in-patch? genuine v1 improvement? not deep floor?)
+→ synthesize a prioritized actionable list (close-now / stretch / defer) with
+effort + repro. Then implement the close-now bucket (verify each empirically,
+commit per fix), grill, Judge.
+
+## Definition of done
+
+Every close-now-bucket item implemented + verified (empirical repro fixed) +
+regression test + committed. Whole-repo gate green (cargo test --workspace + all
+xtask gates + golden + build-run oracle parity + nvim 17/17). Independent Judge
+verifies the discovery was thorough + the shipped fixes are real. A written list
+of what was found, fixed, and honestly deferred (with why).
 
 ## Resume protocol
 
-Read THIS file + `git log --oneline -15` on `rewrite/rust-compiler`. LSP code:
-`rust/crates/sky-lsp/src/lib.rs` (`load_project`/`load_dir` ~192-215, dir-walk
-skip ~2183, `ref_type_string` `Res::Foreign` ~310). FFI parsing: `rust/crates/ffi/`.
+Read THIS file + `git log --oneline -20`. Prior mandates' work is committed;
+this sweep is additive. Discovery findings tracked in docs/v0.18/.
