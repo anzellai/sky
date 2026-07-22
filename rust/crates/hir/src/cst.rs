@@ -69,6 +69,21 @@ pub fn first_upper(n: &SyntaxNode) -> Option<String> {
     first_token(n, SyntaxKind::UpperIdent)
 }
 
+/// The first UpperIdent TOKEN directly under `n` (its range powers LSP ref
+/// recording on constructor patterns — hover/goto/rename/semantic-tokens).
+pub fn first_upper_tok(n: &SyntaxNode) -> Option<SyntaxToken> {
+    sig_tokens(n).find(|t| t.kind() == SyntaxKind::UpperIdent)
+}
+
+/// The LAST UpperIdent token directly under `n` — for a QUALIFIED constructor
+/// pattern (`Db.SetField`) the ctor name is the last upper segment (the earlier
+/// ones are the module qualifier).
+pub fn last_upper_tok(n: &SyntaxNode) -> Option<SyntaxToken> {
+    sig_tokens(n)
+        .filter(|t| t.kind() == SyntaxKind::UpperIdent)
+        .last()
+}
+
 /// All lowercase ident tokens directly under `n` (record pattern fields, type
 /// var lists).
 pub fn lower_idents(n: &SyntaxNode) -> Vec<String> {

@@ -1540,6 +1540,13 @@ impl<'a> Resolver<'a> {
                 // Unqualified unknown ctor pattern head: Elm degrades silently
                 // (doc 05 §12) — no diagnostic.
                 let ctor = self.ctors.get(&name).cloned();
+                // Record the ctor NAME token as a use-site so hover / goto-def /
+                // find-references / rename / semantic-tokens all treat a pattern
+                // constructor exactly like an expression one — without this,
+                // rename silently skips the pattern occurrence → uncompilable file.
+                if let (Some(cr), Some(tok)) = (&ctor, cst::first_upper_tok(c.syntax())) {
+                    self.record_ref(tok.text_range(), Res::Ctor(cr.clone()));
+                }
                 self.body.pat(Pattern::Ctor {
                     ctor,
                     name: Name::new(&name),
@@ -1553,6 +1560,9 @@ impl<'a> Resolver<'a> {
                     .map(|p| self.resolve_pattern(p))
                     .collect();
                 let ctor = self.resolve_qual_ctor(&qual, &name);
+                if let (Some(cr), Some(tok)) = (&ctor, cst::last_upper_tok(c.syntax())) {
+                    self.record_ref(tok.text_range(), Res::Ctor(cr.clone()));
+                }
                 self.body.pat(Pattern::Ctor {
                     ctor,
                     name: Name::new(&name),

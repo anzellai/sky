@@ -12,7 +12,7 @@ self-contained, achievable-in-patch items. **Bold = `check ≡ build` violation*
 | 4 | **arity-0 fn-valued def → double-call `Main_x()()(arg)` go-build fail** (lower.rs:2762) | S | ⬜ |
 | 5 | call-arg type mismatch anchored at whole call, not the arg (infer.rs:587) | S | ⬜ |
 | 6 | E1001/E1002 diagnostics carry no span/caret/excerpt (resolve.rs:1908/621) | S | ⬜ |
-| 7 | ctor in case-pattern not recorded → hover/goto/refs/**rename corrupts** (resolve.rs:1534/1549) | S | ⬜ |
+| 7 | pattern-ctor recorded as ref (hover/goto/refs/rename) | S | ✅ |
 | 8 | `List.sum/product/maximum/minimum` missing from stdlib | S/M | ⬜ |
 | 9 | Basics.abs/negate/sqrt repointed to rt.Math_*/rt.Negate | S | ✅ |
 | 10 | `String.left/right`, `List.sort*/filterMap` exist but not exposed | S | ⬜ |
