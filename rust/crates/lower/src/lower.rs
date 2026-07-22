@@ -92,6 +92,14 @@ impl FfiTable {
         self.mods.values().any(|m| m.ffi_slots.contains(name))
     }
 
+    /// Whether a generated FFI surface for `module` is loaded at all (i.e. the
+    /// package was `sky install`ed). Distinguishes "no surface present → run
+    /// `sky install`" from "surface present but this specific symbol is missing
+    /// / inexpressible" — two failures that need different developer actions.
+    pub fn has_package(&self, module: &str) -> bool {
+        self.mods.contains_key(module)
+    }
+
     /// The ordered Go param type strings for a wrapper `symbol` (`Go_…T`).
     /// Empty when the surface carries no parsed wrapper-param info.
     pub fn wrapper_params(&self, symbol: &str) -> Vec<String> {
@@ -2534,20 +2542,37 @@ impl<'a> Ctx<'a> {
                 let wparams = self.ffi.wrapper_params(&sym);
                 return self.ffi_call(&format!("rt.{sym}"), args, actual, &wparams, typed);
             }
-            // A Go-FFI call whose package has no wrapper symbol for `name`: the
-            // function either does not exist in the pinned surface, or is
-            // inexpressible from Sky (e.g. it takes a Go `error` parameter, whose
-            // wrapper is deliberately not emitted — see `ffi::gen::has_error_param`).
-            // Falling through would lower the callee to `nil` and emit `nil(args)`,
-            // which `go build` rejects (`cannot call nil`). Reject at check time
-            // instead so `sky check ≡ sky build` holds.
-            self.errors.push(format!(
-                "no such Go-FFI function `{}.{}` — it is not exported by the pinned \
-                 FFI surface, or it takes a value that cannot be produced from Sky \
-                 (such as a Go `error` parameter). It cannot be called from Sky.",
-                package.as_str(),
-                name.as_str()
-            ));
+            // A Go-FFI call with no wrapper symbol for `name`. Two distinct
+            // causes need two distinct developer actions:
+            //   1. NO surface loaded for the package → it was never `sky
+            //      install`ed (the `sky-ffi/` surface is a gitignored build
+            //      artifact, absent on a fresh clone). Point the dev at `sky
+            //      install` — blaming the symbol here is actively misleading.
+            //   2. Surface IS present but this symbol is genuinely absent /
+            //      inexpressible (e.g. it takes a Go `error` parameter, whose
+            //      wrapper is deliberately not emitted — see
+            //      `ffi::gen::has_error_param`).
+            // Falling through would lower the callee to `nil` → `nil(args)`,
+            // which `go build` rejects; reject at check time so `sky check ≡ sky
+            // build` holds.
+            let pkg = package.as_str();
+            let fun = name.as_str();
+            let msg = if self.ffi.has_package(pkg) {
+                format!(
+                    "no such Go-FFI function `{pkg}.{fun}` — the FFI surface for `{pkg}` \
+                     is present but exports no such function, or it takes a value that \
+                     cannot be produced from Sky (such as a Go `error` parameter). It \
+                     cannot be called from Sky."
+                )
+            } else {
+                format!(
+                    "`{pkg}` has no generated FFI surface, so `{pkg}.{fun}` cannot be \
+                     resolved. Run `sky install` to fetch and inspect its Go module — \
+                     the `sky-ffi/` surface is a generated build artifact (regenerated \
+                     from your `sky.toml` dependencies), not committed to the repo."
+                )
+            };
+            self.errors.push(msg);
             return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
         }
         // general call: lower callee + args, coercing each arg to the callee's
