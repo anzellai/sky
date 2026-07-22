@@ -1154,7 +1154,8 @@ fn is_watched_change(path: &Path) -> bool {
 // ---- FFI verbs (add / remove / install / update) -------------------------
 
 use project::{
-    ffi_add, ffi_add_sky, ffi_install, ffi_remove, ffi_remove_sky, ffi_update, FfiReport,
+    ffi_add, ffi_add_sky, ffi_add_smart, ffi_install, ffi_remove, ffi_remove_sky, ffi_update,
+    FfiReport,
 };
 
 /// Resolve `(repo_root, project_dir)` for an FFI verb run from the cwd. The
@@ -1182,8 +1183,14 @@ fn emit_ffi_report(r: FfiReport) -> ExitCode {
 }
 
 fn cmd_add(args: &[String]) -> ExitCode {
+    let force_go = args.iter().any(|a| a == "--go");
+    let force_sky = args.iter().any(|a| a == "--sky");
+    if force_go && force_sky {
+        eprintln!("sky add: choose one of --go / --sky, not both");
+        return ExitCode::from(2);
+    }
     let Some(raw) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky add [--sky] <import-path>[@version]");
+        eprintln!("usage: sky add [--go|--sky] <import-path>[@version]");
         return ExitCode::from(2);
     };
     // Split an optional version off the LAST `@` — import paths never contain one,
@@ -1195,13 +1202,15 @@ fn cmd_add(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
         return ExitCode::FAILURE;
     };
-    // `--sky` routes to the Sky external-package lifecycle ([dependencies] +
-    // `.skydeps/`); otherwise the Go FFI path ([go.dependencies] + sky-ffi/).
-    if args.iter().any(|a| a == "--sky") {
-        emit_ffi_report(ffi_add_sky(&project_dir, pkg, spec))
-    } else {
-        emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg, spec))
-    }
+    // Routing: `--go` forces the Go FFI path ([go.dependencies] + sky-ffi/);
+    // `--sky` forces the Sky external-package path ([dependencies] + .skydeps/);
+    // neither → smart-resolve (Go-first probe, Sky on miss).
+    let report = match (force_go, force_sky) {
+        (true, _) => ffi_add(&project_dir, &repo_root, pkg, spec),
+        (_, true) => ffi_add_sky(&project_dir, pkg, spec),
+        (false, false) => ffi_add_smart(&project_dir, &repo_root, pkg, spec),
+    };
+    emit_ffi_report(report)
 }
 
 fn cmd_remove(args: &[String]) -> ExitCode {

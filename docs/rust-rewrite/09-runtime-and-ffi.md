@@ -392,10 +392,16 @@ Deterministic pipeline (all in the `project` + `ffi` crates):
 ### D.2 `sky install` / `sky update` / `sky remove`
 
 - **`sky install`** — for a fresh clone: ensure `go.mod`/`go.sum` deps are
-  present (`go mod download`) and **verify** the committed surface matches
-  (re-inspect into a temp dir, byte-diff against committed; mismatch → error,
-  not overwrite). It regenerates *only* surfaces that are absent. This is the CI
-  entry point.
+  present (`go mod download`), then materialize the surface from the declared
+  deps. It generates any **absent** surface and re-inspects each **present** one;
+  a present surface that no longer matches a fresh inspection (toolchain or
+  dep-version moved on) is **refreshed** in place, not a hard error — `sky-ffi/`
+  is a gitignored build artifact, not a committed reproducibility anchor, so
+  there is no committed byte-image to gate against. Unchanged surfaces are left
+  untouched. This is the fresh-clone / CI entry point (`sky build` then finds the
+  surface already present). *(The historical byte-diff-and-error behaviour only
+  made sense when the surface was committed; §C.1's gitignore decision retired
+  it.)*
 - **`sky update`** — bump dep versions (`go get -u` + `go mod tidy`),
   re-inspect, re-commit the surface. A version bump is a visible diff in the
   committed `kernel.json`, reviewable like any code change.

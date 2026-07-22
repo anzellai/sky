@@ -182,24 +182,41 @@ pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
 /// resolved concrete ref (a tag or SHA) is written for reproducible builds.
 pub fn add_sky(project_dir: &Path, pkg: &str, spec: Option<&str>) -> FfiReport {
     let mut r = FfiReport::new();
-    let explicit_spec = spec;
-    let resolve_spec = spec_or_latest(explicit_spec.unwrap_or("latest"));
+    let resolve_spec = spec_or_latest(spec.unwrap_or("latest"));
     if let Err(e) = validate_spec(pkg, resolve_spec) {
         return r.fail(format!("sky add --sky: {e}"));
     }
     let skydeps = project_dir.join(".skydeps");
+    let slug = pkg.replace('/', "_");
     r.say(format!(
         "Fetching Sky package {pkg} ({resolve_spec}) via git…"
     ));
+    // Explicit `--sky`: the user asserts this is a Sky package, so trust the
+    // long-standing `src/` marker (`fetch_sky_dep`) — the stricter `[lib]` gate
+    // is only for the auto-probe in `add_smart`, where misrouting must be
+    // prevented.
     let resolved = match fetch_sky_dep(&skydeps, pkg, resolve_spec) {
         Ok(re) => {
-            let slug = pkg.replace('/', "_");
             r.say(format!("  cloned into .skydeps/{slug}/ (resolved {re})"));
             re
         }
         Err(e) => return r.fail(format!("sky add --sky: {e}")),
     };
-    // Pin-by-default: explicit ref → verbatim; none → the resolved concrete ref.
+    merge_reports(r, record_sky_dep(project_dir, pkg, spec, resolved))
+}
+
+/// Write the `[dependencies]` entry for an already-fetched Sky package. Split
+/// out of `add_sky` so the smart auto-probe (which has already cloned the tree
+/// to inspect its `[lib]` marker) records the dep WITHOUT a second clone.
+/// Pin-by-default: an explicit `@ref` is written verbatim (including `"latest"`);
+/// no ref → the resolved concrete ref (tag or SHA) for reproducible builds.
+fn record_sky_dep(
+    project_dir: &Path,
+    pkg: &str,
+    explicit_spec: Option<&str>,
+    resolved: String,
+) -> FfiReport {
+    let mut r = FfiReport::new();
     let write_spec: String = match explicit_spec {
         Some(s) => s.to_string(),
         None => resolved,
@@ -239,6 +256,118 @@ pub fn remove_sky(project_dir: &Path, pkg: &str) -> FfiReport {
     }
     r.say(format!("Removed Sky package {pkg}."));
     r
+}
+
+// ---------------------------------------------------------------------------
+// sky add  (smart go-vs-sky resolution — the no-flag default)
+// ---------------------------------------------------------------------------
+
+/// `sky add <import-path>[@spec]` with neither `--go` nor `--sky` — resolve
+/// whether the target is a Go module or a Sky package and route accordingly.
+///
+/// Precedence (deterministic, top to bottom):
+///  1. **Undotted head** (`net/http`, `io`) → stdlib → Go, no clone probe.
+///  2. **Sky-detect-first.** A Sky package is always hosted at its repo root, so
+///     the import path IS a clone URL. Clone it and check for a `[lib]` sky.toml
+///     (the authoritative Sky-library marker). Clone-ok + `[lib]` → **Sky**
+///     (reuse the cloned tree, record it). Clone-ok + no `[lib]` (a Sky *app* or
+///     a `src/`-carrying repo) → discard the tree, fall through to Go. Clone
+///     fails (a Go package subpath / vanity path / non-repo) → fall through to
+///     Go (NOT an error).
+///  3. **Go.** `go get <path>@<spec>` is the authoritative Go probe: it walks a
+///     package import path up to its enclosing module and resolves vanity
+///     redirects + major-version subdirs (unlike `git clone` of the raw path,
+///     which is why step 2's clone correctly fails for those). Success → the Go
+///     `add` flow (its internal `go get` is then a cache hit).
+///  4. **Neither** → actionable error naming `--go` / `--sky`.
+///
+/// Tie-break: a repo that is BOTH a Go module and a Sky `[lib]` package routes
+/// to **Sky** (the `[lib]` marker is the specific signal, and this is the case
+/// the smart default exists to serve — `sky add github.com/org/sky-thing`); pass
+/// `--go` to force the Go surface. A private Sky package whose probe clone fails
+/// on auth looks like "not a repo" → falls to Go; use `--sky` to force it.
+pub fn add_smart(project_dir: &Path, repo_root: &Path, pkg: &str, spec: Option<&str>) -> FfiReport {
+    let mut r = FfiReport::new();
+    let resolve_spec = spec_or_latest(spec.unwrap_or("latest"));
+    if let Err(e) = validate_spec(pkg, resolve_spec) {
+        return r.fail(format!("sky add: {e}"));
+    }
+
+    // 1. Stdlib / undotted head is unambiguously Go — never a git-hosted Sky pkg.
+    if !is_external_module(pkg) {
+        return add(project_dir, repo_root, pkg, spec);
+    }
+
+    // 2. Sky-detect-first: clone the import path (Sky packages live at the repo
+    //    root) and route to Sky only when a `[lib]` sky.toml is present.
+    let skydeps = project_dir.join(".skydeps");
+    let slug = pkg.replace('/', "_");
+    r.say(format!(
+        "Resolving {pkg} — checking whether it is a Sky package…"
+    ));
+    match fetch_sky_dep(&skydeps, pkg, resolve_spec) {
+        Ok(resolved) => {
+            if is_sky_package_root(&skydeps.join(&slug)) {
+                r.say(format!(
+                    "  {pkg} is a Sky package (has [lib]) → adding as a Sky dependency"
+                ));
+                r.say(format!("  cloned into .skydeps/{slug}/ (resolved {resolved})"));
+                return merge_reports(r, record_sky_dep(project_dir, pkg, spec, resolved));
+            }
+            // Cloned, but not a library — discard and treat as a Go module.
+            let _ = std::fs::remove_dir_all(skydeps.join(&slug));
+            r.say(format!(
+                "  {pkg} has no [lib] table → treating as a Go module"
+            ));
+        }
+        Err(_) => {
+            // Not cloneable at the import path (Go subpath / vanity path / repo
+            // without a top-level src/) → Go handles it.
+            r.say(format!(
+                "  {pkg} is not a Sky package → treating as a Go module"
+            ));
+        }
+    }
+
+    // 3. Go: probe authoritatively via `go get`, then run the full Go add.
+    let sky_out = project_dir.join("sky-out");
+    if let Err(e) = ensure_go_mod(repo_root, &sky_out) {
+        return r.fail(format!("sky add: {e}"));
+    }
+    if go_resolves(&sky_out, pkg, resolve_spec) {
+        return merge_reports(r, add(project_dir, repo_root, pkg, spec));
+    }
+
+    // 4. Neither.
+    merge_reports(
+        r,
+        FfiReport::new().fail(format!(
+            "sky add: could not resolve {pkg} as a Go module or a Sky package. \
+             Check the import path and your network, or force the kind with \
+             `sky add --go {pkg}` / `sky add --sky {pkg}`."
+        )),
+    )
+}
+
+/// Append `next`'s lines onto `first` and AND their `ok` flags.
+fn merge_reports(mut first: FfiReport, next: FfiReport) -> FfiReport {
+    first.lines.extend(next.lines);
+    first.ok = first.ok && next.ok;
+    first
+}
+
+/// The authoritative "is this a Go module/package?" probe: `go get <pkg>@<spec>`
+/// succeeds iff the Go toolchain can resolve the import path to a module (it
+/// walks a package import path up to its enclosing module, resolves vanity
+/// redirects, and honours major-version subdirs). Runs in `sky_out` against the
+/// baseline `go.mod`.
+fn go_resolves(sky_out: &Path, pkg: &str, spec: &str) -> bool {
+    let target = if is_external_module(pkg) {
+        format!("{pkg}@{spec}")
+    } else {
+        pkg.to_string()
+    };
+    go_get(sky_out, &[target]).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -323,26 +452,33 @@ fn install_go_deps(
 
     let mut regenerated = 0usize;
     let mut verified = 0usize;
-    let mut drifted = 0usize;
+    let mut refreshed = 0usize;
     for (dep, _spec) in deps {
         let present = slug_for_package(project_dir, dep).is_some();
         if present {
-            // Verify: re-inspect + regenerate in-memory, compare to committed.
+            // Re-inspect and compare to the on-disk surface. `sky-ffi/` is a
+            // gitignored build artifact, not a committed reproducibility
+            // anchor — so a mismatch means the local artifact went stale
+            // (toolchain / dep-version moved on) and we simply REFRESH it with
+            // the fresh bytes we already hold, rather than failing. Identical
+            // bytes → skip the write.
             match regenerate_in_memory(&bin, &sky_out, dep) {
                 Ok(surface) => {
-                    let committed = project_dir
+                    let on_disk_path = project_dir
                         .join("sky-ffi")
                         .join(format!("{}.kernel.json", surface.slug));
-                    match std::fs::read_to_string(&committed) {
+                    match std::fs::read_to_string(&on_disk_path) {
                         Ok(on_disk) if on_disk == surface.kernel_json => verified += 1,
-                        Ok(_) => {
-                            drifted += 1;
-                            r.say(format!(
-                                "  DRIFT: committed sky-ffi/{}.kernel.json differs from a fresh inspection of {dep} (run `sky update`)",
-                                surface.slug
-                            ));
-                        }
-                        Err(_) => verified += 1,
+                        _ => match write_generated_surface(project_dir, &surface) {
+                            Ok(()) => {
+                                refreshed += 1;
+                                r.say(format!(
+                                    "  refreshed sky-ffi/{}.* (was stale vs a fresh inspection of {dep})",
+                                    surface.slug
+                                ));
+                            }
+                            Err(e) => r.say(format!("  note: could not refresh {dep}: {e}")),
+                        },
                     }
                 }
                 Err(e) => r.say(format!("  note: could not verify {dep}: {e}")),
@@ -358,12 +494,9 @@ fn install_go_deps(
         }
     }
     r.say(format!(
-        "sky install: {verified} verified, {regenerated} generated, {drifted} drifted ({} deps).",
+        "sky install: {verified} verified, {regenerated} generated, {refreshed} refreshed ({} deps).",
         deps.len()
     ));
-    if drifted > 0 {
-        r.ok = false;
-    }
 }
 
 /// The Sky-package half of `sky install` — for each `[dependencies]` entry, fetch
@@ -564,10 +697,22 @@ fn regenerate_committed(
     write_surface(project_dir, &info)
 }
 
-/// Write the three committed surface files for one inspected package. Returns
-/// the slug. `info` is already normalised by `run_inspector`.
+/// Write the three surface files for one inspected package. Returns the slug.
+/// `info` is already normalised by `run_inspector`.
 fn write_surface(project_dir: &Path, info: &ffi::PackageInfo) -> Result<String, String> {
     let surface = ffi::generate(info);
+    write_generated_surface(project_dir, &surface)?;
+    Ok(surface.slug.clone())
+}
+
+/// Write the three surface files for an already-generated surface. Used both by
+/// `write_surface` (fresh inspect) and by the `sky install` refresh path (which
+/// already holds the generated bytes from its drift comparison, so it writes
+/// them rather than re-inspecting).
+fn write_generated_surface(
+    project_dir: &Path,
+    surface: &ffi::GeneratedSurface,
+) -> Result<(), String> {
     let ffi_dir = project_dir.join("sky-ffi");
     let go_dir = ffi_dir.join("go");
     std::fs::create_dir_all(&go_dir).map_err(|e| format!("mkdir sky-ffi/go: {e}"))?;
@@ -584,7 +729,7 @@ fn write_surface(project_dir: &Path, info: &ffi::PackageInfo) -> Result<String, 
         &surface.bindings_go,
     )
     .map_err(|e| format!("write {slug}_bindings.go: {e}"))?;
-    Ok(slug.clone())
+    Ok(())
 }
 
 /// Find the slug of a committed surface whose `kernel.json` `"package"` == `pkg`.
@@ -959,6 +1104,19 @@ fn section_matches(line: &str, section: &str) -> bool {
     line == format!("[\"{section}\"]") || line == format!("[{section}]")
 }
 
+/// True iff `dir/sky.toml` declares a `[lib]` table — the marker of a Sky
+/// *library* package (as opposed to a Sky application, which has `src/` but no
+/// `[lib]`). Used by the smart `sky add` auto-probe to distinguish a genuine
+/// library dependency from an app or a `src/`-carrying Go repo. A `[lib]`
+/// inside a comment or a value never matches (whole-line table header only);
+/// a missing / unreadable `sky.toml` → false (never panics).
+fn is_sky_package_root(dir: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(dir.join("sky.toml")) else {
+        return false;
+    };
+    text.lines().any(|raw| section_matches(raw.trim(), "lib"))
+}
+
 /// The canonical header line to CREATE for `section` when it is absent — dotted
 /// keys are quoted (`["go.dependencies"]`, TOML requires it), bare keys are not
 /// (`[dependencies]`). Preserves the exact byte shape the go path emitted before
@@ -1104,6 +1262,51 @@ mod tests {
         assert_eq!(read_go_dependencies(&toml).len(), 2);
         assert!(remove_go_dependency(&toml, "github.com/google/uuid").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_sky_package_root_keys_on_lib_table() {
+        let base = std::env::temp_dir().join(format!("sky-lib-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+
+        // A Sky LIBRARY: has a [lib] table → true.
+        let lib = base.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(
+            lib.join("sky.toml"),
+            "name = \"tw\"\n\n[lib]\nexposing = [\"Tw\"]\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        assert!(is_sky_package_root(&lib), "[lib] table → Sky library");
+
+        // A Sky APPLICATION: entry point, src/, but NO [lib] → false (an app is
+        // not a library dependency; the smart probe must fall through to Go).
+        let app = base.join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(
+            app.join("sky.toml"),
+            "name = \"myapp\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        assert!(!is_sky_package_root(&app), "no [lib] → not a Sky library");
+
+        // A `[lib]` mentioned only in a COMMENT or a value must not match.
+        let sneaky = base.join("sneaky");
+        std::fs::create_dir_all(&sneaky).unwrap();
+        std::fs::write(
+            sneaky.join("sky.toml"),
+            "name = \"g\"\n# [lib] is documented here but not declared\ndesc = \"has [lib] inside a value\"\n",
+        )
+        .unwrap();
+        assert!(
+            !is_sky_package_root(&sneaky),
+            "commented / in-value [lib] is not a table header"
+        );
+
+        // Missing sky.toml → false, never panics.
+        assert!(!is_sky_package_root(&base.join("does-not-exist")));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
