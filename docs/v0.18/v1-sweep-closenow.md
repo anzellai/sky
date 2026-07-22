@@ -7,8 +7,8 @@ self-contained, achievable-in-patch items. **Bold = `check ≡ build` violation*
 | # | Item | Eff | Status |
 |---|------|-----|--------|
 | 1 | String.repeat negative → "" | S | ✅ |
-| 2 | `sky doctor` false-positives auth-secret on pristine init (comment lines) | S | ⬜ |
-| 3 | `sky test` can't run in a standalone project (repo_root_for → assets_root_for) | S | ⬜ |
+| 2 | sky doctor auth-secret skips commented headers | S | ✅ |
+| 3 | sky test uses assets_root_for (standalone works) | S | ✅ |
 | 4 | **arity-0 fn-valued def → double-call `Main_x()()(arg)` go-build fail** (lower.rs:2762) | S | ⬜ |
 | 5 | call-arg type mismatch anchored at whole call, not the arg (infer.rs:587) | S | ⬜ |
 | 6 | E1001/E1002 diagnostics carry no span/caret/excerpt (resolve.rs:1908/621) | S | ⬜ |

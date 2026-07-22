@@ -5,7 +5,7 @@
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
 use project::{
-    build_project, module_name_from_path, project_dir_for, repo_root_for, run_app, BuildOptions,
+    assets_root_for, build_project, module_name_from_path, project_dir_for, run_app, BuildOptions,
 };
 use std::path::Path;
 
@@ -51,8 +51,11 @@ const ENTRY_MODULE: &str = "SkyTestEntry__";
 pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestRun> {
     let mut run = TestRun::default();
 
-    let Some(repo_root) = repo_root_for(suite_path) else {
-        run.note = "could not locate compiler repo root (sky-stdlib + runtime-go)".into();
+    // `assets_root_for` (not `repo_root_for`) so `sky test` works in a standalone
+    // `sky init` project too — it extracts the embedded stdlib + runtime when run
+    // outside the compiler repo tree, exactly like `build`/`run`/`check`.
+    let Some(repo_root) = assets_root_for(suite_path) else {
+        run.note = "could not locate the Sky stdlib + runtime (embedded extraction failed)".into();
         return Ok(run);
     };
     let project_dir = project_dir_for(suite_path);

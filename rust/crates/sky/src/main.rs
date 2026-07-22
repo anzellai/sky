@@ -1603,7 +1603,14 @@ fn check_auth_secret(root: &Path) -> Vec<Finding> {
     let Ok(c) = std::fs::read_to_string(root.join("sky.toml")) else {
         return Vec::new();
     };
-    if !(c.contains("[live]") || c.contains("[auth]")) {
+    // Only an UNCOMMENTED `[live]`/`[auth]` section header counts — a bare
+    // `contains("[live]")` also matches the COMMENTED `# [live]` template lines
+    // that `sky init` scaffolds, so it warned on every pristine project.
+    let declares_live_or_auth = c.lines().any(|line| {
+        let t = line.trim();
+        t == "[live]" || t == "[auth]"
+    });
+    if !declares_live_or_auth {
         return Vec::new();
     }
     match std::env::var("SKY_AUTH_TOKEN_SECRET") {
