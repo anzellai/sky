@@ -290,15 +290,15 @@ impl Analysis {
             Res::Def(d) => self.def_sig_string(typer, resolved, *d),
             Res::Kernel { module, func } => typer
                 .kernel_sig(module.as_str(), func.as_str())
-                .map(|s| s.ty.render()),
-            Res::Ctor(cr) => typer.ctor_sig_by_def(cr.def).map(|s| s.ty.render()),
+                .map(|s| s.ty.render_pretty()),
+            Res::Ctor(cr) => typer.ctor_sig_by_def(cr.def).map(|s| s.ty.render_pretty()),
             Res::Local(l) => {
                 let body = resolved.bodies.get(&o.owner)?;
                 typer
                     .body_types_annotated(o.owner, body)
                     .locals
                     .get(l)
-                    .map(|t| t.render())
+                    .map(|t| t.render_pretty())
             }
             Res::Foreign { .. } | Res::Error => None,
         }
@@ -315,11 +315,11 @@ impl Analysis {
         typer
             .value_sig(d)
             .or_else(|| typer.inferred_sig(d))
-            .map(|s| s.ty.render())
+            .map(|s| s.ty.render_pretty())
             .or_else(|| {
                 let body = resolved.bodies.get(&d)?;
                 let bt = typer.body_types_annotated(d, body);
-                bt.signature.or(bt.result).map(|t| t.render())
+                bt.signature.or(bt.result).map(|t| t.render_pretty())
             })
     }
 
@@ -329,7 +329,7 @@ impl Analysis {
         let bt = typer.body_types_annotated(o.owner, body);
         let recv = bt.exprs.get(&o.receiver)?;
         let s = record_field(recv, o.field.as_str())
-            .map(|t| t.render())
+            .map(|t| t.render_pretty())
             .unwrap_or_else(|| "?".to_string());
         Some(format!("```sky\n{name} : {s}\n```"))
     }
@@ -361,7 +361,7 @@ impl Analysis {
             DefKind::Ctor => {
                 let ty = typer
                     .ctor_sig_by_def(def)
-                    .map(|s| s.ty.render())
+                    .map(|s| s.ty.render_pretty())
                     .unwrap_or_else(|| "?".to_string());
                 format!("```sky\n{name} : {ty}\n```")
             }
@@ -1269,7 +1269,7 @@ impl Analysis {
             // (bug (b)). For a nullary value `signature == result`, so value-def
             // hints are unchanged. Fall back to `result` only if absent.
             if let Some(ty) = bt.signature.clone().or_else(|| bt.result.clone()) {
-                hints.push(type_hint(text, span.range.1, &ty.render()));
+                hints.push(type_hint(text, span.range.1, &ty.render_pretty()));
             }
         }
 
@@ -1310,7 +1310,7 @@ impl Analysis {
                     .entry(binder.owner)
                     .or_insert_with(|| typer.body_types_annotated(binder.owner, obody));
                 if let Some(ty) = bt.locals.get(&binder.local).cloned() {
-                    hints.push(type_hint(text, e, &ty.render()));
+                    hints.push(type_hint(text, e, &ty.render_pretty()));
                 }
             }
         }
@@ -1370,7 +1370,7 @@ impl Analysis {
                 continue;
             };
             let name = td.name.as_str();
-            let rendered = ty.render();
+            let rendered = ty.render_pretty();
             let line = position_at(&text, span.range.0).line;
             let at = Range {
                 start: Position { line, character: 0 },

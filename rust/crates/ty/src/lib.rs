@@ -99,44 +99,130 @@ impl Ty {
 
     /// A compact rendering for spot-checks / hover (not the emission form).
     pub fn render(&self) -> String {
+        self.render_mapped(&std::collections::HashMap::new())
+    }
+
+    /// Like [`render`](Self::render), but with internal inference-variable names
+    /// (`t42`, `r7` — assigned during unification) remapped to clean sequential
+    /// names (`a`, `b`, …) for display in hover / diagnostics. User-written
+    /// annotation vars (`msg`, `model`, `a`) are kept verbatim, and generated
+    /// names never collide with a kept one. This is what turns a hover of
+    /// `main : t30` into `main : a` and `{ r61 | count : Int }` into
+    /// `{ a | count : Int }`.
+    pub fn render_pretty(&self) -> String {
+        let mut kept = std::collections::HashSet::new();
+        self.for_each_var(&mut |n| {
+            if !is_internal_var(n) {
+                kept.insert(n.to_string());
+            }
+        });
+        let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut counter = 0usize;
+        self.for_each_var(&mut |n| {
+            if is_internal_var(n) && !map.contains_key(n) {
+                let clean = loop {
+                    let cand = display_var_name(counter);
+                    counter += 1;
+                    if !kept.contains(&cand) {
+                        break cand;
+                    }
+                };
+                map.insert(n.to_string(), clean);
+            }
+        });
+        self.render_mapped(&map)
+    }
+
+    /// Visit every type/row variable name in first-appearance order.
+    fn for_each_var(&self, f: &mut dyn FnMut(&str)) {
         match self {
-            Ty::Var(n) => n.as_str().to_string(),
+            Ty::Var(n) => f(n.as_str()),
+            Ty::Unit | Ty::Error => {}
+            Ty::Fun(a, b) => {
+                a.for_each_var(f);
+                b.for_each_var(f);
+            }
+            Ty::App(_, args) | Ty::Tuple(args) => {
+                for a in args {
+                    a.for_each_var(f);
+                }
+            }
+            Ty::Record(fields, ext) => {
+                if let Some(e) = ext {
+                    f(e.as_str());
+                }
+                for (_, t) in fields {
+                    t.for_each_var(f);
+                }
+            }
+        }
+    }
+
+    fn render_mapped(&self, map: &std::collections::HashMap<String, String>) -> String {
+        let sub = |n: &Name| -> String {
+            map.get(n.as_str())
+                .cloned()
+                .unwrap_or_else(|| n.as_str().to_string())
+        };
+        match self {
+            Ty::Var(n) => sub(n),
             Ty::Unit => "()".to_string(),
             Ty::Error => "?".to_string(),
             Ty::Fun(a, b) => {
                 let lhs = match a.as_ref() {
-                    Ty::Fun(_, _) => format!("({})", a.render()),
-                    _ => a.render(),
+                    Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
+                    _ => a.render_mapped(map),
                 };
-                format!("{lhs} -> {}", b.render())
+                format!("{lhs} -> {}", b.render_mapped(map))
             }
             Ty::App(n, args) if args.is_empty() => n.as_str().to_string(),
             Ty::App(n, args) => {
                 let parts: Vec<String> = args
                     .iter()
                     .map(|a| match a {
-                        Ty::App(_, xs) if !xs.is_empty() => format!("({})", a.render()),
-                        Ty::Fun(_, _) => format!("({})", a.render()),
-                        _ => a.render(),
+                        Ty::App(_, xs) if !xs.is_empty() => format!("({})", a.render_mapped(map)),
+                        Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
+                        _ => a.render_mapped(map),
                     })
                     .collect();
                 format!("{} {}", n.as_str(), parts.join(" "))
             }
             Ty::Tuple(xs) => {
-                let parts: Vec<String> = xs.iter().map(Ty::render).collect();
+                let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();
                 format!("( {} )", parts.join(", "))
             }
             Ty::Record(fields, ext) => {
                 let parts: Vec<String> = fields
                     .iter()
-                    .map(|(n, t)| format!("{} : {}", n.as_str(), t.render()))
+                    .map(|(n, t)| format!("{} : {}", n.as_str(), t.render_mapped(map)))
                     .collect();
                 match ext {
-                    Some(e) => format!("{{ {} | {} }}", e.as_str(), parts.join(", ")),
+                    Some(e) => format!("{{ {} | {} }}", sub(e), parts.join(", ")),
                     None => format!("{{ {} }}", parts.join(", ")),
                 }
             }
         }
+    }
+}
+
+/// A variable name is *internal* (an inference artefact worth hiding in hover)
+/// when it is `t`/`r` followed by only digits — the shape the unifier mints.
+/// User annotation vars (`msg`, `a`, `model`) never match.
+fn is_internal_var(n: &str) -> bool {
+    let mut chars = n.chars();
+    matches!(chars.next(), Some('t') | Some('r'))
+        && !n[1..].is_empty()
+        && n[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+/// The nth display var name: `a`, `b`, … `z`, `a1`, `b1`, …
+fn display_var_name(i: usize) -> String {
+    let letter = (b'a' + (i % 26) as u8) as char;
+    let suffix = i / 26;
+    if suffix == 0 {
+        letter.to_string()
+    } else {
+        format!("{letter}{suffix}")
     }
 }
 
@@ -215,5 +301,26 @@ mod tests {
     fn renders_function_type() {
         let t = Ty::Fun(Box::new(Ty::app("Int", vec![])), Box::new(Ty::Unit));
         assert_eq!(t.render(), "Int -> ()");
+    }
+
+    #[test]
+    fn render_pretty_normalises_internal_vars_keeps_user_vars() {
+        // Internal inference vars (t30 / r61) → clean a, b, …; the first internal
+        // var seen is `a`.
+        let t = Ty::Fun(
+            Box::new(Ty::Var(Name::from("t30"))),
+            Box::new(Ty::Var(Name::from("t30"))),
+        );
+        assert_eq!(t.render(), "t30 -> t30");
+        assert_eq!(t.render_pretty(), "a -> a");
+
+        // A user annotation var (`msg`) is kept; the internal row var is renamed
+        // and skips the kept name.
+        let rec = Ty::Record(
+            vec![(Name::from("count"), Ty::app("Int", vec![]))],
+            Some(Name::from("r61")),
+        );
+        let t2 = Ty::Fun(Box::new(Ty::Var(Name::from("msg"))), Box::new(rec));
+        assert_eq!(t2.render_pretty(), "msg -> { a | count : Int }");
     }
 }

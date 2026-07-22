@@ -282,18 +282,15 @@ fn inlay_hint_unannotated_function_shows_full_arrow() {
     // `add x y = x + y` is fully polymorphic `a -> a -> a` now that Sky separates
     // Int/Float and `+` is unconstrained (was the over-constrained `number -> …`
     // before the Int/Float separation — `+` accepts any single type, e.g.
-    // `add "s" "t"`). Read-back names generalized vars `t<n>` (existing convention).
+    // `add "s" "t"`). Hover/inlay render internal vars as clean `a`, `b`, …
+    // (`render_pretty`).
     assert_eq!(
         add.as_deref(),
-        Some(" : t0 -> t0 -> t0"),
+        Some(" : a -> a -> a"),
         "unannotated 2-arg fn must hint its full arrow, not the body result; got {add:?}"
     );
-    // Regression guard: the old bug rendered the body-root type only (` : t0`).
-    assert_ne!(
-        add.as_deref(),
-        Some(" : t0"),
-        "must NOT be body-result only"
-    );
+    // Regression guard: the old bug rendered the body-root type only (` : a`).
+    assert_ne!(add.as_deref(), Some(" : a"), "must NOT be body-result only");
 
     // `bump n = step Inc n` (line 16): concrete `Int -> Int` (task's Int-arrow case).
     let bump = inlay_label(&a, 16);
@@ -312,7 +309,7 @@ fn hover_unannotated_function_shows_full_arrow() {
     // Poly `a -> a -> a` (see the inlay test) — `+` is unconstrained now that
     // Int and Float are fully separate.
     assert!(
-        add_decl.contains("t0 -> t0 -> t0"),
+        add_decl.contains("a -> a -> a"),
         "hover on unannotated decl shows full arrow; got {add_decl:?}"
     );
     // On the `bump` declaration name (line 16) — concrete `Int -> Int`.
