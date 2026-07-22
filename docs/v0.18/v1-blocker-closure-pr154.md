@@ -23,7 +23,7 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
 
 | # | Item | Crate(s) | Status |
 |---|------|----------|--------|
-| B1 | **auto-TCO** — GoStmt::Loop/Continue/Assign + tail-detection walk + clobber-safe reassignment | lower/ir, codegen | 🔄 impl 8fd93e8b (deep-recursion no overflow, build-run 40/40, coerce-floor neutral); grilling |
+| B1 | **auto-TCO** — GoStmt::Loop/Continue/Assign + tail-detection walk + clobber-safe reassignment | lower/ir, codegen | ✅ 8fd93e8b; grill verdict SOUND (G1-G6); deep-recursion no overflow |
 | B2 | **multiline {{expr}} interpolation** — route bodies through the real expr parser (sub-parser + green-subtree remap) | syntax, hir | ✅ 61c297ce; roundtrip 167/167; `{{String.fromInt n}}`→42 (was nil); build-run green |
 
 ## Parity guardrail (end-of-batch re-verify)
@@ -40,3 +40,17 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
   only.
 - **Not-v1-even-after-this**: any-typed ADT constructor params + missing TEA Msg
   decode/dispatch (server wire-decode floor); dead-click coverage; oracle removal.
+
+## Surfaced during B1 grill (follow-up, NOT in this mandate's scope)
+
+- **Pre-existing `sky check ≢ go build` hole** — a `case` whose branch ignores
+  its subject emits an unused `_subj` local → `go build: declared and not used`.
+  Present in the NON-TCO path too (TCO only renames the binder). A §8
+  non-negotiable violation; file for a follow-up fix (emit `_subj` only when a
+  branch references it, or `_ = _subj`).
+- **TCO completeness gap (minor)** — TCO doesn't fire for a def with a wildcard
+  `_` param or one that also passes itself as a value. Correct results, just
+  unoptimized (recursive Go). Not a soundness issue.
+- **Test-strength note** — the in-process `tail_recursive_def_emits_loop_not_recursion`
+  test doesn't catch a build-pipeline break; a CLI-level emitted-Go golden
+  (`for {` present) would close that.
