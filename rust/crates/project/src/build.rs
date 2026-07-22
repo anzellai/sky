@@ -389,7 +389,13 @@ fn build_inner(
     // project-specific FFI packages (`sky add github.com/gorilla/mux`). A
     // materialised binding that imports such a package fails `go build` until the
     // module is a `require` + present in go.sum — inject those now.
-    if let Err(e) = inject_ffi_deps(&registry, &ffi_used, &out_dir, &opts.example_dir) {
+    if let Err(e) = inject_ffi_deps(
+        &registry,
+        &ffi_used,
+        &out_dir,
+        &opts.example_dir,
+        &mut report.warnings,
+    ) {
         report.warnings.push(format!("ffi go.mod injection: {e}"));
     }
     report.emitted = true;
@@ -704,17 +710,27 @@ fn materialise_ffi_bindings(
     Ok(())
 }
 
-/// Add a `require` for every external Go-FFI package the program calls that the
-/// base go.mod (copied from `runtime-go`) does not already pin. Stdlib packages
-/// (`net/http`, `io`, `os`) never need a require and are skipped. The version is
-/// taken from the oracle's committed `sky-out/go.mod` when present (exact match),
-/// else resolved as `@latest`. `go get` handles go.mod + go.sum + the module
-/// download in one step (offline via the module cache when populated).
+/// Add a `require` for every external Go-FFI package the program calls, honoring
+/// the version declared in the project's `sky.toml [go.dependencies]`. Stdlib
+/// packages (`net/http`, `io`, `os`) never need a require and are skipped.
+///
+/// The declared spec is the source of truth — NOT `sky-out/go.mod`, which
+/// `write_out` has already clobbered with `runtime-go/go.mod` by the time this
+/// runs. Each used import path is matched to its declared module by LONGEST
+/// import-path prefix (so `…/v84/customer` maps to the `…/v84` module root), and
+/// `go get module@<spec>` is issued even when the inherited runtime go.mod
+/// already `require`s a DIFFERENT version — the sky.toml pin must win. This runs
+/// after `write_out`, so the sky.toml-sourced (re)pin lands last.
+///
+/// An UNdeclared transitive module (used but not in sky.toml) keeps `@latest`
+/// with a warning; if it is already required in the inherited go.mod it is left
+/// as-is.
 fn inject_ffi_deps(
     reg: &ffi::FfiRegistry,
     used: &std::collections::BTreeSet<String>,
     out_dir: &Path,
     example_dir: &Path,
+    warnings: &mut Vec<String>,
 ) -> std::io::Result<()> {
     let mut paths: Vec<String> = used
         .iter()
@@ -728,29 +744,58 @@ fn inject_ffi_deps(
         return Ok(());
     }
 
+    // Declared Go deps from sky.toml — the authoritative version source. Reject a
+    // dep whose spec is a non-Go range constraint rather than silently @latest it.
+    let declared: Vec<(String, String)> =
+        crate::ffi_ops::read_go_dependencies(&example_dir.join("sky.toml"))
+            .into_iter()
+            .filter(|(p, _)| is_external_module(p))
+            .filter(|(p, spec)| match crate::ffi_ops::validate_spec(p, spec) {
+                Ok(()) => true,
+                Err(e) => {
+                    warnings.push(e);
+                    false
+                }
+            })
+            .collect();
+
     let go_mod = out_dir.join("go.mod");
     let existing = std::fs::read_to_string(&go_mod).unwrap_or_default();
-    let oracle_mod = std::fs::read_to_string(example_dir.join("sky-out").join("go.mod")).ok();
 
     for path in &paths {
-        if module_required(&existing, path) {
-            continue;
+        // Longest declared import-path prefix wins (module root over subpackage).
+        let matched = declared
+            .iter()
+            .filter(|(module, _)| path == module || path.starts_with(&format!("{module}/")))
+            .max_by_key(|(module, _)| module.len());
+
+        match matched {
+            Some((module, spec)) => {
+                let target = format!("{module}@{}", crate::ffi_ops::spec_or_latest(spec));
+                // `go get module@<spec>` edits go.mod (up- OR down-grade), writes
+                // go.sum, and downloads — overriding any inherited require.
+                let _ = Command::new("go")
+                    .args(["get", &target])
+                    .current_dir(out_dir)
+                    .env("GOFLAGS", "-mod=mod")
+                    .output();
+            }
+            None => {
+                // Undeclared transitive: leave an existing require untouched;
+                // otherwise pull @latest and warn (naming the module).
+                if module_required(&existing, path) {
+                    continue;
+                }
+                warnings.push(format!(
+                    "ffi go.mod: {path} used but not declared in sky.toml [\"go.dependencies\"]; resolving @latest"
+                ));
+                let _ = Command::new("go")
+                    .args(["get", path])
+                    .current_dir(out_dir)
+                    .env("GOFLAGS", "-mod=mod")
+                    .output();
+            }
         }
-        let spec = match oracle_mod
-            .as_deref()
-            .and_then(|m| required_version(m, path))
-        {
-            Some(v) => format!("{path}@{v}"),
-            None => path.clone(),
-        };
-        // `go get <path>[@version]` edits go.mod, downloads the module, and writes
-        // go.sum. Best-effort: a network/cache miss is surfaced by the subsequent
-        // `go build` failure rather than aborting the emit.
-        let _ = Command::new("go")
-            .args(["get", &spec])
-            .current_dir(out_dir)
-            .env("GOFLAGS", "-mod=mod")
-            .output();
     }
     Ok(())
 }
@@ -769,21 +814,6 @@ fn module_required(go_mod: &str, path: &str) -> bool {
     go_mod
         .lines()
         .any(|l| l.split_whitespace().next() == Some(path) || l.trim() == path)
-}
-
-/// Extract the version pinned for `path` from a go.mod's require lines.
-fn required_version(go_mod: &str, path: &str) -> Option<String> {
-    for line in go_mod.lines() {
-        let mut it = line.split_whitespace();
-        if it.next() == Some(path) {
-            if let Some(v) = it.next() {
-                if v.starts_with('v') {
-                    return Some(v.to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 fn write_out(

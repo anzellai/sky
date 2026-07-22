@@ -1180,14 +1180,20 @@ fn emit_ffi_report(r: FfiReport) -> ExitCode {
 }
 
 fn cmd_add(args: &[String]) -> ExitCode {
-    let Some(pkg) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky add <go-import-path>");
+    let Some(raw) = args.iter().find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: sky add <go-import-path>[@version]");
         return ExitCode::from(2);
+    };
+    // Split an optional version off the LAST `@` — Go import paths never contain
+    // one, so `github.com/foo/bar@v1.2.3` → (`github.com/foo/bar`, `v1.2.3`).
+    let (pkg, spec) = match raw.rfind('@') {
+        Some(i) => (&raw[..i], Some(&raw[i + 1..])),
+        None => (raw.as_str(), None),
     };
     let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
         return ExitCode::FAILURE;
     };
-    emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg))
+    emit_ffi_report(ffi_add(&project_dir, &repo_root, pkg, spec))
 }
 
 fn cmd_remove(args: &[String]) -> ExitCode {
