@@ -143,6 +143,32 @@ impl<'a> Typer<'a> {
     }
 }
 
+/// Advance a span's start byte past any leading whitespace (within the span),
+/// so a diagnostic caret anchors under the first real character of the offending
+/// expression rather than the trailing newline / indentation trivia the CST
+/// carries at the head of a body-RHS region. The end byte is untouched. If the
+/// span is entirely whitespace (never expected for a real expression) or already
+/// tight, it is returned unchanged.
+fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
+    let start = span.range.0 as usize;
+    let end = (span.range.1 as usize).min(src.len());
+    if start >= end {
+        return span;
+    }
+    let mut ns = start;
+    for ch in src[start..end].chars() {
+        if ch.is_whitespace() {
+            ns += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if ns == start || ns >= end {
+        return span;
+    }
+    base::Span::new(span.file, ns as u32, span.range.1)
+}
+
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
 pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
@@ -166,7 +192,10 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
         let Some(&anchor) = group.iter().find(|m| to_check_set.contains(m)) else {
             continue;
         };
-        let mut names: Vec<String> = group.iter().map(|m| sky.module_name(*m).to_string()).collect();
+        let mut names: Vec<String> = group
+            .iter()
+            .map(|m| sky.module_name(*m).to_string())
+            .collect();
         names.sort();
         let labels = sky
             .resolve(anchor)
@@ -196,6 +225,14 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
 
     for &mid in to_check {
         let mname = sky.module_name(mid).to_string();
+        // Module source text — used to tighten an E2001 label span to the first
+        // non-whitespace byte of the offending expression's region (see
+        // `trim_leading_ws`). A body-RHS span (e.g. the whole `main = <expr>`
+        // binding) recorded by the resolver includes the leading newline +
+        // indentation between `=` and the expression, so its start byte lands on
+        // the `main =` line; trimming re-anchors the caret under the real
+        // sub-expression (`"not an int"`), matching the Haskell oracle.
+        let module_src = sky.module_parse(mid).syntax().text().to_string();
         let resolved = sky.resolve(mid);
         // Surface unresolved-name diagnostics (additive — see `name_errors`).
         for d in &resolved.diagnostics {
@@ -240,7 +277,7 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
                         .span
                         .map(|s| {
                             vec![diagnostics::Label {
-                                span: s,
+                                span: trim_leading_ws(&module_src, s),
                                 message: "this expression".into(),
                             }]
                         })

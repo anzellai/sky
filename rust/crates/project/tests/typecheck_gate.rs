@@ -83,7 +83,7 @@ fn driver_rejects_int_plus_string() {
     );
     assert!(!report.go_build_ok, "go build must not run on a type error");
     assert!(
-        report.note.contains("TYPE MISMATCH"),
+        report.note.contains("TYPE ERROR") && report.note.contains("[E2001]"),
         "expected an [E2001] type-mismatch diagnostic in the note, got: {}",
         report.note
     );
@@ -119,8 +119,23 @@ fn driver_rejects_annotated_string_plus_int() {
         report.note
     );
     assert!(
-        report.note.contains("TYPE MISMATCH"),
+        report.note.contains("TYPE ERROR") && report.note.contains("[E2001]"),
         "expected [E2001] in note, got: {}",
+        report.note
+    );
+    // Defect-1 regression: the E2001 caret must anchor at the offending RHS
+    // expression, NOT the binding head. `bad =` is on line 7 and the RHS
+    // `"text" + 1` is on line 8 — so the header location must read `:8:` (the
+    // RHS line), the source-context window must show the `bad =` line above it,
+    // and the caret must sit under a source line that carries `"text"`.
+    assert!(
+        report.note.contains("src/Main.sky:8:"),
+        "E2001 caret must anchor on the RHS line (8), not the binding head; note: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("bad ="),
+        "the context window should include the `bad =` line above the caret; note: {}",
         report.note
     );
 

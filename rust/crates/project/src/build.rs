@@ -115,7 +115,7 @@ fn assemble_and_emit_with(
     if stdlib.is_empty() {
         return Err("no stdlib under sky-stdlib".into());
     }
-    for (n, file) in stdlib {
+    for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
     // Sky-package dependencies (`[dependencies]` in sky.toml, e.g.
@@ -150,6 +150,22 @@ fn assemble_and_emit_with(
     if locals.is_empty() {
         return Err("no .sky under src/".into());
     }
+    // `FileId → display path` for every APP module — feeds the Elm-style renderer
+    // so each diagnostic header carries `src/Main.sky:line:col` (matching the
+    // oracle) instead of a bare `line:col`. Keyed by the module's `file_id` (its
+    // eventual `ModuleId` index, which is exactly what a span's `file` carries).
+    // Paths are shown relative to the project dir when possible.
+    let path_map: std::collections::HashMap<base::FileId, String> = locals
+        .iter()
+        .map(|(_n, file, p)| {
+            let disp = p
+                .strip_prefix(example_dir)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            (base::FileId(file.file_id(&db)), disp)
+        })
+        .collect();
     if progress {
         println!("-- Discovering modules");
         println!("   Found {} project module(s)", locals.len());
@@ -165,7 +181,7 @@ fn assemble_and_emit_with(
     // across the whole corpus) and are trusted, exactly like the type/name/
     // exhaustive gates scope to `check_ids`.
     let mut parse_diags: Vec<diagnostics::Diagnostic> = Vec::new();
-    for (n, file) in locals {
+    for (n, file, _p) in locals {
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
         // node that lowers to Go `nil` and panics at runtime — while `sky check`
@@ -223,13 +239,19 @@ fn assemble_and_emit_with(
             )
         })
         .collect();
+    // Combined source provider: text (for the caret excerpt) + display path (for
+    // the `path:line:col` header). Passed to every `render_diags` call below.
+    let sources = CliSources {
+        text: &src_map,
+        paths: &path_map,
+    };
 
     // Halt on any app-module parse error BEFORE entry detection, typecheck,
     // lower, and emit — a syntactically broken module can never be soundly
     // lowered, and reporting the parse error is more actionable than a
     // downstream "no entry module named Main" / type-clash message.
     if !parse_diags.is_empty() {
-        return Err(render_diags(&parse_diags, &src_map));
+        return Err(render_diags(&parse_diags, &sources));
     }
     let Some(entry) = entry else {
         return Err(match entry_module {
@@ -263,7 +285,7 @@ fn assemble_and_emit_with(
             .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E2001")
             .cloned()
             .collect();
-        return Err(render_diags(&ds, &src_map));
+        return Err(render_diags(&ds, &sources));
     }
     // Name-resolution rejections (the `[E1xxx]` class over the checked app
     // modules): undefined names (`[E1001]`), duplicate top-level definitions
@@ -283,7 +305,7 @@ fn assemble_and_emit_with(
             .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E1"))
             .cloned()
             .collect();
-        return Err(render_diags(&ds, &src_map));
+        return Err(render_diags(&ds, &sources));
     }
     // Exhaustiveness gate (`[E3001]`): Sky treats a non-exhaustive `case` as a
     // HARD error (stronger than GHC-as-configured — self-host R1-D3, doc 06
@@ -303,7 +325,7 @@ fn assemble_and_emit_with(
         .cloned()
         .collect();
     if !exhaustive_diags.is_empty() {
-        return Err(render_diags(&exhaustive_diags, &src_map));
+        return Err(render_diags(&exhaustive_diags, &sources));
     }
     if progress {
         println!("   Types OK ({} module(s))", check_ids.len());
@@ -350,7 +372,7 @@ fn assemble_and_emit_with(
     let abi_diags =
         crate::abi_guard::check_abi_symbols(&source, crate::abi_guard::runtime_exports(repo_root));
     if !abi_diags.is_empty() {
-        return Err(render_diags(&abi_diags, &src_map));
+        return Err(render_diags(&abi_diags, &sources));
     }
     Ok(Emitted {
         source,
@@ -978,18 +1000,35 @@ pub fn enumerate_skydep_files(skydeps: &Path) -> Vec<PathBuf> {
 /// handle — the whole module set now lives in the salsa db (the resolve-stage
 /// port), so `resolve`/`module_exports` key off these handles rather than cloned
 /// `Parse`s. No `FileId`/span reaches emitted Go, so build + repro are unchanged.
+/// A CLI source provider: the `FileId → text` map for the caret excerpt PLUS a
+/// `FileId → display path` map so the header shows `src/Main.sky:line:col`
+/// (matching the oracle) rather than a bare `line:col`.
+struct CliSources<'a> {
+    text: &'a std::collections::HashMap<base::FileId, String>,
+    paths: &'a std::collections::HashMap<base::FileId, String>,
+}
+
+impl diagnostics::SourceProvider for CliSources<'_> {
+    fn text(&self, file: base::FileId) -> Option<&str> {
+        self.text.get(&file).map(String::as_str)
+    }
+    fn path(&self, file: base::FileId) -> Option<&str> {
+        self.paths.get(&file).map(String::as_str)
+    }
+}
+
 /// Render a batch of Sky-frontend diagnostics as Elm-style terminal blocks,
-/// one per diagnostic, separated by a blank line. `src_map` supplies each span's
-/// source line for the caret excerpt (`Diagnostic::render_cli`). The joined
-/// string becomes the `BuildReport.note` printed by `sky`.
+/// one per diagnostic, separated by a blank line. `sources` supplies each span's
+/// source line for the caret excerpt + the module's display path for the header
+/// (`Diagnostic::render_cli`). The joined string becomes the `BuildReport.note`
+/// printed by `sky`.
 fn render_diags(
     diags: &[diagnostics::Diagnostic],
-    src_map: &std::collections::HashMap<base::FileId, String>,
+    sources: &dyn diagnostics::SourceProvider,
 ) -> String {
-    let provider: &std::collections::HashMap<base::FileId, String> = src_map;
     diags
         .iter()
-        .map(|d| d.render_cli(&provider))
+        .map(|d| d.render_cli(sources))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1027,7 +1066,7 @@ fn load_dir(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     dir: &Path,
-) -> Vec<(String, skydb::SourceFile)> {
+) -> Vec<(String, skydb::SourceFile, PathBuf)> {
     let mut files = Vec::new();
     collect_sky(dir, &mut files);
     let mut out = Vec::new();
@@ -1035,7 +1074,8 @@ fn load_dir(
         let Ok(src) = std::fs::read_to_string(&path) else {
             continue;
         };
-        out.push(parse_via_salsa(sdb, next_id, src, &path));
+        let (name, file) = parse_via_salsa(sdb, next_id, src, &path);
+        out.push((name, file, path));
     }
     out
 }

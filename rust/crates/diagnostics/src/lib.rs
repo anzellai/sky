@@ -134,7 +134,7 @@ fn code_title(code: &str) -> &'static str {
         "E1004" => "SHADOWED NAME",
         "E1005" => "INTEGER OVERFLOW",
         "E1006" => "UNSUPPORTED PATTERN",
-        "E2001" => "TYPE MISMATCH",
+        "E2001" => "TYPE ERROR",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",
@@ -156,28 +156,33 @@ fn header_line(title: &str, loc: Option<&str>, code: &str) -> String {
     format!("{prefix}{} {tail_str}", "-".repeat(dashes))
 }
 
-/// The source excerpt + caret for one label span, e.g.
+/// How many source lines of preceding context to show above the caret line.
+const CONTEXT_LINES: usize = 2;
+
+/// The source excerpt + caret for one label span, with a small window of
+/// preceding context lines (matching the Haskell oracle), e.g.
 ///
 /// ```text
-/// 7|     println (String.fromInt (1 + "x"))
-///                                      ^^^
+///    5 | main : Int
+///    6 | main =
+///    7 |     "not an int"
+///      |     ^
 /// ```
 ///
 /// The caret run sits under `[range.0, range.1)` clamped to the label's first
 /// line. Leading whitespace inside the span is trimmed so the caret is tight
-/// (spans may carry leading trivia). Returns `None` when the file text is
-/// unavailable, so the caller falls back to a text-only block.
+/// (spans may carry leading trivia). Line numbers are right-aligned in a gutter
+/// whose width is the widest line number shown, followed by ` | `. Returns
+/// `None` when the file text is unavailable, so the caller falls back to a
+/// text-only block.
 fn excerpt(text: &str, span: Span) -> Option<String> {
     let starts = line_starts(text);
     let (line0, _) = position_at(text, span.range.0);
-    let line_start = *starts.get(line0 as usize)?;
-    let line_end = starts
-        .get(line0 as usize + 1)
-        .map(|&s| s.saturating_sub(1)) // drop the trailing '\n'
-        .unwrap_or(text.len());
-    let line_text = &text[line_start..line_end];
+    let caret_idx = line0 as usize;
+    let line_start = *starts.get(caret_idx)?;
+    let line_end = line_bounds_end(&starts, text, caret_idx);
 
-    // Byte offsets of the span within this line, clamped to the line.
+    // Byte offsets of the span within the caret line, clamped to the line.
     let mut sb = (span.range.0 as usize).clamp(line_start, line_end);
     let eb = (span.range.1 as usize).clamp(sb, line_end);
     // Trim leading whitespace inside the span for a tight caret.
@@ -190,15 +195,34 @@ fn excerpt(text: &str, span: Span) -> Option<String> {
     let col_start = text[line_start..sb].chars().count();
     let caret_len = text[sb..eb].chars().count().max(1);
 
-    let lineno = line0 + 1; // 1-based
-    let gutter = format!("{lineno}| ");
-    let caret_line = format!(
-        "{}{}{}",
-        " ".repeat(gutter.chars().count()),
+    // Gutter width = width of the largest (1-based) line number shown.
+    let gutter_w = (caret_idx + 1).to_string().len();
+    let first_idx = caret_idx.saturating_sub(CONTEXT_LINES);
+
+    let mut out = String::new();
+    for li in first_idx..=caret_idx {
+        let ls = starts[li];
+        let le = line_bounds_end(&starts, text, li);
+        let ltext = &text[ls..le];
+        out.push_str(&format!("{:>gutter_w$} | {ltext}\n", li + 1));
+    }
+    // The caret line: blank gutter, ` | `, then spaces to the caret column.
+    out.push_str(&format!(
+        "{} | {}{}",
+        " ".repeat(gutter_w),
         " ".repeat(col_start),
         "^".repeat(caret_len)
-    );
-    Some(format!("{gutter}{line_text}\n{caret_line}"))
+    ));
+    Some(out)
+}
+
+/// End byte of line `idx` (0-based), with the trailing `\n` dropped. Falls back
+/// to the text length for the final line.
+fn line_bounds_end(starts: &[usize], text: &str, idx: usize) -> usize {
+    starts
+        .get(idx + 1)
+        .map(|&s| s.saturating_sub(1))
+        .unwrap_or(text.len())
 }
 
 impl Diagnostic {
@@ -337,12 +361,15 @@ mod tests {
         };
         let rendered = d.render_cli(&sources);
 
-        // `"x"` starts at 0-based column 11 → 1-based col 12, on line 2.
+        // `"x"` starts at 0-based column 11 → 1-based col 12, on line 2. The
+        // window shows the one preceding line (line 1) plus the caret line, with
+        // a right-aligned `N | ` gutter and a `  | ^^^` caret row.
         let expected = "\
--- TYPE MISMATCH --------------------------------- src/Main.sky:2:12 [E2001]
+-- TYPE ERROR ------------------------------------ src/Main.sky:2:12 [E2001]
 
-2| main = 1 + \"x\"
-              ^^^
+1 | module Main exposing (main)
+2 | main = 1 + \"x\"
+  |            ^^^
 
 [Main] Type mismatch — expected Int, found String
 ";
@@ -350,6 +377,52 @@ mod tests {
             rendered, expected,
             "\n--- got ---\n{rendered}\n--- want ---\n{expected}"
         );
+    }
+
+    /// The excerpt shows up to two PRECEDING context lines above the caret line
+    /// (the oracle's window), so an annotated-binding mismatch whose caret sits
+    /// on the RHS line still displays the `name : T` / `name =` lines above it.
+    #[test]
+    fn render_cli_shows_context_window() {
+        // line 1: `main : Int`     (0-based 0)
+        // line 2: `main =`         (0-based 1)
+        // line 3: `    "nope"`     (0-based 2) — the caret line
+        let src = "main : Int\nmain =\n    \"nope\"\n";
+        let start = src.find("\"nope\"").unwrap() as u32;
+        let end = start + 6;
+        let d = Diagnostic {
+            severity: Severity::Error,
+            code: Code("E2001".to_string()),
+            message: "[main] type mismatch: `String` vs `Int`".to_string(),
+            labels: vec![Label {
+                span: Span::new(FileId(0), start, end),
+                message: "this expression".into(),
+            }],
+            suggestion: None,
+        };
+        let sources = NamedSource {
+            path: "src/Main.sky".to_string(),
+            text: src.to_string(),
+        };
+        let rendered = d.render_cli(&sources);
+
+        // Header carries the RHS location (line 3, col 5) + the path.
+        assert!(
+            rendered.contains("src/Main.sky:3:5 [E2001]"),
+            "header should point at the RHS line:col with a path: {rendered}"
+        );
+        // Both preceding context lines present, with a `N | ` gutter.
+        assert!(
+            rendered.contains("1 | main : Int"),
+            "ctx line 1: {rendered}"
+        );
+        assert!(rendered.contains("2 | main ="), "ctx line 2: {rendered}");
+        assert!(
+            rendered.contains("3 |     \"nope\""),
+            "caret line: {rendered}"
+        );
+        // The caret sits under the opening quote (col 5), on a blank-gutter row.
+        assert!(rendered.contains("\n  |     ^"), "caret row: {rendered}");
     }
 
     #[test]
@@ -375,7 +448,7 @@ mod tests {
         let rendered = d.render_cli(&(&map));
 
         // No path in the map → bare `line:col` header.
-        assert!(rendered.contains("-- TYPE MISMATCH "), "header: {rendered}");
+        assert!(rendered.contains("-- TYPE ERROR "), "header: {rendered}");
         assert!(
             rendered.contains(" 1:1"),
             "bare line:col header: {rendered}"
@@ -383,7 +456,7 @@ mod tests {
         assert!(rendered.contains("primary message"));
         assert!(rendered.contains("also relevant here"));
         assert!(rendered.contains("Try: rename `b`"));
-        assert!(rendered.contains("1| a = 1"));
-        assert!(rendered.contains("2| b = 2"));
+        assert!(rendered.contains("1 | a = 1"));
+        assert!(rendered.contains("2 | b = 2"));
     }
 }

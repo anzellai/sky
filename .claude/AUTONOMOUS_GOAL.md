@@ -40,6 +40,18 @@ each finding (real? achievable-in-patch? genuine v1 improvement? not deep floor?
 effort + repro. Then implement the close-now bucket (verify each empirically,
 commit per fix), grill, Judge.
 
+## ADDED 2026-07-23 (user, mid-sweep) — expanded scope
+
+1. **`sky upgrade` not wired** — implement real self-update (was STRETCH).
+2. **`sky run`/`install` progress logging** — not Haskell-compatible; log
+   progress info to the console like the oracle does.
+3. **Full agents scan of the `sky` CLI** — discover every verb/flag/behaviour
+   NOT implemented (or stubbed / diverging from the oracle) and implement
+   properly.
+4. **Docs/comments tidy-up (DO LAST, after all code settles)** — README (must
+   reference v0.18.x), CLAUDE.md + `templates/CLAUDE.md`, docs/*: streamline
+   outdated info, ensure everything reflects the shipped state.
+
 ## Definition of done
 
 Every close-now-bucket item implemented + verified (empirical repro fixed) +
