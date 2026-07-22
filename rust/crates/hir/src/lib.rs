@@ -42,6 +42,40 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_call_resolves_through_grammar() {
+        // Regression: a rich interpolation body (`{{String.fromInt n}}`) must
+        // resolve to a real `Call(Var(Kernel …), [Var …])` in the HIR — the
+        // pre-fix hand-rolled classifier wrapped the whole body in one
+        // `QualRefExpr` that resolved to `Res::Error` and silently lowered to
+        // `nil` (a miscompile). No class-a errors, one Call node present.
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Std.Log exposing (println)\n\n\
+                   n = 42\n\n\
+                   render =\n    \"\"\"A={{String.fromInt n}}\"\"\"\n\n\
+                   main =\n    println render\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+        let has_kernel_call = r.bodies.values().any(|body| {
+            body.exprs.iter().any(|(_, e)| {
+                if let Expr::Call(callee, args) = e {
+                    matches!(&body.exprs[*callee], Expr::Var(Res::Kernel { module, func })
+                        if module.as_str() == "String" && func.as_str() == "fromInt")
+                        && args.len() == 1
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(
+            has_kernel_call,
+            "expected a Call to Kernel String.fromInt from the interpolation body"
+        );
+    }
+
+    #[test]
     fn resolves_prelude_and_kernel() {
         let src = "module Main exposing (main)\n\
                    import Sky.Core.Prelude exposing (..)\n\

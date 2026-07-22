@@ -309,6 +309,13 @@ impl<'a> Parser<'a> {
         &self.src[start as usize..end as usize]
     }
 
+    /// The file this parser produces spans for — used to seed the sub-parser
+    /// that runs the real `expr` grammar over an interpolation `{{…}}` body
+    /// (doc 04 §9).
+    pub(crate) fn file(&self) -> FileId {
+        self.file
+    }
+
     /// Consume the current significant token *without* emitting it — the caller
     /// re-covers its bytes with `emit_slice`s (multiline interpolation split).
     pub(crate) fn skip_raw(&mut self) {

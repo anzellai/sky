@@ -49,6 +49,43 @@ fn interpolation_produces_nodes_and_roundtrips() {
 }
 
 #[test]
+fn interpolation_rich_expr_shapes_produce_correct_nodes() {
+    // Rich interpolation bodies route through the real `expr` grammar, so a
+    // qualified call, a nested field access, and a multi-arg application each
+    // resolve to the correct expression node — not the pre-fix flat-leaf /
+    // wrong-node fallback that silently miscompiled.
+    let src =
+        "x =\n    \"\"\"a {{String.fromInt n}} b {{record.field.sub}} c {{f x y}}\"\"\"\n";
+    let parse = assert_clean(src);
+    assert_eq!(count(&parse, SyntaxKind::Interpolation), 3);
+    // `String.fromInt n` -> CallExpr whose callee is a QualRefExpr.
+    assert_eq!(count(&parse, SyntaxKind::QualRefExpr), 1);
+    // `record.field.sub` -> chained FieldAccess (two `.` steps).
+    assert_eq!(count(&parse, SyntaxKind::FieldAccess), 2);
+    // `String.fromInt n` and `f x y` -> two CallExpr nodes.
+    assert_eq!(count(&parse, SyntaxKind::CallExpr), 2);
+}
+
+#[test]
+fn interpolation_qualified_call_roundtrips_with_interior_whitespace() {
+    // Interior whitespace inside `{{ … }}` must re-emit byte-for-byte.
+    let src = "x =\n    \"\"\"v={{ String.fromInt  n }}!\"\"\"\n";
+    let parse = assert_clean(src);
+    assert_eq!(count(&parse, SyntaxKind::Interpolation), 1);
+    assert_eq!(count(&parse, SyntaxKind::QualRefExpr), 1);
+    assert_eq!(count(&parse, SyntaxKind::CallExpr), 1);
+}
+
+#[test]
+fn interpolation_arithmetic_body_roundtrips() {
+    // A binary-operator body parses as a BinExpr and round-trips.
+    let src = "x =\n    \"\"\"sum={{a + b}}\"\"\"\n";
+    let parse = assert_clean(src);
+    assert_eq!(count(&parse, SyntaxKind::Interpolation), 1);
+    assert_eq!(count(&parse, SyntaxKind::BinExpr), 1);
+}
+
+#[test]
 fn escaped_interpolation_stays_literal() {
     // `\{{` must NOT open an interpolation; bytes are kept verbatim.
     let src = "x =\n    \"\"\"literal \\{{ braces }}\"\"\"\n";
