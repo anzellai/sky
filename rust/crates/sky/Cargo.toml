@@ -14,4 +14,5 @@ path = "src/main.rs"
 project = { path = "../project" }
 fmt = { path = "../fmt" }
 testrunner = { path = "../testrunner" }
+sky-lsp = { path = "../sky-lsp" }
 notify = "8"

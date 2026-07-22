@@ -13,8 +13,10 @@
 //! holding it across an `await`. (The salsa `db` in doc 10 makes this a
 //! memoised handle; this is the value-threaded variant the task permits.)
 //!
-//! Deliberately independent of `tower-lsp`'s server so it can be unit- and
-//! integration-tested directly; `main.rs` is the thin async transport wrapper.
+//! The analysis engine is deliberately independent of `tower-lsp` so it can be
+//! unit- and integration-tested directly. The `tower-lsp` transport lives in the
+//! [`server`] submodule and is exposed as [`run`], so the LSP can run inline
+//! inside the `sky` binary (`sky lsp`) — no separate `sky-lsp` process required.
 //!
 //! **Persistent salsa db (doc 10 §"Incremental for free", the salsa payoff).**
 //! The engine holds ONE long-lived `skydb::SkyDatabase`. On `didOpen`/`didChange`
@@ -26,6 +28,9 @@
 //! the whole stdlib+project (the per-request `SourceDb` rebuild is gone). The
 //! `SkyDatabase` is `Send`, so it is held across `await` behind the server's one
 //! async mutex; no salsa is imported here (it stays quarantined in `skydb`, L1).
+
+mod server;
+pub use server::run;
 
 use base::{DefId, FileId, ModuleId, Span};
 use hir::{
@@ -80,6 +85,9 @@ pub struct Analysis {
     /// canonicalisation regardless of encoding differences).
     by_path: HashMap<String, usize>,
     stdlib_loaded: bool,
+    /// Project roots whose `src/`+`tests/` have already been loaded, so opening
+    /// a second file in the same project doesn't re-walk it.
+    loaded_projects: std::collections::HashSet<PathBuf>,
 }
 
 impl Default for Analysis {
@@ -109,6 +117,7 @@ impl Analysis {
             by_name: HashMap::new(),
             by_path: HashMap::new(),
             stdlib_loaded: false,
+            loaded_projects: std::collections::HashSet::new(),
         }
     }
 
@@ -183,6 +192,19 @@ impl Analysis {
     pub fn load_project(&mut self, root: &Path) {
         for sub in ["src", "tests"] {
             self.load_dir(&root.join(sub));
+        }
+    }
+
+    /// Ensure the stdlib and the project owning `file` are loaded, resolved from
+    /// the file itself. Robust to how the client set the workspace root (some
+    /// send the git root, some the folder, some only `workspaceFolders`) and to
+    /// editing a project outside the compiler repo (embedded stdlib). Idempotent
+    /// per project root.
+    pub fn ensure_project_for(&mut self, file: &Path) {
+        let proj = project::project_dir_for(file);
+        self.load_stdlib(Some(&proj));
+        if self.loaded_projects.insert(proj.clone()) {
+            self.load_project(&proj);
         }
     }
 
@@ -2177,22 +2199,14 @@ fn stdlib_dir(root: Option<&Path>) -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let mut starts: Vec<PathBuf> = Vec::new();
-    if let Some(r) = root {
-        starts.push(r.to_path_buf());
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        starts.push(cwd);
-    }
-    for start in starts {
-        let mut cur: Option<&Path> = Some(start.as_path());
-        while let Some(dir) = cur {
-            let cand = dir.join("sky-stdlib");
-            if cand.is_dir() {
-                return Some(cand);
-            }
-            cur = dir.parent();
-        }
-    }
-    None
+    // Resolve via the same asset root the compiler uses: the on-disk repo tree
+    // when editing inside the compiler repo (byte-identical dev path), otherwise
+    // the embedded stdlib materialised to a cache dir. Without this fallback a
+    // real user project — which has no `sky-stdlib/` on disk — would load no
+    // stdlib, so hover/completion/types on `String`, `List`, `Std.*`, … would
+    // all come back empty.
+    let start = root
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())?;
+    project::assets_root_for(&start).map(|r| r.join("sky-stdlib"))
 }

@@ -108,7 +108,11 @@ fn entry_from_sky_toml() -> Result<Option<PathBuf>, PathBuf> {
                 .and_then(|s| parse_toml_entry(&s))
                 .unwrap_or_else(|| "src/Main.sky".to_string());
             let entry = dir.join(entry_rel);
-            return if entry.is_file() { Ok(Some(entry)) } else { Err(entry) };
+            return if entry.is_file() {
+                Ok(Some(entry))
+            } else {
+                Err(entry)
+            };
         }
         match dir.parent() {
             Some(p) => dir = p,
@@ -400,33 +404,12 @@ fn cmd_test(args: &[String]) -> ExitCode {
 /// `sky lsp` — launch the (already built) `sky-lsp` JSON-RPC server over stdio.
 /// Locates the sibling binary next to this executable and execs it, forwarding
 /// stdin/stdout/stderr.
-fn cmd_lsp(args: &[String]) -> ExitCode {
-    let bin = match std::env::current_exe() {
-        Ok(exe) => exe.with_file_name(if cfg!(windows) {
-            "sky-lsp.exe"
-        } else {
-            "sky-lsp"
-        }),
-        Err(e) => {
-            eprintln!("sky lsp: cannot locate executable dir: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if !bin.exists() {
-        eprintln!(
-            "sky lsp: sky-lsp binary not found next to `sky` (looked at {}).\n\
-             Build it with: cargo build -p sky-lsp",
-            bin.display()
-        );
-        return ExitCode::FAILURE;
-    }
-    match Command::new(&bin).args(args).status() {
-        Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
-        Err(e) => {
-            eprintln!("sky lsp: failed to launch {}: {e}", bin.display());
-            ExitCode::FAILURE
-        }
-    }
+fn cmd_lsp(_args: &[String]) -> ExitCode {
+    // Run the LSP server inline — the transport + analysis engine are linked into
+    // this binary, so `sky lsp` works from a single installed `sky` with no
+    // separate `sky-lsp` process to locate or ship.
+    sky_lsp::run();
+    ExitCode::SUCCESS
 }
 
 // ---- clean ---------------------------------------------------------------
@@ -2316,7 +2299,10 @@ mod tests {
             Some("app/Start.sky".to_string())
         );
         // No top-level entry key → None (caller applies the src/Main.sky default).
-        assert_eq!(parse_toml_entry("name = \"x\"\n[source]\nroot = \"src\"\n"), None);
+        assert_eq!(
+            parse_toml_entry("name = \"x\"\n[source]\nroot = \"src\"\n"),
+            None
+        );
         // An `entry` inside a section must NOT be picked up (scan stops at `[`).
         assert_eq!(
             parse_toml_entry("name = \"x\"\n[weird]\nentry = \"nope.sky\"\n"),

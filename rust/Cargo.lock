@@ -1104,6 +1104,7 @@ dependencies = [
  "fmt",
  "notify",
  "project",
+ "sky-lsp",
  "testrunner",
 ]
 
