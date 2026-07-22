@@ -51,6 +51,8 @@ const CLI_FAMILY: &[&str] = &[
     "07-todo-cli",
     "00-standard-libs",
     "20-cli-counter",
+    // Regression for anzellai/sky#153 — cross-module parametric ADT codegen.
+    "49-xmodule-adt",
 ];
 
 /// Heavy-FFI GUI examples that build but cannot be headless-verified (native

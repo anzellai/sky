@@ -1,0 +1,16 @@
+-- anzellai/sky#153 — build + run must succeed (no `undefined: T1`) with the
+-- parametric `Zipper a` defined in a sibling module and used here.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Zipper exposing (Zipper)
+
+
+main =
+    let
+        z = Zipper.singleton 42
+        _ = println (String.fromInt (Zipper.current z))
+    in
+        ()

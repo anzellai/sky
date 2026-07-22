@@ -4,6 +4,15 @@
 It's used by the Helix, Zed, and VS Code integrations, and any
 LSP-aware editor.
 
+The server runs **inline** — `sky lsp` is served by the single `sky`
+binary, so there is no separate `sky-lsp` process to install or locate.
+Point your editor at `command = "sky", args = ["lsp"]` and make sure
+`sky` is on the editor's `PATH` (GUI editors often don't inherit your
+shell `PATH` — use an absolute path or launch the editor from a shell
+if hover/completion don't appear). The stdlib is resolved from the
+compiler's embedded copy, so hover, completion, and go-to work in any
+project — not only inside the compiler repo.
+
 **LSP contract (100 % coverage)**: every USED symbol class has hover +
 goto-definition coverage. 17 end-to-end tests via the headless
 Neovim gate driver (`scripts/lsp-test-nvim.{lua,sh}`):
