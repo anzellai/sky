@@ -48,7 +48,7 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
   Present in the NON-TCO path too (TCO only renames the binder). A §8
   non-negotiable violation; file for a follow-up fix (emit `_subj` only when a
   branch references it, or `_ = _subj`).
-- **TCO completeness gap (minor)** — TCO doesn't fire for a def with a wildcard
+- ✅ NOT A GAP (verified fresh build) — TCO DOES fire for a wildcard
   `_` param or one that also passes itself as a value. Correct results, just
   unoptimized (recursive Go). Not a soundness issue.
 - **Test-strength note** — the in-process `tail_recursive_def_emits_loop_not_recursion`
