@@ -253,10 +253,10 @@ impl Analysis {
         let cand = self.cand_at(db, &resolved, module, off)?;
         let typer = Typer::new(db);
         let md = match cand {
-            Cand::Ref(o) => self.hover_ref(&typer, &resolved, o),
+            Cand::Ref(o) => self.hover_ref(&typer, &resolved, db, o),
             Cand::Field(o) => self.hover_field(&typer, &resolved, o),
             Cand::Type(o) => self.hover_type(o),
-            Cand::Def { def, .. } => self.hover_def(&typer, &resolved, db, def),
+            Cand::Def { def, .. } => self.hover_def(&typer, db, def),
         }?;
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -267,10 +267,16 @@ impl Analysis {
         })
     }
 
-    fn hover_ref(&self, typer: &Typer, resolved: &ResolveResult, o: &RefOcc) -> Option<String> {
+    fn hover_ref(
+        &self,
+        typer: &Typer,
+        resolved: &ResolveResult,
+        db: &dyn SkyDb,
+        o: &RefOcc,
+    ) -> Option<String> {
         let name = self.slice(o.span).trim().to_string();
         let ty = self
-            .ref_type_string(typer, resolved, o)
+            .ref_type_string(typer, resolved, db, o)
             .unwrap_or_else(|| "?".to_string());
         Some(format!("```sky\n{name} : {ty}\n```"))
     }
@@ -284,10 +290,11 @@ impl Analysis {
         &self,
         typer: &Typer,
         resolved: &ResolveResult,
+        db: &dyn SkyDb,
         o: &RefOcc,
     ) -> Option<String> {
         match &o.res {
-            Res::Def(d) => self.def_sig_string(typer, resolved, *d),
+            Res::Def(d) => self.def_sig_string(typer, db, *d),
             Res::Kernel { module, func } => typer
                 .kernel_sig(module.as_str(), func.as_str())
                 .map(|s| s.ty.render_pretty()),
@@ -311,13 +318,21 @@ impl Analysis {
     /// an unannotated function hover as `Int -> Int -> Int` rather than the
     /// body-result-only `Int` (bug (b)). Shared by `ref_type_string` (use sites) +
     /// `hover_def` (declaration sites).
-    fn def_sig_string(&self, typer: &Typer, resolved: &ResolveResult, d: DefId) -> Option<String> {
+    fn def_sig_string(&self, typer: &Typer, db: &dyn SkyDb, d: DefId) -> Option<String> {
         typer
             .value_sig(d)
             .or_else(|| typer.inferred_sig(d))
             .map(|s| s.ty.render_pretty())
             .or_else(|| {
-                let body = resolved.bodies.get(&d)?;
+                // Body-inferred fallback for an UNANNOTATED def. Resolve it from
+                // its OWN module (via `def_loc`), not the hovered document — so an
+                // unannotated value/function imported from ANOTHER user module
+                // hovers its inferred type instead of `?`. For a same-module def
+                // the owner IS the current module, so this is byte-identical to
+                // the old current-module-only path.
+                let owner = db.def_loc(d)?.module;
+                let owner_resolved = db.resolve(owner);
+                let body = owner_resolved.bodies.get(&d)?;
                 let bt = typer.body_types_annotated(d, body);
                 bt.signature.or(bt.result).map(|t| t.render_pretty())
             })
@@ -342,19 +357,13 @@ impl Analysis {
     /// same `name : ty` a use site would (via `def_sig_string`); a constructor
     /// renders its scheme; a type-con / alias renders `type Name`. Mirrors the
     /// hover a use of the symbol produces.
-    fn hover_def(
-        &self,
-        typer: &Typer,
-        resolved: &ResolveResult,
-        db: &dyn SkyDb,
-        def: DefId,
-    ) -> Option<String> {
+    fn hover_def(&self, typer: &Typer, db: &dyn SkyDb, def: DefId) -> Option<String> {
         let loc = db.def_loc(def)?;
         let name = loc.name.as_str().to_string();
         let md = match loc.kind {
             DefKind::Value => {
                 let ty = self
-                    .def_sig_string(typer, resolved, def)
+                    .def_sig_string(typer, db, def)
                     .unwrap_or_else(|| "?".to_string());
                 format!("```sky\n{name} : {ty}\n```")
             }
@@ -1430,7 +1439,7 @@ impl Analysis {
             .trim()
             .to_string();
         let typer = Typer::new(db);
-        let ty = self.ref_type_string(&typer, &resolved, head_occ)?;
+        let ty = self.ref_type_string(&typer, &resolved, db, head_occ)?;
 
         Some(build_signature(&name, &ty, active))
     }
