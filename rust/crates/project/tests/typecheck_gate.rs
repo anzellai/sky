@@ -214,6 +214,41 @@ fn driver_accepts_well_typed_and_emits() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A `case` whose only arm is a wildcard (`case n of _ -> …`) never reads the
+/// subject. The lowerer used to unconditionally bind `_subj := subj`, so Go
+/// rejected it (`declared and not used: _subj`) — valid Sky emitted un-buildable
+/// Go, a `sky check ≢ go build` hole. It must now EMIT and `go build` cleanly
+/// (the subject is `_ = subj`-discarded when unread).
+#[test]
+fn driver_wildcard_case_subject_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "wildcase",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         g : Int -> Int\n\
+         g n =\n    case n of\n        _ ->\n            7\n\n\
+         main =\n    println (String.fromInt (g 3))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted,
+        "well-typed wildcard-case program failed to emit; note: {}",
+        report.note
+    );
+    assert!(
+        report.go_build_ok,
+        "`sky check ≢ go build` hole: emitted Go for an all-wildcard `case` did \
+         not `go build` (unused `_subj`); note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// A duplicate top-level binding (`x = 1` then `x = 2`) is REJECTED before emit
 /// with `[E1002]`. Sky has no multi-clause definitions; the oracle rejects such
 /// a program (at `go build`: "x redeclared in this block"). The Rust resolver

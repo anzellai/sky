@@ -43,7 +43,7 @@ Source analysis: 21-agent readiness audit + 19-agent feasibility workflow
 
 ## Surfaced during B1 grill (follow-up, NOT in this mandate's scope)
 
-- **Pre-existing `sky check ≢ go build` hole** — a `case` whose branch ignores
+- ✅ FIXED (this branch) — `sky check ≢ go build` hole: a `case` whose branch ignores
   its subject emits an unused `_subj` local → `go build: declared and not used`.
   Present in the NON-TCO path too (TCO only renames the binder). A §8
   non-negotiable violation; file for a follow-up fix (emit `_subj` only when a

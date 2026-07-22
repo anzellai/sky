@@ -4042,16 +4042,37 @@ impl<'a> Ctx<'a> {
         } else {
             subj
         };
-        out.push(GoStmt::Short(subj_name.clone(), subj));
-        let subj_ref = GoExpr::new(GoExprKind::Ident(subj_name), subj_ty.clone());
+        // Emit the branch bodies into a temp buffer first, so we can tell
+        // whether they actually reference the subject binder before deciding how
+        // to bind it.
+        let subj_ref = GoExpr::new(GoExprKind::Ident(subj_name.clone()), subj_ty.clone());
+        let mut body: Vec<GoStmt> = Vec::new();
         for br in &branches {
-            self.lower_case_branch(&subj_ref, &subj_ty, br, actual, tail, out);
+            self.lower_case_branch(&subj_ref, &subj_ty, br, actual, tail, &mut body);
         }
         // fallthrough guard (exhaustiveness should prevent reaching here).
-        out.push(GoStmt::Expr(GoExpr::new(
+        body.push(GoStmt::Expr(GoExpr::new(
             GoExprKind::Ident("panic(rt.Unreachable(\"case\"))".into()),
             GoTy::Unit,
         )));
+        // Bind the subject with `:=` only when an arm actually reads it. A `case`
+        // whose arms are ALL wildcards / unit (`case n of _ -> …`) never touches
+        // `_subj`, and Go rejects an unused `:=` local — so valid Sky would emit
+        // un-buildable Go (a `sky check ≢ go build` hole). Any other pattern —
+        // a literal (`_subj == lit`), constructor (`_subj.Tag`), binder
+        // (`x := _subj`), or destructure — reads it, so a mixed case still binds
+        // as before and the corpus emission is byte-identical. When unread, fall
+        // back to `_ = subj`: still evaluates the subject (side effects
+        // preserved), declares nothing.
+        let subj_read = !branches
+            .iter()
+            .all(|br| matches!(self.body.pats[br.pat], Pattern::Anything | Pattern::Unit));
+        if subj_read {
+            out.push(GoStmt::Short(subj_name, subj));
+        } else {
+            out.push(GoStmt::Discard(subj));
+        }
+        out.extend(body);
     }
 
     /// The nominal Go type implied by a case's branch patterns — the owning ADT
