@@ -879,10 +879,13 @@ fn ty_contains_unit(ty: &Ty) -> bool {
 /// component of size > 1 in the dependency graph `deps_of`). These are skipped
 /// by the F1c pass — inferring cyclic-module defs needs a fixpoint this narrow
 /// subset deliberately defers. Tarjan's SCC over the app-module subgraph.
-fn modules_in_cycle(
+/// The APP-module import cycles: every strongly-connected component of size > 1
+/// (plus self-loops) in the dependency graph `deps_of`, each returned as a group
+/// so a diagnostic can name its members. Iterative Tarjan (L7 stack safety).
+pub(crate) fn scc_cycle_groups(
     nodes: &[ModuleId],
     deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
-) -> std::collections::HashSet<ModuleId> {
+) -> Vec<Vec<ModuleId>> {
     #[derive(Default, Clone)]
     struct NodeState {
         index: Option<u32>,
@@ -892,7 +895,7 @@ fn modules_in_cycle(
     let mut state: HashMap<ModuleId, NodeState> = HashMap::new();
     let mut index_counter: u32 = 0;
     let mut stack: Vec<ModuleId> = Vec::new();
-    let mut cyclic: std::collections::HashSet<ModuleId> = std::collections::HashSet::new();
+    let mut groups: Vec<Vec<ModuleId>> = Vec::new();
 
     // Iterative Tarjan (avoids deep recursion on large corpora — L7 safety).
     // Frame carries the node and the index of the next successor to visit.
@@ -945,13 +948,53 @@ fn modules_in_cycle(
                     // size > 1 → cycle; also treat a self-loop as cyclic.
                     let self_loop = deps_of.get(&v).map(|ds| ds.contains(&v)).unwrap_or(false);
                     if comp.len() > 1 || self_loop {
-                        cyclic.extend(comp);
+                        groups.push(comp);
                     }
                 }
             }
         }
     }
-    cyclic
+    groups
+}
+
+/// Flat set of app modules that sit in an import cycle (the deferral logic reads
+/// this; the Elm-like rejection reads the groups). Wrapper over `scc_cycle_groups`.
+fn modules_in_cycle(
+    nodes: &[ModuleId],
+    deps_of: &HashMap<ModuleId, Vec<ModuleId>>,
+) -> std::collections::HashSet<ModuleId> {
+    scc_cycle_groups(nodes, deps_of).into_iter().flatten().collect()
+}
+
+/// Build the APP-module import graph and return its cycles as groups. Same graph
+/// + Tarjan the deferral logic in `infer_app_check_sigs` uses, exposed so the
+/// checker (`check_modules`) can REJECT cycles (Elm-like posture) rather than
+/// silently defer them to wildcard-flex inference.
+pub(crate) fn app_import_cycle_groups(db: &dyn SkyDb) -> Vec<Vec<ModuleId>> {
+    let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
+    let app_mods: Vec<ModuleId> = db
+        .module_ids()
+        .into_iter()
+        .filter(|m| !path_to_pseudo.contains_key(db.module_name(*m).to_string().as_str()))
+        .collect();
+    let app_set: std::collections::HashSet<ModuleId> = app_mods.iter().copied().collect();
+    let mut deps_of: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    for &m in &app_mods {
+        let mut ds: Vec<ModuleId> = Vec::new();
+        let tree = db.module_parse(m).tree();
+        for imp in tree.imports() {
+            let Some(path) = imp.name().map(|n| n.text()) else {
+                continue;
+            };
+            if let hir::ImportSource::Dep(dep) = db.classify_import(&path) {
+                if app_set.contains(&dep) && dep != m && !ds.contains(&dep) {
+                    ds.push(dep);
+                }
+            }
+        }
+        deps_of.insert(m, ds);
+    }
+    scc_cycle_groups(&app_mods, &deps_of)
 }
 
 /// Kahn topo-sort of the app modules (dependencies before dependents), EXCLUDING

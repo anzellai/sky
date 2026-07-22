@@ -154,6 +154,46 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
     let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 
+    // Elm-like import-cycle rejection. An app-module import cycle otherwise
+    // leaves the cycle's unannotated defs at wildcard flex (the sig pass defers
+    // cyclic SCCs), which defeats the `go build` backstop and lets cross-cycle
+    // misuse slip through `sky check`. Reject each cycle once, attributed to a
+    // member actually being checked. (The oracle types cycles; Sky deliberately
+    // diverges — verified 0 cycles in the corpus + stdlib, so this rejects only
+    // a future cycle a project might introduce.)
+    let to_check_set: std::collections::HashSet<ModuleId> = to_check.iter().copied().collect();
+    for group in crate::sig::app_import_cycle_groups(sky) {
+        let Some(&anchor) = group.iter().find(|m| to_check_set.contains(m)) else {
+            continue;
+        };
+        let mut names: Vec<String> = group.iter().map(|m| sky.module_name(*m).to_string()).collect();
+        names.sort();
+        let labels = sky
+            .resolve(anchor)
+            .def_spans
+            .first()
+            .map(|(_, s)| {
+                vec![diagnostics::Label {
+                    span: *s,
+                    message: "this module is part of an import cycle".into(),
+                }]
+            })
+            .unwrap_or_default();
+        out.name_errors += 1;
+        out.diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            code: Code("E1010".to_string()),
+            message: format!(
+                "Import cycle: the modules {} import each other, forming a cycle. \
+                 Sky rejects import cycles — break it by extracting the shared \
+                 definitions into a separate module that both import.",
+                names.join(" ↔ ")
+            ),
+            labels,
+            suggestion: None,
+        });
+    }
+
     for &mid in to_check {
         let mname = sky.module_name(mid).to_string();
         let resolved = sky.resolve(mid);
