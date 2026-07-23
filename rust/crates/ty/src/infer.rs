@@ -29,6 +29,21 @@ pub struct TypeError {
     /// range was recorded (synthesised / recovery nodes) — the renderer then
     /// falls back to the whole-def span.
     pub span: Option<Span>,
+    /// The diagnostic code the checker renders. Defaults to `"E2001"` (the
+    /// unify-clash class); the arity gate sets `"E2007"` so an over-application
+    /// gets a precise arity message instead of a generic "T vs function" clash.
+    pub code: &'static str,
+}
+
+/// The arrow count of `t`'s full spine — its arity as a curried function.
+/// `Int -> Int -> Int` is 2; a non-function is 0. Aliases are already expanded
+/// at this layer, so a function-returning callee's result contributes to the
+/// count (which is exactly what the arity gate needs).
+fn count_fun_arrows(t: &Ty) -> usize {
+    match t {
+        Ty::Fun(_, r) => 1 + count_fun_arrows(r),
+        _ => 0,
+    }
 }
 
 /// Replace leading `Unit` arguments on a scheme's top arrow-spine with fresh
@@ -352,6 +367,7 @@ impl<'a> Infer<'a> {
                     consumed
                 ),
                 span: body.expr_span(root),
+                code: "E2001",
             });
         }
         // (The bespoke record-literal-vs-closed strictness check that used to
@@ -470,6 +486,7 @@ impl<'a> Infer<'a> {
             self.errors.push(TypeError {
                 message: m.message,
                 span: self.cur_span,
+                code: "E2001",
             });
         }
     }
@@ -580,6 +597,38 @@ impl<'a> Infer<'a> {
             }
             Expr::Call(callee, args) => {
                 let mut tf = self.infer_expr(body, *callee);
+                // E2007 arity gate: a NAMED callee applied to MORE args than its
+                // resolved (alias-unfolded) arrow count is over-application. Emit
+                // a precise arity error + recover, instead of the generic "T vs
+                // function" unify clash and its downstream cascade. Over-application
+                // is always already a type error, so this only swaps the message on
+                // a rejected program — accept-parity is untouched. The unfolded
+                // arrow count means a function-RETURNING callee (`withCors o h
+                // extra`, whose result is itself applied) is never mis-flagged.
+                let callee_name = match &body.exprs[*callee] {
+                    Expr::Var(res) => self.callee_name(res),
+                    _ => None,
+                };
+                if let Some(name) = callee_name {
+                    let ty = self.read_back(tf);
+                    if !matches!(ty, Ty::Var(_) | Ty::Error) {
+                        let arity = count_fun_arrows(&ty);
+                        if args.len() > arity {
+                            for &arg in args {
+                                self.infer_expr(body, arg);
+                            }
+                            self.errors.push(TypeError {
+                                message: format!(
+                                    "`{name}` is declared as {arity}-arg, called with {} arg(s)",
+                                    args.len()
+                                ),
+                                span: body.expr_span(e),
+                                code: "E2007",
+                            });
+                            return self.uf.fresh_flex();
+                        }
+                    }
+                }
                 for &arg in args {
                     let ta = self.infer_expr(body, arg);
                     let res = self.uf.fresh_flex();
@@ -681,6 +730,17 @@ impl<'a> Infer<'a> {
                 fv
             }
             Expr::Error => self.uf.fresh_flex(),
+        }
+    }
+
+    /// A displayable name for a callee reference — `Module.func` for a kernel,
+    /// the def's own name for a user def. `None` for anything unnameable (locals,
+    /// foreign, errors), which suppresses the arity gate (no name to blame).
+    fn callee_name(&self, res: &Res) -> Option<String> {
+        match res {
+            Res::Kernel { module, func } => Some(format!("{}.{}", module.as_str(), func.as_str())),
+            Res::Def(d) => self.db.def_loc(*d).map(|l| l.name.as_str().to_string()),
+            _ => None,
         }
     }
 

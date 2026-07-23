@@ -268,7 +268,7 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
                 out.type_errors += 1;
                 out.diagnostics.push(Diagnostic {
                     severity: Severity::Error,
-                    code: Code("E2001".to_string()),
+                    code: Code(err.code.to_string()),
                     // The `-- TYPE MISMATCH --` header already names the category;
                     // don't repeat it in the message (was `Type mismatch — type
                     // mismatch: …`). Keep the `[def]` context tag.

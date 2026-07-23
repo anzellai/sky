@@ -282,7 +282,10 @@ fn assemble_and_emit_with(
         let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E2001")
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && (d.code.0 == "E2001" || d.code.0 == "E2007")
+            })
             .cloned()
             .collect();
         return Err(render_diags(&ds, &sources));
