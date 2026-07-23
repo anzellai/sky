@@ -397,10 +397,16 @@ impl<'a> Resolver<'a> {
         // ---- exposing binding (still happens even if the qualifier was
         // suppressed by explicit-alias-wins — C1) ----
         let clause = imp.exposing().map(|e| cst::read_exposing(e.syntax()));
+        // Anchor a "not exposed" error at the `exposing (...)` clause (falling
+        // back to the module name), so [E1011] renders a line + caret + excerpt.
+        let exposing_span = imp
+            .exposing()
+            .map(|e| self.span_of(e.syntax().text_range()))
+            .or_else(|| imp.name().map(|n| self.span_of(n.syntax().text_range())));
         match (&source, clause) {
             (ImportSource::Dep(dep), Some(c)) => {
                 let exports = self.db.module_exports(*dep);
-                self.bind_exposing_dep(&c, &exports);
+                self.bind_exposing_dep(&c, &exports, &path, exposing_span);
             }
             (ImportSource::Kernel(pseudo), Some(c)) => {
                 if c.all {
@@ -476,7 +482,13 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn bind_exposing_dep(&mut self, c: &cst::ExposingClause, exports: &ModuleExports) {
+    fn bind_exposing_dep(
+        &mut self,
+        c: &cst::ExposingClause,
+        exports: &ModuleExports,
+        module_name: &str,
+        span: Option<Span>,
+    ) {
         if c.all {
             for (name, def) in &exports.values {
                 self.vars.insert(name.as_str().to_string(), Res::Def(*def));
@@ -508,10 +520,27 @@ impl<'a> Resolver<'a> {
         for it in &c.items {
             match it {
                 cst::ExposedItem::Value(v) => {
-                    let res = exports
-                        .value(v)
-                        .map(Res::Def)
-                        .unwrap_or_else(|| Res::Def(self.def(exports.module, v, DefKind::Value)));
+                    // Elm semantics: a value the source module does not expose
+                    // cannot be imported. `module_exports` already publishes
+                    // every explicitly-exposed name (including re-exports), so a
+                    // miss here means `v` is private (or undeclared) in
+                    // `module_name`. Report [E1011]; still bind a recovery def so
+                    // the rest of resolution doesn't cascade into a flood of
+                    // "undefined name" errors for `v`'s use sites.
+                    let res = match exports.value(v) {
+                        Some(def) => Res::Def(def),
+                        None => {
+                            let mut diag = Diagnostic::error(
+                                "E1011",
+                                format!("module `{module_name}` does not expose `{v}`"),
+                            );
+                            if let Some(sp) = span {
+                                diag = diag.with_label(sp, "not exposed by the module");
+                            }
+                            self.result.diagnostics.push(diag);
+                            Res::Def(self.def(exports.module, v, DefKind::Value))
+                        }
+                    };
                     self.vars.insert(v.clone(), res);
                 }
                 cst::ExposedItem::Type { name, ctors } => {
@@ -625,10 +654,7 @@ impl<'a> Resolver<'a> {
                                             "`{nm}` is defined more than once at the top level"
                                         ),
                                     )
-                                    .with_label(
-                                        self.span_of(n.text_range()),
-                                        "redefined here",
-                                    ),
+                                    .with_label(self.span_of(n.text_range()), "redefined here"),
                                 );
                             }
                             let d = self.def(self.module, n.text(), DefKind::Value);

@@ -827,3 +827,52 @@ fn driver_stdlib_module_typo_is_not_an_ffi_install_hint() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// Elm semantics: a consumer cannot import a name the source module does not
+/// expose. `Helper` exposes only `publicFn`; importing `privateFn` must be a
+/// hard [E1011] error (was silently accepted — the export list wasn't enforced).
+#[test]
+fn driver_rejects_import_of_non_exported_name() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "notexposed",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Log exposing (println)\n\
+         import Helper exposing (publicFn, privateFn)\n\n\
+         main =\n    let _ = println (String.fromInt (publicFn 10))\n    in Task.succeed ()\n",
+    );
+    // A sibling module that keeps `privateFn` module-private.
+    std::fs::write(
+        project.join("src").join("Helper.sky"),
+        "module Helper exposing (publicFn)\n\n\
+         publicFn : Int -> Int\n\
+         publicFn x =\n    x + 1\n\n\
+         privateFn : Int -> Int\n\
+         privateFn x =\n    x * 2\n",
+    )
+    .unwrap();
+
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.note.contains("[E1011]") && report.note.contains("does not expose"),
+        "expected an [E1011] not-exposed diagnostic, got: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("privateFn") && report.note.contains("Helper"),
+        "diagnostic should name the module and the private name; got: {}",
+        report.note
+    );
+    // publicFn (legitimately exposed) must NOT be flagged.
+    assert!(
+        !report.note.contains("does not expose `publicFn`"),
+        "publicFn is exported and must not be flagged; got: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}

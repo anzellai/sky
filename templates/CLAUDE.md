@@ -449,6 +449,7 @@ before writing non-trivial code.
 | `TYPE ERROR: Type mismatch: ( { ... }, Cmd Msg ) vs ( Model, Cmd Msg )` | `init` returns an anonymous record but annotation expects named alias | Make sure field set matches `Model` exactly; if it does and still fails, annotate `init : a -> ( Model, Cmd Msg )` to force the expectation |
 | `interface conversion: interface {} is int, not struct {}` at runtime | Annotation says `Result Error ()` but body returns `Result Error Int` | Change annotation to match actual return type, or use `Result.map (\_ -> ())` to discard |
 | `undefined: Error` in generated Go | Missing `import Sky.Core.Error as Error exposing (Error)` | Add the import — Prelude does not re-export it |
+| `[E1011] NOT EXPOSED: module `M` does not expose `name`` | You imported a name that `M`'s own `module M exposing (...)` list doesn't include (it's module-private, or a typo) | Import only exposed names; if the name should be public, add it to `M`'s `exposing (...)` list |
 | Input/button renders as always-disabled | (fixed in v0.9-dev) boolean attrs now honour their value — regenerate sky-out after `sky upgrade` | — |
 | `case xs of [] -> _` panics with `[]main.T, not []interface {}` | (fixed in v0.9-dev) typed list patterns | — |
 | Add-a-row updates DB but page doesn't refresh | (fixed in v0.9-dev) `rt.RecordUpdate` now narrows `[]any → []T` | — |

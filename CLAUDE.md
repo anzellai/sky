@@ -52,6 +52,25 @@ Rationale + gate: see `Sky.Canonicalise.Module`'s
 `effectiveQualifier` + `detectImportAliasCollisions`.  Regression
 spec: `Sky.Canonicalise.DualImportCollisionSpec`.
 
+## Export enforcement — `exposing` is a real boundary (v0.18)
+
+Elm semantics: `import M exposing (name)` where `M` does **not**
+expose `name` is a hard error — `[E1011] NOT EXPOSED: module `M`
+does not expose `name``. A module-private binding (declared but
+left out of `M`'s own `exposing (...)` list) can no longer be
+reached by a consumer. This makes the export list an enforced
+contract, not documentation.
+
+* Scope is **values** (functions / bindings). Kernel-implicit
+  types (`Decoder`, `Value`, `Cmd`, `Sub`, `Error`, … — #576) stay
+  accepted in `exposing` lists.
+* Applies to project modules AND stdlib modules — Rust compiles the
+  stdlib from source, so `import Sky.Core.List exposing (typo)`
+  also errors (the oracle exempted kernel modules; the Rust primary
+  doesn't need that shortcut).
+* Rust site: `hir` `resolve.rs` `bind_exposing_dep`. The oracle
+  encodes the same intent in `checkImportExposingAgainstDep`.
+
 ## `main` entry points (v0.17.5+)
 
 The runtime auto-forces a Task-typed `main` — the generated Go

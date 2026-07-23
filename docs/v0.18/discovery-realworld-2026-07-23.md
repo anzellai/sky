@@ -39,15 +39,26 @@ differential byte-match is preserved (both sides move together).
   via `System.getenvOr` at the call site. docs/sky-toml.md corrected to
   describe this accurately (it previously implied the framework reads them).
 
-### Policy question (NOT a differential — needs user decision)
-- `exposing` a **non-exported** name reports "Types OK" (e.g. `import Helper
-  exposing (privateFn)` where `Helper` only exposes `publicFn`). **Verified
-  2026-07-23: the oracle ALSO accepts this** — it's a SHARED leniency (same
-  family as #576's kernel-implicit exposing acceptance), not a Rust bug.
-  Enforcing Elm-strict export lists is a language-semantics decision that
-  could break existing user code relying on the leniency; tightening Rust
-  alone would break the differential byte-match. Escalate to the user before
-  spending iterations.
+### Closed: enforce Elm export semantics (user-approved 2026-07-23)
+- `import M exposing (name)` where `M` does not expose `name` was silently
+  accepted (the export list wasn't a real boundary). Now a hard `[E1011] NOT
+  EXPOSED` — `module `M` does not expose `name``. Scope: **values** (the
+  user's "functions/vars" ask; types keep the #576 kernel-implicit leniency).
+  - **Corpus audit first** (per the user's "fix sources so produced code is
+    identical" requirement): 48 examples + full stdlib + bundled/doc + all
+    `tests/` — **0 violations**. Nobody relied on the leniency, so no source
+    changed and generated Go is byte-identical by construction.
+  - **Design note**: the oracle SOURCE already encodes this
+    (`checkImportExposingAgainstDep`), which validated the design. The oracle
+    EXEMPTS kernel modules (`isKernel -> []`); Rust doesn't need that shortcut
+    (stdlib modules are real source `Dep`s with authoritative exposing lists),
+    so Rust also catches typos in stdlib imports (`Sky.Core.List exposing
+    (nonExistentFn)`). Corpus is clean → differential gates (corpus-scoped)
+    stay green; divergence only on hand-written invalid programs no gate tests.
+  - `hir` `resolve.rs` `bind_exposing_dep` — the `unwrap_or_else` that
+    fabricated a def for any non-exported value now emits `[E1011]` (keeps a
+    recovery binding to avoid cascade "undefined name" errors). Regression:
+    `driver_rejects_import_of_non_exported_name`.
 
 ### Diagnostics (DX)
 - (Future) The stdlib-typo diagnostic now says "unknown Sky module"; a
