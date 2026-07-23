@@ -39,3 +39,37 @@ env var when unset, so a real env override always wins.
 
 templates/CLAUDE.md + CLAUDE.md used `[auth] cookie`/`ttl`; corrected to the
 canonical `cookieName`/`tokenTtl`/`driver` (docs/sky-toml.md + the build reader).
+
+## Follow-up (2026-07-23, session cont.)
+
+Closed since the first pass:
+
+4. **`[log]` runtime re-sync.** The `[log] format`/`level` defaults were
+   emitted via `SetSkyDefault` but the runtime still logged plain — rt's
+   `logJSON`/`logThreshold` package vars are evaluated at `rt` package-init,
+   BEFORE the app's generated `init()` runs. Fix: `SetSkyDefault` now re-fires
+   the `envPrefixHooks` (same mechanism `SetEnvPrefix` uses), so the cached log
+   state re-reads env. Regression `TestSetSkyDefaultResyncsLogConfig`.
+5. **`[database] url` alias.** CLAUDE.md's app-matrix uses `url = "…"` but the
+   reader only recognised `path`. Both now seed `DB_PATH` (detectDriver routes
+   a `postgres://` DSN to pgx). Regression `database_url_is_an_alias_for_path`;
+   docs/sky-toml.md updated.
+
+### Still open (documented-but-ignored — tracked, not yet closed)
+
+- **`bin` (output binary name).** docs/sky-toml.md documents `bin = "app"` →
+  `sky-out/<bin>`, but the output name is hardcoded `app` across ~7 build/run
+  sites (build.rs:505/608, driver.rs:149, main.rs:436/1467/2225/2634). Closing
+  it means threading a `bin_name` through `BuildOptions` + the `go build -o`
+  arg + every `Command::new("./app")` run path + the completion message.
+  Low real-world impact (everyone ships `sky-out/app`); needs a careful
+  single-pass thread so no run site is missed.
+- **`[source] root`.** docs documents `root = "src"` for module resolution, but
+  discovery hardcodes `example_dir.join("src")` (build.rs:146, :1026). Reading
+  the root requires parsing sky.toml BEFORE discovery (config is currently read
+  after). Rare in practice.
+- **`[auth]` runtime consumer.** `cookieName`/`tokenTtl`/`driver` now seed
+  `AUTH_*` env defaults, but the runtime auth layer does not yet READ
+  `AUTH_COOKIE`/`AUTH_TOKEN_TTL`/`AUTH_DRIVER` at every relevant site — the
+  seed is a no-op until each `Std.Auth` read routes through `skyGetenv`. Deeper
+  runtime work; the env-seed half is done.
