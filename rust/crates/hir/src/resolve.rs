@@ -1436,7 +1436,13 @@ impl<'a> Resolver<'a> {
             ast::Pattern::Var(v) => {
                 let n = cst::first_lower(v.syntax()).unwrap_or_default();
                 let id = self.bind_local(&n);
-                self.record_binder(v.syntax().text_range(), id);
+                // Record the LowerIdent TOKEN range, not the node range (which
+                // includes leading whitespace) — else rename/goto edit the space
+                // and corrupt source (`pick maybeVal` → `pickmv`).
+                let span = cst::first_lower_tok(v.syntax())
+                    .map(|t| t.text_range())
+                    .unwrap_or_else(|| v.syntax().text_range());
+                self.record_binder(span, id);
                 self.body.pat(Pattern::Var(id))
             }
             ast::Pattern::Unit(_) => self.body.pat(Pattern::Unit),

@@ -56,6 +56,14 @@ pub fn first_lower(n: &SyntaxNode) -> Option<String> {
     first_token(n, SyntaxKind::LowerIdent)
 }
 
+/// The first LowerIdent TOKEN directly under `n`. Its range (NOT the enclosing
+/// node's, which includes leading whitespace trivia) is the binder span LSP
+/// rename/goto/references edit — using the node range corrupts source on rename
+/// (`pick maybeVal` → `pickmv`).
+pub fn first_lower_tok(n: &SyntaxNode) -> Option<SyntaxToken> {
+    sig_tokens(n).find(|t| t.kind() == SyntaxKind::LowerIdent)
+}
+
 /// True when the first boolean keyword token under `n` is `True` (a `PatBool`).
 pub fn first_token_is_true(n: &SyntaxNode) -> bool {
     sig_tokens(n)
