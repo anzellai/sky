@@ -212,7 +212,6 @@ func stringField(cfg any, name string) string {
 	return fmt.Sprintf("%v", v)
 }
 
-
 // parseTTL — resolve a TTL value from env > sky.toml > default in
 // precedence order. Each layer accepts EITHER a Go-duration string
 // ("30m", "24h", "1h30m") OR a bare integer interpreted as seconds.
@@ -245,7 +244,6 @@ func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
 	return def
 }
 
-
 // SessionStore: common interface for the three backends. The runtime
 // reads/writes via `Get`, `Set`, `Delete`, and generates IDs via
 // `NewID`. Callers are responsible for per-session locking (the runtime
@@ -269,7 +267,6 @@ type SessionStore interface {
 	// backends override.
 	Broker() Broker
 }
-
 
 // ═════════════════════════════════════════════════════════════════════
 // Memory store — default; in-process, lost on restart.
@@ -375,16 +372,15 @@ func (s *memoryStore) cleanupLoop() {
 	}
 }
 
-
 // ═════════════════════════════════════════════════════════════════════
 // SQLite store — persistent sessions on disk, zero-op setup.
 // Uses modernc.org/sqlite (pure Go, no CGO).
 // ═════════════════════════════════════════════════════════════════════
 
 type sqliteStore struct {
-	db    *sql.DB
-	ttl   time.Duration
-	stop  chan struct{}
+	db   *sql.DB
+	ttl  time.Duration
+	stop chan struct{}
 	// memCache is a pointer cache so sessions that fail to gob-encode
 	// (anonymous struct types the Sky compiler emits for records) still
 	// behave correctly within a single process. Restart forgets them,
@@ -402,9 +398,35 @@ func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		db.Close()
-		return nil, err
+	// SQLite concurrency defaults — the same three-part config Db.connect
+	// applies (v0.17.10). WITHOUT these the session store was fragile under
+	// the Sky.Live load pattern: every request reads + writes the session, so
+	// the default unbounded pool opened many modernc connections against one
+	// WAL file. Under navigation load those contend on the WAL writer lock and
+	// stall (the "page transition hangs" symptom); at open time a lock held by
+	// a still-exiting previous process surfaced as the bare `unable to open
+	// database file (14)` and dropped the WHOLE store to memory, silently
+	// losing session persistence.
+	//
+	//   MaxOpenConns=1 — SQLite has a single global writer; serialising on one
+	//   connection removes the multi-conn WAL contention entirely.
+	//   busy_timeout=5000 — wait out a transient lock (fast restart, a
+	//   concurrent write) instead of erroring immediately.
+	//   synchronous=NORMAL — safe under WAL, cheaper commits.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	for _, pragma := range []string{
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+	} {
+		if _, pErr := db.Exec(pragma); pErr != nil {
+			// A PRAGMA failure must NOT nuke the whole store — a path that
+			// rejects WAL (NFS/SMB, :memory:) still works in rollback-journal
+			// mode. Warn and carry on; only a genuine open/CREATE failure below
+			// falls back to memory.
+			Log_warn("live session store: " + pragma + " failed: " + pErr.Error())
+		}
 	}
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sky_sessions (
@@ -532,7 +554,6 @@ func (s *sqliteStore) cleanupLoop() {
 		}
 	}
 }
-
 
 // ═════════════════════════════════════════════════════════════════════
 // Postgres store — same schema, same blob-gob protocol, prod-ready.
@@ -667,7 +688,6 @@ func (s *postgresStore) cleanupLoop() {
 	}
 }
 
-
 // ═════════════════════════════════════════════════════════════════════
 // Redis store — multi-instance deployments (Cloud Run, ECS, k8s). Uses
 // native Redis TTL for expiry, so there's no cleanup goroutine. Sessions
@@ -800,7 +820,6 @@ func (s *redisStore) Close() error {
 	return s.client.Close()
 }
 
-
 // ═════════════════════════════════════════════════════════════════════
 // Helpers
 // ═════════════════════════════════════════════════════════════════════
@@ -828,7 +847,7 @@ func (s *redisStore) Close() error {
 // and the client's __skyLastGlobalSeq guard is benign (a fresh
 // broadcast cycle is its own monotonic series).
 type storableSession struct {
-	Model    any
+	Model any
 	// PrevTree excluded: VNode.Events holds function values which
 	// gob can't encode. The tree is rebuilt from view(model) on
 	// restore — handleEvent already handles empty prevTree.
@@ -877,10 +896,11 @@ func encodeSession(s *liveSession) ([]byte, error) {
 // validateSessionValue walks v recursively and rejects kinds that
 // gob can't meaningfully persist for Sky programs:
 //   - reflect.Func    — closures don't round-trip; the new instance
-//                       would decode as nil and crash on first call.
+//     would decode as nil and crash on first call.
 //   - reflect.Chan    — runtime-only.
 //   - reflect.UnsafePointer — never safe to persist.
 //   - unexported struct fields containing any of the above.
+//
 // Accepted: numeric primitives, bool, string, slice/array/map/struct
 // whose elements are themselves session-safe, pointer to the same,
 // and typed nil interface values.
@@ -970,7 +990,6 @@ func decodeSession(blob []byte) (*liveSession, error) {
 	return sess, nil
 }
 
-
 // chooseStore: honour a sky.toml Live-store override or the
 // <PREFIX>_LIVE_STORE / <PREFIX>_LIVE_STORE_PATH env variables.
 // Falls back to memory. TTL defaults to 30 minutes. Standard
@@ -1033,7 +1052,6 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		return newMemoryStore(ttl)
 	}
 }
-
 
 // generateSkySessionID: 256-bit URL-safe random.
 func generateSkySessionID() string {
