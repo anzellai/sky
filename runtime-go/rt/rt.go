@@ -24,20 +24,20 @@ package rt
 import (
 	"bufio"
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/md5"
 	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/x509"
-	"encoding/pem"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -5031,6 +5031,7 @@ func Math_abs(n any) any {
 	}
 	return x
 }
+
 // Math.min / Math.max are polymorphic (`a -> a -> a`, "any comparable type" —
 // Sky.Core.Math). Compare via skyLessThan, NOT AsInt: AsInt truncates Floats to
 // Int (so `Math.min` over `[0.4 … 1.3]` collapsed the range to 0..1, mis-scaling
@@ -7266,38 +7267,38 @@ func Math_logT(n float64) float64         { return math.Log(n) }
 
 // #366 — full Go math.* parity.
 // Inverse trig
-func Math_asin(n any) any              { return math.Asin(AsFloat(n)) }
-func Math_acos(n any) any              { return math.Acos(AsFloat(n)) }
-func Math_atan(n any) any              { return math.Atan(AsFloat(n)) }
-func Math_atan2(y, x any) any          { return math.Atan2(AsFloat(y), AsFloat(x)) }
+func Math_asin(n any) any     { return math.Asin(AsFloat(n)) }
+func Math_acos(n any) any     { return math.Acos(AsFloat(n)) }
+func Math_atan(n any) any     { return math.Atan(AsFloat(n)) }
+func Math_atan2(y, x any) any { return math.Atan2(AsFloat(y), AsFloat(x)) }
 
 // Hyperbolic + inverse hyperbolic
-func Math_sinh(n any) any              { return math.Sinh(AsFloat(n)) }
-func Math_cosh(n any) any              { return math.Cosh(AsFloat(n)) }
-func Math_tanh(n any) any              { return math.Tanh(AsFloat(n)) }
-func Math_asinh(n any) any             { return math.Asinh(AsFloat(n)) }
-func Math_acosh(n any) any             { return math.Acosh(AsFloat(n)) }
-func Math_atanh(n any) any             { return math.Atanh(AsFloat(n)) }
+func Math_sinh(n any) any  { return math.Sinh(AsFloat(n)) }
+func Math_cosh(n any) any  { return math.Cosh(AsFloat(n)) }
+func Math_tanh(n any) any  { return math.Tanh(AsFloat(n)) }
+func Math_asinh(n any) any { return math.Asinh(AsFloat(n)) }
+func Math_acosh(n any) any { return math.Acosh(AsFloat(n)) }
+func Math_atanh(n any) any { return math.Atanh(AsFloat(n)) }
 
 // Exp / log family
-func Math_exp(n any) any               { return math.Exp(AsFloat(n)) }
-func Math_exp2(n any) any              { return math.Exp2(AsFloat(n)) }
-func Math_log2(n any) any              { return math.Log2(AsFloat(n)) }
-func Math_log10(n any) any             { return math.Log10(AsFloat(n)) }
+func Math_exp(n any) any   { return math.Exp(AsFloat(n)) }
+func Math_exp2(n any) any  { return math.Exp2(AsFloat(n)) }
+func Math_log2(n any) any  { return math.Log2(AsFloat(n)) }
+func Math_log10(n any) any { return math.Log10(AsFloat(n)) }
 
 // Roots + utilities
-func Math_cbrt(n any) any              { return math.Cbrt(AsFloat(n)) }
-func Math_hypot(x, y any) any          { return math.Hypot(AsFloat(x), AsFloat(y)) }
-func Math_trunc(n any) any             { return int(math.Trunc(AsFloat(n))) }
-func Math_mod(x, y any) any            { return math.Mod(AsFloat(x), AsFloat(y)) }
-func Math_remainder(x, y any) any      { return math.Remainder(AsFloat(x), AsFloat(y)) }
+func Math_cbrt(n any) any         { return math.Cbrt(AsFloat(n)) }
+func Math_hypot(x, y any) any     { return math.Hypot(AsFloat(x), AsFloat(y)) }
+func Math_trunc(n any) any        { return int(math.Trunc(AsFloat(n))) }
+func Math_mod(x, y any) any       { return math.Mod(AsFloat(x), AsFloat(y)) }
+func Math_remainder(x, y any) any { return math.Remainder(AsFloat(x), AsFloat(y)) }
 
 // Additional constants
-func Math_phi() any                    { return math.Phi }
-func Math_sqrt2() any                  { return math.Sqrt2 }
-func Math_inf() any                    { return math.Inf(1) }
-func Math_nan() any                    { return math.NaN() }
-func Math_isNaN(x any) any             { return math.IsNaN(AsFloat(x)) }
+func Math_phi() any        { return math.Phi }
+func Math_sqrt2() any      { return math.Sqrt2 }
+func Math_inf() any        { return math.Inf(1) }
+func Math_nan() any        { return math.NaN() }
+func Math_isNaN(x any) any { return math.IsNaN(AsFloat(x)) }
 
 // Typed companions for the new entries
 func Math_asinT(n float64) float64         { return math.Asin(n) }
@@ -8123,6 +8124,36 @@ func httpEnvTimeout(key string, def time.Duration) time.Duration {
 	return def
 }
 
+// colonToMuxPattern translates Sky's documented `:name` path-parameter
+// syntax into Go 1.22+ ServeMux's `{name}` wildcard syntax, returning the
+// rewritten pattern plus the ordered list of captured parameter names.
+//
+// Sky.Http.Server documents `Server.get "/users/:id" h` + `Server.param
+// "id" req`. Go's stdlib mux treats `:id` as a LITERAL segment, so the raw
+// pattern only ever matched the literal URL `/users/:id` — `/users/42`
+// 404'd and `req.Params` was always empty. Rewriting each `:seg` to
+// `{seg}` lets the mux capture the segment; the caller then reads it back
+// via `req.PathValue(name)`. Only single-segment captures are produced
+// (matching Sky's per-segment `:name` semantics); a trailing-`*` catch-all
+// is out of scope. Segments that are exactly `:` (no name) are left
+// untouched so a malformed pattern surfaces as a plain literal rather than
+// a mux-panicking `{}`.
+func colonToMuxPattern(path string) (string, []string) {
+	if !strings.Contains(path, "/:") {
+		return path, nil
+	}
+	segs := strings.Split(path, "/")
+	var names []string
+	for i, seg := range segs {
+		if len(seg) > 1 && seg[0] == ':' {
+			name := seg[1:]
+			names = append(names, name)
+			segs[i] = "{" + name + "}"
+		}
+	}
+	return strings.Join(segs, "/"), names
+}
+
 func Server_listen(port any, routes any) any {
 	p := AsInt(port)
 	routeList := AsList(routes)
@@ -8181,9 +8212,13 @@ func Server_listen(port any, routes any) any {
 		// keeps Go's "wildcard-method on more-specific path" conflict
 		// rule from tripping on the console mount (#466 follow-up,
 		// caught 2026-06-04 by VerifyScenarioSpec via 15-http-server).
-		muxPattern := pattern
+		// Translate `:name` → `{name}` so Go's mux captures the segment
+		// (raw `:name` matched only the literal path). paramNames drives
+		// req.PathValue read-back inside the handler below.
+		translated, paramNames := colonToMuxPattern(pattern)
+		muxPattern := translated
 		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
-			muxPattern = route.Method + " " + pattern
+			muxPattern = route.Method + " " + translated
 		}
 		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
 			// Panic recovery — one bad handler mustn't kill the process.
@@ -8259,6 +8294,11 @@ func Server_listen(port any, routes any) any {
 				if len(v) > 0 {
 					skyReq.Query[k] = v[0]
 				}
+			}
+			// URL path captures — Server.param reads these. paramNames was
+			// derived from the `:name` segments this route registered.
+			for _, pn := range paramNames {
+				skyReq.Params[pn] = req.PathValue(pn)
 			}
 
 			// Call the Sky handler and invoke the returned Task
