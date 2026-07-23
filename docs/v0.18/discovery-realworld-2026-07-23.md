@@ -34,13 +34,6 @@ differential byte-match is preserved (both sides move together).
 - **`[auth]` runtime consumer** — `AUTH_*` env seeds land, but the runtime auth
   layer doesn't yet READ them at each site. Deeper runtime work.
 
-### Determinism
-- **`Set.toList`/`union`/`intersect`/`diff` non-deterministic ordering** —
-  backed by a Go map; iteration order varies run-to-run. Elm's `Set` is ordered
-  (sorted). Fix: sort on `toList` (and the set-algebra outputs) via the shared
-  `cmp`. Medium; touches `Set_*` in the runtime — verify no golden depends on
-  the current arbitrary order first.
-
 ### Policy question (NOT a differential — needs user decision)
 - `exposing` a **non-exported** name reports "Types OK" (e.g. `import Helper
   exposing (privateFn)` where `Helper` only exposes `publicFn`). **Verified
