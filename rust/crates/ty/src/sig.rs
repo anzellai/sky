@@ -468,10 +468,16 @@ impl World {
     fn seed_check_sigs(&mut self, db: &dyn SkyDb) {
         let a = || Ty::var("a");
         let b = || Ty::var("b");
+        let c = || Ty::var("c");
+        let d = || Ty::var("d");
+        let e = || Ty::var("e");
+        let g = || Ty::var("g");
+        let x = || Ty::var("x"); // Result error type param
         let bool_ = || Ty::app("Bool", vec![]);
         let int_ = || Ty::app("Int", vec![]);
         let list = |t: Ty| Ty::app("List", vec![t]);
         let maybe = |t: Ty| Ty::app("Maybe", vec![t]);
+        let result = |xe: Ty, t: Ty| Ty::app("Result", vec![xe, t]);
         let tup2 = |x: Ty, y: Ty| Ty::Tuple(vec![x, y]);
         let fun = |from: Ty, to: Ty| Ty::Fun(Box::new(from), Box::new(to));
 
@@ -542,6 +548,11 @@ impl World {
         ];
 
         // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).
+        // map2..5 / andMap / combine are seeded so a cross-module ill-typed
+        // payload (`Maybe.map2 f (Just 1) (Just "s")`) is rejected instead of
+        // absorbed by a wildcard flex — the oracle rejects it, and these are
+        // unannotated in the stdlib so no annotation supplies the sig. Arg order
+        // matches the `sky-stdlib/Sky/Core/Maybe.sky` bodies (`andMap ma mfn`).
         let maybe_specs: Vec<(&str, Ty)> = vec![
             ("withDefault", fun(a(), fun(maybe(a()), a()))),
             ("map", fun(fun(a(), b()), fun(maybe(a()), maybe(b())))),
@@ -549,12 +560,130 @@ impl World {
                 "andThen",
                 fun(fun(a(), maybe(b())), fun(maybe(a()), maybe(b()))),
             ),
+            (
+                "map2",
+                fun(
+                    fun(a(), fun(b(), c())),
+                    fun(maybe(a()), fun(maybe(b()), maybe(c()))),
+                ),
+            ),
+            (
+                "map3",
+                fun(
+                    fun(a(), fun(b(), fun(c(), d()))),
+                    fun(maybe(a()), fun(maybe(b()), fun(maybe(c()), maybe(d())))),
+                ),
+            ),
+            (
+                "map4",
+                fun(
+                    fun(a(), fun(b(), fun(c(), fun(d(), e())))),
+                    fun(
+                        maybe(a()),
+                        fun(maybe(b()), fun(maybe(c()), fun(maybe(d()), maybe(e())))),
+                    ),
+                ),
+            ),
+            (
+                "map5",
+                fun(
+                    fun(a(), fun(b(), fun(c(), fun(d(), fun(e(), g()))))),
+                    fun(
+                        maybe(a()),
+                        fun(
+                            maybe(b()),
+                            fun(maybe(c()), fun(maybe(d()), fun(maybe(e()), maybe(g())))),
+                        ),
+                    ),
+                ),
+            ),
+            // andMap ma mfn : Maybe a -> Maybe (a -> b) -> Maybe b
+            (
+                "andMap",
+                fun(maybe(a()), fun(maybe(fun(a(), b())), maybe(b()))),
+            ),
+            // combine : List (Maybe a) -> Maybe (List a)
+            ("combine", fun(list(maybe(a())), maybe(list(a())))),
+        ];
+
+        // Result combinators — same shape as Maybe but carry the error type `x`
+        // through every arg + the result. Unannotated in the stdlib, so seed the
+        // check-sigs here for cross-module payload checking (`Result.map2 f (Ok 1)
+        // (Ok "s")` must reject). Arg order matches `Sky.Core.Result.sky`
+        // (`andMap ra rfn`, `map2 fn ra rb`).
+        // NOTE: only the map2..5 / andMap / combine holes are seeded. withDefault
+        // / map / andThen / mapError are deliberately LEFT to the existing lenient
+        // path — the oracle accepts `Result.withDefault "" (Task.run (loadEnv …))`
+        // where the payload is `()` (17-skymon), so pinning `withDefault`'s payload
+        // to the default's type would make Rust stricter than the oracle (a
+        // divergence, not a fix).
+        let result_specs: Vec<(&str, Ty)> = vec![
+            (
+                "map2",
+                fun(
+                    fun(a(), fun(b(), c())),
+                    fun(result(x(), a()), fun(result(x(), b()), result(x(), c()))),
+                ),
+            ),
+            (
+                "map3",
+                fun(
+                    fun(a(), fun(b(), fun(c(), d()))),
+                    fun(
+                        result(x(), a()),
+                        fun(result(x(), b()), fun(result(x(), c()), result(x(), d()))),
+                    ),
+                ),
+            ),
+            (
+                "map4",
+                fun(
+                    fun(a(), fun(b(), fun(c(), fun(d(), e())))),
+                    fun(
+                        result(x(), a()),
+                        fun(
+                            result(x(), b()),
+                            fun(result(x(), c()), fun(result(x(), d()), result(x(), e()))),
+                        ),
+                    ),
+                ),
+            ),
+            (
+                "map5",
+                fun(
+                    fun(a(), fun(b(), fun(c(), fun(d(), fun(e(), g()))))),
+                    fun(
+                        result(x(), a()),
+                        fun(
+                            result(x(), b()),
+                            fun(
+                                result(x(), c()),
+                                fun(result(x(), d()), fun(result(x(), e()), result(x(), g()))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            // andMap ra rfn : Result x a -> Result x (a -> b) -> Result x b
+            (
+                "andMap",
+                fun(
+                    result(x(), a()),
+                    fun(result(x(), fun(a(), b())), result(x(), b())),
+                ),
+            ),
+            // combine : List (Result x a) -> Result x (List a)
+            (
+                "combine",
+                fun(list(result(x(), a())), result(x(), list(a()))),
+            ),
         ];
 
         for (pseudo, path, specs) in [
             ("List", "Sky.Core.List", list_specs),
             ("Basics", "Sky.Core.Basics", basics_specs),
             ("Maybe", "Sky.Core.Maybe", maybe_specs),
+            ("Result", "Sky.Core.Result", result_specs),
         ] {
             let module = db.module_by_name(path);
             for (name, ty) in specs {

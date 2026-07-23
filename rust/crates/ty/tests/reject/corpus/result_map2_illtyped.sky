@@ -1,0 +1,22 @@
+-- defect: Result.map2 with a combining function whose 2nd parameter type
+--         clashes with the 2nd Result's payload. `map2 : (a -> b -> c) ->
+--         Result x a -> Result x b -> Result x c`; `addI : Int -> Int -> Int`
+--         pins b = Int, but `Ok "s"` is `Result x String`, so b unifies Int
+--         vs String and must be rejected. The unannotated stdlib combinator
+--         gets its cross-module check-sig from sig.rs result_specs. The oracle
+--         rejects this too.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Std.Log exposing (println)
+
+
+addI : Int -> Int -> Int
+addI a b =
+    a + b
+
+
+main =
+    println (Result.withDefault 0 (Result.map2 addI (Ok 1) (Ok "s")))
