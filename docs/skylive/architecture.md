@@ -126,6 +126,45 @@ client receives a full-body frame for those cases. The producer
 NEVER ships `event: patches` to a session that hasn't yet seen
 a prev tree.
 
+## SSE connection lifecycle + scaling
+
+Each loaded page opens exactly ONE `EventSource` to `/_sky/sse` and holds it
+open for pushed frames. A streaming SSE connection consumes one of the
+browser's ~6-connections-per-host HTTP/1.1 budget, so the connection lifecycle
+is managed on both ends:
+
+**Client — one connection, released on navigation.**
+- `__skyOpenSSE` is idempotent: it closes any existing `__skySSE` before
+  opening a new one, so a reconnect race can never orphan a live stream.
+- A `pagehide` handler closes the `EventSource` the instant the page navigates
+  away, freeing the slot before the next page opens its own. `pageshow`
+  (bfcache restore) reopens it. Without this, an app that navigates via
+  **full-page loads** (plain `<a href>` links — a fresh SSE per page) overlaps
+  the closing stream with the next page's new one; rapid clicking piles them up
+  until the 6-connection limit is hit and the tab freezes (spinner stuck, all
+  clicks no-op).
+
+**Server — one live SSE per session.** A new `/_sky/sse` connection for a
+session supersedes the previous one: `handleSSE` closes the prior handler's
+`sess.sseCancel` channel, its for-select returns, and its goroutine +
+connection are released immediately. This bounds server-side SSE to
+one-per-active-session regardless of client behaviour (multi-tab, rapid
+reconnect, a misbehaving client). At N concurrent users the server holds ~N SSE
+connections + goroutines — Go handles this well; raise the file-descriptor
+limit (`ulimit -n`) for large N.
+
+**For multi-page apps, prefer `sky-nav` over full-page links.** A `sky-nav`
+link keeps ONE persistent SSE for the whole session and swaps the body via a
+client-side patch, instead of tearing down + reopening an SSE on every page.
+Fewer connections, no per-navigation reconnect/resync, and no exposure to the
+per-host limit at all. Reach for plain `<a href>` (full-page) only when you
+genuinely want a fresh document.
+
+**In production, terminate over HTTP/2.** HTTP/2 multiplexes many streams over
+one TCP connection, so SSE no longer consumes a scarce per-host slot and the
+6-connection limit stops applying — the robust answer for high-navigation or
+many-tab usage. A TLS front (Cloud Run, nginx, Caddy) gives you this for free.
+
 ## Event serialisation
 
 Sky closures can't cross the wire. Event handlers are serialised to string tags:
