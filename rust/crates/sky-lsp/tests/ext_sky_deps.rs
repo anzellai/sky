@@ -99,7 +99,10 @@ fn skydeps_decoy_main_is_dropped() {
     );
     // And the project's Main still resolves its own body (a real hover, not `?`).
     let h = hover(&a, &root, "main =", 0);
-    assert!(!h.is_empty(), "project `main` must still resolve after the decoy drop");
+    assert!(
+        !h.is_empty(),
+        "project `main` must still resolve after the decoy drop"
+    );
 }
 
 #[test]

@@ -92,7 +92,9 @@ pub fn main_text() -> String {
 /// where `needle` is located inside `text`. Keeps hover targets robust to
 /// reformatting of the fixture (no hand-counted columns).
 pub fn pos_in(text: &str, needle: &str, plus: u32) -> tower_lsp::lsp_types::Position {
-    let byte = text.find(needle).unwrap_or_else(|| panic!("needle {needle:?} not in fixture"))
+    let byte = text
+        .find(needle)
+        .unwrap_or_else(|| panic!("needle {needle:?} not in fixture"))
         + plus as usize;
     let mut line = 0u32;
     let mut col = 0u32;
@@ -107,5 +109,8 @@ pub fn pos_in(text: &str, needle: &str, plus: u32) -> tower_lsp::lsp_types::Posi
             col += ch.len_utf16() as u32;
         }
     }
-    tower_lsp::lsp_types::Position { line, character: col }
+    tower_lsp::lsp_types::Position {
+        line,
+        character: col,
+    }
 }

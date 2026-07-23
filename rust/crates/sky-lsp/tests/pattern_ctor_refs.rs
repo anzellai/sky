@@ -43,7 +43,13 @@ fn setup() -> (Analysis, Url) {
 fn pattern_ctor_hover_resolves() {
     let (a, u) = setup();
     // `Green` in the pattern `Green n ->` (line 7, char 8).
-    let h = match a.hover(&u, Position { line: 7, character: 8 }) {
+    let h = match a.hover(
+        &u,
+        Position {
+            line: 7,
+            character: 8,
+        },
+    ) {
         Some(h) => match h.contents {
             HoverContents::Markup(m) => m.value,
             _ => String::new(),
@@ -60,7 +66,14 @@ fn pattern_ctor_hover_resolves() {
 fn pattern_ctor_is_found_by_references_and_rename() {
     let (a, u) = setup();
     // references from the DECL (line 2) must include the PATTERN occurrence (L7).
-    let refs = a.references(&u, Position { line: 2, character: 20 }, true);
+    let refs = a.references(
+        &u,
+        Position {
+            line: 2,
+            character: 20,
+        },
+        true,
+    );
     let lines: Vec<u32> = refs.iter().map(|l| l.range.start.line).collect();
     assert!(
         lines.contains(&7),
@@ -69,7 +82,14 @@ fn pattern_ctor_is_found_by_references_and_rename() {
     );
     // rename must edit the pattern occurrence too.
     let edit = a
-        .rename(&u, Position { line: 2, character: 20 }, "Blue")
+        .rename(
+            &u,
+            Position {
+                line: 2,
+                character: 20,
+            },
+            "Blue",
+        )
         .expect("rename should produce an edit");
     let edited_lines: Vec<u32> = edit
         .changes

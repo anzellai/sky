@@ -2427,8 +2427,14 @@ mod dep_match_tests {
     #[test]
     fn sky_prefix_and_segments() {
         // the `sky-<name>` repo convention → `<Name>` module
-        assert!(dep_matches_import("github.com/anzellai/sky-tailwind", "Tailwind"));
-        assert!(dep_matches_import("github.com/anzellai/sky-tailwind", "Tailwind.Spacing"));
+        assert!(dep_matches_import(
+            "github.com/anzellai/sky-tailwind",
+            "Tailwind"
+        ));
+        assert!(dep_matches_import(
+            "github.com/anzellai/sky-tailwind",
+            "Tailwind.Spacing"
+        ));
         // plain + separator conventions
         assert!(dep_matches_import("github.com/x/my-utils", "MyUtils"));
         assert!(dep_matches_import("github.com/x/widgets", "Widgets"));

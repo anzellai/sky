@@ -20,7 +20,13 @@ fn url(name: &str) -> Url {
 }
 
 fn hover_at(a: &Analysis, u: &Url, line: u32, ch: u32) -> String {
-    match a.hover(u, Position { line, character: ch }) {
+    match a.hover(
+        u,
+        Position {
+            line,
+            character: ch,
+        },
+    ) {
         Some(h) => match h.contents {
             HoverContents::Markup(m) => m.value,
             _ => String::new(),
@@ -73,8 +79,14 @@ fn cross_module_unannotated_ref_hovers_inferred_type() {
     let bump = hover_at(&a, &u, 6, 27); // Helper.bump : Int -> Int
     let greeting = hover_at(&a, &u, 8, 23); // Helper.greeting : String
     let from_int = hover_at(&a, &u, 6, 11); // String.fromInt : Int -> String
-    assert!(bump.contains("Int"), "annotated cross-module fn regressed: {bump:?}");
-    assert!(greeting.contains("String"), "annotated cross-module value regressed: {greeting:?}");
+    assert!(
+        bump.contains("Int"),
+        "annotated cross-module fn regressed: {bump:?}"
+    );
+    assert!(
+        greeting.contains("String"),
+        "annotated cross-module value regressed: {greeting:?}"
+    );
     assert!(
         from_int.contains("Int") && from_int.contains("String"),
         "stdlib ref regressed: {from_int:?}"
