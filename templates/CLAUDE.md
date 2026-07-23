@@ -1943,6 +1943,34 @@ app : config -> config     -- marks as Sky.Live app (compiler detects this)
 route : String -> page -> (String, page)   -- route "/" MyPage (supports :param)
 ```
 
+**Navigation: make every internal link a `sky-nav` link.** Add the
+`sky-nav` attribute to each in-app `<a>` — the runtime intercepts the
+click, fetches the target, patches the body, and updates history, all
+without leaving the page:
+
+```elm
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+Html.a [ Attr.href "/products", Attr.attribute "sky-nav" "" ]
+    [ Html.text "Shop" ]
+```
+
+Why this matters (not optional for multi-page apps): a Sky.Live page
+holds one persistent SSE (`EventSource`) connection for live updates.
+A plain `<a href>` does a FULL-PAGE reload, which opens a BRAND-NEW SSE
+on every navigation. Each streaming connection uses one of the
+browser's ~6-per-host HTTP/1.1 slots, so clicking through several
+full-reload pages piles up connections until the pool is exhausted and
+the tab FREEZES — spinner stuck, every click a no-op. `sky-nav` keeps
+ONE SSE for the whole session and swaps the body via a client-side
+patch: no per-navigation reconnect, no connection churn, instant
+transitions. Use a bare `<a href>` only to deliberately leave the app
+(external site, hard sign-out). Back/Forward and the address bar are
+handled by the runtime automatically for `sky-nav` links — no app code
+needed. (Deploy behind a TLS front for HTTP/2, which multiplexes SSE
+and removes the per-host limit entirely.)
+
 **Sensitive inputs (passwords, API keys, card details): collect via `onSubmit` form data, not `onInput` per keystroke.** This is the recommended pattern as of v0.9.8:
 
 ```elm

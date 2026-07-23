@@ -156,6 +156,7 @@ Production-grade code does not survive guesswork.
 | Concern              | Default                                                          |
 |----------------------|------------------------------------------------------------------|
 | View layer           | `Std.Ui` (typed no-CSS DSL).  `Std.Html` only for wrapping raw markup. |
+| Navigation (Sky.Live)| Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on the `<a>`).  ONE persistent SSE for the whole session.  A plain `<a href>` full-reload opens a fresh SSE per page and can exhaust the browser's connection pool → frozen tab.  Bare `href` only to deliberately leave the app. |
 | Auth                 | `Std.Auth` — bcrypt + HS256 JWT cookies.  Never `fmt.Sprintf("%v", secret)`. |
 | Forms with passwords | `Ui.form [Ui.onSubmit DoSignIn]` with typed record arg.  Never per-keystroke `onInput` on password. |
 | DB                   | `Std.Db` + SQLite for prototypes; PostgreSQL for multi-instance deploys. |
@@ -1748,6 +1749,27 @@ full-body-patches, and pushes history. No app code needed.
 ```elm
 Html.a [ Attr.href "/apps", Attr.attribute "sky-nav" "" ] [ Html.text "Dashboard" ]
 ```
+
+**Default EVERY internal link to `sky-nav`. This is a strong
+recommendation, not a nicety — a plain `<a href>` triggers a
+full-page reload, and every page load opens a fresh SSE
+(`EventSource`) connection. Each streaming SSE holds one of the
+browser's ~6-connections-per-host HTTP/1.1 budget, so an app that
+navigates full-page across several pages piles up connections until
+the pool is exhausted and the tab FREEZES (spinner stuck, every
+click a no-op).** `sky-nav` keeps ONE persistent SSE for the whole
+session and swaps the body via a client-side patch — no
+per-navigation reconnect/resync, no connection churn, and it never
+approaches the per-host limit. Reach for a bare `<a href>` (full
+reload) only when you deliberately want a fresh document (e.g.
+leaving the app, or a hard auth boundary). The runtime hardens the
+SSE lifecycle (client releases the connection on `pagehide`; server
+enforces one live SSE per session), so full-page apps no longer hang
+outright — but `sky-nav` is still the right default: it's
+fewer connections, less server work, and instant transitions.
+Production deploys behind a TLS front get HTTP/2, which multiplexes
+SSE and removes the per-host limit entirely. See
+`docs/skylive/architecture.md` §"SSE connection lifecycle + scaling".
 
 **Back / Forward** is handled by the runtime: a popstate listener
 re-fetches the URL with `X-Sky-Nav: 1` and patches. App code does
