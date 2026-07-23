@@ -799,7 +799,16 @@ pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> Str
         };
         let scoped = section.is_empty() || section == "project" || section == "source";
         if scoped && k.trim() == key {
-            let val = v.trim().trim_matches('"');
+            // Take the value up to an inline `#` comment. When the value is a
+            // quoted string, the comment starts after the closing quote; when
+            // bare, at the first `#`. Without this, `bin = "srv"  # out` parsed
+            // as `srv"  # out` and produced a garbage output-binary name.
+            let raw_val = v.trim();
+            let val = if let Some(rest) = raw_val.strip_prefix('"') {
+                rest.split('"').next().unwrap_or("")
+            } else {
+                raw_val.split('#').next().unwrap_or("").trim()
+            };
             if val.is_empty() || val.contains('/') || val.contains('\\') || val.contains("..") {
                 return default.to_string();
             }
@@ -1298,6 +1307,11 @@ mod sky_toml_tests {
         write("name = \"x\"\n");
         assert_eq!(configured_bin_name(&dir), "app");
         assert_eq!(configured_source_root(&dir), "src");
+
+        // Inline comment after a quoted value is stripped (was a garbage name).
+        write("bin = \"srv\"  # output name\nroot = \"code\"  # source dir\n");
+        assert_eq!(configured_bin_name(&dir), "srv");
+        assert_eq!(configured_source_root(&dir), "code");
 
         // Sanitisation: a path-escaping value falls back to the default so
         // `go build -o` can never write outside the out dir.

@@ -144,14 +144,18 @@ is managed on both ends:
   until the 6-connection limit is hit and the tab freezes (spinner stuck, all
   clicks no-op).
 
-**Server — one live SSE per session.** A new `/_sky/sse` connection for a
-session supersedes the previous one: `handleSSE` closes the prior handler's
-`sess.sseCancel` channel, its for-select returns, and its goroutine +
-connection are released immediately. This bounds server-side SSE to
-one-per-active-session regardless of client behaviour (multi-tab, rapid
-reconnect, a misbehaving client). At N concurrent users the server holds ~N SSE
-connections + goroutines — Go handles this well; raise the file-descriptor
-limit (`ulimit -n`) for large N.
+**Server — prompt cleanup, no per-session supersede.** `handleSSE` returns as
+soon as `r.Context().Done()` fires (the client's TCP connection closed), so a
+navigated-away or closed tab frees its goroutine + connection immediately. The
+server does NOT try to bound connections to one-per-session: two live tabs
+share a session (same cookie), and EventSource auto-reconnects when a 200
+stream ends — so closing one same-session connection just makes the tabs
+ping-pong reconnecting. Per-tab bounding belongs on the client (idempotent
+open + release-on-`pagehide`, above); server-side scale is Go's cheap
+goroutine-per-connection model + prompt disconnect cleanup. At N concurrent
+tabs the server holds ~N SSE connections — Go handles this well; raise the
+file-descriptor limit (`ulimit -n`) for large N, and terminate over HTTP/2
+(below) so the browser side isn't the bottleneck.
 
 **For multi-page apps, prefer `sky-nav` over full-page links.** A `sky-nav`
 link keeps ONE persistent SSE for the whole session and swaps the body via a
