@@ -690,9 +690,12 @@ fn spawn_pipe_reader(
 }
 
 /// Minimal `sky.toml` reader for the build-time `init()` defaults. Extracts
-/// top-level `port` and the `[database]` `driver`/`path` — enough for the
-/// runtime's `SKY_*` fallbacks (`Db.connect ()` resolves `SKY_DB_PATH`). A full
-/// TOML parse isn't warranted for these flat keys; unknown shapes are ignored.
+/// top-level `port`, the `[database]` `driver`/`path`, and the `[live]` runtime
+/// keys — emitted as `rt.SetSkyDefault(<suffix>, value)` so the runtime honours
+/// them WITHOUT the user setting the matching `SKY_*` env var. The suffix matches
+/// the runtime's `skyGetenv`/env read (`store` → `LIVE_STORE`, read by
+/// `chooseStore`; `static` → `LIVE_STATIC_DIR`; etc.). A full TOML parse isn't
+/// warranted for these flat keys; unknown shapes are ignored.
 fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -722,6 +725,23 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
             ("database", "path") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
             ("live", "port") => cfg.port = Some(val),
+            // `[live]` runtime keys → the suffixes the runtime reads (live.go /
+            // live_store.go). Without these, only the `SKY_LIVE_*` env vars were
+            // honoured and the sky.toml keys were silently ignored.
+            ("live", "static") => cfg.extra_defaults.push(("LIVE_STATIC_DIR".into(), val)),
+            ("live", "store") => cfg.extra_defaults.push(("LIVE_STORE".into(), val)),
+            ("live", "storePath") => cfg.extra_defaults.push(("LIVE_STORE_PATH".into(), val)),
+            ("live", "ttl") => cfg.extra_defaults.push(("LIVE_TTL".into(), val)),
+            ("live", "maxBodyBytes") => {
+                cfg.extra_defaults.push(("LIVE_MAX_BODY_BYTES".into(), val))
+            }
+            // `[auth]` keys (canonical names per docs/sky-toml.md) → the suffixes
+            // the runtime's fixed AUTH defaults use, so sky.toml overrides them
+            // (the prologue emits these fallbacks AFTER extra_defaults). `secret`
+            // is deliberately NOT seeded from sky.toml — it must come from env.
+            ("auth", "cookieName") => cfg.extra_defaults.push(("AUTH_COOKIE".into(), val)),
+            ("auth", "tokenTtl") => cfg.extra_defaults.push(("AUTH_TOKEN_TTL".into(), val)),
+            ("auth", "driver") => cfg.extra_defaults.push(("AUTH_DRIVER".into(), val)),
             _ => {}
         }
     }
@@ -1130,5 +1150,48 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
             out.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod sky_toml_tests {
+    use super::read_sky_toml_config;
+
+    #[test]
+    fn live_and_auth_keys_map_to_runtime_default_suffixes() {
+        let dir = std::env::temp_dir().join(format!("skytoml-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[live]\nport = 9000\nstatic = \"public\"\nstore = \"sqlite\"\n\
+             storePath = \"s.db\"\nttl = \"24h\"\nmaxBodyBytes = 10485760\n\
+             [auth]\ncookieName = \"my_sid\"\ntokenTtl = 3600\ndriver = \"jwt\"\n\
+             [database]\ndriver = \"sqlite\"\npath = \"app.db\"\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+
+        assert_eq!(cfg.port.as_deref(), Some("9000"));
+        let has = |suffix: &str, value: &str| {
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == suffix && v == value)
+        };
+        // [live] keys → the suffixes the runtime reads (previously dropped).
+        assert!(has("LIVE_STATIC_DIR", "public"), "{:?}", cfg.extra_defaults);
+        assert!(has("LIVE_STORE", "sqlite"));
+        assert!(has("LIVE_STORE_PATH", "s.db"));
+        assert!(has("LIVE_TTL", "24h"));
+        assert!(has("LIVE_MAX_BODY_BYTES", "10485760"));
+        // [auth] keys override the fixed AUTH fallbacks.
+        assert!(has("AUTH_COOKIE", "my_sid"));
+        assert!(has("AUTH_TOKEN_TTL", "3600"));
+        assert!(has("AUTH_DRIVER", "jwt"));
+        // [database] (unchanged).
+        assert!(has("DB_DRIVER", "sqlite"));
+        assert!(has("DB_PATH", "app.db"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
