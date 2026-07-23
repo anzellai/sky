@@ -745,7 +745,13 @@ func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 		memCache: map[string]*liveSession{},
-		broker:   newTopicRegistry(0),
+		// Phase 2: multi-instance deploys use the cross-instance broker
+		// so Cmd.publish / Sub.subscribeTopic (and same-user cross-session
+		// sync) fan out across every instance, not just the publisher's.
+		// Shares this store's *redis.Client (ownsClient=false) — the
+		// store's Close owns the client. SKY_LIVE_BROKER=inprocess forces
+		// the in-process registry back (escape hatch); see chooseBroker.
+		broker: brokerForRedisStore(client),
 	}, nil
 }
 
@@ -817,6 +823,13 @@ func (s *redisStore) NewID() string { return generateSkySessionID() }
 
 func (s *redisStore) Close() error {
 	s.cancel()
+	// Close the broker BEFORE the client — the cross-instance broker's
+	// Pub/Sub connection rides this client; tearing it down first stops
+	// the receive loop cleanly. The broker shares the client
+	// (ownsClient=false) so it won't double-close it.
+	if s.broker != nil {
+		_ = s.broker.Close()
+	}
 	return s.client.Close()
 }
 

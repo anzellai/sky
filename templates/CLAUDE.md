@@ -1455,8 +1455,18 @@ boundary, not a tab boundary.
 | Use case | Primitive |
 |---|---|
 | Chat / collab / multi-session UI | `Cmd.publish` + `Sub.subscribeTopic` |
+| Same user, two devices (keep them in sync) | `Cmd.publish ("user:" ++ userId)` + each session `Sub.subscribeTopic ("user:" ++ userId) OnUserEvent` |
 | Animation tick, clock, watchdog heartbeat | `Sub.every` / `Time.every` |
 | Periodic refresh of state from an external HTTP API that doesn't push | `Time.every` + `Cmd.perform` |
+
+**Horizontal scale (multiple instances).** Pub/sub fans out ACROSS
+instances automatically when the session store is Redis
+(`SKY_LIVE_STORE=redis`) — no code change; the same `Cmd.publish` reaches
+subscribers on every instance via the Redis broker. (Postgres sessions +
+Redis pub/sub: set `SKY_LIVE_BROKER_URL`.) **Multi-instance deploys MUST
+use sticky sessions (load-balancer affinity on the `sky_sid` cookie)** — a
+Sky.Live session's Model is single-owner and must live on one instance at
+a time; SkyDeploy sets this automatically. Single-instance needs nothing.
 
 **Mandatory pattern: persist FIRST, publish SECOND.** Notification
 loss is acceptable (process crash, network blip); data loss is not.

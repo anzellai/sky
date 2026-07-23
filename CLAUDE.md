@@ -208,6 +208,21 @@ Run" / "Kubernetes":
   mount `/_sky/console`.
 * Confirm session store is NOT memory when there is more than one
   replica.
+* **Confirm the load balancer routes with session affinity (sticky
+  sessions) keyed on the `sky_sid` cookie when there is more than one
+  replica.** A Sky.Live session is single-owner: its Model + serializing
+  mutex must live on one instance at a time (same model as Phoenix
+  LiveView). Affinity keeps a session's tabs together (Phase 1 fan-out
+  reaches them; the mutex serializes them) and lets a moved session
+  re-hydrate cleanly from the shared store on reconnect. Without it, two
+  instances mutate one session's Model independently → lost updates.
+  SkyDeploy sets affinity automatically. See
+  `docs/skylive/architecture.md` §"Horizontal scale".
+* Confirm cross-instance pub/sub is wired when broadcasts must reach
+  users across replicas (chat / collab / same-user-two-devices).
+  `store=redis` selects the cross-instance Redis broker automatically;
+  otherwise set `SKY_LIVE_BROKER_URL` to a Redis. Single-instance needs
+  nothing (in-process broker).
 
 ### When in doubt — one focused question
 
@@ -1402,6 +1417,8 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 | `SKY_LIVE_HEARTBEAT_TTL_MS` | — | 35000 |
 | `SKY_LIVE_SSE_BUFFER` | — | 16 (clamped to [1, 1024]; drops surfaced as `sky_live_sse_drops_total{session}`) |
 | `SKY_LIVE_BASE_PATH` | — | (set by `MountSubApp`) |
+| `SKY_LIVE_BROKER_URL` | — | Redis URL for the cross-instance pub/sub broker when sessions are NOT on Redis (e.g. Postgres sessions + Redis broker). Unset → the store's broker (in-process unless store=redis). |
+| `SKY_LIVE_BROKER` | — | `inprocess` forces the in-process broker even on a Redis store (single-instance escape hatch). |
 
 ### Logging (`[log]` section)
 

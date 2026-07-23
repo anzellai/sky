@@ -35,9 +35,13 @@ batch =
 -- incoming payload; its result is dispatched to `update` exactly
 -- like any other Msg.
 --
--- Subscriptions are exact-match by topic name (no wildcards in
--- v0.15.x). Use string concatenation to build per-room / per-user
--- topics, e.g. `("chat-" ++ roomId)`.
+-- Subscriptions are exact-match by topic name (no wildcards). Use
+-- string concatenation to build per-room / per-user topics, e.g.
+-- `("chat-" ++ roomId)` or `("user:" ++ userId)`. A user-scoped
+-- topic is the same-user cross-session sync primitive: every one of
+-- a signed-in user's sessions subscribes to `("user:" ++ userId)`,
+-- and a publish reaches them all — across devices AND, on a
+-- multi-instance deploy, across instances via the Redis broker.
 --
 -- The runtime cleans up subscriptions automatically when:
 --

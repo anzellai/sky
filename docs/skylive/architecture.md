@@ -212,6 +212,105 @@ one TCP connection, so SSE no longer consumes a scarce per-host slot and the
 6-connection limit stops applying — the robust answer for high-navigation or
 many-tab usage. A TLS front (Cloud Run, nginx, Caddy) gives you this for free.
 
+## Horizontal scale — many instances (Phase 2)
+
+Sky.Live scales to N app instances behind a load balancer with two rules,
+one about session ownership and one about broadcast fan-out.
+
+### Sessions are single-owner — route sticky by cookie (load-bearing)
+
+A session (`sky_sid`) holds ONE authoritative Model, mutated under ONE
+per-session mutex that serializes dispatches (serialized last-writer-wins,
+no lost update). That guarantee only holds while the session lives on ONE
+instance at a time. **The load balancer MUST route by session affinity —
+the `sky_sid` cookie is the affinity key.** This is the same model as
+Phoenix LiveView (a LiveView process lives on one node) or Rails
+ActionCable; it is the correct architecture for server-held session state,
+not a limitation to engineer around.
+
+- All TABS of one session share the cookie, so affinity keeps them on one
+  instance → the Phase 1 per-session fan-out (in-process) reaches them all
+  and the mutex serializes their dispatches. Correct with zero
+  cross-instance machinery.
+- If a session MOVES instances (instance dies, deploy, LB reshuffle): the
+  new instance loads the current Model from the shared session store
+  (every dispatch does `store.Set`, so the store is always current), the
+  browser's `EventSource` reconnects and lands on the new instance via the
+  cookie, and the reconnect-resync repaints at the current state. No
+  distributed lock needed — because only one instance owns the session at
+  a time.
+- Without affinity, two instances would each load + mutate the same
+  session's Model independently → lost updates on the store and split
+  in-process fan-out. Cross-instance frame fan-out would NOT fix this (the
+  Model is still split); single ownership is the only sound fix. SkyDeploy
+  sets affinity automatically; on your own LB, enable sticky sessions
+  keyed on the session cookie.
+
+### Cross-instance pub/sub — the Redis broker
+
+`Cmd.publish` / `Std.PubSub.publish` / `Sub.subscribeTopic` fan out through
+a `Broker`. Single-instance uses the in-process registry. Multi-instance
+uses the **cross-instance Redis broker**, which is selected automatically
+when the session store is Redis (`runtime-go/rt/live_redis_broker.go`):
+
+- **Publish**: re-stamp the event's `globalSeq` from THIS instance's
+  counter, deliver to local subscribers, then `PUBLISH` the gob-encoded
+  event to `sky:live:topic:<topic>` tagged with this instance's id.
+- **Receive** (one loop per instance): read every subscribed channel,
+  DROP messages tagged with our own instance id (already delivered
+  locally — no double delivery), re-stamp `globalSeq` from this instance's
+  counter, and deliver locally.
+- **Per-topic subscribe**: the Redis channel is subscribed on the 0→1
+  local-subscriber transition and unsubscribed on 1→0, so an instance
+  only receives traffic for topics it actually has subscribers for.
+
+**Why `globalSeq` is re-stamped per instance, not shared.** The browser
+dedupes broadcast frames with a monotonic watermark (drop `globalSeq ≤`
+last applied). That only has to be monotonic per subscriber STREAM — i.e.
+per instance. Re-stamping every locally-delivered event (local- AND
+remote-origin) from one per-instance counter keeps each stream monotonic
+with no cross-instance sequencer, no Redis `INCR` on the hot path, and no
+global bottleneck. Ordering stays best-effort exactly as the in-process
+broker already is — a rarely-reordered broadcast is superseded by the next
+one.
+
+**Payloads** cross the wire via the same gob machinery the DB stores use
+for the Model, plus eager registration of the common typed-`Dict`/`List`
+shapes so a `Dict String String` payload round-trips on every instance
+from startup. A payload that can't be gob-encoded degrades to LOCAL-only
+delivery with a logged-once warning — never a panic.
+
+**Graceful degradation.** A Redis `PUBLISH`/`SUBSCRIBE` error never breaks
+local delivery; the cross-instance hop is logged-once and skipped. Since
+the session store is Redis too in this tier, a Redis outage takes the
+whole deployment down regardless — so "Redis down → cross-instance
+fan-out pauses" is consistent with the rest of the tier.
+
+### Configuration
+
+| Env | Effect |
+|---|---|
+| `SKY_LIVE_STORE=redis` + `SKY_LIVE_STORE_PATH=<url>` | Shared session store AND (by default) the cross-instance broker. The scalable-by-default path: deploy multi-instance ⇒ sessions must be shared ⇒ pub/sub crosses instances with no extra config. |
+| `SKY_LIVE_BROKER_URL=<redis-url>` | Run a Redis broker even when sessions are NOT on Redis (e.g. Postgres sessions + Redis pub/sub). The broker is app-scoped, so the two are legitimately decoupled. |
+| `SKY_LIVE_BROKER=inprocess` | Escape hatch — force the in-process registry back on a single-instance Redis deploy or when debugging. |
+
+A native Postgres `LISTEN/NOTIFY` broker (zero-config cross-instance for
+Postgres-only deploys) is the next backend; today a Postgres-store deploy
+opts into cross-instance pub/sub via `SKY_LIVE_BROKER_URL`.
+
+### Same-user, different sessions (two devices)
+
+Two browsers signed into one account are two DIFFERENT sessions (different
+`sky_sid` → different Models), possibly on different instances. They sync
+by publishing to a user-scoped topic keyed on the stable auth identity
+(e.g. `"user:" ++ userId`): every one of that user's sessions subscribes
+to it, and — via the Redis broker — the broadcast reaches them across
+instances. This is opt-in by design: different sessions may be on
+different pages with different view state, so the APP decides which shared
+state syncs (typically re-read the account row + re-render), rather than
+blindly replicating a whole Model. Conflicts resolve at the DB
+(last-writer-wins), the same as any two writers to shared rows.
+
 ## Event serialisation
 
 Sky closures can't cross the wire. Event handlers are serialised to string tags:

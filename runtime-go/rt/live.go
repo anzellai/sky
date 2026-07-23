@@ -3403,6 +3403,12 @@ func liveAppRun(cfg any) any {
 	// app-wide; the store owns the binding so v0.16+ cross-process
 	// backends can swap implementations without touching call sites).
 	app.topics = app.store.Broker()
+	// Phase 2: the broker is app-scoped, not store-scoped, so a deploy
+	// can run a Redis broker even with a non-Redis session store (e.g.
+	// Postgres sessions + Redis pub/sub) via SKY_LIVE_BROKER_URL. No-op
+	// when unset or when the store already provides a cross-instance
+	// broker (store=redis).
+	app.topics = maybeOverrideBroker(app.topics)
 	// Cycle 4 PT: register as the process-global broker so
 	// Std.PubSub.publish (Task-shaped, callable from raw api
 	// handlers / post-init goroutines / scheduled jobs) can find a
