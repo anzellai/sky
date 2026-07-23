@@ -71,10 +71,9 @@ fn scan_arity_dir(dir: &Path, out: &mut BTreeMap<String, usize>) {
 }
 
 /// For a top-level `func Name(params) …` line, return `(Name, param_count)`.
-/// Methods (`func (r *T) M`) and non-func decls yield `None`. The param count is
-/// the number of top-level comma-separated groups times their names — Go allows
-/// `func f(a, b int)` (2 params sharing a type), so we count identifiers before
-/// each type, at bracket depth 0. Only column-0 `func ` declarations count.
+/// Methods (`func (r *T) M`) and non-func decls yield `None`; a generic
+/// `[T any]` list is skipped before the value params. Only column-0 `func `
+/// declarations count.
 fn extract_func_arity(line: &str) -> Option<(String, usize)> {
     let rest = line.strip_prefix("func ")?;
     // Method receiver (`func (r *T) …`) → the char after `func ` is `(`.
@@ -155,13 +154,8 @@ fn count_params(inner: &str) -> usize {
         }
     }
     groups.push(&inner[start..]);
-    // A group is either `name type`, `name`, or `name1 name2 … type` (Go lets
-    // successive params share a type by listing all names before it). Count the
-    // leading identifier(s): a bare-name group (no space before a type token) is
-    // one shared-type name; a `name type` group is one param. The robust count is
-    // the number of groups (each comma-separated group is exactly one parameter);
-    // Go's shared-type form (`a, b int`) already splits into `a` and `b int`,
-    // each a group. So the parameter count equals the group count.
+    // Param count == group count: Go's shared-type form (`a, b int`) already
+    // splits on commas into `a` and `b int`, one parameter each.
     groups.iter().filter(|g| !g.trim().is_empty()).count()
 }
 
