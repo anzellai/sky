@@ -142,6 +142,10 @@ enum TypeDeclKind {
 pub struct LowerConfig {
     /// `port` (default 8000 when `None`).
     pub port: Option<String>,
+    /// The `[env] prefix` from sky.toml — re-namespaces every runtime `SKY_*`
+    /// read. Emitted as a leading `rt.SetEnvPrefix(...)` in `init()` (before the
+    /// defaults, so they seed under the custom prefix). `None` keeps `SKY`.
+    pub env_prefix: Option<String>,
     /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_DRIVER",
     /// "sqlite"), ("DB_PATH", "todos.db")]` from `[database]`. Emitted after the
     /// fixed defaults so a config value wins.
@@ -708,7 +712,13 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
         ))
     };
     let port = cfg.port.clone().unwrap_or_else(|| "8000".to_string());
-    let mut stmts = vec![call("rt.SetPortDefault", &[&port])];
+    let mut stmts = Vec::new();
+    // `[env] prefix` FIRST — it changes what env name every subsequent default
+    // seeds under, so it must run before SetPortDefault / SetSkyDefault.
+    if let Some(prefix) = &cfg.env_prefix {
+        stmts.push(call("rt.SetEnvPrefix", &[prefix]));
+    }
+    stmts.push(call("rt.SetPortDefault", &[&port]));
     // sky.toml-derived values FIRST so they win: `SetSkyDefault` is set-if-unset,
     // so the first call for a suffix wins and the fixed fallbacks below become
     // no-ops when sky.toml already provided the key. (Emitting the fixed defaults

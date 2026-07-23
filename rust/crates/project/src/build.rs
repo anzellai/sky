@@ -742,6 +742,13 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("auth", "cookieName") => cfg.extra_defaults.push(("AUTH_COOKIE".into(), val)),
             ("auth", "tokenTtl") => cfg.extra_defaults.push(("AUTH_TOKEN_TTL".into(), val)),
             ("auth", "driver") => cfg.extra_defaults.push(("AUTH_DRIVER".into(), val)),
+            // [log] → the suffixes Std.Log reads (skyGetenv LOG_FORMAT/LOG_LEVEL).
+            ("log", "format") => cfg.extra_defaults.push(("LOG_FORMAT".into(), val)),
+            ("log", "level") => cfg.extra_defaults.push(("LOG_LEVEL".into(), val)),
+            // [env] prefix re-namespaces every runtime SKY_* read; the compiler
+            // must emit `rt.SetEnvPrefix(...)` for it to take effect (the Rust
+            // compiler previously emitted nothing, so it was silently ignored).
+            ("env", "prefix") => cfg.env_prefix = Some(val),
             _ => {}
         }
     }
@@ -1164,9 +1171,10 @@ mod sky_toml_tests {
         let path = dir.join("sky.toml");
         std::fs::write(
             &path,
-            "name = \"x\"\n[live]\nport = 9000\nstatic = \"public\"\nstore = \"sqlite\"\n\
-             storePath = \"s.db\"\nttl = \"24h\"\nmaxBodyBytes = 10485760\n\
-             [auth]\ncookieName = \"my_sid\"\ntokenTtl = 3600\ndriver = \"jwt\"\n\
+            "name = \"x\"\n[env]\nprefix = \"FENCE\"\n[live]\nport = 9000\n\
+             static = \"public\"\nstore = \"sqlite\"\nstorePath = \"s.db\"\nttl = \"24h\"\n\
+             maxBodyBytes = 10485760\n[auth]\ncookieName = \"my_sid\"\ntokenTtl = 3600\n\
+             driver = \"jwt\"\n[log]\nformat = \"json\"\nlevel = \"debug\"\n\
              [database]\ndriver = \"sqlite\"\npath = \"app.db\"\n",
         )
         .unwrap();
@@ -1188,9 +1196,14 @@ mod sky_toml_tests {
         assert!(has("AUTH_COOKIE", "my_sid"));
         assert!(has("AUTH_TOKEN_TTL", "3600"));
         assert!(has("AUTH_DRIVER", "jwt"));
+        // [log] keys → Std.Log's LOG_FORMAT / LOG_LEVEL.
+        assert!(has("LOG_FORMAT", "json"));
+        assert!(has("LOG_LEVEL", "debug"));
         // [database] (unchanged).
         assert!(has("DB_DRIVER", "sqlite"));
         assert!(has("DB_PATH", "app.db"));
+        // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
+        assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
