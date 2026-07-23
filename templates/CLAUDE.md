@@ -1439,9 +1439,15 @@ every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N millis
 
 ### Pub/sub (`Cmd.publish` + `Sub.subscribeTopic`)
 
-Server-side broadcast channel between Sky.Live sessions. Use to push
+Server-side broadcast channel between Sky.Live sessions (DIFFERENT
+`sky_sid` — different users, or one user on two devices). Use to push
 real-time updates WITHOUT polling — chatrooms, collaborative editors,
 live dashboards, presence indicators.
+
+**Note: multiple TABS of the SAME session sync automatically** (v0.18+)
+— they share one server Model and every frame fans out to all of the
+session's connections. You only need pub/sub to cross a SESSION
+boundary, not a tab boundary.
 
 **Decision rule.** **DB writes in your own Sky.Live app → pub/sub.**
 **External state changing on another service → `Time.every` poll.**

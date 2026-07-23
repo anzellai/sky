@@ -2147,6 +2147,33 @@ type liveSession struct {
 	// to a typed envelope lets the SSE producer choose patches-vs-body
 	// per render without changing the channel/buffer plumbing.
 	sseCh chan sseFrame
+
+	// Phase 1 multi-tab fan-out (v0.18). `sseCh` above stays the
+	// session's single INGRESS channel every producer (runPerformBody,
+	// the Time.every tick, pub/sub delivery, dispatchBatched, the
+	// WebSocket bridge) still writes to. A relay goroutine — started
+	// once per session by the first handleSSE via ensureSSERelay, exits
+	// when `done` closes — drains sseCh and fans each frame out to EVERY
+	// live SSE connection registered below. Before this, a single shared
+	// sseCh handed each frame to ONE random connection, so a second tab
+	// of the same session never saw server-pushed frames; now all tabs
+	// of one session render in lockstep.
+	//
+	// sseConns maps a per-connection id → that connection's private
+	// outbound buffer (capacity sseChanBuffer) + its client-generated
+	// tab id (the `tab` query param on /_sky/sse). The tab id lets the
+	// dispatch path exclude the ORIGINATING tab from its own broadcast —
+	// that tab already applied the patch via its HTTP response, and the
+	// client seq guard would drop the duplicate regardless.
+	//
+	// sseConnMu is a LEAF lock: never held while acquiring sess.mu.
+	// registration / fan-out snapshot / count take it briefly; the
+	// actual per-connection channel sends happen OUTSIDE it so one slow
+	// consumer can't block the relay, the registry, or the other tabs.
+	sseConns   map[uint64]sseConn
+	sseConnMu  sync.Mutex
+	sseConnSeq uint64
+	sseRelay   sync.Once
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -2643,6 +2670,18 @@ func encodeSSEFrame(sess *liveSession, body string) string {
 type sseFrame struct {
 	event string
 	data  string
+}
+
+// sseConn is one live SSE connection of a session (Phase 1 fan-out).
+// `ch` is the connection's private outbound buffer (capacity
+// sseChanBuffer); `tab` is the client-generated per-tab id (the `tab`
+// query param on /_sky/sse) used to exclude the originating tab from
+// its own dispatch broadcast. `tab` is "" for pre-Phase-1 clients that
+// don't send one — those fall back to the client-side seq guard, which
+// drops the duplicate frame the acting tab would otherwise re-apply.
+type sseConn struct {
+	ch  chan sseFrame
+	tab string
 }
 
 // patchesEventEnvelope mirrors writeEventJSON's body so the wire
@@ -4013,6 +4052,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		Seq        int64                      `json:"seq,omitempty"`
 		InputState map[string]inputStateEntry `json:"inputState,omitempty"`
 		Batch      []batchedEvent             `json:"batch,omitempty"`
+		// Tab — client-generated per-page id (Phase 1 fan-out). Echoes
+		// the SSE `?tab=` value so the dispatch broadcast can exclude the
+		// originating tab (it already applied the patch on this HTTP
+		// response). Empty for pre-Phase-1 clients — seq-dedup covers it.
+		Tab string `json:"tab,omitempty"`
 	}
 	// Bound event payload. Default 5 MiB (was 1 MiB hardcoded) —
 	// tiny JSON envelopes need almost nothing, but `Event.onFile` /
@@ -4177,6 +4221,27 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
 	app.store.Set(req.SessionID, sess)
+
+	// Phase 1 fan-out: mirror this dispatch to the OTHER live tabs of
+	// the session (same shared model) so they reflect the change without
+	// waiting for their own interaction. The acting tab already applied
+	// the patch via its HTTP response below — the broadcast carries the
+	// SAME respSeq (client seq guard drops a duplicate) and req.Tab is
+	// excluded, so the acting tab pays nothing. clientState is nil so
+	// each observer tab's own __skyIsDirty authority preserves its
+	// in-flight typing (identical to a Cmd.perform / tick push). Gated
+	// on a sibling tab actually being connected, so the common single-
+	// tab dispatch runs no extra diff/marshal. ackInputs is left nil:
+	// this frame is not a response to any observer tab's input, so it
+	// must not retire their dirty flags.
+	if body2 != "" && sess.hasSSEConnOtherThan(req.Tab) {
+		var bpatches []Patch
+		if prev != nil && newTree != nil {
+			bpatches = diffTrees(prev, newTree, nil)
+		}
+		bsnap := frameSnapshot{seq: respSeq, body: body2}
+		sess.fanOutFrame(chooseSSEFrame(bsnap, prev, bpatches), req.Tab)
+	}
 
 	// dispatch returns "" when the event produced a byte-identical
 	// view (no-op update). Reply with an empty patch list so the
@@ -5560,6 +5625,19 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 1 fan-out: this connection joins the session's live set.
+	// Start the relay (once) + register a private outbound channel
+	// BEFORE the reconnect-resync below, so no concurrent dispatch /
+	// push slips through a gap between the resync snapshot and the loop
+	// starting — the client seq guard drops any pre-resync frame whose
+	// seq ≤ the resync's, and every later frame applies in order. The
+	// per-tab id (query param `tab`, client-generated once per page)
+	// lets the dispatch path exclude this tab from its own broadcast.
+	tab := r.URL.Query().Get("tab")
+	sess.ensureSSERelay()
+	connID, sseOut := sess.registerSSEConn(tab)
+	defer sess.unregisterSSEConn(connID)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
@@ -5689,7 +5767,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case fr := <-sess.sseCh:
+		case fr := <-sseOut:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
 			// Gap C11: the event name now travels with the frame —
 			// producers choose `event: patches` (structural diff)
@@ -5990,6 +6068,100 @@ func recordSseDrop(sid string) {
 	})
 }
 
+// ── Phase 1 multi-tab SSE fan-out ────────────────────────────────
+// A session's `sseCh` is a single ingress channel; the relay below
+// drains it and fans every frame to all live connections so 2+ tabs
+// of one session render identically + live. See the sseConns doc on
+// liveSession for the locking contract.
+
+// ensureSSERelay starts the per-session fan-out relay exactly once
+// (sync.Once). The relay drains sess.sseCh and broadcasts each frame
+// to every registered connection until the session is torn down
+// (`done` closed on TTL evict / Delete). Idempotent: every handleSSE
+// calls it; only the first launches the goroutine. The goroutine is
+// bounded by the session lifetime — the same shape as the Time.every
+// tick loop — and exits promptly on `done`.
+func (s *liveSession) ensureSSERelay() {
+	s.sseRelay.Do(func() {
+		go func() {
+			for {
+				select {
+				case <-s.done:
+					return
+				case fr := <-s.sseCh:
+					s.fanOutFrame(fr, "")
+				}
+			}
+		}()
+	})
+}
+
+// registerSSEConn allocates a private outbound buffer for a new SSE
+// connection and records its tab id. Returns the id (for
+// unregisterSSEConn) + the channel handleSSE's loop reads. Lazy-inits
+// the map so decoded / test-constructed sessions work without an
+// explicit registry init.
+func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame) {
+	s.sseConnMu.Lock()
+	defer s.sseConnMu.Unlock()
+	if s.sseConns == nil {
+		s.sseConns = make(map[uint64]sseConn)
+	}
+	s.sseConnSeq++
+	id := s.sseConnSeq
+	ch := make(chan sseFrame, sseChanBuffer)
+	s.sseConns[id] = sseConn{ch: ch, tab: tab}
+	return id, ch
+}
+
+// unregisterSSEConn removes a connection on disconnect (handleSSE
+// defer). Safe on an absent id / nil map.
+func (s *liveSession) unregisterSSEConn(id uint64) {
+	s.sseConnMu.Lock()
+	defer s.sseConnMu.Unlock()
+	delete(s.sseConns, id)
+}
+
+// fanOutFrame delivers fr to every live connection whose tab id is not
+// exceptTab (exceptTab == "" → all connections). Non-blocking per
+// connection: a full buffer drops the frame for THAT connection
+// (counted via sky_live_sse_drops_total; the connection recovers on
+// its next reconnect-resync) without blocking the relay or the other
+// connections. Channels are snapshotted under the leaf lock, then sent
+// to outside it so no send happens while sseConnMu is held.
+func (s *liveSession) fanOutFrame(fr sseFrame, exceptTab string) {
+	s.sseConnMu.Lock()
+	chans := make([]chan sseFrame, 0, len(s.sseConns))
+	for _, c := range s.sseConns {
+		if exceptTab != "" && c.tab == exceptTab {
+			continue
+		}
+		chans = append(chans, c.ch)
+	}
+	s.sseConnMu.Unlock()
+	for _, ch := range chans {
+		select {
+		case ch <- fr:
+		default:
+			recordSseDrop(s.sid)
+		}
+	}
+}
+
+// hasSSEConnOtherThan reports whether any live connection other than
+// exceptTab exists — the dispatch fan-out gate, so a lone tab pays no
+// diff/marshal cost mirroring its own click to nobody.
+func (s *liveSession) hasSSEConnOtherThan(exceptTab string) bool {
+	s.sseConnMu.Lock()
+	defer s.sseConnMu.Unlock()
+	for _, c := range s.sseConns {
+		if exceptTab == "" || c.tab != exceptTab {
+			return true
+		}
+	}
+	return false
+}
+
 // liveJS keeps the historical signature (used by tests + any external
 // callers that don't have a liveApp instance). Resolves the env-only
 // banner config and forwards to liveJSWithCfg. Production callers go
@@ -6101,6 +6273,13 @@ func liveJSWithCfgAndCsrfWithBase(sid string, cfg liveBannerConfig, csrfToken, b
 	return fmt.Sprintf(`
 var __skySid = %q;
 var __skyBase = %q;
+// __skyTabId — a per-PAGE id generated once on load (Phase 1 multi-tab
+// fan-out). Sent on the SSE query (?tab=) so the server can address this
+// connection, and on every event POST so the server excludes THIS tab
+// from the dispatch broadcast (it already applied the patch on its HTTP
+// response). Two tabs of one session get distinct ids; a reload mints a
+// fresh one. Random base36 — URL-safe, no escaping needed.
+var __skyTabId = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
 var __skyCsrfToken = %q;
 var __skyBannerEnabled = %t;
 var __skyRetryBaseMs = %d;
@@ -6821,7 +7000,8 @@ function __skySend(msgName, args, handlerId, opts) {
     seq: mySeq,
     msg: msgName || "",
     args: args || [],
-    handlerId: handlerId || ""
+    handlerId: handlerId || "",
+    tab: __skyTabId
   };
   if (snapshot) body.inputState = snapshot;
   __skyPostEvent(body);
@@ -7568,7 +7748,7 @@ function __skyOpenSSE() {
   // exhaust the pool and every subsequent request (navigation, clicks) hangs.
   // At most ONE EventSource exists at any time.
   try { if (__skySSE) __skySSE.close(); } catch (_) {}
-  __skySSE = new EventSource(__skyBase + "/_sky/sse");
+  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId);
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything

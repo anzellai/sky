@@ -1593,10 +1593,20 @@ firestore), type-safe events, VNode diffing.
 browser with no `sky_sid` cookie fires `init`. Browser reload while
 the session is alive RESTORES Model from the session store — `init`
 does NOT run. To force a fresh `init` (demo reset / e2e bootstrap):
-`Cmd.perform (Cookie.expire "sky_sid")` then reload. If the goal is
-"my other tab missed an update", reach for `Cmd.publish` instead —
-reload-as-resync is a missing broadcast, not a feature gap. Details
+`Cmd.perform (Cookie.expire "sky_sid")` then reload. Details
 in `docs/skylive/overview.md` §"Session lifecycle — when `init` runs".
+
+**Multi-tab of the SAME session syncs live automatically (v0.18+).**
+Two tabs sharing one `sky_sid` share one server Model, and every
+committed frame — dispatch result AND server push (Cmd.perform /
+Time.every / pub-sub) — fans out to ALL of the session's live
+connections. So an action in one tab is reflected in the others with
+no app code, no `Cmd.publish`. Who-wins is unchanged: the per-session
+mutex serializes dispatches (serialized last-writer-wins), and every
+tab converges to the resolved state. Reach for `Cmd.publish` only to
+sync across DIFFERENT sessions (different `sky_sid` — e.g. two users,
+or one user on two devices). See
+`docs/skylive/architecture.md` §"Per-session fan-out".
 
 ### init's `req` shape (v0.16.7 #417 + v0.16.8 #423)
 

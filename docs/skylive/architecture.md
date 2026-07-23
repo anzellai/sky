@@ -126,6 +126,49 @@ client receives a full-body frame for those cases. The producer
 NEVER ships `event: patches` to a session that hasn't yet seen
 a prev tree.
 
+## Per-session fan-out — every tab of one session renders in lockstep
+
+A session (`sky_sid` cookie) holds ONE server-side Model; multiple tabs of the
+same browser share the cookie, so they share that Model. As of v0.18 every
+committed frame is fanned out to **all** live connections of the session, so
+the tabs stay identical and live — an action in one tab is reflected in the
+others without the user touching them.
+
+- **Ingress + relay.** `sess.sseCh` is the session's single ingress channel
+  every producer (Cmd.perform completion, Time.every tick, pub/sub delivery,
+  the tab-unload batch, the WebSocket bridge) writes to. A per-session relay
+  goroutine — started once by the first `handleSSE`, exits when the session's
+  `done` closes — drains `sseCh` and broadcasts each frame to every registered
+  connection. Before this, a single shared channel handed each pushed frame to
+  ONE random connection, so a second tab never saw server pushes.
+- **Per-connection channels.** Each `handleSSE` registers a private buffered
+  channel (capacity `SKY_LIVE_SSE_BUFFER`) keyed by a connection id + the
+  client's per-page `tab` id (the `?tab=` query param). Delivery is
+  non-blocking per connection: a full buffer drops that frame for that
+  connection only (counted via `sky_live_sse_drops_total`; it recovers on its
+  next reconnect-resync) without stalling the relay or the other tabs.
+- **Dispatch mirror.** A `POST /_sky/event` still replies with the acting
+  tab's patch on its HTTP response for latency; it ALSO mirrors the frame
+  (same `seq`, `clientState = nil`) to the OTHER tabs so they reflect the
+  shared model. The originating tab is excluded by its `tab` id (and the
+  client seq guard would drop the duplicate regardless), so the common
+  single-tab dispatch runs no extra diff/marshal.
+- **Who-wins is unchanged.** The per-session mutex still serializes dispatches
+  (serialized last-writer-wins, no lost update). Fan-out only makes every
+  connection *see* the resolved state, so all tabs converge. In-flight typing
+  in an observer tab is preserved by the client's `__skyIsDirty` authority —
+  mirrored frames carry `clientState = nil`, identical to a Cmd/tick push.
+- **Ordering.** Every frame carries the session's monotonic `seq`; the relay
+  preserves channel FIFO, and the client drops any frame with `seq ≤` the last
+  it applied. A newly-connected tab receives a full-body reconnect-resync at
+  the current state, then only later frames — so a late joiner never applies a
+  stale diff.
+
+Zero config, zero app-code change: default-on at every store tier. Horizontal
+scale across instances (a shared store + a cross-process broker so fan-out
+crosses instances, and same-user cross-session sync) is the follow-on work; the
+`Broker` interface is already the seam for it.
+
 ## SSE connection lifecycle + scaling
 
 Each loaded page opens exactly ONE `EventSource` to `/_sky/sse` and holds it
