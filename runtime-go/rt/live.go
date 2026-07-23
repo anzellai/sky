@@ -6437,7 +6437,9 @@ function __skyPatch(t) {
   window.scrollTo(scrollX, scrollY);
   __skyBindEvents(document);
   __skyRunEvals(root);
-  __skyRunPaths(root);
+  // Full-body patch (sky-nav click / popstate / mount): the URL is already
+  // correct, so reconcile without minting a history entry (push=false).
+  __skyRunPaths(root, false);
   __skyReviveScripts(root);
 }
 
@@ -7043,7 +7045,9 @@ function __skyApplyPatches(patches) {
   // After SSE-driven patches the URL also needs reconciling — without
   // this, programmatic Navigate Msgs would only update the in-memory
   // model and leave the address bar pointing at the previous page.
-  __skyRunPaths(document);
+  // push=true: a programmatic Navigate is a real navigation and gets a
+  // Back-able history entry.
+  __skyRunPaths(document, true);
   // Any <script> in newly-patched HTML wouldn't execute via innerHTML
   // — revive them so JS bundles (e.g. sky-editor) bootstrap correctly
   // when their host element first appears via a patch (not the initial
@@ -7099,13 +7103,24 @@ function __skyRunEvals(root) {
 // sky-id, and the next attribute patch (when the path changes) would
 // silently skip. The path-check makes the call idempotent, so leaving
 // the element in place is cheap — at most one comparison per patch.
-function __skyRunPaths(root) {
+// The push arg is the caller's history intent:
+//   - false (full-body patch: sky-nav click / popstate / initial mount):
+//     the correct URL is ALREADY in the address bar (the click handler pushed
+//     it, popstate is browser-driven, mount is the loaded URL). Reconcile with
+//     replaceState only - a full-body patch must never mint a second entry,
+//     otherwise Back needs two presses per page.
+//   - true (SSE-driven patch: a programmatic Navigate Msg): the address bar
+//     still shows the previous page, so this IS a new navigation and gets a
+//     real, Back-able history entry via pushState.
+// Making the intent explicit removes the old reliance on pushState/patch
+// ordering: the full-body path can no longer double-push under any interleaving.
+function __skyRunPaths(root, push) {
   var els = (root || document).querySelectorAll("[data-sky-path]");
   for (var i = 0; i < els.length; i++) {
     var p = els[i].getAttribute("data-sky-path");
     if (!p) continue;
     if (location.pathname !== p) {
-      try { history.pushState({}, "", p); } catch (_) {}
+      try { history[push ? "pushState" : "replaceState"]({}, "", p); } catch (_) {}
     } else if (location.search) {
       try { history.replaceState({}, "", p); } catch (_) {}
     }
