@@ -4051,7 +4051,7 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	// their own background/border/padding inline, which overrides the native
 	// look — so this only affects unstyled buttons, giving them a sensible
 	// default instead of rendering as bare inline text.
-	`button{cursor:pointer}` +
+	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
 	`a{color:inherit;text-decoration:none}` +
 	`img,video,canvas,svg{display:block;max-width:100%}`
 
