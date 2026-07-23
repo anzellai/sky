@@ -140,6 +140,19 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Credentialed-API exemption. A request bearing an `Authorization`
+		// header (Bearer / Basic) authenticates via a NON-ambient credential:
+		// the browser never auto-attaches it, and cross-origin JS can neither
+		// read the token nor set the header without a CORS preflight the server
+		// must approve. So such a request cannot be a CSRF vector — exempt it so
+		// JSON / Bearer APIs work out of the box, without disabling CSRF
+		// globally (SKY_CSRF=off) or per-route (WithoutCsrf). Cookie-session
+		// browser POSTs (no Authorization header) stay fully protected. This is
+		// the standard framework exemption (Django REST / Rails).
+		if r.Header.Get("Authorization") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		method := r.Method
 		isMutating := method == http.MethodPost ||
@@ -246,7 +259,12 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 func csrfReject(w http.ResponseWriter, status, reason string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"status":"` + status + `","reason":"` + reason + `"}`))
+	// The hint names the escape hatches so a machine client isn't left
+	// guessing why a POST 403'd: CSRF only guards cookie-session browser
+	// requests. An API caller either sends an Authorization header (auto-
+	// exempt), sets SKY_CSRF=off, or exempts the route via WithoutCsrf(path).
+	w.Write([]byte(`{"status":"` + status + `","reason":"` + reason +
+		`","hint":"CSRF guards cookie-session browser POSTs. API clients: send an Authorization header (auto-exempt), or set SKY_CSRF=off, or exempt the route with WithoutCsrf(path)."}`))
 }
 
 // isObservabilityPath — true for paths the CSRF middleware skips

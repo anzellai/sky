@@ -20,6 +20,7 @@ differential byte-match is preserved (both sides move together).
 | `[database] url` ignored (only `path` recognised) | config | `url` aliases `path` → both seed `DB_PATH` (detectDriver routes postgres DSN) | `database_url_is_an_alias_for_path` |
 | Type-mismatch messages TRUNCATED parametric types to the head constructor (`Maybe` vs `String`, hiding `Maybe Int`) | DX | `unify.rs` `describe_flat`/`describe_var` walk the union-find and render full applications (`Maybe Int`, nested `List (Maybe Int)` parenthesised) at both App-mismatch arms | `mismatch_message_keeps_type_arguments` |
 | A **stdlib module typo** (`import Std.Lst`) was diagnosed as a missing Go-FFI package with a "run `sky install`" hint (which can never fetch a Sky module) | DX (misleading) | `lower.rs` — a `Std.*`/`Sky.*`-namespaced package reaching the Foreign fallthrough is an unknown Sky module (real Go FFI packages are never Sky-namespaced); emit "unknown Sky module — check spelling" instead | `driver_stdlib_module_typo_is_not_an_ffi_install_hint` |
+| `Server.post` JSON endpoints 403'd machine clients by default (CSRF on for all POSTs; only `SKY_CSRF=off` escape, undocumented, opaque 403 body) | DX + API-usability | `csrf_middleware.go` — auto-exempt any request bearing an `Authorization` header (credentialed-API calls aren't CSRF-forgeable — the browser never auto-attaches `Authorization`), and the 403 body now names all three escape hatches; documented in `docs/stdlib.md` | `TestCsrfAuthorizationHeaderExempt` |
 
 ## Open (tracked — fix sites identified, not yet closed)
 
@@ -50,10 +51,6 @@ differential byte-match is preserved (both sides move together).
   spending iterations.
 
 ### Diagnostics (DX)
-- `Server.post` JSON endpoints return **403 CSRF by default** to machine
-  clients (curl/fetch without the cookie+token) — correct-by-design but
-  **undocumented**; at minimum a docs note + a clear 403 body naming the CSRF
-  requirement + how to exempt an API route.
 - (Future) The stdlib-typo diagnostic now says "unknown Sky module"; a
   did-you-mean against the bundled module set (`Std.Lst` → `Std.List`) would
   need the module registry threaded into `lower` — tracked as an enhancement.

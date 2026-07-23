@@ -1400,6 +1400,31 @@ Server.use Middleware.withLogging
     )
 ```
 
+#### CSRF protection + JSON/API clients
+
+Every `Server.listen` server wraps its routes in CSRF protection
+**by default** (on for `POST` / `PUT` / `DELETE` / `PATCH`). A
+cookie-session browser form works automatically — the runtime issues
+a `__sky_csrf` cookie and Sky.Live's JS echoes it in an `X-Sky-Csrf`
+header (HTML forms get a hidden `__sky_csrf` field auto-injected).
+
+A **machine / API client** that has no CSRF token gets a `403` with a
+JSON body naming the escape hatches. Three ways to call a mutating
+endpoint from a non-browser client:
+
+- **Send an `Authorization` header** (Bearer / Basic). Such a request
+  is auto-exempt: CSRF only guards *ambient-cookie* browser requests,
+  and a browser never auto-attaches `Authorization`, so it can't be a
+  CSRF vector. This is the recommended path for token-authenticated
+  JSON APIs — no config needed.
+- **`SKY_CSRF=off`** — disables CSRF for the whole server (pure-API
+  services with their own auth).
+- **`WithoutCsrf("/webhooks/stripe")`** — exempt a specific path (for
+  third-party webhooks that can't carry a token).
+
+Cookie-session POSTs (no `Authorization` header) stay fully protected
+in every case.
+
 ---
 
 ## Low-level FFI proxies
