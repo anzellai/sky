@@ -1090,7 +1090,8 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::RecordUpdate(ru) => {
                 let base_name = cst::first_lower(ru.syntax()).unwrap_or_default();
-                let res = self.resolve_var(&base_name, Some(self.span_of(ru.syntax().text_range())));
+                let res =
+                    self.resolve_var(&base_name, Some(self.span_of(ru.syntax().text_range())));
                 if let Some(tok) = ru
                     .syntax()
                     .children_with_tokens()
@@ -1481,7 +1482,39 @@ impl<'a> Resolver<'a> {
                 let val = cst::first_token_is_true(b.syntax());
                 self.body.pat(Pattern::Bool(val))
             }
-            ast::Pattern::Negate(_) => self.body.pat(Pattern::Int(0)),
+            ast::Pattern::Negate(n) => {
+                // A negative-literal pattern (`case n of -1 -> …`). The prior stub
+                // hardcoded `Int(0)`, so EVERY negative pattern lowered to
+                // `_subj == 0` — a silent miscompile (`-1`/`-5` never matched, and
+                // `0` wrongly matched them). Parse the negated literal from the
+                // node text; a negated FLOAT is still a float pattern and routes to
+                // the same unsupported-[E1006] path as a plain float literal.
+                let text: String = n
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if text.contains('.') || text.contains('e') || text.contains('E') {
+                    let span = self.span_of(n.syntax().text_range());
+                    self.result.diagnostics.push(
+                        Diagnostic::error(
+                            "E1006",
+                            "Float patterns are not supported — float equality is \
+                             unreliable. Match on an `Int` (e.g. via `round`/`floor`) \
+                             or use an `if` guard instead.",
+                        )
+                        .with_label(span, "float literal pattern"),
+                    );
+                    self.body.pat(Pattern::Anything)
+                } else if let Ok(val) = text.parse::<i64>() {
+                    self.body.pat(Pattern::Int(val))
+                } else {
+                    // `-<non-literal>` is not a valid pattern; recover as wildcard.
+                    self.body.pat(Pattern::Anything)
+                }
+            }
             ast::Pattern::Record(r) => {
                 let mut binders = Vec::new();
                 for f in cst::lower_idents(r.syntax()) {

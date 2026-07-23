@@ -346,6 +346,45 @@ fn driver_kernel_partial_application_go_builds() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// Negative-literal `case` patterns must match their actual value — the prior
+/// resolver stub lowered EVERY `-N` pattern to `Int(0)` (`_subj == 0`), a silent
+/// miscompile: `case n of -1 -> …` never matched `-1` and wrongly matched `0`.
+/// This BUILDS + RUNS the program and asserts the runtime output, since the bug
+/// type-checks and `go build`s clean (the worst class — only visible at runtime).
+#[test]
+fn driver_negative_literal_patterns_match_at_runtime() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "neg-pat",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         sign : Int -> String\n\
+         sign n =\n    case n of\n        -1 -> \"neg-one\"\n        -5 -> \"neg-five\"\n        _ -> \"other\"\n\n\
+         main =\n    let\n        _ = println (sign 0)\n        _ = println (sign (-1))\n        _ = println (sign (-5))\n    in\n    println (sign 7)\n",
+    );
+    let out = project.join("sky-out-test");
+    let opts = BuildOptions {
+        run: true,
+        ..opts_for(&repo, &project, &out)
+    };
+    let report = build_example(&opts);
+    let stdout = report.run_stdout.clone().unwrap_or_default();
+    assert!(
+        report.go_build_ok && report.run_ok == Some(true),
+        "neg-pattern program must build + run; note: {} stderr: {:?}",
+        report.note,
+        report.run_stderr
+    );
+    // Order: sign 0 -> other, sign -1 -> neg-one, sign -5 -> neg-five, sign 7 -> other.
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec!["other", "neg-one", "neg-five", "other"],
+        "negative patterns matched wrong values (was all `== 0`); stdout: {stdout:?}"
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and
