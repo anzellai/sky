@@ -150,3 +150,25 @@ jobs:
       #   cargo run -p xtask -- build-run --shape cli --run --golden --bless
       - name: Gate — golden (runtime-correctness, CLI subset; oracle-parity via committed snapshot)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+
+      # Server/terminal-shape RUNTIME correctness. golden (above) proves the CLI
+      # subset computes the right answer and build-run --all proves the server
+      # examples BUILD — but neither RUNS a server. These gates prove a compiled
+      # Sky.Live / Sky.Http.Server / Sky.Tui app actually STARTS, serves, and does
+      # not panic: the "builds but broken at runtime" class (SSE / dispatch /
+      # pub-sub / routing / fan-out regressions) that a build-only gate misses.
+      # Each app spawns under a watchdog with a memory store + banners off; the
+      # gate waits for the "listening" line, curls `/`, requires a non-empty body
+      # with zero panic strings, then ALWAYS kills the child. No browser needed
+      # (HTTP-level, deterministic). The deep wire behaviour (per-session fan-out,
+      # navigation mirror, cross-instance Redis broker) is covered by the go-test
+      # gate above (runtime-go/rt/*_test.go); these close the compiler→runtime
+      # end-to-end loop for server shapes.
+      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
+        run: cargo run -q -p xtask -- build-run --shape live --run
+
+      - name: Gate — http runtime (Sky.Http.Server examples start + serve, no panic)
+        run: cargo run -q -p xtask -- build-run --shape http --run
+
+      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
+        run: cargo run -q -p xtask -- build-run --shape tui --run
