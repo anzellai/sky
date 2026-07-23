@@ -1721,11 +1721,10 @@ func Fmt_errorf(format any, args ...any) any {
 // default calling convention. modBy is (divisor, dividend) — divisor first
 // to match the Elm/Sky argument order for pipeline use.
 func Basics_modBy(divisor, n any) any {
-	d := AsInt(divisor)
-	if d == 0 {
-		return 0
-	}
-	return AsInt(n) % d
+	// Delegate to the typed companion so the any-dispatch path shares its
+	// Elm FLOORED-modulo semantics (result sign follows the divisor):
+	// `modBy 3 -1 == 2`, not Go's truncated `-1`.
+	return Basics_modByT(AsInt(divisor), AsInt(n))
 }
 
 // Basics_clamp — any-typed wrapper around Basics_clampT to match the
