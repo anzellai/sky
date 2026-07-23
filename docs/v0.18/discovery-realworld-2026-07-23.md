@@ -31,8 +31,13 @@ differential byte-match is preserved (both sides move together).
   run `Command::new("./app")`. Low real-world impact.
 - **`[source] root`** — discovery hardcodes `join("src")` (build.rs:146/1026);
   requires reading sky.toml before discovery.
-- **`[auth]` runtime consumer** — `AUTH_*` env seeds land, but the runtime auth
-  layer doesn't yet READ them at each site. Deeper runtime work.
+- ~~**`[auth]` runtime consumer**~~ — RESOLVED as a docs clarification.
+  Verified 2026-07-23: `Std.Auth` is a library — `signToken secret claims
+  expirySeconds` takes the secret + TTL as ARGUMENTS and the cookie is set by
+  the user's handler, so there is no framework layer to "consume" the keys.
+  The `[auth]` keys correctly seed `SKY_AUTH_*` env vars that USER CODE reads
+  via `System.getenvOr` at the call site. docs/sky-toml.md corrected to
+  describe this accurately (it previously implied the framework reads them).
 
 ### Policy question (NOT a differential — needs user decision)
 - `exposing` a **non-exported** name reports "Types OK" (e.g. `import Helper

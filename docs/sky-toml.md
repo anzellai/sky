@@ -149,9 +149,23 @@ Connection-status banner config is env-only (not in sky.toml):
 
 ## `[auth]`
 
-Std.Auth runtime defaults. Auth.signToken / verifyToken read
-the secret from env at runtime, so the sky.toml value is just a
-seed — production should always override via shell env or `.env`.
+Std.Auth defaults. `Std.Auth` is a library, not a framework layer:
+`signToken secret claims expirySeconds` takes the secret + TTL as
+**arguments**, and the session cookie is set by your handler
+(`Server.setCookie`). So these keys don't reconfigure the runtime
+directly — each is **seeded into a `SKY_AUTH_*` env var that your
+code reads** at the call site:
+
+```elm
+secret = System.getenvOr "SKY_AUTH_SECRET" "dev-secret"
+ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
+cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth"
+
+token  = Auth.signToken secret claims ttl
+```
+
+Production overrides via shell env / `.env` win over the sky.toml
+seed (same precedence as every other key).
 
 ```toml
 [auth]
