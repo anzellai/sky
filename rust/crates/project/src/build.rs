@@ -340,6 +340,12 @@ fn assemble_and_emit_with(
     // still builds. Absent both → an empty table (no FFI).
     let registry = load_ffi_surface(example_dir);
     cfg.ffi = build_ffi_table(&registry);
+    // Authoritative kernel arities, scanned from the runtime `rt.*` param counts
+    // (`abi_guard::runtime_arities`, cached once per process). The lowerer uses
+    // these to eta-expand partially-applied kernels correctly — the curried HM
+    // type over-counts for function-returning kernels, so the runtime symbol's
+    // actual parameter count is the only sound arity source.
+    cfg.kernel_arity = crate::abi_guard::runtime_arities(repo_root).clone();
     // Stage E (doc 01 bottom-of-DAG): route lowering + codegen through the salsa
     // `go_program` tracked query, closing the query DAG below `infer`. The config
     // is a salsa **input** created once for this build; `go_program` reads the

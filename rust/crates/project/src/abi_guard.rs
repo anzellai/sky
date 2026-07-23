@@ -13,7 +13,7 @@
 //! red — it is a pure UX upgrade on already-broken input.
 
 use diagnostics::Diagnostic;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -22,6 +22,147 @@ use std::sync::OnceLock;
 pub fn runtime_exports(repo_root: &Path) -> &'static BTreeSet<String> {
     static CACHE: OnceLock<BTreeSet<String>> = OnceLock::new();
     CACHE.get_or_init(|| scan_runtime_exports(&repo_root.join("runtime-go").join("rt")))
+}
+
+/// The parameter count of every top-level `func Name(params) …` in the runtime,
+/// scanned once per process — the AUTHORITATIVE arity of each `rt.<Name>` kernel
+/// symbol (the emitted call passes exactly this many `any` args). The lowerer
+/// uses it to decide whether a kernel application is partial (eta-expand) or full
+/// (direct call). This is the only sound arity source: a kernel's curried HM type
+/// over-counts when its result is a function alias (`Handler = Request -> Task`),
+/// so `withCors : List String -> Handler -> Handler` (runtime arity 2) would look
+/// like arity 3 and a full 2-arg call would be mis-eta-expanded.
+pub fn runtime_arities(repo_root: &Path) -> &'static BTreeMap<String, usize> {
+    static CACHE: OnceLock<BTreeMap<String, usize>> = OnceLock::new();
+    CACHE.get_or_init(|| scan_runtime_arities(&repo_root.join("runtime-go").join("rt")))
+}
+
+fn scan_runtime_arities(rt_dir: &Path) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    scan_arity_dir(rt_dir, &mut out);
+    out
+}
+
+fn scan_arity_dir(dir: &Path, out: &mut BTreeMap<String, usize>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            scan_arity_dir(p.as_path(), out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("go") {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with("_test.go") {
+                continue;
+            }
+            if let Ok(src) = std::fs::read_to_string(&p) {
+                for line in src.lines() {
+                    if let Some((n, arity)) = extract_func_arity(line) {
+                        // A name may appear once (Go forbids redeclaration); first
+                        // wins if a duplicate ever slips through.
+                        out.entry(n).or_insert(arity);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// For a top-level `func Name(params) …` line, return `(Name, param_count)`.
+/// Methods (`func (r *T) M`) and non-func decls yield `None`. The param count is
+/// the number of top-level comma-separated groups times their names — Go allows
+/// `func f(a, b int)` (2 params sharing a type), so we count identifiers before
+/// each type, at bracket depth 0. Only column-0 `func ` declarations count.
+fn extract_func_arity(line: &str) -> Option<(String, usize)> {
+    let rest = line.strip_prefix("func ")?;
+    // Method receiver (`func (r *T) …`) → the char after `func ` is `(`.
+    let name: String = rest.chars().take_while(|c| is_ident_char(*c)).collect();
+    if name.is_empty() {
+        return None;
+    }
+    let after = &rest[name.len()..];
+    // Skip an optional generic type-param list `[T any]` before the value params.
+    let after = after.trim_start();
+    let after = if let Some(stripped) = after.strip_prefix('[') {
+        // find the matching `]` at depth 0
+        let mut depth = 1usize;
+        let mut idx = 0;
+        for (i, c) in stripped.char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        idx = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        stripped[idx..].trim_start()
+    } else {
+        after
+    };
+    let params_inner = param_list_inner(after)?;
+    Some((name, count_params(params_inner)))
+}
+
+/// The text between the outermost `(` and its matching `)` in `s` (the value
+/// parameter list), or `None` if there is no `(` at the head.
+fn param_list_inner(s: &str) -> Option<&str> {
+    let s = s.strip_prefix('(')?;
+    let mut depth = 1usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[..i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Count Go parameters in a parameter-list body. Splits on top-level commas
+/// (depth 0), then within each group counts leading identifiers that precede a
+/// type — so `a, b int` is 2, `a any, b any` is 2, `m map[string]int` is 1,
+/// `f func(int, int) int` is 1. An empty list is 0.
+fn count_params(inner: &str) -> usize {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return 0;
+    }
+    // Split on depth-0 commas.
+    let mut groups: Vec<&str> = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                groups.push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    groups.push(&inner[start..]);
+    // A group is either `name type`, `name`, or `name1 name2 … type` (Go lets
+    // successive params share a type by listing all names before it). Count the
+    // leading identifier(s): a bare-name group (no space before a type token) is
+    // one shared-type name; a `name type` group is one param. The robust count is
+    // the number of groups (each comma-separated group is exactly one parameter);
+    // Go's shared-type form (`a, b int`) already splits into `a` and `b int`,
+    // each a group. So the parameter count equals the group count.
+    groups.iter().filter(|g| !g.trim().is_empty()).count()
 }
 
 fn scan_runtime_exports(rt_dir: &Path) -> BTreeSet<String> {
@@ -317,6 +458,49 @@ mod tests {
             !m.contains("compiler bug"),
             "typo must not blame the compiler: {m}"
         );
+    }
+
+    #[test]
+    fn func_arity_counts_params_robustly() {
+        // all-any dispatch kernels
+        assert_eq!(
+            extract_func_arity("func String_append(a any, b any) any {"),
+            Some(("String_append".into(), 2))
+        );
+        assert_eq!(
+            extract_func_arity("func Middleware_withCors(origins any, handler any) any {"),
+            Some(("Middleware_withCors".into(), 2))
+        );
+        assert_eq!(
+            extract_func_arity("func Char_toUpper(c any) any { return x }"),
+            Some(("Char_toUpper".into(), 1))
+        );
+        // zero-arg
+        assert_eq!(
+            extract_func_arity("func Dict_empty() any {"),
+            Some(("Dict_empty".into(), 0))
+        );
+        // Go shared-type form: `lo, hi, n int` is 3 params
+        assert_eq!(
+            extract_func_arity("func Basics_clampT(lo, hi, n int) int {"),
+            Some(("Basics_clampT".into(), 3))
+        );
+        // func-typed param has an inner comma at depth>0 → still ONE param
+        assert_eq!(
+            extract_func_arity("func Apply(f func(int, int) int, x any) any {"),
+            Some(("Apply".into(), 2))
+        );
+        // generic type-param list is skipped before the value params
+        assert_eq!(
+            extract_func_arity("func Coerce[T any](v any) T {"),
+            Some(("Coerce".into(), 1))
+        );
+        // methods + non-func decls yield nothing
+        assert_eq!(
+            extract_func_arity("func (r *Reader) Read(p any) int {"),
+            None
+        );
+        assert_eq!(extract_func_arity("type Foo struct {"), None);
     }
 
     #[test]

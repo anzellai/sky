@@ -315,6 +315,37 @@ fn driver_char_pattern_go_builds() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A partially-applied kernel (`String.append "hi "` — 1 arg to the 2-arg
+/// `rt.String_append`) must EMIT and `go build`. The Go symbol isn't curried, so
+/// a direct under-applied call was `not enough arguments`; the lowerer now
+/// eta-expands it into a closure. Crucially, the eta-expansion is driven by the
+/// kernel's RUNTIME param count (`abi_guard::runtime_arities`), not the curried
+/// HM type — so a FULL application of a function-returning kernel (whose HM type
+/// has more arrows than the runtime has params, e.g. a `Handler`-returning
+/// middleware) is NOT mis-eta-expanded into an over-application. The full-app
+/// side is covered by `examples/36-composite-server` in the build-run sweep;
+/// this test locks the partial-app side.
+#[test]
+fn driver_kernel_partial_application_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "kernel-partial",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.List as List\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    let\n        g = String.append \"hi \"\n        tagged = List.map (String.append \">> \") [\"a\", \"b\"]\n    in\n    let\n        _ = println (g \"bob\")\n    in\n    println (String.join \", \" tagged)\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "partial kernel application must emit AND go build (was `not enough arguments`); note: {}",
+        report.note
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and

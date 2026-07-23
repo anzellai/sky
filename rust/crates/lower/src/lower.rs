@@ -149,6 +149,16 @@ pub struct LowerConfig {
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,
+    /// Runtime kernel arities: `rt.<Name>` (keyed WITHOUT the `rt.` prefix) → the
+    /// number of `any` parameters that Go symbol takes. Populated by the build
+    /// driver from `abi_guard::runtime_arities`. This is the authoritative arity
+    /// for deciding whether a kernel application is partial (eta-expand into a
+    /// closure) or full (direct call) — the curried HM type over-counts for
+    /// function-returning kernels (`Handler`-returning middleware). Empty in the
+    /// default config (e.g. unit tests / the eager `lower_program`), which
+    /// disables the partial-kernel path — safe, since a full application still
+    /// lowers to the correct direct call.
+    pub kernel_arity: BTreeMap<String, usize>,
 }
 
 pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
@@ -562,6 +572,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             closure_elem: None,
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
+            kernel_arity: &cfg.kernel_arity,
             cur_module: e.module_name.clone(),
             cur_def: d,
             tco: None,
@@ -1401,6 +1412,9 @@ struct Ctx<'a> {
     /// The pinned FFI surface (read-only) + the modules actually called here.
     ffi: &'a FfiTable,
     ffi_used: BTreeSet<String>,
+    /// Runtime kernel arities (`rt.<Name>` sans prefix → param count) — the
+    /// authoritative arity for the partial-kernel eta-expansion decision.
+    kernel_arity: &'a BTreeMap<String, usize>,
     /// The module the def currently being lowered belongs to — disambiguates a
     /// nominal type name (`Msg`/`Model`) declared in more than one module.
     cur_module: String,
@@ -2603,12 +2617,27 @@ impl<'a> Ctx<'a> {
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
             if let Some(raw) = self.kernel_alias.get(d) {
                 let go = alias_go_name(raw);
+                if let Some(arity) = self.kernel_runtime_arity(&go) {
+                    if arity > args.len() {
+                        return self.kernel_partial(&go, args, arity, actual);
+                    }
+                }
                 return self.kernel_call(&go, args, actual);
             }
         }
         // kernel direct call
         if let Expr::Var(Res::Kernel { module, func }) = &self.body.exprs[callee] {
             let go = kernel_go_name(module.as_str(), func.as_str());
+            // Partial application: Sky curries but the Go runtime symbol does not,
+            // so an under-applied kernel must eta-expand into a closure instead of
+            // emitting an under-applied call. The arity comes from the runtime
+            // param count (authoritative), NOT the curried HM type (which
+            // over-counts for function-returning kernels).
+            if let Some(arity) = self.kernel_runtime_arity(&go) {
+                if arity > args.len() {
+                    return self.kernel_partial(&go, args, arity, actual);
+                }
+            }
             return self.kernel_call(&go, args, actual);
         }
         // Go-FFI direct call (doc 09): `Uuid.newString ()` → the typed wrapper
@@ -3085,6 +3114,71 @@ impl<'a> Ctx<'a> {
                 actual.clone(),
             )
         }
+    }
+
+    /// The runtime parameter count of kernel symbol `go` (`rt.String_append`), or
+    /// `None` when it isn't a known runtime symbol (defensive — then no
+    /// eta-expansion, so a full application still lowers correctly). This is the
+    /// authoritative kernel arity: `rt.Middleware_withCors(origins, handler)` is 2,
+    /// even though `withCors : List String -> Handler -> Handler` has 3 curried
+    /// arrows once `Handler = Request -> Task` unfolds.
+    fn kernel_runtime_arity(&self, go: &str) -> Option<usize> {
+        let sym = go.strip_prefix("rt.").unwrap_or(go);
+        self.kernel_arity.get(sym).copied()
+    }
+
+    /// Eta-expand a partially-applied kernel into a Go closure. A kernel runtime
+    /// symbol (`rt.String_append(a, b any) any`) has no currying, so a direct
+    /// under-applied call (`String.append "hi "` — 1 arg to a 2-arg kernel) emits
+    /// `rt.String_append("hi ")`, which `go build` rejects ("not enough
+    /// arguments"). Instead emit `func(_p any) any { return rt.String_append("hi ", _p) }`.
+    /// Mirrors [`ctor_partial`]; kernel params are `any`, so the closure widens
+    /// each fresh param into the call and coerces the `any` result to `ret`.
+    /// `arity` is the runtime param count (from [`kernel_runtime_arity`]), so a
+    /// FULL application never reaches here — only genuine under-applications.
+    fn kernel_partial(
+        &mut self,
+        go: &str,
+        given: &[ExprId],
+        arity: usize,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let mut arg_exprs: Vec<GoExpr> = given
+            .iter()
+            .map(|a| {
+                let e = self.lower_expr(*a, &GoTy::Any);
+                widen(e)
+            })
+            .collect();
+        let n_rest = arity - given.len();
+        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
+            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
+        };
+        let mut gparams: Vec<GoParam> = Vec::new();
+        for pty in &rest_tys {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
+            // The kernel symbol takes `any` params — widen the typed closure param.
+            arg_exprs.push(widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
+        }
+        let call = GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                arg_exprs,
+            ),
+            GoTy::Any,
+        );
+        let body = self.coerce_if_needed(call, &ret);
+        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+            fn_ty,
+        )
     }
 
     fn lower_binop(&mut self, op: &str, lhs: ExprId, rhs: ExprId, actual: &GoTy) -> GoExpr {
