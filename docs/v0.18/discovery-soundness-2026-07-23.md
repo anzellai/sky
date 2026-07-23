@@ -18,11 +18,18 @@ rationale, 3 were duplicates/probe-artifacts.
 ## Known residual on B (tracked, not closed)
 
 `map2..5` with an **inline lambda** first arg (`Maybe.map2 (\a b -> a + b) (Just
-1) (Just "x")`) still slips through — the lambda body's constraints (`b` numeric
-from `+`) don't thread to the later container args before they're checked. The
-named-function form (`map2 addI …`) IS caught. This is a deeper checker
-constraint-ordering matter (lambda-arg bidirectional inference), separate from
-the missing-sig hole this session closed.
+1) (Just "x")`) still slips through. Investigated 2026-07-23: this is NOT the
+missing-sig hole (closed) but a deeper NUMERIC-UNIFICATION matter. Both Rust AND
+the oracle accept `Maybe.map (\x -> x + 1) (Just "s")` — the `Number`-flex
+absorbing `String` is a SHARED leniency, not a Rust bug. The oracle only rejects
+the `map2` case because `(Just 1)` pins a CONCRETE `Int` that must then propagate
+through the lambda's `a = b` link (`+` unifies its operands) to clash with arg3's
+`String`. Rust's `+` isn't unifying its two operands / propagating that concrete
+type through the lambda, so `b` stays flex and absorbs `String`. Closing it means
+changing core numeric-operator unification (`+ : number -> number -> number` with
+a SHARED `number`) — high risk, adjacent to the oracle's own number leniency.
+Deferred as a deeper checker task; the named-function `map2` + all `andMap` forms
+are caught (oracle-parity).
 
 ## Deferred (with rationale)
 
