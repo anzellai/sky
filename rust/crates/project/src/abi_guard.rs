@@ -172,19 +172,70 @@ pub fn check_abi_symbols(source: &str, exports: &BTreeSet<String>) -> Vec<Diagno
     }
     missing
         .into_iter()
-        .map(|name| {
-            Diagnostic::error(
-                "E4005",
-                format!(
-                    "Codegen emitted a reference to `rt.{name}`, but the Sky runtime \
-                     does not export it. This is a Sky compiler bug — please report \
-                     with the offending source. (Fix the kernel table in \
-                     `rust/crates/lower/src/kernel.rs` or add `rt.{name}` to \
-                     `runtime-go/rt/`.)"
-                ),
-            )
-        })
+        .map(|name| Diagnostic::error("E4005", abi_message(&name, exports)))
         .collect()
+}
+
+/// The `[E4005]` message for a missing `rt.<name>`. A missing symbol whose
+/// `<Module>_` prefix has sibling exports (`rt.<Module>_*`) is a real kernel
+/// module the user typo'd a MEMBER of (`String.lenght`) — surface that as a
+/// name error with a did-you-mean, not a "compiler bug — please report" (which
+/// blames the compiler for a user typo). A missing symbol with NO siblings is a
+/// genuine codegen hole and keeps the report-a-bug framing.
+fn abi_message(name: &str, exports: &BTreeSet<String>) -> String {
+    if let Some((module, member)) = name.rsplit_once('_') {
+        let prefix = format!("{module}_");
+        let siblings: Vec<&str> = exports
+            .iter()
+            .filter_map(|e| e.strip_prefix(&prefix))
+            .filter(|m| !m.is_empty() && !m.contains('_'))
+            .collect();
+        if !siblings.is_empty() {
+            // `String_` → the Sky qualifier `String`; `Json_Decode_` → `Json.Decode`.
+            let sky_qual = module.replace('_', ".");
+            let hint = closest(member, &siblings)
+                .map(|c| format!(" — did you mean `{sky_qual}.{c}`?"))
+                .unwrap_or_default();
+            return format!(
+                "`{sky_qual}` has no member `{member}`{hint} (the Sky runtime exports \
+                 no `rt.{name}`)."
+            );
+        }
+    }
+    format!(
+        "Codegen emitted a reference to `rt.{name}`, but the Sky runtime does not \
+         export it. This is a Sky compiler bug — please report with the offending \
+         source. (Fix the kernel table in `rust/crates/lower/src/kernel.rs` or add \
+         `rt.{name}` to `runtime-go/rt/`.)"
+    )
+}
+
+/// The candidate closest to `target` by Levenshtein distance, within a small
+/// threshold (so an unrelated name yields no misleading suggestion).
+fn closest<'a>(target: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    let max = (target.len() / 2).max(2);
+    candidates
+        .iter()
+        .map(|c| (levenshtein(target, c), *c))
+        .filter(|(d, _)| *d <= max)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, c)| c)
+}
+
+/// Standard Levenshtein edit distance (two-row DP).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 #[cfg(test)]
@@ -248,5 +299,37 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("rt.Pow"));
         assert_eq!(diags[0].code.0, "E4005");
+    }
+
+    #[test]
+    fn kernel_member_typo_gets_did_you_mean_not_report_a_bug() {
+        // `rt.String_length` exists → `String` is a real kernel module, so a
+        // typo'd `rt.String_lenght` is a member typo, not a compiler bug.
+        let mut exports = BTreeSet::new();
+        exports.insert("String_length".to_string());
+        exports.insert("String_reverse".to_string());
+        let diags = check_abi_symbols("x := rt.String_lenght(s)", &exports);
+        assert_eq!(diags.len(), 1);
+        let m = &diags[0].message;
+        assert!(m.contains("has no member `lenght`"), "got: {m}");
+        assert!(m.contains("did you mean `String.length`"), "got: {m}");
+        assert!(
+            !m.contains("compiler bug"),
+            "typo must not blame the compiler: {m}"
+        );
+    }
+
+    #[test]
+    fn genuine_codegen_hole_keeps_report_a_bug() {
+        // No `rt.Widget_*` sibling exports → a real codegen hole, keep the
+        // report-a-bug framing.
+        let exports = BTreeSet::new();
+        let diags = check_abi_symbols("x := rt.Widget_render(w)", &exports);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.contains("compiler bug"),
+            "got: {}",
+            diags[0].message
+        );
     }
 }
