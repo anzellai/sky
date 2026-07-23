@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -169,6 +170,13 @@ func Set_toList(set any) any {
 	for _, v := range s.items {
 		out = append(out, v)
 	}
+	// A Go map iterates in randomised order, so Set.toList — and union /
+	// intersect / diff / fromList, all observed THROUGH toList — returned a
+	// non-deterministic order run-to-run. Elm's Set is ordered; sort by the
+	// element's natural order via the shared comparator. Set keys are
+	// `comparable` by Sky's type system, so cmp never hits its type-mismatch
+	// panic for a well-typed Set.
+	sort.SliceStable(out, func(i, j int) bool { return cmp(out[i], out[j]) < 0 })
 	return out
 }
 
