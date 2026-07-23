@@ -52,13 +52,34 @@ commit per fix), grill, Judge.
    reference v0.18.x), CLAUDE.md + `templates/CLAUDE.md`, docs/*: streamline
    outdated info, ensure everything reflects the shipped state.
 
+## ADDED 2026-07-23 (user, AFK) — full autonomous close-out toward PR-ready
+
+> use agents + grilling + full autonomous mode to close as many as possible
+> for this patch closer or reaching v1. only stop when you're genuinely stuck
+> or reaching the goals and ready for me to review + PR ready to merge.
+>
+> every milestone reached please ensure to:
+> - update all relevant docs, read me, claude.md, Claude template etc.
+> - comments tidy up — don't leave unnecessary comments in code, only leave
+>   comments for those with decisions value and the strong why
+
+**Standing directive while AFK:** run the discovery→grill→implement→verify loop
+autonomously. At EACH milestone (a coherent batch of verified fixes): (a) sync
+docs/README/CLAUDE.md/template to the shipped state, (b) tidy comments in the
+touched code — delete narration/obvious comments, keep only decision-value "why"
+comments, (c) commit, (d) push at meaningful milestones. Continue until the
+close-now surface is exhausted (Judge-verified thorough) OR genuinely blocked on
+a user decision. End state: PR-ready, whole-repo gate green, a written summary of
+found/fixed/deferred.
+
 ## Definition of done
 
 Every close-now-bucket item implemented + verified (empirical repro fixed) +
 regression test + committed. Whole-repo gate green (cargo test --workspace + all
 xtask gates + golden + build-run oracle parity + nvim 17/17). Independent Judge
 verifies the discovery was thorough + the shipped fixes are real. A written list
-of what was found, fixed, and honestly deferred (with why).
+of what was found, fixed, and honestly deferred (with why). Comments tidied +
+docs synced at every milestone.
 
 ## Resume protocol
 

@@ -57,36 +57,30 @@ close-able (STRETCH).
   rt.String_append`. Distinct from #4 (which was the arity-0 CAF call-site
   double-force, now fixed + verified via a user-fn point-free = 42). A kernel
   under-application should emit a partial closure. Effort M.
-  **ATTEMPTED + REVERTED 2026-07-23** — a `kernel_partial` eta-expander was
-  added, keyed on `count_arrows` of the callee's HM type. It regressed
+  **CLOSED 2026-07-23 (runtime-arity approach)** — a first attempt keyed the
+  eta-expander on `count_arrows` of the callee's curried HM type and regressed
   `examples/36-composite-server`: `Middleware.withCors : List String -> Handler
-  -> Handler` where `Handler = Request -> Task` is a FUNCTION alias, so the
-  unfolded HM type has 3 spine arrows (`List String -> Handler -> Request ->
-  Task`). A FULL 2-arg application (`withCors origins h`, which returns a
-  Handler by design) was misread as a partial and eta-expanded into a 3-arg
-  call → `too many arguments in call to rt.Middleware_withCors`. The HM arrow
-  count is fundamentally insufficient: a "2-arg function returning a function"
-  is indistinguishable from a "3-arg function" once alias-unfolded. The correct
-  fix needs the kernel's TRUE **runtime param count** (how many `any` params
-  `rt.Middleware_withCors` actually takes = 2), which is authoritative and
-  complete. Mechanism: extend the abi-guard runtime scan to capture
-  `name -> param_count` and thread a kernel-arity map into the lowerer (salsa
-  BuildConfig input), then eta-expand iff `runtime_arity > given`. Reverted at
-  `5367111e`; re-open as a runtime-arity task. The original `String.append
-  "hi "` bug is rare (no example hits it) and stays open until the correct fix.
+  -> Handler` where `Handler = Request -> Task` unfolds to 3 spine arrows, so a
+  FULL 2-arg application was mis-eta-expanded into a 3-arg over-application. The
+  HM arrow count is fundamentally insufficient (a "2-arg function returning a
+  function" is indistinguishable from a "3-arg function" once alias-unfolded).
+  The shipped fix uses the kernel's TRUE **runtime param count**:
+  `abi_guard::runtime_arities()` scans the runtime `func` signatures (depth-aware
+  param counter, cached), threaded through `LowerConfig.kernel_arity` into the
+  lowerer; `lower_call` eta-expands iff `runtime_arity > given`. Single source of
+  truth, no hand-maintained table. Regressions
+  `driver_kernel_partial_application_go_builds` +
+  `abi_guard::func_arity_counts_params_robustly`; 50/50 sweep green.
 
 ## Status after the compiler-sweep thrust (2026-07-23)
 
-Two check≡build violations (#11 char literals, #12 let forward refs) plus
-#13 entry module and #14 diagnostic are shipped with driver-level regressions
-and green reject/infer/roundtrip/golden/build-run gates + a full 50/50
-non-skyshop example sweep (skyshop verified separately). The kernel
-partial-application fix was attempted, regressed 36-composite-server, and was
-reverted — it needs the runtime-param-count arity mechanism (see above).
-Remaining known non-close-now work: kernel partial-application (runtime-arity
-approach), #8 stdlib expansion (runtime + both-compiler kernel +
-number-polymorphism), B2 incremental short-circuit, A2/A3 deprecated-console
-product question.
+All CLOSE-NOW compiler items are shipped: three check≡build violations (#11
+char literals, #12 let forward refs, kernel partial-application) plus #13 entry
+module and #14 diagnostic, each with driver-level regressions and green
+reject/infer/roundtrip/golden/build-run gates + a full 50/50 non-skyshop
+example sweep (skyshop verified separately). Remaining known non-close-now
+work: #8 stdlib expansion (runtime + both-compiler kernel + number-polymorphism),
+B2 incremental short-circuit, A2/A3 deprecated-console product question.
 
 ## CLI-completeness scan (2026-07-23) — `sky` verbs vs Haskell oracle
 
