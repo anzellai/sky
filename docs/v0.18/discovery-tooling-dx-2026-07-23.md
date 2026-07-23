@@ -26,14 +26,21 @@ grill-confirmed findings; 5 closed, 1 at-parity, 3 carried to the next batch.
 |---|---------|-------|-----|-----------|
 | 4 | Arity / over-application gave a generic E2001 clash + cascade; E2007 never constructed | diagnostic | arity gate in `Expr::Call` — a named callee over its resolved (alias-unfolded) arrow count emits `[E2007] <name> declared N-arg, called M`, recovering to suppress the cascade | reject corpus `arity_over_application.sky`; infer 49/49 |
 
-## Carried to next batch (M effort)
+## Closed (batch 2c)
 
-- **2 Hover expands type aliases** to their structural record form (loses the
-  user-written `User` name). `ty` expands aliases eagerly (unify.rs), so the alias
-  identity is gone by the `value_sig` layer. Fix = render the ANNOTATED def's sig
-  syntactically from the AST type node (which still says `User`). Scoped to sky-lsp
-  + a name-preserving printer.
-- **3 Hover field ordering inconsistent** — the signature path shows declaration
-  order, the parameter/inferred path shows alphabetical (`Ty::Record` is sorted for
-  row-poly unify). Rendering the alias name (fix #2) closes this simultaneously.
-_(4 closed above.)_
+| # | Finding | Class | Fix | Regression |
+|---|---------|-------|-----|-----------|
+| 2 | Hover expanded type aliases to the structural record (lost the `User` name) | lsp | `def_sig_string` prefers the def's DECLARED annotation, read from CST text (`declared_anno_text`), preserving written aliases + field order | `hover_alias_preserved`; sky-lsp + nvim 17/17 |
+| 3 | Hover field ordering inconsistent (sig=decl-order, inferred=alphabetical for the SAME record) | lsp | resolved by #2 — the sig path shows the alias name, not the record two ways | (covered by #2) |
+
+_(4 closed in batch 2b.)_
+
+## sky doc DX (user-reported 2026-07-23)
+
+- `sky doc --tui` "failed to read .skycache/doc-out/api/symbols.json" (sky-chess):
+  the bundled app runs in its own dir and reads `$SKY_DOC_DIR/...`, so a relative
+  `SKY_DOC_DIR` missed the file. Fixed — `prepare_doc_out` canonicalises to an
+  absolute path + verifies `symbols.json` exists (actionable error otherwise).
+- `sky doc --serve` had no search (bare module-list index; `symbols.json` carried
+  only module names). Enrichment (per-symbol entries + client-side search bar) in
+  progress.
