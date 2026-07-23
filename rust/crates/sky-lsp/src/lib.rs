@@ -419,6 +419,15 @@ impl Analysis {
     /// body-result-only `Int` (bug (b)). Shared by `ref_type_string` (use sites) +
     /// `hover_def` (declaration sites).
     fn def_sig_string(&self, typer: &Typer, db: &dyn SkyDb, d: DefId) -> Option<String> {
+        // Prefer the def's DECLARED annotation, rendered from its source text, so
+        // hover shows the alias the user wrote (`describe : User -> String`) rather
+        // than the alias-EXPANDED record `value_sig` carries (the `ty` layer expands
+        // aliases eagerly for unification). This also keeps a record's fields in the
+        // written order, matching the oracle. Unannotated defs fall through to the
+        // inferred type below (unchanged).
+        if let Some(anno) = declared_anno_text(db, d) {
+            return Some(anno);
+        }
         typer
             .value_sig(d)
             .or_else(|| typer.inferred_sig(d))
@@ -2393,6 +2402,28 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 /// equals (case-insensitively) the dep's last `/`-segment, OR the whole import
 /// path equals the dep path. So `import Mylib` matches `github.com/org/mylib`,
 /// and `import Foo` matches `foo` — the module a `sky add` produces.
+/// The source text of a value def's DECLARED type annotation, whitespace-
+/// normalised (a multi-line signature collapses to one line). `None` for an
+/// unannotated def. Reading the annotation's CST text preserves the type
+/// ALIASES the user wrote — the `ty` layer expands them eagerly, so `value_sig`
+/// can't recover the alias name.
+fn declared_anno_text(db: &dyn SkyDb, d: DefId) -> Option<String> {
+    let loc = db.def_loc(d)?;
+    let want = loc.name.as_str();
+    for decl in db.module_parse(loc.module).tree().decls() {
+        if let ast::Decl::TypeAnno(a) = decl {
+            let matches = a.name().map(|t| t.text().to_string());
+            if matches.as_deref() == Some(want) {
+                let ty = a.ty()?;
+                let text = ty.syntax().text().to_string();
+                let normalised = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                return (!normalised.is_empty()).then_some(normalised);
+            }
+        }
+    }
+    None
+}
+
 fn dep_matches_import(dep: &str, import_path: &str) -> bool {
     // Normalise a slug/module segment for the common repo↔module conventions:
     // lowercase, drop a leading `sky-`/`sky_` (the `sky-<name>` repo → `<Name>`
