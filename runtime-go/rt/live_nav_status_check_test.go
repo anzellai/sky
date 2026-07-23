@@ -103,3 +103,37 @@ func TestSkyNavPushesUrlBeforePatch(t *testing.T) {
 			"element, breaking the browser Back button (needs two presses per page)")
 	}
 }
+
+// TestSkyRunPathsIntentIsExplicit locks the elegant, order-independent half of
+// the fix: __skyRunPaths (the data-sky-path URL sync) takes an explicit `push`
+// intent instead of guessing from a pathname race.
+//
+//   - The full-body patch caller (__skyPatch — sky-nav click / popstate /
+//     mount) passes push=false: the address bar is already correct, so it may
+//     only replaceState, never mint a duplicate entry. This is what makes the
+//     double-push structurally impossible regardless of interleaving.
+//   - The SSE apply caller (a programmatic Navigate Msg) passes push=true: a
+//     real navigation that earns a Back-able history entry.
+//
+// A regression that drops the arg, flips either call site, or reverts
+// __skyRunPaths to an unconditional pushState reintroduces the broken-Back bug.
+func TestSkyRunPathsIntentIsExplicit(t *testing.T) {
+	js := liveJSWithCfgAndCsrfWithBase("test-sid", liveBannerConfig{}, "csrf-token", "")
+
+	// __skyRunPaths must branch its history call on the intent, not always push.
+	if !strings.Contains(js, `history[push ? "pushState" : "replaceState"]`) {
+		t.Error("__skyRunPaths no longer branches pushState/replaceState on the " +
+			"push intent — a full-body patch could double-push history again")
+	}
+	// Full-body patch reconciles without a new entry.
+	if !strings.Contains(js, "__skyRunPaths(root, false)") {
+		t.Error("__skyPatch must call __skyRunPaths(root, false) — a full-body " +
+			"patch (sky-nav/popstate/mount) must never mint a history entry")
+	}
+	// SSE-driven programmatic Navigate earns a Back-able entry.
+	if !strings.Contains(js, "__skyRunPaths(document, true)") {
+		t.Error("the SSE apply path must call __skyRunPaths(document, true) — " +
+			"otherwise a programmatic Navigate Msg leaves the URL stale / " +
+			"un-Back-able")
+	}
+}
