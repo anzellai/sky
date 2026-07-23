@@ -982,7 +982,7 @@ impl<'a> Resolver<'a> {
                 }
                 for s in &mut segs {
                     if let Seg::Lit(t) = s {
-                        *t = t.replace("\\{{", "{{");
+                        *t = decode_multiline_escapes(t);
                     }
                 }
                 // Build the value: pure-literal → `Expr::Str`; else fold with
@@ -2097,6 +2097,31 @@ fn decl_name(d: &ast::Decl) -> Option<String> {
     }
 }
 
+/// Decode the escapes of a multiline (triple-quoted) string literal segment
+/// (doc 04 §9): `\\` collapses to a single backslash and `\{{` yields a literal
+/// `{{`; every OTHER `\X` is preserved verbatim (so regex `\d+` and paths
+/// `\test` survive). Left-to-right so `\\{{` is `\` + a live `{{`, not `\` +
+/// escaped braces. (A plain `.replace("\\{{", "{{")` missed the `\\` collapse.)
+fn decode_multiline_escapes(s: &str) -> String {
+    let cs: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i] == '\\' && i + 1 < cs.len() && cs[i + 1] == '\\' {
+            out.push('\\');
+            i += 2;
+        } else if cs[i] == '\\' && i + 2 < cs.len() && cs[i + 1] == '{' && cs[i + 2] == '{' {
+            out.push('{');
+            out.push('{');
+            i += 3;
+        } else {
+            out.push(cs[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// The kernel reference an operator desugars to (doc 03 §5.2). Always resolves.
 fn op_kernel(op: &str) -> Res {
     let func = match op {
@@ -2174,4 +2199,25 @@ fn levenshtein(a: &str, b: &str) -> usize {
         std::mem::swap(&mut prev, &mut cur);
     }
     prev[b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_multiline_escapes;
+
+    #[test]
+    fn multiline_escapes_collapse_backslash_keep_others() {
+        // `\\` collapses; `\{{` yields literal `{{`; every other `\X` verbatim.
+        assert_eq!(decode_multiline_escapes(r"a\\b"), r"a\b");
+        assert_eq!(
+            decode_multiline_escapes(r"regex \d+ path\test"),
+            r"regex \d+ path\test"
+        );
+        assert_eq!(decode_multiline_escapes(r"\{{literal}}"), "{{literal}}");
+        // `\\{{` is `\` + a live `{{` (left-to-right), not `\` + escaped braces.
+        assert_eq!(decode_multiline_escapes(r"\\{{"), r"\{{");
+        // trailing single backslash preserved
+        assert_eq!(decode_multiline_escapes(r"end\"), r"end\");
+        assert_eq!(decode_multiline_escapes("plain"), "plain");
+    }
 }
