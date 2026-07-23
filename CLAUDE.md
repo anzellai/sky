@@ -206,8 +206,14 @@ Run" / "Kubernetes":
 * Confirm `SKY_CONSOLE_AUTH` is set (`token` or `app`).  Production
   with `SKY_CONSOLE_AUTH` unset emits a warn log and refuses to
   mount `/_sky/console`.
-* Confirm session store is NOT memory when there is more than one
-  replica.
+* Confirm the session store is a SHARED store (`redis` / `postgres` /
+  `firestore`) when there is more than one replica. `memory` AND
+  `sqlite` are BOTH single-instance — `memory` is per-process (lost on
+  restart) and `sqlite` is a local file (one per host, not shareable;
+  a network-FS file is a corruption hazard, not a shared store). Single
+  instance (one VM / container / desktop) → `sqlite` is the right default
+  and everything works; multiple replicas → move sessions to a shared
+  store. The app code doesn't change — only `SKY_LIVE_STORE`.
 * **Confirm the load balancer routes with session affinity (sticky
   sessions) keyed on the `sky_sid` cookie when there is more than one
   replica.** A Sky.Live session is single-owner: its Model + serializing
