@@ -781,6 +781,31 @@ fn cmd_doc(args: &[String]) -> ExitCode {
 /// `src/`, then builds and spawns the bundled `sky-doc-server` (Sky.Http.Server)
 /// pointed at it via `SKY_DOC_DIR` on `SKY_LIVE_PORT`. Foreground; Ctrl-C stops.
 /// Mirrors `app/Main.hs` `runDocServe`.
+/// Render the doc-site into `<project>/.skycache/doc-out` and return its
+/// ABSOLUTE path. The bundled doc app (serve/tui) is spawned in its own build
+/// dir and reads `$SKY_DOC_DIR/api/symbols.json`, so a relative path would
+/// resolve against the wrong cwd — the "failed to read .skycache/doc-out/api/
+/// symbols.json" the user hit. Canonicalising here makes `SKY_DOC_DIR` absolute
+/// regardless of how the project dir resolved, and the existence check turns a
+/// silent render gap into an actionable error.
+fn prepare_doc_out(repo_root: &Path, project_dir: &Path) -> Result<PathBuf, ExitCode> {
+    let doc_out = project_dir.join(".skycache").join("doc-out");
+    if let Err(e) = project::render_doc_site(repo_root, project_dir, &doc_out) {
+        eprintln!("sky doc: could not render doc-site: {e}");
+        return Err(ExitCode::FAILURE);
+    }
+    let doc_out = std::fs::canonicalize(&doc_out).unwrap_or(doc_out);
+    if !doc_out.join("api").join("symbols.json").is_file() {
+        eprintln!(
+            "sky doc: the doc-site render produced no api/symbols.json under {} \
+             — the project's modules may have failed to parse for docs.",
+            doc_out.display()
+        );
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(doc_out)
+}
+
 fn cmd_doc_serve(port: u16) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(repo_root) = assets_root_for(&cwd) else {
@@ -789,11 +814,10 @@ fn cmd_doc_serve(port: u16) -> ExitCode {
     let project_dir = project::project_dir_for(&cwd.join("_"));
 
     // Render the doc-site into the project's cache so the server has content.
-    let doc_out = project_dir.join(".skycache").join("doc-out");
-    if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &doc_out) {
-        eprintln!("sky doc: could not render doc-site: {e}");
-        return ExitCode::FAILURE;
-    }
+    let doc_out = match prepare_doc_out(&repo_root, &project_dir) {
+        Ok(d) => d,
+        Err(code) => return code,
+    };
 
     let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "doc") else {
         return bundled_missing("doc");
@@ -838,11 +862,10 @@ fn cmd_doc_tui() -> ExitCode {
     };
     let project_dir = project::project_dir_for(&cwd.join("_"));
 
-    let doc_out = project_dir.join(".skycache").join("doc-out");
-    if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &doc_out) {
-        eprintln!("sky doc: could not render doc-site: {e}");
-        return ExitCode::FAILURE;
-    }
+    let doc_out = match prepare_doc_out(&repo_root, &project_dir) {
+        Ok(d) => d,
+        Err(code) => return code,
+    };
 
     let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "doc") else {
         return bundled_missing("doc");
