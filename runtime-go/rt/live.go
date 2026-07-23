@@ -2107,15 +2107,6 @@ type liveSession struct {
 	// to a typed envelope lets the SSE producer choose patches-vs-body
 	// per render without changing the channel/buffer plumbing.
 	sseCh chan sseFrame
-	// sseCancel enforces ONE live SSE connection per session. Each new
-	// /_sky/sse connection closes the previous session's channel (superseding
-	// it) and installs its own. The superseded handler's for-select sees the
-	// close and returns, freeing its goroutine + connection immediately. This
-	// bounds server-side SSE connections to one-per-active-session regardless
-	// of client behaviour (multi-tab, rapid reconnect, a buggy client that
-	// opens several) — the scalable defence that complements the client-side
-	// idempotent-open + release-on-navigation. Guarded by `mu`.
-	sseCancel chan struct{}
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -5605,27 +5596,16 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		sess.mu.Unlock()
 	}
 
-	// One live SSE per session: supersede any previous connection. A new
-	// connect closes the prior handler's cancel channel (it returns from the
-	// for-select below), then installs its own. Bounds server-side SSE
-	// connections to one-per-active-session even if the client opens several
-	// (multi-tab, rapid reconnect). Guarded by sess.mu.
-	sess.mu.Lock()
-	if sess.sseCancel != nil {
-		close(sess.sseCancel)
-	}
-	myCancel := make(chan struct{})
-	sess.sseCancel = myCancel
-	sess.mu.Unlock()
-	defer func() {
-		// Only clear the slot if it's still OURS — a newer connection may have
-		// already superseded us and installed its own cancel channel.
-		sess.mu.Lock()
-		if sess.sseCancel == myCancel {
-			sess.sseCancel = nil
-		}
-		sess.mu.Unlock()
-	}()
+	// NOTE: a server-side "one SSE per session" supersede was tried and
+	// REVERTED. EventSource auto-reconnects when the server gracefully ends a
+	// 200 stream (readyState → CONNECTING, not CLOSED), so superseding a
+	// same-session connection makes two LIVE tabs of one session ping-pong
+	// forever (each supersede triggers the other's reconnect ~3s later). Two
+	// tabs sharing a session is a supported, common case (see the Cmd.publish
+	// cross-tab model), so per-session connection count is NOT bounded here.
+	// Per-tab bounding is handled correctly on the client (idempotent
+	// __skyOpenSSE + release-on-pagehide); server-side scale is Go's connection
+	// handling + prompt r.Context().Done() cleanup + HTTP/2 in production.
 
 	// Heartbeat ticker. Interval is intentionally LESS than the
 	// client's heartbeat-timeout (35s) by a factor of 2 so a single
@@ -5639,10 +5619,6 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
-			return
-		case <-myCancel:
-			// A newer SSE connection for this session superseded us — exit so
-			// we don't hold a goroutine + connection for a stale tab.
 			return
 		case fr := <-sess.sseCh:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
