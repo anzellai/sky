@@ -3905,8 +3905,30 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// so it counts as BOTH "last computed" and "last shipped".
 	sess.commitRender(&vn, body)
 	sess.lastShippedBody = body
+	// Phase 1 mirror (v0.18): a session's tabs mirror ONE shared view,
+	// so a navigation (sky-nav / popstate / a new tab landing on a URL)
+	// must reach the session's OTHER tabs too — otherwise they drift onto
+	// a different page than the shared Model, and a later action's diff
+	// (computed against the shared page) would target sky-ids that don't
+	// exist in the stale tab's DOM. We fan a FULL-BODY frame (not a
+	// diff): navigation is a structural change, and a full swap converges
+	// any tab regardless of the page it was showing, with no diff-baseline
+	// dependency. The requesting tab is excluded via X-Sky-Tab — its own
+	// response already carries the new page (a bare browser load has no
+	// header + no SSE yet, so it is naturally excluded). Gated on a
+	// sibling tab being connected so a lone tab / first load pays nothing.
+	navTab := r.Header.Get("X-Sky-Tab")
+	var mirrorFrame sseFrame
+	mirror := false
+	if sess.hasSSEConnOtherThan(navTab) {
+		mirrorFrame = sseFrame{event: "patch", data: encodeSSEFrame(sess, body)}
+		mirror = true
+	}
 	app.store.Set(sid, sess)
 	sess.mu.Unlock()
+	if mirror {
+		sess.fanOutFrame(mirrorFrame, navTab)
+	}
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -7610,7 +7632,7 @@ document.addEventListener("click", function(ev) {
     if (u.origin !== window.location.origin) return;
   } catch (e) { return; }
   ev.preventDefault();
-  fetch(href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
+  fetch(href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
     .then(function(r) {
       // r.ok check is load-bearing. Without it, a 404 body like
       // "session not found" (server lost our session_id store
@@ -7638,7 +7660,7 @@ document.addEventListener("click", function(ev) {
     .catch(function() { window.location.href = href; });
 });
 window.addEventListener("popstate", function() {
-  fetch(window.location.href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
+  fetch(window.location.href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
     .then(function(r) {
       // Same r.ok gate as the sky-nav click path. Without it,
       // Back/Forward to a URL after the server lost our session

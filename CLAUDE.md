@@ -1613,16 +1613,20 @@ does NOT run. To force a fresh `init` (demo reset / e2e bootstrap):
 `Cmd.perform (Cookie.expire "sky_sid")` then reload. Details
 in `docs/skylive/overview.md` §"Session lifecycle — when `init` runs".
 
-**Multi-tab of the SAME session syncs live automatically (v0.18+).**
-Two tabs sharing one `sky_sid` share one server Model, and every
-committed frame — dispatch result AND server push (Cmd.perform /
-Time.every / pub-sub) — fans out to ALL of the session's live
-connections. So an action in one tab is reflected in the others with
-no app code, no `Cmd.publish`. Who-wins is unchanged: the per-session
-mutex serializes dispatches (serialized last-writer-wins), and every
-tab converges to the resolved state. Reach for `Cmd.publish` only to
-sync across DIFFERENT sessions (different `sky_sid` — e.g. two users,
-or one user on two devices). See
+**Multi-tab of the SAME session mirrors one shared view (v0.18+).**
+Two tabs sharing one `sky_sid` share one server Model and are ONE
+logical window: they always show the same page AND state. Every
+committed frame — an action's patch, a server push (Cmd.perform /
+Time.every / pub-sub), AND a navigation — fans out to ALL of the
+session's live connections, with no app code and no `Cmd.publish`.
+Navigating one tab (or opening a new tab at a URL) therefore moves ALL
+tabs of that session — this is deliberate and is what keeps the
+broadcast diff sound (every tab stays at the shared `prevTree`, so a
+diff never mis-targets a stale tab's DOM). Who-wins is unchanged: the
+per-session mutex serializes dispatches (last-writer-wins), and every
+tab converges. Two people who must browse INDEPENDENTLY are two
+different sessions, not two tabs — reach for `Cmd.publish` (or a
+user-keyed topic) to sync across DIFFERENT `sky_sid`s. See
 `docs/skylive/architecture.md` §"Per-session fan-out".
 
 ### init's `req` shape (v0.16.7 #417 + v0.16.8 #423)

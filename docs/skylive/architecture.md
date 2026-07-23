@@ -126,13 +126,24 @@ client receives a full-body frame for those cases. The producer
 NEVER ships `event: patches` to a session that hasn't yet seen
 a prev tree.
 
-## Per-session fan-out — every tab of one session renders in lockstep
+## Per-session fan-out — every tab of one session mirrors one shared view
 
 A session (`sky_sid` cookie) holds ONE server-side Model; multiple tabs of the
-same browser share the cookie, so they share that Model. As of v0.18 every
-committed frame is fanned out to **all** live connections of the session, so
-the tabs stay identical and live — an action in one tab is reflected in the
-others without the user touching them.
+same browser share the cookie, so they share that Model. As of v0.18 the tabs
+of a session **mirror one shared view**: they always show the same page AND the
+same state. Every committed frame — an action's patch, a server push, AND a
+navigation — is fanned out to **all** live connections of the session.
+
+**This is a deliberate semantic, and it is what makes the fan-out sound.**
+Because every tab is kept at the shared `sess.prevTree`, a broadcast diff always
+targets a DOM that matches its baseline. If navigation did NOT mirror, one tab
+could drift onto a different page than the shared Model, and a later action's
+diff (computed against the shared page) would target `sky-id`s that don't exist
+in the stale tab's DOM — silent corruption. Mirroring navigation closes that.
+The consequence to know: navigating one tab (or opening a new tab at a URL)
+moves ALL tabs of that session — they are one logical window. (Two people who
+must browse independently are two different sessions, not two tabs; see
+*Same-user, different sessions* under Horizontal scale.)
 
 - **Ingress + relay.** `sess.sseCh` is the session's single ingress channel
   every producer (Cmd.perform completion, Time.every tick, pub/sub delivery,
@@ -153,6 +164,15 @@ others without the user touching them.
   shared model. The originating tab is excluded by its `tab` id (and the
   client seq guard would drop the duplicate regardless), so the common
   single-tab dispatch runs no extra diff/marshal.
+- **Navigation mirror.** A `sky-nav` fetch / popstate / initial load is a
+  `GET` served by `handleInitial`, which mutates the shared Model's page. It
+  fans a **full-body** frame to the OTHER tabs (a page change is structural,
+  so a full swap converges any tab regardless of its prior page — no
+  diff-baseline dependency). The requesting tab is excluded via the
+  `X-Sky-Tab` request header the client sends on nav fetches; a bare browser
+  load carries no header and has no SSE yet, so it is naturally excluded.
+  Gated on a sibling tab being connected, so a lone tab / first load pays
+  nothing.
 - **Who-wins is unchanged.** The per-session mutex still serializes dispatches
   (serialized last-writer-wins, no lost update). Fan-out only makes every
   connection *see* the resolved state, so all tabs converge. In-flight typing

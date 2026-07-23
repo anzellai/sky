@@ -1444,10 +1444,13 @@ Server-side broadcast channel between Sky.Live sessions (DIFFERENT
 real-time updates WITHOUT polling — chatrooms, collaborative editors,
 live dashboards, presence indicators.
 
-**Note: multiple TABS of the SAME session sync automatically** (v0.18+)
-— they share one server Model and every frame fans out to all of the
-session's connections. You only need pub/sub to cross a SESSION
-boundary, not a tab boundary.
+**Note: multiple TABS of the SAME session mirror one shared view**
+(v0.18+) — they share one server Model and are ONE logical window:
+always the same page AND state. Actions, server pushes, AND navigation
+all fan out to every tab, so navigating one tab moves all tabs of that
+session. You only need pub/sub to cross a SESSION boundary (different
+`sky_sid` — two users, or one user browsing independently on two
+devices), never a tab boundary.
 
 **Decision rule.** **DB writes in your own Sky.Live app → pub/sub.**
 **External state changing on another service → `Time.every` poll.**
