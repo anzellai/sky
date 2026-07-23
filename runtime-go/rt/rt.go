@@ -2782,6 +2782,14 @@ func cmp(a, b any) int {
 		}
 		return 0
 	}
+	// Composite comparables: Elm's `comparable` includes tuples and lists OF
+	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
+	// such types, so a tuple (rt.T2/T3/… struct) or list (slice) reaching here is
+	// well-typed — compare it recursively rather than falling through to AsInt
+	// (which panics on a struct/slice: the class this closes).
+	if c, ok := cmpComposite(a, b); ok {
+		return c
+	}
 	ia, ib := AsInt(a), AsInt(b)
 	switch {
 	case ia < ib:
@@ -2790,6 +2798,57 @@ func cmp(a, b any) int {
 		return 1
 	}
 	return 0
+}
+
+// cmpComposite compares two tuple (struct) or list (slice/array) values
+// lexicographically, returning (result, true) when both are the same composite
+// kind. Lists compare element-wise then shorter-is-less on a common prefix
+// (Elm ordering); tuples compare field-by-field in declaration order (V0, V1,
+// …). Returns (0, false) for non-composites or a kind mismatch, so the caller
+// falls back to the scalar path.
+func cmpComposite(a, b any) (int, bool) {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	switch va.Kind() {
+	case reflect.Slice, reflect.Array:
+		if k := vb.Kind(); k != reflect.Slice && k != reflect.Array {
+			return 0, false
+		}
+		n := va.Len()
+		if vb.Len() < n {
+			n = vb.Len()
+		}
+		for i := 0; i < n; i++ {
+			if c := cmp(va.Index(i).Interface(), vb.Index(i).Interface()); c != 0 {
+				return c, true
+			}
+		}
+		switch {
+		case va.Len() < vb.Len():
+			return -1, true
+		case va.Len() > vb.Len():
+			return 1, true
+		}
+		return 0, true
+	case reflect.Struct:
+		if vb.Kind() != reflect.Struct {
+			return 0, false
+		}
+		n := va.NumField()
+		if vb.NumField() < n {
+			n = vb.NumField()
+		}
+		for i := 0; i < n; i++ {
+			fa, fb := va.Field(i), vb.Field(i)
+			if !fa.CanInterface() || !fb.CanInterface() {
+				return 0, false // unexported field — not a tuple; let the caller decide
+			}
+			if c := cmp(fa.Interface(), fb.Interface()); c != 0 {
+				return c, true
+			}
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func And(a, b any) any { return AsBool(a) && AsBool(b) }
