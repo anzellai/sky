@@ -522,6 +522,9 @@ fn pattern_atom(p: &mut Parser) -> CompletedMarker {
         }
         String | MultilineString => {
             let m = p.start();
+            if p.at(String) && !is_terminated_string(p.cur_text()) {
+                p.error("unterminated string literal — add a closing `\"`");
+            }
             p.bump();
             m.complete(p, PatString)
         }
@@ -759,6 +762,28 @@ fn valid_char_literal(text: &str) -> bool {
     (n == 1 && !inner.starts_with('\\')) || (n == 2 && inner.starts_with('\\'))
 }
 
+/// Whether a `String` token is terminated (has an unescaped closing `"`). The
+/// lexer auto-closes an unterminated string at newline/EOF into the same `Str`
+/// token, so the parser must reject it — else `msg = "oops` (no closing quote)
+/// type-checks and go-builds clean (a check≢build hole; the oracle emits E0001).
+fn is_terminated_string(text: &str) -> bool {
+    let mut chars = text.chars();
+    if chars.next() != Some('"') {
+        return false;
+    }
+    let mut escaped = false;
+    for c in chars {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            return true;
+        }
+    }
+    false
+}
+
 fn char_error_msg() -> &'static str {
     "a character literal must contain exactly one character — e.g. `'a'` or an \
      escape like `'\\n'` / `'\\\\'`"
@@ -766,8 +791,16 @@ fn char_error_msg() -> &'static str {
 
 fn atom(p: &mut Parser) -> CompletedMarker {
     match p.current() {
-        Int | HexInt | Float | String => {
+        Int | HexInt | Float => {
             let m = p.start();
+            p.bump();
+            m.complete(p, Literal)
+        }
+        String => {
+            let m = p.start();
+            if !is_terminated_string(p.cur_text()) {
+                p.error("unterminated string literal — add a closing `\"`");
+            }
             p.bump();
             m.complete(p, Literal)
         }
