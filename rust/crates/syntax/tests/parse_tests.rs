@@ -54,8 +54,7 @@ fn interpolation_rich_expr_shapes_produce_correct_nodes() {
     // qualified call, a nested field access, and a multi-arg application each
     // resolve to the correct expression node — not the pre-fix flat-leaf /
     // wrong-node fallback that silently miscompiled.
-    let src =
-        "x =\n    \"\"\"a {{String.fromInt n}} b {{record.field.sub}} c {{f x y}}\"\"\"\n";
+    let src = "x =\n    \"\"\"a {{String.fromInt n}} b {{record.field.sub}} c {{f x y}}\"\"\"\n";
     let parse = assert_clean(src);
     assert_eq!(count(&parse, SyntaxKind::Interpolation), 3);
     // `String.fromInt n` -> CallExpr whose callee is a QualRefExpr.
@@ -251,11 +250,7 @@ fn char_literal_strictness_matches_oracle() {
     }
     // Invalid: empty, multi-char, and multi-codepoint escapes (`\x41`, `\u{..}`)
     // — the oracle rejects all of these at parse.
-    for bad in [
-        "x =\n    ''\n",
-        "x =\n    'ab'\n",
-        "x =\n    '\\x41'\n",
-    ] {
+    for bad in ["x =\n    ''\n", "x =\n    'ab'\n", "x =\n    '\\x41'\n"] {
         let parse = p(bad);
         assert!(
             !parse.errors().is_empty(),
@@ -263,7 +258,8 @@ fn char_literal_strictness_matches_oracle() {
         );
     }
     // Pattern position rejects too (the merged Char arm was split at both sites).
-    let pat_bad = p("f c =\n    case c of\n        'ab' ->\n            1\n\n        _ ->\n            0\n");
+    let pat_bad =
+        p("f c =\n    case c of\n        'ab' ->\n            1\n\n        _ ->\n            0\n");
     assert!(
         !pat_bad.errors().is_empty(),
         "should REJECT multi-char literal in a pattern"
