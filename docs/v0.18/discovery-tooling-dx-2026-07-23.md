@@ -20,6 +20,12 @@ grill-confirmed findings; 5 closed, 1 at-parity, 3 carried to the next batch.
   Rust and the oracle both show the location + `Undefined name: <n>` with a caret;
   they are equivalent. No change.
 
+## Closed (batch 2b)
+
+| # | Finding | Class | Fix | Regression |
+|---|---------|-------|-----|-----------|
+| 4 | Arity / over-application gave a generic E2001 clash + cascade; E2007 never constructed | diagnostic | arity gate in `Expr::Call` — a named callee over its resolved (alias-unfolded) arrow count emits `[E2007] <name> declared N-arg, called M`, recovering to suppress the cascade | reject corpus `arity_over_application.sky`; infer 49/49 |
+
 ## Carried to next batch (M effort)
 
 - **2 Hover expands type aliases** to their structural record form (loses the
@@ -30,8 +36,4 @@ grill-confirmed findings; 5 closed, 1 at-parity, 3 carried to the next batch.
 - **3 Hover field ordering inconsistent** — the signature path shows declaration
   order, the parameter/inferred path shows alphabetical (`Ty::Record` is sorted for
   row-poly unify). Rendering the alias name (fix #2) closes this simultaneously.
-- **4 Arity / over-application errors cryptic; E2007 never constructed.** `Uuid.v4 ()`
-  gives cascading E2001s; the oracle gives one precise `[E2007] Arity mismatch —
-  declared as 0-arg, called with 1 args`. E2007 exists only as an enum code +
-  reject-corpus comment — never built in `crates/*/src`. Wiring it is a checker
-  change (constrain-call arity gate).
+_(4 closed above.)_
