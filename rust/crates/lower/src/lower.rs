@@ -2679,7 +2679,22 @@ impl<'a> Ctx<'a> {
             // build` holds.
             let pkg = package.as_str();
             let fun = name.as_str();
-            let msg = if self.ffi.has_package(pkg) {
+            // A real Go-FFI package is an import path (`github.com/…`) or a Go
+            // std package (`fmt`, `strings`) — NEVER a Sky-namespaced
+            // `Std.*` / `Sky.*` qualifier. So a Sky-namespaced name reaching
+            // this Foreign fallthrough is an unknown/misspelled STDLIB module
+            // (`Std.Lst` for `Std.List`), not a missing Go module. Pointing the
+            // dev at `sky install` there is actively misleading — it can never
+            // fetch a Sky stdlib module.
+            let sky_namespaced = pkg.starts_with("Std.") || pkg.starts_with("Sky.");
+            let msg = if sky_namespaced {
+                format!(
+                    "unknown Sky module `{pkg}`, so `{pkg}.{fun}` cannot be resolved. \
+                     Check the spelling of the import — Sky stdlib modules live under \
+                     `Std.*` and `Sky.Core.*` / `Sky.Http.*` (e.g. `Sky.Core.List`, \
+                     `Std.Db`). This is not a Go-FFI package; `sky install` won't fetch it."
+                )
+            } else if self.ffi.has_package(pkg) {
                 format!(
                     "no such Go-FFI function `{pkg}.{fun}` — the FFI surface for `{pkg}` \
                      is present but exports no such function, or it takes a value that \

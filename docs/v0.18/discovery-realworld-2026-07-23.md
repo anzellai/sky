@@ -19,6 +19,7 @@ differential byte-match is preserved (both sides move together).
 | `[log]` sky.toml default logged plain (rt's `logJSON`/`logThreshold` cached at package-init, before the app's `init()` seeds) | config | `SetSkyDefault` re-fires `envPrefixHooks` (same as `SetEnvPrefix`) | `TestSetSkyDefaultResyncsLogConfig` |
 | `[database] url` ignored (only `path` recognised) | config | `url` aliases `path` → both seed `DB_PATH` (detectDriver routes postgres DSN) | `database_url_is_an_alias_for_path` |
 | Type-mismatch messages TRUNCATED parametric types to the head constructor (`Maybe` vs `String`, hiding `Maybe Int`) | DX | `unify.rs` `describe_flat`/`describe_var` walk the union-find and render full applications (`Maybe Int`, nested `List (Maybe Int)` parenthesised) at both App-mismatch arms | `mismatch_message_keeps_type_arguments` |
+| A **stdlib module typo** (`import Std.Lst`) was diagnosed as a missing Go-FFI package with a "run `sky install`" hint (which can never fetch a Sky module) | DX (misleading) | `lower.rs` — a `Std.*`/`Sky.*`-namespaced package reaching the Foreign fallthrough is an unknown Sky module (real Go FFI packages are never Sky-namespaced); emit "unknown Sky module — check spelling" instead | `driver_stdlib_module_typo_is_not_an_ffi_install_hint` |
 
 ## Open (tracked — fix sites identified, not yet closed)
 
@@ -48,13 +49,14 @@ differential byte-match is preserved (both sides move together).
   alone would break the differential byte-match. Escalate to the user before
   spending iterations.
 
-### Diagnostics (DX — correct behaviour unambiguous, deferred for a focused pass)
-- A **stdlib module typo** (`import Std.Lst`) is diagnosed as a missing *Go FFI
-  package* rather than an unknown-module / did-you-mean.
+### Diagnostics (DX)
 - `Server.post` JSON endpoints return **403 CSRF by default** to machine
   clients (curl/fetch without the cookie+token) — correct-by-design but
   **undocumented**; at minimum a docs note + a clear 403 body naming the CSRF
   requirement + how to exempt an API route.
+- (Future) The stdlib-typo diagnostic now says "unknown Sky module"; a
+  did-you-mean against the bundled module set (`Std.Lst` → `Std.List`) would
+  need the module registry threaded into `lower` — tracked as an enhancement.
 
 ## Notes
 - Both compilers share `runtime-go/rt`, so the JSON/Error/`:param` fixes are

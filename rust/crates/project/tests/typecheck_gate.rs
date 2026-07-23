@@ -795,3 +795,35 @@ fn driver_eta_expands_func_value_lambda_body() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// A typo of a Sky stdlib module (`Std.Lst` for `Std.List`) must be diagnosed
+/// as an unknown Sky module, NOT as a missing Go-FFI package with a "run
+/// sky install" hint (which can never fetch a Sky stdlib module). Regression
+/// for the real-world sweep finding: the misleading FFI-surface error.
+#[test]
+fn driver_stdlib_module_typo_is_not_an_ffi_install_hint() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "stdlibtypo",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Lst as L\n\n\
+         main =\n    let _ = L.length [1, 2, 3]\n    in Task.succeed ()\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.note.contains("unknown Sky module") && report.note.contains("Std.Lst"),
+        "expected an unknown-Sky-module diagnostic, got: {}",
+        report.note
+    );
+    assert!(
+        !report.note.contains("Run `sky install`"),
+        "a Sky-namespaced typo must NOT suggest `sky install` (it can't fetch stdlib); note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
