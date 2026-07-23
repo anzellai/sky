@@ -259,6 +259,33 @@ fn driver_pointfree_def_go_builds() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A `let` group with an out-of-source-order forward reference
+/// (`a = b + 1` before `b = 5`) must EMIT and `go build`. Sky allows the
+/// forward reference; the lowerer used to emit the defs in source order, so Go
+/// saw `v_a := v_b + 1` before `v_b` was declared (`undefined: v_1`). The
+/// dependency topo-sort now emits `b` first.
+#[test]
+fn driver_let_forward_ref_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "let-forward",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         compute : Int -> Int\n\
+         compute n =\n    let\n        c = a + b\n        a = n + 1\n        b = a * 2\n    in\n    c\n\n\
+         main =\n    let\n        x = y + 1\n        y = 5\n    in\n    println (String.fromInt (x + compute 10))\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "forward-ref let must emit AND go build (was `undefined: v_N`); note: {}",
+        report.note
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and

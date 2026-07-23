@@ -1714,8 +1714,17 @@ impl<'a> Ctx<'a> {
         if let Expr::Let { defs, body } = &self.body.exprs[e] {
             let defs = defs.clone();
             let body = *body;
+            // Pre-register every binder's Go name so a forward reference resolves
+            // to the name its binding will emit (matches `lower_let_expr`).
             for d in &defs {
-                self.lower_let_def(d, out);
+                for (bn, lid) in &d.binders {
+                    let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+                }
+            }
+            // Dependency-order the defs (Go declare-before-use vs Sky's out-of-order
+            // forward references — `let a = b + 1; b = 5`).
+            for &i in &self.order_let_defs(&defs) {
+                self.lower_let_def(&defs[i], out);
             }
             self.lower_main_body(body, out);
         } else {
@@ -3467,6 +3476,133 @@ impl<'a> Ctx<'a> {
         Some(stmts)
     }
 
+    /// Collect every `Res::Local` referenced anywhere in expression `e`. Used to
+    /// dependency-order `let` bindings: Sky allows an out-of-source-order forward
+    /// reference (`let a = b + 1; b = 5 in a`), but Go requires declare-before-use,
+    /// so the emitter must place `b` ahead of `a`. A missed variant only drops a
+    /// dependency edge (degrading to source order — the prior behaviour), never a
+    /// crash, but every `Expr` variant is covered here.
+    fn collect_local_refs(&self, e: ExprId, out: &mut HashSet<LocalId>) {
+        match &self.body.exprs[e] {
+            Expr::Var(Res::Local(l)) => {
+                out.insert(*l);
+            }
+            Expr::Var(_)
+            | Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Accessor(_)
+            | Expr::Error => {}
+            Expr::List(es) | Expr::Tuple(es) => {
+                for &x in es {
+                    self.collect_local_refs(x, out);
+                }
+            }
+            Expr::Record(fs) => {
+                for (_, x) in fs {
+                    self.collect_local_refs(*x, out);
+                }
+            }
+            Expr::Update { base, fields } => {
+                self.collect_local_refs(*base, out);
+                for (_, x) in fields {
+                    self.collect_local_refs(*x, out);
+                }
+            }
+            Expr::Negate(x) | Expr::Access(x, _) => self.collect_local_refs(*x, out),
+            Expr::Lambda { body, .. } => self.collect_local_refs(*body, out),
+            Expr::Call(f, args) => {
+                self.collect_local_refs(*f, out);
+                for &x in args {
+                    self.collect_local_refs(x, out);
+                }
+            }
+            Expr::Binop { lhs, rhs, .. } => {
+                self.collect_local_refs(*lhs, out);
+                self.collect_local_refs(*rhs, out);
+            }
+            Expr::If { arms, els } => {
+                for (c, t) in arms {
+                    self.collect_local_refs(*c, out);
+                    self.collect_local_refs(*t, out);
+                }
+                self.collect_local_refs(*els, out);
+            }
+            Expr::Let { defs, body } => {
+                for d in defs {
+                    self.collect_local_refs(d.body, out);
+                }
+                self.collect_local_refs(*body, out);
+            }
+            Expr::Case { subject, branches } => {
+                self.collect_local_refs(*subject, out);
+                for b in branches {
+                    self.collect_local_refs(b.body, out);
+                }
+            }
+        }
+    }
+
+    /// Return the emission order of a `let` group's defs so each def is emitted
+    /// AFTER every sibling whose binder it references (Kahn topo-sort). A cycle
+    /// (mutual value recursion — ill-typed; or mutually-recursive local functions,
+    /// whose names are pre-registered so closures still resolve) leaves the
+    /// remaining defs in source order.
+    fn order_let_defs(&self, defs: &[hir::LocalDef]) -> Vec<usize> {
+        let n = defs.len();
+        if n <= 1 {
+            return (0..n).collect();
+        }
+        // binder LocalId -> the def index that introduces it.
+        let mut owner: HashMap<LocalId, usize> = HashMap::new();
+        for (i, d) in defs.iter().enumerate() {
+            for (_, lid) in &d.binders {
+                owner.insert(*lid, i);
+            }
+        }
+        // deps[i] = sibling def indices that def i references (must precede it).
+        let mut deps: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+        for (i, d) in defs.iter().enumerate() {
+            let mut refs = HashSet::new();
+            self.collect_local_refs(d.body, &mut refs);
+            for r in refs {
+                if let Some(&j) = owner.get(&r) {
+                    if j != i {
+                        deps[i].insert(j);
+                    }
+                }
+            }
+        }
+        // Kahn, stable: each pass emits every not-yet-emitted def whose deps are
+        // all satisfied, scanning in source order so independent defs keep their
+        // original order.
+        let mut emitted = vec![false; n];
+        let mut order = Vec::with_capacity(n);
+        loop {
+            let mut progressed = false;
+            for i in 0..n {
+                if !emitted[i] && deps[i].iter().all(|&j| emitted[j]) {
+                    emitted[i] = true;
+                    order.push(i);
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+        // Any defs left in a cycle: append in source order (prior behaviour).
+        for i in 0..n {
+            if !emitted[i] {
+                order.push(i);
+            }
+        }
+        order
+    }
+
     fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
         let defs = defs.to_vec();
         // Pre-register every binder's Go name BEFORE lowering any body, so a
@@ -3482,8 +3618,11 @@ impl<'a> Ctx<'a> {
             }
         }
         let mut stmts: Vec<GoStmt> = Vec::new();
-        for d in &defs {
-            self.lower_let_def(d, &mut stmts);
+        // Dependency-order the defs so a forward reference emits its target first
+        // (Go requires declare-before-use; names are pre-registered above so a
+        // genuine cycle still resolves by name).
+        for &i in &self.order_let_defs(&defs) {
+            self.lower_let_def(&defs[i], &mut stmts);
         }
         let b = self.lower_expr(body, actual);
         stmts.push(GoStmt::Return(Some(b)));
@@ -5158,13 +5297,12 @@ mod tco_tests {
     /// Recursively test whether any `GoStmt` in `body` (or nested) matches `f`.
     fn any_stmt(body: &[GoStmt], f: &dyn Fn(&GoStmt) -> bool) -> bool {
         body.iter().any(|s| {
-            f(s)
-                || match s {
-                    GoStmt::Loop(b) => any_stmt(b, f),
-                    GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
-                    GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
-                    _ => false,
-                }
+            f(s) || match s {
+                GoStmt::Loop(b) => any_stmt(b, f),
+                GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
+                GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
+                _ => false,
+            }
         })
     }
 
