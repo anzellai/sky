@@ -31,10 +31,11 @@ should appear in another user's open tab:
 - A live dashboard: a background job publishes new data; every
   watching tab updates without re-polling.
 
-In v0.15.x delivery is **in-process** — sub-100 μs at the broker
-layer, 10–100 ms end-to-end including SSE flush. Cross-process
-broker tiers (Redis / Cloud Pub/Sub / NATS / Postgres LISTEN/NOTIFY)
-land in v0.16+; see [Cross-process delivery](#cross-process-delivery).
+Single-instance delivery is **in-process** — sub-100 μs at the broker
+layer, 10–100 ms end-to-end including SSE flush. Multi-instance
+deploys (`SKY_LIVE_STORE=redis`) fan out ACROSS instances via the
+Redis broker automatically, with no Sky-source change; see
+[Cross-instance delivery](#cross-instance-delivery).
 
 ## When to use Pub/Sub vs Tick (`Time.every`)
 
@@ -108,9 +109,11 @@ update msg model =
 ```
 
 The payload is opaque — `any` — so you can ship any value the runtime
-can carry. In v0.15.x, in-process delivery preserves the original Go
-value as-is; for cross-process tiers in v0.16+, payloads are JSON-
-encoded between processes. **Dict-shaped payloads (`Dict.fromList […]`)
+can carry. In-process delivery preserves the original Go value as-is;
+across instances (Redis broker) payloads are gob-encoded on the wire,
+the same machinery the DB session stores use for the Model — a
+non-encodable payload degrades to local-only delivery (logged once),
+never a panic. **Dict-shaped payloads (`Dict.fromList […]`)
 are the safest portable choice.**
 
 ### `Sub.subscribeTopic topic toMsg`
@@ -213,8 +216,9 @@ have no originating session and therefore no echo-suppression target.
 Subscribers that filter on `Origin == ownSid` see these as foreign and
 will receive them normally.
 
-The same in-process scope rules as `Cmd.publish` apply (v0.15.x:
-in-process only; v0.16+ cross-process tiers cover both APIs uniformly).
+The same scope rules as `Cmd.publish` apply: in-process for a single
+instance, cross-instance via the Redis broker on a multi-instance
+deploy — both APIs uniformly.
 
 ## The durability pattern: write to DB FIRST, publish SECOND
 
@@ -286,8 +290,8 @@ subscriber receives the event exactly as it would under the default
 
 The savings:
 
-- **One broker round-trip per publish.** In v0.15.x in-process
-  broker, that's a channel push + a dispatch goroutine wakeup — sub-
+- **One broker round-trip per publish.** With the in-process broker
+  that's a channel push + a dispatch goroutine wakeup — sub-
   microsecond, but eliminated entirely.
 - **Network latency in v0.16+ broker tiers.** Redis Pub/Sub, Cloud
   Pub/Sub, NATS, and Postgres LISTEN/NOTIFY all route the publisher's
@@ -338,41 +342,50 @@ the broadcast — for example, a kanban board where every tab applies
 the same `CardMoved` Msg through `MessageReceived` whether they
 originated it or not.
 
-## Cross-process delivery (v0.16+)
+## Cross-instance delivery
 
-In v0.15.x, pub/sub is **in-process only.** A single Sky.Live
-instance — sessions on different instances do NOT see each other's
-publishes. This is correct for:
+Single-instance apps use the **in-process** broker — sub-100 μs, zero
+infra. That is the right default for a single Cloud Run instance, a
+self-hosted VPS, or local dev.
 
-- Single-instance Cloud Run apps (autoscaler at 1)
-- Self-hosted single VPS deployments
-- Local dev
+**Multi-instance deployments cross instances automatically (v0.18+).**
+When the session store is Redis (`SKY_LIVE_STORE=redis`), pub/sub is
+backed by a **cross-instance Redis broker** — a `Cmd.publish` /
+`Std.PubSub.publish` on one instance reaches subscribers on every
+instance, with ZERO Sky-source change. The `Broker` seam held exactly
+as designed: `Sub.subscribeTopic` / `Cmd.publish` are untouched; only
+the runtime's broker implementation swaps.
 
-For multi-instance deployments (autoscaling Cloud Run, multi-pod
-Kubernetes, blue/green with concurrent traffic on both versions), the
-v0.16+ broker tiers will plug into the existing `Sub.subscribeTopic`
-+ `Cmd.publish` calls WITHOUT a Sky source change. The
-[`liveStore.Subscribe`](pubsub-design.md#32-storesubscribe-interface)
-interface in v0.15.x is precisely the seam for that swap.
+How it works (see [architecture.md §"Horizontal scale"](architecture.md#horizontal-scale--many-instances-phase-2)):
+each instance re-stamps `globalSeq` from its own counter on delivery
+(so each subscriber stream stays monotonic for the client's dedup
+watermark — no shared sequencer), tags every Redis message with its
+instance id to drop its own echo (no double delivery), and
+subscribes/unsubscribes the Redis channel per topic on the 0↔1
+local-subscriber transition. Payloads cross the wire via the same gob
+machinery the DB session stores use; a non-encodable payload degrades
+to local-only delivery with a logged-once warning (never a panic).
 
-Planned tiers (see [design doc §11.2.5](pubsub-design.md#1125-cross-process-broker-tiers-cloud-run-scaling)):
+Selection (env, not `sky.toml` — the broker is app-scoped):
 
-| Tier | Tech | When |
+| Config | Effect |
+|---|---|
+| `SKY_LIVE_STORE=redis` + `SKY_LIVE_STORE_PATH=<url>` | shared store AND (default) the cross-instance broker |
+| `SKY_LIVE_BROKER_URL=<redis-url>` | Redis broker even when sessions are on Postgres/other |
+| `SKY_LIVE_BROKER=inprocess` | force the in-process broker (single-instance escape hatch) |
+
+Backend tiers:
+
+| Tier | Tech | Status |
 |---|---|---|
-| 0 (v0.15.x default) | In-process Go channels | Single-instance Cloud Run; dev |
-| 1 (v0.16 priority) | Redis Pub/Sub | Multi-instance Cloud Run; sub-ms VPC latency |
-| 2 (v0.16+) | Google Cloud Pub/Sub | GCP-native stacks; IAM-authenticated; replay |
-| 3 (v0.16+) | PostgreSQL LISTEN/NOTIFY | Already-on-Postgres apps; zero extra infra |
-| 4 (deferred) | NATS JetStream | High-throughput apps that outgrow Redis |
+| 0 | In-process Go channels | shipped — single-instance default |
+| 1 | Redis Pub/Sub | **shipped (v0.18)** — the cross-instance default when store=redis |
+| 2 | PostgreSQL LISTEN/NOTIFY | planned — zero-config cross-instance for Postgres-only deploys |
+| 3 | Google Cloud Pub/Sub / NATS | deferred — GCP-native / high-throughput |
 
-Each tier is selected via `sky.toml`:
-
-```toml
-[live.broker]
-kind   = "redis"             # in-process (default) | redis | gcp-pubsub | pg-notify
-url    = "$REDIS_URL"
-prefix = "myapp"             # optional topic namespace (multi-tenant)
-```
+**Multi-instance also requires sticky sessions** (load-balancer
+affinity on the `sky_sid` cookie): a Sky.Live session's Model is
+single-owner. See architecture.md §"Horizontal scale".
 
 Apps that already use `Cmd.publish` / `Sub.subscribeTopic` need ZERO
 source changes when switching tiers.
