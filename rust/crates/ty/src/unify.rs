@@ -288,6 +288,56 @@ impl UnionFind {
         Err(Mismatch::new("infinite type (occurs check)"))
     }
 
+    /// Render a resolved variable to a display string for diagnostics, walking
+    /// the union-find so a nominal application shows its arguments (`Maybe Int`,
+    /// not the head-only `Maybe`). Unresolved / flex vars render as `_`; nested
+    /// multi-word applications parenthesise. Depth-bounded so a cyclic residue
+    /// can't loop.
+    fn describe_var(&mut self, v: TyVarId, depth: u32) -> String {
+        if depth > 6 {
+            return "…".to_string();
+        }
+        match self.content(v) {
+            Content::Structure(ft) => self.describe_flat(&ft, depth),
+            Content::Rigid(n) => n.as_str().to_string(),
+            Content::Flex | Content::FlexSuper(_) | Content::Error => "_".to_string(),
+        }
+    }
+
+    fn describe_flat(&mut self, ft: &FlatTy, depth: u32) -> String {
+        match ft {
+            FlatTy::App(n, args) if args.is_empty() => n.as_str().to_string(),
+            FlatTy::App(n, args) => {
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|a| {
+                        let s = self.describe_var(*a, depth + 1);
+                        if s.contains(' ') {
+                            format!("({s})")
+                        } else {
+                            s
+                        }
+                    })
+                    .collect();
+                format!("{} {}", n.as_str(), parts.join(" "))
+            }
+            FlatTy::Fun(a, r) => {
+                let sa = self.describe_var(*a, depth + 1);
+                let sr = self.describe_var(*r, depth + 1);
+                format!("{sa} -> {sr}")
+            }
+            FlatTy::Tuple(xs) => {
+                let parts: Vec<String> = xs
+                    .iter()
+                    .map(|x| self.describe_var(*x, depth + 1))
+                    .collect();
+                format!("({})", parts.join(", "))
+            }
+            FlatTy::Record(_, _) => "record".to_string(),
+            FlatTy::Unit => "()".to_string(),
+        }
+    }
+
     fn unify_flat(
         &mut self,
         ra: TyVarId,
@@ -332,21 +382,19 @@ impl UnionFind {
                     }
                     Ok(())
                 } else {
-                    Err(Mismatch::new(format!(
-                        "type mismatch: `{}` vs `{}`",
-                        n1.as_str(),
-                        n2.as_str()
-                    )))
+                    // Render the FULL applications (args included) — a head-only
+                    // `Maybe` vs `String` hides that the mismatch is `Maybe Int`.
+                    let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
+                    Err(Mismatch::new(format!("type mismatch: `{d1}` vs `{d2}`")))
                 }
             }
             (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) => {
                 self.unify_records(ra, rb, fs1.clone(), *e1, fs2.clone(), *e2)
             }
-            _ => Err(Mismatch::new(format!(
-                "type mismatch: {} vs {}",
-                flat_label(&f1),
-                flat_label(&f2)
-            ))),
+            _ => {
+                let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
+                Err(Mismatch::new(format!("type mismatch: {d1} vs {d2}")))
+            }
         }
     }
 
@@ -578,6 +626,45 @@ mod tests {
         let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
         let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
         assert!(uf.unify(int, s).is_err());
+    }
+
+    /// Mismatch messages render the FULL application (arguments included), not
+    /// the head-only constructor — `Maybe Int` vs `String`, and the nested
+    /// `List (Maybe Int)` parenthesises.
+    #[test]
+    fn mismatch_message_keeps_type_arguments() {
+        let mut uf = UnionFind::new();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let maybe_int = uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Maybe"),
+            vec![int],
+        )));
+        let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
+        let err = uf.unify(maybe_int, s).unwrap_err();
+        assert!(
+            err.message.contains("Maybe Int") && err.message.contains("String"),
+            "want full args, got: {}",
+            err.message
+        );
+
+        // Nested application parenthesises: List (Maybe Int).
+        let mut uf2 = UnionFind::new();
+        let int2 = uf2.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let maybe2 = uf2.fresh(Content::Structure(FlatTy::App(
+            Name::new("Maybe"),
+            vec![int2],
+        )));
+        let list_maybe = uf2.fresh(Content::Structure(FlatTy::App(
+            Name::new("List"),
+            vec![maybe2],
+        )));
+        let plain_int = uf2.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let err2 = uf2.unify(list_maybe, plain_int).unwrap_err();
+        assert!(
+            err2.message.contains("List (Maybe Int)"),
+            "want parenthesised nested app, got: {}",
+            err2.message
+        );
     }
 
     /// The self-host killer guard (self-host §7 R1-D2): two DISTINCT

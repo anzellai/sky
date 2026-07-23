@@ -18,6 +18,7 @@ differential byte-match is preserved (both sides move together).
 | `errorToString`/`toString` DUMPED the raw Go struct for the Error ADT (`{0 Error [10 {boom <nil>}]}`) | DX (ubiquitous) | `renderSkyError` mirrors `Error.toString` → `"<KindLabel>: <message>"` | `TestErrorToStringRendersAdt` |
 | `[log]` sky.toml default logged plain (rt's `logJSON`/`logThreshold` cached at package-init, before the app's `init()` seeds) | config | `SetSkyDefault` re-fires `envPrefixHooks` (same as `SetEnvPrefix`) | `TestSetSkyDefaultResyncsLogConfig` |
 | `[database] url` ignored (only `path` recognised) | config | `url` aliases `path` → both seed `DB_PATH` (detectDriver routes postgres DSN) | `database_url_is_an_alias_for_path` |
+| Type-mismatch messages TRUNCATED parametric types to the head constructor (`Maybe` vs `String`, hiding `Maybe Int`) | DX | `unify.rs` `describe_flat`/`describe_var` walk the union-find and render full applications (`Maybe Int`, nested `List (Maybe Int)` parenthesised) at both App-mismatch arms | `mismatch_message_keeps_type_arguments` |
 
 ## Open (tracked — fix sites identified, not yet closed)
 
@@ -37,12 +38,19 @@ differential byte-match is preserved (both sides move together).
   `cmp`. Medium; touches `Set_*` in the runtime — verify no golden depends on
   the current arbitrary order first.
 
+### Policy question (NOT a differential — needs user decision)
+- `exposing` a **non-exported** name reports "Types OK" (e.g. `import Helper
+  exposing (privateFn)` where `Helper` only exposes `publicFn`). **Verified
+  2026-07-23: the oracle ALSO accepts this** — it's a SHARED leniency (same
+  family as #576's kernel-implicit exposing acceptance), not a Rust bug.
+  Enforcing Elm-strict export lists is a language-semantics decision that
+  could break existing user code relying on the leniency; tightening Rust
+  alone would break the differential byte-match. Escalate to the user before
+  spending iterations.
+
 ### Diagnostics (DX — correct behaviour unambiguous, deferred for a focused pass)
-- `exposing` a **non-exported** name reports "Types OK" instead of an error.
 - A **stdlib module typo** (`import Std.Lst`) is diagnosed as a missing *Go FFI
   package* rather than an unknown-module / did-you-mean.
-- Type-mismatch messages **truncate parametric/function types to the head
-  constructor** (`Cfg` instead of `Cfg msg`, `→` chain elided).
 - `Server.post` JSON endpoints return **403 CSRF by default** to machine
   clients (curl/fetch without the cookie+token) — correct-by-design but
   **undocumented**; at minimum a docs note + a clear 403 body naming the CSRF
