@@ -618,10 +618,18 @@ impl<'a> Resolver<'a> {
                         if n.kind() == SyntaxKind::LowerIdent {
                             let nm = n.text().to_string();
                             if !seen_values.insert(nm.clone()) {
-                                self.result.diagnostics.push(Diagnostic::error(
-                                    "E1002",
-                                    format!("`{nm}` is defined more than once at the top level"),
-                                ));
+                                self.result.diagnostics.push(
+                                    Diagnostic::error(
+                                        "E1002",
+                                        format!(
+                                            "`{nm}` is defined more than once at the top level"
+                                        ),
+                                    )
+                                    .with_label(
+                                        self.span_of(n.text_range()),
+                                        "redefined here",
+                                    ),
+                                );
                             }
                             let d = self.def(self.module, n.text(), DefKind::Value);
                             self.vars.insert(n.text().to_string(), Res::Def(d));
@@ -1465,7 +1473,7 @@ impl<'a> Resolver<'a> {
                 // otherwise HM-checks and then emits go-build-broken Go (an
                 // unused `_subj` / non-exhaustive lowering) — a check≢build hole.
                 // Still recover as `Anything` to suppress cascade diagnostics.
-                let span = self.span_of(fp.syntax().text_range());
+                let span = self.span_of(cst::sig_range(fp.syntax()));
                 self.result.diagnostics.push(
                     Diagnostic::error(
                         "E1006",
@@ -1503,7 +1511,7 @@ impl<'a> Resolver<'a> {
                     .filter(|c| !c.is_whitespace())
                     .collect();
                 if text.contains('.') || text.contains('e') || text.contains('E') {
-                    let span = self.span_of(n.syntax().text_range());
+                    let span = self.span_of(cst::sig_range(n.syntax()));
                     self.result.diagnostics.push(
                         Diagnostic::error(
                             "E1006",

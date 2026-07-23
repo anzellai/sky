@@ -5,7 +5,21 @@
 //! to CST shape is contained to one file.
 
 use syntax::ast::{self, AstNode};
-use syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+use syntax::{SyntaxKind, SyntaxNode, SyntaxToken, TextRange};
+
+/// The range of `n` with leading trivia trimmed — from its first significant
+/// (non-trivia) token, at any depth, to the node's end. Diagnostic carets use
+/// this so they point at the offending text, not the whitespace/newline before
+/// it (an untrimmed node range starts in the preceding line's trivia).
+pub fn sig_range(n: &SyntaxNode) -> TextRange {
+    let start = n
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .find(|t| !t.kind().is_trivia())
+        .map(|t| t.text_range().start())
+        .unwrap_or_else(|| n.text_range().start());
+    TextRange::new(start, n.text_range().end())
+}
 
 /// Significant (non-trivia) tokens directly under `n`.
 fn sig_tokens(n: &SyntaxNode) -> impl Iterator<Item = SyntaxToken> + '_ {
