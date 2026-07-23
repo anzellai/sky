@@ -318,6 +318,19 @@ fn header_name(src: &str) -> Option<String> {
 }
 
 /// Format the terminal doc page from a module's source text.
+/// A union variant rendered WITH its argument types (`Resend String`), from the
+/// variant node's source text (whitespace-normalised). Rendering the name alone
+/// dropped the args — `type EmailProvider = Resend | Ses` implied nullary
+/// constructors while the checker treats `Resend` as `String -> EmailProvider`.
+fn variant_text(v: &syntax::ast::UnionVariant) -> String {
+    v.syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn render_source(src: &str) -> String {
     let parse = syntax::parse(src, FileId(0));
     let tree = parse.tree();
@@ -359,11 +372,7 @@ fn render_source(src: &str) -> String {
             }
             Decl::Union(d) => {
                 if let Some(name) = d.name() {
-                    let variants: Vec<String> = d
-                        .variants()
-                        .iter()
-                        .filter_map(|v| v.name().map(|t| t.text().to_string()))
-                        .collect();
+                    let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
                     if variants.is_empty() {
                         types.push(format!("type {}", name.text()));
                     } else {
@@ -485,11 +494,7 @@ fn module_symbols(src: &str) -> Vec<DocSym> {
             Decl::Union(d) => {
                 if let Some(name) = d.name() {
                     let n = name.text().to_string();
-                    let variants: Vec<String> = d
-                        .variants()
-                        .iter()
-                        .filter_map(|v| v.name().map(|t| t.text().to_string()))
-                        .collect();
+                    let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
                     let sig = if variants.is_empty() {
                         format!("type {}", name.text())
                     } else {
@@ -699,6 +704,19 @@ mod tests {
     fn json_string_escapes() {
         assert_eq!(json_string("Sky.Core.List"), "\"Sky.Core.List\"");
         assert_eq!(json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    }
+
+    #[test]
+    fn union_variants_keep_their_argument_types() {
+        // The doc renderer must show constructor args (`Resend String`), not just
+        // the name — else the docs imply a nullary ctor the checker rejects.
+        let src = "module M exposing (Provider(..))\n\n\
+                   type Provider\n    = Resend String\n    | Ses Config\n    | Off\n";
+        let page = render_source(src);
+        assert!(
+            page.contains("type Provider = Resend String | Ses Config | Off"),
+            "union ctor args dropped:\n{page}"
+        );
     }
 
     #[test]
