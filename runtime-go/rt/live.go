@@ -2147,6 +2147,15 @@ type liveSession struct {
 	// to a typed envelope lets the SSE producer choose patches-vs-body
 	// per render without changing the channel/buffer plumbing.
 	sseCh chan sseFrame
+	// sseCancel enforces ONE live SSE connection per session. Each new
+	// /_sky/sse connection closes the previous session's channel (superseding
+	// it) and installs its own. The superseded handler's for-select sees the
+	// close and returns, freeing its goroutine + connection immediately. This
+	// bounds server-side SSE connections to one-per-active-session regardless
+	// of client behaviour (multi-tab, rapid reconnect, a buggy client that
+	// opens several) — the scalable defence that complements the client-side
+	// idempotent-open + release-on-navigation. Guarded by `mu`.
+	sseCancel chan struct{}
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -5665,6 +5674,28 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		sess.mu.Unlock()
 	}
 
+	// One live SSE per session: supersede any previous connection. A new
+	// connect closes the prior handler's cancel channel (it returns from the
+	// for-select below), then installs its own. Bounds server-side SSE
+	// connections to one-per-active-session even if the client opens several
+	// (multi-tab, rapid reconnect). Guarded by sess.mu.
+	sess.mu.Lock()
+	if sess.sseCancel != nil {
+		close(sess.sseCancel)
+	}
+	myCancel := make(chan struct{})
+	sess.sseCancel = myCancel
+	sess.mu.Unlock()
+	defer func() {
+		// Only clear the slot if it's still OURS — a newer connection may have
+		// already superseded us and installed its own cancel channel.
+		sess.mu.Lock()
+		if sess.sseCancel == myCancel {
+			sess.sseCancel = nil
+		}
+		sess.mu.Unlock()
+	}()
+
 	// Heartbeat ticker. Interval is intentionally LESS than the
 	// client's heartbeat-timeout (35s) by a factor of 2 so a single
 	// dropped frame doesn't trip the wedge detector. 15s is a
@@ -5677,6 +5708,10 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-myCancel:
+			// A newer SSE connection for this session superseded us — exit so
+			// we don't hold a goroutine + connection for a stale tab.
 			return
 		case fr := <-sess.sseCh:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
@@ -6764,6 +6799,24 @@ document.addEventListener("click", function(ev) {
 window.addEventListener("beforeunload", __skyFlushPendingBeacon);
 window.addEventListener("pagehide", __skyFlushPendingBeacon);
 
+// Release the SSE connection the instant we navigate away. A streaming
+// EventSource can linger in the browser's connection pool while a full-page
+// navigation tears the old document down; without an explicit close, an app
+// that navigates via plain links (a fresh SSE per page) overlaps the closing
+// stream with the next page's new one. Rapid clicking piles them up until the
+// browser's ~6-connections-per-host HTTP/1.1 limit is hit, at which point every
+// request (navigation, clicks, images) queues forever and the tab appears
+// frozen. Closing here frees the slot before the next page opens its own.
+window.addEventListener("pagehide", function() {
+  try { if (__skySSE) __skySSE.close(); } catch (_) {}
+  __skySSE = null;
+  if (__skySseReopenTimer !== null) { clearTimeout(__skySseReopenTimer); __skySseReopenTimer = null; }
+});
+// bfcache restore (Back/Forward): the SSE was closed on pagehide, so reopen it.
+window.addEventListener("pageshow", function(e) {
+  if (e.persisted && __skySSE === null && __skySseReopenTimer === null) { __skyOpenSSE(); }
+});
+
 // ── Core send ────────────────────────────────────────────────
 // Wire format (see docs/skylive/input-authority-protocol.md §Request):
 //   {sessionId, seq, msg, args, handlerId, inputState?}
@@ -7531,6 +7584,14 @@ function __skyOpenSSE() {
   __skyForcedClose = false;
   __skyHelloOk = false;
   __skyOpenAt = 0;
+  // Idempotent: never orphan a live connection. Overwriting __skySSE with a
+  // new EventSource WITHOUT closing the old one leaks the old stream — it
+  // stays open in the browser, holding one of the ~6 per-host HTTP/1.1
+  // connection slots. A few of those (reconnect races, or full-page-nav apps
+  // that open a fresh SSE per page while the previous is still tearing down)
+  // exhaust the pool and every subsequent request (navigation, clicks) hangs.
+  // At most ONE EventSource exists at any time.
+  try { if (__skySSE) __skySSE.close(); } catch (_) {}
   __skySSE = new EventSource(__skyBase + "/_sky/sse");
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
