@@ -385,6 +385,47 @@ fn driver_negative_literal_patterns_match_at_runtime() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// Prelude `min` / `max` / `compare` must build AND run — they were registered
+/// as valid HIR kernel names (so they type-checked) but had no codegen mapping
+/// (`min`/`max` absent; `compare` → non-existent `rt.Basics_compare`), so a
+/// well-typed `min 3 5` passed `sky check` then failed `go build` [E4005] — a
+/// check≡build violation for documented primitives.
+#[test]
+fn driver_prelude_min_max_compare_build_and_run() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "min-max-compare",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    let\n        _ = println (String.fromInt (min 3 5))\n        _ = println (String.fromInt (max 3 5))\n    in\n    println (String.fromInt (compare 5 3))\n",
+    );
+    let out = project.join("sky-out-test");
+    let opts = BuildOptions {
+        run: true,
+        ..opts_for(&repo, &project, &out)
+    };
+    let report = build_example(&opts);
+    assert!(
+        report.go_build_ok && report.run_ok == Some(true),
+        "min/max/compare must build + run (was E4005); note: {} stderr: {:?}",
+        report.note,
+        report.run_stderr
+    );
+    assert_eq!(
+        report
+            .run_stdout
+            .clone()
+            .unwrap_or_default()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["3", "5", "1"],
+        "min 3 5=3, max 3 5=5, compare 5 3=1; stdout: {:?}",
+        report.run_stdout
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and

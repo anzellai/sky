@@ -2755,6 +2755,11 @@ func Lte(a, b any) any { return cmp(a, b) <= 0 }
 // FFI call returned `any` of either side; the HM checker would
 // normally reject this in pure Sky source. Classified `Comparison-
 // Mismatch` at the top-level recover (Cycle 6 PC).
+// Basics_compare — Sky's Prelude `compare : a -> a -> Int` (LT=-1, EQ=0, GT=1).
+// The any-dispatch shim the emitter targets (`rt.Basics_compare`); reuses the
+// shared `cmp` (numbers / strings / chars / tuples / lists lexicographic).
+func Basics_compare(a, b any) any { return cmp(a, b) }
+
 func cmp(a, b any) int {
 	// String vs string.
 	if sa, ok := a.(string); ok {
