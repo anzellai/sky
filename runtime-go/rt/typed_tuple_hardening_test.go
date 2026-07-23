@@ -95,8 +95,8 @@ func TestDictFromListTSkipsNonTuple(t *testing.T) {
 	// the `default:` arm semantics), not panic.
 	list := []any{
 		typedStrIntPair("keep", 5),
-		42,       // non-tuple: skipped
-		"nope",   // non-tuple: skipped
+		42,     // non-tuple: skipped
+		"nope", // non-tuple: skipped
 	}
 	got := Dict_fromListT[int](list)
 	if len(got) != 1 || got["keep"] != 5 {
@@ -113,8 +113,9 @@ func TestJsonEncObjectTypedTuple(t *testing.T) {
 	}
 	obj := JsonEnc_object(pairs)
 	got := JsonEnc_encode(0, obj).(string)
-	// json.Marshal sorts map keys → deterministic.
-	want := `{"age":30,"name":"Alice"}`
+	// Insertion order preserved (Elm Json.Encode.object semantics) — name
+	// was inserted before age.
+	want := `{"name":"Alice","age":30}`
 	if got != want {
 		t.Fatalf("JsonEnc_object typed T2: want %s, got %s", want, got)
 	}

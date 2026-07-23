@@ -1618,7 +1618,57 @@ func Basics_not(b any) any {
 }
 
 func Basics_toString(v any) string {
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
 	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
+}
+
+// errorKindLabels mirrors Sky.Core.Error.kindLabel, indexed by the
+// ErrorKind constructor tag (0=Io … 10=Unexpected). Keep in sync with
+// Error.sky's kindLabel.
+var errorKindLabels = []string{
+	"IO", "Network", "FFI", "Decode", "Timeout", "NotFound",
+	"PermissionDenied", "InvalidInput", "Conflict", "Unavailable",
+	"Unexpected",
+}
+
+// renderSkyError renders a Sky.Core.Error value — SkyADT{SkyName:"Error",
+// Fields:[kind, info]} — exactly as Sky.Core.Error.toString does:
+// "<KindLabel>: <message>". Returns ok=false for anything that isn't an
+// Error ADT so the generic toString / errorToString fallbacks can defer to
+// their `%v` path. Without this, an Error flowing through errorToString /
+// toString dumped its raw Go struct (`{0 Error [10 {boom <nil>}]}`) into
+// logs and user-facing messages.
+func renderSkyError(v any) (string, bool) {
+	rv := reflect.ValueOf(derefPointer(unwrapAny(v)))
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return "", false
+	}
+	nameF := rv.FieldByName("SkyName")
+	fieldsF := rv.FieldByName("Fields")
+	if !nameF.IsValid() || nameF.Kind() != reflect.String || nameF.String() != "Error" {
+		return "", false
+	}
+	if !fieldsF.IsValid() || fieldsF.Kind() != reflect.Slice || fieldsF.Len() != 2 {
+		return "", false
+	}
+	// Fields[0] — ErrorKind tag (int). Unknown/future tags keep a sane
+	// "Error" label rather than an out-of-range panic.
+	label := "Error"
+	if kindV := reflect.ValueOf(fieldsF.Index(0).Interface()); kindV.IsValid() && kindV.CanInt() {
+		if t := int(kindV.Int()); t >= 0 && t < len(errorKindLabels) {
+			label = errorKindLabels[t]
+		}
+	}
+	// Fields[1] — ErrorInfo{Message, Details}. Read Message.
+	msg := ""
+	if infoV := reflect.ValueOf(fieldsF.Index(1).Interface()); infoV.IsValid() && infoV.Kind() == reflect.Struct {
+		if mF := infoV.FieldByName("Message"); mF.IsValid() && mF.Kind() == reflect.String {
+			msg = mF.String()
+		}
+	}
+	return label + ": " + msg, true
 }
 
 // Basics_errorToString — Prelude extractor for Result errors (the
@@ -1634,6 +1684,9 @@ func Basics_errorToString(v any) any {
 	case error:
 		return x.Error()
 	}
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
 	return fmt.Sprintf("%v", v)
 }
 
@@ -1643,6 +1696,9 @@ func Basics_errorToStringT(v any) string {
 		return x
 	case error:
 		return x.Error()
+	}
+	if s, ok := renderSkyError(v); ok {
+		return s
 	}
 	return fmt.Sprintf("%v", v)
 }
