@@ -1342,6 +1342,15 @@ fn rune_lit(s: &str) -> GoExpr {
     )
 }
 
+/// The number of curried arrows in a Sky type — its arity as a function.
+/// `String -> String -> String` is 2; a non-function type is 0.
+fn count_arrows(t: &Ty) -> usize {
+    match t {
+        Ty::Fun(_, b) => 1 + count_arrows(b),
+        _ => 0,
+    }
+}
+
 /// Whether a Sky type references any nominal name that is declared in more than
 /// one module (`ambiguous`) — structurally, at any depth. Such a reference can't
 /// be resolved to a single Go type after the qualifier is dropped, so a union
@@ -2599,16 +2608,27 @@ impl<'a> Ctx<'a> {
                 return e;
             }
         }
+        // Kernel arity from the callee's HM type (curried arrow count). When a
+        // kernel is applied to FEWER args than its arity, Sky curries but the Go
+        // runtime symbol does not — eta-expand into a closure instead of emitting
+        // an under-applied call that `go build` rejects.
+        let kernel_arity = self.types.exprs.get(&callee).map(count_arrows).unwrap_or(0);
         // kernel-alias direct call → uniform widen-args / coerce-return.
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
             if let Some(raw) = self.kernel_alias.get(d) {
                 let go = alias_go_name(raw);
+                if kernel_arity > args.len() {
+                    return self.kernel_partial(&go, args, kernel_arity, actual);
+                }
                 return self.kernel_call(&go, args, actual);
             }
         }
         // kernel direct call
         if let Expr::Var(Res::Kernel { module, func }) = &self.body.exprs[callee] {
             let go = kernel_go_name(module.as_str(), func.as_str());
+            if kernel_arity > args.len() {
+                return self.kernel_partial(&go, args, kernel_arity, actual);
+            }
             return self.kernel_call(&go, args, actual);
         }
         // Go-FFI direct call (doc 09): `Uuid.newString ()` → the typed wrapper
@@ -3085,6 +3105,58 @@ impl<'a> Ctx<'a> {
                 actual.clone(),
             )
         }
+    }
+
+    /// Eta-expand a partially-applied kernel into a Go closure. A kernel runtime
+    /// symbol (`rt.String_append(a, b any) any`) has no currying, so a direct
+    /// under-applied call (`String.append "hi "` — 1 arg to a 2-arg kernel)
+    /// emits `rt.String_append("hi ")`, which `go build` rejects ("not enough
+    /// arguments"). Instead emit `func(_p any) any { return rt.String_append("hi ", _p) }`.
+    /// Mirrors [`ctor_partial`]; kernel params are `any`, so the closure widens
+    /// each fresh param into the call and coerces the `any` result to `ret`.
+    fn kernel_partial(
+        &mut self,
+        go: &str,
+        given: &[ExprId],
+        arity: usize,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let mut arg_exprs: Vec<GoExpr> = given
+            .iter()
+            .map(|a| {
+                let e = self.lower_expr(*a, &GoTy::Any);
+                widen(e)
+            })
+            .collect();
+        let n_rest = arity - given.len();
+        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
+            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
+        };
+        let mut gparams: Vec<GoParam> = Vec::new();
+        for pty in &rest_tys {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
+            // The kernel symbol takes `any` params — widen the typed closure param.
+            arg_exprs.push(widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
+        }
+        let call = GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                arg_exprs,
+            ),
+            GoTy::Any,
+        );
+        let body = self.coerce_if_needed(call, &ret);
+        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+            fn_ty,
+        )
     }
 
     fn lower_binop(&mut self, op: &str, lhs: ExprId, rhs: ExprId, actual: &GoTy) -> GoExpr {

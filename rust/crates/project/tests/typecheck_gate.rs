@@ -315,6 +315,32 @@ fn driver_char_pattern_go_builds() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A partially-applied kernel (`String.append "hi "` — 1 arg to a 2-arg kernel)
+/// must EMIT and `go build`. The Go runtime symbol isn't curried, so a direct
+/// under-applied call emitted `rt.String_append("hi ")` → `not enough arguments`
+/// (check≡build violation). The lowerer now eta-expands it into a closure. Covers
+/// both the let-bound-then-applied case and passing the partial to a HOF.
+#[test]
+fn driver_kernel_partial_application_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "kernel-partial",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.List as List\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    let\n        g = String.append \"hi \"\n        tagged = List.map (String.append \">> \") [\"a\", \"b\"]\n    in\n    let\n        _ = println (g \"bob\")\n    in\n    println (String.join \", \" tagged)\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "partial kernel application must emit AND go build (was `not enough arguments`); note: {}",
+        report.note
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and
