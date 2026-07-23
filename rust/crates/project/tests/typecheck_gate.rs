@@ -876,3 +876,87 @@ fn driver_rejects_import_of_non_exported_name() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// sky.toml `bin` renames the output binary: `go build -o <bin>` and the
+/// artifact lands at `<out>/<bin>` (not the hardcoded `app`).
+#[test]
+fn driver_bin_key_renames_output_binary() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "binkey",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    let _ = println \"hi\"\n    in Task.succeed ()\n",
+    );
+    std::fs::write(
+        project.join("sky.toml"),
+        "name = \"binkey\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\nbin = \"myserver\"\n",
+    )
+    .unwrap();
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.go_build_ok,
+        "build must succeed; note: {}",
+        report.note
+    );
+    assert!(
+        out.join("myserver").is_file(),
+        "binary must be produced at <out>/myserver (the sky.toml `bin`)"
+    );
+    assert!(
+        !out.join("app").is_file(),
+        "the hardcoded `app` name must NOT be produced when `bin` is set"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// sky.toml `root` relocates module discovery: a project whose sources live in
+/// `lib/` (not `src/`) builds when `root = "lib"`.
+#[test]
+fn driver_source_root_relocates_discovery() {
+    let repo = repo_root();
+    // Build a project by hand with sources under `lib/` instead of `src/`.
+    let uniq = format!("sky-srcroot-{}", std::process::id());
+    let project = std::env::temp_dir().join(uniq);
+    std::fs::create_dir_all(project.join("lib")).unwrap();
+    std::fs::write(
+        project.join("sky.toml"),
+        "name = \"srcroot\"\nversion = \"0.1.0\"\nentry = \"lib/Main.sky\"\nroot = \"lib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("lib").join("Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Log exposing (println)\n\
+         import Helper exposing (greet)\n\n\
+         main =\n    let _ = println (greet \"x\")\n    in Task.succeed ()\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("lib").join("Helper.sky"),
+        "module Helper exposing (greet)\n\n\
+         greet : String -> String\n\
+         greet name =\n    \"hi \" ++ name\n",
+    )
+    .unwrap();
+
+    let out = project.join("sky-out-test");
+    let mut opts = opts_for(&repo, &project, &out);
+    opts.entry_module = Some("Main".to_string());
+    let report = build_example(&opts);
+
+    assert!(
+        report.go_build_ok,
+        "project with sources under lib/ (root=\"lib\") must build; note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}

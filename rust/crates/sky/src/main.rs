@@ -433,7 +433,8 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         println!("No errors found.");
     } else {
         println!("Compilation successful");
-        println!("Build complete: {out_dir_name}/app");
+        let bin_name = project::configured_bin_name(&project_dir);
+        println!("Build complete: {out_dir_name}/{bin_name}");
     }
     ExitCode::SUCCESS
 }
@@ -1464,7 +1465,11 @@ fn watch_build_and_spawn(
         return None;
     }
     let out_dir = project_dir.join("sky-out");
-    match Command::new("./app").current_dir(&out_dir).spawn() {
+    let bin_name = project::configured_bin_name(project_dir);
+    match Command::new(format!("./{bin_name}"))
+        .current_dir(&out_dir)
+        .spawn()
+    {
         Ok(child) => Some(child),
         Err(e) => {
             eprintln!("[watch] could not launch binary: {e}");
@@ -2222,7 +2227,7 @@ fn run_verify_target(name: &str, dir: &Path, out_dir: &Path) -> Result<String, S
         return Ok("gui build-only".into());
     }
     let shape = classify_shape(dir);
-    let app = out_dir.join("app");
+    let app = out_dir.join(project::configured_bin_name(dir));
     if !app.is_file() {
         return Err("binary not produced".into());
     }

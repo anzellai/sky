@@ -146,7 +146,14 @@ fn cap_first(s: &str) -> String {
 /// share this). The child inherits stdin/stdout/stderr so interactive CLIs and
 /// test output surface directly; the exit code propagates for CI.
 pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<ExitStatus> {
-    let mut cmd = Command::new("./app");
+    // The binary name honours sky.toml `bin` (default `app`). The project dir is
+    // the out dir's parent (`<project>/sky-out`); if that read fails we fall back
+    // to `app`, matching the build default.
+    let bin_name = out_dir
+        .parent()
+        .map(crate::build::configured_bin_name)
+        .unwrap_or_else(|| "app".to_string());
+    let mut cmd = Command::new(format!("./{bin_name}"));
     cmd.current_dir(out_dir);
     for (k, v) in envs {
         cmd.env(k, v);

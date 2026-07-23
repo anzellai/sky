@@ -246,7 +246,9 @@ fn json_string(s: &str) -> String {
 /// (a module under the project's own `src/` is a project module; everything
 /// under `sky-stdlib/` is stdlib). Backs `sky doc --list`.
 pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
-    let src_root = project_dir.join("src");
+    // Honour sky.toml `root` (default `src`) so a project whose sources live
+    // under `lib/` still buckets its own modules under `── project ──`.
+    let src_root = project_dir.join(crate::build::configured_source_root(project_dir));
     let mut project: Vec<String> = Vec::new();
     let mut stdlib: Vec<String> = Vec::new();
     for (name, path) in collect_module_files(repo_root, project_dir) {
@@ -276,7 +278,10 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
 fn collect_module_files(repo_root: &Path, project_dir: &Path) -> Vec<(String, PathBuf)> {
     let mut files = Vec::new();
     collect_sky(&repo_root.join("sky-stdlib"), &mut files);
-    collect_sky(&project_dir.join("src"), &mut files);
+    collect_sky(
+        &project_dir.join(crate::build::configured_source_root(project_dir)),
+        &mut files,
+    );
     let mut out = Vec::new();
     for path in files {
         let Ok(src) = std::fs::read_to_string(&path) else {

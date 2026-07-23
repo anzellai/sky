@@ -55,21 +55,21 @@ Closed since the first pass:
    a `postgres://` DSN to pgx). Regression `database_url_is_an_alias_for_path`;
    docs/sky-toml.md updated.
 
-### Still open (documented-but-ignored — tracked, not yet closed)
+### Closed (2026-07-23, session cont.)
 
-- **`bin` (output binary name).** docs/sky-toml.md documents `bin = "app"` →
-  `sky-out/<bin>`, but the output name is hardcoded `app` across ~7 build/run
-  sites (build.rs:505/608, driver.rs:149, main.rs:436/1467/2225/2634). Closing
-  it means threading a `bin_name` through `BuildOptions` + the `go build -o`
-  arg + every `Command::new("./app")` run path + the completion message.
-  Low real-world impact (everyone ships `sky-out/app`); needs a careful
-  single-pass thread so no run site is missed.
-- **`[source] root`.** docs documents `root = "src"` for module resolution, but
-  discovery hardcodes `example_dir.join("src")` (build.rs:146, :1026). Reading
-  the root requires parsing sky.toml BEFORE discovery (config is currently read
-  after). Rare in practice.
-- **`[auth]` runtime consumer.** `cookieName`/`tokenTtl`/`driver` now seed
-  `AUTH_*` env defaults, but the runtime auth layer does not yet READ
-  `AUTH_COOKIE`/`AUTH_TOKEN_TTL`/`AUTH_DRIVER` at every relevant site — the
-  seed is a no-op until each `Std.Auth` read routes through `skyGetenv`. Deeper
-  runtime work; the env-seed half is done.
+- **`bin` (output binary name)** — CLOSED. A shared `configured_bin_name`
+  reader (sky.toml `bin`, default `app`, sanitised to a single path segment so
+  `go build -o` can't escape the out dir) is wired into the `go build -o` arg
+  AND every run path (`build_example` run, `driver::run_app`, `sky watch`
+  restart, `sky verify`, the completion message). `main.rs:2634` was a red
+  herring — it reads the oracle's `legacy-haskell-compiler/app/VERSION`, not the
+  built binary. `sky-out/<bin>` verified e2e; default stays `sky-out/app`.
+- **`[source] root`** — CLOSED. `configured_source_root` (sky.toml `root`,
+  default `src`, also accepts the `[source]` table form) drives module
+  discovery (build.rs), so a project with sources under `lib/` builds.
+- **`[auth]` runtime consumer** — RESOLVED as a docs clarification. `Std.Auth`
+  is a library: `signToken secret claims expirySeconds` takes the secret + TTL
+  as ARGUMENTS and the cookie is set by the handler, so there is no framework
+  layer to "consume" the keys. The `[auth]` keys correctly seed `SKY_AUTH_*`
+  env vars that USER CODE reads via `System.getenvOr`. docs/sky-toml.md
+  corrected to describe this accurately.

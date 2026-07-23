@@ -143,12 +143,13 @@ fn assemble_and_emit_with(
         db.add_module(&n, file);
     }
 
-    let mut locals = load_dir(&db, &mut next_id, &example_dir.join("src"));
+    let source_root = configured_source_root(&example_dir);
+    let mut locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
     for dir in extra_dirs {
         locals.extend(load_dir(&db, &mut next_id, dir));
     }
     if locals.is_empty() {
-        return Err("no .sky under src/".into());
+        return Err(format!("no .sky under {source_root}/"));
     }
     // `FileId → display path` for every APP module — feeds the Elm-style renderer
     // so each diagnostic header carries `src/Main.sky:line:col` (matching the
@@ -487,7 +488,9 @@ fn build_inner(
     // `webview_stub.go` compiles cleanly under CGO=0 and the app would silently
     // no-op at runtime, so the static-first probe must be skipped there. Matches
     // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
-    match run_go_build_detecting_cgo(&out_dir, &source) {
+    // Output binary name honours the sky.toml `bin` key (default `app`).
+    let bin_name = configured_bin_name(&opts.example_dir);
+    match run_go_build_detecting_cgo(&out_dir, &source, &bin_name) {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
             report.go_build_stderr = outcome.stderr;
@@ -502,7 +505,7 @@ fn build_inner(
     // ---- run ----
     if opts.run && report.go_build_ok {
         use std::io::Write;
-        let mut cmd = Command::new("./app");
+        let mut cmd = Command::new(format!("./{bin_name}"));
         cmd.current_dir(&out_dir);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
@@ -542,12 +545,16 @@ struct GoBuildOutcome {
 /// Run `go build` with static-first cgo detection. `source` is the emitted
 /// `main.go` text; its containing `rt.Webview_app` reference is the signal that
 /// the project links the system webview and MUST build with cgo.
-fn run_go_build_detecting_cgo(out_dir: &Path, source: &str) -> Result<GoBuildOutcome, String> {
+fn run_go_build_detecting_cgo(
+    out_dir: &Path,
+    source: &str,
+    bin_name: &str,
+) -> Result<GoBuildOutcome, String> {
     // Sky.Webview: the stub (`webview_stub.go`, `!cgo || !darwin`) compiles fine
     // under CGO=0, producing a binary that silently no-ops on `Webview.app`.
     // Force cgo up front so the real WKWebView-backed `webview.go` links.
     if source.contains("rt.Webview_app") {
-        let attempt = run_go_build_once(out_dir, "1")?;
+        let attempt = run_go_build_once(out_dir, "1", bin_name)?;
         return Ok(GoBuildOutcome {
             ok: attempt.status_ok,
             stderr: attempt.stderr,
@@ -559,7 +566,7 @@ fn run_go_build_detecting_cgo(out_dir: &Path, source: &str) -> Result<GoBuildOut
     }
 
     // Preferred path: static, pure-Go binary.
-    let static_attempt = run_go_build_once(out_dir, "0")?;
+    let static_attempt = run_go_build_once(out_dir, "0", bin_name)?;
     if static_attempt.status_ok {
         return Ok(GoBuildOutcome {
             ok: true,
@@ -569,7 +576,7 @@ fn run_go_build_detecting_cgo(out_dir: &Path, source: &str) -> Result<GoBuildOut
     }
 
     // The static build failed — an FFI package may require cgo. Retry with it.
-    let cgo_attempt = run_go_build_once(out_dir, "1")?;
+    let cgo_attempt = run_go_build_once(out_dir, "1", bin_name)?;
     if cgo_attempt.status_ok {
         return Ok(GoBuildOutcome {
             ok: true,
@@ -601,11 +608,11 @@ struct GoBuildAttempt {
     stderr: String,
 }
 
-fn run_go_build_once(out_dir: &Path, cgo: &str) -> Result<GoBuildAttempt, String> {
+fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
     let mut cmd = Command::new("go");
     cmd.arg("build")
         .arg("-o")
-        .arg("app")
+        .arg(bin_name)
         .arg(".")
         .current_dir(out_dir)
         .env("GOFLAGS", "-mod=mod")
@@ -758,6 +765,60 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         }
     }
     cfg
+}
+
+/// Read a `[project]`-scoped (or bare top-level, or `[source]`-table) string key
+/// from a project's `sky.toml`, returning `default` when absent. The build
+/// driver uses this for `bin` (output binary name) and `root` (source-root dir)
+/// — both documented in docs/sky-toml.md as `[project]` keys, also accepted at
+/// the top level. `root` additionally accepts the `[source]` table form.
+///
+/// The value is sanitised to a single path segment: a value containing a path
+/// separator or `..`, or an empty value, falls back to `default` — so a stray
+/// `bin = "../x"` can never redirect `go build -o` outside the out dir.
+pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> String {
+    let Ok(text) = std::fs::read_to_string(project_dir.join("sky.toml")) else {
+        return default.to_string();
+    };
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line
+                .trim_matches(['[', ']'])
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let scoped = section.is_empty() || section == "project" || section == "source";
+        if scoped && k.trim() == key {
+            let val = v.trim().trim_matches('"');
+            if val.is_empty() || val.contains('/') || val.contains('\\') || val.contains("..") {
+                return default.to_string();
+            }
+            return val.to_string();
+        }
+    }
+    default.to_string()
+}
+
+/// Output binary name (`bin` key, default `app`) — the file `go build -o`
+/// produces under the out dir and every run path launches.
+pub fn configured_bin_name(project_dir: &Path) -> String {
+    sky_toml_project_key(project_dir, "bin", "app")
+}
+
+/// Source-root directory (`root` key, default `src`) — where module discovery
+/// walks for the project's own `.sky` files.
+pub fn configured_source_root(project_dir: &Path) -> String {
+    sky_toml_project_key(project_dir, "root", "src")
 }
 
 // ---- FFI surface loading + binding materialisation (doc 09) --------------
@@ -1167,7 +1228,7 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod sky_toml_tests {
-    use super::read_sky_toml_config;
+    use super::{configured_bin_name, configured_source_root, read_sky_toml_config};
 
     #[test]
     fn live_and_auth_keys_map_to_runtime_default_suffixes() {
@@ -1209,6 +1270,40 @@ mod sky_toml_tests {
         assert!(has("DB_PATH", "app.db"));
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn project_key_reads_sections_and_sanitises() {
+        let dir = std::env::temp_dir().join(format!("skytoml-projkey-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |body: &str| std::fs::write(dir.join("sky.toml"), body).unwrap();
+
+        // Top-level (bare) keys.
+        write("name = \"x\"\nbin = \"myserver\"\nroot = \"lib\"\n");
+        assert_eq!(configured_bin_name(&dir), "myserver");
+        assert_eq!(configured_source_root(&dir), "lib");
+
+        // [project] table form.
+        write("[project]\nbin = \"srv\"\nroot = \"app_src\"\n");
+        assert_eq!(configured_bin_name(&dir), "srv");
+        assert_eq!(configured_source_root(&dir), "app_src");
+
+        // [source] table form for root.
+        write("name = \"x\"\n[source]\nroot = \"code\"\n");
+        assert_eq!(configured_source_root(&dir), "code");
+
+        // Defaults when absent.
+        write("name = \"x\"\n");
+        assert_eq!(configured_bin_name(&dir), "app");
+        assert_eq!(configured_source_root(&dir), "src");
+
+        // Sanitisation: a path-escaping value falls back to the default so
+        // `go build -o` can never write outside the out dir.
+        write("bin = \"../evil\"\nroot = \"a/b\"\n");
+        assert_eq!(configured_bin_name(&dir), "app");
+        assert_eq!(configured_source_root(&dir), "src");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

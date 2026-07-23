@@ -26,11 +26,15 @@ differential byte-match is preserved (both sides move together).
 ## Open (tracked — fix sites identified, not yet closed)
 
 ### Config (see also sky-toml-config-sweep-2026-07-23.md §Follow-up)
-- **`bin` output name** — hardcoded `app` across ~7 build/run sites; needs a
-  single-pass `bin_name` thread through `BuildOptions` + `go build -o` + every
-  run `Command::new("./app")`. Low real-world impact.
-- **`[source] root`** — discovery hardcodes `join("src")` (build.rs:146/1026);
-  requires reading sky.toml before discovery.
+- ~~**`bin` output name**~~ — CLOSED. Shared `configured_bin_name` reader
+  (sky.toml `bin`, default `app`, path-sanitised) wired into `go build -o` +
+  every run path (`build_example` run, `driver::run_app`, `sky watch` restart,
+  `sky verify`, the completion message). `sky-out/<bin>` verified e2e; default
+  still `sky-out/app`. Regressions: `project_key_reads_sections_and_sanitises`
+  + `driver_bin_key_renames_output_binary`.
+- ~~**`[source] root`**~~ — CLOSED. `configured_source_root` (sky.toml `root`,
+  default `src`) drives module discovery, so a project with sources under
+  `lib/` builds. Regression: `driver_source_root_relocates_discovery`.
 - ~~**`[auth]` runtime consumer**~~ — RESOLVED as a docs clarification.
   Verified 2026-07-23: `Std.Auth` is a library — `signToken secret claims
   expirySeconds` takes the secret + TTL as ARGUMENTS and the cookie is set by
