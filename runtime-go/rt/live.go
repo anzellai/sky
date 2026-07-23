@@ -574,14 +574,14 @@ func assignSkyIDs(n *VNode, path string) {
 // marker pair (set by `Std.Ui.mediaQuery` / `Ui.breakpoint`, issue
 // #376) into a base wrapper with a sky-id-scoped `<style>` child:
 //
-//   <div sky-id="r.0.2#div" ...>
-//       <style data-sky-mq="r.0.2#div">
-//           @media (max-width: 767px) {
-//               [sky-id="r.0.2#div"] { padding: 8px; flex-direction: column; }
-//           }
-//       </style>
-//       <child ... />
-//   </div>
+//	<div sky-id="r.0.2#div" ...>
+//	    <style data-sky-mq="r.0.2#div">
+//	        @media (max-width: 767px) {
+//	            [sky-id="r.0.2#div"] { padding: 8px; flex-direction: column; }
+//	        }
+//	    </style>
+//	    <child ... />
+//	</div>
 //
 // The marker attrs are stripped from the wire output (the runtime
 // has fully consumed them); the `<style>` block is scoped per-
@@ -663,7 +663,6 @@ func injectPseudoClassStyles(n *VNode) {
 	})
 }
 
-
 // styleMarkerSpec describes one style-injection pass. All four passes
 // (media-query / pseudo-class / transition / animation) share the
 // same shape: locate a marker attr on an element with a sky-id, build
@@ -692,7 +691,6 @@ type styleMarkerSpec struct {
 	recurse func(*VNode)
 }
 
-
 // injectStyleMarker applies a single style-injection spec to a VNode
 // + its descendants. Handles both the non-void case (attach style as
 // first child) and the void case (hoist to sibling after).
@@ -709,7 +707,6 @@ func injectStyleMarker(n *VNode, spec styleMarkerSpec) {
 	// above bailed for void).
 	n.Children = walkChildrenWithVoidSiblingHoist(n.Children, spec)
 }
-
 
 // applyMarkerAsFirstChild handles the canonical case: build the
 // style body, prepend as first child, strip marker(s). Caller must
@@ -753,7 +750,6 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 	}
 	n.Children = append([]VNode{styleNode}, n.Children...)
 }
-
 
 // walkChildrenWithVoidSiblingHoist recurses into each child + splices
 // a sibling <style> immediately after any VOID child whose marker
@@ -903,16 +899,16 @@ func applyStyleInjections(n *VNode) {
 // (set by `Transition.attribute` / `Ui.transitionRaw`, issue #378)
 // into a base wrapper with a sky-id-scoped `<style>` child:
 //
-//   <button sky-id="r.0#button" ...>
-//       <style data-sky-tr="r.0#button">
-//           @media (prefers-reduced-motion: no-preference) {
-//               [sky-id="r.0#button"] {
-//                   transition: background-color 200ms ease-out;
-//               }
-//           }
-//       </style>
-//       <!-- original children -->
-//   </button>
+//	<button sky-id="r.0#button" ...>
+//	    <style data-sky-tr="r.0#button">
+//	        @media (prefers-reduced-motion: no-preference) {
+//	            [sky-id="r.0#button"] {
+//	                transition: background-color 200ms ease-out;
+//	            }
+//	        }
+//	    </style>
+//	    <!-- original children -->
+//	</button>
 //
 // `data-sky-tr-respect="0"` opts OUT of the `prefers-reduced-motion`
 // gate — the rule is emitted unwrapped. Default is "1" (respect).
@@ -955,22 +951,22 @@ func injectTransitionStyles(n *VNode) {
 // marker (set by `Animation.attribute` / `Ui.animateRaw`, issue
 // #378) into a base wrapper with a sky-id-scoped `<style>` child:
 //
-//   <div sky-id="r.0#div" ...>
-//       <style data-sky-anim="r.0#div">
-//           @keyframes fadeIn__r_0_div { 0% { ... } 100% { ... } }
-//           @media (prefers-reduced-motion: no-preference) {
-//               [sky-id="r.0#div"] {
-//                   animation: fadeIn__r_0_div 300ms ease-out 0ms 1 forwards;
-//               }
-//           }
-//       </style>
-//       <!-- original children -->
-//   </div>
+//	<div sky-id="r.0#div" ...>
+//	    <style data-sky-anim="r.0#div">
+//	        @keyframes fadeIn__r_0_div { 0% { ... } 100% { ... } }
+//	        @media (prefers-reduced-motion: no-preference) {
+//	            [sky-id="r.0#div"] {
+//	                animation: fadeIn__r_0_div 300ms ease-out 0ms 1 forwards;
+//	            }
+//	        }
+//	    </style>
+//	    <!-- original children -->
+//	</div>
 //
 // Wire format (mirror of `encodeAnimations` in Std.Ui.sky):
 //
-//   rules = entry ("@@" entry)*
-//   entry = name "||" shorthandTail "||" keyframesBody "||" respect
+//	rules = entry ("@@" entry)*
+//	entry = name "||" shorthandTail "||" keyframesBody "||" respect
 //
 // `respect` is "1" (default) / "0" (opt out of reduced-motion gate).
 //
@@ -2052,7 +2048,7 @@ type liveSession struct {
 	identityValid bool
 	model         any
 	handlers      map[string]any
-	prevTree *VNode // Last rendered tree; used by the diff protocol.
+	prevTree      *VNode // Last rendered tree; used by the diff protocol.
 	// View-body bookkeeping for the SSE no-op suppression contract
 	// (Cycle 3 P39 / Gap C2 — split out from the historical single
 	// `prevBody` field whose dual meaning had bitten v0.15.14).
@@ -2695,7 +2691,7 @@ type liveApp struct {
 	subscriptions any // Model -> Sub Msg
 	routes        []liveRoute
 	notFound      any
-	guard         any          // Maybe (Msg -> Model -> Result String ()) — nil = no guard
+	guard         any // Maybe (Msg -> Model -> Result String ()) — nil = no guard
 	// head : Model -> List (Html msg) — optional. When set, the
 	// returned list is rendered to HTML and spliced into <head> on
 	// the initial full-page response, after the baseline meta tags
@@ -2710,7 +2706,7 @@ type liveApp struct {
 	// derived from page identity, which changes via in-app
 	// navigation that already triggers a sky-nav fetch +
 	// full-body patch + history push).
-	head          any
+	head any
 	// consoleAuth : Request -> Task Error (Maybe Identity) — optional.
 	// When the embedded console mounts in `app`-mode (env
 	// SKY_CONSOLE_AUTH=app), the framework calls this callback BEFORE
@@ -2723,7 +2719,7 @@ type liveApp struct {
 	// production when SKY_CONSOLE_AUTH is unset, per the production
 	// gate in evaluateConsoleAuth). Same row-poly pattern as v0.15.58
 	// `head` field — apps that omit `consoleAuth` build byte-identical.
-	consoleAuth   any
+	consoleAuth any
 	// v0.16.7 #418 — onNavigate : Page -> msg — optional callback.
 	// When set, the framework dispatches the resulting Msg through
 	// `update` AFTER every URL-driven `applyRoute` call (initial
@@ -2737,16 +2733,16 @@ type liveApp struct {
 	// behaviour).  Same row-poly extension pattern as `head` /
 	// `consoleAuth` — apps that omit `onNavigate` build
 	// byte-identical.
-	onNavigate    any
-	api           []apiRoute   // REST-style custom handlers alongside Live pages
-	staticDir     string       // Serves files from this directory under /static/…
-	staticURL     string       // URL mount prefix (default "/static")
-	store         SessionStore // sessionID -> *liveSession (memory, sqlite, or postgres)
-	sessionTTL    time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
-	locker        *sessionLocker
-	msgTags       map[string]int // SkyName → Tag cache for direct-send events
-	msgTagsMu     sync.Mutex
-	bannerCfg     liveBannerConfig // resolved env-vars + cfg.status overrides
+	onNavigate any
+	api        []apiRoute    // REST-style custom handlers alongside Live pages
+	staticDir  string        // Serves files from this directory under /static/…
+	staticURL  string        // URL mount prefix (default "/static")
+	store      SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
+	sessionTTL time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
+	locker     *sessionLocker
+	msgTags    map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu  sync.Mutex
+	bannerCfg  liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
 	// parent Sky.Live runtime). Empty for root-mount (the common
@@ -5341,46 +5337,46 @@ func (app *liveApp) runStreamSubscriberLoop(sess *liveSession, reg *streamSubReg
 	RunWithTraceContext(parentCtx, func() {
 		runWithLiveSession(sess, func() {
 			for {
-			// Locked default #3: drain up to streamDrainBatchMax
-			// events per pass. The batch loop reads non-blocking
-			// from sh.ch so a partially-full channel doesn't stall
-			// a yield. After batchMax iterations OR an empty
-			// channel, fall back to the blocking select below.
-			drained := 0
-			for drained < streamDrainBatchMax {
+				// Locked default #3: drain up to streamDrainBatchMax
+				// events per pass. The batch loop reads non-blocking
+				// from sh.ch so a partially-full channel doesn't stall
+				// a yield. After batchMax iterations OR an empty
+				// channel, fall back to the blocking select below.
+				drained := 0
+				for drained < streamDrainBatchMax {
+					select {
+					case ev, open := <-sh.ch:
+						if !open {
+							return
+						}
+						app.runStreamSubscriberDispatch(sess, reg.toMsg, ev)
+						drained++
+						if ev.kind != streamChunkEv {
+							// Done / Errored is terminal — retire the
+							// goroutine; the consumer's handler can
+							// call Http.Stream.close to unregister.
+							return
+						}
+					default:
+						goto blocking
+					}
+				}
+			blocking:
 				select {
+				case <-gDone:
+					return
+				case <-sessDone:
+					return
 				case ev, open := <-sh.ch:
 					if !open {
 						return
 					}
 					app.runStreamSubscriberDispatch(sess, reg.toMsg, ev)
-					drained++
 					if ev.kind != streamChunkEv {
-						// Done / Errored is terminal — retire the
-						// goroutine; the consumer's handler can
-						// call Http.Stream.close to unregister.
 						return
 					}
-				default:
-					goto blocking
 				}
 			}
-		blocking:
-			select {
-			case <-gDone:
-				return
-			case <-sessDone:
-				return
-			case ev, open := <-sh.ch:
-				if !open {
-					return
-				}
-				app.runStreamSubscriberDispatch(sess, reg.toMsg, ev)
-				if ev.kind != streamChunkEv {
-					return
-				}
-			}
-		}
 		})
 	})
 }
@@ -7329,8 +7325,15 @@ document.addEventListener("click", function(ev) {
       // whatever surface their init is configured to render.
       if (!r.ok) { window.location.href = href; return; }
       return r.text().then(function(t) {
-        __skyPatch(t);
+        // Push the URL BEFORE patching. __skyPatch runs the data-sky-path
+        // sync handler, which pushes a new entry whenever location.pathname
+        // doesn't already match. If we patched first (stale pathname), it
+        // would push href, and the pushState below would push it AGAIN —
+        // two history entries per sky-nav click, so Back needs two presses
+        // to move one page. Setting the URL first makes the data-sky-path
+        // handler see a matching pathname and replaceState (a no-op) instead.
         window.history.pushState({}, "", href);
+        __skyPatch(t);
       });
     })
     .catch(function() { window.location.href = href; });

@@ -58,3 +58,48 @@ func TestSkyNavFetchChecksOk(t *testing.T) {
 			"'window.location.href = href' — without it, a 404 has no recovery")
 	}
 }
+
+// TestSkyNavPushesUrlBeforePatch regression-locks the ordering of the sky-nav
+// click handler's `history.pushState` vs `__skyPatch`. __skyPatch runs the
+// data-sky-path URL-sync handler, which pushes a NEW history entry whenever
+// location.pathname doesn't already match the patched view's data-sky-path.
+//
+// Symptom that drove the fix: an app using BOTH `sky-nav` links AND a
+// `data-sky-path` urlSync element (the documented URL-from-Page pattern) got
+// TWO history entries per navigation — the data-sky-path handler pushed the
+// new path (location.pathname still stale mid-patch), then the click handler
+// pushed it again. Result: the browser Back button needed two presses to move
+// one page, so page transitions looked stuck/broken.
+//
+// Fix: push the URL FIRST, so when __skyPatch runs the data-sky-path handler,
+// location.pathname already matches and it replaceState()s (a no-op) instead
+// of pushing a duplicate. This test pins `pushState(...href...)` before
+// `__skyPatch(t)` in the click handler.
+func TestSkyNavPushesUrlBeforePatch(t *testing.T) {
+	js := liveJSWithCfgAndCsrfWithBase("test-sid", liveBannerConfig{}, "csrf-token", "")
+
+	push := strings.Index(js, `pushState({}, "", href)`)
+	if push < 0 {
+		t.Fatal("sky-nav click handler missing its history.pushState(href) — handler stripped?")
+	}
+	// The `__skyPatch(t)` that pairs with the click handler's fetch must come
+	// AFTER that pushState. (The other __skyPatch sites — SSE apply, popstate —
+	// don't carry the `href` var, so anchoring on the href pushState is exact.)
+	patchAfter := strings.Index(js[push:], "__skyPatch(t)")
+	if patchAfter < 0 {
+		t.Fatal("sky-nav click handler missing __skyPatch(t) after pushState")
+	}
+	// And there must be NO `__skyPatch(t)` BEFORE the pushState within the
+	// click handler — guard against a regression that reintroduces the
+	// patch-then-push order. Search the window between the fetch's r.ok gate
+	// and the pushState.
+	okGate := strings.LastIndex(js[:push], "if (!r.ok) { window.location.href = href")
+	if okGate < 0 {
+		t.Fatal("could not locate the sky-nav click handler's r.ok gate")
+	}
+	if strings.Contains(js[okGate:push], "__skyPatch(t)") {
+		t.Error("sky-nav click handler patches the body BEFORE pushing the URL — " +
+			"this double-pushes history when the view carries a data-sky-path " +
+			"element, breaking the browser Back button (needs two presses per page)")
+	}
+}
