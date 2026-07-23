@@ -23,42 +23,49 @@ Generated at: <ts>
 
 --- JSON ---
 {
+  "rowCount": 20,
+  "uniqueAccounts": 7,
+  "uniqueCategories": 10,
+  "totalCents": 931652,
   "averageCents": 46582.6,
+  "medianCents": -1230,
+  "maxCents": 420000,
+  "minCents": -180000,
   "buckets": [
     {
-      "averageCents": 0,
       "bucket": "income",
       "count": 0,
-      "topAccounts": [],
-      "totalCents": 0
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
     },
     {
-      "averageCents": 0,
       "bucket": "expense",
       "count": 0,
-      "topAccounts": [],
-      "totalCents": 0
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
     },
     {
-      "averageCents": 0,
       "bucket": "refund",
       "count": 0,
-      "topAccounts": [],
-      "totalCents": 0
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
     },
     {
-      "averageCents": 0,
       "bucket": "transfer",
       "count": 0,
-      "topAccounts": [],
-      "totalCents": 0
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
     },
     {
-      "averageCents": 0,
       "bucket": "unknown",
       "count": 0,
-      "topAccounts": [],
-      "totalCents": 0
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
     }
   ],
   "byAccount": [
@@ -110,13 +117,6 @@ Generated at: <ts>
     }
   ],
   "generatedAt": "<ts>",
-  "literalNull": null,
-  "maxCents": 420000,
-  "medianCents": -1230,
-  "minCents": -180000,
-  "rowCount": 20,
-  "totalCents": 931652,
-  "uniqueAccounts": 7,
-  "uniqueCategories": 10,
-  "validBool": true
+  "validBool": true,
+  "literalNull": null
 }
