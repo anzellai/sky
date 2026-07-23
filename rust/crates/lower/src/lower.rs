@@ -1321,6 +1321,27 @@ fn should_seal_prefix(go_name: &str) -> bool {
         || go_name.starts_with("Sky_Http_"))
 }
 
+/// Lower a Sky `Char` literal / pattern (`'a'`) to a Go rune value `rune(<cp>)`.
+/// `Char` maps to Go `rune` (`Prim::Rune`), so a char must NOT lower to a string
+/// literal — a case subject `c : Char` is a `rune`, and `rune == "a"` fails
+/// `go build` (mismatched types). Emitting `rune(<codepoint>)` also boxes as
+/// `int32` in an `any` slot, matching the runtime's `firstRune` / `String_toList`
+/// rune representation. `s` is the DECODED char (escapes already resolved), so
+/// the first `char`'s Unicode scalar is the codepoint.
+fn rune_lit(s: &str) -> GoExpr {
+    let cp = s.chars().next().map(|c| c as i64).unwrap_or(0);
+    GoExpr::new(
+        GoExprKind::Call(
+            Box::new(GoExpr::new(
+                GoExprKind::Ident("rune".into()),
+                GoTy::Bare(Prim::Rune),
+            )),
+            vec![GoExpr::new(GoExprKind::IntLit(cp), GoTy::Bare(Prim::Int))],
+        ),
+        GoTy::Bare(Prim::Rune),
+    )
+}
+
 /// Whether a Sky type references any nominal name that is declared in more than
 /// one module (`ambiguous`) — structurally, at any depth. Such a reference can't
 /// be resolved to a single Go type after the qualifier is dropped, so a union
@@ -1920,7 +1941,7 @@ impl<'a> Ctx<'a> {
             Expr::Float(f) => GoExpr::new(GoExprKind::FloatLit(*f), GoTy::Bare(Prim::Float)),
             Expr::Str(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
             Expr::Bool(b) => GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool)),
-            Expr::Chr(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
+            Expr::Chr(s) => rune_lit(s),
             Expr::Unit => GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Unit),
             Expr::Var(res) => self.lower_var(res.clone(), actual),
             Expr::Call(callee, args) => self.lower_call(*callee, args, actual),
@@ -4575,14 +4596,7 @@ impl<'a> Ctx<'a> {
             }
             Pattern::Chr(s) => (
                 Some(GoExpr::new(
-                    GoExprKind::Binary(
-                        GoBin::Eq,
-                        Box::new(subj.clone()),
-                        Box::new(GoExpr::new(
-                            GoExprKind::StrLit(s.to_string()),
-                            GoTy::Bare(Prim::Str),
-                        )),
-                    ),
+                    GoExprKind::Binary(GoBin::Eq, Box::new(subj.clone()), Box::new(rune_lit(s))),
                     GoTy::Bare(Prim::Bool),
                 )),
                 vec![],

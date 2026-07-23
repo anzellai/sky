@@ -286,6 +286,35 @@ fn driver_let_forward_ref_go_builds() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// A `case` on a `Char` with char-literal patterns must EMIT and `go build`.
+/// `Char` lowers to Go `rune`, but char literals + patterns used to lower to Go
+/// string literals, so `go build` rejected `_subj == "a"` (rune vs string) — a
+/// check≡build violation. Char literals/patterns now lower to `rune(<cp>)`.
+#[test]
+fn driver_char_pattern_go_builds() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "char-pat",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.String as String\n\
+         import Std.Log exposing (println)\n\n\
+         classify : Char -> String\n\
+         classify c =\n    case c of\n        'a' -> \"ay\"\n        _ -> \"other\"\n\n\
+         firstOf : String -> String\n\
+         firstOf s =\n    case String.toList s of\n        c :: _ -> classify c\n        [] -> \"empty\"\n\n\
+         main =\n    let\n        _ = println (classify 'a')\n    in\n    println (firstOf \"abc\")\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "char-literal case must emit AND go build (was `_subj == \"a\"` rune/string clash); note: {}",
+        report.note
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// The entry module is derived from the file's `module <Name>` header, NOT
 /// hardcoded to `Main`. A project whose entry declares `module App` must build
 /// (the oracle builds it fine); the pre-fix driver hardcoded `n == "Main"` and
