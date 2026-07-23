@@ -180,12 +180,14 @@ all calls pick it up automatically.
 [database]
 driver = "sqlite"          # sqlite / postgres
 path   = "./app.db"        # sqlite file path or postgres URL
+# url  = "postgres://…"    # alias for `path` (same DB_PATH)
 ```
 
 | Key      | Env var                  | Default   | Meaning                          |
 |----------|--------------------------|-----------|----------------------------------|
 | `driver` | `<PREFIX>_DB_DRIVER`     | `sqlite`  | `sqlite` / `postgres`            |
 | `path`   | `<PREFIX>_DB_PATH`       | (empty)   | File path or connection URL      |
+| `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)  |
 
 ---
 

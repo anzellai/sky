@@ -723,7 +723,12 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
             ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
-            ("database", "path") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
+            // `path` and `url` are aliases — both seed DB_PATH, which
+            // `Db.connect ()` reads and `detectDriver` routes to sqlite or
+            // postgres by DSN shape (`postgres://…` → pgx). `url` matches the
+            // CLAUDE.md app-matrix wording; a bare `postgres://` DSN in either
+            // key just works.
+            ("database", "path" | "url") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
             ("live", "port") => cfg.port = Some(val),
             // `[live]` runtime keys → the suffixes the runtime reads (live.go /
             // live_store.go). Without these, only the `SKY_LIVE_*` env vars were
@@ -1205,6 +1210,29 @@ mod sky_toml_tests {
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn database_url_is_an_alias_for_path() {
+        let dir = std::env::temp_dir().join(format!("skytoml-dburl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[database]\ndriver = \"postgres\"\n\
+             url = \"postgres://localhost/mydb\"\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        // `url` seeds DB_PATH (detectDriver routes the postgres:// DSN to pgx).
+        assert!(
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == "DB_PATH" && v == "postgres://localhost/mydb"),
+            "{:?}",
+            cfg.extra_defaults
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
