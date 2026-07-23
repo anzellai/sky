@@ -134,8 +134,9 @@ driver = "sqlite"               # sqlite / postgres
 url = "DATABASE_URL"            # env-var reference for production
 
 [auth]                          # only if auth != none
-cookie = "sky_sid"
-ttl = "24h"
+cookieName = "sky_sid"          # session cookie name (→ SKY_AUTH_COOKIE)
+tokenTtl = 86400                # JWT lifetime in seconds (→ SKY_AUTH_TOKEN_TTL)
+driver = "jwt"                  # jwt / session / oauth
 # secret comes from SKY_AUTH_TOKEN_SECRET — never commit it
 
 [log]
