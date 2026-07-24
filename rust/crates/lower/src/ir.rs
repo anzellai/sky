@@ -177,6 +177,11 @@ pub enum GoStmt {
     /// `name = expr` — plain assignment to an existing local (used by the TCO
     /// pass to reassign a function parameter before `continue`).
     Assign(String, GoExpr),
+    /// `var name T` — a bare typed declaration. Emitted before assigning a
+    /// SELF-RECURSIVE local function closure: Go's `name := func(){…name…}` leaves
+    /// `name` undefined inside its own initializer, so a recursive `let` helper
+    /// needs `var name T` then `name = func…` (issue #162).
+    VarDecl(String, GoTy),
     /// `for { <body> }` — an unconditional forever-loop wrapping a TCO'd
     /// tail-recursive function body. Every tail leaf is a `Return`; every tail
     /// self-call is param-reassignment + `Continue`.

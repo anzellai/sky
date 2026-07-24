@@ -1881,14 +1881,32 @@ impl<'a> Ctx<'a> {
             // a local function — emit a Go closure. Inlining the body instead
             // (the previous behaviour) leaves each param referenced as an
             // undefined `v_N` ident (`undefined: v_2`, examples 18/36/37).
-            let lowered = if d.params.is_empty() {
+            let is_fn = !d.params.is_empty();
+            let lowered = if !is_fn {
                 let ty = self.expr_ty(d.body);
                 self.lower_expr(d.body, &ty)
             } else {
                 self.lower_local_fn(&d.params, d.body)
             };
             self.local_tys.insert(lid, lowered.ty.clone());
-            out.push(GoStmt::Short(gname.clone(), lowered));
+            // A SELF-RECURSIVE local function references its own name inside the
+            // closure body. Go's `name := func(){ … name … }` leaves `name`
+            // undefined in its own initializer, so declare then assign — `var name
+            // T; name = func…` (issue #162). Only local FUNCTIONS can be
+            // self-recursive here (a value `x = … x …` is ill-typed and never
+            // reaches codegen), so gate on `is_fn` to keep every ordinary binding
+            // on the `:=` path byte-identical.
+            let recursive = is_fn && {
+                let mut refs: HashSet<LocalId> = HashSet::new();
+                self.collect_local_refs(d.body, &mut refs);
+                refs.contains(&lid)
+            };
+            if recursive {
+                out.push(GoStmt::VarDecl(gname.clone(), lowered.ty.clone()));
+                out.push(GoStmt::Assign(gname.clone(), lowered));
+            } else {
+                out.push(GoStmt::Short(gname.clone(), lowered));
+            }
             // `_ = name` so a let binding the body ignores does not trip Go's
             // "declared and not used" (matches the oracle's per-binding discard).
             if gname != "_" {
@@ -2084,7 +2102,14 @@ impl<'a> Ctx<'a> {
                     GoExprKind::Ident(format!(
                         "func(_r any) any {{ return rt.Field(_r, \"{f}\") }}"
                     )),
-                    GoTy::Any,
+                    // Type it as the `func(any) any` it actually IS, not bare `any`.
+                    // A consumer that applies it (`… |> .field`, `List.map .field
+                    // xs`) then sees the closure's `any` RESULT and narrows it to
+                    // the concrete slot via `coerce_if_needed`; typing it `any`
+                    // made the application result inherit the slot type and skip
+                    // the narrowing, so `rt.Field`'s `any` reached e.g. a `return
+                    // int` unconverted (issue #161).
+                    GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
                 )
             }
             Expr::Error => {
@@ -2994,8 +3019,25 @@ impl<'a> Ctx<'a> {
             return self.lower_call(func_e, &[value_e], actual);
         }
         let f = self.lower_expr(func_e, &GoTy::Any);
-        let a = self.lower_expr(value_e, &GoTy::Any);
-        GoExpr::new(GoExprKind::Call(Box::new(f), vec![a]), actual.clone())
+        // Thread the function value's declared PARAM type as the piped value's
+        // expected type, so an erased `[]any`/`any` from an upstream polymorphic
+        // pipeline stage narrows to the consumer's concrete param — e.g. a lambda
+        // `\rest -> …` typed `func([]Step) …` at the end of `… |> dropWhile p |>
+        // (\rest -> …)` (issue #163). Without it the value lowered with expected
+        // `Any`, so `coerce_if_needed` skipped the boundary and go build hit
+        // `[]any` vs `[]Step`. The return slot is likewise the function's own
+        // result type. `coerce_if_needed` elides when the types already match, so
+        // a concrete-into-concrete pipe stays byte-identical.
+        let (param_ty, ret_ty) = match &f.ty {
+            GoTy::Func(ps, r) => (
+                ps.first().cloned().unwrap_or_else(|| GoTy::Any),
+                (**r).clone(),
+            ),
+            _ => (GoTy::Any, actual.clone()),
+        };
+        let a = self.lower_expr(value_e, &param_ty);
+        let call = GoExpr::new(GoExprKind::Call(Box::new(f), vec![a]), ret_ty);
+        self.coerce_if_needed(call, actual)
     }
 
     /// The uniform kernel-call rule (doc 07 §6 FFI-return): every runtime kernel
