@@ -960,3 +960,92 @@ fn driver_source_root_relocates_discovery() {
 
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// Regression: a type error must be reported under the file it actually occurs
+/// in, even when a `.skydeps` module shares a NAME with a local module.
+///
+/// A diagnostic span carries the module's `ModuleId`. The display-path map used
+/// by the Elm-style renderer USED to be keyed by the `SourceFile`'s `file_id`
+/// (a load-order ordinal), on the assumption that `file_id == ModuleId`. That
+/// holds for a project with no Sky dependencies, but a dep module that shares a
+/// name with a local one makes `add_module` return the EXISTING id on re-add
+/// (dedup), shifting `file_id` and `ModuleId` apart for every module loaded
+/// after it — so an error resolved to the WRONG file's path (a sibling). This
+/// sets up exactly that shift and asserts the error names its own file.
+#[test]
+fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
+    let repo = repo_root();
+    let uniq = format!(
+        "sky-typecheck-gate-skydepshift-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dir = std::env::temp_dir().join(uniq);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    // A Sky dependency is declared; its source lives under `.skydeps/<slug>/src/`.
+    let slug = "github.com_test_collidedep";
+    let dep_src = dir.join(".skydeps").join(slug).join("src");
+    std::fs::create_dir_all(&dep_src).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"skydep-shift\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [dependencies]\n\"github.com/test/collidedep\" = \"v0.1.0\"\n",
+    )
+    .unwrap();
+    // The dep ships a module named `AaShared` …
+    std::fs::write(
+        dep_src.join("AaShared.sky"),
+        "module AaShared exposing (depValue)\n\ndepValue : Int\ndepValue =\n    1\n",
+    )
+    .unwrap();
+    // … and so does the local project (sorts FIRST among locals → the dedup, and
+    // thus the file_id/ModuleId shift, applies to every later local module).
+    std::fs::write(
+        src.join("AaShared.sky"),
+        "module AaShared exposing (localValue)\n\nlocalValue : Int\nlocalValue =\n    2\n",
+    )
+    .unwrap();
+    // The module with the type error sorts LAST, so its ModuleId is shifted away
+    // from its file_id — the exact condition that misnamed the file pre-fix.
+    std::fs::write(
+        src.join("ZzBroken.sky"),
+        "module ZzBroken exposing (broken)\n\nimport Sky.Core.Prelude exposing (..)\n\n\
+         broken : String -> a\nbroken s =\n    42\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("Main.sky"),
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\nimport AaShared\nimport ZzBroken\n\n\
+         main =\n    println (String.fromInt AaShared.localValue)\n",
+    )
+    .unwrap();
+
+    let out = dir.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &dir, &out));
+
+    assert!(
+        report.note.contains("TYPE ERROR") && report.note.contains("[E2001]"),
+        "expected the [E2001] rigid-var error, got: {}",
+        report.note
+    );
+    // The error is in ZzBroken.sky — it MUST be named there, not under a sibling
+    // (pre-fix it was reported under `src/Main.sky`, the module whose file_id
+    // matched ZzBroken's shifted ModuleId).
+    assert!(
+        report.note.contains("src/ZzBroken.sky:"),
+        "the type error must be reported under its own file src/ZzBroken.sky; note: {}",
+        report.note
+    );
+    assert!(
+        !report.note.contains("src/Main.sky:") && !report.note.contains("src/AaShared.sky:"),
+        "the type error must NOT be misattributed to a sibling module; note: {}",
+        report.note
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -153,20 +153,18 @@ fn assemble_and_emit_with(
     }
     // `FileId → display path` for every APP module — feeds the Elm-style renderer
     // so each diagnostic header carries `src/Main.sky:line:col` (matching the
-    // oracle) instead of a bare `line:col`. Keyed by the module's `file_id` (its
-    // eventual `ModuleId` index, which is exactly what a span's `file` carries).
-    // Paths are shown relative to the project dir when possible.
-    let path_map: std::collections::HashMap<base::FileId, String> = locals
-        .iter()
-        .map(|(_n, file, p)| {
-            let disp = p
-                .strip_prefix(example_dir)
-                .unwrap_or(p)
-                .to_string_lossy()
-                .replace('\\', "/");
-            (base::FileId(file.file_id(&db)), disp)
-        })
-        .collect();
+    // oracle) instead of a bare `line:col`. MUST be keyed by the module's
+    // `ModuleId` — the id `db.add_module` returns and the id a diagnostic span's
+    // `file` carries — NOT by the `SourceFile`'s `file_id` (a load-order ordinal
+    // minted by `next_id`). The two coincide for a project with no Sky
+    // dependencies, but a `.skydeps` module that shares a name with a local one
+    // (`add_module` returns the EXISTING id on re-add) — or kernel pre-population
+    // — shifts them apart, and a span then resolves to the WRONG file's path
+    // (e.g. `View/Common.sky` errors reported under `View/AppDetail.sky`). `path`
+    // is captured in the per-module loop below where the real `ModuleId` is known;
+    // this map is filled there, alongside `src_map`, so both key off the same id.
+    let mut path_map: std::collections::HashMap<base::FileId, String> =
+        std::collections::HashMap::new();
     if progress {
         println!("-- Discovering modules");
         println!("   Found {} project module(s)", locals.len());
@@ -182,7 +180,7 @@ fn assemble_and_emit_with(
     // across the whole corpus) and are trusted, exactly like the type/name/
     // exhaustive gates scope to `check_ids`.
     let mut parse_diags: Vec<diagnostics::Diagnostic> = Vec::new();
-    for (n, file, _p) in locals {
+    for (n, file, p) in locals {
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
         // node that lowers to Go `nil` and panics at runtime — while `sky check`
@@ -218,6 +216,16 @@ fn assemble_and_emit_with(
         // signatures, never re-checked — mirrors the `xtask infer` gate, whose
         // zero-type-error accept-parity property this preserves.
         check_ids.push(id);
+        // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
+        // same id `src_map` and diagnostic spans use — so a Sky-frontend error
+        // always names the file the span actually points at (see the note where
+        // `path_map` is declared).
+        let disp = p
+            .strip_prefix(example_dir)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .replace('\\', "/");
+        path_map.insert(base::FileId(id.index()), disp);
         let is_entry = match entry_module {
             Some(want) => n == want,
             None => n == "Main" || n.ends_with(".Main") || n == "main",
