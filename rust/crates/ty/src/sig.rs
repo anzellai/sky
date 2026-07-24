@@ -14,14 +14,11 @@ use std::collections::HashMap;
 use syntax::ast::{self, AstNode};
 use syntax::{SyntaxKind, SyntaxNode};
 
-/// One alias definition: its type parameters, its (unexpanded) body, and the
-/// module it was declared in (so a reference inside its body resolves against
-/// the DECLARING module, not the reference site's module).
+/// One alias definition: its type parameters and its (unexpanded) body.
 #[derive(Clone, PartialEq, Eq)]
 struct AliasDef {
     params: Vec<String>,
     body: Ty,
-    module: String,
 }
 
 /// The typed world: everything inference needs to look a name's scheme up.
@@ -98,15 +95,8 @@ pub struct World {
     /// Union type `DefId` → its constructor names (disambiguates same-named
     /// unions across modules, e.g. a `Msg` in each of several modules).
     pub union_members_by_def: HashMap<DefId, Vec<String>>,
-    /// Type aliases keyed by MODULE-QUALIFIED name (`"Page.A.Model"`), so two
-    /// modules declaring `type alias Model` don't collide (issue #164). A bare
-    /// reference resolves via `resolve_alias` (current module first, then a
-    /// unique bare name).
+    /// Whether a bare type name is a known nominal type (for opaque handling).
     aliases: HashMap<String, AliasDef>,
-    /// Bare alias name → the qualified keys that share it. `len == 1` means the
-    /// name is unambiguous and a bare reference (no module context, e.g. the
-    /// lowerer's `expand_ty`, or a stdlib alias) resolves to it directly.
-    alias_bare: HashMap<String, Vec<String>>,
 }
 
 impl World {
@@ -164,29 +154,18 @@ impl World {
             union_ctors: HashMap::new(),
             union_members_by_def: HashMap::new(),
             aliases: HashMap::new(),
-            alias_bare: HashMap::new(),
         };
         world.seed_builtin_ctors();
 
         // ---- pass 1: collect aliases + unions (so signatures can expand) ----
         for m in db.module_ids() {
-            let mname = db.module_name(m).to_string();
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 if let ast::Decl::Alias(a) = &decl {
                     if let Some(name) = a.name().map(|t| t.text().to_string()) {
                         let params = decl_type_vars(a.syntax());
-                        let body = a.ty().map(|t| ast_type_to_ty_qualified(&t)).unwrap_or(Ty::Error);
-                        let qkey = format!("{mname}.{name}");
-                        world.aliases.insert(
-                            qkey.clone(),
-                            AliasDef {
-                                params,
-                                body,
-                                module: mname.clone(),
-                            },
-                        );
-                        world.alias_bare.entry(name).or_default().push(qkey);
+                        let body = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                        world.aliases.insert(name, AliasDef { params, body });
                     }
                 }
             }
@@ -204,8 +183,8 @@ impl World {
                             continue;
                         };
                         let Some(t) = a.ty() else { continue };
-                        let raw = ast_type_to_ty_qualified(&t);
-                        let expanded = world.expand(&raw, 0, &mname);
+                        let raw = ast_type_to_ty(&t);
+                        let expanded = world.expand(&raw, 0);
                         let scheme = Scheme::generalize(expanded);
                         let def = intern_value(db, m, &name);
                         world.value_sigs.insert(def, scheme.clone());
@@ -224,8 +203,8 @@ impl World {
                         if let (Some(name), Some(ast::Type::Record(_))) =
                             (a.name().map(|t| t.text().to_string()), a.ty())
                         {
-                            let raw = a.ty().map(|t| ast_type_to_ty_qualified(&t)).unwrap_or(Ty::Error);
-                            let expanded = world.expand(&raw, 0, &mname);
+                            let raw = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                            let expanded = world.expand(&raw, 0);
                             let scheme = record_ctor_scheme(&expanded);
                             let def = intern_value(db, m, &name);
                             world.value_sigs.entry(def).or_insert(scheme.clone());
@@ -810,7 +789,6 @@ impl World {
     }
 
     fn record_union(&mut self, db: &dyn SkyDb, m: ModuleId, u: &ast::UnionDecl) {
-        let mname = db.module_name(m).to_string();
         let Some(tname) = u.name().map(|t| t.text().to_string()) else {
             return;
         };
@@ -826,7 +804,7 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&ast_type_to_ty_qualified(t), 0, &mname))
+                .map(|t| self.expand(&ast_type_to_ty(t), 0))
                 .collect();
             let ty = arg_tys
                 .into_iter()
@@ -887,98 +865,37 @@ impl World {
     /// 37-composite-live-shop: the struct-field decl must agree with the function
     /// signatures, which come pre-expanded from the sig world).
     pub fn expand_ty(&self, ty: &Ty) -> Ty {
-        // No reference-site module context here (the lowerer expands a field type
-        // in isolation), so ambiguous bare names fall to the unique-name path.
-        self.expand(ty, 0, "")
-    }
-
-    /// Resolve a (bare or already-qualified) alias reference `name` seen in module
-    /// `cur_mod`. A same-module reference wins first (`cur_mod.name`); otherwise a
-    /// bare name that is unambiguous across the whole program resolves to its sole
-    /// definition (stdlib aliases, and the common single-definition case). An
-    /// ambiguous bare name with no matching current module stays unresolved — the
-    /// pre-#164 behaviour silently picked the last-inserted homonym.
-    fn resolve_alias(&self, name: &str, cur_mod: &str) -> Option<&AliasDef> {
-        // Qualified reference `Qual.Name` — a cross-module use like `A.Model`
-        // (`import Page.A as A`) or a full-path `Page.A.Model`. Try the exact
-        // module-qualified key, then match `Qual` against a defining module's
-        // LAST path segment (the import-alias / unaliased-import convention:
-        // `import Page.A [as A]` → qualifier `A`).
-        if let Some((qual, base)) = name.rsplit_once('.') {
-            if let Some(def) = self.aliases.get(name) {
-                return Some(def);
-            }
-            if let Some(qkeys) = self.alias_bare.get(base) {
-                for qk in qkeys {
-                    if let Some(def) = self.aliases.get(qk) {
-                        if def.module == qual
-                            || def.module.rsplit('.').next() == Some(qual)
-                        {
-                            return Some(def);
-                        }
-                    }
-                }
-            }
-            return None;
-        }
-        // Bare reference: current module wins, else a program-wide unique name.
-        if !cur_mod.is_empty() {
-            if let Some(def) = self.aliases.get(&format!("{cur_mod}.{name}")) {
-                return Some(def);
-            }
-        }
-        if let Some(qkeys) = self.alias_bare.get(name) {
-            if qkeys.len() == 1 {
-                return self.aliases.get(&qkeys[0]);
-            }
-        }
-        None
+        self.expand(ty, 0)
     }
 
     /// Expand a type transparently through the alias table (record/function
-    /// aliases). `cur_mod` is the module the type is being read in, so a bare
-    /// alias reference resolves against its own module (issue #164). Guarded
-    /// against runaway recursion (aliases are non-recursive in Sky, but a
-    /// malformed corpus must not hang — L7).
-    fn expand(&self, ty: &Ty, depth: u32, cur_mod: &str) -> Ty {
+    /// aliases). Guarded against runaway recursion (aliases are non-recursive in
+    /// Sky, but a malformed corpus must not hang — L7).
+    fn expand(&self, ty: &Ty, depth: u32) -> Ty {
         if depth > 40 {
             return ty.clone();
         }
         match ty {
             Ty::App(name, args) => {
-                let args: Vec<Ty> = args
-                    .iter()
-                    .map(|a| self.expand(a, depth + 1, cur_mod))
-                    .collect();
-                if let Some(def) = self.resolve_alias(name.as_str(), cur_mod) {
+                let args: Vec<Ty> = args.iter().map(|a| self.expand(a, depth + 1)).collect();
+                if let Some(def) = self.aliases.get(name.as_str()) {
                     let mut sub: HashMap<String, Ty> = HashMap::new();
                     for (p, arg) in def.params.iter().zip(args.iter()) {
                         sub.insert(p.clone(), arg.clone());
                     }
                     let substituted = substitute(&def.body, &sub);
-                    // The body's own references resolve against the alias's
-                    // DECLARING module, not the reference site's.
-                    return self.expand(&substituted, depth + 1, &def.module);
+                    return self.expand(&substituted, depth + 1);
                 }
-                // Unresolved. If the name is qualified (a preserved `Qual.Name`
-                // that is NOT an alias — e.g. a cross-module UNION `Counter.Msg`),
-                // strip back to the bare final segment so it stays byte-identical
-                // to the historical qualifier-collapse. Bare names pass through.
-                let bare = name.as_str().rsplit('.').next().unwrap_or(name.as_str());
-                Ty::App(Name::new(bare), args)
+                Ty::App(name.clone(), args)
             }
             Ty::Fun(a, b) => Ty::Fun(
-                Box::new(self.expand(a, depth + 1, cur_mod)),
-                Box::new(self.expand(b, depth + 1, cur_mod)),
+                Box::new(self.expand(a, depth + 1)),
+                Box::new(self.expand(b, depth + 1)),
             ),
-            Ty::Tuple(xs) => Ty::Tuple(
-                xs.iter()
-                    .map(|x| self.expand(x, depth + 1, cur_mod))
-                    .collect(),
-            ),
+            Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| self.expand(x, depth + 1)).collect()),
             Ty::Record(fs, ext) => Ty::Record(
                 fs.iter()
-                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, cur_mod)))
+                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1)))
                     .collect(),
                 ext.clone(),
             ),
