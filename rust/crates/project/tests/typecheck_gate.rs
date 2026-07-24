@@ -1049,3 +1049,153 @@ fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Regression for #164: two modules each declaring `type alias Model` (with
+/// DIFFERENT record shapes) must NOT be conflated. The ty alias table used to be
+/// keyed by the bare name, so the second `Model` overwrote the first and both
+/// resolved to it — yielding spurious "record is missing field" errors. Covers
+/// both a same-module bare reference (`init : Model` inside Page.A) and a
+/// cross-module qualified reference (`A.Model` / `B.Model` used as ctor args in
+/// Main).
+#[test]
+fn distinct_same_named_type_aliases_are_not_conflated() {
+    let repo = repo_root();
+    let uniq = format!(
+        "sky-typecheck-gate-alias164-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dir = std::env::temp_dir().join(uniq);
+    let src = dir.join("src").join("Page");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"alias164\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("A.sky"),
+        "module Page.A exposing (Model, init, describe)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         type alias Model = { name : String, age : Int }\n\
+         init : Model\ninit = { name = \"Alice\", age = 30 }\n\
+         describe : Model -> String\n\
+         describe m = \"A: \" ++ m.name ++ \" \" ++ String.fromInt m.age\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("B.sky"),
+        "module Page.B exposing (Model, init, describe)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         type alias Model = { title : String, count : Int }\n\
+         init : Model\ninit = { title = \"Hello\", count = 42 }\n\
+         describe : Model -> String\n\
+         describe m = \"B: \" ++ m.title ++ \" \" ++ String.fromInt m.count\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("Main.sky"),
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         import Page.A as A\nimport Page.B as B\n\
+         type App = OnA A.Model | OnB B.Model\n\
+         render : App -> String\n\
+         render app = case app of\n\
+         \x20   OnA m -> A.describe m\n\
+         \x20   OnB m -> B.describe m\n\
+         main =\n    let\n        _ = println (render (OnA A.init))\n\
+         \x20       _ = println (render (OnB B.init))\n    in ()\n",
+    )
+    .unwrap();
+
+    let out = dir.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &dir, &out));
+
+    assert!(
+        !report.note.contains("missing field"),
+        "same-named aliases in different modules were conflated (spurious missing-field); note: {}",
+        report.note
+    );
+    assert!(
+        report.emitted && report.go_build_ok,
+        "the program must type-check + build (both Models resolve to their own module); note: {}, go_stderr: {}",
+        report.note, report.go_build_stderr
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Helper: build a single-file program and assert it type-checks AND `go build`
+/// succeeds. Used by the boundary-codegen regressions (#161/#162/#163) — these
+/// fail in the Haskell oracle too, so they can't be oracle-matched golden
+/// examples; a Rust-only build assertion is the regression guard.
+fn assert_single_file_builds(tag: &str, main_src: &str) {
+    let repo = repo_root();
+    let project = scratch_project(tag, main_src);
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+    assert!(
+        report.emitted && report.go_build_ok,
+        "[{tag}] expected type-check + go build to succeed; note: {}, go_stderr: {}",
+        report.note, report.go_build_stderr
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn issue161_field_accessor_in_pipeline_builds() {
+    assert_single_file_builds(
+        "i161",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         type Session = Session Config\n\
+         type alias Config = { terminalLineHeight : Int, wpmTarget : Int }\n\
+         config : Session -> Config\nconfig (Session c) = c\n\
+         terminalLineHeight : Session -> Int\n\
+         terminalLineHeight session = session |> config |> .terminalLineHeight\n\
+         main =\n    let\n        s = Session { terminalLineHeight = 24, wpmTarget = 60 }\n\
+         \x20       _ = println (String.fromInt (terminalLineHeight s))\n    in ()\n",
+    );
+}
+
+#[test]
+fn issue162_recursive_let_binding_builds() {
+    assert_single_file_builds(
+        "i162",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         takeWhile : (a -> Bool) -> List a -> List a\n\
+         takeWhile predicate list =\n    let\n\
+         \x20       helper memo xs = case xs of\n\
+         \x20           [] -> List.reverse memo\n\
+         \x20           x :: rest -> if predicate x then helper (x :: memo) rest else List.reverse memo\n\
+         \x20   in helper [] list\n\
+         main =\n    let\n        r = takeWhile (\\n -> n < 3) [ 1, 2, 3, 4, 1 ]\n\
+         \x20       _ = println (String.fromInt (List.length r))\n    in ()\n",
+    );
+}
+
+#[test]
+fn issue163_polymorphic_list_into_lambda_pipe_builds() {
+    assert_single_file_builds(
+        "i163",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         type Step = Typeable Char | EnterChar | End\n\
+         dropWhile : (a -> Bool) -> List a -> List a\n\
+         dropWhile p list = case list of\n\
+         \x20   [] -> []\n\
+         \x20   x :: xs -> if p x then dropWhile p xs else list\n\
+         trimSteps : List Step -> Int\n\
+         trimSteps steps = steps |> dropWhile (\\s -> s == EnterChar) |> (\\rest -> List.length rest)\n\
+         main =\n    let\n        r = trimSteps [ EnterChar, Typeable 'a', End ]\n\
+         \x20       _ = println (String.fromInt r)\n    in ()\n",
+    );
+}
