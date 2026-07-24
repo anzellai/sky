@@ -1050,6 +1050,93 @@ fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Issue #164: two modules that each declare `type alias Model` with DIFFERENT
+/// fields must NOT be conflated by the type-checker. Before the HIR-based
+/// resolution fix, the bare-name alias table let the second `Model` overwrite
+/// the first, so a reference to either resolved to whichever was inserted last
+/// — every access to the other's fields became a spurious "record is missing
+/// field" error on valid code. The test also exercises an import ALIAS whose
+/// qualifier is neither the module name nor a path segment (`import Wrap as
+/// Repo` → `Repo.RepoInfo`), the exact shape that a syntactic last-segment
+/// heuristic (the reverted v0.18.2 attempt) mis-resolved and that regressed the
+/// skydeploy control-plane. Correct resolution routes through HIR's resolver, so
+/// all three references land on their own module's alias and the project builds.
+#[test]
+fn issue164_same_named_aliases_in_different_modules_not_conflated() {
+    let repo = repo_root();
+    let uniq = format!(
+        "sky-typecheck-gate-issue164-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dir = std::env::temp_dir().join(uniq);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"issue164\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    // Module A: `Model` = { count, label }.
+    std::fs::write(
+        src.join("PageA.sky"),
+        "module PageA exposing (Model, init)\n\n\
+         type alias Model =\n    { count : Int\n    , label : String\n    }\n\n\
+         init : Model\ninit =\n    { count = 0, label = \"a\" }\n",
+    )
+    .unwrap();
+    // Module B: `Model` under the SAME name but a DIFFERENT shape = { name, active }.
+    std::fs::write(
+        src.join("PageB.sky"),
+        "module PageB exposing (Model, init)\n\n\
+         type alias Model =\n    { name : String\n    , active : Bool\n    }\n\n\
+         init : Model\ninit =\n    { name = \"b\", active = True }\n",
+    )
+    .unwrap();
+    // A third module whose alias is reached through an import ALIAS in Main.
+    std::fs::write(
+        src.join("Wrap.sky"),
+        "module Wrap exposing (RepoInfo, mk)\n\n\
+         type alias RepoInfo =\n    { fullName : String\n    , stars : Int\n    }\n\n\
+         mk : RepoInfo\nmk =\n    { fullName = \"x/y\", stars = 3 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         import PageA as A\nimport PageB as B\n\
+         import Wrap as Repo exposing (RepoInfo)\n\n\
+         useA : A.Model -> String\nuseA m =\n    m.label\n\n\
+         useB : B.Model -> String\nuseB m =\n    m.name\n\n\
+         useRepo : RepoInfo -> Int\nuseRepo r =\n    r.stars\n\n\
+         main =\n    println (useA A.init ++ \" \" ++ useB B.init ++ \" \" ++ String.fromInt (useRepo Repo.mk))\n",
+    )
+    .unwrap();
+
+    let out = dir.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &dir, &out));
+
+    assert!(
+        !report.note.contains("missing field"),
+        "issue #164: same-named aliases were conflated (spurious missing-field \
+         error); note: {}",
+        report.note
+    );
+    assert!(
+        report.emitted && report.go_build_ok,
+        "issue #164: expected type-check + go build to succeed; note: {}, go_stderr: {}",
+        report.note,
+        report.go_build_stderr
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Helper: build a single-file program and assert it type-checks AND `go build`
 /// succeeds. Used by the boundary-codegen regressions (#161/#162/#163) — these
 /// fail in the Haskell oracle too, so they can't be oracle-matched golden
@@ -1062,7 +1149,8 @@ fn assert_single_file_builds(tag: &str, main_src: &str) {
     assert!(
         report.emitted && report.go_build_ok,
         "[{tag}] expected type-check + go build to succeed; note: {}, go_stderr: {}",
-        report.note, report.go_build_stderr
+        report.note,
+        report.go_build_stderr
     );
     let _ = std::fs::remove_dir_all(&project);
 }
