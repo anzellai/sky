@@ -40,16 +40,24 @@ RUN set -e; \
     echo "Installing sky v${SKY_VERSION} for linux-${ARCH}"; \
     ARCHIVE_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}.tar.gz"; \
     RAW_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}"; \
-    if curl -fsSL "$ARCHIVE_URL" -o /tmp/sky.tar.gz 2>/dev/null; then \
-        cd /tmp && tar xzf sky.tar.gz; \
-        mv sky-linux-${ARCH} /usr/local/bin/sky; \
-        [ -f sky-ffi-inspect-sky-linux-${ARCH} ] && mv sky-ffi-inspect-sky-linux-${ARCH} /usr/local/bin/sky-ffi-inspect; \
-        rm -f sky.tar.gz; \
-    elif curl -fsSL "$RAW_URL" -o /usr/local/bin/sky 2>/dev/null; then \
-        echo "Downloaded raw binary"; \
-    else \
-        echo "Failed to download sky v${SKY_VERSION}" && exit 1; \
-    fi; \
+    # Retry with backoff: this image builds in the SAME release run that just
+    # published the assets (docker `needs: release`), so a fresh tag's asset can
+    # 404 for a minute while GitHub's release-asset CDN propagates. Retry the
+    # download (7 attempts, ~2m total) instead of failing the build on a race.
+    ok=""; \
+    for attempt in 1 2 3 4 5 6 7; do \
+        if curl -fsSL "$ARCHIVE_URL" -o /tmp/sky.tar.gz 2>/dev/null; then \
+            cd /tmp && tar xzf sky.tar.gz; \
+            mv sky-linux-${ARCH} /usr/local/bin/sky; \
+            [ -f sky-ffi-inspect-sky-linux-${ARCH} ] && mv sky-ffi-inspect-sky-linux-${ARCH} /usr/local/bin/sky-ffi-inspect; \
+            rm -f sky.tar.gz; ok=1; break; \
+        elif curl -fsSL "$RAW_URL" -o /usr/local/bin/sky 2>/dev/null; then \
+            echo "Downloaded raw binary"; ok=1; break; \
+        fi; \
+        echo "download attempt ${attempt} failed (asset may still be propagating) — retrying in 20s"; \
+        sleep 20; \
+    done; \
+    [ -n "$ok" ] || { echo "Failed to download sky v${SKY_VERSION} after retries" && exit 1; }; \
     chmod +x /usr/local/bin/sky; \
     sky --version
 
