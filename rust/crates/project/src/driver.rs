@@ -149,12 +149,32 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
     // The binary name honours sky.toml `bin` (default `app`). The project dir is
     // the out dir's parent (`<project>/sky-out`); if that read fails we fall back
     // to `app`, matching the build default.
-    let bin_name = out_dir
-        .parent()
+    let project_dir = out_dir.parent();
+    let bin_name = project_dir
         .map(crate::build::configured_bin_name)
         .unwrap_or_else(|| "app".to_string());
-    let mut cmd = Command::new(format!("./{bin_name}"));
-    cmd.current_dir(out_dir);
+    // Absolute path to the built binary, so program resolution never depends on
+    // the child's working directory. A relative program path combined with a
+    // `current_dir` is platform-specific + unstable (see the std::process docs),
+    // which is exactly the combination the old `Command::new("./app")` +
+    // `current_dir(out_dir)` relied on.
+    let bin_abs = std::fs::canonicalize(out_dir.join(&bin_name))
+        .unwrap_or_else(|_| out_dir.join(&bin_name));
+    let mut cmd = Command::new(&bin_abs);
+    // Run from the directory the user INVOKED the command from — NOT sky-out/.
+    // The old `current_dir(out_dir)` ran the app inside sky-out/, so every
+    // relative path the app uses (.env, data/, the sqlite store path, static
+    // dirs) resolved against sky-out/ and silently broke — e.g. the sqlite store
+    // reported "unable to open database file" and fell back to the memory store.
+    // The `sky` process never chdirs, so `current_dir()` is the invocation dir;
+    // running there makes relative paths resolve exactly as `./sky-out/app`
+    // would when launched from that same directory. Falls back to the project
+    // dir if the cwd is somehow unavailable.
+    let cwd = std::env::current_dir()
+        .ok()
+        .or_else(|| project_dir.map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| out_dir.to_path_buf());
+    cmd.current_dir(&cwd);
     for (k, v) in envs {
         cmd.env(k, v);
     }
