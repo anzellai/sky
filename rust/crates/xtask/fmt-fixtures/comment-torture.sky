@@ -1,0 +1,54 @@
+-- | Comment-torture fixture for the `sky fmt` comment-loss safety gate
+-- (xtask fmt). Every comment in this file MUST survive formatting. The gate
+-- compares the comment multiset before/after `sky fmt`; a dropped, added, or
+-- mutated comment fails it. Trailing/inline comments are the sharp case: the
+-- opinionated printer would drop them on its own, so the safety net has to
+-- fall back to the lossless reprint. See crates/xtask/src/fmt_gate.rs.
+
+module CommentTorture exposing (main)
+
+-- header comment sitting above the imports
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+{- a block-comment section header
+   spanning several lines, {- with a nested block -} inside -}
+
+
+-- own-line comment above a type declaration
+type Shape
+    = Circle Int    -- trailing comment on a constructor
+    | Square Int    -- another trailing comment
+    | Rect Int Int  -- and one more trailing comment
+
+
+-- own-line comment above a function
+area : Shape -> Int
+area shape =
+    case shape of
+        Circle r ->
+            r * r * 3       -- trailing comment inside a case arm
+
+        Square s ->
+            -- own-line comment inside a case arm
+            s * s
+
+        Rect w h ->
+            w * h
+
+
+greet : String -> String
+greet name =
+    let
+        -- comment above a let binding
+        prefix = "hi, "     -- trailing comment on a let binding
+    in
+    prefix ++ name          -- trailing comment on the let body
+
+
+main =
+    let
+        _ = println (greet "sky")
+    in
+    println (String.fromInt (area (Rect 3 4)))     -- trailing on the final expr

@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 syntax = { path = "../syntax" }
 base = { path = "../base" }
+fmt = { path = "../fmt" }
 hir = { path = "../hir" }
 ty = { path = "../ty" }
 lower = { path = "../lower" }

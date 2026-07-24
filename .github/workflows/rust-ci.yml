@@ -72,6 +72,15 @@ jobs:
       - name: Gate — roundtrip (reprint == source, L8)
         run: cargo run -q -p xtask -- roundtrip
 
+      # `sky fmt` comment-loss safety: format every sky-stdlib/ + examples/
+      # file (both comment-heavy) plus a comment-torture fixture, and assert the
+      # comment multiset (own-line AND trailing/inline) is byte-identical before
+      # and after, and that formatting is idempotent. roundtrip above locks the
+      # LOSSLESS reprint; this locks the OPINIONATED path + its safety net so a
+      # regression that drops a comment fails CI instead of reaching users.
+      - name: Gate — fmt (sky fmt never drops a comment; idempotent)
+        run: cargo run -q -p xtask -- fmt
+
       - name: Gate — resolve (name-resolution parity)
         run: cargo run -q -p xtask -- resolve
 
