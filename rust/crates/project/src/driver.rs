@@ -162,8 +162,8 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
     // `current_dir` is platform-specific + unstable (see the std::process docs),
     // which is exactly the combination the old `Command::new("./app")` +
     // `current_dir(out_dir)` relied on.
-    let bin_abs = std::fs::canonicalize(out_dir.join(&bin_name))
-        .unwrap_or_else(|_| out_dir.join(&bin_name));
+    let bin_abs =
+        std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
     // Run from the PROJECT ROOT (the sky.toml dir), NOT sky-out/. The old
     // `current_dir(out_dir)` ran the app inside sky-out/, so every relative path
