@@ -378,26 +378,19 @@ fn verify_one(
     // `--bless` also need the RUST binary to run (they compare/capture its
     // stdout), so force the inline run for CLI even without `--run`.
     let want_inline_run = (do_verify || golden || bless) && shape == Shape::Cli;
-    // The generated FFI surface (`sky-ffi/`) is a gitignored build artifact, so
-    // a fresh clone / CI has none. When we intend to actually RUN/verify an
-    // example (CLI golden, server verify) it must resolve its FFI symbols, so
-    // generate any absent surface first — exactly what a user runs (`sky
-    // install`) before building an FFI project. Build-only paths (`--all` with
-    // no `--run`) deliberately skip this and let a surface-less FFI example
-    // FFI-block, so the heavy 13-skyshop (Stripe) surface is never regenerated
-    // on the CI build sweep.
-    // Sky-source deps are cheap (a shallow clone) and REQUIRED to build, so
-    // fetch them for EVERY dep-declaring example — including the build-only
-    // sweep (`--all`, no `--run`). Without this a Sky-dep example (13-skyshop ->
-    // sky-tailwind) built-blocked with "dependency … not fetched" and was
-    // silently skipped rather than tested. The heavy Go-FFI surface stays gated
-    // on run/verify below to keep the build sweep fast.
-    if !dir.join(".skydeps").is_dir() {
-        let _ = project::ffi_install_sky(dir);
-    }
-    if want_inline_run || do_verify {
-        ensure_ffi_surface(root, dir);
-    }
+    // Both the generated Go-FFI surface (`sky-ffi/`) and the fetched Sky deps
+    // (`.skydeps/`) are gitignored build artifacts, so a fresh clone / CI has
+    // neither. Generate/fetch whatever is ABSENT for EVERY dep-declaring example
+    // — this is exactly what a user runs (`sky install`) before building an FFI
+    // project. Previously the build-only sweep (`--all`, no `--run`) skipped this
+    // to avoid the heavy surface regeneration, but that silently LEFT every
+    // Go-FFI example (03/05/08/13, uuid / gorilla-mux / firestore / stripe …)
+    // build-blocked and untested under `build-run --all`. Doing it here is
+    // net-neutral in CI: the shape-specific run gates (golden / http / live)
+    // regenerate the same surfaces later in the SAME job, and `ensure_ffi_surface`
+    // no-ops when the surface is already present (`need` is false), so the cost
+    // is paid once and reused, just moved earlier so `--all` is comprehensive.
+    ensure_ffi_surface(root, dir);
     let opts = BuildOptions {
         repo_root: root.to_path_buf(),
         example_dir: dir.to_path_buf(),
