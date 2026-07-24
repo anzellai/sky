@@ -1,32 +1,28 @@
 module Main exposing (main)
 
--- Regression for two Rust-codegen bugs surfaced by the skydeploy control-plane,
--- fixed in v0.18.1. Both type-check fine in BOTH compilers; both broke `go
--- build` under the Rust primary before v0.18.1. (Built Rust-only by the
--- `build-run` gate — NOT oracle-matched: Bug A is a Rust codegen improvement the
--- Haskell oracle's codegen never had, so the oracle cannot build this example.
--- See docs/rust-rewrite/known-divergences.md.)
+-- Regression for a Rust-codegen bug surfaced by the skydeploy control-plane
+-- (accepted by the Haskell oracle; broke `go build` under the Rust primary
+-- before v0.18.1). This example is oracle-matched.
 --
---   Bug B (regression vs oracle, now re-matched) — an OPEN record row whose
---   unresolved tail dropped a field lowered a closure parameter to a lossy
---   SUBSET struct. A `List.find` predicate that reads a field NONE of the result
---   branches read (`\c -> c.primary`, while the `Just` branch reads `.email`)
---   emitted `struct{Email;Verified}` and then `v.Primary` on it → "undefined
---   field". Fixed by widening such a closure param to `any` (the field access
---   routes through `rt.Field`).
+-- An OPEN record row whose unresolved tail dropped a field lowered a closure
+-- parameter to a lossy SUBSET struct. A `List.find` predicate that reads a field
+-- NONE of the result branches read (`\c -> c.primary`, while the `Just` branches
+-- read `.email`) emitted `struct{Email;Verified}` and then `v.Primary` on it →
+-- "undefined field". Fixed by widening such a closure param to `any` (the field
+-- access routes through `rt.Field`).
 --
---   Bug A (Rust beyond oracle) — a GENERIC kernel used as a first-class VALUE
---   (`JsonEnc.list identity` over a `List Value`) emitted the Go generic
---   `rt.Basics_identity` uninstantiated → "cannot use generic function without
---   instantiation". Fixed by instantiating value-position references
---   (`rt.Basics_identity[any]`). The oracle's codegen emits it bare and go build
---   rejects it too — so this is a capability the Rust primary gained, not a
---   regression it repaired.
+-- The predicate/result field split is load-bearing: `primary` is read ONLY by
+-- the `List.find` predicate, so the element row's tail must not be dropped.
+--
+-- Two sibling codegen fixes shipped in the same release are Rust-BEYOND-oracle
+-- (the oracle's codegen fails them identically), so they cannot live in this
+-- oracle-matched corpus. They are recorded as divergences C001 (generic kernel
+-- as a first-class value) and C002 (builtin constructor as a first-class value)
+-- in docs/rust-rewrite/known-divergences.md, and witnessed by the real
+-- sky-lang.org and skydeploy control-plane builds.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
-import Sky.Core.Json.Encode as JsonEnc
-import Sky.Core.Json.Decode as JsonDec
 import Std.Log exposing (println)
 
 type alias Contact =
@@ -36,8 +32,6 @@ type alias Contact =
     }
 
 
--- Bug B: `primary` is read ONLY by the `List.find` predicate; the `Just`
--- branches read `.email`. The element row's tail must not be dropped.
 pickPrimary : List Contact -> String
 pickPrimary contacts =
     case List.find (\c -> c.primary) contacts of
@@ -55,28 +49,6 @@ pickPrimary contacts =
                     "none"
 
 
--- Bug A: `identity` (a generic kernel) handed to `JsonEnc.list : (a -> Value) ->
--- List a -> Value` as a bare value, over an already-encoded `List Value`.
-encodeVals : String
-encodeVals =
-    let
-        vals = List.map JsonEnc.string [ "one", "two", "three" ]
-    in
-        JsonEnc.encode 0 (JsonEnc.list identity vals)
-
-
--- Bug C (Rust beyond oracle): a builtin CONSTRUCTOR (`Just`) handed to
--- `JsonDec.map : (a -> b) -> Decoder a -> Decoder b` as a first-class function.
--- The oracle's codegen emitted `rt.Just()` (a zero-arg call of the arity-1 ctor)
--- → "not enough arguments in call to rt.Just". Rust eta-expands the ctor value
--- into a closure of the right arity.
-decodeMaybeName : String -> Maybe String
-decodeMaybeName json =
-    Result.withDefault
-        Nothing
-        (JsonDec.decodeString (JsonDec.map Just JsonDec.string) json)
-
-
 main =
     let
         contacts =
@@ -84,8 +56,5 @@ main =
             , { email = "b@x.com", primary = True, verified = True }
             ]
         _ = println (pickPrimary contacts)
-        _ = println encodeVals
-        _ =
-            println (Maybe.withDefault "nothing" (decodeMaybeName "\"parsed\""))
     in
         println "done"

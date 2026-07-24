@@ -95,10 +95,9 @@ skydeploy control-plane build.
   function without instantiation"*. Rust instantiates the reference
   (`rt.Basics_identity[any]`), so it compiles. Rust is strictly **more capable**
   here; the oracle never built this shape. Surfaced by the skydeploy control-plane
-  (`Mcp/Prompts.sky`, `Mcp/Resources.sky`); regression-covered by
-  `examples/50-open-row-closure` (Bug A). Because the oracle cannot build it,
-  this example is Rust-only in `build-run` and is NOT in the oracle-matched
-  `CLI_FAMILY` golden set.
+  (`Mcp/Prompts.sky`, `Mcp/Resources.sky`). Witnessed by the skydeploy
+  control-plane build; it cannot live in the oracle-matched example corpus
+  because the oracle rejects it.
 
 - **C002 — builtin constructor used as a first-class value (v0.18.1).**
   `JsonDec.map Just dec` / any bare reference to an arity-1 builtin constructor
@@ -107,5 +106,5 @@ skydeploy control-plane build.
   enough arguments in call to rt.Just"*. Rust eta-expands the constructor value
   into a closure of the right arity. Rust is strictly **more capable**; the oracle
   never built this shape. Surfaced by the sky-lang.org site (via the sky-github
-  dependency's `Github.User` JSON decoder); regression-covered by
-  `examples/50-open-row-closure` (Bug C), same Rust-only status as C001.
+  dependency's `Github.User` JSON decoder). Witnessed by the sky-lang.org
+  build; same reason as C001, it cannot live in the oracle-matched corpus.
