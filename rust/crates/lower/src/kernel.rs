@@ -58,6 +58,27 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
     )
 }
 
+/// Type-parameter arity for a GENERIC runtime kernel symbol referenced as a
+/// first-class VALUE (passed as an argument, stored in a slot, coerced to `any`).
+/// Go rejects a generic function used as a value without instantiation —
+/// `any(rt.Basics_identity)` → "cannot use generic function … without
+/// instantiation" — so such a reference must be emitted instantiated:
+/// `rt.Basics_identity[any]`, `rt.Basics_always[any, any]`. Returns the number of
+/// `any` type args to append, or `None` for the non-generic majority (emitted
+/// bare, unchanged). These are the only two mapped kernels whose runtime symbol
+/// is generic: `func Basics_identity[A any]` and `func Basics_always[A any, B any]`
+/// (rt.go). A directly-CALLED kernel (`identity x`) never reaches this path — Go
+/// infers the type args at the call site; only a bare value reference (e.g.
+/// `JsonEnc.list identity args`) needs the explicit `[any, …]`. Sky's polymorphism
+/// erases to `any` at this boundary, so `any` is always the correct instantiation.
+pub fn generic_kernel_value_tyargs(runtime_sym: &str) -> Option<usize> {
+    match runtime_sym {
+        "rt.Basics_identity" => Some(1),
+        "rt.Basics_always" => Some(2),
+        _ => None,
+    }
+}
+
 // determinism (L4): lookup-only kernel dispatch table. Built once from the
 // ordered `KERNEL_TABLE` slice and consulted purely via `.get()` — its iteration
 // order is never observed, so a `HashMap` is sound here.

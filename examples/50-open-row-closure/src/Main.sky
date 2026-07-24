@@ -1,0 +1,60 @@
+module Main exposing (main)
+
+-- Regression for a Rust-codegen bug surfaced by the skydeploy control-plane
+-- (accepted by the Haskell oracle; broke `go build` under the Rust primary
+-- before v0.18.1). This example is oracle-matched.
+--
+-- An OPEN record row whose unresolved tail dropped a field lowered a closure
+-- parameter to a lossy SUBSET struct. A `List.find` predicate that reads a field
+-- NONE of the result branches read (`\c -> c.primary`, while the `Just` branches
+-- read `.email`) emitted `struct{Email;Verified}` and then `v.Primary` on it →
+-- "undefined field". Fixed by widening such a closure param to `any` (the field
+-- access routes through `rt.Field`).
+--
+-- The predicate/result field split is load-bearing: `primary` is read ONLY by
+-- the `List.find` predicate, so the element row's tail must not be dropped.
+--
+-- Two sibling codegen fixes shipped in the same release are Rust-BEYOND-oracle
+-- (the oracle's codegen fails them identically), so they cannot live in this
+-- oracle-matched corpus. They are recorded as divergences C001 (generic kernel
+-- as a first-class value) and C002 (builtin constructor as a first-class value)
+-- in docs/rust-rewrite/known-divergences.md, and witnessed by the real
+-- sky-lang.org and skydeploy control-plane builds.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+type alias Contact =
+    { email : String
+    , primary : Bool
+    , verified : Bool
+    }
+
+
+pickPrimary : List Contact -> String
+pickPrimary contacts =
+    case List.find (\c -> c.primary) contacts of
+
+        Just c ->
+            c.email
+
+        Nothing ->
+            case List.find (\c -> c.verified) contacts of
+
+                Just v ->
+                    v.email
+
+                Nothing ->
+                    "none"
+
+
+main =
+    let
+        contacts =
+            [ { email = "a@x.com", primary = False, verified = True }
+            , { email = "b@x.com", primary = True, verified = True }
+            ]
+        _ = println (pickPrimary contacts)
+    in
+        println "done"

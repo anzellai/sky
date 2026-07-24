@@ -1034,6 +1034,21 @@ fn collect_types(
     (nominal, nominal_by_module, decls)
 }
 
+/// Arity of a BUILTIN constructor (`Just`, `Ok`, `Err`, `Nothing`, …). These are
+/// interned under the synthetic `BUILTIN_MOD`, not the per-module `ctor_arity`
+/// map, so a bare VALUE reference to one (`JsonDec.map Just dec` — the ctor as a
+/// first-class function) fell through `ctor_arity_pinned`'s map lookup to the old
+/// `unwrap_or(0)` default and emitted a zero-arg call `rt.Just()` → "not enough
+/// arguments in call to rt.Just". The arity-1 builtins must eta-expand into a
+/// closure of the right arity instead. `Nothing` / `True` / `False` are genuinely
+/// nullary and correctly stay 0 (their value path emits `rt.Nothing[T]()`).
+fn builtin_ctor_arity(cname: &str) -> usize {
+    match cname {
+        "Just" | "Ok" | "Err" => 1,
+        _ => 0,
+    }
+}
+
 /// The DISTINCT non-`"any"` type-param vars of a record alias's field types, in
 /// first-appearance order (the Go generic param order `T1, T2, …`). `"any"` is
 /// the per-occurrence wildcard floor (`ty::is_polymorphic`), never a real
@@ -2122,6 +2137,16 @@ impl<'a> Ctx<'a> {
                         .is_some_and(|(m, f)| crate::kernel::is_nullary_kernel_value(m, f));
                     if nullary {
                         self.nullary_kernel_value(&go, actual)
+                    } else if let Some(n) = crate::kernel::generic_kernel_value_tyargs(&go) {
+                        // A GENERIC runtime kernel used as a first-class value
+                        // (`JsonEnc.list identity args`): Go requires the type
+                        // args explicit — `any(rt.Basics_identity)` is rejected
+                        // ("cannot use generic function … without instantiation").
+                        // Instantiate with `any` (Sky's polymorphism erases to
+                        // `any` here). A directly-called reference never reaches
+                        // this arm — Go infers the args at the call site.
+                        let inst = format!("{go}[{}]", ["any"].repeat(n).join(", "));
+                        GoExpr::new(GoExprKind::Ident(inst), actual.clone())
                     } else {
                         GoExpr::new(GoExprKind::Ident(go), actual.clone())
                     }
@@ -2173,6 +2198,16 @@ impl<'a> Ctx<'a> {
                 let go = kernel_go_name(module.as_str(), func.as_str());
                 if crate::kernel::is_nullary_kernel_value(module.as_str(), func.as_str()) {
                     self.nullary_kernel_value(&go, actual)
+                } else if let Some(n) = crate::kernel::generic_kernel_value_tyargs(&go) {
+                    // A GENERIC runtime kernel used as a first-class value
+                    // (`JsonEnc.list identity args`): Go requires the type args
+                    // explicit — `any(rt.Basics_identity)` is rejected ("cannot
+                    // use generic function … without instantiation"). Instantiate
+                    // with `any` (Sky's polymorphism erases to `any` here). A
+                    // directly-called reference never reaches this arm — Go infers
+                    // the args at the call site.
+                    let inst = format!("{go}[{}]", ["any"].repeat(n).join(", "));
+                    GoExpr::new(GoExprKind::Ident(inst), actual.clone())
                 } else {
                     GoExpr::new(GoExprKind::Ident(go), actual.clone())
                 }
@@ -2572,7 +2607,10 @@ impl<'a> Ctx<'a> {
                 return *a;
             }
         }
-        self.ctor_arity.get(cname).copied().unwrap_or(0)
+        self.ctor_arity
+            .get(cname)
+            .copied()
+            .unwrap_or_else(|| builtin_ctor_arity(cname))
     }
 
     /// Build the owning-union Go name (`Std_Css_TextAlign`) from a union's
@@ -3402,6 +3440,25 @@ impl<'a> Ctx<'a> {
     /// let-def RHS bodies (a self-call there is non-tail) and `if` conditions.
     /// New AST variants MUST get an arm here — a missing child → a missed
     /// self-call → a misclassified (and thus miscompiled) TCO candidate.
+    /// Field names read on the local `param` (`param.field`) anywhere in the
+    /// subtree rooted at `e`. Used by `lower_lambda`'s SOUND WIDENING: when a
+    /// closure param's Go type is a lossy SUBSET struct (an open record row whose
+    /// unresolved tail dropped a field), and the body reads a field the struct
+    /// omits, the param is widened to `any` so the access routes through
+    /// `rt.Field` instead of emitting `v.Field` on a struct that lacks it.
+    fn fields_read_on_local(&self, e: ExprId, param: LocalId, out: &mut HashSet<String>) {
+        if let Expr::Access(base, field) = &self.body.exprs[e] {
+            if let Expr::Var(Res::Local(l)) = &self.body.exprs[*base] {
+                if *l == param {
+                    out.insert(field.as_str().to_string());
+                }
+            }
+        }
+        for c in self.expr_children(e) {
+            self.fields_read_on_local(c, param, out);
+        }
+    }
+
     fn expr_children(&self, e: ExprId) -> Vec<ExprId> {
         match &self.body.exprs[e] {
             Expr::Int(_)
@@ -4196,6 +4253,38 @@ impl<'a> Ctx<'a> {
                     ty = elem;
                     elem_pinned = true;
                 }
+            }
+            // SOUND WIDENING: if the param's Go type is a struct that OMITS a field
+            // the body actually reads on this param, widen to `any` (the access then
+            // routes through `rt.Field`). This fires when an OPEN record row
+            // (`{a, b | ρ}`, ρ unresolved) lowered to a lossy SUBSET struct — the
+            // dropped tail held the read field. Example: a `List.find` predicate
+            // `\e -> e.primary` over `List {email, verified | ρ}` where ρ should
+            // carry `primary`; `goty` emitted `struct{Email; Verified}` and the body
+            // reads `.Primary`. Emitting a field read on a struct that lacks the
+            // field is a GUARANTEED `go build` failure, so widening here can never
+            // regress a program that currently compiles.
+            let widen_param = if let (Pattern::Var(pid), GoTy::Struct(sfields)) =
+                (&self.body.pats[*p], &ty)
+            {
+                let pid = *pid;
+                let present: HashSet<String> =
+                    sfields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+                let mut read: HashSet<String> = HashSet::new();
+                self.fields_read_on_local(body, pid, &mut read);
+                let capf = |s: &str| -> String {
+                    let mut ch = s.chars();
+                    match ch.next() {
+                        Some(c) => c.to_ascii_uppercase().to_string() + ch.as_str(),
+                        None => String::new(),
+                    }
+                };
+                read.iter().any(|f| !present.contains(&capf(f)))
+            } else {
+                false
+            };
+            if widen_param {
+                ty = GoTy::Any;
             }
             let name = match &self.body.pats[*p] {
                 Pattern::Var(id) => {

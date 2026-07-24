@@ -53,6 +53,8 @@ const CLI_FAMILY: &[&str] = &[
     "20-cli-counter",
     // Regression for anzellai/sky#153 — cross-module parametric ADT codegen.
     "49-xmodule-adt",
+    // Regression for the v0.18.1 open-row closure-param codegen fix.
+    "50-open-row-closure",
 ];
 
 /// Heavy-FFI GUI examples that build but cannot be headless-verified (native

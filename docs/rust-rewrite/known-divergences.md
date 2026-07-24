@@ -77,3 +77,34 @@ one active behavioural divergence:
   (appendHelp)` (a module-private stdlib helper) is ACCEPTED by the oracle
   (kernel-module exemption) and REJECTED `[E1011]` by Rust, which enforces the
   `exposing` boundary uniformly. Intentional hardening.
+
+## Codegen-capability divergences (not check-level)
+
+The ledger above (and `xtask divergences`) covers **type-check** accept/reject
+divergences. A separate, narrower class exists: programs BOTH compilers
+type-check identically, but whose emitted Go differs such that one compiler's
+output fails `go build` and the other's compiles. These cannot be encoded in the
+check-level gate (both checkers accept), so they are recorded here in prose and
+witnessed by the `build-run` gate (Rust-only build) plus the real-world
+skydeploy control-plane build.
+
+- **C001 — generic kernel used as a first-class value (v0.18.1).** `JsonEnc.list
+  identity xs` / any bare reference to a polymorphic kernel (`identity`,
+  `always`) in value position. The oracle's codegen emits the Go generic bare
+  (`any(rt.Basics_identity)`), which `go build` rejects — *"cannot use generic
+  function without instantiation"*. Rust instantiates the reference
+  (`rt.Basics_identity[any]`), so it compiles. Rust is strictly **more capable**
+  here; the oracle never built this shape. Surfaced by the skydeploy control-plane
+  (`Mcp/Prompts.sky`, `Mcp/Resources.sky`). Witnessed by the skydeploy
+  control-plane build; it cannot live in the oracle-matched example corpus
+  because the oracle rejects it.
+
+- **C002 — builtin constructor used as a first-class value (v0.18.1).**
+  `JsonDec.map Just dec` / any bare reference to an arity-1 builtin constructor
+  (`Just`, `Ok`, `Err`) as a function value. The oracle's codegen emitted a
+  zero-arg call of the constructor (`rt.Just()`), which `go build` rejects — *"not
+  enough arguments in call to rt.Just"*. Rust eta-expands the constructor value
+  into a closure of the right arity. Rust is strictly **more capable**; the oracle
+  never built this shape. Surfaced by the sky-lang.org site (via the sky-github
+  dependency's `Github.User` JSON decoder). Witnessed by the sky-lang.org
+  build; same reason as C001, it cannot live in the oracle-matched corpus.
