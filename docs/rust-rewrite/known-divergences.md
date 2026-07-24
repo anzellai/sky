@@ -77,3 +77,25 @@ one active behavioural divergence:
   (appendHelp)` (a module-private stdlib helper) is ACCEPTED by the oracle
   (kernel-module exemption) and REJECTED `[E1011]` by Rust, which enforces the
   `exposing` boundary uniformly. Intentional hardening.
+
+## Codegen-capability divergences (not check-level)
+
+The ledger above (and `xtask divergences`) covers **type-check** accept/reject
+divergences. A separate, narrower class exists: programs BOTH compilers
+type-check identically, but whose emitted Go differs such that one compiler's
+output fails `go build` and the other's compiles. These cannot be encoded in the
+check-level gate (both checkers accept), so they are recorded here in prose and
+witnessed by the `build-run` gate (Rust-only build) plus the real-world
+skydeploy control-plane build.
+
+- **C001 — generic kernel used as a first-class value (v0.18.1).** `JsonEnc.list
+  identity xs` / any bare reference to a polymorphic kernel (`identity`,
+  `always`) in value position. The oracle's codegen emits the Go generic bare
+  (`any(rt.Basics_identity)`), which `go build` rejects — *"cannot use generic
+  function without instantiation"*. Rust instantiates the reference
+  (`rt.Basics_identity[any]`), so it compiles. Rust is strictly **more capable**
+  here; the oracle never built this shape. Surfaced by the skydeploy control-plane
+  (`Mcp/Prompts.sky`, `Mcp/Resources.sky`); regression-covered by
+  `examples/50-open-row-closure` (Bug A). Because the oracle cannot build it,
+  this example is Rust-only in `build-run` and is NOT in the oracle-matched
+  `CLI_FAMILY` golden set.
