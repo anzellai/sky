@@ -5719,6 +5719,29 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// path normally pre-creates the session before SSE opens).
 	sess.mu.Lock()
 	if sess.model != nil {
+		// v0.18.4 — reconcile the session's page with THIS connection's
+		// URL before the resync render. A full document load (fresh
+		// page, reload, or bfcache Back/Forward) reopens the SSE
+		// carrying its `location.pathname` in `?path`. Unlike a full
+		// GET, a bfcache restore does NOT re-run the route handler, so
+		// `sess.model.Page` can be stale relative to the URL the browser
+		// is actually showing (the last page navigated TO) — the resync
+		// would then push that stale page as a full-body frame over the
+		// restored DOM, so hitting Back "refreshes" onto the page you
+		// just left. Applying the route here lands the tab on the page
+		// its URL names; per the v0.18 shared-page mirror a full-document
+		// connection IS a navigation, so that becomes the session's page.
+		// Guards: only when the client sent a `path` AND it matches a
+		// registered route (an absent param from an older cached client,
+		// or an unroutable path, falls through to the pre-v0.18.4
+		// behaviour — render the stored page as-is). Idempotent when the
+		// tab is already on the page its URL names (the common reconnect
+		// / same-page case), so no extra work and no regression there.
+		if p := r.URL.Query().Get("path"); p != "" {
+			if _, ok := matchAnyRoute(app, p); ok {
+				sess.model = applyRoute(app, sess.model, p)
+			}
+		}
 		// Recover from any panic in view() so a bad render doesn't tear
 		// down the SSE connection. The recovered SSE just enters its
 		// for-select loop with the legacy prevTree / lastComputedBody /
@@ -7776,7 +7799,13 @@ function __skyOpenSSE() {
   // exhaust the pool and every subsequent request (navigation, clicks) hangs.
   // At most ONE EventSource exists at any time.
   try { if (__skySSE) __skySSE.close(); } catch (_) {}
-  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId);
+  // Carry this tab's current URL so the server's reconnect-resync can
+  // reconcile the session's page with the URL the browser is actually
+  // showing (bfcache Back/Forward + full-reload nav reopen the SSE
+  // WITHOUT a route-running GET; without the path the resync would push
+  // the last-navigated page over the restored DOM). Re-read on every
+  // (re)open so a bfcache restore sends the restored page's path.
+  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId + "&path=" + encodeURIComponent(location.pathname));
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything

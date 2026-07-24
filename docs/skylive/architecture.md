@@ -206,6 +206,19 @@ is managed on both ends:
   the closing stream with the next page's new one; rapid clicking piles them up
   until the 6-connection limit is hit and the tab freezes (spinner stuck, all
   clicks no-op).
+- The reopened connection carries the tab's current URL:
+  `/_sky/sse?tab=<id>&path=<location.pathname>`. A full-document reconnect
+  (bfcache Back/Forward, a reload, or a full-reload nav) does NOT re-run the
+  route handler, so the server's `model.Page` can be stale relative to the URL
+  the browser is showing. `handleSSE` therefore `applyRoute`s the `?path` (when
+  it matches a registered route) before the resync render, so the tab lands on
+  the page its URL names instead of the last page the session navigated to.
+  Without this, pressing Back restored the previous page from bfcache and the
+  resync immediately pushed the *last* page's body over it — the "Back bounces
+  onto the page I just left" bug. The full GET and sky-nav paths already
+  reconcile via `applyRoute`; this closes the reconnect gap. `sky-nav` +
+  `data-sky-path` avoids the churn entirely (one persistent SSE, no reconnect
+  per navigation) and remains the recommended default.
 
 **Server — prompt cleanup, no per-session supersede.** `handleSSE` returns as
 soon as `r.Context().Done()` fires (the client's TCP connection closed), so a

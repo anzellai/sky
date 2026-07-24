@@ -199,6 +199,95 @@ func TestSSEReconnectResyncPushesCurrentView(t *testing.T) {
 	}
 }
 
+// TestSSEResyncReconcilesPageWithConnectionURL — v0.18.4 regression.
+// A full-document reconnect (bfcache Back/Forward, reload, or a
+// full-reload `<a href>` navigation) reopens the SSE carrying its
+// current URL in `?path`. The resync MUST render the page that URL
+// names, not the stale `sess.model.Page` (the last page the session
+// navigated TO). Without the reconciliation, hitting Back restores the
+// previous page from bfcache and the resync then pushes a full-body
+// frame for the LAST page over it — the browser "refreshes"/bounces
+// onto the page you just left. This is the exact symptom reported
+// against real full-reload apps.
+func TestSSEResyncReconcilesPageWithConnectionURL(t *testing.T) {
+	app := &liveApp{
+		store:  newMemoryStore(30 * time.Minute),
+		locker: newSessionLocker(),
+		routes: []liveRoute{
+			{path: "/products", page: "products"},
+			{path: "/basket", page: "basket"},
+		},
+		view: func(model any) any {
+			page := "?"
+			if m, ok := model.(map[string]any); ok {
+				if p, ok := m["Page"].(string); ok {
+					page = p
+				}
+			}
+			return velement("div", nil, []any{vtext("PAGE=" + page)})
+		},
+	}
+	// Stored page is `basket` — the page the user last navigated TO
+	// before pressing Back.
+	app.store.Set("sid-reconcile", &liveSession{
+		sseCh:     make(chan sseFrame, 4),
+		cancelSub: make(chan struct{}),
+		model:     map[string]any{"Page": "basket"},
+		handlers:  map[string]any{},
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(app.handleSSE))
+	defer srv.Close()
+
+	// The tab is showing /products (bfcache-restored); its reopened SSE
+	// carries ?path=/products (%2Fproducts URL-encoded, as the client
+	// sends via encodeURIComponent(location.pathname)).
+	req, _ := http.NewRequest("GET", srv.URL+"?tab=t1&path=%2Fproducts", nil)
+	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-reconcile"})
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("SSE GET failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("no response from SSE handler")
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
+	sawHello := false
+	sawPatch := false
+	body := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "event: hello") {
+			sawHello = true
+			continue
+		}
+		if sawHello && strings.HasPrefix(line, "event: patch") {
+			sawPatch = true
+			continue
+		}
+		if sawPatch && strings.HasPrefix(line, "data: ") {
+			body = line
+			break
+		}
+	}
+	if !sawPatch {
+		t.Fatal("no resync patch frame after hello")
+	}
+	if !strings.Contains(body, "PAGE=products") {
+		t.Errorf("resync must reconcile to the connection URL's page (products); got: %s", body)
+	}
+	if strings.Contains(body, "PAGE=basket") {
+		t.Errorf("resync pushed the STALE stored page (basket) — the bfcache-Back desync is not fixed; got: %s", body)
+	}
+}
+
 // TestSSEHeartbeatFires verifies that the heartbeat ticker actually
 // emits frames (not just that it's wired up — the JS-side test asserts
 // the listener exists, but a server that never sends would still trip
