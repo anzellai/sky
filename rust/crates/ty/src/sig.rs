@@ -9,8 +9,8 @@
 
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Name};
-use hir::{DefKind, SkyDb, KERNEL_MODULES};
-use std::collections::HashMap;
+use hir::{DefKind, SkyDb, TypeRes, KERNEL_MODULES};
+use std::collections::{HashMap, HashSet};
 use syntax::ast::{self, AstNode};
 use syntax::{SyntaxKind, SyntaxNode};
 
@@ -95,8 +95,25 @@ pub struct World {
     /// Union type `DefId` → its constructor names (disambiguates same-named
     /// unions across modules, e.g. a `Msg` in each of several modules).
     pub union_members_by_def: HashMap<DefId, Vec<String>>,
-    /// Whether a bare type name is a known nominal type (for opaque handling).
+    /// BARE-name alias table (last-writer-wins on same-named aliases across
+    /// modules). Kept for the emission path (`expand_ty` from `lower`, which
+    /// carries no module context) and as the unique-name fallback in `expand`.
+    /// Byte-identical to pre-#164 behaviour, so corpus emission + apps that
+    /// never collide alias names are unaffected.
     aliases: HashMap<String, AliasDef>,
+    /// MODULE-QUALIFIED alias table, keyed by `"<defining-module>.<name>"`.
+    /// This is the #164 fix: same-named aliases in different modules are
+    /// distinct keys. The type-checker's signature path resolves each type
+    /// reference through HIR (`ResolveResult::type_refs` → `def_loc().module`)
+    /// to the exact defining module, so it consults THIS table, never the bare
+    /// one. Its bodies are likewise resolved, so nested references inside an
+    /// alias body resolve against the alias's own module.
+    alias_by_mod: HashMap<String, AliasDef>,
+    /// The set of all `"<module>.<name>"` alias keys — used while resolving a
+    /// type reference to decide whether a resolved `(module, name)` names an
+    /// alias (→ qualified key) or a non-alias type (union / kernel / var — kept
+    /// bare, exactly as `ast_type_to_ty` produced it pre-#164).
+    alias_keys: HashSet<String>,
 }
 
 impl World {
@@ -154,21 +171,55 @@ impl World {
             union_ctors: HashMap::new(),
             union_members_by_def: HashMap::new(),
             aliases: HashMap::new(),
+            alias_by_mod: HashMap::new(),
+            alias_keys: HashSet::new(),
         };
         world.seed_builtin_ctors();
 
-        // ---- pass 1: collect aliases + unions (so signatures can expand) ----
+        // ---- pass 1a: collect alias names — the bare table (unchanged) + the
+        // module-qualified key set + a stash of each alias's (module, name,
+        // params, body-syntax) for pass 1b. The full key set must be complete
+        // before ANY body is resolved, because an alias body may reference an
+        // alias declared in a later module (forward reference). ----
+        let mut alias_stash: Vec<(ModuleId, String, Vec<String>, ast::Type)> = Vec::new();
         for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 if let ast::Decl::Alias(a) = &decl {
                     if let Some(name) = a.name().map(|t| t.text().to_string()) {
                         let params = decl_type_vars(a.syntax());
-                        let body = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
-                        world.aliases.insert(name, AliasDef { params, body });
+                        // BARE table (last-writer-wins) — emission + unique fallback.
+                        let body_bare = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                        world.aliases.insert(
+                            name.clone(),
+                            AliasDef {
+                                params: params.clone(),
+                                body: body_bare,
+                            },
+                        );
+                        world.alias_keys.insert(format!("{mname}.{name}"));
+                        if let Some(t) = a.ty() {
+                            alias_stash.push((m, name, params, t));
+                        }
                     }
                 }
             }
+        }
+        // ---- pass 1b: resolve each alias body against its OWN module and the
+        // now-complete key set, keying the module-qualified table. A reference
+        // inside the body to another alias becomes that alias's qualified key;
+        // a reference to a non-alias type stays bare (== `ast_type_to_ty`). ----
+        for (m, name, params, t) in &alias_stash {
+            let mname = db.module_name(*m).to_string();
+            let body = resolve_type_names(db, *m, t, &world.alias_keys);
+            world.alias_by_mod.insert(
+                format!("{mname}.{name}"),
+                AliasDef {
+                    params: params.clone(),
+                    body,
+                },
+            );
         }
 
         // ---- pass 2: signatures, kernel sigs, union ctors ----
@@ -183,7 +234,7 @@ impl World {
                             continue;
                         };
                         let Some(t) = a.ty() else { continue };
-                        let raw = ast_type_to_ty(&t);
+                        let raw = resolve_type_names(db, m, &t, &world.alias_keys);
                         let expanded = world.expand(&raw, 0);
                         let scheme = Scheme::generalize(expanded);
                         let def = intern_value(db, m, &name);
@@ -203,7 +254,10 @@ impl World {
                         if let (Some(name), Some(ast::Type::Record(_))) =
                             (a.name().map(|t| t.text().to_string()), a.ty())
                         {
-                            let raw = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                            let raw = a
+                                .ty()
+                                .map(|t| resolve_type_names(db, m, &t, &world.alias_keys))
+                                .unwrap_or(Ty::Error);
                             let expanded = world.expand(&raw, 0);
                             let scheme = record_ctor_scheme(&expanded);
                             let def = intern_value(db, m, &name);
@@ -804,7 +858,7 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&ast_type_to_ty(t), 0))
+                .map(|t| self.expand(&resolve_type_names(db, m, t, &self.alias_keys), 0))
                 .collect();
             let ty = arg_tys
                 .into_iter()
@@ -878,7 +932,17 @@ impl World {
         match ty {
             Ty::App(name, args) => {
                 let args: Vec<Ty> = args.iter().map(|a| self.expand(a, depth + 1)).collect();
-                if let Some(def) = self.aliases.get(name.as_str()) {
+                // A module-qualified key (`"<module>.<name>"`, produced only by
+                // `resolve_type_names` for a reference HIR resolved to an alias)
+                // hits `alias_by_mod` — the #164-correct table. A bare name
+                // (emission path, or a reference HIR could not resolve) falls
+                // back to the last-writer-wins `aliases` table — byte-identical
+                // to pre-#164 for unique alias names.
+                if let Some(def) = self
+                    .alias_by_mod
+                    .get(name.as_str())
+                    .or_else(|| self.aliases.get(name.as_str()))
+                {
                     let mut sub: HashMap<String, Ty> = HashMap::new();
                     for (p, arg) in def.params.iter().zip(args.iter()) {
                         sub.insert(p.clone(), arg.clone());
@@ -1205,6 +1269,88 @@ fn topo_order(
 /// final segment (name-based nominal equality — accept-parity honesty note).
 pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
     ast_type_to_ty_impl(t, false)
+}
+
+/// Convert an annotation to a `Ty`, resolving every type reference that names an
+/// ALIAS to its module-qualified key (`"<defining-module>.<name>"`) via HIR.
+/// Non-alias references (unions, kernel types, type variables) and references
+/// HIR cannot resolve are left bare — byte-identical to [`ast_type_to_ty`]. This
+/// is the load-bearing half of the #164 fix: a type's identity comes from HIR's
+/// resolver (which already models `exposing`-imports, import aliases,
+/// auto-qualifiers, and local-shadows-import), never from a syntactic heuristic
+/// on the reference's qualifier. `m` is the module the annotation lives in;
+/// `alias_keys` is the program-wide set of `"<module>.<name>"` alias keys.
+fn resolve_type_names(
+    db: &dyn SkyDb,
+    m: ModuleId,
+    t: &ast::Type,
+    alias_keys: &HashSet<String>,
+) -> Ty {
+    let resolved = db.resolve(m);
+    let qualified = ast_type_to_ty_qualified(t);
+    rewrite_alias_refs(db, &resolved.type_refs, alias_keys, &qualified)
+}
+
+/// Walk a `Ty` (whose `App` names may be qualified — `"Q.Name"`) and rewrite any
+/// name HIR resolves to a declared alias into its module-qualified key; every
+/// other name collapses to its bare final segment (the pre-#164 form). See
+/// [`resolve_type_names`].
+fn rewrite_alias_refs(
+    db: &dyn SkyDb,
+    type_refs: &HashMap<String, TypeRes>,
+    alias_keys: &HashSet<String>,
+    ty: &Ty,
+) -> Ty {
+    match ty {
+        Ty::App(name, args) => {
+            let args: Vec<Ty> = args
+                .iter()
+                .map(|a| rewrite_alias_refs(db, type_refs, alias_keys, a))
+                .collect();
+            let full = name.as_str();
+            // The bare final segment: what `ast_type_to_ty` produces, and the
+            // `<name>` half of any alias key.
+            let base = full.rsplit('.').next().unwrap_or(full);
+            // Resolve through HIR: prefer the exact (possibly qualified) name,
+            // then fall back to the bare base (an `exposing`-imported name is
+            // registered bare). A hit that lands on a DECLARED alias is
+            // rewritten to that alias's defining-module key; anything else stays
+            // bare, exactly as before this fix.
+            if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
+                if let Some(loc) = db.def_loc(tr.con) {
+                    // Gate on `TypeAlias` BEFORE touching `module_name`: only an
+                    // alias can land in `alias_by_mod`, and builtins /
+                    // kernel-implicit types carry a synthetic sentinel module id
+                    // whose `module_name` would panic (index out of bounds). A
+                    // non-alias (union / builtin / kernel type) therefore stays
+                    // bare — identical to `ast_type_to_ty`.
+                    if loc.kind == DefKind::TypeAlias {
+                        let key = format!("{}.{}", db.module_name(loc.module), base);
+                        if alias_keys.contains(&key) {
+                            return Ty::App(Name::new(&key), args);
+                        }
+                    }
+                }
+            }
+            Ty::App(Name::new(base), args)
+        }
+        Ty::Fun(a, b) => Ty::Fun(
+            Box::new(rewrite_alias_refs(db, type_refs, alias_keys, a)),
+            Box::new(rewrite_alias_refs(db, type_refs, alias_keys, b)),
+        ),
+        Ty::Tuple(xs) => Ty::Tuple(
+            xs.iter()
+                .map(|x| rewrite_alias_refs(db, type_refs, alias_keys, x))
+                .collect(),
+        ),
+        Ty::Record(fs, ext) => Ty::Record(
+            fs.iter()
+                .map(|(n, ft)| (n.clone(), rewrite_alias_refs(db, type_refs, alias_keys, ft)))
+                .collect(),
+            ext.clone(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// Like [`ast_type_to_ty`] but PRESERVES a qualified reference's qualifier in the

@@ -157,6 +157,15 @@ pub struct ResolveResult {
     /// this module's own top-level defs. Powers unqualified completion (bare `pr`
     /// offers `println`); lexical locals are NOT here (they live in `binders`).
     pub scope_names: Vec<(String, ScopeNameKind)>,
+    /// Type-name resolution for THIS module: every in-scope type-reference name,
+    /// both bare (`"Model"`) and qualified (`"Q.Model"`, keyed by the qualifier
+    /// as written — import alias or auto-qualifier), mapped to its resolved
+    /// constructor. Lets a downstream crate map a type reference to its DEFINING
+    /// module (via `def_loc(con).module`) instead of re-deriving identity from
+    /// syntax by bare name — the fix for same-named aliases in different modules
+    /// being conflated (issue #164). Foreign (Go FFI) qualifier members are
+    /// omitted (they are not Sky type constructors).
+    pub type_refs: HashMap<String, TypeRes>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -349,6 +358,27 @@ impl<'a> Resolver<'a> {
         // LSP: publish import qualifiers so `M.` completion can enumerate the
         // target module's exports.
         self.result.qualifiers = self.import_aliases.clone();
+        // #164: publish this module's type-name resolution so a downstream crate
+        // can key type aliases by their DEFINING module (`def_loc`) rather than
+        // by bare name. Bare names (own decls + `exposing`-imports) come from
+        // `types`; qualified refs (import aliases + auto-qualifiers) from
+        // `qual_types`, flattened to `"Qual.Name"` keys. Foreign qualifier
+        // members are dropped — they name Go FFI types, not Sky constructors.
+        {
+            let mut trefs: HashMap<String, TypeRes> =
+                HashMap::with_capacity(self.types.len() + self.qual_types.len());
+            for (n, tr) in &self.types {
+                trefs.insert(n.clone(), *tr);
+            }
+            for (q, inner) in &self.qual_types {
+                for (n, entry) in inner {
+                    if let TypeResEntry::Res(tr) = entry {
+                        trefs.insert(format!("{q}.{n}"), *tr);
+                    }
+                }
+            }
+            self.result.type_refs = trefs;
+        }
         // LSP: publish the in-scope unqualified names so bare-identifier
         // completion can offer Prelude + `exposing`-imported names, not just
         // locals + this module's top defs + qualifiers.
