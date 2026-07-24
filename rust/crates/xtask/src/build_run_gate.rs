@@ -386,6 +386,15 @@ fn verify_one(
     // no `--run`) deliberately skip this and let a surface-less FFI example
     // FFI-block, so the heavy 13-skyshop (Stripe) surface is never regenerated
     // on the CI build sweep.
+    // Sky-source deps are cheap (a shallow clone) and REQUIRED to build, so
+    // fetch them for EVERY dep-declaring example — including the build-only
+    // sweep (`--all`, no `--run`). Without this a Sky-dep example (13-skyshop ->
+    // sky-tailwind) built-blocked with "dependency … not fetched" and was
+    // silently skipped rather than tested. The heavy Go-FFI surface stays gated
+    // on run/verify below to keep the build sweep fast.
+    if !dir.join(".skydeps").is_dir() {
+        let _ = project::ffi_install_sky(dir);
+    }
     if want_inline_run || do_verify {
         ensure_ffi_surface(root, dir);
     }

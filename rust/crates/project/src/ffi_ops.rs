@@ -417,6 +417,20 @@ pub fn install(project_dir: &Path, repo_root: &Path) -> FfiReport {
     r
 }
 
+/// Fetch ONLY the Sky-source dependencies (`[dependencies]`) into `.skydeps`,
+/// skipping the (potentially heavy) Go-FFI surface work. Cheap — a shallow git
+/// clone per dep — so the build-run gate can run it for EVERY dep-declaring
+/// example, including the build-only sweep, without triggering a Stripe-scale
+/// surface re-inspection. A no-op when the project declares no Sky deps.
+pub fn install_sky_only(project_dir: &Path) -> FfiReport {
+    let mut r = FfiReport::new();
+    let sky_deps = read_sky_dependencies(&project_dir.join("sky.toml"));
+    if !sky_deps.is_empty() {
+        install_sky_deps(project_dir, &sky_deps, &mut r);
+    }
+    r
+}
+
 /// The Go-FFI half of `sky install` — ensure `go.mod` deps, then regenerate any
 /// ABSENT committed surface + verify present ones for drift (doc 09 §D.2).
 fn install_go_deps(
