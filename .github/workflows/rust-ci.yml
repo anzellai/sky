@@ -183,11 +183,25 @@ jobs:
       # navigation mirror, cross-instance Redis broker) is covered by the go-test
       # gate above (runtime-go/rt/*_test.go); these close the compiler→runtime
       # end-to-end loop for server shapes.
+      #
+      # Ubuntu-only: unlike `build-run --all`, which SKIPS FFI examples, the
+      # `--shape … --run` path BUILDS every example of the shape — and a couple
+      # (13-skyshop's Stripe FFI surface, 38-composite-ui-multibackend's webview
+      # cgo link) hit environment build ceilings on the macOS runner that are
+      # not compiler/runtime bugs (they build + run clean on Linux and locally).
+      # The runtime correctness these gates verify is platform-agnostic, so
+      # running them on Linux — the canonical server deploy target, with a clean
+      # build env — is the right scope. macOS keeps full coverage via `go test
+      # ./rt` (the runtime behaviour incl. fan-out/mirror/broker), `build-run
+      # --all` (build), and every compiler gate above.
       - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo run -q -p xtask -- build-run --shape live --run
 
       - name: Gate — http runtime (Sky.Http.Server examples start + serve, no panic)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo run -q -p xtask -- build-run --shape http --run
 
       - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo run -q -p xtask -- build-run --shape tui --run
