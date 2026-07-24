@@ -1,0 +1,47 @@
+name: Docker Publish
+
+# Manual, on-demand publish of the anzel/sky Docker image for a given released
+# version. The release workflow publishes the image automatically on a tag, but
+# that job builds from the TAG ref's Dockerfile and runs in the same run that
+# just published the release assets — so a fresh tag can hit the release-asset
+# CDN propagation race. This workflow builds from whatever ref it is dispatched
+# on (main by default, which carries the retry-with-backoff Dockerfile) and is
+# meant to be run AFTER a release's assets are confirmed live — to publish an
+# image a tag-time run missed, or to re-tag `latest`.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released Sky version to build the image for (no v prefix, e.g. 0.18.1)'
+        required: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build + push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            SKY_VERSION=${{ inputs.version }}
+          tags: |
+            anzel/sky:${{ inputs.version }}
+            anzel/sky:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
