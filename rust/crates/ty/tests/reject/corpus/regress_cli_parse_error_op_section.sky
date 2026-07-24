@@ -1,0 +1,19 @@
+-- gate: reject
+-- defect: bare operator section `(+)` — Sky has NO operator sections.
+-- oracle: reject — exit 1, `[E0001] PARSE ERROR … Top-level declaration
+--         expected here`.
+--
+-- The parser RECOVERS from `(+)` and produces an `Expr::Error` node that the
+-- lowerer turns into Go `nil`; without a parse-error gate `sky check` reported
+-- success and `sky run` then panicked `NilDereference` inside
+-- `Sky_Core_List_foldl`. Gated at the build driver
+-- (`crates/project/src/build.rs`) on `parse.errors()` / `error_node_count()`
+-- over the app modules, and mirrored into this reject gate (the `parse` signal).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+main =
+    println (String.fromInt (List.foldl (+) 0 [ 1, 2, 3 ]))

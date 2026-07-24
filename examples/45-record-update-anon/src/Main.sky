@@ -1,0 +1,33 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Anonymous-record-annotated bindings whose fields are in NON-sorted decl order
+-- (`name`, `age`, `active`). A record UPDATE at a top-level binding takes the
+-- base's Go type for its `_u` block; that type MUST match the function's rendered
+-- return type. Go anonymous-struct field order is part of the type's identity, so
+-- both sites must lower to ONE canonical order. Before the fix the annotation's
+-- decl-order fields (`struct{Name;Age;Active}`) clashed with the checker-
+-- normalised result type (`struct{Active;Age;Name}`) and `go build` rejected the
+-- update. Both now sort by Go field name (oracle parity: the oracle emits
+-- `struct{ Active; Age; Name }` too — the Rust build is additionally typed).
+base : { name : String
+, age : Int
+, active : Bool
+}
+base =
+    { name = "ada", age = 36, active = True }
+
+
+older : { name : String
+, age : Int
+, active : Bool
+}
+older =
+    { base | age = base.age + 1 }
+
+
+main =
+    println (older.name ++ " " ++ String.fromInt older.age)

@@ -290,7 +290,7 @@ handleSignOut req =
     let
         token = getSessionToken req
         _ =
-            case Db.exec "DELETE FROM sessions WHERE token = ?" [token] of
+            case Db.exec "DELETE FROM sessions WHERE token = ?" [ token ] of
 
                 Ok _ ->
                     ()

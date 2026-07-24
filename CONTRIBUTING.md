@@ -44,8 +44,9 @@ attribution mechanism) to all users.
 
 ## Prior-art attribution and derivative-work files
 
-A small number of files in `src/Sky/` are derivative works adapted
-from elm/compiler under BSD-3-Clause (see [NOTICE.md](NOTICE.md) for
+A small number of files in `legacy-haskell-compiler/src/Sky/` are
+derivative works adapted from elm/compiler under BSD-3-Clause (see
+[NOTICE.md](NOTICE.md) for
 the full list and licence text). When modifying those files, please:
 
 - Keep the per-file header that names the upstream module + licence
@@ -64,8 +65,9 @@ and add an entry to NOTICE.md in the same PR.
 1. Open an issue first if the change is non-trivial — to align on
    the design before implementation.
 2. Fork the repo, create a feature branch, make your changes.
-3. Run `cabal test` and `scripts/example-sweep.sh` (full
-   end-to-end sweep) — both must be green.
+3. Run `cargo test --workspace` (plus the xtask gate suite,
+   `cargo run -p xtask -- <gate>`) and `scripts/example-sweep.sh`
+   (full end-to-end sweep) — all must be green.
 4. Open a PR with a clear description of what you changed and why.
    The PR description should reference any related issue.
 

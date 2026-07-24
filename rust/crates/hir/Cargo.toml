@@ -1,0 +1,14 @@
+[package]
+name = "hir"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+base = { path = "../base" }
+syntax = { path = "../syntax" }
+diagnostics = { path = "../diagnostics" }
+indexmap.workspace = true
+la-arena.workspace = true

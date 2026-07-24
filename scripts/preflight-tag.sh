@@ -51,24 +51,20 @@ fail() {
 }
 
 step "1/6 — Rebuild compiler from clean state"
-cabal install --overwrite-policy=always --installdir=./sky-out \
-    --install-method=copy exe:sky 2>&1 | tail -5
-[ -x ./sky-out/sky ] || fail "compiler binary missing after cabal install"
+( cd rust && cargo build --release --locked -p sky ) 2>&1 | tail -5
+mkdir -p ./sky-out
+cp rust/target/release/sky ./sky-out/sky
+[ -x ./sky-out/sky ] || fail "compiler binary missing after cargo build"
 
 step "2/6 — Smoke-test binary"
 ver=$(./sky-out/sky --version 2>&1)
 echo "  version output: $ver"
 echo "$ver" | grep -qE "^sky " || fail "sky --version did not print 'sky' line"
 
-step "3/6 — cabal test"
+step "3/6 — rust gate suite"
 # CLAUDE.md §2.3 — long-running commands must be timeout-bounded.
 # 60 min ceiling; if real runs need more, that's a flaky test.
-out=$(timeout 3600 cabal test 2>&1)
-echo "$out" | grep -E "examples, [0-9]+ failures" | tail -1
-echo "$out" | grep -qE "[0-9]+ failures, " || fail "cabal test output unrecognised"
-if echo "$out" | grep -qE "^[1-9][0-9]* failures? "; then
-    fail "cabal test had failures"
-fi
+( cd rust && timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run -q -p xtask -- "$g" || exit 1; done && cargo run -q -p xtask -- build-run --all && cargo run -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
 
 step "4/6 — Example sweep (build-only, all 19+ examples)"
 scripts/example-sweep.sh --build-only 2>&1 | tail -5

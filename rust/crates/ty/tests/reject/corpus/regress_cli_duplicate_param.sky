@@ -1,0 +1,18 @@
+-- gate: reject
+-- defect: non-linear parameter list `f x x = …` (same binder twice)
+-- oracle: reject — emitted Go fails `go build` ("x redeclared in this block").
+--
+-- Sky patterns are linear: a variable may not be bound twice in one binding
+-- group. The Rust resolver used to overwrite the first binder silently. Fixed by
+-- the `check_linear_group` linearity gate over function/lambda param lists +
+-- case-arm / let-destructure patterns, emitting `[E1003]`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+f x x =
+    x
+
+main =
+    println (String.fromInt (f 1 2))

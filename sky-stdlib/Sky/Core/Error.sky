@@ -22,13 +22,19 @@ import Sky.Core.String as String
 import Sky.Core.Maybe exposing (Maybe(..))
 
 type alias ErrorInfo =
-    { message : String, details : Maybe ErrorDetails }
+    { message : String
+    , details : Maybe ErrorDetails
+    }
 
 type alias PanicInfo =
-    { message : String, stack : List String }
+    { message : String
+    , stack : List String
+    }
 
 type alias TypeInfo =
-    { expected : String, actual : String }
+    { expected : String
+    , actual : String
+    }
 
 type Error
     = Error ErrorKind ErrorInfo

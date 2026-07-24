@@ -16,6 +16,7 @@ module Main exposing (main)
 -- onClick → Msg → update → re-render via Sky.Live's framework
 -- wire. Multi-module split so the type-checker stays well below
 -- the heap-exhaustion limit (CLAUDE.md Limitation #17).
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.System as System
 import Sky.Core.Http as Http
@@ -36,19 +37,17 @@ import HubStore exposing (hubStore, hubCurrentIdentity)
 
 
 -- ─── Decoders for the parent's /_sky/console/api/* JSON ──────────
-
 overviewDecoder : Decode.Decoder Overview
 overviewDecoder =
-    Decode.succeed Overview
-        |> Pipeline.optional "skyVersion"      Decode.string "—"
-        |> Pipeline.optional "commit"          Decode.string "—"
-        |> Pipeline.optional "builtAt"         Decode.string "—"
-        |> Pipeline.optional "uptimeSeconds"   intFromFloat 0
-        |> Pipeline.optional "requestsTotal"   intFromFloat 0
-        |> Pipeline.optional "errorRate5xx"    Decode.float 0.0
-        |> Pipeline.optional "bufferLogUsed"   intFromFloat 0
+    Decode.succeed Overview |> Pipeline.optional "skyVersion" Decode.string "—"
+        |> Pipeline.optional "commit" Decode.string "—"
+        |> Pipeline.optional "builtAt" Decode.string "—"
+        |> Pipeline.optional "uptimeSeconds" intFromFloat 0
+        |> Pipeline.optional "requestsTotal" intFromFloat 0
+        |> Pipeline.optional "errorRate5xx" Decode.float 0.0
+        |> Pipeline.optional "bufferLogUsed" intFromFloat 0
         |> Pipeline.optional "bufferTraceUsed" intFromFloat 0
-        |> Pipeline.optional "productionMode"  Decode.bool False
+        |> Pipeline.optional "productionMode" Decode.bool False
 
 
 -- Cast Float → Int at the decode boundary so the Model holds
@@ -72,16 +71,15 @@ logsDecoder =
 -- Fields["session_id"] when the entry came from a Sky.Live dispatch.
 logEntryDecoder : Decode.Decoder LogEntry
 logEntryDecoder =
-    Decode.succeed LogEntry
-        |> Pipeline.optional "TS"        Decode.string "—"
-        |> Pipeline.optional "Level"     Decode.string "info"
-        |> Pipeline.optional "Message"   Decode.string ""
-        |> Pipeline.optional "Subapp"    Decode.string ""
-        |> Pipeline.optional "ReqID"     Decode.string ""
+    Decode.succeed LogEntry |> Pipeline.optional "TS" Decode.string "—"
+        |> Pipeline.optional "Level" Decode.string "info"
+        |> Pipeline.optional "Message" Decode.string ""
+        |> Pipeline.optional "Subapp" Decode.string ""
+        |> Pipeline.optional "ReqID" Decode.string ""
         |> Pipeline.custom (fieldFromFields "session_id")
         |> Pipeline.custom (fieldFromFields "user_label")
-        |> Pipeline.optional "Route"     Decode.string ""
-        |> Pipeline.optional "Status"    Decode.float 0.0
+        |> Pipeline.optional "Route" Decode.string ""
+        |> Pipeline.optional "Status" Decode.float 0.0
         |> Pipeline.optional "LatencyMS" Decode.float 0.0
 
 
@@ -93,13 +91,10 @@ logEntryDecoder =
 fieldFromFields : String -> Decode.Decoder String
 fieldFromFields name =
     Decode.oneOf
-        [ Decode.at [ "Fields", name ] Decode.string
-        , Decode.succeed ""
-        ]
+        [ Decode.at [ "Fields", name ] Decode.string, Decode.succeed "" ]
 
 
 -- ─── Metrics / Traces / Errors decoders ─────────────────────────
-
 metricsDecoder : Decode.Decoder (List MetricRow)
 metricsDecoder =
     Decode.list metricRowDecoder
@@ -107,18 +102,17 @@ metricsDecoder =
 
 metricRowDecoder : Decode.Decoder MetricRow
 metricRowDecoder =
-    Decode.succeed MetricRow
-        |> Pipeline.optional "name"   Decode.string ""
-        |> Pipeline.optional "type"   Decode.string ""
+    Decode.succeed MetricRow |> Pipeline.optional "name" Decode.string ""
+        |> Pipeline.optional "type" Decode.string ""
+        |> Pipeline.optional "labels" Decode.string ""
+        |> Pipeline.optional "value" Decode.float 0.0
+        |> Pipeline.optional "sum" Decode.float 0.0
+        |> Pipeline.optional "count" Decode.float 0.0
         -- `labels` arrives pre-flattened to a "k=v, k=v" string by
         -- HandleConsoleMetricsSummary — decode it directly. (It used
         -- to be a JSON object the pipeline punted on with
         -- `succeed ""`, which is why distinct label-series rendered
         -- as indistinguishable rows.)
-        |> Pipeline.optional "labels" Decode.string ""
-        |> Pipeline.optional "value"  Decode.float 0.0
-        |> Pipeline.optional "sum"    Decode.float 0.0
-        |> Pipeline.optional "count"  Decode.float 0.0
 
 
 tracesDecoder : Decode.Decoder (List TraceRow)
@@ -128,15 +122,14 @@ tracesDecoder =
 
 traceRowDecoder : Decode.Decoder TraceRow
 traceRowDecoder =
-    Decode.succeed TraceRow
-        |> Pipeline.optional "traceId"    Decode.string ""
-        |> Pipeline.optional "spanId"     Decode.string ""
-        |> Pipeline.optional "parentId"   Decode.string ""
-        |> Pipeline.optional "name"       Decode.string ""
-        |> Pipeline.optional "kind"       Decode.string ""
-        |> Pipeline.optional "startTime"  Decode.string "—"
+    Decode.succeed TraceRow |> Pipeline.optional "traceId" Decode.string ""
+        |> Pipeline.optional "spanId" Decode.string ""
+        |> Pipeline.optional "parentId" Decode.string ""
+        |> Pipeline.optional "name" Decode.string ""
+        |> Pipeline.optional "kind" Decode.string ""
+        |> Pipeline.optional "startTime" Decode.string "—"
         |> Pipeline.optional "durationMs" Decode.float 0.0
-        |> Pipeline.optional "status"     Decode.string ""
+        |> Pipeline.optional "status" Decode.string ""
 
 
 errorsDecoder : Decode.Decoder (List ErrorRow)
@@ -146,14 +139,11 @@ errorsDecoder =
 
 errorRowDecoder : Decode.Decoder ErrorRow
 errorRowDecoder =
-    Decode.succeed ErrorRow
-        |> Pipeline.optional "count"   Decode.int 0
+    Decode.succeed ErrorRow |> Pipeline.optional "count" Decode.int 0
         |> Pipeline.optional "message" Decode.string ""
 
 
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
-
-
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
 -- and delegates to the same Http.get + Decode.decodeString pipeline
@@ -162,10 +152,10 @@ errorRowDecoder =
 httpStore : String -> Store
 httpStore parent =
     { readOverview = \_ -> fetchOverview parent
-    , readLogs     = \filter -> fetchLogs parent filter
-    , readMetrics  = \_ -> fetchMetrics parent
-    , readTraces   = \_ -> fetchTraces parent
-    , readErrors   = \_ -> fetchErrors parent
+    , readLogs = \filter -> fetchLogs parent filter
+    , readMetrics = \_ -> fetchMetrics parent
+    , readTraces = \_ -> fetchTraces parent
+    , readErrors = \_ -> fetchErrors parent
     , listServices = \_ -> Task.succeed [ "" ]
     -- v0.16.4 B5: the embedded console fetches its telemetry from
     -- the parent app's /_sky/console/api/* endpoints which only
@@ -188,13 +178,11 @@ httpStore parent =
 
 
 -- ─── Init / update / subscriptions / view ────────────────────────
-
 init : a -> ( Model, Cmd Msg )
 init _req =
     let
         parent = System.getenvOr "SKY_PARENT_URL" ""
         hubDbPath = System.getenvOr "SKY_CONSOLE_HUB_DB" ""
-
         -- v0.16.18 #558-PR4: URL-encode the filter state on the
         -- WRITE side (View.urlSync emits data-sky-query). The
         -- READ side (parse req.query → seed Model) trips Sky HM's
@@ -205,7 +193,6 @@ init _req =
         initialRange = Last24h
         initialQuery = ""
         initialService = ""
-
         -- v0.16.4 Option B B4: when SKY_CONSOLE_HUB_DB is set the
         -- console is running IN-PROCESS with the hub daemon and
         -- reads telemetry via direct SQLite kernels (HubStore.sky)
@@ -217,16 +204,14 @@ init _req =
         chosenStore =
             if hubDbPath /= "" then
                 hubStore hubDbPath
+
             else
                 httpStore parent
-
         -- When the hub mode is active we always render against
         -- real data — the parent-url-empty placeholder text is
         -- specific to standalone `sky console` invocations that
         -- have NEITHER a parent NOR a hub DB.
-        isStandalone =
-            parent == "" && hubDbPath == ""
-
+        isStandalone = parent == "" && hubDbPath == ""
         -- v0.16.4 B5: pick up `?service=<name>` from the request's
         -- query string so the selection persists across reloads
         -- and `sky-nav` fetches. `init`'s first argument is the
@@ -236,15 +221,23 @@ init _req =
         -- request, so we guard against missing fields by falling
         -- back to "" via `Dict.get`-returning Maybe.withDefault.
         startModel =
-            { tab       = OverviewTab
+            { tab = OverviewTab
             , parentUrl = parent
             , hubDbPath = hubDbPath
-            , store     = chosenStore
-            , overview  = if isStandalone then mockOverview else emptyOverview
-            , logs      = if isStandalone then mockLogs else []
-            , metrics   = []
-            , traces    = []
-            , errors    = []
+            , store = chosenStore
+            , overview = if isStandalone then
+                  mockOverview
+
+              else
+                  emptyOverview
+            , logs = if isStandalone then
+                  mockLogs
+
+              else
+                  []
+            , metrics = []
+            , traces = []
+            , errors = []
             , lastError = ""
             , logFilter = emptyLogFilter
             , traceQuery = ""
@@ -267,7 +260,6 @@ init _req =
             -- v0.16.18 #558-PR3: empty = no filter.
             , globalQuery = initialQuery
             }
-
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the
         -- auth-gate active; standalone runs and embedded-without-
@@ -276,30 +268,32 @@ init _req =
         identityCmd =
             if hubDbPath /= "" then
                 Cmd.perform (hubCurrentIdentity hubDbPath) GotIdentity
+
             else
                 Cmd.none
     in
+        ( startModel
+        , Cmd.batch
+              [ fetchForTab startModel startModel.tab startModel.logFilter
+              , identityCmd
+              , Cmd.perform (Time.unixMillis ()) GotNowMs
+              ]
+        )
     -- Fire one immediate fetch so the initial render isn't empty;
     -- the 3 s Sub.every then keeps it fresh.  When in hub mode the
     -- batch picks up the multi-service stats too via fetchForTab's
     -- OverviewTab branch.  identityCmd lands a single Hub_currentIdentity
     -- result; subsequent update sets model.identity + tenantPrefix.
-    ( startModel
-    , Cmd.batch
-        [ fetchForTab startModel startModel.tab startModel.logFilter
-        , identityCmd
         -- v0.16.18 #558-PR1: prime nowMs so the very first render
         -- after init has a real threshold (the default range is
         -- Last24h — without this Cmd, the first render sees
         -- nowMs=0 and falls through to "no filter").
-        , Cmd.perform (Time.unixMillis ()) GotNowMs
-        ]
-    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         SelectTab tab ->
             -- Fire a fetch for the newly-active tab IMMEDIATELY
             -- (otherwise the user sees stale / empty data until the
@@ -308,20 +302,14 @@ update msg model =
             -- 5 endpoints every tick which piled up "context canceled"
             -- proxy errors when re-renders ran longer than 3 s on
             -- larger Metrics / Traces datasets.
-            ( { model | tab = tab }
-            , fetchForTab model tab model.logFilter
-            )
+            ( { model | tab = tab }, fetchForTab model tab model.logFilter )
 
         Tick ->
             ( model
             , Cmd.batch
-                [ fetchForTab model model.tab model.logFilter
-                -- v0.16.18 #558-PR1: refresh nowMs so the time-range
-                -- filter's ISO-8601 threshold tracks wall-clock. We
-                -- only need this when range != RangeAll (the only
-                -- case it's actually consulted in the view path).
-                , Cmd.perform (Time.unixMillis ()) GotNowMs
-                ]
+                  [ fetchForTab model model.tab model.logFilter
+                  , Cmd.perform (Time.unixMillis ()) GotNowMs
+                  ]
             )
 
         GotOverview (Ok ov) ->
@@ -357,35 +345,45 @@ update msg model =
         LogFilterQuery q ->
             let
                 f = model.logFilter
+                -- v0.16.18 #558-PR1: refresh nowMs so the time-range
+                -- filter's ISO-8601 threshold tracks wall-clock. We
+                -- only need this when range != RangeAll (the only
+                -- case it's actually consulted in the view path).
                 f2 = { f | query = q }
             in
-            ( { model | logFilter = f2 }
-            , fetchLogsOnly model f2
-            )
+                ( { model | logFilter = f2 }, fetchLogsOnly model f2 )
 
         LogFilterToggleLevel lvl ->
             let
                 f = model.logFilter
                 f2 =
                     case lvl of
-                        "debug" -> { f | showDebug = not f.showDebug }
-                        "info"  -> { f | showInfo = not f.showInfo }
-                        "warn"  -> { f | showWarn = not f.showWarn }
-                        "error" -> { f | showError = not f.showError }
-                        _       -> f
+
+                        "debug" ->
+                            { f | showDebug = not f.showDebug }
+
+                        "info" ->
+                            { f | showInfo = not f.showInfo }
+
+                        "warn" ->
+                            { f | showWarn = not f.showWarn }
+
+                        "error" ->
+                            { f | showError = not f.showError }
+
+                        _ ->
+                            f
             in
-            ( { model | logFilter = f2 }
-            , fetchLogsOnly model f2
-            )
+                ( { model | logFilter = f2 }, fetchLogsOnly model f2 )
 
         LogFilterPickSession sid ->
             let
                 f = model.logFilter
                 f2 = { f | session = sid }
             in
-            ( { model | logFilter = f2, tab = LogsTab }
-            , fetchLogsOnly model f2
-            )
+                ( { model | logFilter = f2, tab = LogsTab }
+                , fetchLogsOnly model f2
+                )
 
         LogFilterClear ->
             ( { model | logFilter = emptyLogFilter }
@@ -420,9 +418,9 @@ update msg model =
             let
                 newModel = { model | selectedService = name }
             in
-            ( newModel
-            , fetchForTab newModel newModel.tab newModel.logFilter
-            )
+                ( newModel
+                , fetchForTab newModel newModel.tab newModel.logFilter
+                )
 
         GotServiceStats (Ok stats) ->
             ( { model | serviceStats = stats, lastError = "" }, Cmd.none )
@@ -444,12 +442,9 @@ update msg model =
                 tenant =
                     Maybe.withDefault "" (Dict.get "tenant" identity.claims)
             in
-            ( { model
-                | identity = Just identity
-                , tenantPrefix = tenant
-              }
-            , Cmd.none
-            )
+                ( { model | identity = Just identity, tenantPrefix = tenant }
+                , Cmd.none
+                )
 
         GotIdentity (Err _) ->
             ( model, Cmd.none )
@@ -476,11 +471,6 @@ update msg model =
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg
 fetchLogsOnly model filter =
     if hasStoreSource model then
-        -- v0.16.4 B6: in hub mode the Logs tab is scoped to the
-        -- currently-selected service. Route through the filtered
-        -- reader so the wire payload is pre-narrowed; embedded
-        -- mode (httpStore) ignores the service arg and falls
-        -- through to the un-filtered fetch.
         if model.hubDbPath /= "" then
             Cmd.perform
                 (model.store.readFilteredLogs model.selectedService filter)
@@ -490,6 +480,11 @@ fetchLogsOnly model filter =
             Cmd.perform (model.store.readLogs filter) GotLogs
 
     else
+        -- v0.16.4 B6: in hub mode the Logs tab is scoped to the
+        -- currently-selected service. Route through the filtered
+        -- reader so the wire payload is pre-narrowed; embedded
+        -- mode (httpStore) ignores the service arg and falls
+        -- through to the un-filtered fetch.
         Cmd.none
 
 
@@ -519,6 +514,7 @@ fetchForTab model tab filter =
         Cmd.batch
             (Cmd.perform (model.store.readOverview ()) GotOverview
                 :: tabFetches model tab filter)
+
     else
         Cmd.none
 
@@ -532,43 +528,38 @@ tabFetches model tab filter =
     -- behaviour byte-identical to pre-B6.
     if model.hubDbPath /= "" then
         case tab of
+
             OverviewTab ->
-                [ Cmd.perform
-                    (model.store.readServiceStats ())
-                    GotServiceStats
+                [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats
                 ]
 
             LogsTab ->
                 [ Cmd.perform
-                    (model.store.readFilteredLogs
-                        model.selectedService
-                        filter)
-                    GotLogs
+                      (model.store.readFilteredLogs model.selectedService filter)
+                      GotLogs
                 ]
 
             MetricsTab ->
                 [ Cmd.perform
-                    (model.store.readFilteredMetrics
-                        model.selectedService)
-                    GotMetrics
+                      (model.store.readFilteredMetrics model.selectedService)
+                      GotMetrics
                 ]
 
             TracesTab ->
                 [ Cmd.perform
-                    (model.store.readFilteredTraces
-                        model.selectedService)
-                    GotTraces
+                      (model.store.readFilteredTraces model.selectedService)
+                      GotTraces
                 ]
 
             ErrorsTab ->
                 [ Cmd.perform
-                    (model.store.readFilteredErrors
-                        model.selectedService)
-                    GotErrors
+                      (model.store.readFilteredErrors model.selectedService)
+                      GotErrors
                 ]
 
     else
         case tab of
+
             OverviewTab ->
                 -- v0.16.4 B5: in hub mode (Model.hubDbPath /= "") the
                 -- Overview tab renders the multi-service dashboard,
@@ -576,23 +567,35 @@ tabFetches model tab filter =
                 -- (httpStore) `readServiceStats ()` returns
                 -- `Task.succeed []` so the dispatch is a no-op for the
                 -- rollup state — cheap, no extra wire round-trip.
-                [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats ]
-            LogsTab     -> [ Cmd.perform (model.store.readLogs filter) GotLogs ]
-            MetricsTab  -> [ Cmd.perform (model.store.readMetrics ()) GotMetrics ]
-            TracesTab   -> [ Cmd.perform (model.store.readTraces ()) GotTraces ]
-            ErrorsTab   -> [ Cmd.perform (model.store.readErrors ()) GotErrors ]
+                [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats
+                ]
+
+            LogsTab ->
+                [ Cmd.perform (model.store.readLogs filter) GotLogs ]
+
+            MetricsTab ->
+                [ Cmd.perform (model.store.readMetrics ()) GotMetrics ]
+
+            TracesTab ->
+                [ Cmd.perform (model.store.readTraces ()) GotTraces ]
+
+            ErrorsTab ->
+                [ Cmd.perform (model.store.readErrors ()) GotErrors ]
 
 
 fetchOverview : String -> Task Error Overview
 fetchOverview parent =
     Http.get (parent ++ "/_sky/console/api/overview")
-        |> Task.andThenResult (\resp -> Decode.decodeString overviewDecoder resp.body)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString overviewDecoder resp.body)
 
 
 fetchLogs : String -> LogFilter -> Task Error (List LogEntry)
 fetchLogs parent filter =
-    Http.get (parent ++ "/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
-        |> Task.andThenResult (\resp -> Decode.decodeString logsDecoder resp.body)
+    Http.get
+        (parent ++ "/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString logsDecoder resp.body)
 
 
 -- Build the level= query string from the filter. Server-side filter
@@ -602,40 +605,63 @@ buildLogQuery : LogFilter -> String
 buildLogQuery f =
     let
         levels =
-            (if f.showDebug then [ "debug" ] else [])
-                ++ (if f.showInfo then [ "info" ] else [])
-                ++ (if f.showWarn then [ "warn" ] else [])
-                ++ (if f.showError then [ "error" ] else [])
+            (if f.showDebug then
+                [ "debug" ]
+
+            else
+                [])
+                ++ (if f.showInfo then
+                       [ "info" ]
+
+                   else
+                       [])
+                ++ (if f.showWarn then
+                       [ "warn" ]
+
+                   else
+                       [])
+                ++ (if f.showError then
+                       [ "error" ]
+
+                   else
+                       [])
     in
+        if List.length levels == 4 then
+            ""
+
+        else
+            "&level=" ++ String.join "," levels
     -- All four levels selected = no level filter (don't add a query
     -- param at all so the server returns everything).
-    if List.length levels == 4 then
-        ""
-    else
-        "&level=" ++ String.join "," levels
 
 
 fetchMetrics : String -> Task Error (List MetricRow)
 fetchMetrics parent =
     Http.get (parent ++ "/_sky/console/api/metrics-summary")
-        |> Task.andThenResult (\resp -> Decode.decodeString metricsDecoder resp.body)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString metricsDecoder resp.body)
 
 
 fetchTraces : String -> Task Error (List TraceRow)
 fetchTraces parent =
     Http.get (parent ++ "/_sky/console/api/traces?limit=100")
-        |> Task.andThenResult (\resp -> Decode.decodeString tracesDecoder resp.body)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString tracesDecoder resp.body)
 
 
 fetchErrors : String -> Task Error (List ErrorRow)
 fetchErrors parent =
     Http.get (parent ++ "/_sky/console/api/errors")
-        |> Task.andThenResult (\resp -> Decode.decodeString errorsDecoder resp.body)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString errorsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
     if hasStoreSource model then
+        Sub.every (tickIntervalMs model.tab) Tick
+
+    else
         -- v0.16.4 B6: per-tab refresh cadence (HUB-UI.md
         -- §"Implementation milestones"). Logs tail at 1.5 s for
         -- responsiveness; Metrics + Traces at 3 s (typical exporter
@@ -649,9 +675,6 @@ subscriptions model =
         -- (rare changes) and under-served Logs (users want the
         -- tail to feel live). Embedded mode keeps the 3 s blanket
         -- — its single-service surface doesn't need the tuning.
-        Sub.every (tickIntervalMs model.tab) Tick
-
-    else
         Sub.none
 
 
@@ -680,10 +703,10 @@ viewWrapped model =
 
 main =
     app
-        { init          = init
-        , update        = update
-        , view          = viewWrapped
+        { init = init
+        , update = update
+        , view = viewWrapped
         , subscriptions = subscriptions
-        , routes        = [ route "/" () ]
-        , notFound      = ()
+        , routes = [ route "/" () ]
+        , notFound = ()
         }

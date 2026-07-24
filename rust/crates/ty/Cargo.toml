@@ -1,0 +1,13 @@
+[package]
+name = "ty"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+base = { path = "../base" }
+hir = { path = "../hir" }
+syntax = { path = "../syntax" }
+diagnostics = { path = "../diagnostics" }

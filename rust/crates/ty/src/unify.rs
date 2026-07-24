@@ -1,0 +1,781 @@
+//! The arena union-find — the L3 centrepiece (doc 06 §"The arena union-find").
+//!
+//! Derivative work adapted from elm/compiler's `Type.UnionFind`, `Type.Type`,
+//! and `Type.Occurs` (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause).
+//! See NOTICE.md at the repo root for the full attribution and licence text.
+//!
+//! Type-variable identity stops being a pointer (`UF.Point`, `UnionFind.hs:61`)
+//! and becomes a dense integer index [`TyVarId`] into a `Vec` local to one
+//! inference run (never a global — L1). `find` is path-compressed; `union` is by
+//! rank; the occurs-check is a `HashSet<TyVarId>` of representatives.
+//!
+//! `Content` mirrors `Type.hs:51` **minus** the dead `_rank/_mark/_copy`
+//! elm/compiler let-generalisation-pool machinery (doc 06 §"What we delete").
+//! Rigid + Alias content are folded away here: aliases are expanded eagerly in
+//! [`crate::sig`], and rigid annotation vars are instantiated flexibly (leniency
+//! that only ever *accepts more* — safe under the accept-parity gate).
+
+use crate::TyVarId;
+use base::Name;
+use std::collections::BTreeMap;
+
+/// The four built-in super-vars (`Type.hs:62`). NOT typeclasses (doc 03 §5).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SuperType {
+    Number,
+    Comparable,
+    Appendable,
+    CompAppend,
+}
+
+/// The descriptor a union-find root carries.
+#[derive(Clone, Debug)]
+pub enum Content {
+    /// An unbound inference variable (`FlexVar`).
+    Flex,
+    /// A super-constrained flex var (`Number`/`Comparable`/…).
+    FlexSuper(SuperType),
+    /// A skolem — a rigid annotation quantifier (`Rigid(name)`). Introduced by
+    /// the annotation gate ([`crate::infer::Infer::infer_def_against`]) when it
+    /// skolemizes a declared scheme's quantifiers: a rigid BINDS a flex (so the
+    /// body may stay polymorphic through it) but CLASHES with a concrete
+    /// Structure or a different rigid (so a body that pins the quantifier to a
+    /// concrete type is rejected — audit #5/#6).
+    Rigid(Name),
+    /// A resolved concrete shape.
+    Structure(FlatTy),
+    /// L7 recovery sentinel — unifies with anything, suppresses cascades.
+    Error,
+}
+
+/// `Type.hs:71` FlatType, over [`TyVarId`] instead of `Variable`.
+#[derive(Clone, Debug)]
+pub enum FlatTy {
+    /// Nominal application `Name a b …` (home folded into the name for
+    /// accept-parity — see the report's honesty note).
+    App(Name, Vec<TyVarId>),
+    Fun(TyVarId, TyVarId),
+    /// Row-polymorphic record: sorted fields + optional extension var.
+    /// `ext = None` ⇒ closed; `ext = Some(v)` ⇒ open under row var `v`.
+    Record(BTreeMap<Name, TyVarId>, Option<TyVarId>),
+    Tuple(Vec<TyVarId>),
+    Unit,
+}
+
+#[derive(Clone, Debug)]
+enum Slot {
+    Root { content: Content, rank: u32 },
+    Link(TyVarId),
+}
+
+/// A unification mismatch — a value, never an exception (L7). Read back into a
+/// diagnostic by the caller.
+#[derive(Clone, Debug)]
+pub struct Mismatch {
+    pub message: String,
+}
+
+impl Mismatch {
+    fn new(msg: impl Into<String>) -> Self {
+        Mismatch {
+            message: msg.into(),
+        }
+    }
+}
+
+/// The union-find store. Local to ONE inference run; never global (L1).
+#[derive(Default)]
+pub struct UnionFind {
+    slots: Vec<Slot>,
+}
+
+impl UnionFind {
+    pub fn new() -> Self {
+        UnionFind { slots: Vec::new() }
+    }
+
+    /// Allocate a fresh variable with the given content. Deterministic (L4):
+    /// the id is the next dense index, drawn in constraint-generation order.
+    pub fn fresh(&mut self, content: Content) -> TyVarId {
+        let id = TyVarId(self.slots.len() as u32);
+        self.slots.push(Slot::Root { content, rank: 0 });
+        id
+    }
+
+    #[inline]
+    pub fn fresh_flex(&mut self) -> TyVarId {
+        self.fresh(Content::Flex)
+    }
+
+    /// `repr` (`UnionFind.hs:47`) — path compression, by index.
+    pub fn find(&mut self, mut v: TyVarId) -> TyVarId {
+        let root = {
+            let mut r = v;
+            while let Slot::Link(p) = self.slots[r.0 as usize] {
+                r = p;
+            }
+            r
+        };
+        while let Slot::Link(p) = self.slots[v.0 as usize] {
+            self.slots[v.0 as usize] = Slot::Link(root);
+            v = p;
+        }
+        root
+    }
+
+    fn rank(&self, root: TyVarId) -> u32 {
+        match &self.slots[root.0 as usize] {
+            Slot::Root { rank, .. } => *rank,
+            Slot::Link(_) => 0,
+        }
+    }
+
+    /// Content of `v`'s representative (cloned — cheap, ids inside).
+    pub fn content(&mut self, v: TyVarId) -> Content {
+        let r = self.find(v);
+        match &self.slots[r.0 as usize] {
+            Slot::Root { content, .. } => content.clone(),
+            Slot::Link(_) => Content::Flex,
+        }
+    }
+
+    fn set_content(&mut self, v: TyVarId, content: Content) {
+        let r = self.find(v);
+        if let Slot::Root { content: c, .. } = &mut self.slots[r.0 as usize] {
+            *c = content;
+        }
+    }
+
+    /// `union` by rank, carrying merged content (`UnionFind.hs:106`).
+    fn union(&mut self, a: TyVarId, b: TyVarId, content: Content) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra == rb {
+            self.set_content(ra, content);
+            return;
+        }
+        let (rank_a, rank_b) = (self.rank(ra), self.rank(rb));
+        let (root, child, mut rank) = if rank_a >= rank_b {
+            (ra, rb, rank_a)
+        } else {
+            (rb, ra, rank_b)
+        };
+        if rank_a == rank_b {
+            rank += 1;
+        }
+        self.slots[child.0 as usize] = Slot::Link(root);
+        self.slots[root.0 as usize] = Slot::Root { content, rank };
+    }
+
+    // ---- occurs check (Occurs.hs) ---------------------------------------
+
+    /// Does `target`'s representative appear inside the structure reachable
+    /// from `v` (other than at `v == target`)? Gates the Flex↔Structure merge
+    /// that would otherwise build an infinite type.
+    fn occurs(&mut self, v: TyVarId, target: TyVarId) -> bool {
+        let target = self.find(target);
+        let mut seen = std::collections::HashSet::new();
+        self.occurs_in(v, target, &mut seen)
+    }
+
+    fn occurs_in(
+        &mut self,
+        v: TyVarId,
+        target: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+    ) -> bool {
+        let r = self.find(v);
+        if r == target {
+            return true;
+        }
+        if !seen.insert(r) {
+            return false;
+        }
+        match self.content(r) {
+            Content::Structure(ft) => {
+                let kids = flat_children(&ft);
+                kids.into_iter().any(|k| self.occurs_in(k, target, seen))
+            }
+            _ => false,
+        }
+    }
+
+    // ---- unification (Unify.hs actuallyUnify) ---------------------------
+
+    /// Unify `a` and `b`. Returns `Err(Mismatch)` on a genuine clash — the
+    /// caller records a diagnostic and commits both vars to `Error` (L7).
+    pub fn unify(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return Ok(());
+        }
+        let ca = self.content(ra);
+        let cb = self.content(rb);
+        match (ca, cb) {
+            (Content::Error, _) | (_, Content::Error) => {
+                self.union(ra, rb, Content::Error);
+                Ok(())
+            }
+            (Content::Flex, Content::Flex) => {
+                self.union(ra, rb, Content::Flex);
+                Ok(())
+            }
+            (Content::Flex, other) => {
+                if self.occurs(rb, ra) {
+                    return self.infinite(ra, rb);
+                }
+                self.union(ra, rb, other);
+                Ok(())
+            }
+            (other, Content::Flex) => {
+                if self.occurs(ra, rb) {
+                    return self.infinite(ra, rb);
+                }
+                self.union(ra, rb, other);
+                Ok(())
+            }
+            // Two skolems unify only when they are the SAME quantifier
+            // (`identity : a -> a` — the body's `x` and the declared result are
+            // the same rigid `a`). Distinct skolems clash. (Note: the def-level
+            // gate only skolemizes RESULT-position quantifiers; an argument-only
+            // quantifier stays flex and BINDS a result rigid via the `(Flex,
+            // other)` arm above — accept-parity with the flexible-instantiation
+            // oracle. This arm therefore fires only when two *distinct
+            // result-position* skolems are forced together by the body.)
+            (Content::Rigid(n1), Content::Rigid(n2)) => {
+                if n1 == n2 {
+                    self.union(ra, rb, Content::Rigid(n1));
+                    Ok(())
+                } else {
+                    Err(Mismatch::new(format!(
+                        "rigid type variable `{}` cannot unify with `{}`",
+                        n1.as_str(),
+                        n2.as_str()
+                    )))
+                }
+            }
+            // A skolem vs ANYTHING concrete (Structure / FlexSuper) is a clash:
+            // the body forced the declared quantifier to a specific type, so the
+            // annotation is strictly more general than the body (audit #5/#6).
+            // NOTE: this sits AFTER the Flex arms so a rigid still BINDS a plain
+            // flex (the body may keep the quantifier polymorphic).
+            (Content::Rigid(n), _) | (_, Content::Rigid(n)) => Err(Mismatch::new(format!(
+                "rigid type variable `{}` cannot be unified with a concrete type",
+                n.as_str()
+            ))),
+            (Content::FlexSuper(s1), Content::FlexSuper(s2)) => match combine_super(s1, s2) {
+                Some(s) => {
+                    self.union(ra, rb, Content::FlexSuper(s));
+                    Ok(())
+                }
+                None => Err(Mismatch::new(format!("cannot unify {s1:?} with {s2:?}"))),
+            },
+            (Content::FlexSuper(s), Content::Structure(ft))
+            | (Content::Structure(ft), Content::FlexSuper(s)) => {
+                if super_matches(s, &ft) {
+                    self.union(ra, rb, Content::Structure(ft));
+                    Ok(())
+                } else {
+                    Err(Mismatch::new(format!("{} is not a {s:?}", flat_label(&ft))))
+                }
+            }
+            (Content::Structure(f1), Content::Structure(f2)) => self.unify_flat(ra, rb, f1, f2),
+        }
+    }
+
+    fn infinite(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
+        self.union(a, b, Content::Error);
+        Err(Mismatch::new("infinite type (occurs check)"))
+    }
+
+    /// Render a resolved variable to a display string for diagnostics, walking
+    /// the union-find so a nominal application shows its arguments (`Maybe Int`,
+    /// not the head-only `Maybe`). Unresolved / flex vars render as `_`; nested
+    /// multi-word applications parenthesise. Depth-bounded so a cyclic residue
+    /// can't loop.
+    fn describe_var(&mut self, v: TyVarId, depth: u32) -> String {
+        if depth > 6 {
+            return "…".to_string();
+        }
+        match self.content(v) {
+            Content::Structure(ft) => self.describe_flat(&ft, depth),
+            Content::Rigid(n) => n.as_str().to_string(),
+            Content::Flex | Content::FlexSuper(_) | Content::Error => "_".to_string(),
+        }
+    }
+
+    fn describe_flat(&mut self, ft: &FlatTy, depth: u32) -> String {
+        match ft {
+            FlatTy::App(n, args) if args.is_empty() => n.as_str().to_string(),
+            FlatTy::App(n, args) => {
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|a| {
+                        let s = self.describe_var(*a, depth + 1);
+                        if s.contains(' ') {
+                            format!("({s})")
+                        } else {
+                            s
+                        }
+                    })
+                    .collect();
+                format!("{} {}", n.as_str(), parts.join(" "))
+            }
+            FlatTy::Fun(a, r) => {
+                let sa = self.describe_var(*a, depth + 1);
+                let sr = self.describe_var(*r, depth + 1);
+                format!("{sa} -> {sr}")
+            }
+            FlatTy::Tuple(xs) => {
+                let parts: Vec<String> = xs
+                    .iter()
+                    .map(|x| self.describe_var(*x, depth + 1))
+                    .collect();
+                format!("({})", parts.join(", "))
+            }
+            FlatTy::Record(_, _) => "record".to_string(),
+            FlatTy::Unit => "()".to_string(),
+        }
+    }
+
+    fn unify_flat(
+        &mut self,
+        ra: TyVarId,
+        rb: TyVarId,
+        f1: FlatTy,
+        f2: FlatTy,
+    ) -> Result<(), Mismatch> {
+        match (&f1, &f2) {
+            (FlatTy::Unit, FlatTy::Unit) => {
+                self.union(ra, rb, Content::Structure(FlatTy::Unit));
+                Ok(())
+            }
+            (FlatTy::Fun(a1, r1), FlatTy::Fun(a2, r2)) => {
+                let (a1, r1, a2, r2) = (*a1, *r1, *a2, *r2);
+                self.union(ra, rb, Content::Structure(f1.clone()));
+                self.unify(a1, a2)?;
+                self.unify(r1, r2)
+            }
+            (FlatTy::Tuple(xs), FlatTy::Tuple(ys)) => {
+                if xs.len() != ys.len() {
+                    return Err(Mismatch::new(format!(
+                        "tuple arity {} vs {}",
+                        xs.len(),
+                        ys.len()
+                    )));
+                }
+                let pairs: Vec<(TyVarId, TyVarId)> =
+                    xs.iter().copied().zip(ys.iter().copied()).collect();
+                self.union(ra, rb, Content::Structure(f1.clone()));
+                for (x, y) in pairs {
+                    self.unify(x, y)?;
+                }
+                Ok(())
+            }
+            (FlatTy::App(n1, a1), FlatTy::App(n2, a2)) => {
+                if n1 == n2 && a1.len() == a2.len() {
+                    let pairs: Vec<(TyVarId, TyVarId)> =
+                        a1.iter().copied().zip(a2.iter().copied()).collect();
+                    self.union(ra, rb, Content::Structure(f1.clone()));
+                    for (x, y) in pairs {
+                        self.unify(x, y)?;
+                    }
+                    Ok(())
+                } else {
+                    // Render the FULL applications (args included) — a head-only
+                    // `Maybe` vs `String` hides that the mismatch is `Maybe Int`.
+                    let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
+                    Err(Mismatch::new(format!("type mismatch: `{d1}` vs `{d2}`")))
+                }
+            }
+            (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) => {
+                self.unify_records(ra, rb, fs1.clone(), *e1, fs2.clone(), *e2)
+            }
+            _ => {
+                let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
+                Err(Mismatch::new(format!("type mismatch: {d1} vs {d2}")))
+            }
+        }
+    }
+
+    /// Follow a record's extension chain, merging any ext var that has already
+    /// resolved to a concrete `Record` into the field map. Returns the fully
+    /// flattened field set plus the FINAL extension (`None` = genuinely closed;
+    /// `Some(v)` = still open under a flex/unresolved row var `v`).
+    ///
+    /// The row-poly result-access bug: a generalised row-poly function like
+    /// `bump : {age|ρ} -> {age|ρ}` shares ρ between its param and result. At a
+    /// call `bump {name, age}`, unifying the param binds ρ to `Record({name})`,
+    /// so the RESULT node reads as the NESTED `{age | {name}}`. Without
+    /// flattening, `{age | {name}}` is treated as `{age | flex}` for the
+    /// closed/open discipline (the ext var is `Some`, so "open"), and the
+    /// row-carried `name` is invisible — field access on it, and the eventual
+    /// generalised read-back, drop `name`. Flattening makes `{age | {name}}`
+    /// behave as the closed `{age, name}` it really is.
+    ///
+    /// Bounded by a visited set so a recursive row (`ρ` resolving to a record
+    /// whose ext is `ρ` again) terminates. Outer fields win over an inner
+    /// ext-carried field of the same name (they are more specific).
+    pub(crate) fn normalize_record(
+        &mut self,
+        mut fields: BTreeMap<Name, TyVarId>,
+        ext: Option<TyVarId>,
+    ) -> (BTreeMap<Name, TyVarId>, Option<TyVarId>) {
+        let mut cur = ext;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            match cur {
+                None => return (fields, None),
+                Some(e) => {
+                    let r = self.find(e);
+                    if !seen.insert(r) {
+                        return (fields, Some(r));
+                    }
+                    match self.content(r) {
+                        Content::Structure(FlatTy::Record(fs_inner, ext_inner)) => {
+                            for (k, v) in fs_inner {
+                                fields.entry(k).or_insert(v);
+                            }
+                            cur = ext_inner;
+                        }
+                        // Flex/super/rigid/error/non-record structure: the row is
+                        // still open under `r` (or malformed — leave it to the
+                        // caller's unify to clash). This preserves the exact
+                        // pre-fix open/closed status for every case except a
+                        // fully-resolved Record chain.
+                        _ => return (fields, Some(r)),
+                    }
+                }
+            }
+        }
+    }
+
+    /// `unify_records` (`Unify.hs:468`) — the closed/open discipline.
+    fn unify_records(
+        &mut self,
+        ra: TyVarId,
+        rb: TyVarId,
+        fs1: BTreeMap<Name, TyVarId>,
+        e1: Option<TyVarId>,
+        fs2: BTreeMap<Name, TyVarId>,
+        e2: Option<TyVarId>,
+    ) -> Result<(), Mismatch> {
+        // Flatten any resolved-Record extension so the closed/open discipline
+        // sees the record's true field set + true final extension. A no-op when
+        // both ext vars are still flex (the common case at call time).
+        let (fs1, e1) = self.normalize_record(fs1, e1);
+        let (fs2, e2) = self.normalize_record(fs2, e2);
+        // shared fields unify pairwise
+        let shared: Vec<(TyVarId, TyVarId)> = fs1
+            .iter()
+            .filter_map(|(k, v1)| fs2.get(k).map(|v2| (*v1, *v2)))
+            .collect();
+        let only1: BTreeMap<Name, TyVarId> = fs1
+            .iter()
+            .filter(|(k, _)| !fs2.contains_key(*k))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        let only2: BTreeMap<Name, TyVarId> = fs2
+            .iter()
+            .filter(|(k, _)| !fs1.contains_key(*k))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+
+        // A closed side forbids the other side introducing extras it lacks.
+        // (extras1Illegal / extras2Illegal, Unify.hs:486). Runs unconditionally:
+        // a closed record that lacks a field the other side carries is a genuine
+        // field-presence clash the Haskell oracle rejects.
+        // The first unify arg is the ACTUAL (body/literal), the second the
+        // EXPECTED (declared) — `unify(v, expected)` threads a→side1, b→side2 —
+        // so the two extras rules are directional:
+        //   side1 (actual) closed + only2 (fields only the expected has)
+        //     ⇒ the actual is MISSING those fields.
+        //   side2 (expected) closed + only1 (fields only the actual has)
+        //     ⇒ the actual has UNKNOWN fields not in the declared type.
+        if e1.is_none() && !only2.is_empty() {
+            return Err(Mismatch::new(record_missing_msg(&only2)));
+        }
+        if e2.is_none() && !only1.is_empty() {
+            return Err(Mismatch::new(record_unknown_msg(&only1)));
+        }
+
+        // resolved combined field set + extension
+        let mut all = fs1.clone();
+        for (k, v) in &fs2 {
+            all.entry(k.clone()).or_insert(*v);
+        }
+        let ext = match (e1, e2) {
+            (None, _) | (_, None) => None,
+            (Some(_), Some(_)) => Some(self.fresh_flex()),
+        };
+        self.union(ra, rb, Content::Structure(FlatTy::Record(all, ext)));
+        for (a, b) in shared {
+            self.unify(a, b)?;
+        }
+        // connect an open side's row var to the extras it must absorb
+        if let Some(row1) = e1 {
+            if !only2.is_empty() {
+                let rec = self.fresh(Content::Structure(FlatTy::Record(only2, ext)));
+                let _ = self.unify(row1, rec);
+            }
+        }
+        if let Some(row2) = e2 {
+            if !only1.is_empty() {
+                let rec = self.fresh(Content::Structure(FlatTy::Record(only1, ext)));
+                let _ = self.unify(row2, rec);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn flat_children(ft: &FlatTy) -> Vec<TyVarId> {
+    match ft {
+        FlatTy::App(_, args) => args.clone(),
+        FlatTy::Fun(a, b) => vec![*a, *b],
+        FlatTy::Record(fs, e) => fs.values().copied().chain(e.iter().copied()).collect(),
+        FlatTy::Tuple(xs) => xs.clone(),
+        FlatTy::Unit => Vec::new(),
+    }
+}
+
+fn flat_label(ft: &FlatTy) -> String {
+    match ft {
+        FlatTy::App(n, _) => n.as_str().to_string(),
+        FlatTy::Fun(_, _) => "function".to_string(),
+        FlatTy::Record(_, _) => "record".to_string(),
+        FlatTy::Tuple(_) => "tuple".to_string(),
+        FlatTy::Unit => "()".to_string(),
+    }
+}
+
+fn record_missing_msg(missing: &BTreeMap<Name, TyVarId>) -> String {
+    let names: Vec<&str> = missing.keys().map(Name::as_str).collect();
+    format!("record is missing field(s): {}", names.join(", "))
+}
+
+fn record_unknown_msg(unknown: &BTreeMap<Name, TyVarId>) -> String {
+    let names: Vec<&str> = unknown.keys().map(Name::as_str).collect();
+    format!(
+        "record has unknown field(s) not in the declared type: {}",
+        names.join(", ")
+    )
+}
+
+/// `combineSuper` (`Unify.hs:546`). CompAppend is the meet of Comparable and
+/// Appendable; Number meets only itself/Comparable-ish per Sky's tables.
+fn combine_super(a: SuperType, b: SuperType) -> Option<SuperType> {
+    use SuperType::*;
+    if a == b {
+        return Some(a);
+    }
+    match (a, b) {
+        (Number, Comparable) | (Comparable, Number) => Some(Number),
+        (Comparable, Appendable) | (Appendable, Comparable) => Some(CompAppend),
+        (CompAppend, Comparable) | (Comparable, CompAppend) => Some(CompAppend),
+        (CompAppend, Appendable) | (Appendable, CompAppend) => Some(CompAppend),
+        _ => None,
+    }
+}
+
+/// `superMatches` (`Unify.hs:529`): does a concrete shape satisfy a super-var?
+fn super_matches(s: SuperType, ft: &FlatTy) -> bool {
+    let name = match ft {
+        FlatTy::App(n, args) if args.is_empty() => Some(n.as_str()),
+        FlatTy::App(n, _) => Some(n.as_str()),
+        _ => None,
+    };
+    match s {
+        SuperType::Number => matches!(name, Some("Int") | Some("Float")),
+        SuperType::Comparable => {
+            matches!(
+                name,
+                Some("Int") | Some("Float") | Some("String") | Some("Char")
+            ) || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+                || matches!(ft, FlatTy::Tuple(_))
+        }
+        SuperType::Appendable => {
+            matches!(name, Some("String"))
+                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+        }
+        SuperType::CompAppend => {
+            matches!(name, Some("String"))
+                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unifies_flex_with_structure() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        assert!(uf.unify(a, int).is_ok());
+        assert!(
+            matches!(uf.content(a), Content::Structure(FlatTy::App(n, _)) if n.as_str() == "Int")
+        );
+    }
+
+    #[test]
+    fn rejects_mismatched_apps() {
+        let mut uf = UnionFind::new();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
+        assert!(uf.unify(int, s).is_err());
+    }
+
+    /// Mismatch messages render the FULL application (arguments included), not
+    /// the head-only constructor — `Maybe Int` vs `String`, and the nested
+    /// `List (Maybe Int)` parenthesises.
+    #[test]
+    fn mismatch_message_keeps_type_arguments() {
+        let mut uf = UnionFind::new();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let maybe_int = uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Maybe"),
+            vec![int],
+        )));
+        let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
+        let err = uf.unify(maybe_int, s).unwrap_err();
+        assert!(
+            err.message.contains("Maybe Int") && err.message.contains("String"),
+            "want full args, got: {}",
+            err.message
+        );
+
+        // Nested application parenthesises: List (Maybe Int).
+        let mut uf2 = UnionFind::new();
+        let int2 = uf2.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let maybe2 = uf2.fresh(Content::Structure(FlatTy::App(
+            Name::new("Maybe"),
+            vec![int2],
+        )));
+        let list_maybe = uf2.fresh(Content::Structure(FlatTy::App(
+            Name::new("List"),
+            vec![maybe2],
+        )));
+        let plain_int = uf2.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let err2 = uf2.unify(list_maybe, plain_int).unwrap_err();
+        assert!(
+            err2.message.contains("List (Maybe Int)"),
+            "want parenthesised nested app, got: {}",
+            err2.message
+        );
+    }
+
+    /// The self-host killer guard (self-host §7 R1-D2): two DISTINCT
+    /// nominal/opaque types must NOT unify. The legacy `Unify.sky:99-100`
+    /// `isOpaqueFfiType a && isOpaqueFfiType b -> Ok emptySub` made every pair
+    /// of unrelated FFI types unify (`Customer` ≡ `Widget`). This unifier has NO
+    /// such rule — `App(n1,..)` unifies with `App(n2,..)` only when `n1 == n2`.
+    #[test]
+    fn distinct_nominal_types_do_not_unify() {
+        let mut uf = UnionFind::new();
+        let customer = uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Customer"),
+            vec![],
+        )));
+        let widget = uf.fresh(Content::Structure(FlatTy::App(Name::new("Widget"), vec![])));
+        assert!(
+            uf.unify(customer, widget).is_err(),
+            "distinct nominal types Customer and Widget must NOT unify (v0.7 hole)"
+        );
+    }
+
+    #[test]
+    fn occurs_check_rejects_infinite() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let list_a = uf.fresh(Content::Structure(FlatTy::App(Name::new("List"), vec![a])));
+        // a = List a  →  infinite
+        assert!(uf.unify(a, list_a).is_err());
+    }
+
+    #[test]
+    fn number_super_accepts_int_not_string() {
+        let mut uf = UnionFind::new();
+        let n = uf.fresh(Content::FlexSuper(SuperType::Number));
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        assert!(uf.unify(n, int).is_ok());
+        let n2 = uf.fresh(Content::FlexSuper(SuperType::Number));
+        let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
+        assert!(uf.unify(n2, s).is_err());
+    }
+
+    #[test]
+    fn closed_record_rejects_extra_field() {
+        let mut uf = UnionFind::new();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let mut f1 = BTreeMap::new();
+        f1.insert(Name::new("count"), int);
+        let closed = uf.fresh(Content::Structure(FlatTy::Record(f1, None)));
+        let int2 = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let mut f2 = BTreeMap::new();
+        f2.insert(Name::new("count"), int2);
+        f2.insert(Name::new("extra"), int2);
+        let other = uf.fresh(Content::Structure(FlatTy::Record(f2, None)));
+        assert!(uf.unify(closed, other).is_err());
+    }
+
+    #[test]
+    fn open_record_accepts_superset() {
+        let mut uf = UnionFind::new();
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        // open {count: Int | rho}
+        let row = uf.fresh_flex();
+        let mut f1 = BTreeMap::new();
+        f1.insert(Name::new("count"), int);
+        let open = uf.fresh(Content::Structure(FlatTy::Record(f1, Some(row))));
+        // closed {count: Int, name: String}
+        let s = uf.fresh(Content::Structure(FlatTy::App(Name::new("String"), vec![])));
+        let mut f2 = BTreeMap::new();
+        f2.insert(Name::new("count"), int);
+        f2.insert(Name::new("name"), s);
+        let closed = uf.fresh(Content::Structure(FlatTy::Record(f2, None)));
+        assert!(uf.unify(open, closed).is_ok());
+    }
+
+    #[test]
+    fn rigid_binds_flex_but_clashes_concrete() {
+        // A skolem BINDS a plain flex (body keeps the quantifier polymorphic:
+        // `identity : a -> a`).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let flex = uf.fresh_flex();
+        assert!(uf.unify(rigid, flex).is_ok());
+        assert!(matches!(uf.content(flex), Content::Rigid(n) if n.as_str() == "a"));
+
+        // A skolem CLASHES with a concrete Structure (body pins the quantifier:
+        // `f : a -> a; f n = n + 1` — audit #5).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        assert!(uf.unify(rigid, int).is_err());
+
+        // A skolem CLASHES with a super-constrained flex (`x = 5` forces Number
+        // — audit #6).
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("a")));
+        let num = uf.fresh(Content::FlexSuper(SuperType::Number));
+        assert!(uf.unify(rigid, num).is_err());
+    }
+
+    #[test]
+    fn distinct_rigids_clash_same_rigid_ok() {
+        // Same skolem name unifies (both occurrences of `a` in `a -> a`).
+        let mut uf = UnionFind::new();
+        let a1 = uf.fresh(Content::Rigid(Name::new("a")));
+        let a2 = uf.fresh(Content::Rigid(Name::new("a")));
+        assert!(uf.unify(a1, a2).is_ok());
+        // Distinct skolems clash at the primitive level (two distinct
+        // result-position quantifiers forced together by the body).
+        let mut uf = UnionFind::new();
+        let a = uf.fresh(Content::Rigid(Name::new("a")));
+        let b = uf.fresh(Content::Rigid(Name::new("b")));
+        assert!(uf.unify(a, b).is_err());
+    }
+}

@@ -37,19 +37,14 @@ import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import Std.Html.Events as Event
 
-
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Model + Msg
 -- ═══════════════════════════════════════════════════════════════════
-
-
 type alias Todo =
     { id : Int
     , label : String
     , done : Bool
     }
-
 
 type alias Model =
     { todos : List Todo
@@ -57,12 +52,10 @@ type alias Model =
     , nextId : Int
     }
 
-
 type alias KeyEvent =
     { kind : String
     , value : String
     }
-
 
 type Msg
     = UpdateDraft String
@@ -90,6 +83,7 @@ seedTodos =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         UpdateDraft s ->
             ( { model | draft = s }, Cmd.none )
 
@@ -100,12 +94,14 @@ update msg model =
             else
                 let
                     newTodo =
-                        { id = model.nextId, label = String.trim s, done = False }
+                        { id = model.nextId
+                        , label = String.trim s
+                        , done = False
+                        }
                 in
-                    ( { model
-                        | todos = model.todos ++ [ newTodo ]
-                        , draft = ""
-                        , nextId = model.nextId + 1
+                    ( { model | todos = model.todos ++ [ newTodo ]
+                      , draft = ""
+                      , nextId = model.nextId + 1
                       }
                     , Cmd.none
                     )
@@ -134,7 +130,11 @@ update msg model =
 
 toggleIfMatch : Int -> Todo -> Todo
 toggleIfMatch id t =
-    if t.id == id then { t | done = not t.done } else t
+    if t.id == id then
+        { t | done = not t.done }
+
+    else
+        t
 
 
 subscriptions : Model -> Sub Msg
@@ -144,16 +144,16 @@ subscriptions _ =
 
 onKey : KeyEvent -> Msg
 onKey k =
-    if k.kind == "ctrl" && k.value == "c" then Quit
-    else NoOp
+    if k.kind == "ctrl" && k.value == "c" then
+        Quit
 
+    else
+        NoOp
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- View — typed Std.Ui Element tree (the same one targets HTML + TUI)
 -- ═══════════════════════════════════════════════════════════════════
-
-
 view : Model -> Element Msg
 view model =
     Ui.column
@@ -172,9 +172,7 @@ view model =
 
 heading : Element Msg
 heading =
-    Ui.el
-        [ Font.color (Ui.rgb 142 200 168) ]
-        (Ui.text "Todos")
+    Ui.el [ Font.color (Ui.rgb 142 200 168) ] (Ui.text "Todos")
 
 
 inputRow : Model -> Element Msg
@@ -182,25 +180,25 @@ inputRow model =
     Ui.row
         [ Ui.spacing 8 ]
         [ Ui.input
-            [ Ui.width Ui.fill
-            , Background.color (Ui.rgb 30 36 60)
-            , Font.color (Ui.rgb 230 230 240)
-            , Ui.paddingXY 12 4
-            , Border.color (Ui.rgb 80 100 140)
-            , Border.width 1
-            , Ui.htmlAttribute "value" model.draft
-            , Ui.htmlAttribute "placeholder" "What needs doing?"
-            , Ui.onInput UpdateDraft
-            , Ui.onChange SubmitDraft
-            ]
+              [ Ui.width Ui.fill
+              , Background.color (Ui.rgb 30 36 60)
+              , Font.color (Ui.rgb 230 230 240)
+              , Ui.paddingXY 12 4
+              , Border.color (Ui.rgb 80 100 140)
+              , Border.width 1
+              , Ui.htmlAttribute "value" model.draft
+              , Ui.htmlAttribute "placeholder" "What needs doing?"
+              , Ui.onInput UpdateDraft
+              , Ui.onChange SubmitDraft
+              ]
         , Ui.button
-            [ Background.color (Ui.rgb 60 90 70)
-            , Font.color (Ui.rgb 240 240 240)
-            , Ui.paddingXY 16 4
-            ]
-            { onPress = Just (SubmitDraft model.draft)
-            , label = Ui.text "Add"
-            }
+              [ Background.color (Ui.rgb 60 90 70)
+              , Font.color (Ui.rgb 240 240 240)
+              , Ui.paddingXY 16 4
+              ]
+              { onPress = Just (SubmitDraft model.draft)
+              , label = Ui.text "Add"
+              }
         ]
 
 
@@ -212,40 +210,45 @@ todoList todos =
             (Ui.text "(no todos — add one above)")
 
     else
-        Ui.column
-            [ Ui.spacing 4 ]
-            (List.map todoItem todos)
+        Ui.column [ Ui.spacing 4 ] (List.map todoItem todos)
 
 
 todoItem : Todo -> Element Msg
 todoItem t =
     let
-        checkbox = if t.done then "[x]" else "[ ]"
+        checkbox =
+            if t.done then
+                "[x]"
+
+            else
+                "[ ]"
         labelColor =
-            if t.done then Ui.rgb 110 120 130 else Ui.rgb 220 220 230
+            if t.done then
+                Ui.rgb 110 120 130
+
+            else
+                Ui.rgb 220 220 230
     in
         Ui.row
             [ Ui.spacing 8 ]
             [ Ui.button
-                [ Background.color (Ui.rgb 40 50 80)
-                , Ui.paddingXY 4 0
-                ]
-                { onPress = Just (ToggleTodo t.id)
-                , label = Ui.text checkbox
-                }
+                  [ Background.color (Ui.rgb 40 50 80), Ui.paddingXY 4 0 ]
+                  { onPress = Just (ToggleTodo t.id), label = Ui.text checkbox }
             , Ui.el
-                [ Font.color labelColor
-                , (if t.done then Font.lineThrough else Font.noDecoration)
-                ]
-                (Ui.text t.label)
+                  [ Font.color labelColor
+                  , (if t.done then
+                        Font.lineThrough
+
+                    else
+                        Font.noDecoration)
+                  ]
+                  (Ui.text t.label)
             , Ui.button
-                [ Background.color (Ui.rgb 90 50 50)
-                , Font.color (Ui.rgb 240 240 240)
-                , Ui.paddingXY 4 0
-                ]
-                { onPress = Just (DeleteTodo t.id)
-                , label = Ui.text "×"
-                }
+                  [ Background.color (Ui.rgb 90 50 50)
+                  , Font.color (Ui.rgb 240 240 240)
+                  , Ui.paddingXY 4 0
+                  ]
+                  { onPress = Just (DeleteTodo t.id), label = Ui.text "×" }
             ]
 
 
@@ -258,19 +261,23 @@ footerRow model =
         Ui.row
             [ Ui.spacing 16 ]
             [ Ui.el
-                [ Font.color (Ui.rgb 150 150 170) ]
-                (Ui.text (String.fromInt remaining ++ " remaining · " ++ String.fromInt completed ++ " done"))
+                  [ Font.color (Ui.rgb 150 150 170) ]
+                  (Ui.text
+                      (String.fromInt remaining ++ " remaining · "
+                          ++ String.fromInt completed
+                          ++ " done"))
             , if completed > 0 then
-                Ui.button
-                    [ Background.color (Ui.rgb 60 60 80)
-                    , Font.color (Ui.rgb 220 220 230)
-                    , Ui.paddingXY 8 0
-                    ]
-                    { onPress = Just ClearCompleted
-                    , label = Ui.text "Clear completed"
-                    }
+                  Ui.button
+                      [ Background.color (Ui.rgb 60 60 80)
+                      , Font.color (Ui.rgb 220 220 230)
+                      , Ui.paddingXY 8 0
+                      ]
+                      { onPress = Just ClearCompleted
+                      , label = Ui.text "Clear completed"
+                      }
+
               else
-                Ui.none
+                  Ui.none
             ]
 
 
@@ -278,15 +285,13 @@ helpLine : Element Msg
 helpLine =
     Ui.el
         [ Font.color (Ui.rgb 100 100 120) ]
-        (Ui.text "Tab to cycle · Enter to activate · click items · Ctrl-C to quit")
-
+        (Ui.text
+            "Tab to cycle · Enter to activate · click items · Ctrl-C to quit")
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
-
-
 main =
     Tui.app
         { init = init

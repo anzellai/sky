@@ -1,9 +1,9 @@
 # Std.Auth overview
 
-> **v0.15 state**: type-directed lowering across callback fields,
-> record-field inits, list elements, and call args. Whole-program
-> Sky DCE prunes unused FFI bindings. LSP 100 % coverage; runtime
-> verification across all 27 examples. See
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 

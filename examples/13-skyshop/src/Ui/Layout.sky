@@ -191,7 +191,7 @@ cardHeader =
 
 
 cardBody =
-    tw [p6]
+    tw [ p6 ]
 
 
 cardSection =
@@ -609,13 +609,13 @@ imgOverlayDelete =
 -- ══════════════════════════════════════════════════════
 page model content =
     div
-        [tw [ minHScreen, flex, flexCol ]]
+        [ tw [ minHScreen, flex, flexCol ] ]
         [ styles
         , globalStyles
         , raw (OAuth.firebaseAuthScript ())
         , viewHeader model
         , viewNotification model
-        , div [tw [ flex1, maxW7xl, mxAuto, wFull, px4, py8 ]] [content]
+        , div [ tw [ flex1, maxW7xl, mxAuto, wFull, px4, py8 ] ] [ content ]
         , viewFooter model
         , viewSignOutTrigger model
         ]
@@ -623,7 +623,7 @@ page model content =
 
 viewSignOutTrigger model =
     if model.signOutPending == True then
-        div [attribute "data-sky-eval" "skySignOut()"] []
+        div [ attribute "data-sky-eval" "skySignOut()" ] []
 
     else
         text ""
@@ -635,25 +635,27 @@ adminPage model content =
         Just user ->
             if Auth.isAdmin user then
                 div
-                    [tw [ minHScreen, flex, flexCol ]]
+                    [ tw [ minHScreen, flex, flexCol ] ]
                     [ styles
                     , globalStyles
                     , viewHeader model
                     , viewNotification model
                     , div
-                          [tw [ flex1, wFull, px4, py8 ]]
-                          [div
-                              [tw
-                                  [ flex
-                                  , flexCol
-                                  , Responsive.lg flexRow
-                                  , gap6
-                                  , maxW7xl
-                                  , mxAuto
-                                  ]]
-                              [ adminSidebar model
-                              , div [tw [ flex1, minW0 ]] [content]
-                              ]]
+                          [ tw [ flex1, wFull, px4, py8 ] ]
+                          [ div
+                                [ tw
+                                      [ flex
+                                      , flexCol
+                                      , Responsive.lg flexRow
+                                      , gap6
+                                      , maxW7xl
+                                      , mxAuto
+                                      ]
+                                ]
+                                [ adminSidebar model
+                                , div [ tw [ flex1, minW0 ] ] [ content ]
+                                ]
+                          ]
                     , viewFooter model
                     ]
 
@@ -661,19 +663,21 @@ adminPage model content =
                 page
                     model
                     (div
-                        [tw [ textCenter, py20 ]]
-                        [Html.h2
-                            [tw [ text2xl, fontBold, textGray400 ]]
-                            [text "Access denied"]])
+                        [ tw [ textCenter, py20 ] ]
+                        [ Html.h2
+                              [ tw [ text2xl, fontBold, textGray400 ] ]
+                              [ text "Access denied" ]
+                        ])
 
         Nothing ->
             page
                 model
                 (div
-                    [tw [ textCenter, py20 ]]
-                    [Html.h2
-                        [tw [ text2xl, fontBold, textGray400 ]]
-                        [text "Please sign in"]])
+                    [ tw [ textCenter, py20 ] ]
+                    [ Html.h2
+                          [ tw [ text2xl, fontBold, textGray400 ] ]
+                          [ text "Please sign in" ]
+                    ])
 
 
 -- ══════════════════════════════════════════════════════
@@ -687,37 +691,39 @@ viewHeader model =
             [ tw [ bgWhite, borderB, borderGray200, sticky, top0, z50 ]
             , style "backdrop-filter:blur(8px);background:rgba(255,255,255,.95)"
             ]
-            [div
-                [tw
-                    [ maxW7xl
-                    , mxAuto
-                    , px4
-                    , flex
-                    , itemsCenter
-                    , justifyBetween
-                    , h16
-                    ]]
-                [ div
-                      [tw [ flex, itemsCenter, gap6 ]]
-                      [ a
-                            [ href "/"
-                            , attribute "sky-nav" ""
-                            , tw [ text2xl, fontExtrabold, textGray900 ]
-                            ]
-                            [text (Tr.t lang "app.name")]
-                      , nav
-                            [tw [ hidden_, Responsive.md flex, gap1 ]]
-                            [ navLink "/" (Tr.t lang "nav.home") model
-                            , navLink
-                                  "/products"
-                                  (Tr.t lang "nav.products")
-                                  model
-                            ]
-                      ]
-                , div
-                      [tw [ flex, itemsCenter, gap4 ]]
-                      [ langToggle model, viewUserNav model ]
-                ]]
+            [ div
+                  [ tw
+                        [ maxW7xl
+                        , mxAuto
+                        , px4
+                        , flex
+                        , itemsCenter
+                        , justifyBetween
+                        , h16
+                        ]
+                  ]
+                  [ div
+                        [ tw [ flex, itemsCenter, gap6 ] ]
+                        [ a
+                              [ href "/"
+                              , attribute "sky-nav" ""
+                              , tw [ text2xl, fontExtrabold, textGray900 ]
+                              ]
+                              [ text (Tr.t lang "app.name") ]
+                        , nav
+                              [ tw [ hidden_, Responsive.md flex, gap1 ] ]
+                              [ navLink "/" (Tr.t lang "nav.home") model
+                              , navLink
+                                    "/products"
+                                    (Tr.t lang "nav.products")
+                                    model
+                              ]
+                        ]
+                  , div
+                        [ tw [ flex, itemsCenter, gap4 ] ]
+                        [ langToggle model, viewUserNav model ]
+                  ]
+            ]
 
 
 navLink url label model =
@@ -763,7 +769,7 @@ navLink url label model =
                       , hover bgGray100
                       ]
             ]
-            [text label]
+            [ text label ]
 
 
 langToggle model =
@@ -797,7 +803,7 @@ langToggle model =
                   , hover textGray900
                   ]
             ]
-            [text label]
+            [ text label ]
 
 
 viewUserNav model =
@@ -808,7 +814,7 @@ viewUserNav model =
 
             Just user ->
                 div
-                    [tw [ flex, itemsCenter, gap4 ]]
+                    [ tw [ flex, itemsCenter, gap4 ] ]
                     [ a
                           [ href "/cart"
                           , attribute "sky-nav" ""
@@ -824,7 +830,7 @@ viewUserNav model =
                                 , hover bgGray100
                                 ]
                           ]
-                          [ span [] [text (Tr.t lang "nav.cart")]
+                          [ span [] [ text (Tr.t lang "nav.cart") ]
                           , viewCartBadge model
                           ]
                     , a
@@ -841,23 +847,24 @@ viewUserNav model =
                                 , hover bgGray100
                                 ]
                           ]
-                          [text (Tr.t lang "nav.orders")]
+                          [ text (Tr.t lang "nav.orders") ]
                     , viewAdminLink model user
                     , div
-                          [tw
-                              [ flex
-                              , itemsCenter
-                              , gap2
-                              , bgGray50
-                              , border
-                              , borderGray200
-                              , roundedFull
-                              , px3
-                              , py1
-                              ]]
+                          [ tw
+                                [ flex
+                                , itemsCenter
+                                , gap2
+                                , bgGray50
+                                , border
+                                , borderGray200
+                                , roundedFull
+                                , px3
+                                , py1
+                                ]
+                          ]
                           [ span
-                                [tw [ textSm, fontMedium ]]
-                                [text (Db.getField "name" user)]
+                                [ tw [ textSm, fontMedium ] ]
+                                [ text (Db.getField "name" user) ]
                           , button
                                 [ onClick DoSignOut
                                 , tw
@@ -870,19 +877,20 @@ viewUserNav model =
                                       , hover bgRed50
                                       ]
                                 ]
-                                [text (Tr.t lang "nav.signout")]
+                                [ text (Tr.t lang "nav.signout") ]
                           ]
                     ]
 
             Nothing ->
                 div
-                    [tw [ flex, itemsCenter, gap3 ]]
-                    [a
-                        [ href "/auth/signin"
-                        , attribute "sky-nav" ""
-                        , btnPrimary
-                        ]
-                        [text (Tr.t lang "nav.signin")]]
+                    [ tw [ flex, itemsCenter, gap3 ] ]
+                    [ a
+                          [ href "/auth/signin"
+                          , attribute "sky-nav" ""
+                          , btnPrimary
+                          ]
+                          [ text (Tr.t lang "nav.signin") ]
+                    ]
 
 
 viewAdminLink model user =
@@ -901,7 +909,7 @@ viewAdminLink model user =
                   , hover bgPurple100
                   ]
             ]
-            [text (Tr.t model.lang "nav.admin")]
+            [ text (Tr.t model.lang "nav.admin") ]
 
     else
         text ""
@@ -928,7 +936,7 @@ viewCartBadge model =
                       ]
                 , style "top:-4px;right:-4px;font-size:.625rem"
                 ]
-                [text (String.fromInt itemCount)]
+                [ text (String.fromInt itemCount) ]
 
         else
             text ""
@@ -951,16 +959,17 @@ viewNotification model =
                     notificationSuccess
         in
             div
-                [tw [ maxW7xl, mxAuto, px4, mt4 ]]
-                [div
-                    [ notifStyle, style "animation:slideDown .2s ease" ]
-                    [ span [tw [flex1]] [text model.notification]
-                    , button
-                          [ onClick DismissNotification
-                          , tw [ textBase, opacity50, px1, hover opacity100 ]
-                          ]
-                          [text "x"]
-                    ]]
+                [ tw [ maxW7xl, mxAuto, px4, mt4 ] ]
+                [ div
+                      [ notifStyle, style "animation:slideDown .2s ease" ]
+                      [ span [ tw [ flex1 ] ] [ text model.notification ]
+                      , button
+                            [ onClick DismissNotification
+                            , tw [ textBase, opacity50, px1, hover opacity100 ]
+                            ]
+                            [ text "x" ]
+                      ]
+                ]
 
 
 -- ══════════════════════════════════════════════════════
@@ -971,22 +980,25 @@ adminSidebar model =
         lang = model.lang
     in
         div
-            [tw [ wFull, Responsive.lg w48, shrink0, pt2 ]]
+            [ tw [ wFull, Responsive.lg w48, shrink0, pt2 ] ]
             [ div
-                  [tw [ px3, py2, mb2 ]]
-                  [span
-                      [tw [ textXs, uppercase, fontBold, textGray400 ]]
-                      [text (Tr.t lang "nav.admin")]]
+                  [ tw [ px3, py2, mb2 ] ]
+                  [ span
+                        [ tw [ textXs, uppercase, fontBold, textGray400 ] ]
+                        [ text (Tr.t lang "nav.admin") ]
+                  ]
             , div
-                  [tw [ flex, flexRow, Responsive.lg flexCol, gap1, flexWrap ]]
+                  [ tw [ flex, flexRow, Responsive.lg flexCol, gap1, flexWrap ]
+                  ]
                   [ adminSidebarLink "/admin/products" "admin.products" model
                   , adminSidebarLink "/admin/orders" "admin.orders" model
                   ]
             , div
-                  [tw [ borderT, borderGray200, mt4, pt4 ]]
-                  [a
-                      [ href "/", attribute "sky-nav" "", sidebarLink_ ]
-                      [text "View Store"]]
+                  [ tw [ borderT, borderGray200, mt4, pt4 ] ]
+                  [ a
+                        [ href "/", attribute "sky-nav" "", sidebarLink_ ]
+                        [ text "View Store" ]
+                  ]
             ]
 
 
@@ -1023,7 +1035,7 @@ adminSidebarLink url key model =
               else
                   sidebarLink_
             ]
-            [text (Tr.t lang key)]
+            [ text (Tr.t lang key) ]
 
 
 -- ══════════════════════════════════════════════════════
@@ -1034,93 +1046,99 @@ viewFooter model =
         lang = model.lang
     in
         footerNode
-            [tw [ bgWhite, borderT, borderGray200, ( "margin-top", "auto" ) ]]
-            [div
-                [tw [ maxW7xl, mxAuto, px4 ]]
-                [ div
-                      [tw
-                          [ grid
-                          , gridCols1
-                          , Responsive.md gridCols3
-                          , gap8
-                          , py12
-                          ]]
-                      [ div
-                            []
-                            [ Html.h4
-                                  [tw [ fontBold, textGray900, mb3 ]]
-                                  [text (Tr.t lang "app.name")]
-                            , p
-                                  [tw [ textSm, textGray500, leadingRelaxed ]]
-                                  [text (Tr.t lang "footer.tagline")]
-                            ]
-                      , div
-                            []
-                            [ Html.h4
-                                  [tw
-                                      [ fontBold
-                                      , textGray900
-                                      , mb3
-                                      , textSm
-                                      , uppercase
-                                      ]]
-                                  [text (Tr.t lang "footer.quickLinks")]
-                            , div
-                                  [tw [ flex, flexCol, gap2 ]]
-                                  [ a
-                                        [ href "/products"
-                                        , attribute "sky-nav" ""
-                                        , tw [ textSm, textGray500 ]
-                                        ]
-                                        [text (Tr.t lang "nav.products")]
-                                  , a
-                                        [ href "/cart"
-                                        , attribute "sky-nav" ""
-                                        , tw [ textSm, textGray500 ]
-                                        ]
-                                        [text (Tr.t lang "nav.cart")]
-                                  , a
-                                        [ href "/orders"
-                                        , attribute "sky-nav" ""
-                                        , tw [ textSm, textGray500 ]
-                                        ]
-                                        [text (Tr.t lang "nav.orders")]
-                                  ]
-                            ]
-                      , div
-                            []
-                            [ Html.h4
-                                  [tw
-                                      [ fontBold
-                                      , textGray900
-                                      , mb3
-                                      , textSm
-                                      , uppercase
-                                      ]]
-                                  [text (Tr.t lang "footer.legal")]
-                            , div
-                                  [tw [ flex, flexCol, gap2 ]]
-                                  [ a
-                                        [ href "/privacy-policy"
-                                        , attribute "sky-nav" ""
-                                        , tw [ textSm, textGray500 ]
-                                        ]
-                                        [text (Tr.t lang "footer.privacy")]
-                                  , a
-                                        [ href "/terms"
-                                        , attribute "sky-nav" ""
-                                        , tw [ textSm, textGray500 ]
-                                        ]
-                                        [text (Tr.t lang "footer.terms")]
-                                  ]
-                            ]
-                      ]
-                , div
-                      [tw [ borderT, borderGray200, py6, textCenter ]]
-                      [p
-                          [tw [ textSm, textGray400 ]]
-                          [text ("2024 " ++ Tr.t lang "footer.copyright")]]
-                ]]
+            [ tw [ bgWhite, borderT, borderGray200, ( "margin-top", "auto" ) ] ]
+            [ div
+                  [ tw [ maxW7xl, mxAuto, px4 ] ]
+                  [ div
+                        [ tw
+                              [ grid
+                              , gridCols1
+                              , Responsive.md gridCols3
+                              , gap8
+                              , py12
+                              ]
+                        ]
+                        [ div
+                              []
+                              [ Html.h4
+                                    [ tw [ fontBold, textGray900, mb3 ] ]
+                                    [ text (Tr.t lang "app.name") ]
+                              , p
+                                    [ tw [ textSm, textGray500, leadingRelaxed ]
+                                    ]
+                                    [ text (Tr.t lang "footer.tagline") ]
+                              ]
+                        , div
+                              []
+                              [ Html.h4
+                                    [ tw
+                                          [ fontBold
+                                          , textGray900
+                                          , mb3
+                                          , textSm
+                                          , uppercase
+                                          ]
+                                    ]
+                                    [ text (Tr.t lang "footer.quickLinks") ]
+                              , div
+                                    [ tw [ flex, flexCol, gap2 ] ]
+                                    [ a
+                                          [ href "/products"
+                                          , attribute "sky-nav" ""
+                                          , tw [ textSm, textGray500 ]
+                                          ]
+                                          [ text (Tr.t lang "nav.products") ]
+                                    , a
+                                          [ href "/cart"
+                                          , attribute "sky-nav" ""
+                                          , tw [ textSm, textGray500 ]
+                                          ]
+                                          [ text (Tr.t lang "nav.cart") ]
+                                    , a
+                                          [ href "/orders"
+                                          , attribute "sky-nav" ""
+                                          , tw [ textSm, textGray500 ]
+                                          ]
+                                          [ text (Tr.t lang "nav.orders") ]
+                                    ]
+                              ]
+                        , div
+                              []
+                              [ Html.h4
+                                    [ tw
+                                          [ fontBold
+                                          , textGray900
+                                          , mb3
+                                          , textSm
+                                          , uppercase
+                                          ]
+                                    ]
+                                    [ text (Tr.t lang "footer.legal") ]
+                              , div
+                                    [ tw [ flex, flexCol, gap2 ] ]
+                                    [ a
+                                          [ href "/privacy-policy"
+                                          , attribute "sky-nav" ""
+                                          , tw [ textSm, textGray500 ]
+                                          ]
+                                          [ text (Tr.t lang "footer.privacy") ]
+                                    , a
+                                          [ href "/terms"
+                                          , attribute "sky-nav" ""
+                                          , tw [ textSm, textGray500 ]
+                                          ]
+                                          [ text (Tr.t lang "footer.terms") ]
+                                    ]
+                              ]
+                        ]
+                  , div
+                        [ tw [ borderT, borderGray200, py6, textCenter ] ]
+                        [ p
+                              [ tw [ textSm, textGray400 ] ]
+                              [ text ("2024 " ++ Tr.t lang "footer.copyright") ]
+                        ]
+                  ]
+            ]
 
 
 -- ══════════════════════════════════════════════════════
@@ -1130,18 +1148,31 @@ globalStyles =
     styleNode
         []
         (Css.stylesheet
-            [ Css.rule "*" [ Css.rawProp "margin:0", Css.rawProp "padding:0", Css.rawProp "box-sizing:border-box" ]
+            [ Css.rule
+                  "*"
+                  [ Css.rawProp "margin:0"
+                  , Css.rawProp "padding:0"
+                  , Css.rawProp "box-sizing:border-box"
+                  ]
             , Css.rule
                   "body"
-                  [ Css.rawProp "font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
+                  [ Css.rawProp
+                        "font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
                   , Css.rawProp "line-height:1.6"
                   , Css.rawProp "color:#1a202c"
                   , Css.rawProp "background:#f8fafc"
                   ]
-            , Css.rule "a" [ Css.rawProp "text-decoration:none", Css.rawProp "color:inherit" ]
+            , Css.rule
+                  "a"
+                  [ Css.rawProp "text-decoration:none"
+                  , Css.rawProp "color:inherit"
+                  ]
             , Css.rule
                   "img"
-                  [ Css.rawProp "max-width:100%", Css.rawProp "height:auto", Css.rawProp "display:block" ]
+                  [ Css.rawProp "max-width:100%"
+                  , Css.rawProp "height:auto"
+                  , Css.rawProp "display:block"
+                  ]
             , Css.rule
                   "button"
                   [ Css.rawProp "cursor:pointer"
@@ -1151,17 +1182,26 @@ globalStyles =
                   ]
             , Css.rule
                   "input,textarea,select"
-                  [ Css.rawProp "font-family:inherit", Css.rawProp "font-size:inherit", Css.rawProp "outline:none" ]
-            , Css.rule ".line-through" [Css.rawProp "text-decoration:line-through"]
-            , Css.rule ".product-card" [Css.rawProp "transition:all .2s ease"]
+                  [ Css.rawProp "font-family:inherit"
+                  , Css.rawProp "font-size:inherit"
+                  , Css.rawProp "outline:none"
+                  ]
+            , Css.rule
+                  ".line-through"
+                  [ Css.rawProp "text-decoration:line-through" ]
+            , Css.rule ".product-card" [ Css.rawProp "transition:all .2s ease" ]
             , Css.rule
                   ".product-card:hover"
                   [ Css.rawProp "border-color:#cbd5e1"
                   , Css.rawProp "box-shadow:0 4px 12px rgba(0,0,0,.08)"
                   , Css.rawProp "transform:translateY(-2px)"
                   ]
-            , Css.rule ".product-card:hover img" [Css.rawProp "transform:scale(1.03)"]
-            , Css.rule ".product-card img" [Css.rawProp "transition:transform .3s ease"]
+            , Css.rule
+                  ".product-card:hover img"
+                  [ Css.rawProp "transform:scale(1.03)" ]
+            , Css.rule
+                  ".product-card img"
+                  [ Css.rawProp "transition:transform .3s ease" ]
             , Css.rule
                   ".toggle"
                   [ Css.rawProp "width:44px"
@@ -1170,8 +1210,8 @@ globalStyles =
                   , Css.rawProp "position:relative"
                   , Css.rawProp "transition:background .15s ease"
                   ]
-            , Css.rule ".toggle-on" [Css.rawProp "background:#2563eb"]
-            , Css.rule ".toggle-off" [Css.rawProp "background:#d1d5db"]
+            , Css.rule ".toggle-on" [ Css.rawProp "background:#2563eb" ]
+            , Css.rule ".toggle-off" [ Css.rawProp "background:#d1d5db" ]
             , Css.rule
                   ".toggle-knob"
                   [ Css.rawProp "width:20px"
@@ -1183,8 +1223,8 @@ globalStyles =
                   , Css.rawProp "transition:all .15s ease"
                   , Css.rawProp "box-shadow:0 1px 3px rgba(0,0,0,.15)"
                   ]
-            , Css.rule ".toggle-knob-on" [Css.rawProp "right:2px"]
-            , Css.rule ".toggle-knob-off" [Css.rawProp "left:2px"]
+            , Css.rule ".toggle-knob-on" [ Css.rawProp "right:2px" ]
+            , Css.rule ".toggle-knob-off" [ Css.rawProp "left:2px" ]
             , Css.rule
                   ".spinner"
                   [ Css.rawProp "width:48px"
@@ -1210,8 +1250,16 @@ globalStyles =
                   "slideDown"
                   [ Css.frame
                         "from"
-                        [ Css.rawProp "opacity:0", Css.rawProp "transform:translateY(-8px)" ]
-                  , Css.frame "to" [ Css.rawProp "opacity:1", Css.rawProp "transform:translateY(0)" ]
+                        [ Css.rawProp "opacity:0"
+                        , Css.rawProp "transform:translateY(-8px)"
+                        ]
+                  , Css.frame
+                        "to"
+                        [ Css.rawProp "opacity:1"
+                        , Css.rawProp "transform:translateY(0)"
+                        ]
                   ]
-            , Css.keyframes "spin" [Css.frame "to" [Css.rawProp "transform:rotate(360deg)"]]
+            , Css.keyframes
+                  "spin"
+                  [ Css.frame "to" [ Css.rawProp "transform:rotate(360deg)" ] ]
             ])

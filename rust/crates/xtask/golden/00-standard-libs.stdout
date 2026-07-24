@@ -1,0 +1,132 @@
+ok    String > trim outer space
+  ok    String > toUpper
+  ok    String > toLower
+  ok    String > reverse
+  ok    String > length counts runes
+  ok    String > contains
+  ok    String > startsWith
+  ok    String > endsWith
+  ok    String > replace
+  ok    String > split on comma yields 3
+  ok    String > join
+  ok    String > toInt accepts digits
+  ok    String > toInt rejects junk
+  ok    String > fromInt
+  ok    String > fromFloat
+  ok    String > isEmpty true
+  ok    String > isEmpty false
+  ok    List > length
+  ok    List > reverse head
+  ok    List > head finds first
+  ok    List > head on empty list is Nothing
+  ok    List > tail drops first (length 2 left)
+  ok    List > take 2 produces length 2
+  ok    List > drop 2 produces length 2
+  ok    List > map double via sum
+  ok    List > filter evens count
+  ok    List > foldl sum
+  ok    List > append length
+  ok    List > member found
+  ok    List > member missing
+  ok    List > isEmpty empty
+  ok    List > isEmpty non-empty
+  ok    List > concat length
+  ok    List > range length
+  ok    Dict > empty has no keys
+  ok    Dict > insert + get
+  ok    Dict > get missing → Nothing
+  ok    Dict > remove drops key
+  ok    Dict > member
+  ok    Dict > fromList round-trip
+  ok    Maybe > withDefault on Nothing
+  ok    Maybe > withDefault on Just
+  ok    Maybe > map on Just doubles via withDefault
+  ok    Maybe > map on Nothing stays Nothing
+  ok    Maybe > andThen chains
+  ok    Result > withDefault on Err
+  ok    Result > withDefault on Ok
+  ok    Result > map on Ok doubles
+  ok    Result > andThen chains
+  ok    Result > mapError preserves message via wrapper
+  ok    Math > abs negative
+  ok    Math > min
+  ok    Math > max
+  ok    Math > sqrt
+  ok    Math > pow
+  ok    Math > floor
+  ok    Math > ceil
+  ok    Math > round
+  ok    Crypto > sha256 known vector
+  ok    Crypto > md5 known vector
+  ok    Crypto > hmacSha256 produces 64 hex chars
+  ok    Crypto > constantTimeEqual equal strings
+  ok    Crypto > constantTimeEqual differing strings
+  ok    Crypto > sha1 known vector
+  ok    Crypto > hmacSha512 produces 128 hex chars
+  ok    Crypto > aesKeyFromPassword derivation succeeds round-trip
+  ok    Crypto > aesGcm round-trip
+  ok    Crypto > aesGcm tamper detection
+  ok    Crypto > chacha20 round-trip
+  ok    Crypto > aesGcm short-key rejected
+  ok    Jwt > HS256 encode yields three segments
+  ok    Jwt > HS256 verify round-trips
+  ok    Jwt > rejects a forged signature (wrong key)
+  ok    Jwt > rejects an expired token
+  ok    Encoding > base64 round-trip
+  ok    Encoding > hex round-trip
+  ok    Encoding > urlEncode escapes space as + (QueryEscape semantics)
+  ok    Encoding > urlDecode reverses + back to space
+  ok    Encoding > urlDecode also accepts %20-encoded space
+  ok    Json > encode string
+  ok    Json > encode int
+  ok    Json > encode bool
+  ok    Json > encode object
+  ok    Json > decode int
+  ok    Json > decode field
+  ok    Std.Decimal > fromString accepts decimal literal
+  ok    Std.Decimal > fromString rejects junk
+  ok    Std.Decimal > exact 0.1 + 0.2 == 0.3
+  ok    Std.Decimal > add commutative
+  ok    Std.Decimal > div by zero is Err
+  ok    Std.Decimal > div by non-zero is Ok
+  ok    Std.Decimal > neg flips sign
+  ok    Std.Decimal > abs of negative
+  ok    Std.Decimal > round 2dp banker's
+  ok    Std.Decimal > compare
+  ok    Std.Decimal > fromMinor 2dp
+  ok    Std.Decimal > percentOf 10% of 100
+  ok    Std.Decimal > isZero on zero
+  ok    Std.Decimal > isPositive on 5
+  ok    Std.Decimal > isNegative on -5
+  ok    Std.Money > fromMajor builds $100
+  ok    Std.Money > fromMinor 1234 cents = $12.34
+  ok    Std.Money > JPY has 0 minor units (no cents)
+  ok    Std.Money > USD has 2 minor units
+  ok    Std.Money > BHD has 3 minor units
+  ok    Std.Money > add same-currency sums
+  ok    Std.Money > percentOf 10% of $100 = $10
+  ok    Std.Money > allocate $100 over 3 → sum preserved
+  ok    Std.Money > allocate $100 over 3 yields 3 parts
+  ok    Std.Money > symbol lookup USD
+  ok    Std.Money > symbol lookup EUR
+  ok    Std.Money > knownCurrency USD ctor is True
+  ok    Std.Money > knownCurrency (CurrencyRaw "XYZ") is False
+  ok    Std.Money > isKnownCode "USD" (raw-string check)
+  ok    Std.Money > isKnownCode "XYZ" rejects unknown code
+  ok    Std.Money > currencyCode JPY
+  ok    Std.Money > isZero on zero USD
+  ok    Std.Time > isLeapYear 2024
+  ok    Std.Time > isLeapYear 2023
+  ok    Std.Time > isLeapYear 2000 (div by 400)
+  ok    Std.Time > isLeapYear 1900 (div by 100 not 400)
+  ok    Std.Time > daysInMonth Jan = 31
+  ok    Std.Time > daysInMonth Feb 2024 = 29
+  ok    Std.Time > daysInMonth Feb 2023 = 28
+  ok    Std.Time > daysInMonth Apr = 30
+  ok    Task.retryWith > Ok body runs once
+  ok    Task.retryWith > Err body retries to maxAttempts
+  ok    Task.retryWith > Exponential policy survives
+  ok    Task.retryWith > withJitter composes
+  ok    Task.retryWith > retryOn predicate short-circuits
+  ok    Task.retryWith > defaultRetryPolicy builder chain
+131 passed, 0 failed (131 total)

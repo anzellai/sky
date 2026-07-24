@@ -14,65 +14,94 @@
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
 -- (`String_*` helpers).
 module Sky.Core.String exposing
-    ( fromInt, fromFloat
-    , length, isEmpty
-    , join, split, replace, slice, dropLeft, dropRight
-    , toInt, toFloat
-    , toUpper, toLower, trim, trimStart, trimEnd
-    , reverse, append, concat
-    , contains, startsWith, endsWith
-    , containsIn, startsWithIn, endsWithIn
-    , casefold, equalFold
-    , isEmail, isUrl
-    , words, lines
-    , fromChar, toList, fromList
-    , repeat, padLeft, padRight
+    ( fromInt
+    , fromFloat
+    , length
+    , isEmpty
+    , join
+    , split
+    , replace
+    , slice
+    , dropLeft
+    , dropRight
+    , toInt
+    , toFloat
+    , toUpper
+    , toLower
+    , trim
+    , trimStart
+    , trimEnd
+    , reverse
+    , append
+    , concat
+    , contains
+    , startsWith
+    , endsWith
+    , containsIn
+    , startsWithIn
+    , endsWithIn
+    , casefold
+    , equalFold
+    , isEmail
+    , isUrl
+    , words
+    , lines
+    , fromChar
+    , toList
+    , fromList
+    , repeat
+    , padLeft
+    , padRight
     )
-
 
 import Sky.Ffi as Ffi
 
 
 -- ─── Construction ──────────────────────────────────────────────────
-
-
 fromInt : Int -> String
-fromInt = Ffi.kernel "String_fromInt"
+fromInt =
+    Ffi.kernel "String_fromInt"
 
 
 fromFloat : Float -> String
-fromFloat = Ffi.kernel "String_fromFloat"
+fromFloat =
+    Ffi.kernel "String_fromFloat"
 
 
 fromChar : Char -> String
-fromChar = Ffi.kernel "String_fromChar"
+fromChar =
+    Ffi.kernel "String_fromChar"
 
 
 fromList : List Char -> String
-fromList = Ffi.kernel "String_fromList"
+fromList =
+    Ffi.kernel "String_fromList"
 
 
 -- ─── Sizes + predicates ────────────────────────────────────────────
-
-
 length : String -> Int
-length = Ffi.kernel "String_length"
+length =
+    Ffi.kernel "String_length"
 
 
 isEmpty : String -> Bool
-isEmpty = Ffi.kernel "String_isEmpty"
+isEmpty =
+    Ffi.kernel "String_isEmpty"
 
 
 contains : String -> String -> Bool
-contains = Ffi.kernel "String_contains"
+contains =
+    Ffi.kernel "String_contains"
 
 
 startsWith : String -> String -> Bool
-startsWith = Ffi.kernel "String_startsWith"
+startsWith =
+    Ffi.kernel "String_startsWith"
 
 
 endsWith : String -> String -> Bool
-endsWith = Ffi.kernel "String_endsWith"
+endsWith =
+    Ffi.kernel "String_endsWith"
 
 
 -- | Haystack-first companion to `contains` — built for pipelines.
@@ -81,138 +110,159 @@ endsWith = Ffi.kernel "String_endsWith"
 --
 -- Equivalent to `\\haystack needle -> contains needle haystack`.
 containsIn : String -> String -> Bool
-containsIn haystack needle = contains needle haystack
+containsIn haystack needle =
+    contains needle haystack
 
 
 -- | Haystack-first companion to `startsWith`.
 --
 --     "/api/users" |> String.startsWithIn "/api"  -- True
 startsWithIn : String -> String -> Bool
-startsWithIn haystack prefix = startsWith prefix haystack
+startsWithIn haystack prefix =
+    startsWith prefix haystack
 
 
 -- | Haystack-first companion to `endsWith`.
 --
 --     "image.png" |> String.endsWithIn ".png"  -- True
 endsWithIn : String -> String -> Bool
-endsWithIn haystack suffix = endsWith suffix haystack
+endsWithIn haystack suffix =
+    endsWith suffix haystack
 
 
 isEmail : String -> Bool
-isEmail = Ffi.kernel "String_isEmail"
+isEmail =
+    Ffi.kernel "String_isEmail"
 
 
 isUrl : String -> Bool
-isUrl = Ffi.kernel "String_isUrl"
+isUrl =
+    Ffi.kernel "String_isUrl"
 
 
 equalFold : String -> String -> Bool
-equalFold = Ffi.kernel "String_equalFold"
+equalFold =
+    Ffi.kernel "String_equalFold"
 
 
 -- ─── Parsing ───────────────────────────────────────────────────────
-
-
 toInt : String -> Maybe Int
-toInt = Ffi.kernel "String_toInt"
+toInt =
+    Ffi.kernel "String_toInt"
 
 
 toFloat : String -> Maybe Float
-toFloat = Ffi.kernel "String_toFloat"
+toFloat =
+    Ffi.kernel "String_toFloat"
 
 
 -- ─── Case + whitespace ─────────────────────────────────────────────
-
-
 toUpper : String -> String
-toUpper = Ffi.kernel "String_toUpper"
+toUpper =
+    Ffi.kernel "String_toUpper"
 
 
 toLower : String -> String
-toLower = Ffi.kernel "String_toLower"
+toLower =
+    Ffi.kernel "String_toLower"
 
 
 casefold : String -> String
-casefold = Ffi.kernel "String_casefold"
+casefold =
+    Ffi.kernel "String_casefold"
 
 
 trim : String -> String
-trim = Ffi.kernel "String_trim"
+trim =
+    Ffi.kernel "String_trim"
 
 
 trimStart : String -> String
-trimStart = Ffi.kernel "String_trimStart"
+trimStart =
+    Ffi.kernel "String_trimStart"
 
 
 trimEnd : String -> String
-trimEnd = Ffi.kernel "String_trimEnd"
+trimEnd =
+    Ffi.kernel "String_trimEnd"
 
 
 -- ─── Slicing + assembly ────────────────────────────────────────────
-
-
 reverse : String -> String
-reverse = Ffi.kernel "String_reverse"
+reverse =
+    Ffi.kernel "String_reverse"
 
 
 append : String -> String -> String
-append = Ffi.kernel "String_append"
+append =
+    Ffi.kernel "String_append"
 
 
 concat : List String -> String
-concat = Ffi.kernel "String_concat"
+concat =
+    Ffi.kernel "String_concat"
 
 
 join : String -> List String -> String
-join = Ffi.kernel "String_join"
+join =
+    Ffi.kernel "String_join"
 
 
 split : String -> String -> List String
-split = Ffi.kernel "String_split"
+split =
+    Ffi.kernel "String_split"
 
 
 replace : String -> String -> String -> String
-replace = Ffi.kernel "String_replace"
+replace =
+    Ffi.kernel "String_replace"
 
 
 slice : Int -> Int -> String -> String
-slice = Ffi.kernel "String_slice"
+slice =
+    Ffi.kernel "String_slice"
 
 
 -- | Drop the first n characters (runes) from s.  Elm semantics:
 -- negative n returns s unchanged; n >= length returns "".
 dropLeft : Int -> String -> String
-dropLeft = Ffi.kernel "String_dropLeft"
+dropLeft =
+    Ffi.kernel "String_dropLeft"
 
 
 -- | Drop the last n characters (runes) from s.  Elm semantics:
 -- negative n returns s unchanged; n >= length returns "".
 dropRight : Int -> String -> String
-dropRight = Ffi.kernel "String_dropRight"
+dropRight =
+    Ffi.kernel "String_dropRight"
 
 
 repeat : Int -> String -> String
-repeat = Ffi.kernel "String_repeat"
+repeat =
+    Ffi.kernel "String_repeat"
 
 
 padLeft : Int -> Char -> String -> String
-padLeft = Ffi.kernel "String_padLeft"
+padLeft =
+    Ffi.kernel "String_padLeft"
 
 
 padRight : Int -> Char -> String -> String
-padRight = Ffi.kernel "String_padRight"
+padRight =
+    Ffi.kernel "String_padRight"
 
 
 -- ─── Word / line / character views ─────────────────────────────────
-
-
 words : String -> List String
-words = Ffi.kernel "String_words"
+words =
+    Ffi.kernel "String_words"
 
 
 lines : String -> List String
-lines = Ffi.kernel "String_lines"
+lines =
+    Ffi.kernel "String_lines"
 
 
 toList : String -> List Char
-toList = Ffi.kernel "String_toList"
+toList =
+    Ffi.kernel "String_toList"

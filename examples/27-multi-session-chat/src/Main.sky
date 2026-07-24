@@ -18,6 +18,7 @@ module Main exposing (main)
 --
 -- See `docs/skylive/pubsub.md` for the user-facing tutorial and
 -- `docs/skylive/pubsub-design.md` for the architecture write-up.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -110,7 +111,7 @@ loadRoomHistory room =
                 (Db.query
                     dbConn
                     "SELECT author, text, at FROM messages WHERE room = ? ORDER BY id ASC LIMIT 200"
-                    [room])
+                    [ room ])
     in
         case result of
 
@@ -149,8 +150,6 @@ roomTopic room =
 
 
 -- ─── Decoder for broadcast payloads ──────────────────────────────
-
-
 -- The publisher passes `Cmd.publish topic payload` with payload typed
 -- `any`. Subscribers receive it as `any` and decode it back to the
 -- application shape via the toMsg callback. We carry the payload as
@@ -306,7 +305,7 @@ update msg model =
             let
                 chatMsg = decodeChatMessage payload
             in
-                ( { model | history = List.append model.history [chatMsg] }
+                ( { model | history = List.append model.history [ chatMsg ] }
                 , Cmd.none
                 )
 
@@ -326,20 +325,22 @@ view model =
         []
         [ styleNode [] pageStyles
         , div
-              [class "app"]
+              [ class "app" ]
               [ header
-                    [class "topbar"]
-                    [ h1 [] [text "Sky.Live · multi-session chat"]
+                    [ class "topbar" ]
+                    [ h1 [] [ text "Sky.Live · multi-session chat" ]
                     , p
-                          [class "hint"]
-                          [text
-                              "Open two browser tabs in the same room to see pub/sub in action."]
+                          [ class "hint" ]
+                          [ text
+                                "Open two browser tabs in the same room to see pub/sub in action."
+                          ]
                     ]
-              , div [class "content"] [pageBody model]
+              , div [ class "content" ] [ pageBody model ]
               , footer
-                    [class "footer"]
-                    [text
-                        "Echo-to-publisher matches Redis/NATS/MQTT — your own messages arrive on the broadcast too."]
+                    [ class "footer" ]
+                    [ text
+                          "Echo-to-publisher matches Redis/NATS/MQTT — your own messages arrive on the broadcast too."
+                    ]
               ]
         ]
 
@@ -358,8 +359,8 @@ pageBody model =
 lobbyView : Model -> Html Msg
 lobbyView _model =
     div
-        [class "lobby"]
-        [ h2 [] [text "Join a room"]
+        [ class "lobby" ]
+        [ h2 [] [ text "Join a room" ]
         , form
               [ class "lobby-form", onSubmit JoinRoom ]
               [ label
@@ -382,23 +383,24 @@ lobbyView _model =
                           , autocomplete "off"
                           ]
                     ]
-              , button [ type_ "submit", class "primary" ] [text "Join"]
+              , button [ type_ "submit", class "primary" ] [ text "Join" ]
               ]
         , p
-              [class "hint"]
-              [text
-                  "Tip: open this page in TWO browser tabs and join the same room with different names. Each message you send in one tab will appear in the other within a few milliseconds, with no polling."]
+              [ class "hint" ]
+              [ text
+                    "Tip: open this page in TWO browser tabs and join the same room with different names. Each message you send in one tab will appear in the other within a few milliseconds, with no polling."
+              ]
         ]
 
 
 roomView : Model -> String -> Html Msg
 roomView model room =
     div
-        [class "room"]
+        [ class "room" ]
         [ div
-              [class "room-header"]
-              [ h2 [] [text ("# " ++ room)]
-              , div [class "me"] [text ("you: " ++ model.me)]
+              [ class "room-header" ]
+              [ h2 [] [ text ("# " ++ room) ]
+              , div [ class "me" ] [ text ("you: " ++ model.me) ]
               ]
         , div
               [ class "log", id "chat-log" ]
@@ -411,13 +413,13 @@ roomView model room =
                     , placeholder "Say something…"
                     , autocomplete "off"
                     ]
-              , button [ type_ "submit", class "primary" ] [text "Send"]
+              , button [ type_ "submit", class "primary" ] [ text "Send" ]
               ]
         , if model.notice == "" then
               span [] []
 
           else
-              div [class "notice"] [text model.notice]
+              div [ class "notice" ] [ text model.notice ]
         ]
 
 
@@ -432,10 +434,10 @@ messageRow me msg =
                 "msg"
     in
         div
-            [class klass]
-            [ span [class "msg-author"] [text msg.author]
-            , span [class "msg-at"] [text (" · " ++ msg.at)]
-            , div [class "msg-text"] [text msg.text]
+            [ class klass ]
+            [ span [ class "msg-author" ] [ text msg.author ]
+            , span [ class "msg-at" ] [ text (" · " ++ msg.at) ]
+            , div [ class "msg-text" ] [ text msg.text ]
             ]
 
 

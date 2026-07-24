@@ -30,6 +30,7 @@ module Main exposing (main)
 --      (the runtime's __skyReviveScripts shim revives them after
 --      the initial HTML lands in the document — same hardening
 --      Sky.Live uses).
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Webview as Webview
@@ -79,7 +80,7 @@ view : Model -> any
 view _ =
     Html.node
         "div"
-        [Attr.id "scene-root"]
+        [ Attr.id "scene-root" ]
         [ Html.node
               "link"
               [ Attr.attribute "rel" "stylesheet"
@@ -88,51 +89,54 @@ view _ =
               []
         , Html.node
               "div"
-              [Attr.id "hud"]
+              [ Attr.id "hud" ]
               [ Html.node
                     "div"
-                    [Attr.id "title"]
-                    [Html.text "Sky.Webview spike"]
+                    [ Attr.id "title" ]
+                    [ Html.text "Sky.Webview spike" ]
               , Html.node
                     "div"
-                    [Attr.id "info"]
-                    [Html.text "three.js + animation under Sky.Webview"]
+                    [ Attr.id "info" ]
+                    [ Html.text "three.js + animation under Sky.Webview" ]
               , Html.node
                     "div"
-                    [Attr.id "fps"]
+                    [ Attr.id "fps" ]
                     [ Html.text "FPS: "
-                    , Html.node "span" [Attr.id "fps-value"] [Html.text "--"]
+                    , Html.node
+                          "span"
+                          [ Attr.id "fps-value" ]
+                          [ Html.text "--" ]
                     ]
               , Html.node
                     "div"
-                    [Attr.id "renderer"]
+                    [ Attr.id "renderer" ]
                     [ Html.text "Renderer: "
                     , Html.node
                           "span"
-                          [Attr.id "renderer-value"]
-                          [Html.text "probing..."]
+                          [ Attr.id "renderer-value" ]
+                          [ Html.text "probing..." ]
                     ]
               , Html.node
                     "div"
-                    [Attr.id "webgl-version"]
+                    [ Attr.id "webgl-version" ]
                     [ Html.text "WebGL: "
                     , Html.node
                           "span"
-                          [Attr.id "webgl-version-value"]
-                          [Html.text "probing..."]
+                          [ Attr.id "webgl-version-value" ]
+                          [ Html.text "probing..." ]
                     ]
               , Html.node
                     "button"
-                    [Attr.id "toggle-rotate"]
-                    [Html.text "pause rotation"]
+                    [ Attr.id "toggle-rotate" ]
+                    [ Html.text "pause rotation" ]
               , Html.node
                     "button"
-                    [Attr.id "toggle-wireframe"]
-                    [Html.text "toggle wireframe"]
+                    [ Attr.id "toggle-wireframe" ]
+                    [ Html.text "toggle wireframe" ]
               ]
-        , Html.node "div" [Attr.id "canvas-wrap"] []
-        , Html.script [Attr.src "/static/three.min.js"] []
-        , Html.script [Attr.src "/static/scene.js"] []
+        , Html.node "div" [ Attr.id "canvas-wrap" ] []
+        , Html.script [ Attr.src "/static/three.min.js" ] []
+        , Html.script [ Attr.src "/static/scene.js" ] []
         ]
 
 

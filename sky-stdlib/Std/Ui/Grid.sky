@@ -52,6 +52,7 @@ module Std.Ui.Grid exposing
 -- silently ignores the emitted `grid-template-*` properties (its
 -- ANSI-cell renderer falls back to column-stacking); Sky.Webview
 -- honours them identically to Sky.Live (shared VNode pipeline).
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -73,8 +74,6 @@ type Track
 
 
 -- ─── Constructors (Sky-friendly camelCase aliases) ──────────────
-
-
 -- N flexible units (`<N>fr`). The browser distributes available
 -- space in proportion to fr values across all fr-typed tracks.
 fr : Int -> Track
@@ -146,8 +145,6 @@ repeatAutoFill t =
 
 
 -- ─── CSS lowering ───────────────────────────────────────────────
-
-
 -- Lower a single Track to its CSS string fragment.
 trackToCss : Track -> String
 trackToCss t =
@@ -198,8 +195,6 @@ tracksToCss ts =
 
 
 -- ─── Attribute entry points ─────────────────────────────────────
-
-
 -- Set both columns + rows explicitly. Pass `[]` for either axis to
 -- skip it (CSS `auto` default applies).
 --

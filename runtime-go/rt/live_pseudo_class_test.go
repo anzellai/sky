@@ -46,6 +46,12 @@ func TestInjectPseudoClassStyles_HoverIsHoverGated(t *testing.T) {
 	if !strings.Contains(text, "background-color: rgba(0, 92, 215, 1)") {
 		t.Errorf("user rule lost: %q", text)
 	}
+	// The declaration MUST carry `!important`, or it loses to the element's
+	// inline base `style=""` (specificity 1,0,0,0) and the `:hover` colour
+	// never applies (the reason #377's rules looked emitted-but-dead).
+	if !strings.Contains(text, "background-color: rgba(0, 92, 215, 1) !important") {
+		t.Errorf("pseudo-class declaration missing !important (would lose to inline base style): %q", text)
+	}
 }
 
 // TestInjectPseudoClassStyles_FocusNotHoverGated — `:focus`,

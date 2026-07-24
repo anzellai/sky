@@ -18,75 +18,79 @@
 module Sky.Core.Set exposing
     ( empty
     , size
-    , insert, remove, member
-    , toList, fromList
-    , union, intersect, diff
+    , insert
+    , remove
+    , member
+    , toList
+    , fromList
+    , union
+    , intersect
+    , diff
     )
-
 
 import Sky.Ffi as Ffi
 
 
 -- ─── Construction ──────────────────────────────────────────────────
-
-
 -- | The empty set.
 empty : Set a
-empty = Ffi.kernel "Set_empty"
+empty =
+    Ffi.kernel "Set_empty"
 
 
 -- ─── Queries ───────────────────────────────────────────────────────
-
-
 -- | Number of distinct elements.
 size : Set a -> Int
-size = Ffi.kernel "Set_size"
+size =
+    Ffi.kernel "Set_size"
 
 
 -- | `member x s` — `True` iff `x` is in `s`.
 member : a -> Set a -> Bool
-member = Ffi.kernel "Set_member"
+member =
+    Ffi.kernel "Set_member"
 
 
 -- ─── Mutation (returns new Set) ────────────────────────────────────
-
-
 -- | `insert x s` — add `x` to `s`. No-op if already present.
 insert : a -> Set a -> Set a
-insert = Ffi.kernel "Set_insert"
+insert =
+    Ffi.kernel "Set_insert"
 
 
 -- | `remove x s` — drop `x` from `s`. No-op if absent.
 remove : a -> Set a -> Set a
-remove = Ffi.kernel "Set_remove"
+remove =
+    Ffi.kernel "Set_remove"
 
 
 -- ─── Conversion ────────────────────────────────────────────────────
-
-
 -- | All elements in the set (unsorted).
 toList : Set a -> List a
-toList = Ffi.kernel "Set_toList"
+toList =
+    Ffi.kernel "Set_toList"
 
 
 -- | Build a set from a list, de-duplicating along the way.
 fromList : List a -> Set a
-fromList = Ffi.kernel "Set_fromList"
+fromList =
+    Ffi.kernel "Set_fromList"
 
 
 -- ─── Set algebra ───────────────────────────────────────────────────
-
-
 -- | `union a b` — every element in `a` OR `b`.
 union : Set a -> Set a -> Set a
-union = Ffi.kernel "Set_union"
+union =
+    Ffi.kernel "Set_union"
 
 
 -- | `intersect a b` — every element in BOTH `a` and `b`.
 intersect : Set a -> Set a -> Set a
-intersect = Ffi.kernel "Set_intersect"
+intersect =
+    Ffi.kernel "Set_intersect"
 
 
 -- | `diff a b` — every element in `a` BUT NOT in `b`.
 diff : Set a -> Set a -> Set a
-diff = Ffi.kernel "Set_diff"
+diff =
+    Ffi.kernel "Set_diff"

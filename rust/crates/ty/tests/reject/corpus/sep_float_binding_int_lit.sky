@@ -1,0 +1,13 @@
+-- defect: an int literal is concrete `Int`, not a number that widens to Float.
+--         Binding it to a `Float`-annotated name is a type error; write `1.0`.
+--         (Sky separates Int/Float uniformly — INTENTIONALLY stricter than the
+--         Haskell oracle, which leniently widens int literals into cross-module
+--         Float params. Both reject this same-module binding form.) oracle: reject.
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+v : Float
+v =
+    1
+main =
+    println (String.fromFloat v)

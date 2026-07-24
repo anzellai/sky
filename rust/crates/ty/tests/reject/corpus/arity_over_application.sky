@@ -1,0 +1,19 @@
+-- defect: a 2-arg function applied to 3 arguments (over-application). The
+--         result of `add a b` is `Int`, not a function, so the 3rd argument has
+--         nothing to apply to. The checker emits [E2007] naming the callee + its
+--         declared vs call arity (previously a generic "Int vs function" clash).
+--         The oracle rejects this too.
+-- oracle: reject [E2007]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+add : Int -> Int -> Int
+add a b =
+    a + b
+
+
+main =
+    println (String.fromInt (add 1 2 3))

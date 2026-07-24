@@ -1,0 +1,7 @@
+# Pin the Rust toolchain so local builds match CI (dtolnay/rust-toolchain@stable)
+# and the reproducibility gates (repro, coerce-floor, golden) are deterministic
+# across machines. The workspace is edition 2021 and uses no nightly features.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-analyzer"]
+profile = "minimal"

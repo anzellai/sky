@@ -2,12 +2,13 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/)
 
-> **Status: v0.17.x release candidate.** Public APIs are stable for the
+> **Status: v0.18.x release candidate.** Public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
-> still change between minor versions. v0.17.0 closes the typed-emit
-> soundness floor under the reframed "rock solid + ~100% sound with
-> documented surface for remaining rt.Coerce" goal — see
-> [docs/v0.17/release-plan.md](docs/v0.17/release-plan.md).
+> still change between minor versions. The compiler is now written in
+> Rust (cargo workspace at `rust/`) — the typed-Go output and the
+> "if it compiles, it works" guarantee carry over unchanged. The
+> retired Haskell compiler stays under `legacy-haskell-compiler/` as
+> the differential oracle.
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,
@@ -58,6 +59,31 @@ sky init hello && cd hello && sky run src/Main.sky
 - **One binary out the back.** Every project compiles to a
   static Go binary. Deploy with `scp`, with Docker, or as a CLI
   you `brew install`.
+
+## Why the compiler is in Rust
+
+The Haskell compiler carried Sky through v0.17. The push to v1 — "if it
+compiles, it works" end to end, on an architecture that stays
+maintainable — surfaced limits in it that were structural rather than
+incidental: a monolithic multi-thousand-line lowering pass, mutable
+`IORef` compiler state that fought the very purity Sky promises its
+users, and an HM solver that needed hard memory budgets to stay bounded.
+The rewrite moves the compiler to a Rust cargo
+workspace of small, single-responsibility crates — lexer/parser, name
+resolution, HM inference, type-directed lowering, Go codegen, FFI,
+formatter, LSP — so each architectural decision sits behind a real
+module boundary instead of inside one file, and a query-DAG core makes
+incremental rebuilds and cross-module analysis robust by construction.
+Rust earns its place specifically: it compiles the corpus faster and
+with a lower, more predictable memory profile, and its algebraic enums,
+enforced exhaustiveness, and absence of null mirror the discipline Sky
+itself enforces — the compiler is now written in the same style it
+compiles. The typed-Go output and the "if it compiles, it works"
+contract carry over unchanged; every one of v0.17's hard-won learnings
+is now a crate boundary, a gate, or a test, which is what makes the v1
+goals reachable. The retired Haskell compiler stays under
+[`legacy-haskell-compiler/`](legacy-haskell-compiler/) as a
+byte-for-byte differential oracle until v1 is tagged.
 
 ## Hello, Sky
 
@@ -126,9 +152,11 @@ canvas, or `Std.Webview.app cfg` for a native desktop window.
 # macOS / Linux — single-binary install
 curl -fsSL https://sky-lang.org/install | bash
 
-# or build from source (Haskell GHC 9.4+ required to build the compiler)
+# or build from source (Rust toolchain required to build the compiler)
 git clone https://github.com/anzellai/sky
-cd sky && cabal install --installdir=$HOME/.local/bin exe:sky
+cd sky/rust && cargo build --release -p sky
+# or install straight to ~/.local/bin:
+#   cargo install --path rust/crates/sky --root ~/.local --locked
 ```
 
 The `sky` binary embeds the runtime, stdlib, and Sky Console.
@@ -264,7 +292,7 @@ platform with a Go 1.22+ runtime.
 
 ## Examples
 
-39 examples ship in [`examples/`](examples/). Each builds clean
+~50 examples ship in [`examples/`](examples/). Each builds clean
 from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
 
 | Range  | Category                              |
@@ -283,11 +311,12 @@ from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
 
 Issues and PRs welcome at
 [github.com/anzellai/sky](https://github.com/anzellai/sky). The
-[compiler architecture](docs/compiler/architecture.md) write-up
-and [pipeline doc](docs/compiler/pipeline.md) are the right
-starting points for compiler work. Run `cabal test` (cap with
-`timeout 3600`) before any PR; `scripts/example-sweep.sh`
-validates every example builds.
+[Rust compiler architecture](docs/rust-rewrite/) write-up is the
+right starting point for compiler work (the Haskell-era
+[docs/compiler/](docs/compiler/) notes are kept as historical
+reference). Run `cargo test --workspace` plus the xtask gate
+suite (`cargo run -p xtask -- <gate>`) before any PR;
+`scripts/example-sweep.sh` validates every example builds.
 
 ## Licence
 

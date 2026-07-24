@@ -48,42 +48,43 @@ tripleDecoder =
 
 tests : List Test
 tests =
-    [Test.suite
-        "Json pipeline panic #372"
-        [ Test.test
-              "two-field user-defined optional helper round-trips"
-              (\_ ->
-                  case Decode.decodeString
-                           specDecoder
-                           "{\"a\":\"x\",\"b\":\"y\"}" of
+    [ Test.suite
+          "Json pipeline panic #372"
+          [ Test.test
+                "two-field user-defined optional helper round-trips"
+                (\_ ->
+                    case Decode.decodeString
+                             specDecoder
+                             "{\"a\":\"x\",\"b\":\"y\"}" of
 
-                      Ok spec ->
-                          Test.equal "x|y" (spec.a ++ "|" ++ spec.b)
+                        Ok spec ->
+                            Test.equal "x|y" (spec.a ++ "|" ++ spec.b)
 
-                      Err _ ->
-                          Test.isTrue False)
-        , Test.test
-              "missing field falls back to empty string"
-              (\_ ->
-                  case Decode.decodeString specDecoder "{\"a\":\"only-a\"}" of
+                        Err _ ->
+                            Test.isTrue False)
+          , Test.test
+                "missing field falls back to empty string"
+                (\_ ->
+                    case Decode.decodeString specDecoder "{\"a\":\"only-a\"}" of
 
-                      Ok spec ->
-                          Test.equal "only-a|" (spec.a ++ "|" ++ spec.b)
+                        Ok spec ->
+                            Test.equal "only-a|" (spec.a ++ "|" ++ spec.b)
 
-                      Err _ ->
-                          Test.isTrue False)
-        , Test.test
-              "three-field chain (curry depth 3) round-trips"
-              (\_ ->
-                  case Decode.decodeString
-                           tripleDecoder
-                           "{\"x\":\"1\",\"y\":\"2\",\"z\":\"3\"}" of
+                        Err _ ->
+                            Test.isTrue False)
+          , Test.test
+                "three-field chain (curry depth 3) round-trips"
+                (\_ ->
+                    case Decode.decodeString
+                             tripleDecoder
+                             "{\"x\":\"1\",\"y\":\"2\",\"z\":\"3\"}" of
 
-                      Ok triple ->
-                          Test.equal
-                              "1|2|3"
-                              (triple.x ++ "|" ++ triple.y ++ "|" ++ triple.z)
+                        Ok triple ->
+                            Test.equal
+                                "1|2|3"
+                                (triple.x ++ "|" ++ triple.y ++ "|" ++ triple.z)
 
-                      Err _ ->
-                          Test.isTrue False)
-        ]]
+                        Err _ ->
+                            Test.isTrue False)
+          ]
+    ]

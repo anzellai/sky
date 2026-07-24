@@ -33,17 +33,17 @@ viewCart model =
 
 viewSignInPrompt model =
     div
-        [tw [ textCenter, py20 ]]
-        [ div [Layout.emptyIconSm] [text "Cart"]
+        [ tw [ textCenter, py20 ] ]
+        [ div [ Layout.emptyIconSm ] [ text "Cart" ]
         , Html.h2
-              [tw [ text2xl, fontBold, mb2, textGray900 ]]
-              [text (Tr.t model.lang "cart.signinTitle")]
+              [ tw [ text2xl, fontBold, mb2, textGray900 ] ]
+              [ text (Tr.t model.lang "cart.signinTitle") ]
         , p
-              [tw [ textGray500, mb6 ]]
-              [text (Tr.t model.lang "cart.signinPrompt")]
+              [ tw [ textGray500, mb6 ] ]
+              [ text (Tr.t model.lang "cart.signinPrompt") ]
         , a
               [ href "/auth/signin", attribute "sky-nav" "", Layout.btnPrimary ]
-              [text (Tr.t model.lang "nav.signin")]
+              [ text (Tr.t model.lang "nav.signin") ]
         ]
 
 
@@ -54,8 +54,8 @@ viewCartContent model =
         div
             []
             [ Html.h1
-                  [tw [ text3xl, fontBold, mb2, textGray900 ]]
-                  [text (Tr.t lang "cart.title")]
+                  [ tw [ text3xl, fontBold, mb2, textGray900 ] ]
+                  [ text (Tr.t lang "cart.title") ]
             , if model.checkoutUrl != "" then
                   viewCheckoutRedirect model
 
@@ -66,26 +66,29 @@ viewCartContent model =
                   div
                       []
                       [ p
-                            [tw [ textGray500, mt1, mb6 ]]
-                            [text
-                                (String.fromInt (List.length model.cartItems)
-                                    ++ " items")]
+                            [ tw [ textGray500, mt1, mb6 ] ]
+                            [ text
+                                  (String.fromInt (List.length model.cartItems)
+                                      ++ " items")
+                            ]
                       , div
-                            [tw
-                                [ flex
-                                , flexCol
-                                , Responsive.lg flexRow
-                                , gap8
-                                , itemsStart
-                                ]]
-                            [ div [tw [flex1]] [viewCartItems model]
+                            [ tw
+                                  [ flex
+                                  , flexCol
+                                  , Responsive.lg flexRow
+                                  , gap8
+                                  , itemsStart
+                                  ]
+                            ]
+                            [ div [ tw [ flex1 ] ] [ viewCartItems model ]
                             , div
-                                  [tw
-                                      [ wFull
-                                      , Responsive.lg w96
-                                      , Responsive.lg shrink0
-                                      ]]
-                                  [viewCartSummary model]
+                                  [ tw
+                                        [ wFull
+                                        , Responsive.lg w96
+                                        , Responsive.lg shrink0
+                                        ]
+                                  ]
+                                  [ viewCartSummary model ]
                             ]
                       ]
             ]
@@ -93,39 +96,39 @@ viewCartContent model =
 
 viewCheckoutRedirect model =
     div
-        [tw [ textCenter, py16 ]]
-        [ div [class "spinner"] []
+        [ tw [ textCenter, py16 ] ]
+        [ div [ class "spinner" ] []
         , p
-              [tw [ textLg, fontMedium, mb2, textGray900 ]]
-              [text (Tr.t model.lang "cart.redirecting")]
+              [ tw [ textLg, fontMedium, mb2, textGray900 ] ]
+              [ text (Tr.t model.lang "cart.redirecting") ]
         , p
-              [tw [ textSm, textGray500, mb6 ]]
-              [text (Tr.t model.lang "cart.redirectHint")]
+              [ tw [ textSm, textGray500, mb6 ] ]
+              [ text (Tr.t model.lang "cart.redirectHint") ]
         , a
               [ href model.checkoutUrl, Layout.btnPrimary ]
-              [text (Tr.t model.lang "cart.goToPayment")]
-        , div [attribute "data-sky-redirect" model.checkoutUrl] []
+              [ text (Tr.t model.lang "cart.goToPayment") ]
+        , div [ attribute "data-sky-redirect" model.checkoutUrl ] []
         ]
 
 
 viewEmptyCart model =
     div
-        [tw [ textCenter, py20 ]]
-        [ div [Layout.emptyIcon] [text "~"]
+        [ tw [ textCenter, py20 ] ]
+        [ div [ Layout.emptyIcon ] [ text "~" ]
         , Html.h2
-              [tw [ textXl, fontSemibold, mb2, textGray900 ]]
-              [text (Tr.t model.lang "cart.empty")]
+              [ tw [ textXl, fontSemibold, mb2, textGray900 ] ]
+              [ text (Tr.t model.lang "cart.empty") ]
         , p
-              [tw [ textGray500, mb6 ]]
-              [text (Tr.t model.lang "cart.startShopping")]
+              [ tw [ textGray500, mb6 ] ]
+              [ text (Tr.t model.lang "cart.startShopping") ]
         , a
               [ href "/products", attribute "sky-nav" "", Layout.btnPrimary ]
-              [text (Tr.t model.lang "cart.continueShopping")]
+              [ text (Tr.t model.lang "cart.continueShopping") ]
         ]
 
 
 viewCartItems model =
-    div [Layout.card] (List.map (viewCartItem model) model.cartItems)
+    div [ Layout.card ] (List.map (viewCartItem model) model.cartItems)
 
 
 viewCartItem model item =
@@ -156,25 +159,25 @@ viewCartItem model item =
                     ""
     in
         div
-            [Layout.cartItem]
+            [ Layout.cartItem ]
             [ if thumb != "" then
                   img [ src thumb, alt title, Layout.cartThumb ]
 
               else
-                  div [Layout.cartThumbPlaceholder] [text "~"]
+                  div [ Layout.cartThumbPlaceholder ] [ text "~" ]
             , div
-                  [tw [flex1]]
+                  [ tw [ flex1 ] ]
                   [ Html.h3
-                        [tw [ fontMedium, textGray900, textSm ]]
-                        [text title]
+                        [ tw [ fontMedium, textGray900, textSm ] ]
+                        [ text title ]
                   , div
-                        [tw [ textXs, textGray500, mt1 ]]
-                        [text (pricing.original ++ " each")]
+                        [ tw [ textXs, textGray500, mt1 ] ]
+                        [ text (pricing.original ++ " each") ]
                   ]
             , div
-                  [tw [ flex, itemsCenter, gap3 ]]
+                  [ tw [ flex, itemsCenter, gap3 ] ]
                   [ div
-                        [tw [ flex, itemsCenter, gap1 ]]
+                        [ tw [ flex, itemsCenter, gap1 ] ]
                         [ button
                               [ onClick
                                     (UpdateCartItemQty
@@ -182,10 +185,10 @@ viewCartItem model item =
                                         (String.fromInt (qty - 1)))
                               , Layout.qtyBtn
                               ]
-                              [text "-"]
+                              [ text "-" ]
                         , span
-                              [tw [ w8, textCenter, fontSemibold, textSm ]]
-                              [text (String.fromInt qty)]
+                              [ tw [ w8, textCenter, fontSemibold, textSm ] ]
+                              [ text (String.fromInt qty) ]
                         , button
                               [ onClick
                                     (UpdateCartItemQty
@@ -193,14 +196,14 @@ viewCartItem model item =
                                         (String.fromInt (qty + 1)))
                               , Layout.qtyBtn
                               ]
-                              [text "+"]
+                              [ text "+" ]
                         ]
                   , span
                         [ Layout.lineTotal, style "min-width:80px" ]
-                        [text lineTotal_]
+                        [ text lineTotal_ ]
                   , button
                         [ onClick (RemoveCartItem itemId), Layout.removeBtn ]
-                        [text (Tr.t model.lang "cart.remove")]
+                        [ text (Tr.t model.lang "cart.remove") ]
                   ]
             ]
 
@@ -230,11 +233,13 @@ viewCartSummary model =
             , style "top:80px"
             ]
             [ Html.h3
-                  [tw [ fontSemibold, textGray900, mb4 ]]
-                  [text (Tr.t lang "cart.orderSummary")]
+                  [ tw [ fontSemibold, textGray900, mb4 ] ]
+                  [ text (Tr.t lang "cart.orderSummary") ]
             , div
-                  [tw [mb4]]
-                  [ label [Layout.formLabel_] [text (Tr.t lang "cart.remarks")]
+                  [ tw [ mb4 ] ]
+                  [ label
+                        [ Layout.formLabel_ ]
+                        [ text (Tr.t lang "cart.remarks") ]
                   , textarea
                         [ value model.cartRemarks
                         , onInput UpdateRemarks
@@ -245,46 +250,51 @@ viewCartSummary model =
                         []
                   ]
             , div
-                  [tw [ borderT, borderGray200, mt4, pt4 ]]
+                  [ tw [ borderT, borderGray200, mt4, pt4 ] ]
                   [ div
-                        [tw [ flex, justifyBetween, itemsCenter, mb1 ]]
+                        [ tw [ flex, justifyBetween, itemsCenter, mb1 ] ]
                         [ span
-                              [tw [ textSm, textGray500 ]]
-                              [text (Tr.t lang "cart.subtotal")]
+                              [ tw [ textSm, textGray500 ] ]
+                              [ text (Tr.t lang "cart.subtotal") ]
                         , span
-                              [tw [fontMedium]]
-                              [text (Money.formatPrice totalAmount totalCurrency)]
+                              [ tw [ fontMedium ] ]
+                              [ text
+                                    (Money.formatPrice totalAmount totalCurrency)
+                              ]
                         ]
                   , div
-                        [tw [ flex, justifyBetween, itemsCenter, mb1 ]]
+                        [ tw [ flex, justifyBetween, itemsCenter, mb1 ] ]
                         [ span
-                              [tw [ textSm, textGray500 ]]
-                              [text (Tr.t lang "cart.shipping")]
+                              [ tw [ textSm, textGray500 ] ]
+                              [ text (Tr.t lang "cart.shipping") ]
                         , span
-                              [tw [ textSm, textGreen600, fontMedium ]]
-                              [text (Tr.t lang "cart.shippingFree")]
+                              [ tw [ textSm, textGreen600, fontMedium ] ]
+                              [ text (Tr.t lang "cart.shippingFree") ]
                         ]
                   , div
-                        [tw
-                            [ flex
-                            , justifyBetween
-                            , itemsCenter
-                            , mt4
-                            , pt4
-                            , borderT
-                            , borderGray200
-                            ]]
+                        [ tw
+                              [ flex
+                              , justifyBetween
+                              , itemsCenter
+                              , mt4
+                              , pt4
+                              , borderT
+                              , borderGray200
+                              ]
+                        ]
                         [ span
-                              [tw [ textLg, fontBold, textGray900 ]]
-                              [text (Tr.t lang "cart.total")]
+                              [ tw [ textLg, fontBold, textGray900 ] ]
+                              [ text (Tr.t lang "cart.total") ]
                         , span
-                              [tw [ text2xl, fontBold, textGray900 ]]
-                              [text (Money.formatPrice totalAmount totalCurrency)]
+                              [ tw [ text2xl, fontBold, textGray900 ] ]
+                              [ text
+                                    (Money.formatPrice totalAmount totalCurrency)
+                              ]
                         ]
                   ]
             , button
                   [ onClick StartCheckout, Layout.btnCheckout ]
-                  [text (Tr.t lang "cart.checkout")]
+                  [ text (Tr.t lang "cart.checkout") ]
             , a
                   [ href "/products"
                   , attribute "sky-nav" ""
@@ -298,5 +308,5 @@ viewCartSummary model =
                         , hover textBlue700
                         ]
                   ]
-                  [text (Tr.t lang "cart.continueShopping")]
+                  [ text (Tr.t lang "cart.continueShopping") ]
             ]

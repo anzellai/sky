@@ -1,0 +1,19 @@
+-- defect: a record LITERAL bound directly to a CLOSED annotated type carries an
+--         EXTRA field the type does not declare — `p : P = { name, age }` where
+--         `P = {name}`. Used to be accepted and the extra field silently
+--         dropped. The record-literal-vs-closed strictness now rejects.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias P =
+    { name : String }
+
+p : P
+p =
+    { name = "a", age = 5 }
+
+main =
+    println p.name

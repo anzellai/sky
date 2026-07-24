@@ -314,7 +314,7 @@ replayMovesLoop moves board history =
                                     replayMovesLoop
                                         rest
                                         newBoard
-                                        (history ++ [algebraic])
+                                        (history ++ [ algebraic ])
 
                             Nothing ->
                                 let

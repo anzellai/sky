@@ -4,10 +4,18 @@
 It's used by the Helix, Zed, and VS Code integrations, and any
 LSP-aware editor.
 
-**v0.15 contract (LSP 100 %)**: every USED symbol class has hover +
-goto-definition coverage. 17 cabal-fenced end-to-end tests via headless
-Neovim driver (`scripts/lsp-test-nvim.{lua,sh}`, wired through
-`Sky.Lsp.NvimDriverSpec`):
+The server runs **inline** — `sky lsp` is served by the single `sky`
+binary, so there is no separate `sky-lsp` process to install or locate.
+Point your editor at `command = "sky", args = ["lsp"]` and make sure
+`sky` is on the editor's `PATH` (GUI editors often don't inherit your
+shell `PATH` — use an absolute path or launch the editor from a shell
+if hover/completion don't appear). The stdlib is resolved from the
+compiler's embedded copy, so hover, completion, and go-to work in any
+project — not only inside the compiler repo.
+
+**LSP contract (100 % coverage)**: every USED symbol class has hover +
+goto-definition coverage. 17 end-to-end tests via the headless
+Neovim gate driver (`scripts/lsp-test-nvim.{lua,sh}`):
 
 - hover-task-run, hover-field, hover-type-name
 - hover-function-use, hover-ctor-use, hover-lambda-param,
@@ -18,13 +26,14 @@ Neovim driver (`scripts/lsp-test-nvim.{lua,sh}`, wired through
   completion-let-binding
 
 Plus 3 huge-FFI tests against `examples/13-skyshop` (Stripe SDK +
-Firebase) via `scripts/lsp-test-skyshop.lua`. The driver runs as part
-of `cabal test`; pending if `nvim` isn't on PATH (so CI environments
-without headless Neovim setup stay green).
+Firebase) via `scripts/lsp-test-skyshop.lua`. The driver runs via the
+`scripts/lsp-test-nvim.sh` gate (alongside `cargo test`); skipped if
+`nvim` isn't on PATH (so CI environments without headless Neovim
+setup stay green).
 
 ## Capabilities declared
 
-From `serverCapabilities` in `src/Sky/Lsp/Server.hs`:
+From `serverCapabilities` in the Rust LSP crate (`rust/crates/sky-lsp`):
 
 | Capability | Provided | Notes |
 |------------|----------|-------|
@@ -55,7 +64,7 @@ The LSP **does NOT** index:
 - `.skycache/go/*.go` — generated Go FFI wrappers.
 - `.skycache/lowered/` — incremental cache.
 - `sky-out/` — compiled output.
-- `dist-newstyle/`, `node_modules/`, `legacy-*/`, `bootstrap/` — hard-coded skips.
+- `target/`, `node_modules/`, `legacy-*/`, `bootstrap/` — hard-coded skips.
 
 ## Editor configuration
 

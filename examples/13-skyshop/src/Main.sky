@@ -39,7 +39,7 @@ import Page.Static as Static
 init : a -> ( Model, Cmd Msg )
 init req =
     let
-    -- Set checkout info on the ORDER (not the cart)
+        -- Set checkout info on the ORDER (not the cart)
         _ = Db.initDb ()
         _ = println "[APP] SkyShop initialised"
         products = Products.listProducts
@@ -76,7 +76,7 @@ init req =
 -- ══════════════════════════════════════════════════════
 refreshProducts model =
     let
-    -- Update user profile with shipping address
+        -- Update user profile with shipping address
         products =
             if model.search != "" || model.categoryFilter != "all" then
                 Products.searchProducts
@@ -96,9 +96,9 @@ refreshCart model =
 
         Just user ->
             let
-            -- ══════════════════════════════════════════════════════
-            -- UPDATE
-            -- ══════════════════════════════════════════════════════
+                -- ══════════════════════════════════════════════════════
+                -- UPDATE
+                -- ══════════════════════════════════════════════════════
                 userId = Db.getField "id" user
                 -- Save shipping/customer details to order
             in
@@ -154,10 +154,10 @@ loadProductDetail model productId =
                 }
 
         Err e ->
-        -- Boundary failure during checkout verification is
-        -- serious; we surface the operator log AND fall
-        -- through to "order not found" UX. A real shop
-        -- would alert ops here (PagerDuty / Sentry).
+            -- Boundary failure during checkout verification is
+            -- serious; we surface the operator log AND fall
+            -- through to "order not found" UX. A real shop
+            -- would alert ops here (PagerDuty / Sentry).
             { model | product = Nothing
             , productImages = []
             , notification = "Couldn't load product: " ++ Error.toString e
@@ -414,7 +414,6 @@ handleStartCheckout model =
                                                     Cart.setCartState
                                                         orderId
                                                         "pending"
-                                                        -- Reset the active cart to fresh "ongoing"
                                                 userId =
                                                     Db.getField "id" user
                                                 _ = Cart.createCart userId
@@ -450,6 +449,7 @@ handleStartCheckout model =
 
         Nothing ->
             ( { model | page = AuthSignInPage }, Cmd.none )
+                                                        -- Reset the active cart to fresh "ongoing"
 
 
 handleVerifyPayment : String -> Model -> ( Model, Cmd Msg )
@@ -576,11 +576,6 @@ handleVerifyPayment orderId model =
                                                 Nothing ->
                                                     ()
                                         updatedOrder =
-                                        -- Re-fetch the order after marking paid. If the
-                                        -- DB call fails here we degrade gracefully (caller
-                                        -- still got the success path), but log so ops can
-                                        -- diagnose. A real shop should retry async via
-                                        -- Cmd.perform.
                                             case Cart.getOrder orderId of
 
                                                 Ok m ->
@@ -595,6 +590,11 @@ handleVerifyPayment orderId model =
                                                                            e)
                                                     in
                                                         Nothing
+                                        -- Re-fetch the order after marking paid. If the
+                                        -- DB call fails here we degrade gracefully (caller
+                                        -- still got the success path), but log so ops can
+                                        -- diagnose. A real shop should retry async via
+                                        -- Cmd.perform.
                                         orderItems =
                                             Cart.getOrderItems orderId
                                     in
@@ -914,7 +914,6 @@ handleTick model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-    -- Admin-only messages
 
         Navigate page ->
             handleNavigate page model
@@ -1038,6 +1037,7 @@ update msg model =
 
         NoOp ->
             ( model, Cmd.none )
+    -- Admin-only messages
 
 
 -- ══════════════════════════════════════════════════════
@@ -1120,7 +1120,6 @@ guard msg model =
 
         SubmitProduct ->
             requireAdmin model
-            -- Auth-required messages
 
         DeleteProduct _ ->
             requireAdmin model
@@ -1136,7 +1135,6 @@ guard msg model =
 
         AddToCart _ ->
             requireAuth model
-            -- Public messages (no auth needed)
 
         StartCheckout ->
             requireAuth model
@@ -1146,6 +1144,8 @@ guard msg model =
 
         _ ->
             Ok ()
+            -- Auth-required messages
+            -- Public messages (no auth needed)
 
 
 requireAuth model =

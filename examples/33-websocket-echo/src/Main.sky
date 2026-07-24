@@ -34,8 +34,6 @@ import Std.Log as Log
 --   ./sky-out/app &
 --   websocat -n1 ws://localhost:8033/ws <<<'hello'
 --   ⇒ echo: hello
-
-
 -- | Landing page — a tiny HTML snippet so the verify gate can hit
 -- `/` for a sanity 200.
 handleRoot : Request -> Task Error Response
@@ -59,14 +57,13 @@ frame you send will come back prefixed with <code>echo: </code>.</p>
 -- side ends the loop cleanly.
 handleWs : Request -> Task Error Response
 handleWs req =
-    Ws.upgrade req
-        (Ws.defaultCfg
-            |> Ws.withOnConnect onConnect
+    Ws.upgrade
+        req
+        (Ws.defaultCfg |> Ws.withOnConnect onConnect
             |> Ws.withOnMessage onMessage
             |> Ws.withOnClose onClose
             |> Ws.withOnError onError
-            |> Ws.withOriginPatterns [ "*" ]
-        )
+            |> Ws.withOriginPatterns [ "*" ])
 
 
 onConnect : Ws.WebSocketServer -> Task Error ()
@@ -77,10 +74,9 @@ onConnect _ =
 onMessage : Ws.WebSocketServer -> String -> Task Error ()
 onMessage sock msg =
     let
-        _ =
-            Log.println ("[ws] received: " ++ msg)
+        _ = Log.println ("[ws] received: " ++ msg)
     in
-    Ws.sendToClient sock ("echo: " ++ msg)
+        Ws.sendToClient sock ("echo: " ++ msg)
 
 
 onClose : Ws.WebSocketServer -> Task Error ()
@@ -95,7 +91,4 @@ onError _ _ =
 
 main : Task Error ()
 main =
-    Server.listen 8033
-        [ Server.get "/" handleRoot
-        , Server.get "/ws" handleWs
-        ]
+    Server.listen 8033 [ Server.get "/" handleRoot, Server.get "/ws" handleWs ]

@@ -1,4 +1,4 @@
-# Known limitations (v0.17.0)
+# Known limitations (v0.18.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /
@@ -87,13 +87,6 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
   work per CLAUDE.md §0.2 N-strikes circuit-breaker (3 prior swap
   attempts produced regressions — requires re-classification before a
   4th attempt). Deferred to v0.17.x patches or v0.18.0.
-
-* **`scopeStateRef` full IORef deletion.** The IORef carries a
-  machine-verified bracket-scoped + monotonic-accumulating contract
-  (Compile.hs:496-595, audited by `Sky.Build.ScopeStateRefAuditSpec`),
-  so it's sound at HEAD. Full deletion via Reader-monad threading
-  through every emission helper is multi-session structural work,
-  deferred to v0.18.0.
 
 ## What was closed in v0.17.0
 

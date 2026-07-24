@@ -58,7 +58,7 @@ executeWhitePart2 from to algebraic newBoard captured model =
                 ("saveMove White " ++ algebraic)
                 (Games.saveMove model.gameId moveNum from to algebraic "White")
         newCaptured = appendCaptured captured model.capturedByWhite
-        newHistory = model.moveHistory ++ [algebraic]
+        newHistory = model.moveHistory ++ [ algebraic ]
     in
         buildWhiteUpdate from to newBoard newEp newCaptured newHistory model
 
@@ -164,7 +164,7 @@ doBlackPart2 from to algebraic newBoard captured model =
                 ("saveMove Black " ++ algebraic)
                 (Games.saveMove model.gameId moveNum from to algebraic "Black")
         newCaptured = appendCaptured captured model.capturedByBlack
-        newHistory = model.moveHistory ++ [algebraic]
+        newHistory = model.moveHistory ++ [ algebraic ]
     in
         buildBlackUpdate from to newBoard newEp newCaptured newHistory model
 
@@ -224,7 +224,7 @@ appendCaptured captured existing =
     case captured of
 
         Just sym ->
-            existing ++ [sym]
+            existing ++ [ sym ]
 
         Nothing ->
             existing

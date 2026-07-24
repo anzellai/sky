@@ -31,7 +31,7 @@ update msg model =
                           , cartFlash = announcement
                           , recentTopic = announcement
                           }
-                        , Cmd.batch [Cmd.publish "cart" payload]
+                        , Cmd.batch [ Cmd.publish "cart" payload ]
                         )
 
         RemoveFromCart productId ->
@@ -114,12 +114,13 @@ addOrBump product items =
 
     else
         items
-            ++ [{ productId = product.id
-               , slug = product.slug
-               , name = product.name
-               , unitPriceCents = product.priceCents
-               , qty = 1
-               }]
+            ++ [ { productId = product.id
+                 , slug = product.slug
+                 , name = product.name
+                 , unitPriceCents = product.priceCents
+                 , qty = 1
+                 }
+               ]
 
 
 -- "12.50" → 1250 cents. Anything unparseable → 0 (treated as "no

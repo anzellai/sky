@@ -57,6 +57,7 @@ main =
 
         Err e ->
             let
-                _ = println ("Failed to create Fyne app: " ++ errorToString e)
+                _ =
+                    println ("Failed to create Fyne app: " ++ errorToString e)
             in
                 ()

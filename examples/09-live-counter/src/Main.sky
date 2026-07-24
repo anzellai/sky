@@ -99,17 +99,17 @@ view model =
         []
         [ styleNode [] pageStyles
         , div
-              [class "app"]
+              [ class "app" ]
               [ nav
-                    [class "navbar"]
+                    [ class "navbar" ]
                     [ button
                           [ onClick (Navigate CounterPage), class "nav-btn" ]
-                          [text "Counter"]
+                          [ text "Counter" ]
                     , button
                           [ onClick (Navigate AboutPage), class "nav-btn" ]
-                          [text "About"]
+                          [ text "About" ]
                     ]
-              , div [class "content"] [viewPage model]
+              , div [ class "content" ] [ viewPage model ]
               ]
         ]
 
@@ -127,42 +127,49 @@ viewPage model =
 
 viewCounter model =
     div
-        [class "counter"]
-        [ h1 [] [text "Sky.Live Counter"]
+        [ class "counter" ]
+        [ h1 [] [ text "Sky.Live Counter" ]
         , div
-              [class "count"]
-              [span [class "count-value"] [text (String.fromInt model.count)]]
+              [ class "count" ]
+              [ span
+                    [ class "count-value" ]
+                    [ text (String.fromInt model.count) ]
+              ]
         , div
-              [class "buttons"]
-              [ button [ onClick Decrement, class "btn" ] [text "-"]
+              [ class "buttons" ]
+              [ button [ onClick Decrement, class "btn" ] [ text "-" ]
               , button
                     [ onClick Reset, class "btn btn-secondary" ]
-                    [text "Reset"]
-              , button [ onClick Increment, class "btn" ] [text "+"]
+                    [ text "Reset" ]
+              , button [ onClick Increment, class "btn" ] [ text "+" ]
               ]
         , p
-              [class "hint"]
-              [text
-                  "Counter auto-increments every second via server-push (SSE subscription)."]
+              [ class "hint" ]
+              [ text
+                    "Counter auto-increments every second via server-push (SSE subscription)."
+              ]
         ]
 
 
 viewAbout =
     div
-        [class "about"]
-        [ h1 [] [text "About Sky.Live"]
+        [ class "about" ]
+        [ h1 [] [ text "About Sky.Live" ]
         , p
               []
-              [text
-                  "This is a Sky.Live application -- an HTTP-first, server-driven UI."]
+              [ text
+                    "This is a Sky.Live application -- an HTTP-first, server-driven UI."
+              ]
         , p
               []
-              [text
-                  "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."]
+              [ text
+                    "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."
+              ]
         , p
               []
-              [text
-                  "The counter auto-increments via SSE subscriptions -- navigate to About to stop it!"]
+              [ text
+                    "The counter auto-increments via SSE subscriptions -- navigate to About to stop it!"
+              ]
         ]
 
 
@@ -170,10 +177,7 @@ pageStyles =
     stylesheet
         [ rule
               "*, *::before, *::after"
-              [ property "box-sizing" "border-box"
-              , margin zero
-              , padding zero
-              ]
+              [ property "box-sizing" "border-box", margin zero, padding zero ]
         , rule
               "body"
               [ fontFamily
@@ -183,10 +187,7 @@ pageStyles =
               ]
         , rule
               ".app"
-              [ maxWidth (px 600)
-              , margin2 zero auto
-              , padding (rem 2.0)
-              ]
+              [ maxWidth (px 600), margin2 zero auto, padding (rem 2.0) ]
         , rule
               ".navbar"
               [ display Flex
@@ -205,12 +206,12 @@ pageStyles =
               , cursor Pointer
               , fontSize (rem 0.9)
               ]
-        , rule ".nav-btn:hover" [property "background" "#f0f0f0"]
-        , rule ".counter" [textAlign AlignCenter]
+        , rule ".nav-btn:hover" [ property "background" "#f0f0f0" ]
+        , rule ".counter" [ textAlign AlignCenter ]
         , rule
               ".counter h1"
               [ property "margin-bottom" "2rem", fontSize (rem 1.5) ]
-        , rule ".count" [margin2 (rem 2.0) zero]
+        , rule ".count" [ margin2 (rem 2.0) zero ]
         , rule
               ".count-value"
               [ fontSize (rem 4.0), fontWeight Bold, color (hex "2563eb") ]
@@ -233,17 +234,17 @@ pageStyles =
               , cursor Pointer
               , property "min-width" "60px"
               ]
-        , rule ".btn:hover" [property "background" "#1d4ed8"]
-        , rule ".btn:active" [transform "scale(0.95)"]
-        , rule ".btn-secondary" [property "background" "#6b7280"]
-        , rule ".btn-secondary:hover" [property "background" "#4b5563"]
+        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+        , rule ".btn:active" [ transform "scale(0.95)" ]
+        , rule ".btn-secondary" [ property "background" "#6b7280" ]
+        , rule ".btn-secondary:hover" [ property "background" "#4b5563" ]
         , rule
               ".hint"
               [ color (hex "888")
               , fontSize (rem 0.85)
               , property "margin-top" "2rem"
               ]
-        , rule ".about" [lineHeight (num 1.8)]
-        , rule ".about h1" [property "margin-bottom" "1rem"]
-        , rule ".about p" [property "margin-bottom" "1rem"]
+        , rule ".about" [ lineHeight (num 1.8) ]
+        , rule ".about h1" [ property "margin-bottom" "1rem" ]
+        , rule ".about p" [ property "margin-bottom" "1rem" ]
         ]

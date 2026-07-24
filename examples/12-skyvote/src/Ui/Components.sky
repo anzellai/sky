@@ -1,7 +1,8 @@
+module Ui.Components exposing (badge, statusBadge, ideaCard, statCard, emptyState)
+
 -- ======================================================
 -- BADGES
 -- ======================================================
-module Ui.Components exposing (badge, statusBadge, ideaCard, statCard, emptyState)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
@@ -13,7 +14,7 @@ import Lib.Ideas as Ideas
 
 
 badge label badgeClass =
-    span [class ("badge " ++ badgeClass)] [text label]
+    span [ class ("badge " ++ badgeClass) ] [ text label ]
 
 
 statusBadge status =
@@ -52,9 +53,9 @@ categoryBadge category =
 -- ======================================================
 statCard label value =
     div
-        [class "stat-card"]
-        [ div [class "stat-value"] [text value]
-        , div [class "stat-label"] [text label]
+        [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text value ]
+        , div [ class "stat-label" ] [ text label ]
         ]
 
 
@@ -62,7 +63,7 @@ statCard label value =
 -- EMPTY STATE
 -- ======================================================
 emptyState message =
-    div [class "empty-state"] [p [] [text message]]
+    div [ class "empty-state" ] [ p [] [ text message ] ]
 
 
 -- ======================================================
@@ -84,32 +85,34 @@ ideaCard idea userId =
                 Ideas.hasVoted ideaId userId
     in
         div
-            [class "idea-card"]
+            [ class "idea-card" ]
             [ div
                   []
-                  [button
-                      [ onClick (ToggleVote ideaId), class "vote-btn" ]
-                      [ span [class "vote-count"] [text voteCount]
-                      , span [class "vote-label"] [text "votes"]
-                      ]]
+                  [ button
+                        [ onClick (ToggleVote ideaId), class "vote-btn" ]
+                        [ span [ class "vote-count" ] [ text voteCount ]
+                        , span [ class "vote-label" ] [ text "votes" ]
+                        ]
+                  ]
             , div
-                  [class "idea-content"]
+                  [ class "idea-content" ]
                   [ div
                         []
-                        [button
-                            [ onClick (ViewIdea ideaId)
-                            , class "idea-title-btn"
-                            ]
-                            [text (Db.getField "title" idea)]]
+                        [ button
+                              [ onClick (ViewIdea ideaId)
+                              , class "idea-title-btn"
+                              ]
+                              [ text (Db.getField "title" idea) ]
+                        ]
                   , p
-                        [class "idea-desc"]
-                        [text (Db.getField "description" idea)]
+                        [ class "idea-desc" ]
+                        [ text (Db.getField "description" idea) ]
                   , div
-                        [class "idea-meta"]
+                        [ class "idea-meta" ]
                         [ categoryBadge category
                         , statusBadge status
-                        , span [] [text ("by " ++ authorName)]
-                        , span [] [text (commentCount ++ " comments")]
+                        , span [] [ text ("by " ++ authorName) ]
+                        , span [] [ text (commentCount ++ " comments") ]
                         ]
                   ]
             ]

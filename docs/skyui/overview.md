@@ -1,14 +1,10 @@
 # Std.Ui overview
 
-> **v0.15 state**: type-directed lowering across callback fields,
-> record-field inits, list elements, and call args; Go generics on
-> parametric record aliases. The codegen pain in **Limitation #18**
-> (helper params with concrete-Msg `(String -> Msg)` previously
-> mono-mised to `func(string) any`) is **closed in v0.15** — extract
-> helpers freely. Whole-program Sky DCE prunes unused FFI bindings.
-> LSP 100 % coverage; runtime verification across all 27 examples.
-> See [`../compiler/journey.md`](../compiler/journey.md) for the
-> changelog.
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
+> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
 **A typed, no-CSS layout DSL for Sky.Live.** Build a UI from typed primitives (`el`, `row`, `column`, `paragraph`, `textColumn`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — Std.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. No CSS files. No template languages. No client framework.

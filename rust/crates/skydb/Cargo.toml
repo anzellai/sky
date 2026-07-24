@@ -1,0 +1,34 @@
+[package]
+name = "skydb"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The one place "the whole compiler" is assembled: deps on every crate above
+# (doc 02). No `#![forbid(unsafe_code)]` — the salsa proc-macros generate code.
+base = { path = "../base" }
+diagnostics = { path = "../diagnostics" }
+syntax = { path = "../syntax" }
+hir = { path = "../hir" }
+ty = { path = "../ty" }
+# Stage E (doc 01 bottom-of-DAG): the `go_program` tracked query closes the DAG
+# below `infer` by driving `lower` + `codegen` through salsa. `lower` no longer
+# depends on `skydb` (its dead Cargo edge was removed), so this direction is
+# acyclic.
+lower = { path = "../lower" }
+codegen = { path = "../codegen" }
+salsa.workspace = true
+
+# Integration tests link only against this crate + dev-deps (not the crate's
+# regular deps), so the incremental-correctness harness (`tests/incremental.rs`)
+# re-declares the types it names directly.
+[dev-dependencies]
+base = { path = "../base" }
+hir = { path = "../hir" }
+ty = { path = "../ty" }
+# The Stage-E harness builds a `BuildConfig` from a `lower::LowerConfig`.
+lower = { path = "../lower" }
+salsa.workspace = true

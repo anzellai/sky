@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -169,6 +170,13 @@ func Set_toList(set any) any {
 	for _, v := range s.items {
 		out = append(out, v)
 	}
+	// A Go map iterates in randomised order, so Set.toList — and union /
+	// intersect / diff / fromList, all observed THROUGH toList — returned a
+	// non-deterministic order run-to-run. Elm's Set is ordered; sort by the
+	// element's natural order via the shared comparator. Set keys are
+	// `comparable` by Sky's type system, so cmp never hits its type-mismatch
+	// panic for a well-typed Set.
+	sort.SliceStable(out, func(i, j int) bool { return cmp(out[i], out[j]) < 0 })
 	return out
 }
 
@@ -350,21 +358,62 @@ func JsonEnc_list(args ...any) any {
 }
 
 // object: takes a list of tuples (key, JsonValue)
+// jsonOrderedObject preserves Json.Encode.object's insertion order. Go's
+// `json.Marshal` sorts map keys alphabetically, but Elm's Json.Encode.object
+// emits pairs in declaration order (and callers rely on it — signing
+// payloads, deterministic snapshots, human-readable configs). Implements
+// json.Marshaler so `json.Marshal` / `MarshalIndent` (via re-indent) keep
+// the order.
+type jsonOrderedObject struct {
+	keys []string
+	vals []any
+}
+
+func (o jsonOrderedObject) MarshalJSON() ([]byte, error) {
+	out := []byte{'{'}
+	for i, k := range o.keys {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		kb, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, kb...)
+		out = append(out, ':')
+		vb, err := json.Marshal(o.vals[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vb...)
+	}
+	out = append(out, '}')
+	return out, nil
+}
+
 func JsonEnc_object(pairs any) any {
-	m := map[string]any{}
+	obj := jsonOrderedObject{}
 	for _, p := range asList(pairs) {
-		// Expect SkyTuple2 { V0: string, V1: JsonValue }
-		if t, ok := p.(SkyTuple2); ok {
-			key := fmt.Sprintf("%v", t.V0)
-			val := t.V1
-			if jv, ok := val.(JsonValue); ok {
-				m[key] = jv.raw
-			} else {
-				m[key] = val
-			}
+		// Expect a (String, JsonValue) tuple. Typed-tuple codegen (v0.17+)
+		// emits a distinct nominal `rt.T2[string, JsonValue]` here, which the
+		// prior `.(SkyTuple2)` assertion silently skipped — yielding an empty
+		// `{}` object. Route through AsTuple2 (fast-paths SkyTuple2, else
+		// reflect-reboxes a typed T2). A genuine non-tuple yields V0==nil,
+		// preserving the prior silent-skip; a real object key is never nil.
+		t := AsTuple2(p)
+		if t.V0 == nil {
+			continue
+		}
+		key := fmt.Sprintf("%v", t.V0)
+		val := t.V1
+		obj.keys = append(obj.keys, key)
+		if jv, ok := val.(JsonValue); ok {
+			obj.vals = append(obj.vals, jv.raw)
+		} else {
+			obj.vals = append(obj.vals, val)
 		}
 	}
-	return JsonValue{raw: m}
+	return JsonValue{raw: obj}
 }
 
 func JsonEnc_encode(indent any, v any) any {
@@ -529,6 +578,14 @@ func JsonDec_string() any {
 func JsonDec_int() any {
 	return JsonDecoder{run: func(v any) any {
 		if f, ok := v.(float64); ok {
+			// Reject a fractional number rather than silently truncating
+			// (Elm's Json.Decode.int semantics). Integral-valued floats
+			// (3.0, 1e2) still decode — JSON has no int/float distinction,
+			// so `3` arrives as float64(3). float64(int64(f)) round-trips
+			// exactly iff f has no fractional part and fits the int range.
+			if f != float64(int64(f)) {
+				return Err[any, any](ErrDecode("expected Int, got a fractional number"))
+			}
 			return Ok[any, any](int(f))
 		}
 		return Err[any, any](ErrDecode("expected Int, got " + jsonValueKind(v)))

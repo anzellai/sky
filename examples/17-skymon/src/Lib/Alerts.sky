@@ -44,7 +44,7 @@ deleteAlert alertId =
             Database.execOrLog
                 "Alerts.deleteAlert"
                 "DELETE FROM alerts WHERE id = ?"
-                [alertId]
+                [ alertId ]
     in
         ()
 
@@ -62,7 +62,7 @@ getAlertsForMetric metricId =
     Database.queryOrLog
         "Alerts.getAlertsForMetric"
         "SELECT * FROM alerts WHERE metric_id = ? ORDER BY created_at DESC"
-        [metricId]
+        [ metricId ]
 
 
 -- Check all alerts against current metric values and fire notifications
@@ -176,8 +176,6 @@ fireAlert alert currentValue =
         _ = println ("[ALERT] " ++ message)
     in
         if notifyType == "webhook" then
-        -- Centralised delivery logging so every notify variant uses the same
-        -- "[ALERT ERROR] kind target: typedErr" format.
             logFireResult
                 "webhook"
                 notifyTarget
@@ -188,6 +186,8 @@ fireAlert alert currentValue =
 
         else
             ()
+        -- Centralised delivery logging so every notify variant uses the same
+        -- "[ALERT ERROR] kind target: typedErr" format.
 
 
 logFireResult : String -> String -> Result Error () -> ()
@@ -224,7 +224,7 @@ getAlertHistory limit =
     Database.queryOrLog
         "Alerts.getAlertHistory"
         "SELECT * FROM alert_history ORDER BY fired_at DESC LIMIT ?"
-        [String.fromInt limit]
+        [ String.fromInt limit ]
 
 
 getAlertHistoryForMetric : String -> Int -> List (Dict String String)

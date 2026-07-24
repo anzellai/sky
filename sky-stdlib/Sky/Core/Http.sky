@@ -5,17 +5,24 @@
 -- declared Sky shape — apps may annotate `resp : HttpResponse`
 -- and read `.status` / `.body` / `.headers` directly.
 module Sky.Core.Http exposing
-    ( get, post
-    , HttpRequest, HttpResponse, request
-    , defaultRequest, withMethod, withUrl, withBody, withHeader
-    , withTimeout, withFollowRedirects, withMaxRedirects
+    ( get
+    , post
+    , HttpRequest
+    , HttpResponse
+    , request
+    , defaultRequest
+    , withMethod
+    , withUrl
+    , withBody
+    , withHeader
+    , withTimeout
+    , withFollowRedirects
+    , withMaxRedirects
     , parseQuery
     )
 
-
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
-
 
 -- | The shape of an HTTP response.  Returned by every Sky.Core.Http
 -- call (`get`, `post`, `request`).  Maps 1:1 to `rt.HttpResponse`
@@ -30,14 +37,15 @@ type alias HttpResponse =
 
 -- | `get url` — issue a GET request.
 get : String -> Task Error HttpResponse
-get = Ffi.kernel "Http_get"
+get =
+    Ffi.kernel "Http_get"
 
 
 -- | `post url body` — issue a POST request with the given body
 -- (raw bytes).
 post : String -> String -> Task Error HttpResponse
-post = Ffi.kernel "Http_post"
-
+post =
+    Ffi.kernel "Http_post"
 
 -- | A full HTTP request — method, URL, body, headers, timeout,
 -- and redirect controls.  Build with `defaultRequest` + builder
@@ -64,12 +72,11 @@ type alias HttpRequest =
 -- the method, headers, body, and timeout.  Headers are sent as-is
 -- (case-preserved); use the builders below for the common shape.
 request : HttpRequest -> Task Error HttpResponse
-request = Ffi.kernel "Http_request"
+request =
+    Ffi.kernel "Http_request"
 
 
 -- ─── HttpRequest builders (zero-cost record updates) ──────────────
-
-
 -- | `defaultRequest url` — a GET to `url`, no headers, no body,
 -- 30 s timeout, follow up to 10 redirects.  Compose with the
 -- builders below.
@@ -139,4 +146,5 @@ withMaxRedirects n req =
 -- splitting. Repeated keys keep the first value; malformed
 -- input yields a best-effort partial result.
 parseQuery : String -> Dict String String
-parseQuery = Ffi.kernel "Http_parseQuery"
+parseQuery =
+    Ffi.kernel "Http_parseQuery"

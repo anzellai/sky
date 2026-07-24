@@ -3,6 +3,7 @@ module CompositeGenericsTest exposing (main, tests)
 -- Sky.Test assertions over the composite's pipeline. Touches every
 -- module in src/ so a regression anywhere in the State / Decode /
 -- Compute / Report chain shows up here.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -235,7 +236,7 @@ encodingSuite =
               "hex tags round-trip"
               (\_ ->
                   let
-                      encoded = Report.tagsAsHex ["salary"]
+                      encoded = Report.tagsAsHex [ "salary" ]
                   in
                       Test.isTrue (String.length encoded > 0))
         , Test.test

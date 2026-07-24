@@ -1,0 +1,11 @@
+-- defect: Maybe.map applied element mismatch — `Maybe.map String.length (Just 5)`
+--         needs `Just 5 : Maybe String` for `String.length : String -> Int`, but
+--         `5 : Int`. F8 precise `Maybe.map : (a -> b) -> Maybe a -> Maybe b`
+--         rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (Maybe.withDefault 0 (Maybe.map String.length (Just 5))))

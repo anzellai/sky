@@ -1,0 +1,1760 @@
+{
+  "pkg": "github.com/google/uuid",
+  "name": "uuid",
+  "functions": [
+    {
+      "name": "ClockSequence",
+      "params": [],
+      "results": [
+        {
+          "type": "int"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "DisableRandPool",
+      "params": [],
+      "results": [],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "DomainString",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Domain",
+      "methodName": "String"
+    },
+    {
+      "name": "EnableRandPool",
+      "params": [],
+      "results": [],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "FromBytes",
+      "params": [
+        {
+          "name": "b",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "uuid",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "Future",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "GetTime",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Time",
+          "skyType": "int64"
+        },
+        {
+          "type": "uint16"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "Group",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "Invalid",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "IsInvalidLengthError",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "Max",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetMax",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "Max",
+      "isPkgVar": true
+    },
+    {
+      "name": "Microsoft",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "Must",
+      "params": [
+        {
+          "name": "uuid",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "MustParse",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NameSpaceDNS",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceDNS",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceDNS",
+      "isPkgVar": true
+    },
+    {
+      "name": "NameSpaceOID",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceOID",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceOID",
+      "isPkgVar": true
+    },
+    {
+      "name": "NameSpaceURL",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceURL",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceURL",
+      "isPkgVar": true
+    },
+    {
+      "name": "NameSpaceX500",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceX500",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceX500",
+      "isPkgVar": true
+    },
+    {
+      "name": "New",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NewDCEGroup",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewDCEPerson",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewDCESecurity",
+      "params": [
+        {
+          "name": "domain",
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        },
+        {
+          "name": "id",
+          "type": "uint32"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewHash",
+      "params": [
+        {
+          "name": "h",
+          "type": "hash.Hash",
+          "skyTypeQualified": "Hash@hash"
+        },
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        },
+        {
+          "name": "version",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NewMD5",
+      "params": [
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NewRandom",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewRandomFromReader",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader",
+          "skyTypeQualified": "Reader@io"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewSHA1",
+      "params": [
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NewString",
+      "params": [],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NewUUID",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewV6",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewV7",
+      "params": [],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "NewV7FromReader",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader",
+          "skyTypeQualified": "Reader@io"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "Nil",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNil",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "Nil",
+      "isPkgVar": true
+    },
+    {
+      "name": "NodeID",
+      "params": [],
+      "results": [
+        {
+          "type": "[]byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NodeInterface",
+      "params": [],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NullUUIDScan",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "value",
+          "type": "interface{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Scan"
+    },
+    {
+      "name": "NullUUIDValue",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "database/sql/driver.Value",
+          "skyTypeQualified": "Value@database/sql/driver"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Value"
+    },
+    {
+      "name": "NullUUIDMarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "MarshalBinary"
+    },
+    {
+      "name": "NullUUIDUnmarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UnmarshalBinary"
+    },
+    {
+      "name": "NullUUIDMarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "MarshalText"
+    },
+    {
+      "name": "NullUUIDUnmarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UnmarshalText"
+    },
+    {
+      "name": "NullUUIDMarshalJSON",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "MarshalJSON"
+    },
+    {
+      "name": "NullUUIDUnmarshalJSON",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UnmarshalJSON"
+    },
+    {
+      "name": "NullUUIDUUID",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UUID",
+      "isField": true
+    },
+    {
+      "name": "NullUUIDSetUUID",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UUID",
+      "isFieldSet": true
+    },
+    {
+      "name": "NullUUIDValid",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Valid",
+      "isField": true
+    },
+    {
+      "name": "NullUUIDSetValid",
+      "params": [
+        {
+          "name": "value",
+          "type": "bool"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Valid",
+      "isFieldSet": true
+    },
+    {
+      "name": "NewNullUUID",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "isPkgVar": true
+    },
+    {
+      "name": "Org",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "Parse",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "ParseBytes",
+      "params": [
+        {
+          "name": "b",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "Person",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "RFC4122",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "Reserved",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "SetClockSequence",
+      "params": [
+        {
+          "name": "seq",
+          "type": "int"
+        }
+      ],
+      "results": [],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "SetNodeID",
+      "params": [
+        {
+          "name": "id",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "SetNodeInterface",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "SetRand",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader",
+          "skyTypeQualified": "Reader@io"
+        }
+      ],
+      "results": [],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "TimeUnixTime",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.Time",
+          "skyType": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "sec",
+          "type": "int64"
+        },
+        {
+          "name": "nsec",
+          "type": "int64"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Time",
+      "methodName": "UnixTime"
+    },
+    {
+      "name": "UUIDDomain",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Domain",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Domain"
+    },
+    {
+      "name": "UUIDID",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "uint32"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "ID"
+    },
+    {
+      "name": "UUIDMarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "MarshalText"
+    },
+    {
+      "name": "UUIDUnmarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.UUID",
+          "skyTypeQualified": "*UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "UnmarshalText"
+    },
+    {
+      "name": "UUIDMarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "MarshalBinary"
+    },
+    {
+      "name": "UUIDUnmarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.UUID",
+          "skyTypeQualified": "*UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "UnmarshalBinary"
+    },
+    {
+      "name": "UUIDNodeID",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "NodeID"
+    },
+    {
+      "name": "UUIDScan",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.UUID",
+          "skyTypeQualified": "*UUID@github.com/google/uuid"
+        },
+        {
+          "name": "src",
+          "type": "interface{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Scan"
+    },
+    {
+      "name": "UUIDValue",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "database/sql/driver.Value",
+          "skyTypeQualified": "Value@database/sql/driver"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Value"
+    },
+    {
+      "name": "UUIDTime",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Time",
+          "skyType": "int64"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Time"
+    },
+    {
+      "name": "UUIDClockSequence",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "int"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "ClockSequence"
+    },
+    {
+      "name": "UUIDString",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "String"
+    },
+    {
+      "name": "UUIDURN",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "URN"
+    },
+    {
+      "name": "UUIDVariant",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Variant"
+    },
+    {
+      "name": "UUIDVersion",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Version",
+          "skyType": "byte"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Version"
+    },
+    {
+      "name": "UUIDsStrings",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUIDs",
+          "skyTypeQualified": "UUIDs@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUIDs",
+      "methodName": "Strings"
+    },
+    {
+      "name": "Validate",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true
+    },
+    {
+      "name": "VariantString",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.Variant",
+          "skyType": "byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Variant",
+      "methodName": "String"
+    },
+    {
+      "name": "VersionString",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.Version",
+          "skyType": "byte"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Version",
+      "methodName": "String"
+    }
+  ],
+  "implements": {
+    "Domain@github.com/google/uuid": [
+      "Token@encoding/json",
+      "Ordered@cmp",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver",
+      "Stringer@fmt"
+    ],
+    "NullUUID@github.com/google/uuid": [
+      "Marshaler@encoding/json",
+      "Token@encoding/json",
+      "Unmarshaler@encoding/json",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver",
+      "Valuer@database/sql/driver",
+      "BinaryMarshaler@encoding",
+      "BinaryUnmarshaler@encoding",
+      "TextMarshaler@encoding",
+      "TextUnmarshaler@encoding"
+    ],
+    "Time@github.com/google/uuid": [
+      "Token@encoding/json",
+      "Ordered@cmp",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver"
+    ],
+    "UUID@github.com/google/uuid": [
+      "Token@encoding/json",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver",
+      "Valuer@database/sql/driver",
+      "Stringer@fmt",
+      "BinaryMarshaler@encoding",
+      "BinaryUnmarshaler@encoding",
+      "TextMarshaler@encoding",
+      "TextUnmarshaler@encoding"
+    ],
+    "UUIDs@github.com/google/uuid": [
+      "Token@encoding/json",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver"
+    ],
+    "Variant@github.com/google/uuid": [
+      "Token@encoding/json",
+      "Ordered@cmp",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver",
+      "Stringer@fmt"
+    ],
+    "Version@github.com/google/uuid": [
+      "Token@encoding/json",
+      "Ordered@cmp",
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Value@database/sql/driver",
+      "Stringer@fmt"
+    ]
+  },
+  "pkgAlias": {
+    "bytes": "bytes",
+    "crypto/md5": "md5",
+    "crypto/rand": "rand",
+    "crypto/sha1": "sha1",
+    "database/sql/driver": "driver",
+    "encoding/binary": "binary",
+    "encoding/hex": "hex",
+    "encoding/json": "json",
+    "errors": "errors",
+    "fmt": "fmt",
+    "github.com/google/uuid": "uuid",
+    "hash": "hash",
+    "io": "io",
+    "net": "net",
+    "os": "os",
+    "strings": "strings",
+    "sync": "sync",
+    "time": "time"
+  },
+  "errors": null
+}

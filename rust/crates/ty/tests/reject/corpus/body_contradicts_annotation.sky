@@ -1,0 +1,16 @@
+-- defect: def body contradicts its own annotation — declared `Int`, body `String`.
+--         `count` is NOT used at a clashing site, so the ONLY rejection signal is
+--         the annotation gate checking the body against the declared signature
+--         (the M3 residual this milestone closes).
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+count : Int
+count =
+    "not a number"
+
+main =
+    println "unrelated"

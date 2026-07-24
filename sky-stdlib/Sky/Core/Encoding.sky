@@ -4,44 +4,46 @@
 -- well-formed UTF-8 input).  Decoders return `Result Error String`
 -- because malformed input is recoverable at the user level.
 module Sky.Core.Encoding exposing
-    ( base64Encode, base64Decode
-    , urlEncode, urlDecode
-    , hexEncode, hexDecode
+    ( base64Encode
+    , base64Decode
+    , urlEncode
+    , urlDecode
+    , hexEncode
+    , hexDecode
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
 -- ─── Base64 ────────────────────────────────────────────────────────
-
-
 base64Encode : String -> String
-base64Encode = Ffi.kernel "Encoding_base64Encode"
+base64Encode =
+    Ffi.kernel "Encoding_base64Encode"
 
 
 base64Decode : String -> Result Error String
-base64Decode = Ffi.kernel "Encoding_base64Decode"
+base64Decode =
+    Ffi.kernel "Encoding_base64Decode"
 
 
 -- ─── URL ───────────────────────────────────────────────────────────
-
-
 urlEncode : String -> String
-urlEncode = Ffi.kernel "Encoding_urlEncode"
+urlEncode =
+    Ffi.kernel "Encoding_urlEncode"
 
 
 urlDecode : String -> Result Error String
-urlDecode = Ffi.kernel "Encoding_urlDecode"
+urlDecode =
+    Ffi.kernel "Encoding_urlDecode"
 
 
 -- ─── Hex ───────────────────────────────────────────────────────────
-
-
 hexEncode : String -> String
-hexEncode = Ffi.kernel "Encoding_hexEncode"
+hexEncode =
+    Ffi.kernel "Encoding_hexEncode"
 
 
 hexDecode : String -> Result Error String
-hexDecode = Ffi.kernel "Encoding_hexDecode"
+hexDecode =
+    Ffi.kernel "Encoding_hexDecode"

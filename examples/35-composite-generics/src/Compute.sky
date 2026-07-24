@@ -9,6 +9,7 @@ module Compute exposing (..)
 --   * Regex.match / find / findAll / replace
 --   * String.toUpper / replace / slice
 --   * Dict (typed Int key + String key) and Set
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -305,7 +306,7 @@ insertSorted x sorted =
     case sorted of
 
         [] ->
-            [x]
+            [ x ]
 
         h :: t ->
             if x <= h then

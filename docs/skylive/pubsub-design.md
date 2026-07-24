@@ -277,8 +277,8 @@ type SessionEvent struct {
 |---|---|---|
 | `memory` | n/a (in-process) | Native — `map[string]*topicRegistry` keyed by topic; each entry holds a slice of subscriber channels + a refcount. |
 | `sqlite` | n/a (file/disk) | Falls through to the **app-level memory fan-out registry** (§3.1.1) — sqlite stores SESSION state but the pub/sub registry lives in `app.topics` in-process. P46 ships the memory backend; sqlite uses the same in-process registry. |
-| `postgres` | LISTEN/NOTIFY | v0.15.x: in-process registry (same as sqlite). Cross-process via `LISTEN broadcast_<topic>` is a v0.16+ concern. |
-| `redis` | Native pub/sub | v0.15.x: in-process registry. Cross-process via Redis `SUBSCRIBE`/`PUBLISH` is a v0.16+ concern; the affordance exists in the backend but P46 deliberately doesn't wire it. |
+| `postgres` | LISTEN/NOTIFY | in-process registry today; native cross-instance `LISTEN/NOTIFY` broker is planned. Use `SKY_LIVE_BROKER_URL=<redis>` for cross-instance pub/sub with Postgres sessions in the meantime. |
+| `redis` | Native pub/sub | **SHIPPED v0.18** — cross-instance Redis broker auto-selected when store=redis (`runtime-go/rt/live_redis_broker.go`). See `pubsub.md` §"Cross-instance delivery" + `architecture.md` §"Horizontal scale". |
 | `firestore` | Snapshot listeners | NOT IN RUNTIME — `firestoreSessionStore` is mentioned in docs but no Go code exists today. P46 skips it; v0.15.x ships without firestore pub/sub. |
 
 #### 3.1.1 Where the registry actually lives

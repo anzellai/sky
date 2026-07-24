@@ -1,0 +1,587 @@
+# 09 — Runtime & FFI
+
+This crate owns two things the compiler cannot function without and yet must keep
+at arm's length from the query core:
+
+1. **The boundary contract** — the Rust compiler emits Go source against the
+   **unchanged** `runtime-go/rt` runtime (L10). This doc pins that ABI as an
+   explicit, versioned contract so `codegen` (doc [`08`](08-go-codegen.md)) has a
+   stable target and the runtime can never drift out from under it silently.
+2. **The FFI surface** — how a Go package (`net/http`, the 76k-symbol Stripe SDK)
+   becomes typed Sky bindings. This is where the **single hardest law, L4
+   (determinism / reproducibility), is won or lost.** The historical
+   reproducibility CI killer (`f6e3ecdd`) lived entirely here. The rewrite's
+   central FFI design constraint is: **the FFI surface is a committed, pinned
+   build *input*, produced by a deterministic tool out-of-band — never a
+   platform-variant artifact regenerated mid-build.**
+
+Everything below treats L4 as the axis the design rotates around, not a
+nice-to-have.
+
+> **Implementation status.** The FFI subsystem
+> this doc designs is **built and verified**: `rust/crates/ffi` ports the Haskell
+> `FfiGen`/inspector — a deterministic Go-package inspector (`inspect.rs`, pinned
+> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`, Go-map-order normalised → byte-stable)
+> that runs **only** at `sky add`/`install`/`update` and never mid-build (L4);
+> surface generation (`gen.rs`, `gen_bindings.rs`); committed-surface loading
+> (`load_surface` → `FfiRegistry`/`FfiPackage`, `lib.rs`); and runtime+stdlib+tool
+> asset embedding via `include_dir!` (`assets.rs`, `extract_assets_root`) so `sky`
+> is a standalone binary. Verified live end-to-end (`sky add github.com/google/uuid`
+> → build → runs a valid v4; second add byte-identical) and at scale
+> (`13-skyshop`, 76k Stripe symbols, build+run+match). The design (Parts A–H) is
+> therefore an accurate description of what exists — with **one correction**: the
+> `ffi`-crate API names in **Part G** were aspirational; the real surface is named
+> below. Two smaller items remain target: the runtime-`abi`-manifest test (§A.2)
+> is not yet a wired gate, and a couple of committed example surfaces (`03`/`08`)
+> use `go get`-time regeneration rather than a fully pinned commit for every
+> package.
+
+---
+
+## Part A — The runtime is an asset; keep it (L10)
+
+### A.1 What "keep it" means concretely
+
+`runtime-go/` is **not rewritten, not ported, not touched.** The Rust compiler's
+job stops at emitting a single `main.go` and materialising a pruned copy of the
+runtime tree beside it. The proof that this is viable is the current emitted-app
+shape, which the Rust compiler reproduces byte-for-byte:
+
+```
+sky-out/
+  main.go        # the emitted Sky program (package main)
+  rt/            # a pruned copy of runtime-go/rt/ (tests stripped) → package sky-app/rt
+  go.mod         # module sky-app; go 1.25.0; the fixed runtime dep set
+  go.sum         # committed alongside go.mod
+  app            # the compiled binary after `go build`
+```
+
+The emitted program imports the runtime as `import rt "sky-app/rt"`
+(`examples/01-hello-world/sky-out/main.go:3`); the module path of both the
+runtime and every generated app is `sky-app` (`runtime-go/go.mod:1`, `go 1.25.0`).
+The runtime is **copied wholesale into each app**, not referenced as an external
+module — so there is no runtime-version-skew problem across apps, and offline
+builds work with zero network.
+
+### A.2 The ABI is a pinned contract, versioned in the `ffi`/`codegen` seam
+
+Today the "contract" between compiler and runtime is implicit: `Compile.hs`
+emits `rt.Coerce`, `rt.SkyADT`, `rt.AnyTaskRun`, … and correctness is whatever
+`go build` accepts. The rewrite makes it a **typed, enumerated, tested contract**
+owned by `codegen` and consumed nowhere else. The high-traffic ABI surface the
+emitted Go actually references (measured across skyshop / skychess / tui /
+live / hub outputs):
+
+| ABI group | Representative identifiers | Notes |
+|---|---|---|
+| Coercion (hottest) | `rt.Coerce[T]`, `rt.CoerceString/Int/Bool/Float`, `rt.ResultCoerce`, `rt.MaybeCoerce`, `rt.TaskCoerceT` | `rt.Coerce[T]` alone is ~4.7k hits in the skyshop-scale sample. The typed IR (doc [`07`](07-lowering-and-ir.md)) exists to make this the exception, not the norm (L9). |
+| List / map bridging | `rt.AsListT`, `rt.AsMapT`, `rt.AsList`, `rt.AsDict`, `rt.AsBool/Int/String/Float`, `rt.AsTuple2T` | Per-element coercion at the FFI/collection boundary. |
+| Tuples / records | `rt.SkyTuple2`, `rt.T2`, `rt.Field`, `rt.RecordUpdate` | Record field access sorts by `_fieldIndex` before emission (L4 — see [`08`](08-go-codegen.md)). |
+| ADT machinery | `type X = rt.SkyADT` (`{Tag int; SkyName string; Fields []any}`), `rt.SkyVariant` (sealed-iface successor), `rt.SkyMaybe/Result/Value/Attribute`, `rt.RegisterAdtTag/AdtVariant/MsgVariant/MsgUpdate/MsgDecoder/GobType`, `rt.EnumTagIs`, `rt.Unreachable`, `rt.Ok/Err/Just/Nothing` | Registration calls are emitted into `init()`. Contract at `runtime-go/rt/rt.go:3723-3770`. |
+| Task / call | `rt.AnyTaskRun`, `rt.SkyTask`, `rt.SkyCall` | `main` auto-forces a Task-typed entry via `rt.AnyTaskRun` (matches the current runtime auto-force rule). |
+| JSON / wire | `rt.JsonRawMessage`, `rt.JsonUnmarshal` | |
+| Operators | `rt.Add/Sub/Mul/Eq/Or/And/Gt/Concat`, `rt.IntDiv/Rem/Div` | Div-family are the reachable-from-Sky panic sites (classified by `rt.LogPanicAndExit`). |
+| Bootstrap | `rt.SetPortDefault`, `rt.SetSkyDefault`, `rt.LogPanicAndExit`, `rt.System_getenv` | Emitted in top-level `init()` / `main()` prologue. |
+
+**Design rule:** `codegen` references the runtime **only** through a single
+`abi` module — a set of `const`/enum-named symbols (`abi::COERCE`,
+`abi::SKY_ADT`, …), never string literals scattered across lowering. A
+compile-time test asserts every `abi::*` symbol exists in a checked-in
+`runtime-abi.txt` manifest (generated by `go doc`/`nm` over `runtime-go/rt`),
+so a runtime rename breaks CI at the seam instead of silently at a user's
+`go build`. This is the L6 "invariants in the type system" idea applied to the
+FFI boundary.
+
+### A.3 Kernel dispatch is static, resolved at lowering — not a runtime table
+
+Critical architectural point the rewrite must preserve: **`Ffi.kernel` is not a
+runtime lookup.** The kernel table entry
+`(("Ffi","kernel"), KernelInfo "rt.Ffi_kernel" 1 False)`
+(`src/Sky/Generate/Go/Kernel.hs:139`) maps to a runtime stub
+(`runtime-go/rt/rt.go:3710`) that **panics if ever reached** — it is a
+compiler-bug tripwire. A stdlib binding written as
+`name = Ffi.kernel "KernelMod_funcName"` is recognised at build time by
+`collectKernelAliases` (`Compile.hs:11128-11161`) matching the exact shape
+`Can.Call (Can.VarKernel "Ffi" "kernel") [Can.Str raw]`; `splitKernelName`
+(`Compile.hs:11158`) splits `raw` at the first `_` into `(kMod, kFn)`. Every
+call-site of that binding is then rewritten to a direct `Can.VarKernel kMod kFn`,
+emitting a direct call to `rt.<KMod>_<kFn>` (`rt.String_join`, `rt.List_cons`, …).
+The type side recognises the same sentinel body
+(`Type/Constrain/Expression.hs:1803-1805`). The Rust `lower` crate does the same:
+a `VarKernel(module, fn)` HIR node lowers directly to the Go-IR call. There is no
+`Ffi_call` indirection in emitted output.
+
+**Two kernel registries feed one dispatch.** Both ultimately produce
+`VarKernel kMod kFn → rt.<KMod>_<kFn>`:
+
+- **Static** — hand-written stdlib kernels (`Sky.Core.Dict`, `Std.Db.Decode`, the
+  `Hub_*` console kernels) resolve through the ~529-entry static table in
+  `Generate/Go/Kernel.hs` (the `KernelInfo go_expr arity effectful` map). In Rust
+  this becomes generated `'static` data (a `phf`/`BTreeMap`), §G.
+- **Dynamic** — FFI bindings from `sky add` resolve through the `FfiRegistry`
+  loaded from `.skycache/ffi/*.kernel.json` (`FfiRegistry.hs:231-248`). Their
+  kernel names are always `Go_`-prefixed (`FfiGen.kernelNameFromPkg`,
+  `FfiGen.hs:348`) so a generated binding can never collide with a hand-written
+  stdlib kernel. In the rewrite this is the committed-surface input (§C).
+
+---
+
+## Part B — The reproducibility problem, stated precisely (the `f6e3ecdd` post-mortem)
+
+L4 exists because of a specific, diagnosed failure. Getting the fix right
+requires naming all three root causes — they compound.
+
+### B.1 Root cause 1 — the FFI surface is gitignored, so CI regenerates it fresh
+
+The typed FFI surface lives under `.skycache/ffi/`:
+
+- `.skycache/ffi/<pkg>.skyi` — human-readable catalogue of the bindings
+  (`FfiGen.hs:305`).
+- `.skycache/ffi/<pkg>.kernel.json` — the machine-readable form the compiler
+  actually consumes (`FfiGen.hs:306`), loaded by `FfiRegistry.hs:233` from
+  `<projectRoot>/.skycache/ffi/`.
+- `.skycache/go/<pkg>_bindings.go` — the emitted Go wrapper (`FfiGen.hs:304`).
+
+`.skycache/` is **gitignored** (`.gitignore`). Consequence: the developer who
+runs `sky add github.com/stripe/stripe-go/v84` generates the surface locally,
+but **CI (and any fresh clone) has no committed copy — it regenerates the
+surface from scratch on a different machine.** And the regeneration happens
+*inside the build*: `sky build`/`sky run` call `runProject` → `regenMissingBindings`
+(`app/Main.hs:717`, defined `740-805`), which re-inspects any package whose
+`.skycache/ffi/<slug>.kernel.json` is *absent* (`doesFileExist`, `747-750`). So on
+a fresh CI clone the inspector runs as part of the build. If that regeneration is not
+byte-identical, the emitted Go differs and the reproducibility gate fails. The
+surface is not small: `stripe.skyi` alone is **73,359 lines**; one skyshop build
+regenerates **76,526 lines** of FFI catalogue across 18 packages
+(`examples/13-skyshop/.skycache/ffi/`).
+
+### B.2 Root cause 2 — nondeterministic ordering, on *both* sides of the JSON
+
+Nondeterminism leaks in at the producer (Go inspector) and, independently, at the
+consumer (Haskell registry loader).
+
+**Producer.** `tools/sky-ffi-inspect/main.go` contains **no sorting whatsoever**
+(`grep -n sort` over the file: zero hits). Two paths leak Go map-iteration
+order into the JSON:
+
+- **`buildInterfaceInventory`** (`main.go:261`) iterates
+  `loaded map[string]*packages.Package` — a Go map, whose iteration order is
+  randomised per run — appending to `allInterfaces []namedInterface` in that
+  order (`main.go:263-294`).
+- **`computeImplements`** (`main.go:308`) then walks `allInterfaces` in that
+  nondeterministic order and builds each type's `satisfies []string`
+  (`main.go:337-346`). The resulting `Implements` slices are therefore in
+  **random order across runs.** (Go's `encoding/json` sorts *map keys* on
+  marshal, so the `Implements`/`PkgAlias` *keys* are stable — but the *slice
+  values* are not.)
+
+This is the "unsorted `Implements` slices" finding. The downstream
+`FfiTypeResolve` uses this `implements` registry for interface-satisfaction
+axioms, and the `.kernel.json` serialises it, so nondeterministic order reaches
+the surface. (Note the *producer serializer* `FfiGen` is otherwise deterministic —
+`emitKernelJson` uses `Map.toAscList` for both maps, `FfiGen.hs:407,412`, and
+import/alias lists are `sortOn`-ed, `FfiGen.hs:910,1800`. The leak is purely the
+inspector's unsorted slices flowing through unchanged.)
+
+**Consumer.** `FfiRegistry.loadRegistryFrom` enumerates the surface with
+`listDirectory ffiDir` (`FfiRegistry.hs:238`) — **filesystem order, unsorted** —
+and folds the resulting modules through `Map.unions` (`pkgAliasMap`, `:177`),
+`Map.unionsWith (++)` (`implementsMap`, `:167`), and `Map.fromListWith (++)`
+(`kernelFunctionsMap`, `:130`). When two modules collide on a key, the winner /
+concatenation order depends on `listDirectory` order, which is not stable across
+machines. The same unsorted fold is mirrored in `Compile.loadAndSeedFfiRegistryFrom`
+(`Compile.hs:2845,2899,2918`) — a comment there even notes the fold is
+"deterministic *given the input order*", but the input order itself is never
+sorted. So even a byte-identical surface can canonicalise differently depending on
+directory enumeration.
+
+### B.3 Root cause 3 — the surface is platform-variant
+
+`packages.Load` (`main.go:190`) type-checks under the **host** `GOOS`/`GOARCH`.
+Standard-library and build-constrained packages expose **different symbol sets
+on darwin vs linux** (`syscall`, `os`, `net`, anything under `//go:build`). The
+developer on macOS and CI on linux inspect *genuinely different* package
+surfaces. Even with §B.2 fixed, a darwin-generated `os.skyi` ≠ a linux-generated
+`os.skyi`.
+
+### B.4 The compound failure
+
+```
+dev (macOS): sky add stripe → .skycache/ffi/stripe.skyi  (gitignored, thrown away by CI)
+CI  (linux): fresh clone → regenerate stripe.skyi
+             ├─ different symbol set        (B.3 platform variance)
+             └─ different Implements order  (B.2 map nondeterminism)
+   → different bindings → different emitted Go → reproducibility gate FAILS  (f6e3ecdd)
+```
+
+The fix must close all three. §C does exactly that.
+
+---
+
+## Part C — The deterministic, reproducible FFI surface design
+
+### C.1 Core principle — the FFI surface is a regenerable build *artifact*
+
+> **Updated 2026-07-22 — the surface is NOT committed.** The originally-shipped
+> design (below, rule 1) *committed* the generated surface to pin it. That was
+> reversed: the generated surface (`kernel.json` + `.skyi` + `go/*_bindings.go`)
+> is a **build artifact** — globally gitignored under `sky-ffi/`, regenerated
+> from the `sky.toml [go.dependencies]` declaration by `sky install`/`add`/
+> `update`. Committing generated bytes was inconsistent (small surfaces tracked,
+> the 54 MB Stripe one gitignored) and made version bumps a committed-surface
+> merge clash. Rebuilding is now always from a clean slate.
+>
+> **Rule 2 below is UNCHANGED and load-bearing:** `sky build`/`check` still never
+> run the inspector — the build only *reads* the (regenerated, out-of-band)
+> surface. Reproducibility now rests on (a) the deterministic, platform-pinned
+> inspector (§C.2) and (b) an exact version pin — see the Phase-2 follow-up:
+> `sky.toml` deps must record the *resolved* version (not `"latest"`), and the
+> build must consume that pin instead of falling back to `go get @latest`, so two
+> clean-slate regenerations produce byte-identical surfaces.
+
+This mirrors the architecture spine directly: doc [`01`](01-architecture-overview.md)
+lists `ffi_surface (pinned, deterministic)` as a **salsa input set by the
+driver**, alongside `source_text` and `sky_toml` — *not* a query computed during
+the build. The inspector is a query's *provenance tool*, run out-of-band; it
+**never runs during `sky build` / `sky check`**. Restated as hard rules:
+
+1. **The generated surface is committed to the project repo**, not gitignored.
+   The `.skyi` (or its canonical successor) + `kernel.json` move **out of
+   `.skycache/`** into a tracked directory (proposal: `sky-ffi/` at the project
+   root, or `<project>/ffi/`). A fresh clone / CI reads the *same bytes* the dev
+   committed. Root cause B.1 — closed.
+2. **`sky build` treats the committed surface as read-only input.** If it is
+   missing or stale (hash mismatch vs. `go.mod`), the build **fails with an
+   actionable diagnostic** (`run 'sky install' to regenerate the FFI surface`) —
+   it does **not** silently regenerate. Regeneration is only ever triggered by
+   the explicit `sky add`/`install`/`update` verbs (§D). This is the single most
+   important behavioural change from the Haskell compiler: **no inspector in the
+   build path, ever.**
+3. **The inspector produces canonical, sorted, platform-pinned output.**
+   Determinism is a property of the tool (§C.2), and platform variance is
+   resolved by pinning (§C.4).
+
+### C.2 A deterministic inspector
+
+The inspector is rewritten to be byte-reproducible for a fixed
+`(package set, Go toolchain version, target platform)`:
+
+- **Sort every collection before it reaches output.** `allInterfaces` is sorted
+  by `QualifiedName`; every `satisfies []string` is `sort.Strings`-ed; the
+  function list is already in `scope.Names()` order (Go returns these sorted, so
+  functions are already stable — but we assert it rather than assume it). Every
+  map that is range-walked to build a slice gets an explicit sort of its keys
+  first. This is the Go-side analogue of the L4 workspace rule "no `HashMap`
+  iteration reaches output".
+- **Canonical serialisation.** Output is emitted through one serializer with
+  sorted keys, fixed field order, `LF` line endings, and no locale-dependent
+  formatting. A golden test in `xtask` (doc [`11`](11-testing-and-verification.md))
+  runs the inspector N× on the same inputs and byte-diffs.
+- The inspector stays a **small Go tool** (it must run `go/packages` — that is
+  inherently a Go-toolchain capability; reimplementing Go type resolution in
+  Rust is out of scope and would be a worse determinism story). It is invoked as
+  a subprocess by the `ffi` crate, exactly as `FfiGen.runInspector` /
+  `runInspectorMulti` do today (`FfiGen.hs:163,196`), but its output is captured
+  into a committed file rather than a cache.
+- **The consumer is deterministic too.** The `ffi` crate loads the committed
+  surface by enumerating the directory into a **sorted** `Vec` before folding
+  (closing the `listDirectory` leak at `FfiRegistry.hs:238`), and every
+  collision-resolving structure it builds — the module map, `implements` map,
+  per-kernel function list — is a `BTreeMap`/sorted `Vec`, never a `HashMap`. This
+  is the L4 workspace rule ("no `HashMap` iteration reaches output") applied to
+  the FFI registry fold, so canonicalisation is a pure function of the committed
+  bytes regardless of filesystem enumeration order.
+
+### C.3 Where the inspector binary comes from — determinism of the *tool* too
+
+Today the inspector is embedded into the `sky` binary via TH
+(`EmbeddedInspector.embeddedInspectorBytes = $(embedDir "tools/sky-ffi-inspect")`,
+`EmbeddedInspector.hs:44`), materialised to
+`$XDG_CACHE_HOME/sky/tools/sky-ffi-inspect-<hash>/`, and `go build`-ed on first
+use (`EmbeddedInspector.hs:65-97`). The hash is a SHA-256 over the
+sorted-by-path embedded tree (`EmbeddedInspector.hs:50-56`) so `sky upgrade`
+auto-invalidates it. The Rust rewrite keeps this shape:
+
+- The `ffi` crate embeds `tools/sky-ffi-inspect/` via `include_dir!` (§E), hashes
+  it, materialises + `go build`s into an XDG-cache path keyed by that hash. Same
+  content-hash invalidation, no TH.
+- Because the inspector's *own* source is embedded and content-hashed, and the
+  `go.sum` for its two deps is embedded with it, the tool is itself
+  reproducible — the surface's provenance is pinned to a specific inspector
+  version.
+
+### C.4 Platform variance — pin, don't paper over
+
+Root cause B.3 cannot be "sorted away". Two options, and the design commits to
+one with an escape hatch:
+
+- **Default (committed, platform-pinned).** The surface is generated for **one
+  canonical target** — `linux/amd64`, the deploy target (SkyDeploy / Cloud Run)
+  and the CI platform — and **committed**. `sky add` on a macOS dev machine
+  cross-inspects for the pinned target by invoking the inspector with
+  `GOOS=linux GOARCH=amd64` (Go's `go/packages` honours these for pure-Go
+  packages; the vast majority of FFI surfaces are pure-Go SDKs like Stripe /
+  Firestore where the surface is platform-*invariant* anyway). The committed
+  bytes are then identical on every machine and CI. This is the primary fix.
+- **Escape hatch (multi-platform matrix).** For the rare package whose *typed
+  surface* genuinely differs per platform, the surface is generated once per
+  target in the matrix and committed under a platform-keyed path
+  (`sky-ffi/<pkg>.linux-amd64.kernel.json`), and the build selects by target.
+  The header of each committed file records `generated-for: linux/amd64` and
+  `inspector-hash` + `go-version` for auditability.
+
+Either way, **the committed file is the source of truth and CI never regenerates
+it during a build** — it only *verifies* (§F).
+
+### C.5 The committed surface format
+
+The `kernel.json` shape is already the right machine format (`FfiGen.hs:310`,
+sample from `strconv.kernel.json`):
+
+```json
+{ "moduleName": "Strconv", "kernelName": "Go_Strconv", "package": "strconv",
+  "functions": [
+    {"name": "atoi", "arity": 1, "skyType": "String -> Result Error Int"},
+    {"name": "formatInt", "arity": 2, "skyType": "Int -> Int -> Result Error String"} ] }
+```
+
+The rewrite keeps this (adding a stable header block: `schema-version`,
+`inspector-hash`, `go-version`, `generated-for`, and a content `hash` of the
+`go.mod` require-line that produced it, for staleness detection per §C.1 rule 2).
+The `.skyi` human catalogue stays as a *derived, also-committed* view (the
+`[pure]/[fallible]/[effectful]` annotated list from the `strconv.skyi` sample) so
+`sky doc` and code review have a readable diff surface — but the compiler reads
+only `kernel.json`. Both are produced by the same deterministic pass, so they
+never disagree.
+
+---
+
+## Part D — `sky add` / `install` / `remove` / `update`
+
+These are the **only** verbs that run the inspector. They are the FFI analogue of
+`cargo add` — an explicit, out-of-band mutation of a committed manifest + lockfile
++ generated surface, never part of `build`. CLI verbs map to the existing parser
+(`app/Main.hs:999-1006`: `add`, `remove`, `install`, `update`).
+
+### D.1 `sky add <pkg>`
+
+```
+sky add github.com/stripe/stripe-go/v84
+```
+
+Deterministic pipeline (all in the `project` + `ffi` crates):
+
+1. **Resolve + pin the Go dep.** Run `go get <pkg>` against the app's `go.mod`
+   (module `sky-app`), then `go mod tidy` — producing an updated, committed
+   `go.mod` + `go.sum`. This is the lockfile; it pins the exact version whose
+   surface we inspect.
+2. **Inspect (pinned target).** `ensureInspector()` → run the inspector with
+   `GOOS/GOARCH` pinned to the canonical target (§C.4), over the newly-resolved
+   package. Multi-package mode (`runInspectorMulti`, `FfiGen.hs:196`) is used
+   when several roots are added at once — Go's loader dedupes shared transitive
+   deps (Stripe + Firestore both pulling `golang.org/x/oauth2` is type-checked
+   once), halving install time on Cloud-profile dep sets.
+3. **Emit canonically + commit.** Write `sky-ffi/<pkg>.kernel.json`,
+   `sky-ffi/<pkg>.skyi`, and the Go wrapper `sky-ffi/go/<pkg>_bindings.go`
+   (moved out of gitignored `.skycache/`), all through the sorted serializer.
+   These files are **tracked** and show up in the `sky add` commit.
+4. **Register.** Update the project's FFI manifest (the set of added packages) so
+   `sky install` on a fresh clone knows what to (re)generate if verification
+   ever demands it.
+
+### D.2 `sky install` / `sky update` / `sky remove`
+
+- **`sky install`** — for a fresh clone: ensure `go.mod`/`go.sum` deps are
+  present (`go mod download`), then materialize the surface from the declared
+  deps. It generates any **absent** surface and re-inspects each **present** one;
+  a present surface that no longer matches a fresh inspection (toolchain or
+  dep-version moved on) is **refreshed** in place, not a hard error — `sky-ffi/`
+  is a gitignored build artifact, not a committed reproducibility anchor, so
+  there is no committed byte-image to gate against. Unchanged surfaces are left
+  untouched. This is the fresh-clone / CI entry point (`sky build` then finds the
+  surface already present). *(The historical byte-diff-and-error behaviour only
+  made sense when the surface was committed; §C.1's gitignore decision retired
+  it.)*
+- **`sky update`** — bump dep versions (`go get -u` + `go mod tidy`),
+  re-inspect, re-commit the surface. A version bump is a visible diff in the
+  committed `kernel.json`, reviewable like any code change.
+- **`sky remove <pkg>`** — drop the dep from `go.mod`, delete the committed
+  `sky-ffi/<pkg>.*` files, `go mod tidy`.
+
+### D.3 go.mod / go.sum management
+
+The emitted app's `go.mod` (module `sky-app`, `go 1.25.0`) already carries the
+full runtime dep set (`runtime-go/go.mod` — 25 direct + 30 indirect:
+`webview_go`, `coder/websocket`, `pgx/v5`, `go-redis/v9`, `modernc.org/sqlite`,
+`shopspring/decimal`, the OTel stack, …). FFI-added packages append to this same
+`go.mod`. Key invariant: **`go.mod` + `go.sum` are committed project files**, so
+the dependency graph is pinned and reproducible; the runtime's own
+`go.mod`/`go.sum` (164-line `go.sum`) is the baseline that `sky init` copies. No
+network access is needed at `build` time — only at `add`/`install`/`update`.
+
+---
+
+## Part E — Runtime + stdlib embedding via `build.rs` + `include_dir!`
+
+The Haskell compiler embeds `runtime-go/` and `sky-stdlib/` into the `sky` binary
+via a custom TH splice (`EmbeddedRuntime.embeddedRuntime = $(embedDirRecursive
+"runtime-go")`, `EmbeddedRuntime.hs:131,135`). This carries two documented
+scars the Rust rewrite eliminates outright.
+
+### E.1 Scar 1 — Issue #58: `embedDir` doesn't recurse in a cabal-built binary
+
+`Data.FileEmbed.embedDir` from `file-embed-0.0.16.0` silently drops
+subdirectories when TH-spliced into a cabal-installed binary (works in `runghc`,
+fails compiled — `EmbeddedRuntime.hs:11-21`, `EmbedDirTH.hs:9-15`). The result
+was a binary embedding 97 files instead of 114 — `rt/jobs/*.go` and
+`rt/telemetry/*.go` silently missing, so every user app failed `go build` with
+`package sky-app/rt/jobs is not in std`. The workaround is the whole
+`embedDirRecursive` module: a hand-rolled recursive walk that lists every file
+and `qAddDependentFile`s it (`EmbedDirTH.hs:53-81`).
+
+**Rust fix:** `include_dir!("$CARGO_MANIFEST_DIR/../../runtime-go")` recurses
+natively — subdirectories are included by construction, no "must-be-listed"
+pitfall. (`rust-embed` is the alternative; `include_dir` is preferred for a
+purely-static, no-runtime-fs payload.) The `ffi`/`project` crate exposes
+`embedded_runtime()` / `embedded_stdlib()` as `&'static Dir`, iterated in sorted
+path order for a deterministic materialise.
+
+### E.2 Scar 2 — the 89 "re-embed marker" comments
+
+Cabal does **not** track non-`.hs` files for its up-to-date check, so editing a
+`.go` or `.sky` file does **not** trigger re-running the TH splice — the embedded
+copy goes stale. The workaround is a literal counter of **89 `re-embed marker`
+comment lines** in `EmbeddedRuntime.hs` (`grep -c` = 89), each a manual content
+edit whose only purpose is to force cabal to recompile the module. Worse, brand-
+new files (a new `Std/Live/Head.sky` directory) aren't tracked until a splice
+already noticed them, so a marker bump is needed just to *discover* new stdlib
+modules (`EmbeddedRuntime.hs:82,85` document this explicitly).
+
+**Rust fix:** a `build.rs` with
+
+```rust
+println!("cargo:rerun-if-changed=../../runtime-go");
+println!("cargo:rerun-if-changed=../../sky-stdlib");
+println!("cargo:rerun-if-changed=../../tools/sky-ffi-inspect");
+```
+
+makes Cargo re-run the embed step whenever anything under those trees changes —
+new files included. The 89-marker hack disappears entirely; embedding staleness
+becomes structurally impossible. This is a direct L1/L4 win: no hidden manual
+state, deterministic by construction.
+
+### E.3 Determinism of embedding
+
+The materialise step (writing the embedded tree into `sky-out/rt/`) walks entries
+in **sorted path order** and applies the same non-embeddable filter the current
+code shares between the TH and on-disk paths (`isEmbeddableRuntimeFile` /
+`isEmbeddableRuntimeDir`, `EmbedDirTH.hs:100-139`): strip `*_test.go`,
+`testdata/`, `.skycache/`, editor/OS junk. Stripping tests keeps the emitted
+`rt/` to the ~93-file non-test subset (vs 248 files in-repo) and the `sky`
+binary lean. The filter is one function shared by embed-time and materialise-time
+so the two never diverge (the current single-source-of-truth property is
+preserved).
+
+---
+
+## Part F — Scale: the 76k-symbol Stripe SDK
+
+`examples/13-skyshop` is the scale benchmark: 18 Go packages, **76,526 lines** of
+generated FFI catalogue, `stripe.skyi` at **73,359 lines** alone. The design must
+stay correct and fast at this size:
+
+- **The committed-surface model turns 76k symbols from a per-build cost into a
+  one-time `sky add` cost.** Under the Haskell compiler, CI regenerated all 76k
+  lines on every fresh build (and non-deterministically — §B). Under the rewrite,
+  the surface is generated once, committed, and thereafter only *read* (parsed
+  `kernel.json`) and *verified* (§F gate). The dominant cost moves off the hot
+  path.
+- **Multi-package inspection** (`runInspectorMulti`, `FfiGen.hs:196`) keeps the
+  one-time `sky add` fast by deduping shared transitive deps in a single
+  `packages.Load`.
+- **Parsing the committed surface is a salsa input query.** `kernel.json` for a
+  package is parsed once into an interned `FfiPkg { module, kernel_name,
+  functions: Vec<FfiFn> }` and memoised; DCE (whole-program dead-code
+  elimination, doc [`07`](07-lowering-and-ir.md)) prunes the unreferenced 99% of
+  Stripe symbols before lowering, so the 76k surface never inflates emitted Go.
+- **The kernel registry (§C.3 / the current 529-entry `Kernel.hs`) is data, not
+  code.** In Rust it is a generated `phf`/`BTreeMap` keyed by `(module, fn)` →
+  `KernelInfo { go_expr, arity, effectful }`, so lookups are O(1) and the table
+  is trivially deterministic to iterate.
+
+---
+
+## Part G — The `ffi` crate: shape & queries
+
+Per doc [`02`](02-workspace-and-crates.md), `ffi` depends on `base` + `serde` +
+`serde_json` + `include_dir` and feeds `project`. Its **actual** surface (`rust/crates/ffi/src/lib.rs`
++ `inspect.rs`/`gen.rs`/`gen_bindings.rs`/`assets.rs`):
+
+| Item | Responsibility |
+|---|---|
+| `ensure_inspector() / run_inspector(...) -> PackageInfo` (`inspect.rs`) | Materialise + `go build` the embedded inspector into the XDG cache (content-hash keyed), then subprocess it with a pinned `GOOS/GOARCH` and parse canonical JSON (mirrors `EmbeddedInspector.ensureInspector` / `FfiGen.runInspector`). |
+| `generate(...) -> GeneratedSurface` (`gen.rs`, `gen_bindings.rs`) | Turn inspector output into the committed surface: `kernel.json` + `.skyi` + the `_bindings.go` wrapper, through the one sorted/deterministic serializer. |
+| `load_surface(ffi_dir, go_dir) -> FfiRegistry` (`lib.rs`) | Load a committed/pinned surface: parse every `*.kernel.json`, pair with its `_bindings.go`, scan `Go_*`/`FfiT_*` symbols. Directory enumeration sorted before folding; every collection is `BTreeMap`/`BTreeSet` (L4). `FfiRegistry`/`FfiPackage`/`FfiFnInfo` are the loaded model. |
+| `FfiSurface` / `FfiSymbol` (`lib.rs`) | The `serde`-serialisable committed `.skyi` payload model. |
+| `embedded_runtime() / embedded_stdlib() / extract_assets_root() / extract_template()` (`assets.rs`) | `&'static Dir` from `include_dir!` + materialisation of the embedded runtime/stdlib/tool/template trees (§E) — what makes `sky` standalone. |
+
+> **Planned (not yet implemented) — the original Part G names.** Earlier drafts of
+> this table named `emit_surface(&FfiSurface)`, `verify_surface(committed, regenerated) -> Diff`,
+> and `kernel_registry() -> &'static KernelTable`. **None of those functions exist
+> in `rust/crates/ffi`.** Their intent is covered differently: surface emission is
+> `gen::generate` (writing files, not returning a `Files` value); byte-diff
+> verification for `sky install`/reproducibility lives in the `xtask` gate rather
+> than an `ffi` primitive; and the static `(module,fn) → KernelInfo` kernel table
+> is not yet a generated `'static` map in `ffi`. Treat these three as target items.
+
+The crate is `#![forbid(unsafe_code)]` and holds **no global mutable state** —
+the inspector cache is content-addressed on disk, the surface is a value, the
+registry is immutable data (L1).
+
+---
+
+## Part H — Reproducibility gate (how L4 is *tested* here)
+
+The FFI subsystem contributes three checks to the `xtask` reproducibility gate
+(doc [`11`](11-testing-and-verification.md)):
+
+1. **Inspector determinism.** Run the inspector N× on a fixed package set + pinned
+   target; assert byte-identical output. (Directly regresses B.2.)
+2. **Committed-surface freshness.** In CI, re-inspect every project's declared FFI
+   packages and byte-diff against the committed `sky-ffi/*.kernel.json`; a
+   mismatch fails the build with the offending package + a `sky update` hint.
+   (Regresses B.1 — the surface can never silently drift from what's committed.)
+3. **Cross-platform emission.** Compile the example corpus on ≥2 platforms and
+   byte-diff the emitted Go; because the surface is a committed input (not
+   regenerated per platform), FFI can no longer be a source of divergence.
+   (Regresses B.3.)
+
+Together these three make the `f6e3ecdd` class of failure **structurally
+impossible**: the surface is committed (B.1), the tool is deterministic (B.2),
+and the target is pinned (B.3) — the three legs of the L4 soundness stool for
+FFI.
+
+---
+
+## Open questions / risks (kept honest)
+
+- **Cross-`GOOS` inspection fidelity.** `go/packages` under a cross `GOOS/GOARCH`
+  is reliable for pure-Go SDKs (the common FFI case) but a package with
+  cgo-gated or build-constrained exported surface may not inspect cleanly off its
+  native platform. Mitigation: the multi-platform escape hatch (§C.4) + a
+  `sky doctor` check that flags packages whose surface is platform-sensitive.
+- **Committing large generated files.** `stripe.skyi` at 73k lines is a big
+  tracked artifact. Trade-off accepted: a large but *stable, reviewable,
+  reproducible* committed file beats a small gitignored one regenerated
+  nondeterministically. The `.skyi` human view can be marked
+  `linguist-generated` so it collapses in diffs; `kernel.json` remains the
+  reviewed source of truth. (If repo size becomes a real problem, a per-project
+  opt-in to a pinned content-addressed store is a v2 option — but the default
+  stays "committed".)
+- **Runtime ABI drift.** The `abi` manifest test (§A.2) guards renames, but a
+  *semantic* change to `rt.Coerce` behaviour with an unchanged signature would
+  pass. Mitigation: the differential + example-run corpus (doc
+  [`11`](11-testing-and-verification.md)) with the Haskell compiler as oracle
+  catches behavioural drift; the runtime is version-tagged alongside the
+  compiler so an ABI change is always a paired, reviewed commit.
+</content>

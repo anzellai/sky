@@ -14,19 +14,50 @@
 -- ships `SqlMoney` + `Db.Decode.money` for round-trip without manual
 -- formatting.
 module Std.Money exposing
-    ( Money(..), Currency(..)
-    , fromMinor, fromMajor, fromString
-    , zero, zeroOf
-    , amount, currency, currencyCode
-    , add, sub, mul, allocate, sumOf
-    , neg, abs
-    , eq, neq, lt, lte, gt, gte, compare
-    , isZero, isPositive, isNegative
-    , format, formatWithCode, toMinor
-    , percentOf, addPercent, subPercent
-    , minorUnits, symbol, currencyName
-    , knownCurrency, isKnownCode, parseCurrency
-    , setRate, getRate, hasRate, clearRates, convert
+    ( Money(..)
+    , Currency(..)
+    , fromMinor
+    , fromMajor
+    , fromString
+    , zero
+    , zeroOf
+    , amount
+    , currency
+    , currencyCode
+    , add
+    , sub
+    , mul
+    , allocate
+    , sumOf
+    , neg
+    , abs
+    , eq
+    , neq
+    , lt
+    , lte
+    , gt
+    , gte
+    , compare
+    , isZero
+    , isPositive
+    , isNegative
+    , format
+    , formatWithCode
+    , toMinor
+    , percentOf
+    , addPercent
+    , subPercent
+    , minorUnits
+    , symbol
+    , currencyName
+    , knownCurrency
+    , isKnownCode
+    , parseCurrency
+    , setRate
+    , getRate
+    , hasRate
+    , clearRates
+    , convert
     )
 
 -- | Std.Money — production-grade currency arithmetic.
@@ -68,28 +99,74 @@ import Sky.Core.List as List
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
 
-
 -- ─── Currency enum ────────────────────────────────────────────────
-
 type Currency
-    = USD | EUR | GBP | JPY | CHF | AUD | CAD | NZD | SEK | NOK
-    | DKK | CNY | HKD | SGD | KRW | TWD | INR | THB | MYR | IDR
-    | PHP | VND | BRL | MXN | ARS | CLP | ZAR | TRY | RUB | UAH
-    | PLN | CZK | HUF | RON | BGN | AED | SAR | QAR | KWD | BHD
-    | OMR | JOD | ILS | EGP | NGN | KES | GHS | MAD | TND | DZD
-    | PKR | BDT | LKR | NPR
-    | BTC | ETH | USDT | USDC
+    = USD
+    | EUR
+    | GBP
+    | JPY
+    | CHF
+    | AUD
+    | CAD
+    | NZD
+    | SEK
+    | NOK
+    | DKK
+    | CNY
+    | HKD
+    | SGD
+    | KRW
+    | TWD
+    | INR
+    | THB
+    | MYR
+    | IDR
+    | PHP
+    | VND
+    | BRL
+    | MXN
+    | ARS
+    | CLP
+    | ZAR
+    | TRY
+    | RUB
+    | UAH
+    | PLN
+    | CZK
+    | HUF
+    | RON
+    | BGN
+    | AED
+    | SAR
+    | QAR
+    | KWD
+    | BHD
+    | OMR
+    | JOD
+    | ILS
+    | EGP
+    | NGN
+    | KES
+    | GHS
+    | MAD
+    | TND
+    | DZD
+    | PKR
+    | BDT
+    | LKR
+    | NPR
+    | BTC
+    | ETH
+    | USDT
+    | USDC
     | CurrencyRaw String
 
-
 -- ─── The Money ADT ────────────────────────────────────────────────
-
 type Money
     = Money Decimal Currency
 
 
 -- ─── Construction ─────────────────────────────────────────────────
-
 fromMinor : Currency -> Int -> Money
 fromMinor c minor =
     Money (Dec.fromMinor (minorUnits c) minor) c
@@ -103,6 +180,7 @@ fromMajor c n =
 fromString : Currency -> String -> Result Error Money
 fromString c s =
     case Dec.fromString s of
+
         Ok d ->
             Ok (Money d c)
 
@@ -121,7 +199,6 @@ zeroOf m =
 
 
 -- ─── Accessors ────────────────────────────────────────────────────
-
 amount : Money -> Decimal
 amount (Money d _) =
     d
@@ -135,69 +212,186 @@ currency (Money _ c) =
 currencyCode : Currency -> String
 currencyCode c =
     case c of
-        USD -> "USD"
-        EUR -> "EUR"
-        GBP -> "GBP"
-        JPY -> "JPY"
-        CHF -> "CHF"
-        AUD -> "AUD"
-        CAD -> "CAD"
-        NZD -> "NZD"
-        SEK -> "SEK"
-        NOK -> "NOK"
-        DKK -> "DKK"
-        CNY -> "CNY"
-        HKD -> "HKD"
-        SGD -> "SGD"
-        KRW -> "KRW"
-        TWD -> "TWD"
-        INR -> "INR"
-        THB -> "THB"
-        MYR -> "MYR"
-        IDR -> "IDR"
-        PHP -> "PHP"
-        VND -> "VND"
-        BRL -> "BRL"
-        MXN -> "MXN"
-        ARS -> "ARS"
-        CLP -> "CLP"
-        ZAR -> "ZAR"
-        TRY -> "TRY"
-        RUB -> "RUB"
-        UAH -> "UAH"
-        PLN -> "PLN"
-        CZK -> "CZK"
-        HUF -> "HUF"
-        RON -> "RON"
-        BGN -> "BGN"
-        AED -> "AED"
-        SAR -> "SAR"
-        QAR -> "QAR"
-        KWD -> "KWD"
-        BHD -> "BHD"
-        OMR -> "OMR"
-        JOD -> "JOD"
-        ILS -> "ILS"
-        EGP -> "EGP"
-        NGN -> "NGN"
-        KES -> "KES"
-        GHS -> "GHS"
-        MAD -> "MAD"
-        TND -> "TND"
-        DZD -> "DZD"
-        PKR -> "PKR"
-        BDT -> "BDT"
-        LKR -> "LKR"
-        NPR -> "NPR"
-        BTC -> "BTC"
-        ETH -> "ETH"
-        USDT -> "USDT"
-        USDC -> "USDC"
-        CurrencyRaw s -> s
+
+        USD ->
+            "USD"
+
+        EUR ->
+            "EUR"
+
+        GBP ->
+            "GBP"
+
+        JPY ->
+            "JPY"
+
+        CHF ->
+            "CHF"
+
+        AUD ->
+            "AUD"
+
+        CAD ->
+            "CAD"
+
+        NZD ->
+            "NZD"
+
+        SEK ->
+            "SEK"
+
+        NOK ->
+            "NOK"
+
+        DKK ->
+            "DKK"
+
+        CNY ->
+            "CNY"
+
+        HKD ->
+            "HKD"
+
+        SGD ->
+            "SGD"
+
+        KRW ->
+            "KRW"
+
+        TWD ->
+            "TWD"
+
+        INR ->
+            "INR"
+
+        THB ->
+            "THB"
+
+        MYR ->
+            "MYR"
+
+        IDR ->
+            "IDR"
+
+        PHP ->
+            "PHP"
+
+        VND ->
+            "VND"
+
+        BRL ->
+            "BRL"
+
+        MXN ->
+            "MXN"
+
+        ARS ->
+            "ARS"
+
+        CLP ->
+            "CLP"
+
+        ZAR ->
+            "ZAR"
+
+        TRY ->
+            "TRY"
+
+        RUB ->
+            "RUB"
+
+        UAH ->
+            "UAH"
+
+        PLN ->
+            "PLN"
+
+        CZK ->
+            "CZK"
+
+        HUF ->
+            "HUF"
+
+        RON ->
+            "RON"
+
+        BGN ->
+            "BGN"
+
+        AED ->
+            "AED"
+
+        SAR ->
+            "SAR"
+
+        QAR ->
+            "QAR"
+
+        KWD ->
+            "KWD"
+
+        BHD ->
+            "BHD"
+
+        OMR ->
+            "OMR"
+
+        JOD ->
+            "JOD"
+
+        ILS ->
+            "ILS"
+
+        EGP ->
+            "EGP"
+
+        NGN ->
+            "NGN"
+
+        KES ->
+            "KES"
+
+        GHS ->
+            "GHS"
+
+        MAD ->
+            "MAD"
+
+        TND ->
+            "TND"
+
+        DZD ->
+            "DZD"
+
+        PKR ->
+            "PKR"
+
+        BDT ->
+            "BDT"
+
+        LKR ->
+            "LKR"
+
+        NPR ->
+            "NPR"
+
+        BTC ->
+            "BTC"
+
+        ETH ->
+            "ETH"
+
+        USDT ->
+            "USDT"
+
+        USDC ->
+            "USDC"
+
+        CurrencyRaw s ->
+            s
 
 
 -- ─── Currency property lookups ────────────────────────────────────
-
 minorUnits : Currency -> Int
 minorUnits c =
     Ffi.callPure "Money_minorUnits" [ currencyCode c ]
@@ -228,6 +422,7 @@ isKnownCode code =
 knownCurrency : Currency -> Bool
 knownCurrency c =
     case c of
+
         CurrencyRaw _ ->
             False
 
@@ -238,73 +433,191 @@ knownCurrency c =
 parseCurrency : String -> Currency
 parseCurrency code =
     case String.toUpper (String.trim code) of
-        "USD" -> USD
-        "EUR" -> EUR
-        "GBP" -> GBP
-        "JPY" -> JPY
-        "CHF" -> CHF
-        "AUD" -> AUD
-        "CAD" -> CAD
-        "NZD" -> NZD
-        "SEK" -> SEK
-        "NOK" -> NOK
-        "DKK" -> DKK
-        "CNY" -> CNY
-        "HKD" -> HKD
-        "SGD" -> SGD
-        "KRW" -> KRW
-        "TWD" -> TWD
-        "INR" -> INR
-        "THB" -> THB
-        "MYR" -> MYR
-        "IDR" -> IDR
-        "PHP" -> PHP
-        "VND" -> VND
-        "BRL" -> BRL
-        "MXN" -> MXN
-        "ARS" -> ARS
-        "CLP" -> CLP
-        "ZAR" -> ZAR
-        "TRY" -> TRY
-        "RUB" -> RUB
-        "UAH" -> UAH
-        "PLN" -> PLN
-        "CZK" -> CZK
-        "HUF" -> HUF
-        "RON" -> RON
-        "BGN" -> BGN
-        "AED" -> AED
-        "SAR" -> SAR
-        "QAR" -> QAR
-        "KWD" -> KWD
-        "BHD" -> BHD
-        "OMR" -> OMR
-        "JOD" -> JOD
-        "ILS" -> ILS
-        "EGP" -> EGP
-        "NGN" -> NGN
-        "KES" -> KES
-        "GHS" -> GHS
-        "MAD" -> MAD
-        "TND" -> TND
-        "DZD" -> DZD
-        "PKR" -> PKR
-        "BDT" -> BDT
-        "LKR" -> LKR
-        "NPR" -> NPR
-        "BTC" -> BTC
-        "ETH" -> ETH
-        "USDT" -> USDT
-        "USDC" -> USDC
-        other -> CurrencyRaw other
+
+        "USD" ->
+            USD
+
+        "EUR" ->
+            EUR
+
+        "GBP" ->
+            GBP
+
+        "JPY" ->
+            JPY
+
+        "CHF" ->
+            CHF
+
+        "AUD" ->
+            AUD
+
+        "CAD" ->
+            CAD
+
+        "NZD" ->
+            NZD
+
+        "SEK" ->
+            SEK
+
+        "NOK" ->
+            NOK
+
+        "DKK" ->
+            DKK
+
+        "CNY" ->
+            CNY
+
+        "HKD" ->
+            HKD
+
+        "SGD" ->
+            SGD
+
+        "KRW" ->
+            KRW
+
+        "TWD" ->
+            TWD
+
+        "INR" ->
+            INR
+
+        "THB" ->
+            THB
+
+        "MYR" ->
+            MYR
+
+        "IDR" ->
+            IDR
+
+        "PHP" ->
+            PHP
+
+        "VND" ->
+            VND
+
+        "BRL" ->
+            BRL
+
+        "MXN" ->
+            MXN
+
+        "ARS" ->
+            ARS
+
+        "CLP" ->
+            CLP
+
+        "ZAR" ->
+            ZAR
+
+        "TRY" ->
+            TRY
+
+        "RUB" ->
+            RUB
+
+        "UAH" ->
+            UAH
+
+        "PLN" ->
+            PLN
+
+        "CZK" ->
+            CZK
+
+        "HUF" ->
+            HUF
+
+        "RON" ->
+            RON
+
+        "BGN" ->
+            BGN
+
+        "AED" ->
+            AED
+
+        "SAR" ->
+            SAR
+
+        "QAR" ->
+            QAR
+
+        "KWD" ->
+            KWD
+
+        "BHD" ->
+            BHD
+
+        "OMR" ->
+            OMR
+
+        "JOD" ->
+            JOD
+
+        "ILS" ->
+            ILS
+
+        "EGP" ->
+            EGP
+
+        "NGN" ->
+            NGN
+
+        "KES" ->
+            KES
+
+        "GHS" ->
+            GHS
+
+        "MAD" ->
+            MAD
+
+        "TND" ->
+            TND
+
+        "DZD" ->
+            DZD
+
+        "PKR" ->
+            PKR
+
+        "BDT" ->
+            BDT
+
+        "LKR" ->
+            LKR
+
+        "NPR" ->
+            NPR
+
+        "BTC" ->
+            BTC
+
+        "ETH" ->
+            ETH
+
+        "USDT" ->
+            USDT
+
+        "USDC" ->
+            USDC
+
+        other ->
+            CurrencyRaw other
 
 
 -- ─── Arithmetic (currency-checked) ────────────────────────────────
-
 add : Money -> Money -> Money
 add a b =
     if eqCurrency (currency a) (currency b) then
         Money (Dec.add (amount a) (amount b)) (currency a)
+
     else
         a
 
@@ -313,6 +626,7 @@ sub : Money -> Money -> Money
 sub a b =
     if eqCurrency (currency a) (currency b) then
         Money (Dec.sub (amount a) (amount b)) (currency a)
+
     else
         a
 
@@ -341,13 +655,15 @@ abs m =
 allocate : Int -> Money -> List Money
 allocate parts m =
     let
-        decimals = Ffi.callPure "Money_allocate"
-                       [ Ffi.toAny (minorUnits (currency m))
-                       , Ffi.toAny parts
-                       , Ffi.toAny (amount m)
-                       ]
+        decimals =
+            Ffi.callPure
+                "Money_allocate"
+                [ Ffi.toAny (minorUnits (currency m))
+                , Ffi.toAny parts
+                , Ffi.toAny (amount m)
+                ]
     in
-    List.map (\d -> Money d (currency m)) decimals
+        List.map (\d -> Money d (currency m)) decimals
 
 
 -- | Sum a list of Money values (all should be same currency).
@@ -359,6 +675,7 @@ sumOf c xs =
 sumOfHelp : List Money -> Money -> Money
 sumOfHelp xs acc =
     case xs of
+
         [] ->
             acc
 
@@ -367,7 +684,6 @@ sumOfHelp xs acc =
 
 
 -- ─── Comparison ───────────────────────────────────────────────────
-
 compare : Money -> Money -> Int
 compare a b =
     Dec.compare (amount a) (amount b)
@@ -409,7 +725,6 @@ eqCurrency a b =
 
 
 -- ─── Predicates ───────────────────────────────────────────────────
-
 isZero : Money -> Bool
 isZero m =
     Dec.isZero (amount m)
@@ -426,7 +741,6 @@ isNegative m =
 
 
 -- ─── Percent helpers ──────────────────────────────────────────────
-
 percentOf : Decimal -> Money -> Money
 percentOf pct m =
     Money (Dec.percentOf pct (amount m)) (currency m)
@@ -443,18 +757,19 @@ subPercent pct m =
 
 
 -- ─── Formatting + minor extraction ────────────────────────────────
-
 -- | Default symbol-prefixed form: "$12.34", "¥1234" (JPY).
 format : Money -> String
 format m =
-    Ffi.callPure "Money_format"
+    Ffi.callPure
+        "Money_format"
         [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
 
 
 -- | ISO-code suffix form: "12.34 USD". Preferred for B2B.
 formatWithCode : Money -> String
 formatWithCode m =
-    Ffi.callPure "Money_formatWithCode"
+    Ffi.callPure
+        "Money_formatWithCode"
         [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
 
 
@@ -465,10 +780,10 @@ toMinor m =
 
 
 -- ─── FX rate registry ─────────────────────────────────────────────
-
 setRate : Currency -> Currency -> Decimal -> Result Error ()
 setRate from to rate =
-    Ffi.callPure "Money_setRate"
+    Ffi.callPure
+        "Money_setRate"
         [ Ffi.toAny (currencyCode from)
         , Ffi.toAny (currencyCode to)
         , Ffi.toAny rate
@@ -477,14 +792,12 @@ setRate from to rate =
 
 getRate : Currency -> Currency -> Result Error Decimal
 getRate from to =
-    Ffi.callPure "Money_getRate"
-        [ currencyCode from, currencyCode to ]
+    Ffi.callPure "Money_getRate" [ currencyCode from, currencyCode to ]
 
 
 hasRate : Currency -> Currency -> Bool
 hasRate from to =
-    Ffi.callPure "Money_hasRate"
-        [ currencyCode from, currencyCode to ]
+    Ffi.callPure "Money_hasRate" [ currencyCode from, currencyCode to ]
 
 
 clearRates : () -> Result Error ()
@@ -497,8 +810,10 @@ convert : Currency -> Money -> Result Error Money
 convert to m =
     if eqCurrency (currency m) to then
         Ok m
+
     else
         case getRate (currency m) to of
+
             Ok rate ->
                 Ok (Money (Dec.mul rate (amount m)) to)
 

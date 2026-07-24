@@ -20,13 +20,7 @@
 -- existing kernel.  AI-written Sky code is encouraged to default
 -- to this module for "make me a String" rather than memorising
 -- which sub-namespace each conversion lives under.
-module Sky.Core.ToString exposing
-    ( fromInt
-    , fromFloat
-    , fromBool
-    , fromTime
-    )
-
+module Sky.Core.ToString exposing (fromInt, fromFloat, fromBool, fromTime)
 
 import Sky.Core.String as String
 import Sky.Core.Time as Time
@@ -45,8 +39,12 @@ fromFloat x =
 fromBool : Bool -> String
 fromBool b =
     case b of
-        True -> "True"
-        False -> "False"
+
+        True ->
+            "True"
+
+        False ->
+            "False"
 
 
 fromTime : Int -> String

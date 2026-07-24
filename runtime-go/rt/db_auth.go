@@ -768,14 +768,20 @@ func Db_insertFieldsReturning(db any, table any, setFields any, projection any, 
 // lower as SkyTuple2{V0, V1}. Returns ("", nil, false) if the
 // input isn't a 2-tuple with String first.
 func unpackPair(p any) (string, any, bool) {
-	if t2, ok := p.(SkyTuple2); ok {
-		col, sok := t2.V0.(string)
-		if !sok {
-			return "", nil, false
-		}
-		return col, t2.V1, true
+	// Typed-tuple codegen (v0.17+) emits a distinct nominal `rt.T2[string,
+	// SqlValue]` for `(String, SqlValue)` pairs; the prior `.(SkyTuple2)`
+	// assertion silently dropped those (column omitted from the dynamic SQL).
+	// Route through AsTuple2 (fast-paths SkyTuple2, else reflect-reboxes a
+	// typed T2). A genuine non-tuple yields V0==nil → false, same as before.
+	t2 := AsTuple2(p)
+	if t2.V0 == nil {
+		return "", nil, false
 	}
-	return "", nil, false
+	col, sok := t2.V0.(string)
+	if !sok {
+		return "", nil, false
+	}
+	return col, t2.V1, true
 }
 
 // validSqlIdent — alphanumeric + underscore + dot only. Rejects

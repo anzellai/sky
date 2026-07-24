@@ -25,13 +25,14 @@ viewDetail model =
 
 viewNotFound model =
     div
-        [class "mt-32"]
+        [ class "mt-32" ]
         [ emptyState "Idea not found."
         , div
-              [class "text-center"]
-              [button
-                  [ onClick BackToBoard, class "btn btn-secondary" ]
-                  [text "Back to Board"]]
+              [ class "text-center" ]
+              [ button
+                    [ onClick BackToBoard, class "btn btn-secondary" ]
+                    [ text "Back to Board" ]
+              ]
         ]
 
 
@@ -44,42 +45,44 @@ viewIdeaDetail model idea =
         category = Db.getField "category" idea
     in
         div
-            [class "mt-32"]
+            [ class "mt-32" ]
             [ button
                   [ onClick BackToBoard, class "btn btn-ghost btn-sm mb-16" ]
-                  [text "< Back to Board"]
+                  [ text "< Back to Board" ]
             , div
-                  [class "card"]
+                  [ class "card" ]
                   [ div
-                        [class "detail-header"]
+                        [ class "detail-header" ]
                         [ div
-                              [class "flex-row-gap-8"]
+                              [ class "flex-row-gap-8" ]
                               [ viewCategoryBadge category, statusBadge status ]
                         , h1
-                              [class "detail-title"]
-                              [text (Db.getField "title" idea)]
+                              [ class "detail-title" ]
+                              [ text (Db.getField "title" idea) ]
                         , div
-                              [class "idea-meta"]
+                              [ class "idea-meta" ]
                               [ span
                                     []
-                                    [text
-                                        ("by " ++ Db.getField "author_name" idea)]
-                              , span [] [text (Db.getField "created_at" idea)]
+                                    [ text
+                                          ("by "
+                                              ++ Db.getField "author_name" idea)
+                                    ]
+                              , span [] [ text (Db.getField "created_at" idea) ]
                               ]
                         ]
                   , div
-                        [class "detail-body"]
-                        [p [] [text (Db.getField "description" idea)]]
+                        [ class "detail-body" ]
+                        [ p [] [ text (Db.getField "description" idea) ] ]
                   , div
-                        [class "detail-actions"]
+                        [ class "detail-actions" ]
                         [ button
                               [ onClick (ToggleVote ideaId), class "vote-btn" ]
-                              [ span [class "vote-count"] [text voteCount]
-                              , span [class "vote-label"] [text "votes"]
+                              [ span [ class "vote-count" ] [ text voteCount ]
+                              , span [ class "vote-label" ] [ text "votes" ]
                               ]
                         , span
-                              [class "idea-meta"]
-                              [text (commentCount ++ " comments")]
+                              [ class "idea-meta" ]
+                              [ text (commentCount ++ " comments") ]
                         ]
                   ]
             , viewComments model
@@ -88,24 +91,25 @@ viewIdeaDetail model idea =
 
 viewCategoryBadge category =
     if category == "bug" then
-        span [class "badge badge-bug"] [text "Bug"]
+        span [ class "badge badge-bug" ] [ text "Bug" ]
 
     else if category == "improvement" then
-        span [class "badge badge-improvement"] [text "Improvement"]
+        span [ class "badge badge-improvement" ] [ text "Improvement" ]
 
     else
-        span [class "badge badge-feature"] [text "Feature"]
+        span [ class "badge badge-feature" ] [ text "Feature" ]
 
 
 viewComments model =
     div
-        [class "comments-section"]
+        [ class "comments-section" ]
         [ h2
-              [class "comments-title"]
-              [text
-                  ("Comments ("
-                      ++ String.fromInt (List.length model.ideaComments)
-                      ++ ")")]
+              [ class "comments-title" ]
+              [ text
+                    ("Comments ("
+                        ++ String.fromInt (List.length model.ideaComments)
+                        ++ ")")
+              ]
         , viewCommentForm model
         , viewCommentList model
         ]
@@ -115,9 +119,11 @@ viewCommentList model =
     div
         []
         (if List.isEmpty model.ideaComments then
-            [p
-                [class "text-muted-sm"]
-                [text "No comments yet. Be the first to share your thoughts!"]]
+            [ p
+                  [ class "text-muted-sm" ]
+                  [ text "No comments yet. Be the first to share your thoughts!"
+                  ]
+            ]
 
         else
             List.map viewComment model.ideaComments)
@@ -125,17 +131,17 @@ viewCommentList model =
 
 viewComment comment =
     div
-        [class "comment"]
+        [ class "comment" ]
         [ div
-              [class "comment-header"]
+              [ class "comment-header" ]
               [ span
-                    [class "comment-author"]
-                    [text (Db.getField "author_name" comment)]
+                    [ class "comment-author" ]
+                    [ text (Db.getField "author_name" comment) ]
               , span
-                    [class "comment-date"]
-                    [text (Db.getField "created_at" comment)]
+                    [ class "comment-date" ]
+                    [ text (Db.getField "created_at" comment) ]
               ]
-        , div [class "comment-body"] [text (Db.getField "content" comment)]
+        , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
         ]
 
 
@@ -146,23 +152,26 @@ viewCommentForm model =
             viewCommentFormAuth model
 
         Nothing ->
-            p [class "text-secondary-sm"] [text "Sign in to leave a comment."]
+            p
+                [ class "text-secondary-sm" ]
+                [ text "Sign in to leave a comment." ]
 
 
 viewCommentFormAuth model =
     form
         [ onSubmit SubmitComment, class "comment-form mb-20" ]
         [ div
-              [class "form-group"]
-              [textarea
-                  [ class "form-input"
-                  , placeholder "Share your thoughts..."
-                  , value model.newComment
-                  , onInput UpdateComment
-                  , rows 3
-                  ]
-                  []]
+              [ class "form-group" ]
+              [ textarea
+                    [ class "form-input"
+                    , placeholder "Share your thoughts..."
+                    , value model.newComment
+                    , onInput UpdateComment
+                    , rows 3
+                    ]
+                    []
+              ]
         , button
               [ type_ "submit", class "btn btn-primary btn-sm" ]
-              [text "Post Comment"]
+              [ text "Post Comment" ]
         ]

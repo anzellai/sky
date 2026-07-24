@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+inc : Int -> Int
+inc x =
+    x + 1
+
+
+dbl : Int -> Int
+dbl x =
+    x * 2
+
+
+main =
+    let
+        -- `>>` = left-to-right (apply inc, then dbl → dbl (inc 3) = 8);
+        -- `<<` = right-to-left (apply dbl, then inc → inc (dbl 3) = 7).
+        forward = inc >> dbl
+        backward = inc << dbl
+        mapped = List.map (inc >> dbl) [ 1, 2, 3 ]
+        _ = println (String.fromInt (forward 3))
+        _ = println (String.fromInt (backward 3))
+    in
+        println (String.join "," (List.map String.fromInt mapped))

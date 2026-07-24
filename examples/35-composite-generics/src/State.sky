@@ -3,6 +3,7 @@ module State exposing (..)
 -- Typed records + ADTs for the composite. No stdlib effect imports
 -- here — keeps the HM type-checker's heap footprint bounded
 -- (CLAUDE.md Limitation #17).
+
 import Sky.Core.Prelude exposing (..)
 
 -- One row out of the input CSV.

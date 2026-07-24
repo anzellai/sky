@@ -1,0 +1,3 @@
+# Default rustfmt (stable), edition-2021. No custom style — just enforce a
+# consistent format across the workspace via `cargo fmt` + the CI fmt gate.
+edition = "2021"

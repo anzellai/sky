@@ -10,23 +10,25 @@ import State exposing (..)
 import Ui.Layout as Layout
 
 
-viewAuth : Model -> (Html Msg)
+viewAuth : Model -> Html Msg
 viewAuth model =
     Layout.page
         model
         (div
-            [style "max-width: 400px; margin: 48px auto"]
-            [div
-                [class "card"]
-                [ h2
-                      [style
-                          "font-size: 20px; color: #f1f5f9; margin-bottom: 24px; text-align: center"]
-                      [text "Sign In to SkyMon"]
-                , viewAuthBody model
-                ]])
+            [ style "max-width: 400px; margin: 48px auto" ]
+            [ div
+                  [ class "card" ]
+                  [ h2
+                        [ style
+                              "font-size: 20px; color: #f1f5f9; margin-bottom: 24px; text-align: center"
+                        ]
+                        [ text "Sign In to SkyMon" ]
+                  , viewAuthBody model
+                  ]
+            ])
 
 
-viewAuthBody : Model -> (Html Msg)
+viewAuthBody : Model -> Html Msg
 viewAuthBody model =
     case model.session of
 
@@ -37,39 +39,40 @@ viewAuthBody model =
             viewLoginContent model
 
 
-viewSignedIn : UserSession -> (Html Msg)
+viewSignedIn : UserSession -> Html Msg
 viewSignedIn session =
     div
-        [style "text-align: center"]
+        [ style "text-align: center" ]
         [ p
-              [style "color: #22c55e; font-size: 18px; margin-bottom: 16px"]
-              [text ("✓ Signed in as " ++ session.username)]
+              [ style "color: #22c55e; font-size: 18px; margin-bottom: 16px" ]
+              [ text ("✓ Signed in as " ++ session.username) ]
         , a
               [ href "/"
               , class "btn btn-primary"
               , style "text-decoration: none; display: inline-block"
               ]
-              [text "Go to Dashboard"]
+              [ text "Go to Dashboard" ]
         , div
-              [style "margin-top: 12px"]
-              [button
-                  [ onClick SignOut, class "btn btn-ghost btn-sm" ]
-                  [text "Sign Out"]]
+              [ style "margin-top: 12px" ]
+              [ button
+                    [ onClick SignOut, class "btn btn-ghost btn-sm" ]
+                    [ text "Sign Out" ]
+              ]
         ]
 
 
-viewLoginContent : Model -> (Html Msg)
+viewLoginContent : Model -> Html Msg
 viewLoginContent model =
     div [] [ viewLoginForm model, viewError model.errorMessage ]
 
 
-viewLoginForm : Model -> (Html Msg)
+viewLoginForm : Model -> Html Msg
 viewLoginForm model =
     div
         []
         [ div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Username"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Username" ]
               , input
                     [ type_ "text"
                     , class "form-input"
@@ -82,8 +85,8 @@ viewLoginForm model =
                     ]
               ]
         , div
-              [class "form-group"]
-              [ label [class "form-label"] [text "Password"]
+              [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Password" ]
               , input
                     [ type_ "password"
                     , class "form-input"
@@ -92,9 +95,6 @@ viewLoginForm model =
                           (Maybe.withDefault
                               ""
                               (Dict.get "auth_password" model.configInput))
-                              -- onChange (fires on blur) instead of onInput so
-                              -- password-manager browser extensions don't kick in
-                              -- on every keystroke's SSE patch.
                     , onChange InputAuthPassword
                     ]
               ]
@@ -103,21 +103,26 @@ viewLoginForm model =
               , class "btn btn-primary"
               , style "width: 100%"
               ]
-              [text "Sign In"]
+              [ text "Sign In" ]
         , div
-              [style
-                  "margin-top: 16px; text-align: center; color: #64748b; font-size: 12px"]
-              [text "Default: admin / admin123"]
+              [ style
+                    "margin-top: 16px; text-align: center; color: #64748b; font-size: 12px"
+              ]
+              [ text "Default: admin / admin123" ]
         ]
+                              -- onChange (fires on blur) instead of onInput so
+                              -- password-manager browser extensions don't kick in
+                              -- on every keystroke's SSE patch.
 
 
-viewError : String -> (Html Msg)
+viewError : String -> Html Msg
 viewError msg =
     if msg == "" then
         text ""
 
     else
         div
-            [style
-                "margin-top: 16px; padding: 12px; background: #7f1d1d; color: #fca5a5; border-radius: 8px; font-size: 13px"]
-            [text msg]
+            [ style
+                  "margin-top: 16px; padding: 12px; background: #7f1d1d; color: #fca5a5; border-radius: 8px; font-size: 13px"
+            ]
+            [ text msg ]

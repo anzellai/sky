@@ -13,11 +13,7 @@
 -- Use this when the app already has an SSO / multi-tenant session
 -- middleware: thread it into `consoleAuth` and the embedded console
 -- inherits the same auth surface — no second token to provision.
-module Std.Live.Console exposing
-    ( Identity
-    , defaultIdentity
-    , withEmail, withClaim, withClaims
-    )
+module Std.Live.Console exposing (Identity, defaultIdentity, withEmail, withClaim, withClaims)
 
 -- | Std.Live.Console — types exposed for the optional `consoleAuth`
 -- field on `Live.app` cfg (v0.16.0).
@@ -72,10 +68,8 @@ module Std.Live.Console exposing
 -- `Dict.empty` today if you have no extra attributes — the framework
 -- will treat any non-empty Identity as authorised in v0.16.0.
 
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict exposing (Dict)
-
 
 -- | Identity returned by the `consoleAuth` callback when access is
 -- permitted. `subject` is the user's stable identifier (GitHub
@@ -93,10 +87,7 @@ type alias Identity =
 -- Builder chain stays source-compat when v0.16.5+ adds optional fields.
 defaultIdentity : String -> Identity
 defaultIdentity subject =
-    { subject = subject
-    , email = ""
-    , claims = Dict.empty
-    }
+    { subject = subject, email = "", claims = Dict.empty }
 
 
 -- | `withEmail "alice@example.com" id` — replace the audit email.

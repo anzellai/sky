@@ -1,5 +1,13 @@
 -- | Std.Ui.Responsive — device-class detection + breakpoint helpers for `Std.Ui`.
-module Std.Ui.Responsive exposing (DeviceClass, classifyDevice, deviceClassToString, mobile, tablet, desktop, bigDesktop)
+module Std.Ui.Responsive exposing
+    ( DeviceClass
+    , classifyDevice
+    , deviceClassToString
+    , mobile
+    , tablet
+    , desktop
+    , bigDesktop
+    )
 
 -- Std.Ui.Responsive — device-class detection + breakpoint helpers.
 --
@@ -18,7 +26,6 @@ module Std.Ui.Responsive exposing (DeviceClass, classifyDevice, deviceClassToStr
 
 import Sky.Core.Prelude exposing (..)
 
-
 type DeviceClass
     = Phone
     | Tablet
@@ -26,14 +33,19 @@ type DeviceClass
     | BigDesktop
 
 
-classifyDevice : { width : Int, height : Int } -> DeviceClass
+classifyDevice : { width : Int
+, height : Int
+} -> DeviceClass
 classifyDevice viewport =
     if viewport.width < 600 then
         Phone
+
     else if viewport.width < 1200 then
         Tablet
+
     else if viewport.width < 1920 then
         Desktop
+
     else
         BigDesktop
 
@@ -45,22 +57,37 @@ classifyDevice viewport =
 deviceClassToString : DeviceClass -> String
 deviceClassToString d =
     case d of
-        Phone      -> "phone"
-        Tablet     -> "tablet"
-        Desktop    -> "desktop"
-        BigDesktop -> "big-desktop"
+
+        Phone ->
+            "phone"
+
+        Tablet ->
+            "tablet"
+
+        Desktop ->
+            "desktop"
+
+        BigDesktop ->
+            "big-desktop"
 
 
 -- Bare-value constants — for shorter call sites when comparing
 -- against a known class without a full case.
 mobile : DeviceClass
-mobile = Phone
+mobile =
+    Phone
+
 
 tablet : DeviceClass
-tablet = Tablet
+tablet =
+    Tablet
+
 
 desktop : DeviceClass
-desktop = Desktop
+desktop =
+    Desktop
+
 
 bigDesktop : DeviceClass
-bigDesktop = BigDesktop
+bigDesktop =
+    BigDesktop

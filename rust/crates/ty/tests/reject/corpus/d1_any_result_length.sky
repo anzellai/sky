@@ -1,0 +1,14 @@
+-- defect: a wildcard-`any` RESULT is pinned to the body-inferred concrete type,
+--         so a caller can no longer absorb it at an arbitrary type. `f : Int ->
+--         any` with body `f x = x` returns `Int`; `List.length` needs a `List a`,
+--         so `List.length (f 5)` clashes (Int vs List). Before the D1 pin the
+--         `any` result instantiated to a fresh flex that silently absorbed the
+--         List.length use and RAN, printing 0. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+f : Int -> any
+f x =
+    x
+main =
+    println (String.fromInt (List.length (f 5)))

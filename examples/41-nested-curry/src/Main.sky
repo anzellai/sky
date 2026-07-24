@@ -1,0 +1,29 @@
+module Main exposing (main)
+
+-- examples/41-nested-curry — regression lock for audit #7b: a def whose body is
+-- a CHAIN of nested single-arg lambdas (`\c -> \d -> …`) returning a
+-- multi-level curried type. `sky_ty_to_go` flattens the curried spine to a Go
+-- N-ary func; the lambda spine must be collapsed to match (see `lower_lambda`),
+-- and both over-application (`q 1 2 3 4`) and stepwise partial application
+-- (`((makeAdder 1) 2) 3`) of the result must work.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+q : Int -> Int -> Int -> Int -> Int
+q a b =
+    \c -> \d -> a * b * c * d
+
+
+makeAdder : Int -> Int -> Int -> Int
+makeAdder a =
+    \b -> \c -> a + b + c
+
+
+main =
+    let
+        _ = println (String.fromInt (q 1 2 3 4))
+        _ = println (String.fromInt (makeAdder 1 2 3))
+    in
+        println (String.fromInt (((makeAdder 1) 2) 3))

@@ -1,5 +1,14 @@
 -- | Std.Ui.Region — semantic landmarks + accessibility helpers.
-module Std.Ui.Region exposing (mainContent, navigation, footer, aside, heading, label, announce, announceUrgently)
+module Std.Ui.Region exposing
+    ( mainContent
+    , navigation
+    , footer
+    , aside
+    , heading
+    , label
+    , announce
+    , announceUrgently
+    )
 
 -- Std.Ui.Region — semantic landmarks + accessibility helpers.
 --
@@ -18,43 +27,61 @@ module Std.Ui.Region exposing (mainContent, navigation, footer, aside, heading, 
 -- text elements that act as section headings.
 
 import Sky.Core.Prelude exposing (..)
-import Std.Ui exposing (Description, Attribute, describe, descMain, descNavigation, descContentInfo, descComplementary, descHeading, descLabel, descLivePolite, descLiveAssertive)
+import Std.Ui exposing
+    ( Description
+    , Attribute
+    , describe
+    , descMain
+    , descNavigation
+    , descContentInfo
+    , descComplementary
+    , descHeading
+    , descLabel
+    , descLivePolite
+    , descLiveAssertive
+    )
 
 
 -- Mark an element as the main content region of the page.
 -- Renders as `<main>`.
 mainContent : Attribute msg
-mainContent = describe descMain
+mainContent =
+    describe descMain
 
 
 -- Navigation landmark — sidebar links, top nav bar, footer-nav, etc.
 -- Renders as `<nav>`.
 navigation : Attribute msg
-navigation = describe descNavigation
+navigation =
+    describe descNavigation
 
 
 -- Page / section footer landmark. Renders as `<footer>`.
 footer : Attribute msg
-footer = describe descContentInfo
+footer =
+    describe descContentInfo
 
 
 -- Complementary content landmark — sidebars, related-links panels,
 -- pull-quotes, secondary navigation. Renders as `<aside>`.
 aside : Attribute msg
-aside = describe descComplementary
+aside =
+    describe descComplementary
 
 
 -- Section heading — `Region.heading 1` renders as `<h1>`,
 -- `Region.heading 2` as `<h2>`, etc. Headings 7+ collapse to
 -- `<h6>` (HTML's deepest heading level).
 heading : Int -> Attribute msg
-heading n = describe (descHeading n)
+heading n =
+    describe (descHeading n)
 
 
 -- Visually hidden label, used by screen readers as the accessible
 -- name for the element. Emits `aria-label="<text>"`.
 label : String -> Attribute msg
-label text = describe (descLabel text)
+label text =
+    describe (descLabel text)
 
 
 -- Announce updates inside this element to assistive technology
@@ -62,7 +89,8 @@ label text = describe (descLabel text)
 -- when the user pauses. Use for non-urgent status updates ("Saved",
 -- "Loading 12/100", chat notifications). Emits aria-live="polite".
 announce : Attribute msg
-announce = describe descLivePolite
+announce =
+    describe descLivePolite
 
 
 -- Announce updates inside this element urgently — the screen reader
@@ -70,4 +98,5 @@ announce = describe descLivePolite
 -- critical alerts, anything safety-relevant. Emits
 -- aria-live="assertive".
 announceUrgently : Attribute msg
-announceUrgently = describe descLiveAssertive
+announceUrgently =
+    describe descLiveAssertive

@@ -1,0 +1,13 @@
+-- defect: heterogeneous list literal — elements Int and String
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+nums : List Int
+nums =
+    [ 1, 2, "three" ]
+
+main =
+    println (String.fromInt (List.length nums))

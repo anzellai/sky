@@ -1,0 +1,12 @@
+-- defect: HOF result element type mismatches a downstream parameter — `List.map
+--         String.length ["ab","cde"]` is `List Int`, fed to `String.join`'s
+--         `List String` param. The unannotated-combinator wildcard used to accept
+--         this and silently coerce Int→string; the check-only precise List sig
+--         now rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+main =
+    println (String.join "," (List.map String.length [ "ab", "cde" ]))

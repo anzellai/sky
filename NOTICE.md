@@ -94,27 +94,37 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## elm/compiler — adapted source files in `src/Sky/`
+## elm/compiler — adapted source files
 
-Several files in Sky's compiler are derivative works adapted from
-the elm/compiler source tree (Copyright © 2012–present Evan
-Czaplicki, BSD-3-Clause). They are kept here in modified form and
-each file's header notes the upstream module it was adapted from.
+Sky's type inference is a derivative work adapted from the
+elm/compiler source tree (Copyright © 2012–present Evan Czaplicki,
+BSD-3-Clause). Two generations of the Sky compiler carry adapted
+files — the current Rust compiler (shipped in the released `sky`
+binary) and the legacy Haskell compiler (preserved under
+`legacy-haskell-compiler/`, not shipped). Each adapted file's header
+notes the upstream module it was adapted from.
 
-The complete list of adapted files:
+**Current (Rust) compiler — shipped in the released `sky` binary:**
+
+| Sky file                       | Adapted from                                       | Relation                                                        |
+| ---                            | ---                                                | ---                                                             |
+| `rust/crates/ty/src/unify.rs`  | `Type/UnionFind.hs` + `Type/Type.hs` + `Type/Occurs.hs` | Adapted (arena union-find; `Content` / `SuperType` shape; occurs-check) |
+| `rust/crates/ty/src/infer.rs`  | `Type/Unify.hs` + `Type/Solve.hs`                  | Adapted (unification + constraint-solving driver)               |
+
+**Legacy (Haskell) compiler — preserved under `legacy-haskell-compiler/`, not shipped:**
 
 | Sky file                            | Adapted from                  | Relation                               |
 | ---                                 | ---                           | ---                                    |
-| `src/Sky/Type/UnionFind.hs`         | `Type/UnionFind.hs`           | Near-direct port; same exports + algorithm |
-| `src/Sky/Type/Unify.hs`             | `Type/Unify.hs`               | Adapted (CPS-based unifier)            |
-| `src/Sky/Type/Solve.hs`             | `Type/Solve.hs`               | Adapted (constraint solver loop)       |
-| `src/Sky/Type/Type.hs`              | `Type/Type.hs`                | Adapted (`Variable`/`Descriptor`/`Content`/`Constraint` shape) |
-| `src/Sky/Type/Occurs.hs`            | `Type/Occurs.hs`              | Adapted (occurs-check)                 |
-| `src/Sky/Type/Instantiate.hs`       | `Type/Instantiate.hs`         | Adapted (scheme instantiation)         |
-| `src/Sky/AST/Canonical.hs`          | `AST/Canonical.hs`            | Adapted (canonical AST shape)          |
-| `src/Sky/AST/Source.hs`             | `AST/Source.hs`               | Adapted (source AST + Sky extensions)  |
-| `src/Sky/Reporting/Annotation.hs`   | `Reporting/Annotation.hs`     | Adapted (region/located helpers)       |
-| `src/Sky/Parse/Primitives.hs`       | `Parse/Primitives.hs`         | Inspired (uses `Text` not `ByteString`) |
+| `legacy-haskell-compiler/src/Sky/Type/UnionFind.hs`         | `Type/UnionFind.hs`           | Near-direct port; same exports + algorithm |
+| `legacy-haskell-compiler/src/Sky/Type/Unify.hs`             | `Type/Unify.hs`               | Adapted (CPS-based unifier)            |
+| `legacy-haskell-compiler/src/Sky/Type/Solve.hs`             | `Type/Solve.hs`               | Adapted (constraint solver loop)       |
+| `legacy-haskell-compiler/src/Sky/Type/Type.hs`              | `Type/Type.hs`                | Adapted (`Variable`/`Descriptor`/`Content`/`Constraint` shape) |
+| `legacy-haskell-compiler/src/Sky/Type/Occurs.hs`            | `Type/Occurs.hs`              | Adapted (occurs-check)                 |
+| `legacy-haskell-compiler/src/Sky/Type/Instantiate.hs`       | `Type/Instantiate.hs`         | Adapted (scheme instantiation)         |
+| `legacy-haskell-compiler/src/Sky/AST/Canonical.hs`          | `AST/Canonical.hs`            | Adapted (canonical AST shape)          |
+| `legacy-haskell-compiler/src/Sky/AST/Source.hs`             | `AST/Source.hs`               | Adapted (source AST + Sky extensions)  |
+| `legacy-haskell-compiler/src/Sky/Reporting/Annotation.hs`   | `Reporting/Annotation.hs`     | Adapted (region/located helpers)       |
+| `legacy-haskell-compiler/src/Sky/Parse/Primitives.hs`       | `Parse/Primitives.hs`         | Inspired (uses `Text` not `ByteString`) |
 
 For these files specifically, Sky redistributes derivative work
 under the terms of the BSD-3-Clause licence below (this NOTICE
@@ -134,18 +144,22 @@ either:
   Elm-compatible"), which are descriptive statements about
   interoperability, not promotional comparisons.
 
-Apart from the files listed above, the rest of Sky's compiler
-(`src/Sky/Build/*`, `src/Sky/Canonicalise/*`, `src/Sky/Format/*`,
-`src/Sky/Generate/*`, `src/Sky/Lsp/*`, `src/Sky/Parse/*` other than
-`Primitives.hs`, `src/Sky/Sky/*`), the runtime (`runtime-go/`),
-the standard library (`sky-stdlib/`), the FFI generator
-(`tools/sky-ffi-inspect/`), and the CLI (`app/`) are independent
-work and share no source code with elm/compiler.
+Apart from the files listed above, the rest of Sky is independent
+work that shares no source code with elm/compiler: the Rust
+compiler's other crates (`rust/crates/{syntax, hir, lower, codegen,
+ffi, fmt, sky-lsp, project, xtask, …}` and the non-adapted parts of
+`ty`), the Go runtime (`runtime-go/`), the standard library
+(`sky-stdlib/`), the FFI generator (`tools/sky-ffi-inspect/`), and
+the legacy Haskell compiler's non-adapted modules
+(`legacy-haskell-compiler/src/Sky/{Build, Canonicalise, Format,
+Generate, Lsp, …}` and `legacy-haskell-compiler/app/`).
 
-The legacy bootstrap compilers in `legacy-ts-compiler/` and
-`legacy-sky-compiler/` are kept in-tree as historical reference;
-they are not part of the released `sky` binary and themselves do
-not include elm/compiler source code.
+The legacy bootstrap compilers in `legacy-ts-compiler/`,
+`legacy-sky-compiler/`, and `legacy-haskell-compiler/` are kept
+in-tree as historical reference and are not part of the released
+`sky` binary. `legacy-ts-compiler/` and `legacy-sky-compiler/`
+contain no elm/compiler source; the elm-derived files in
+`legacy-haskell-compiler/src/Sky/` are listed above.
 
 The full BSD-3-Clause licence under which elm/compiler is released
 is reproduced below for completeness.

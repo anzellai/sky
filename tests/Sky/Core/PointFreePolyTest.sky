@@ -36,24 +36,32 @@ firstOf =
 tests : List Test
 tests =
     [ Test.suite
-        "Point-free polymorphic alias (#398)"
-        [ Test.test
-            "1-arg monomorphic alias works"
-            (\_ -> Test.equal "HELLO" (tickle "hello"))
-        , Test.test
-            "2-arg monomorphic alias works"
-            (\_ -> Test.equal "hilo" (joinStr "hi" "lo"))
-        , Test.test
-            "1-arg polymorphic alias on Int list"
-            (\_ ->
-                case firstOf [ 7, 8, 9 ] of
-                    Just n -> Test.equal 7 n
-                    Nothing -> Test.isFalse True)
-        , Test.test
-            "1-arg polymorphic alias on empty list returns Nothing"
-            (\_ ->
-                case firstOf [] of
-                    Just _ -> Test.isFalse True
-                    Nothing -> Test.isTrue True)
-        ]
+          "Point-free polymorphic alias (#398)"
+          [ Test.test
+                "1-arg monomorphic alias works"
+                (\_ -> Test.equal "HELLO" (tickle "hello"))
+          , Test.test
+                "2-arg monomorphic alias works"
+                (\_ -> Test.equal "hilo" (joinStr "hi" "lo"))
+          , Test.test
+                "1-arg polymorphic alias on Int list"
+                (\_ ->
+                    case firstOf [ 7, 8, 9 ] of
+
+                        Just n ->
+                            Test.equal 7 n
+
+                        Nothing ->
+                            Test.isFalse True)
+          , Test.test
+                "1-arg polymorphic alias on empty list returns Nothing"
+                (\_ ->
+                    case firstOf [] of
+
+                        Just _ ->
+                            Test.isFalse True
+
+                        Nothing ->
+                            Test.isTrue True)
+          ]
     ]

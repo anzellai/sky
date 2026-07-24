@@ -1,0 +1,22 @@
+-- gate: reject
+-- defect: unresolved name `nosuchbinding` used in a typed (arithmetic) context
+-- oracle: reject [E1001] naming error at canonicalisation
+--
+-- Companion to unresolved_name.sky: the undefined bare name appears in a
+-- position with a concrete expected type (`nosuchbinding + 1` forces `Int`).
+-- Pre-fix this resolved to a lenient `rt.Basics_nosuchbinding` kernel ref, type-
+-- inferred fine, then failed only at `go build` (`undefined:
+-- rt.Basics_nosuchbinding`). Post-fix the kernel `exposing (..)` binds only the
+-- enumerated `Basics` functions, so `nosuchbinding` is `Res::Error` + `[E1001]`
+-- at resolve time — `sky check ≡ sky build`, matching the Haskell oracle.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+answer : Int
+answer =
+    nosuchbinding + 1
+
+main =
+    println (String.fromInt answer)

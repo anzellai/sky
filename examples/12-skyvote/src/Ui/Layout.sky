@@ -19,7 +19,7 @@ viewNotification model =
         text ""
 
     else
-        div [class "notification"] [text model.notification]
+        div [ class "notification" ] [ text model.notification ]
 
 
 -- ======================================================
@@ -30,7 +30,7 @@ page model content =
         []
         [ styleNode [] globalStyles
         , viewHeader model
-        , div [class "container"] [ viewNotification model, content ]
+        , div [ class "container" ] [ viewNotification model, content ]
         ]
 
 
@@ -44,19 +44,21 @@ pageWithAuth model content =
             page
                 model
                 (div
-                    [class "auth-container"]
-                    [div
-                        [class "card"]
-                        [p
-                            [class "auth-prompt"]
-                            [ text "Please "
-                            , a
-                                  [ href "/auth/signin"
-                                  , attribute "sky-nav" ""
-                                  ]
-                                  [text "sign in"]
-                            , text " to access this page."
-                            ]]])
+                    [ class "auth-container" ]
+                    [ div
+                          [ class "card" ]
+                          [ p
+                                [ class "auth-prompt" ]
+                                [ text "Please "
+                                , a
+                                      [ href "/auth/signin"
+                                      , attribute "sky-nav" ""
+                                      ]
+                                      [ text "sign in" ]
+                                , text " to access this page."
+                                ]
+                          ]
+                    ])
 
 
 -- ======================================================
@@ -64,32 +66,33 @@ pageWithAuth model content =
 -- ======================================================
 viewHeader model =
     headerNode
-        [class "header"]
-        [div
-            [class "header-inner"]
-            [ a
-                  [ href "/", attribute "sky-nav" "", class "logo" ]
-                  [text "SkyVote"]
-            , nav
-                  [class "nav"]
-                  [ a
-                        [ href "/", attribute "sky-nav" "", class "nav-link" ]
-                        [text "Board"]
-                  , a
-                        [ href "/roadmap"
-                        , attribute "sky-nav" ""
-                        , class "nav-link"
-                        ]
-                        [text "Roadmap"]
-                  , a
-                        [ href "/about"
-                        , attribute "sky-nav" ""
-                        , class "nav-link"
-                        ]
-                        [text "About"]
-                  , viewAuthNav model
-                  ]
-            ]]
+        [ class "header" ]
+        [ div
+              [ class "header-inner" ]
+              [ a
+                    [ href "/", attribute "sky-nav" "", class "logo" ]
+                    [ text "SkyVote" ]
+              , nav
+                    [ class "nav" ]
+                    [ a
+                          [ href "/", attribute "sky-nav" "", class "nav-link" ]
+                          [ text "Board" ]
+                    , a
+                          [ href "/roadmap"
+                          , attribute "sky-nav" ""
+                          , class "nav-link"
+                          ]
+                          [ text "Roadmap" ]
+                    , a
+                          [ href "/about"
+                          , attribute "sky-nav" ""
+                          , class "nav-link"
+                          ]
+                          [ text "About" ]
+                    , viewAuthNav model
+                    ]
+              ]
+        ]
 
 
 viewAuthNav model =
@@ -97,32 +100,34 @@ viewAuthNav model =
 
         Just user ->
             span
-                [class "auth-nav"]
+                [ class "auth-nav" ]
                 [ a
                       [ href "/submit"
                       , attribute "sky-nav" ""
                       , class "btn btn-primary btn-sm"
                       ]
-                      [text "Submit Idea"]
-                , span [class "nav-link"] [text (Db.getField "username" user)]
+                      [ text "Submit Idea" ]
+                , span
+                      [ class "nav-link" ]
+                      [ text (Db.getField "username" user) ]
                 , button
                       [ onClick DoSignOut, class "btn btn-ghost btn-sm" ]
-                      [text "Sign out"]
+                      [ text "Sign out" ]
                 ]
 
         Nothing ->
             span
-                [class "auth-nav-anon"]
+                [ class "auth-nav-anon" ]
                 [ a
                       [ href "/auth/signin"
                       , attribute "sky-nav" ""
                       , class "nav-link"
                       ]
-                      [text "Sign in"]
+                      [ text "Sign in" ]
                 , a
                       [ href "/auth/signup"
                       , attribute "sky-nav" ""
                       , class "btn btn-primary btn-sm"
                       ]
-                      [text "Sign up"]
+                      [ text "Sign up" ]
                 ]

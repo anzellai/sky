@@ -27,13 +27,19 @@
 --
 -- See `docs/skylive/http-streaming.md` for the design write-up and
 -- `examples/28-streaming-chat` for the canonical pattern.
-module Sky.Core.Http.Stream exposing (StreamId(..), ChunkEvent(..), open, chunks, close, forEachChunk)
+module Sky.Core.Http.Stream exposing
+    ( StreamId(..)
+    , ChunkEvent(..)
+    , open
+    , chunks
+    , close
+    , forEachChunk
+    )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Http exposing (HttpRequest)
 import Sky.Core.Task as Task
-
 
 -- | Opaque handle to an open streaming response. The wrapped `Int`
 -- is the runtime's per-stream id; user code treats it as opaque
@@ -41,7 +47,6 @@ import Sky.Core.Task as Task
 -- unavoidable, e.g. JSON round-trip through a Db column).
 type StreamId
     = StreamId Int
-
 
 -- | One incremental event on a stream.
 --

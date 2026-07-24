@@ -182,7 +182,7 @@ insertByName p acc =
     case acc of
 
         [] ->
-            [p]
+            [ p ]
 
         h :: rest ->
             if p.name <= h.name then
@@ -202,7 +202,7 @@ insertByPriceAsc p acc =
     case acc of
 
         [] ->
-            [p]
+            [ p ]
 
         h :: rest ->
             if p.priceCents <= h.priceCents then
@@ -222,7 +222,7 @@ insertByPriceDesc p acc =
     case acc of
 
         [] ->
-            [p]
+            [ p ]
 
         h :: rest ->
             if p.priceCents >= h.priceCents then

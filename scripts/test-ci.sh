@@ -64,8 +64,8 @@ phase_compiler_build() {
     echo "--- phase: compiler build ---"
     local t0; t0=$(date +%s)
     if [ ! -x "$ROOT/sky-out/sky" ] || [ -n "${SKY_REBUILD:-}" ]; then
-        timeout 600 cabal install --overwrite-policy=always \
-            --installdir="$ROOT/sky-out" --install-method=copy exe:sky
+        ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky ) \
+            && cp "$ROOT/rust/target/release/sky" "$ROOT/sky-out/sky"
     else
         echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"
     fi
@@ -74,14 +74,14 @@ phase_compiler_build() {
     echo
 }
 
-# Phase 2: cabal test with budget + the watcher.
-phase_cabal_test() {
-    echo "--- phase: cabal test ---"
+# Phase 2: rust gate suite (cargo test + xtask gates) with budget + watcher.
+phase_rust_gates() {
+    echo "--- phase: rust gate suite ---"
     local t0; t0=$(date +%s)
     # 1800 s budget — Suite 1's target is <12 min (720 s). Doubling
     # the budget tolerates first-run-cache misses without being so
     # loose that a real hang goes undiagnosed.
-    timeout 1800 bash "$ROOT/scripts/cabal-test.sh"
+    ( cd "$ROOT/rust" && timeout 1800 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run -q -p xtask -- "$g" || exit 1; done && cargo run -q -p xtask -- build-run --all' )
     local rc=$?
     local t1; t1=$(date +%s)
     echo "  $(( t1 - t0 ))s (exit $rc)"
@@ -104,7 +104,7 @@ phase_summary() {
 main() {
     local t_start; t_start=$(date +%s)
     phase_compiler_build
-    if ! phase_cabal_test; then
+    if ! phase_rust_gates; then
         phase_summary
         echo
         echo "FAIL: test-ci did not pass cleanly"

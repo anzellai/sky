@@ -1,0 +1,294 @@
+//! `xtask` — dev automation: the M1 round-trip gate over the `examples/` corpus,
+//! plus stubs for the differential-test (`diff`) and reproducibility (`repro`)
+//! gates (doc 02, docs 11, 12).
+//!
+//! `xtask roundtrip` walks every `*.sky` file under `examples/` (excluding the
+//! generated `sky-out/`, `.skycache/`, `.skydeps/` dirs), parses it, and asserts
+//! the two M1 invariants:
+//!   1. byte-exact round-trip: `reprint(green_tree) == source_bytes` (L8);
+//!   2. zero `ERROR` nodes (the parser structured every construct).
+
+mod build_run_gate;
+mod coerce_floor_gate;
+mod divergences_gate;
+mod fmt_gate;
+mod fuzz_gate;
+mod infer_gate;
+mod lsp_gate;
+mod reject_gate;
+mod repro_gate;
+mod resolve_gate;
+mod s8_gate;
+
+use std::path::{Path, PathBuf};
+
+const VERSION: &str = "xtask (rust bring-up) v0.1.0-m1";
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let code = match args.first().map(String::as_str) {
+        Some("--version") | Some("version") => {
+            println!("{VERSION}");
+            0
+        }
+        Some("roundtrip") => roundtrip(&args[1..]),
+        Some("resolve") => resolve_gate::run(&args[1..], &repo_root()),
+        Some("infer") => infer_gate::run(&args[1..], &repo_root()),
+        Some("reject") => reject_gate::run(&args[1..], &repo_root()),
+        Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
+        Some("coerce-floor") => coerce_floor_gate::run(&args[1..], &repo_root()),
+        Some("divergences") => divergences_gate::run(&args[1..], &repo_root()),
+        Some("fmt") => fmt_gate::run(&args[1..], &repo_root()),
+        Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
+        Some("errloc") => errloc(&args[1..]),
+        Some("diff") => {
+            println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
+            0
+        }
+        Some("repro") => repro_gate::run(&args[1..], &repo_root()),
+        Some("s8") => s8_gate::run(&args[1..], &repo_root()),
+        Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
+        _ => {
+            println!("{VERSION}");
+            println!(
+                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz> [args]"
+            );
+            0
+        }
+    };
+    std::process::exit(code);
+}
+
+/// Locate the repo root by walking up from the crate manifest until an
+/// `examples/` dir is found.
+fn repo_root() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut dir = manifest.as_path();
+    loop {
+        if dir.join("examples").is_dir() {
+            return dir.to_path_buf();
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => return PathBuf::from("."),
+        }
+    }
+}
+
+fn is_generated(path: &Path) -> bool {
+    path.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some("sky-out") | Some(".skycache") | Some(".skydeps")
+        )
+    })
+}
+
+/// Recursively collect `*.sky` regular files under `dir`, skipping generated
+/// directories. Deterministic (sorted) order.
+fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => return,
+    };
+    entries.sort();
+    for path in entries {
+        if is_generated(&path) {
+            continue;
+        }
+        if path.is_dir() {
+            collect_sky(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
+            out.push(path);
+        }
+    }
+}
+
+struct FileResult {
+    rel: String,
+    ok_roundtrip: bool,
+    error_nodes: usize,
+    diags: usize,
+}
+
+fn roundtrip(args: &[String]) -> i32 {
+    let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
+    let root = repo_root();
+    let examples = root.join("examples");
+
+    let mut files = Vec::new();
+    collect_sky(&examples, &mut files);
+
+    if files.is_empty() {
+        eprintln!(
+            "xtask roundtrip: no .sky files found under {}",
+            examples.display()
+        );
+        return 1;
+    }
+
+    let mut results = Vec::with_capacity(files.len());
+    for path in &files {
+        let src = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                results.push(FileResult {
+                    rel: rel(&root, path),
+                    ok_roundtrip: false,
+                    error_nodes: usize::MAX,
+                    diags: 0,
+                });
+                if verbose {
+                    eprintln!("  read error {}: {e}", path.display());
+                }
+                continue;
+            }
+        };
+        let parse = syntax::parse(&src, base::FileId(0));
+        let reprint = parse.reprint();
+        results.push(FileResult {
+            rel: rel(&root, path),
+            ok_roundtrip: reprint == src,
+            error_nodes: parse.error_node_count(),
+            diags: parse.errors().len(),
+        });
+    }
+
+    // ---- report ----
+    let name_w = results
+        .iter()
+        .map(|r| r.rel.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    println!(
+        "{:<width$}  {:>10}  {:>11}  {:>6}",
+        "FILE",
+        "ROUNDTRIP",
+        "ERROR_NODES",
+        "DIAGS",
+        width = name_w
+    );
+    println!("{}", "-".repeat(name_w + 33));
+
+    let mut total_err_nodes = 0usize;
+    let mut rt_ok = 0usize;
+    let mut failing: Vec<&FileResult> = Vec::new();
+    for r in &results {
+        let rt = if r.ok_roundtrip { "ok" } else { "MISMATCH" };
+        if r.ok_roundtrip {
+            rt_ok += 1;
+        }
+        if r.error_nodes != usize::MAX {
+            total_err_nodes += r.error_nodes;
+        }
+        let is_fail = !r.ok_roundtrip || r.error_nodes > 0;
+        if is_fail {
+            failing.push(r);
+        }
+        if verbose || is_fail {
+            let en = if r.error_nodes == usize::MAX {
+                "read-err".to_string()
+            } else {
+                r.error_nodes.to_string()
+            };
+            println!(
+                "{:<width$}  {:>10}  {:>11}  {:>6}",
+                r.rel,
+                rt,
+                en,
+                r.diags,
+                width = name_w
+            );
+        }
+    }
+
+    println!("{}", "-".repeat(name_w + 33));
+    println!(
+        "TOTALS: {}/{} round-trip byte-exact | {} total ERROR nodes | {} files",
+        rt_ok,
+        results.len(),
+        total_err_nodes,
+        results.len()
+    );
+
+    let gate = rt_ok == results.len() && total_err_nodes == 0;
+    if gate {
+        println!("M1 GATE: PASS  (100% round-trip, zero error nodes)");
+        0
+    } else {
+        println!(
+            "M1 GATE: FAIL  ({} files fail round-trip or contain error nodes)",
+            failing.len()
+        );
+        1
+    }
+}
+
+/// Print each ERROR node in a file: line:col + the error text + the enclosing
+/// context. Debug aid for closing the M1 gate.
+fn errloc(args: &[String]) -> i32 {
+    let Some(file) = args.first() else {
+        eprintln!("usage: xtask errloc <file.sky> [limit]");
+        return 1;
+    };
+    let limit: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let src = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("read error: {e}");
+            return 1;
+        }
+    };
+    let parse = syntax::parse(&src, base::FileId(0));
+    let mut shown = 0;
+    for node in parse.syntax().descendants() {
+        if node.kind() != syntax::SyntaxKind::Error {
+            continue;
+        }
+        let range = node.text_range();
+        let start: usize = range.start().into();
+        let (line, col) = line_col(&src, start);
+        let text: String = node.text().to_string();
+        let snippet: String = text.chars().take(60).collect();
+        // enclosing parent kind for context
+        let parent = node
+            .parent()
+            .map(|pn| format!("{:?}", pn.kind()))
+            .unwrap_or_default();
+        println!("{file}:{line}:{col}  ERROR in {parent}  text={snippet:?}");
+        shown += 1;
+        if shown >= limit {
+            println!("... (showing first {limit})");
+            break;
+        }
+    }
+    if shown == 0 {
+        println!("no ERROR nodes in {file}");
+    }
+    0
+}
+
+fn line_col(src: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for (i, ch) in src.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn rel(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}

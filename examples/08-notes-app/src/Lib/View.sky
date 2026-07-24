@@ -35,7 +35,7 @@ errorBanner msg =
         raw ""
 
     else
-        div [Attr.class "error"] [text msg]
+        div [ Attr.class "error" ] [ text msg ]
 
 
 -- ============================================================
@@ -139,9 +139,9 @@ appStyles _ =
               -- Navigation
               , Css.boxSizing Css.BorderBox
               ]
-              -- Buttons
         , Css.rule
               "body"
+              -- Buttons
               [ Css.fontFamily (Css.systemFont)
               -- Forms
               , Css.backgroundColor (pageBg ())
@@ -150,18 +150,18 @@ appStyles _ =
               -- Note cards
               , Css.lineHeight (Css.num 1.6)
               ]
-              -- Headings & links
         , Css.rule
               ".container"
+              -- Headings & links
               [ Css.maxWidth (Css.px 800)
               -- Hero
               , Css.margin2 (Css.zero) (Css.auto)
               -- Features grid
               , Css.padding (sp 6)
               ]
-              -- Split view (editor + preview)
         , Css.rule
               ".card"
+              -- Split view (editor + preview)
               [ Css.backgroundColor (cardBg ())
               -- Markdown rendered content
               , Css.borderRadius (radiusLg ())
@@ -190,7 +190,7 @@ appStyles _ =
               , Css.marginLeft (sp 4)
               , Css.fontSize (Css.px 14)
               ]
-        , Css.rule ".nav a:hover" [Css.opacity 0.8]
+        , Css.rule ".nav a:hover" [ Css.opacity 0.8 ]
         , Css.rule
               ".nav-brand"
               [ Css.fontWeight (Css.Weight 700)
@@ -211,7 +211,7 @@ appStyles _ =
               , Css.fontWeight (Css.Weight 500)
               , Css.transitionProp "background" 0.2 "ease"
               ]
-        , Css.rule ".btn:hover" [Css.backgroundColor (primaryDark ())]
+        , Css.rule ".btn:hover" [ Css.backgroundColor (primaryDark ()) ]
         , Css.rule
               ".btn-outline"
               [ Css.backgroundColor (Css.transparent)
@@ -223,14 +223,14 @@ appStyles _ =
               [ Css.backgroundColor (primaryColor ())
               , Css.color (Css.hex "fff")
               ]
-        , Css.rule ".btn-danger" [Css.backgroundColor (dangerColor ())]
-        , Css.rule ".btn-danger:hover" [Css.backgroundColor (dangerDark ())]
+        , Css.rule ".btn-danger" [ Css.backgroundColor (dangerColor ()) ]
+        , Css.rule ".btn-danger:hover" [ Css.backgroundColor (dangerDark ()) ]
         , Css.rule
               ".btn-sm"
               [ Css.padding2 (Css.px 6) (sp 4), Css.fontSize (Css.px 13) ]
         , Css.rule
               "input,textarea"
-              [ Css.width (Css.pct 100)
+              [ Css.width (Css.pct 100.0)
               , Css.padding (sp 3)
               , Css.border ("1px solid " ++ Css.colorToString (inputBorder ()))
               , Css.borderRadius (radius ())
@@ -242,7 +242,8 @@ appStyles _ =
               "input:focus,textarea:focus"
               [ Css.outline (Css.none)
               , Css.borderColor (primaryColor ())
-              , Css.boxShadow ("0 0 0 3px " ++ Css.colorToString (Css.rgba 37 99 235 0.1))
+              , Css.boxShadow
+                    ("0 0 0 3px " ++ Css.colorToString (Css.rgba 37 99 235 0.1))
               ]
         , Css.rule
               "textarea"
@@ -252,7 +253,7 @@ appStyles _ =
               , Css.property "resize" "vertical"
               , Css.lineHeight (Css.num 1.5)
               ]
-        , Css.rule ".form-group" [Css.marginBottom (sp 5)]
+        , Css.rule ".form-group" [ Css.marginBottom (sp 5) ]
         , Css.rule
               "label"
               [ Css.display Css.Block
@@ -277,11 +278,13 @@ appStyles _ =
               , Css.padding2 (sp 3) (sp 4)
               , Css.borderRadius (radius ())
               , Css.marginBottom (sp 5)
-              , Css.border ("1px solid " ++ Css.colorToString (successBorder ()))
+              , Css.border
+                    ("1px solid " ++ Css.colorToString (successBorder ()))
               ]
         , Css.rule
               ".note-card"
-              [ Css.borderLeft ("4px solid " ++ Css.colorToString (primaryColor ()))
+              [ Css.borderLeft
+                    ("4px solid " ++ Css.colorToString (primaryColor ()))
               , Css.transition "transform .2s,box-shadow .2s"
               ]
         , Css.rule
@@ -311,9 +314,9 @@ appStyles _ =
               , Css.property "-webkit-line-clamp" "2"
               , Css.property "-webkit-box-orient" "vertical"
               ]
-        , Css.rule "h1" [Css.fontSize (Css.em 1.75)]
+        , Css.rule "h1" [ Css.fontSize (Css.em 1.75) ]
         , Css.rule "h2" [ Css.fontSize (Css.em 1.5), Css.marginBottom (sp 5) ]
-        , Css.rule "a" [Css.color (primaryColor ())]
+        , Css.rule "a" [ Css.color (primaryColor ()) ]
         , Css.rule
               ".hero"
               [ Css.textAlign Css.AlignCenter, Css.padding2 (Css.px 80) (sp 5) ]
@@ -322,11 +325,11 @@ appStyles _ =
               [ Css.fontSize (Css.em 3.0)
               , Css.marginBottom (sp 3)
               , Css.backgroundImage
-                    (Css.linearGradient "135deg"
+                    (Css.linearGradient
+                        "135deg"
                         [ Css.colorToString (navBg ())
                         , Css.colorToString (Css.hex "7c3aed")
-                        ]
-                    )
+                        ])
               , Css.property "-webkit-background-clip" "text"
               , Css.property "-webkit-text-fill-color" "transparent"
               , Css.property "background-clip" "text"
@@ -381,7 +384,7 @@ appStyles _ =
               ".preview-label"
               [ Css.fontSize (Css.px 12)
               , Css.textTransform "uppercase"
-              , Css.letterSpacing (Css.em 0.05)
+              , Css.letterSpacing (Css.em 5.0e-2)
               , Css.color (textMuted ())
               , Css.marginBottom (Css.px 4)
               , Css.fontWeight (Css.Weight 600)
@@ -394,12 +397,13 @@ appStyles _ =
         , Css.rule
               ".md h1"
               [ Css.fontSize (Css.em 1.5)
-              , Css.borderBottom ("1px solid " ++ Css.colorToString (borderColor ()))
+              , Css.borderBottom
+                    ("1px solid " ++ Css.colorToString (borderColor ()))
               , Css.paddingBottom (sp 2)
               ]
-        , Css.rule ".md h2" [Css.fontSize (Css.em 1.3)]
-        , Css.rule ".md h3" [Css.fontSize (Css.em 1.1)]
-        , Css.rule ".md p" [Css.marginBottom (sp 3)]
+        , Css.rule ".md h2" [ Css.fontSize (Css.em 1.3) ]
+        , Css.rule ".md h3" [ Css.fontSize (Css.em 1.1) ]
+        , Css.rule ".md p" [ Css.marginBottom (sp 3) ]
         , Css.rule
               ".md code"
               [ Css.backgroundColor (Css.hex "f1f5f9")
@@ -426,10 +430,11 @@ appStyles _ =
         , Css.rule
               ".md ul,.md ol"
               [ Css.marginLeft (sp 6), Css.marginBottom (sp 3) ]
-        , Css.rule ".md li" [Css.marginBottom (Css.px 4)]
+        , Css.rule ".md li" [ Css.marginBottom (Css.px 4) ]
         , Css.rule
               ".md blockquote"
-              [ Css.borderLeft ("4px solid " ++ Css.colorToString (primaryColor ()))
+              [ Css.borderLeft
+                    ("4px solid " ++ Css.colorToString (primaryColor ()))
               , Css.paddingLeft (sp 4)
               , Css.color (textLight ())
               , Css.marginBottom (sp 3)
@@ -437,18 +442,19 @@ appStyles _ =
               ]
         , Css.rule
               ".md img"
-              [ Css.maxWidth (Css.pct 100), Css.borderRadius (radius ()) ]
-        , Css.rule ".md a" [Css.color (primaryColor ())]
+              [ Css.maxWidth (Css.pct 100.0), Css.borderRadius (radius ()) ]
+        , Css.rule ".md a" [ Css.color (primaryColor ()) ]
         , Css.rule
               ".md hr"
               [ Css.border (Css.none)
-              , Css.borderTop ("1px solid " ++ Css.colorToString (borderColor ()))
+              , Css.borderTop
+                    ("1px solid " ++ Css.colorToString (borderColor ()))
               , Css.margin2 (sp 6) (Css.zero)
               ]
         , Css.rule
               ".md table"
               [ Css.borderCollapse "collapse"
-              , Css.width (Css.pct 100)
+              , Css.width (Css.pct 100.0)
               , Css.marginBottom (sp 4)
               ]
         , Css.rule
@@ -459,12 +465,12 @@ appStyles _ =
               ]
         , Css.rule
               ".md th"
-              [ Css.backgroundColor (pageBg ()), Css.fontWeight (Css.Weight 600) ]
+              [ Css.backgroundColor (pageBg ())
+              , Css.fontWeight (Css.Weight 600)
+              ]
         , Css.rule
               ".auth-card"
-              [ Css.maxWidth (Css.px 420)
-              , Css.margin2 (Css.px 40) (Css.auto)
-              ]
+              [ Css.maxWidth (Css.px 420), Css.margin2 (Css.px 40) (Css.auto) ]
         , Css.rule
               ".auth-footer"
               [ Css.marginTop (sp 5)
@@ -472,7 +478,7 @@ appStyles _ =
               , Css.fontSize (Css.px 14)
               , Css.color (textMuted ())
               ]
-        , Css.rule ".auth-footer a" [Css.margin2 (Css.zero) (Css.px 4)]
+        , Css.rule ".auth-footer a" [ Css.margin2 (Css.zero) (Css.px 4) ]
         , Css.rule
               ".header-row"
               [ Css.display Css.Flex
@@ -488,9 +494,9 @@ appStyles _ =
               ]
         , Css.media
               "(max-width:768px)"
-              [ Css.rule ".split-view" [Css.gridTemplateColumns "1fr"]
-              , Css.rule ".features" [Css.gridTemplateColumns "1fr"]
-              , Css.rule ".hero h1" [Css.fontSize (Css.em 2.0)]
+              [ Css.rule ".split-view" [ Css.gridTemplateColumns "1fr" ]
+              , Css.rule ".features" [ Css.gridTemplateColumns "1fr" ]
+              , Css.rule ".hero h1" [ Css.fontSize (Css.em 2.0) ]
               ]
         ]
 
@@ -499,14 +505,14 @@ appStyles _ =
 -- Inline style helpers
 -- ============================================================
 fullWidth _ =
-    Attr.style (Css.styles [Css.width (Css.pct 100)])
+    Attr.style (Css.styles [ Css.width (Css.pct 100.0) ])
 
 
 fullWidthBlock _ =
     let
         s =
             Css.styles
-                [ Css.width (Css.pct 100)
+                [ Css.width (Css.pct 100.0)
                 , Css.textAlign Css.AlignCenter
                 , Css.marginTop (sp 5)
                 , Css.display Css.Block
@@ -522,10 +528,10 @@ layout title navEl content =
     render
         (doctype
             [ htmlNode
-                  [Attr.lang "en"]
+                  [ Attr.lang "en" ]
                   [ headNode
                         []
-                        [ meta [Attr.charset "UTF-8"]
+                        [ meta [ Attr.charset "UTF-8" ]
                         , meta
                               [ Attr.name "viewport"
                               , Attr.content
@@ -534,7 +540,9 @@ layout title navEl content =
                         , titleNode (title ++ " - SkyNotes")
                         , styleNode [] (appStyles ())
                         ]
-                  , body [] [ navEl, div [Attr.class "container"] [content] ]
+                  , body
+                        []
+                        [ navEl, div [ Attr.class "container" ] [ content ] ]
                   ]
             ])
 
@@ -544,37 +552,42 @@ layout title navEl content =
 -- ============================================================
 navGuest _ =
     nav
-        [Attr.class "nav"]
-        [div
-            [Attr.class "nav-inner"]
-            [ a [ Attr.href "/", Attr.class "nav-brand" ] [text "SkyNotes"]
-            , div
-                  []
-                  [ a [Attr.href "/auth/sign-in"] [text "Sign In"]
-                  , a [Attr.href "/auth/sign-up"] [text "Sign Up"]
-                  ]
-            ]]
+        [ Attr.class "nav" ]
+        [ div
+              [ Attr.class "nav-inner" ]
+              [ a [ Attr.href "/", Attr.class "nav-brand" ] [ text "SkyNotes" ]
+              , div
+                    []
+                    [ a [ Attr.href "/auth/sign-in" ] [ text "Sign In" ]
+                    , a [ Attr.href "/auth/sign-up" ] [ text "Sign Up" ]
+                    ]
+              ]
+        ]
 
 
 navAuth email =
     nav
-        [Attr.class "nav"]
-        [div
-            [Attr.class "nav-inner"]
-            [ a [ Attr.href "/notes", Attr.class "nav-brand" ] [text "SkyNotes"]
-            , div
-                  []
-                  [ span
-                        [Attr.style
-                            (Css.styles
-                                [ Css.color (Css.rgba 255 255 255 0.7)
-                                , Css.fontSize (Css.px 14)
-                                , Css.marginRight (sp 2)
-                                ])]
-                        [text email]
-                  , a [Attr.href "/auth/sign-out"] [text "Sign Out"]
-                  ]
-            ]]
+        [ Attr.class "nav" ]
+        [ div
+              [ Attr.class "nav-inner" ]
+              [ a
+                    [ Attr.href "/notes", Attr.class "nav-brand" ]
+                    [ text "SkyNotes" ]
+              , div
+                    []
+                    [ span
+                          [ Attr.style
+                                (Css.styles
+                                    [ Css.color (Css.rgba 255 255 255 0.7)
+                                    , Css.fontSize (Css.px 14)
+                                    , Css.marginRight (sp 2)
+                                    ])
+                          ]
+                          [ text email ]
+                    , a [ Attr.href "/auth/sign-out" ] [ text "Sign Out" ]
+                    ]
+              ]
+        ]
 
 
 -- ============================================================
@@ -582,15 +595,15 @@ navAuth email =
 -- ============================================================
 featureCard icon title description =
     div
-        [Attr.class "feature"]
-        [ div [Attr.class "feature-icon"] [text icon]
-        , h3 [] [text title]
-        , p [] [text description]
+        [ Attr.class "feature" ]
+        [ div [ Attr.class "feature-icon" ] [ text icon ]
+        , h3 [] [ text title ]
+        , p [] [ text description ]
         ]
 
 
 formGroup labelText inputEl =
-    div [Attr.class "form-group"] [ label [] [text labelText], inputEl ]
+    div [ Attr.class "form-group" ] [ label [] [ text labelText ], inputEl ]
 
 
 -- ============================================================
@@ -609,30 +622,31 @@ landingPage _ =
             "Welcome"
             (navGuest ())
             (div
-                [Attr.class "hero"]
-                [ h1 [] [text "SkyNotes"]
+                [ Attr.class "hero" ]
+                [ h1 [] [ text "SkyNotes" ]
                 , p
                       []
-                      [text
-                          "A markdown note-taking app built with the Sky language"]
+                      [ text
+                            "A markdown note-taking app built with the Sky language"
+                      ]
                 , div
                       []
                       [ a
                             [ Attr.href "/auth/sign-up"
                             , Attr.class "btn"
                             , heroBtnStyle
-                            , Attr.style (Css.styles [Css.marginRight (sp 3)])
+                            , Attr.style (Css.styles [ Css.marginRight (sp 3) ])
                             ]
-                            [text "Get Started"]
+                            [ text "Get Started" ]
                       , a
                             [ Attr.href "/auth/sign-in"
                             , Attr.class "btn btn-outline"
                             , heroBtnStyle
                             ]
-                            [text "Sign In"]
+                            [ text "Sign In" ]
                       ]
                 , div
-                      [Attr.class "features"]
+                      [ Attr.class "features" ]
                       [ featureCard
                             "M"
                             "Markdown"
@@ -654,8 +668,8 @@ signInPage errorMsg =
         "Sign In"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Sign In"]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Sign In" ]
             , errorBanner errorMsg
             , form
                   [ Attr.method "POST", Attr.action "/auth/sign-in" ]
@@ -677,15 +691,15 @@ signInPage errorMsg =
                             ])
                   , button
                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                        [text "Sign In"]
+                        [ text "Sign In" ]
                   ]
             , div
-                  [Attr.class "auth-footer"]
+                  [ Attr.class "auth-footer" ]
                   [ a
-                        [Attr.href "/auth/forgot-password"]
-                        [text "Forgot password?"]
-                  , span [] [text " | "]
-                  , a [Attr.href "/auth/sign-up"] [text "Create account"]
+                        [ Attr.href "/auth/forgot-password" ]
+                        [ text "Forgot password?" ]
+                  , span [] [ text " | " ]
+                  , a [ Attr.href "/auth/sign-up" ] [ text "Create account" ]
                   ]
             ])
 
@@ -695,8 +709,8 @@ signUpPage errorMsg =
         "Sign Up"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Create Account"]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Create Account" ]
             , errorBanner errorMsg
             , form
                   [ Attr.method "POST", Attr.action "/auth/sign-up" ]
@@ -727,12 +741,12 @@ signUpPage errorMsg =
                             ])
                   , button
                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                        [text "Create Account"]
+                        [ text "Create Account" ]
                   ]
             , div
-                  [Attr.class "auth-footer"]
+                  [ Attr.class "auth-footer" ]
                   [ text "Already have an account? "
-                  , a [Attr.href "/auth/sign-in"] [text "Sign in"]
+                  , a [ Attr.href "/auth/sign-in" ] [ text "Sign in" ]
                   ]
             ])
 
@@ -742,26 +756,29 @@ signUpSuccessPage _ =
         "Account Created"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Account Created!"]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Account Created!" ]
             , div
-                  [Attr.class "success"]
-                  [text
-                      "Your account has been created. Check the server console for your email verification link."]
+                  [ Attr.class "success" ]
+                  [ text
+                        "Your account has been created. Check the server console for your email verification link."
+                  ]
             , p
-                  [Attr.style
-                      (Css.styles
-                          [ Css.marginTop (sp 4)
-                          , Css.color (textMuted ())
-                          , Css.fontSize (Css.px 14)
-                          ])]
-                  [text "Once verified, you can sign in to start taking notes."]
+                  [ Attr.style
+                        (Css.styles
+                            [ Css.marginTop (sp 4)
+                            , Css.color (textMuted ())
+                            , Css.fontSize (Css.px 14)
+                            ])
+                  ]
+                  [ text "Once verified, you can sign in to start taking notes."
+                  ]
             , a
                   [ Attr.href "/auth/sign-in"
                   , Attr.class "btn"
                   , fullWidthBlock ()
                   ]
-                  [text "Go to Sign In"]
+                  [ text "Go to Sign In" ]
             ])
 
 
@@ -770,13 +787,16 @@ forgotPasswordPage errorMsg =
         "Forgot Password"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Forgot Password"]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Forgot Password" ]
             , p
-                  [Attr.style
-                      (Css.styles
-                          [ Css.color (textMuted ()), Css.marginBottom (sp 5) ])]
-                  [text "Enter your email and we'll send you a reset link."]
+                  [ Attr.style
+                        (Css.styles
+                            [ Css.color (textMuted ())
+                            , Css.marginBottom (sp 5)
+                            ])
+                  ]
+                  [ text "Enter your email and we'll send you a reset link." ]
             , errorBanner errorMsg
             , form
                   [ Attr.method "POST", Attr.action "/auth/forgot-password" ]
@@ -790,11 +810,11 @@ forgotPasswordPage errorMsg =
                             ])
                   , button
                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                        [text "Send Reset Link"]
+                        [ text "Send Reset Link" ]
                   ]
             , div
-                  [Attr.class "auth-footer"]
-                  [a [Attr.href "/auth/sign-in"] [text "Back to Sign In"]]
+                  [ Attr.class "auth-footer" ]
+                  [ a [ Attr.href "/auth/sign-in" ] [ text "Back to Sign In" ] ]
             ])
 
 
@@ -803,27 +823,30 @@ forgotPasswordSentPage _ =
         "Reset Link Sent"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Check Your Console"]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Check Your Console" ]
             , div
-                  [Attr.class "success"]
-                  [text
-                      "If an account exists with that email, a password reset link has been logged to the server console."]
+                  [ Attr.class "success" ]
+                  [ text
+                        "If an account exists with that email, a password reset link has been logged to the server console."
+                  ]
             , p
-                  [Attr.style
-                      (Css.styles
-                          [ Css.marginTop (sp 4)
-                          , Css.color (textMuted ())
-                          , Css.fontSize (Css.px 14)
-                          ])]
-                  [text
-                      "This is a demo app -- in production, an email would be sent instead."]
+                  [ Attr.style
+                        (Css.styles
+                            [ Css.marginTop (sp 4)
+                            , Css.color (textMuted ())
+                            , Css.fontSize (Css.px 14)
+                            ])
+                  ]
+                  [ text
+                        "This is a demo app -- in production, an email would be sent instead."
+                  ]
             , a
                   [ Attr.href "/auth/sign-in"
                   , Attr.class "btn"
                   , fullWidthBlock ()
                   ]
-                  [text "Back to Sign In"]
+                  [ text "Back to Sign In" ]
             ])
 
 
@@ -840,15 +863,15 @@ verifyResultPage isSuccess message =
             "Email Verification"
             (navGuest ())
             (div
-                [Attr.class "card auth-card"]
-                [ h2 [] [text "Email Verification"]
-                , div [Attr.class msgClass] [text message]
+                [ Attr.class "card auth-card" ]
+                [ h2 [] [ text "Email Verification" ]
+                , div [ Attr.class msgClass ] [ text message ]
                 , a
                       [ Attr.href "/auth/sign-in"
                       , Attr.class "btn"
                       , fullWidthBlock ()
                       ]
-                      [text "Go to Sign In"]
+                      [ text "Go to Sign In" ]
                 ])
 
 
@@ -870,15 +893,20 @@ noteCard note =
     in
         render
             (div
-                [Attr.class "card note-card"]
-                [a
-                    [Attr.href ("/notes/view?id=" ++ noteId)]
-                    [ h3
-                          [Attr.style (Css.styles [Css.marginBottom (Css.px 4)])]
-                          [text noteTitle]
-                    , p [Attr.class "note-meta"] [text ("Created " ++ date)]
-                    , p [Attr.class "note-preview"] [text preview]
-                    ]])
+                [ Attr.class "card note-card" ]
+                [ a
+                      [ Attr.href ("/notes/view?id=" ++ noteId) ]
+                      [ h3
+                            [ Attr.style
+                                  (Css.styles [ Css.marginBottom (Css.px 4) ])
+                            ]
+                            [ text noteTitle ]
+                      , p
+                            [ Attr.class "note-meta" ]
+                            [ text ("Created " ++ date) ]
+                      , p [ Attr.class "note-preview" ] [ text preview ]
+                      ]
+                ])
 
 
 notesListPage email notes =
@@ -887,35 +915,39 @@ notesListPage email notes =
         headerRow =
             render
                 (div
-                    [Attr.class "header-row"]
-                    [ h1 [] [text "My Notes"]
+                    [ Attr.class "header-row" ]
+                    [ h1 [] [ text "My Notes" ]
                     , a
                           [ Attr.href "/notes/new", Attr.class "btn" ]
-                          [text "+ New Note"]
+                          [ text "+ New Note" ]
                     ])
         content =
             if List.isEmpty notes then
                 headerRow
                     ++ render
                            (div
-                               [Attr.class "card empty-state"]
+                               [ Attr.class "card empty-state" ]
                                [ p
-                                     [Attr.style
-                                         (Css.styles
-                                             [ Css.fontSize (Css.em 1.2)
-                                             , Css.marginBottom (sp 2)
-                                             ])]
-                                     [text "No notes yet"]
+                                     [ Attr.style
+                                           (Css.styles
+                                               [ Css.fontSize (Css.em 1.2)
+                                               , Css.marginBottom (sp 2)
+                                               ])
+                                     ]
+                                     [ text "No notes yet" ]
                                , p
-                                     [Attr.style
-                                         (Css.styles [Css.marginBottom (sp 5)])]
-                                     [text
-                                         "Create your first markdown note to get started."]
+                                     [ Attr.style
+                                           (Css.styles
+                                               [ Css.marginBottom (sp 5) ])
+                                     ]
+                                     [ text
+                                           "Create your first markdown note to get started."
+                                     ]
                                , a
                                      [ Attr.href "/notes/new"
                                      , Attr.class "btn"
                                      ]
-                                     [text "Create Your First Note"]
+                                     [ text "Create Your First Note" ]
                                ])
 
             else
@@ -942,13 +974,13 @@ noteViewPage email note =
             noteTitle
             (navAuth email)
             (div
-                [Attr.class "card"]
+                [ Attr.class "card" ]
                 [ div
-                      [Attr.class "header-row"]
+                      [ Attr.class "header-row" ]
                       [ div
                             []
-                            [ h1 [] [text noteTitle]
-                            , p [Attr.class "note-meta"] [text dateDisplay]
+                            [ h1 [] [ text noteTitle ]
+                            , p [ Attr.class "note-meta" ] [ text dateDisplay ]
                             ]
                       , div
                             []
@@ -956,45 +988,50 @@ noteViewPage email note =
                                   [ Attr.href ("/notes/edit?id=" ++ noteId)
                                   , Attr.class "btn btn-sm"
                                   , Attr.style
-                                        (Css.styles [Css.marginRight (sp 2)])
+                                        (Css.styles [ Css.marginRight (sp 2) ])
                                   ]
-                                  [text "Edit"]
+                                  [ text "Edit" ]
                             , form
                                   [ Attr.method "POST"
                                   , Attr.action ("/notes/delete?id=" ++ noteId)
                                   , Attr.style
-                                        (Css.styles [Css.display Css.Inline])
+                                        (Css.styles [ Css.display Css.Inline ])
                                   , Events.onSubmit
                                         "return confirm('Delete this note?')"
                                   ]
-                                  [button
-                                      [ Attr.type_ "submit"
-                                      , Attr.class "btn btn-sm btn-danger"
-                                      ]
-                                      [text "Delete"]]
+                                  [ button
+                                        [ Attr.type_ "submit"
+                                        , Attr.class "btn btn-sm btn-danger"
+                                        ]
+                                        [ text "Delete" ]
+                                  ]
                             ]
                       ]
                 , hr
-                      [Attr.style
-                          (Css.styles
-                              [ Css.border (Css.none)
-                              , Css.borderTop ("1px solid " ++ Css.colorToString (borderColor ()))
-                              , Css.margin2 (sp 5) (Css.zero)
-                              ])]
+                      [ Attr.style
+                            (Css.styles
+                                [ Css.border (Css.none)
+                                , Css.borderTop
+                                      ("1px solid "
+                                          ++ Css.colorToString (borderColor ()))
+                                , Css.margin2 (sp 5) (Css.zero)
+                                ])
+                      ]
                 , textarea
                       [ Attr.id "raw-md"
-                      , Attr.style (Css.styles [Css.display Css.DisplayNone])
+                      , Attr.style (Css.styles [ Css.display Css.DisplayNone ])
                       ]
-                      [text content]
+                      [ text content ]
                 , div [ Attr.id "rendered", Attr.class "md" ] []
                 , script
-                      [Attr.src
-                          "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
+                      [ Attr.src
+                            "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+                      ]
                       []
                 , script
                       []
-                      [raw
-                          "window.addEventListener('DOMContentLoaded',function(){document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);});"
+                      [ raw
+                            "window.addEventListener('DOMContentLoaded',function(){document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);});"
                       ]
                 ])
 
@@ -1020,10 +1057,10 @@ noteFormPage email noteTitle content noteId isEdit =
             pageTitle
             (navAuth email)
             (div
-                [Attr.class "card"]
+                [ Attr.class "card" ]
                 [ h1
-                      [Attr.style (Css.styles [Css.marginBottom (sp 6)])]
-                      [text pageTitle]
+                      [ Attr.style (Css.styles [ Css.marginBottom (sp 6) ]) ]
+                      [ text pageTitle ]
                 , form
                       [ Attr.method "POST", Attr.action formAction ]
                       [ formGroup
@@ -1036,24 +1073,25 @@ noteFormPage email noteTitle content noteId isEdit =
                                 , Attr.required True
                                 ])
                       , div
-                            [Attr.class "form-group"]
-                            [ label [] [text "Content (Markdown)"]
+                            [ Attr.class "form-group" ]
+                            [ label [] [ text "Content (Markdown)" ]
                             , div
-                                  [Attr.class "split-view"]
+                                  [ Attr.class "split-view" ]
                                   [ div
                                         []
-                                        [textarea
-                                            [ Attr.id "editor"
-                                            , Attr.name "content"
-                                            , Attr.placeholder placeholderText
-                                            , Attr.required True
-                                            ]
-                                            [text content]]
+                                        [ textarea
+                                              [ Attr.id "editor"
+                                              , Attr.name "content"
+                                              , Attr.placeholder placeholderText
+                                              , Attr.required True
+                                              ]
+                                              [ text content ]
+                                        ]
                                   , div
                                         []
                                         [ div
-                                              [Attr.class "preview-label"]
-                                              [text "Preview"]
+                                              [ Attr.class "preview-label" ]
+                                              [ text "Preview" ]
                                         , div
                                               [ Attr.id "preview"
                                               , Attr.class "preview-pane md"
@@ -1063,10 +1101,10 @@ noteFormPage email noteTitle content noteId isEdit =
                                   ]
                             ]
                       , div
-                            [Attr.style (Css.styles [Css.marginTop (sp 5)])]
+                            [ Attr.style (Css.styles [ Css.marginTop (sp 5) ]) ]
                             [ button
                                   [ Attr.type_ "submit", Attr.class "btn" ]
-                                  [text "Save Note"]
+                                  [ text "Save Note" ]
                             , a
                                   [ Attr.href "/notes"
                                   , Attr.style
@@ -1075,17 +1113,18 @@ noteFormPage email noteTitle content noteId isEdit =
                                             , Css.color (textMuted ())
                                             ])
                                   ]
-                                  [text "Cancel"]
+                                  [ text "Cancel" ]
                             ]
                       ]
                 , script
-                      [Attr.src
-                          "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
+                      [ Attr.src
+                            "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+                      ]
                       []
                 , script
                       []
-                      [raw
-                          "window.addEventListener('DOMContentLoaded',function(){var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();});"
+                      [ raw
+                            "window.addEventListener('DOMContentLoaded',function(){var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();});"
                       ]
                 ])
 
@@ -1095,13 +1134,13 @@ errorPage message =
         "Error"
         (navGuest ())
         (div
-            [Attr.class "card auth-card"]
-            [ h2 [] [text "Something Went Wrong"]
-            , div [Attr.class "error"] [text message]
+            [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Something Went Wrong" ]
+            , div [ Attr.class "error" ] [ text message ]
             , a
                   [ Attr.href "/"
                   , Attr.class "btn"
-                  , Attr.style (Css.styles [Css.marginTop (sp 3)])
+                  , Attr.style (Css.styles [ Css.marginTop (sp 3) ])
                   ]
-                  [text "Go Home"]
+                  [ text "Go Home" ]
             ])

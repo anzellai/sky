@@ -1,0 +1,45 @@
+module Main exposing (main)
+
+-- examples/40-generic-adt-field — regression lock for the "generic
+-- record-alias field carried in an ADT variant, consumed at a concrete
+-- type" codegen bug (audit #8).
+--
+-- `type alias Payload a = { value : a, tag : String }` is NOT
+-- monomorphised, so its generic field erases to a Go `any` field
+-- (`Value any`). When that field is carried inside an ADT variant
+-- (`Filled (Payload a)`) and re-bound in a case arm at a CONCRETE
+-- instantiation (`Box Int`), the field read must be narrowed
+-- (`rt.AsInt`) or `go build` rejects the uncoerced `any` in the
+-- `int` return slot.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Payload a =
+    { value : a
+    , tag : String
+    }
+
+type Box a
+    = Empty
+    | Filled (Payload a)
+
+
+getInt : Box Int -> Int
+getInt b =
+    case b of
+
+        Empty ->
+            0
+
+        Filled rec ->
+            rec.value
+
+
+main =
+    let
+        _ =
+            println (String.fromInt (getInt (Filled { value = 9, tag = "x" })))
+    in
+        println (String.fromInt (getInt Empty))

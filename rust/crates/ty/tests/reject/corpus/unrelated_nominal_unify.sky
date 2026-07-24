@@ -1,0 +1,19 @@
+-- defect: two DISTINCT nominal types must NOT unify — `Widget` passed where
+--         `Customer` is expected. Non-FFI analog of the v0.7 self-host killer
+--         (`isOpaqueFfiType a && isOpaqueFfiType b -> Ok` unified everything;
+--          self-host §7 R1-D2). The Rust unifier requires nominal-name equality.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Customer = Customer
+type Widget = Widget
+
+useCustomer : Customer -> Int
+useCustomer c =
+    1
+
+main =
+    println (String.fromInt (useCustomer Widget))

@@ -31,14 +31,15 @@ import System
 
 main =
     let
-        dir =
-            System.getenvOr "SKY_DOC_DIR" ""
-
+        dir = System.getenvOr "SKY_DOC_DIR" ""
         port =
             case System.getenvInt "SKY_LIVE_PORT" |> Task.run of
-                Ok n -> n
-                Err _ -> 8030
 
+                Ok n ->
+                    n
+
+                Err _ ->
+                    8030
         _ =
             println
                 ("sky doc-server: " ++ dir ++ " on :" ++ String.fromInt port)
@@ -47,14 +48,12 @@ main =
             Task.fail
                 (Error.unexpected
                     "SKY_DOC_DIR not set — run via `sky doc --serve`.")
+
         else
-            Server.listen port
-                [ Server.any "/" (dispatch dir)
-                ]
+            Server.listen port [ Server.any "/" (dispatch dir) ]
 
 
 -- ─── Dispatch ──────────────────────────────────────────────────
-
 dispatch : String -> Request -> Task Error Response
 dispatch dir req =
     let
@@ -66,25 +65,26 @@ dispatch dir req =
         safe = not (String.contains ".." path)
     in
         if not safe then
-            Task.succeed
-                (Server.withStatus 400 (Server.text "bad request"))
+            Task.succeed (Server.withStatus 400 (Server.text "bad request"))
+
         else if path == "/" then
             serveHtml (dir ++ "/index.html")
+
         else if String.startsWith "/m/" path then
             let
                 modName = String.slice 3 (String.length path) path
             in
                 serveHtml (dir ++ "/m/" ++ modName ++ ".html")
+
         else if path == "/api/symbols.json" then
             serveJson (dir ++ "/api/symbols.json")
+
         else
             Task.succeed
-                (Server.withStatus 404
-                    (Server.text ("not found: " ++ path)))
+                (Server.withStatus 404 (Server.text ("not found: " ++ path)))
 
 
 -- ─── Helpers ────────────────────────────────────────────────────
-
 serveHtml : String -> Task Error Response
 serveHtml path =
     File.readFile path
@@ -101,6 +101,4 @@ serveJson path =
 
 notFoundFor : String -> Error -> Task Error Response
 notFoundFor path _ =
-    Task.succeed
-        (Server.withStatus 404
-            (Server.text ("not found: " ++ path)))
+    Task.succeed (Server.withStatus 404 (Server.text ("not found: " ++ path)))

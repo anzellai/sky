@@ -17,15 +17,8 @@ module Lib.OAuth exposing (firebaseAuthScript, handleAuthCallback)
 --   GOOGLE_CLOUD_PROJECT
 --   GOOGLE_APPLICATION_CREDENTIALS
 -- ══════════════════════════════════════════════════════
+
 import Sky.Core.Prelude exposing (..)
-        -- Store UID cookie for instant server-side auth on page load
-        -- Clear cookie on sign-out
-            -- Load Firebase SDK dynamically into <head>
-            -- Listen for auth state changes (sign-in, sign-out, token refresh)
-            -- Send token to Sky.Live server as a FirebaseAuth Msg
-            -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
-            -- Sign-in function called by buttons
-            -- Sign-out function
 import Sky.Core.Result as Result
 import Sky.Core.Task as Task
 import System
@@ -36,6 +29,8 @@ firebaseAuthScript _ =
     let
         apiKey =
             Result.withDefault "" (Task.run (System.getenv "FIREBASE_API_KEY"))
+        -- Store UID cookie for instant server-side auth on page load
+        -- Clear cookie on sign-out
         authDomain =
             Result.withDefault "" (Task.run (System.getenv "AUTH_DOMAIN"))
         projectId =
@@ -44,15 +39,21 @@ firebaseAuthScript _ =
                 (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         if apiKey == "" then
+            "<script>function skySignIn(){alert('Sign-in is disabled: set FIREBASE_API_KEY, AUTH_DOMAIN, GOOGLE_CLOUD_PROJECT.');} function skySignOut(){}</script>"
+
+        else
+            -- Load Firebase SDK dynamically into <head>
+            -- Listen for auth state changes (sign-in, sign-out, token refresh)
+            -- Send token to Sky.Live server as a FirebaseAuth Msg
+            -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
+            -- Sign-in function called by buttons
+            -- Sign-out function
             -- Skip Firebase SDK injection when the API key is missing.
             -- Browsers would otherwise fire `Firebase: Error
             -- (auth/invalid-api-key)` plus 4xx console errors from the
             -- Firebase auth-metadata probes. Sign-in buttons no-op
             -- harmlessly until the user sets FIREBASE_API_KEY +
             -- AUTH_DOMAIN + GOOGLE_CLOUD_PROJECT.
-            "<script>function skySignIn(){alert('Sign-in is disabled: set FIREBASE_API_KEY, AUTH_DOMAIN, GOOGLE_CLOUD_PROJECT.');} function skySignOut(){}</script>"
-
-        else
             """<script>
 var _fbReady=false,_fbUser=null;
 function _fbLoad(url,cb){var s=document.createElement('script');s.src=url;s.onload=cb;document.head.appendChild(s);}

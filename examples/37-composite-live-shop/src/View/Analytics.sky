@@ -24,8 +24,9 @@ analyticsView model =
               (Ui.text "Analytics")
         , Ui.paragraph
               [ Font.color Common.muted, Font.size 13 ]
-              [Ui.text
-                  "Synthetic data — exists to exercise Std.Ui.Chart's line + bar + sparkline primitives."]
+              [ Ui.text
+                    "Synthetic data — exists to exercise Std.Ui.Chart's line + bar + sparkline primitives."
+              ]
         , Common.adaptStack
               model.viewport
               [ chartCard "Daily sales" (lineChart model.sales)
@@ -56,8 +57,9 @@ lineChart sales =
     Chart.line
         (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 180
             |> Chart.withTitle "Last 30 days (USD)")
-        [Chart.series (toPoints sales) |> Chart.withSeriesLabel "Revenue"
-            |> Chart.withSeriesColor (Ui.rgb 60 130 200)]
+        [ Chart.series (toPoints sales) |> Chart.withSeriesLabel "Revenue"
+              |> Chart.withSeriesColor (Ui.rgb 60 130 200)
+        ]
 
 
 categoryBars : Element Msg
@@ -65,14 +67,15 @@ categoryBars =
     Chart.bar
         (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 180
             |> Chart.withTitle "Sales by category")
-        [Chart.series
-            [ ( 0.0, 1200.0 )
-            , ( 1.0, 880.0 )
-            , ( 2.0, 540.0 )
-            , ( 3.0, 420.0 )
-            , ( 4.0, 200.0 )
-            ]
-            |> Chart.withSeriesColor (Ui.rgb 220 130 60)]
+        [ Chart.series
+              [ ( 0.0, 1200.0 )
+              , ( 1.0, 880.0 )
+              , ( 2.0, 540.0 )
+              , ( 3.0, 420.0 )
+              , ( 4.0, 200.0 )
+              ]
+              |> Chart.withSeriesColor (Ui.rgb 220 130 60)
+        ]
 
 
 sparklineRow : Model -> Element Msg
@@ -104,7 +107,7 @@ sparklineRow model =
 sparklineMetric : String -> Int -> List Float -> Element Msg
 sparklineMetric label value xs =
     Ui.column
-        [Ui.spacing 4]
+        [ Ui.spacing 4 ]
         [ Ui.el [ Font.size 11, Font.color Common.muted ] (Ui.text label)
         , Ui.el
               [ Font.size 22, Font.bold, Font.color Common.brand ]

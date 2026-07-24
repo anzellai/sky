@@ -11,21 +11,52 @@
 -- `yearUtc` etc. return `Int -> Int` so server-internal callers
 -- don't thread `Result.withDefault 0` for the UTC happy path.
 module Std.Time exposing
-    ( inZone, formatInZone
-    , addMonths, addYears, addDays, addHours, addMinutes, addSeconds
-    , startOfDay, endOfDay
-    , startOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear
-    , year, month, day
-    , dayOfWeek, dayOfYear, weekOfYear, isWeekend
-    , daysInMonth, isLeapYear
-    , diffDays, diffHours, diffMinutes, diffSeconds
-    , fromParts, zoneOffset, zoneName
+    ( inZone
+    , formatInZone
+    , addMonths
+    , addYears
+    , addDays
+    , addHours
+    , addMinutes
+    , addSeconds
+    , startOfDay
+    , endOfDay
+    , startOfWeek
+    , startOfMonth
+    , endOfMonth
+    , startOfYear
+    , endOfYear
+    , year
+    , month
+    , day
+    , dayOfWeek
+    , dayOfYear
+    , weekOfYear
+    , isWeekend
+    , daysInMonth
+    , isLeapYear
+    , diffDays
+    , diffHours
+    , diffMinutes
+    , diffSeconds
+    , fromParts
+    , zoneOffset
+    , zoneName
     , utc
-    , yearUtc, monthUtc, dayUtc
-    , dayOfWeekUtc, dayOfYearUtc, weekOfYearUtc, isWeekendUtc
-    , startOfDayUtc, endOfDayUtc
-    , startOfWeekUtc, startOfMonthUtc, endOfMonthUtc
-    , startOfYearUtc, endOfYearUtc
+    , yearUtc
+    , monthUtc
+    , dayUtc
+    , dayOfWeekUtc
+    , dayOfYearUtc
+    , weekOfYearUtc
+    , isWeekendUtc
+    , startOfDayUtc
+    , endOfDayUtc
+    , startOfWeekUtc
+    , startOfMonthUtc
+    , endOfMonthUtc
+    , startOfYearUtc
+    , endOfYearUtc
     )
 
 -- | Std.Time — IANA timezone-aware time helpers.
@@ -47,14 +78,12 @@ import Sky.Ffi as Ffi
 
 
 -- ─── Shorthand for the UTC zone ─────────────────────────────────
-
 utc : String
 utc =
     "UTC"
 
 
 -- ─── Formatting ────────────────────────────────────────────────
-
 inZone : String -> Int -> Result Error String
 inZone zone ms =
     Ffi.callPure "Time_inZone" [ Ffi.toAny zone, Ffi.toAny ms ]
@@ -62,12 +91,12 @@ inZone zone ms =
 
 formatInZone : String -> String -> Int -> Result Error String
 formatInZone zone layout ms =
-    Ffi.callPure "Time_formatInZone"
+    Ffi.callPure
+        "Time_formatInZone"
         [ Ffi.toAny zone, Ffi.toAny layout, Ffi.toAny ms ]
 
 
 -- ─── Calendar arithmetic ───────────────────────────────────────
-
 addMonths : Int -> Int -> Int
 addMonths months ms =
     Ffi.callPure "Time_addMonths" [ months, ms ]
@@ -99,7 +128,6 @@ addSeconds seconds ms =
 
 
 -- ─── Period boundaries ─────────────────────────────────────────
-
 startOfDay : String -> Int -> Result Error Int
 startOfDay zone ms =
     Ffi.callPure "Time_startOfDay" [ Ffi.toAny zone, Ffi.toAny ms ]
@@ -136,7 +164,6 @@ endOfYear zone ms =
 
 
 -- ─── Calendar queries ──────────────────────────────────────────
-
 year : String -> Int -> Result Error Int
 year zone ms =
     Ffi.callPure "Time_year" [ Ffi.toAny zone, Ffi.toAny ms ]
@@ -183,7 +210,6 @@ isLeapYear y =
 
 
 -- ─── Differences ───────────────────────────────────────────────
-
 diffDays : Int -> Int -> Int
 diffDays a b =
     Ffi.callPure "Time_diffDays" [ a, b ]
@@ -205,10 +231,10 @@ diffSeconds a b =
 
 
 -- ─── Construction from parts ───────────────────────────────────
-
 fromParts : String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int
 fromParts zone y m d h mins s =
-    Ffi.callPure "Time_fromParts"
+    Ffi.callPure
+        "Time_fromParts"
         [ Ffi.toAny zone
         , Ffi.toAny y
         , Ffi.toAny m
@@ -220,7 +246,6 @@ fromParts zone y m d h mins s =
 
 
 -- ─── Zone discovery ────────────────────────────────────────────
-
 zoneOffset : String -> Int -> Result Error Int
 zoneOffset zone ms =
     Ffi.callPure "Time_zoneOffset" [ Ffi.toAny zone, Ffi.toAny ms ]
@@ -241,101 +266,155 @@ zoneName zone ms =
 -- The full zone-aware fn stays canonical; reach for `*Utc` only
 -- when you're already operating on canonical UTC unix millis
 -- (e.g. server-internal timestamps, log lines, audit rows).
-
-
 yearUtc : Int -> Int
 yearUtc ms =
     case year utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 monthUtc : Int -> Int
 monthUtc ms =
     case month utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 dayUtc : Int -> Int
 dayUtc ms =
     case day utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 dayOfWeekUtc : Int -> Int
 dayOfWeekUtc ms =
     case dayOfWeek utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 dayOfYearUtc : Int -> Int
 dayOfYearUtc ms =
     case dayOfYear utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 weekOfYearUtc : Int -> Int
 weekOfYearUtc ms =
     case weekOfYear utc ms of
-        Ok v -> v
-        Err _ -> 0
+
+        Ok v ->
+            v
+
+        Err _ ->
+            0
 
 
 isWeekendUtc : Int -> Bool
 isWeekendUtc ms =
     case isWeekend utc ms of
-        Ok v -> v
-        Err _ -> False
+
+        Ok v ->
+            v
+
+        Err _ ->
+            False
 
 
 startOfDayUtc : Int -> Int
 startOfDayUtc ms =
     case startOfDay utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 endOfDayUtc : Int -> Int
 endOfDayUtc ms =
     case endOfDay utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 startOfWeekUtc : Int -> Int
 startOfWeekUtc ms =
     case startOfWeek utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 startOfMonthUtc : Int -> Int
 startOfMonthUtc ms =
     case startOfMonth utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 endOfMonthUtc : Int -> Int
 endOfMonthUtc ms =
     case endOfMonth utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 startOfYearUtc : Int -> Int
 startOfYearUtc ms =
     case startOfYear utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms
 
 
 endOfYearUtc : Int -> Int
 endOfYearUtc ms =
     case endOfYear utc ms of
-        Ok v -> v
-        Err _ -> ms
+
+        Ok v ->
+            v
+
+        Err _ ->
+            ms

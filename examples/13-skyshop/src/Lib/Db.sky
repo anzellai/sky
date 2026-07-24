@@ -1,6 +1,3 @@
--- ══════════════════════════════════════════════════════
--- FIELD ACCESSORS
--- ══════════════════════════════════════════════════════
 module Lib.Db exposing
     ( getDoc
     , setDoc
@@ -19,6 +16,10 @@ module Lib.Db exposing
     , queryWhereOrderOrLog
     , queryDocsOrLog
     )
+
+-- ══════════════════════════════════════════════════════
+-- FIELD ACCESSORS
+-- ══════════════════════════════════════════════════════
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -93,11 +94,11 @@ initDb _ =
                 ()
 
         Err e ->
-        -- Propagate boundary failure up. Distinct from
-        -- `Ok Nothing` (doc genuinely not found) — callers must
-        -- handle "DB unreachable / FFI panic" separately from
-        -- "no row matched". Demonstrates real-world handling:
-        -- never collapse "system broken" into "no result".
+            -- Propagate boundary failure up. Distinct from
+            -- `Ok Nothing` (doc genuinely not found) — callers must
+            -- handle "DB unreachable / FFI panic" separately from
+            -- "no row matched". Demonstrates real-world handling:
+            -- never collapse "system broken" into "no result".
             let
                 _ =
                     println
@@ -156,7 +157,7 @@ getFirestoreClient _ =
 -- HELPERS
 -- ══════════════════════════════════════════════════════
 anyToString val =
-    Fmt.sprint [val]
+    Fmt.sprint [ val ]
 
 
 snapshotToDict snapshot =
@@ -165,13 +166,13 @@ snapshotToDict snapshot =
             Result.withDefault
                 Dict.empty
                 (Firestore.documentSnapshotData snapshot)
+        docId =
+            case Firestore.documentSnapshotRef snapshot of
+
                 -- v0.10.0: every Go FFI call returns Result Error T per the
                 -- doctrine. Pre-fix, the typed-codegen tolerated direct
                 -- composition; foreign-fatal now requires explicit
                 -- unwrapping at each boundary.
-        docId =
-            case Firestore.documentSnapshotRef snapshot of
-
                 Ok ref ->
                     Result.withDefault "" (Firestore.documentRefID ref)
 
@@ -288,7 +289,7 @@ mergeOpts =
     case Firestore.mergeAll () of
 
         Ok opt ->
-            [opt]
+            [ opt ]
 
         Err _ ->
             []
@@ -394,9 +395,9 @@ queryWhereInner colRef field op value =
             Err (wrapDbError (errorToString e))
 
         Ok q ->
-        -- ══════════════════════════════════════════════════════
-        -- SHARED QUERY HELPERS
-        -- ══════════════════════════════════════════════════════
+            -- ══════════════════════════════════════════════════════
+            -- SHARED QUERY HELPERS
+            -- ══════════════════════════════════════════════════════
             runQuery q
 
 

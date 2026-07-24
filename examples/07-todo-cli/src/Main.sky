@@ -17,6 +17,7 @@ module Main exposing (main)
 -- which prints to stderr and `System.exit 1`s. No silent `let _ = …`
 -- discard pattern — every effect either runs to completion via the
 -- chain or surfaces its error through the reporter.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
@@ -40,9 +41,9 @@ import Std.Log exposing (println)
 -- CLI entry points.
 main =
     let
-    -- System.args is Task Error (List String) after the
-    -- v1.0 Task-everywhere migration. Force at the
-    -- read site for ergonomic let-binding access.
+        -- System.args is Task Error (List String) after the
+        -- v1.0 Task-everywhere migration. Force at the
+        -- read site for ergonomic let-binding access.
         pipeline =
             Db.connect () |> Task.andThen runApp |> Task.onError reportError
         _ = Task.run pipeline
@@ -91,7 +92,7 @@ initDb conn =
 
 addTodo : Db -> String -> Task Error ()
 addTodo conn todoTitle =
-    Db.exec conn "INSERT INTO todos (title) VALUES (?)" [todoTitle]
+    Db.exec conn "INSERT INTO todos (title) VALUES (?)" [ todoTitle ]
         |> Task.map
                (\_ ->
                    let
@@ -146,7 +147,7 @@ formatTodo row =
 
 markDone : Db -> String -> Task Error ()
 markDone conn idStr =
-    Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [idStr]
+    Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
         |> Task.map
                (\_ ->
                    let
@@ -157,7 +158,7 @@ markDone conn idStr =
 
 markUndone : Db -> String -> Task Error ()
 markUndone conn idStr =
-    Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [idStr]
+    Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
         |> Task.map
                (\_ ->
                    let
@@ -168,7 +169,7 @@ markUndone conn idStr =
 
 removeTodo : Db -> String -> Task Error ()
 removeTodo conn idStr =
-    Db.exec conn "DELETE FROM todos WHERE id = ?" [idStr]
+    Db.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
         |> Task.map
                (\_ ->
                    let

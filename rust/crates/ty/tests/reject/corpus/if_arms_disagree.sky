@@ -1,0 +1,13 @@
+-- defect: `if` branches disagree — then Int, else String
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+pick : Bool -> Int
+pick b =
+    if b then 1 else "nope"
+
+main =
+    println (String.fromInt (pick True))

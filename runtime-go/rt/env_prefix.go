@@ -106,4 +106,14 @@ func skyGetenv(suffix string) string {
 // SetEnvDefault.
 func SetSkyDefault(suffix, value string) {
 	SetEnvDefault(skyEnvName(suffix), value)
+	// Re-read any env-derived state captured at package-init (`logJSON`,
+	// `logThreshold`, …). These package-level vars are evaluated when `rt` first
+	// loads — BEFORE the app's generated init() runs these SetSkyDefault calls —
+	// so a sky.toml `[log] format`/`level` default would otherwise never take
+	// effect (the value was seeded too late). The hooks just re-read env, and
+	// there are only a handful of SetSkyDefault calls, so firing them here is
+	// cheap. Same mechanism SetEnvPrefix uses.
+	for _, fn := range envPrefixHooks {
+		fn()
+	}
 }

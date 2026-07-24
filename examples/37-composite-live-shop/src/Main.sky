@@ -7,6 +7,7 @@ module Main exposing (main)
 -- Lazy / Keyed / Responsive + Std.Live.Head + pub/sub via
 -- Cmd.publish + Sub.subscribeTopic in a single fixture. Multi-module
 -- mandatory per CLAUDE.md Limitation #17.
+
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Live exposing (app, route)
@@ -63,7 +64,7 @@ view model =
             [ Common.topNav model
             , Ui.column
                   [ Ui.paddingXY 24 16, Ui.spacing 16, Ui.width Ui.fill ]
-                  [pageBody model]
+                  [ pageBody model ]
             , Common.footer
             ])
 

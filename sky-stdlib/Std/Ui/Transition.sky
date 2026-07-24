@@ -55,11 +55,11 @@ module Std.Ui.Transition exposing
 -- declaring `transition: background-color 200ms ease-out` on the
 -- base selector. The browser animates the change between the base
 -- and hover states without any JS round-trip.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Ui exposing (Attribute, transitionRaw)
-
 
 -- A single step in a transition definition. Combined by
 -- `buildShorthand` into the CSS `transition` shorthand value
@@ -69,7 +69,6 @@ type Step
     | StepDuration Int
     | StepDelay Int
     | StepEasing Easing
-
 
 -- Easing curve. `Linear` / `EaseIn` / `EaseOut` / `EaseInOut` map
 -- to the same-named CSS keywords; `CubicBezier x1 y1 x2 y2` is the
@@ -84,8 +83,6 @@ type Easing
 
 
 -- ─── Step builders ───────────────────────────────────────────────
-
-
 -- Name the CSS property to transition. Common targets:
 -- "background-color", "color", "border-color", "transform",
 -- "opacity", "width", "height", "padding", "border-radius".
@@ -115,8 +112,6 @@ easing e =
 
 
 -- ─── Easing constants ────────────────────────────────────────────
-
-
 linear : Easing
 linear =
     Linear
@@ -146,8 +141,6 @@ cubicBezier x1 y1 x2 y2 =
 
 
 -- ─── CSS lowering ────────────────────────────────────────────────
-
-
 -- Map an Easing to its CSS function string.
 easingToCss : Easing -> String
 easingToCss e =
@@ -205,7 +198,7 @@ extractProperty steps =
         [] ->
             defaultProperty
 
-        StepProperty p :: _ ->
+        (StepProperty p) :: _ ->
             p
 
         _ :: rest ->
@@ -219,7 +212,7 @@ extractDuration steps =
         [] ->
             defaultDuration
 
-        StepDuration d :: _ ->
+        (StepDuration d) :: _ ->
             d
 
         _ :: rest ->
@@ -233,7 +226,7 @@ extractDelay steps =
         [] ->
             0
 
-        StepDelay d :: _ ->
+        (StepDelay d) :: _ ->
             d
 
         _ :: rest ->
@@ -247,7 +240,7 @@ extractEasing steps =
         [] ->
             defaultEasing
 
-        StepEasing e :: _ ->
+        (StepEasing e) :: _ ->
             e
 
         _ :: rest ->
@@ -275,8 +268,6 @@ buildShorthand steps =
 
 
 -- ─── Attribute entry points ──────────────────────────────────────
-
-
 -- Build a transition Attribute from typed steps. The browser
 -- animates property changes (e.g. `Background.color` → `Background.
 -- hoverColor`) over the specified duration. The rule is

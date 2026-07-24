@@ -1,0 +1,17 @@
+[package]
+name = "project"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+skydb = { path = "../skydb" }
+lower = { path = "../lower" }
+hir = { path = "../hir" }
+ty = { path = "../ty" }
+diagnostics = { path = "../diagnostics" }
+syntax = { path = "../syntax" }
+base = { path = "../base" }
+ffi = { path = "../ffi" }

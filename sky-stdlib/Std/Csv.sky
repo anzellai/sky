@@ -21,10 +21,8 @@ module Std.Csv exposing
     , parseStreamFromFile
     )
 
-
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
-
 
 -- | A parsed CSV document.
 --
@@ -45,9 +43,7 @@ type alias Csv =
 -- chain stays source-compat when v0.17+ adds optional fields.
 defaultCsv : Csv
 defaultCsv =
-    { header = []
-    , rows = []
-    }
+    { header = [], rows = [] }
 
 
 -- | `withHeader ["id", "email"] csv` — replace the header row.
@@ -67,26 +63,30 @@ withRows rows csv =
 -- row is treated as the header.  Returns `Err Error` on
 -- malformed input.
 parse : String -> Result Error Csv
-parse = Ffi.kernel "Csv_parse"
+parse =
+    Ffi.kernel "Csv_parse"
 
 
 -- | `parseWithDelimiter delim text` — like `parse` but with a
 -- custom single-character delimiter.
 parseWithDelimiter : String -> String -> Result Error Csv
-parseWithDelimiter = Ffi.kernel "Csv_parseWithDelimiter"
+parseWithDelimiter =
+    Ffi.kernel "Csv_parseWithDelimiter"
 
 
 -- | `encode csv` — encode `csv` back to a comma-delimited string.
 -- Cells containing the delimiter, double quotes, or newlines are
 -- quoted per RFC 4180.
 encode : Csv -> String
-encode = Ffi.kernel "Csv_encode"
+encode =
+    Ffi.kernel "Csv_encode"
 
 
 -- | `encodeWithDelimiter delim csv` — like `encode` but with a
 -- custom delimiter.
 encodeWithDelimiter : String -> Csv -> String
-encodeWithDelimiter = Ffi.kernel "Csv_encodeWithDelimiter"
+encodeWithDelimiter =
+    Ffi.kernel "Csv_encodeWithDelimiter"
 
 
 -- | `parseStreamFromFile path` — stream-read a CSV file into
@@ -97,4 +97,5 @@ encodeWithDelimiter = Ffi.kernel "Csv_encodeWithDelimiter"
 -- import inside a worker `Task` and chunking by row count at the
 -- caller.
 parseStreamFromFile : String -> Task Error (List (List String))
-parseStreamFromFile = Ffi.kernel "Csv_parseStreamFromFile"
+parseStreamFromFile =
+    Ffi.kernel "Csv_parseStreamFromFile"

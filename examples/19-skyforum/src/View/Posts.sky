@@ -14,7 +14,7 @@ import View.Common exposing (clickable)
 
 postsListView : Maybe Session -> List Post -> Element Msg
 postsListView maybeSession posts =
-    Ui.column [Ui.spacing 12] (List.indexedMap (postRow maybeSession) posts)
+    Ui.column [ Ui.spacing 12 ] (List.indexedMap (postRow maybeSession) posts)
 
 
 postRow : Maybe Session -> Int -> Post -> Element Msg
@@ -113,9 +113,9 @@ currentUsername maybeSession =
 postBody : Post -> Element Msg
 postBody post =
     Ui.column
-        [Ui.spacing 4]
+        [ Ui.spacing 4 ]
         [ Ui.row
-              [Ui.spacing 8]
+              [ Ui.spacing 8 ]
               [ Ui.el
                     [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
                     (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
@@ -124,7 +124,7 @@ postBody post =
                     (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
               ]
         , Ui.row
-              [Ui.spacing 6]
+              [ Ui.spacing 6 ]
               [ Ui.el
                     [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
                     (Ui.text ("by " ++ post.author))

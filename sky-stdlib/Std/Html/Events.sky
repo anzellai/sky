@@ -15,7 +15,6 @@ import Std.Html.Attributes exposing (..)
 
 
 -- ─── Zero-wire-arg events (the Msg dispatches as-is) ────────────
-
 -- Generic escape hatch: bind any DOM event name to a handler.
 -- Uses `OnRaw` so the handler's type stays decoupled from the
 -- surrounding `Html msg` — `on` accepts a plain Msg OR a
@@ -106,7 +105,6 @@ onError msg =
 
 
 -- ─── Value-carrying events (handler receives the input value) ───
-
 onInput : (String -> msg) -> Attribute msg
 onInput handler =
     EventAttr (OnString "input" handler)
@@ -133,7 +131,6 @@ onKeyPress handler =
 
 
 -- ─── Checkbox state ─────────────────────────────────────────────
-
 onCheck : (Bool -> msg) -> Attribute msg
 onCheck handler =
     EventAttr (OnBool "change" handler)
@@ -143,7 +140,6 @@ onCheck handler =
 -- The renderer routes `sky-`-prefixed event names through the
 -- data-sky-ev-* side channel; the handler receives the file's
 -- data URL as a String.
-
 onFile : (String -> msg) -> Attribute msg
 onFile handler =
     EventAttr (OnString "sky-file" handler)
@@ -157,7 +153,6 @@ onImage handler =
 -- ─── File-upload hints (browser-side resize / cap) ──────────────
 -- These are plain attributes the upload side-channel reads — not
 -- events — but they live here next to onFile/onImage for ergonomics.
-
 fileMaxSize : Int -> Attribute msg
 fileMaxSize n =
     Attr "data-sky-ev-sky-file-max-size" (String.fromInt n)

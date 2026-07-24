@@ -1,0 +1,10 @@
+-- defect: unannotated polymorphic `compose g f x = g (f x)` fed a wrong-typed
+--         seed. `String.toUpper : String -> String` as `f` pins x : String, but
+--         `g = String.fromInt : Int -> String` needs f's result to be Int, and
+--         the seed `"s"` collides. gap2 admits the poly scheme. oracle: reject.
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+compose g f x = g (f x)
+main =
+    println (compose String.fromInt String.toUpper "s")

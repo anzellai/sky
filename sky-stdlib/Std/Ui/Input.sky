@@ -47,6 +47,7 @@ module Std.Ui.Input exposing
 -- ADTs in field positions), and the string-keyed shape works with
 -- the typed-Msg dispatch boundary that Sky.Live's `update` function
 -- already uses for form data.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -118,7 +119,6 @@ option value labelEl =
 
 
 -- ─── Controls ────────────────────────────────────────────────────
-
 -- Button. Set `onPress = Nothing` to render a disabled button (the
 -- runtime adds `disabled="true"` so the browser greys it out and
 -- ignores clicks).
@@ -400,7 +400,6 @@ slider attrs cfg =
 
 
 -- ─── Internals ───────────────────────────────────────────────────
-
 -- Build the bare input element with type, change handler, value.
 -- Renders as a real <input> via `Ui.input` (Ui.el would render
 -- as <div> and the browser would ignore the type/value attrs and
@@ -444,7 +443,7 @@ renderRadioOption onChange selected RadioOption value labelEl =
         isChecked = value == selected
         checkedAttr =
             if isChecked then
-                [Ui.htmlAttribute "checked" "checked"]
+                [ Ui.htmlAttribute "checked" "checked" ]
 
             else
                 []
@@ -471,7 +470,7 @@ placeholderTextOf el =
             []
 
         else
-            [Ui.htmlAttribute "placeholder" s]
+            [ Ui.htmlAttribute "placeholder" s ]
 
 
 extractText : Element msg -> String

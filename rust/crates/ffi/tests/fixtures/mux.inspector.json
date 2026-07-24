@@ -1,0 +1,1973 @@
+{
+  "pkg": "github.com/gorilla/mux",
+  "name": "mux",
+  "functions": [
+    {
+      "name": "CORSMethodMiddleware",
+      "params": [
+        {
+          "name": "r",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/gorilla/mux.MiddlewareFunc",
+          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "CurrentRoute",
+      "params": [
+        {
+          "name": "r",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "ErrMethodMismatch",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "ErrNotFound",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "MatcherFuncMatch",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/gorilla/mux.MatcherFunc",
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+        },
+        {
+          "name": "r",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        },
+        {
+          "name": "match",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "MatcherFunc",
+      "methodName": "Match"
+    },
+    {
+      "name": "MiddlewareFuncMiddleware",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/gorilla/mux.MiddlewareFunc",
+          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "results": [
+        {
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "MiddlewareFunc",
+      "methodName": "Middleware"
+    },
+    {
+      "name": "NewRoute",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "isPkgVar": true
+    },
+    {
+      "name": "NewRouteMatch",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.RouteMatch"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "isPkgVar": true
+    },
+    {
+      "name": "NewRouter",
+      "params": [],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "RouteBuildOnly",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "BuildOnly"
+    },
+    {
+      "name": "RouteBuildVarsFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "f",
+          "type": "github.com/gorilla/mux.BuildVarsFunc",
+          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "BuildVarsFunc"
+    },
+    {
+      "name": "RouteGetError",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetError"
+    },
+    {
+      "name": "RouteGetHandler",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetHandler"
+    },
+    {
+      "name": "RouteGetHostTemplate",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetHostTemplate"
+    },
+    {
+      "name": "RouteGetMethods",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetMethods"
+    },
+    {
+      "name": "RouteGetName",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetName"
+    },
+    {
+      "name": "RouteGetPathRegexp",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetPathRegexp"
+    },
+    {
+      "name": "RouteGetPathTemplate",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetPathTemplate"
+    },
+    {
+      "name": "RouteGetQueriesRegexp",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetQueriesRegexp"
+    },
+    {
+      "name": "RouteGetQueriesTemplates",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetQueriesTemplates"
+    },
+    {
+      "name": "RouteGetVarNames",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]string"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "GetVarNames"
+    },
+    {
+      "name": "RouteHandler",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Handler"
+    },
+    {
+      "name": "RouteHandlerFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "f",
+          "type": "func(net/http.ResponseWriter, *net/http.Request)"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "HandlerFunc"
+    },
+    {
+      "name": "RouteHeaders",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Headers"
+    },
+    {
+      "name": "RouteHeadersRegexp",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "HeadersRegexp"
+    },
+    {
+      "name": "RouteHost",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Host"
+    },
+    {
+      "name": "RouteMatch",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "req",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        },
+        {
+          "name": "match",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Match"
+    },
+    {
+      "name": "RouteMatchHandler",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Handler",
+      "isField": true
+    },
+    {
+      "name": "RouteMatchMatchErr",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "MatchErr",
+      "isField": true
+    },
+    {
+      "name": "RouteMatchRoute",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Route",
+      "isField": true
+    },
+    {
+      "name": "RouteMatchSetHandler",
+      "params": [
+        {
+          "name": "value",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Handler",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouteMatchSetMatchErr",
+      "params": [
+        {
+          "name": "value",
+          "type": "error"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "MatchErr",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouteMatchSetRoute",
+      "params": [
+        {
+          "name": "value",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Route",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouteMatchSetVars",
+      "params": [
+        {
+          "name": "value",
+          "type": "map[string]string"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Vars",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouteMatchVars",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "map[string]string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "RouteMatch",
+      "methodName": "Vars",
+      "isField": true
+    },
+    {
+      "name": "RouteMatcherFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "f",
+          "type": "github.com/gorilla/mux.MatcherFunc",
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "MatcherFunc"
+    },
+    {
+      "name": "RouteMethods",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "methods",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Methods"
+    },
+    {
+      "name": "RouteName",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Name"
+    },
+    {
+      "name": "RoutePath",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Path"
+    },
+    {
+      "name": "RoutePathPrefix",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "PathPrefix"
+    },
+    {
+      "name": "RouteQueries",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Queries"
+    },
+    {
+      "name": "RouteSchemes",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "schemes",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Schemes"
+    },
+    {
+      "name": "RouteSkipClean",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "SkipClean"
+    },
+    {
+      "name": "RouteSubrouter",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "Subrouter"
+    },
+    {
+      "name": "RouteURL",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*net/url.URL",
+          "skyTypeQualified": "*URL@net/url"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": true,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "URL"
+    },
+    {
+      "name": "RouteURLHost",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*net/url.URL",
+          "skyTypeQualified": "*URL@net/url"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": true,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "URLHost"
+    },
+    {
+      "name": "RouteURLPath",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*net/url.URL",
+          "skyTypeQualified": "*URL@net/url"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": true,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Route",
+      "methodName": "URLPath"
+    },
+    {
+      "name": "RouterBuildVarsFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "f",
+          "type": "github.com/gorilla/mux.BuildVarsFunc",
+          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "BuildVarsFunc"
+    },
+    {
+      "name": "RouterGet",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Get"
+    },
+    {
+      "name": "RouterGetRoute",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "GetRoute"
+    },
+    {
+      "name": "RouterHandle",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Handle"
+    },
+    {
+      "name": "RouterHandleFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "f",
+          "type": "func(net/http.ResponseWriter, *net/http.Request)"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "HandleFunc"
+    },
+    {
+      "name": "RouterHeaders",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Headers"
+    },
+    {
+      "name": "RouterHost",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Host"
+    },
+    {
+      "name": "RouterKeepContext",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "KeepContext",
+      "isField": true
+    },
+    {
+      "name": "RouterMatch",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "req",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        },
+        {
+          "name": "match",
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Match"
+    },
+    {
+      "name": "RouterMatcherFunc",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "f",
+          "type": "github.com/gorilla/mux.MatcherFunc",
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "MatcherFunc"
+    },
+    {
+      "name": "RouterMethodNotAllowedHandler",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "MethodNotAllowedHandler",
+      "isField": true
+    },
+    {
+      "name": "RouterMethods",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "methods",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Methods"
+    },
+    {
+      "name": "RouterName",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Name"
+    },
+    {
+      "name": "RouterNewRoute",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "NewRoute"
+    },
+    {
+      "name": "RouterNotFoundHandler",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "NotFoundHandler",
+      "isField": true
+    },
+    {
+      "name": "RouterPath",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Path"
+    },
+    {
+      "name": "RouterPathPrefix",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "tpl",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "PathPrefix"
+    },
+    {
+      "name": "RouterQueries",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "pairs",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Queries"
+    },
+    {
+      "name": "RouterSchemes",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "schemes",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Schemes"
+    },
+    {
+      "name": "RouterServeHTTP",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter",
+          "skyTypeQualified": "ResponseWriter@net/http"
+        },
+        {
+          "name": "req",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        }
+      ],
+      "results": [],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "ServeHTTP"
+    },
+    {
+      "name": "RouterSetKeepContext",
+      "params": [
+        {
+          "name": "value",
+          "type": "bool"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "KeepContext",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouterSetMethodNotAllowedHandler",
+      "params": [
+        {
+          "name": "value",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "MethodNotAllowedHandler",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouterSetNotFoundHandler",
+      "params": [
+        {
+          "name": "value",
+          "type": "net/http.Handler",
+          "skyTypeQualified": "Handler@net/http"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "NotFoundHandler",
+      "isFieldSet": true
+    },
+    {
+      "name": "RouterSkipClean",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "value",
+          "type": "bool"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "SkipClean"
+    },
+    {
+      "name": "RouterStrictSlash",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "value",
+          "type": "bool"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "StrictSlash"
+    },
+    {
+      "name": "RouterUse",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "mwf",
+          "type": "[]github.com/gorilla/mux.MiddlewareFunc",
+          "skyTypeQualified": "[]MiddlewareFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [],
+      "variadic": true,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Use"
+    },
+    {
+      "name": "RouterUseEncodedPath",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "UseEncodedPath"
+    },
+    {
+      "name": "RouterWalk",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/gorilla/mux.Router",
+          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+        },
+        {
+          "name": "walkFn",
+          "type": "github.com/gorilla/mux.WalkFunc",
+          "skyTypeQualified": "WalkFunc@github.com/gorilla/mux"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "Router",
+      "methodName": "Walk"
+    },
+    {
+      "name": "SetErrMethodMismatch",
+      "params": [
+        {
+          "name": "value",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "ErrMethodMismatch",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetErrNotFound",
+      "params": [
+        {
+          "name": "value",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "ErrNotFound",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetSkipRouter",
+      "params": [
+        {
+          "name": "value",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "SkipRouter",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetURLVars",
+      "params": [
+        {
+          "name": "r",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        },
+        {
+          "name": "val",
+          "type": "map[string]string"
+        }
+      ],
+      "results": [
+        {
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "SkipRouter",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}"
+        }
+      ],
+      "results": [
+        {
+          "type": "error"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "isPkgVar": true
+    },
+    {
+      "name": "Vars",
+      "params": [
+        {
+          "name": "r",
+          "type": "*net/http.Request",
+          "skyTypeQualified": "*Request@net/http"
+        }
+      ],
+      "results": [
+        {
+          "type": "map[string]string"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true
+    }
+  ],
+  "implements": {
+    "BuildVarsFunc@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "MatcherFunc@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "MiddlewareFunc@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "Route@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "RouteMatch@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "Router@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "Handler@net/http",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ],
+    "WalkFunc@github.com/gorilla/mux": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto"
+    ]
+  },
+  "pkgAlias": {
+    "bytes": "bytes",
+    "context": "context",
+    "errors": "errors",
+    "fmt": "fmt",
+    "github.com/gorilla/mux": "mux",
+    "net/http": "http",
+    "net/url": "url",
+    "path": "path",
+    "regexp": "regexp",
+    "strconv": "strconv",
+    "strings": "strings"
+  },
+  "errors": null
+}

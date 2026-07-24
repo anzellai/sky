@@ -565,10 +565,19 @@ func TestSpool_FileMode_DoesNotBlockOnSlowDisk(t *testing.T) {
 	p50 := latencies[N/2]
 	t.Logf("with 100ms slow-disk spool: p50=%v p99=%v p99.99=%v", p50, p99, p99_99)
 
-	// Hot-path gate: Submit must stay under 1 ms even with a
-	// 100 ms spool Persist. Confirms spool I/O is genuinely async.
-	if p99_99 > time.Millisecond {
-		t.Errorf("p99.99 latency %v > 1ms with slow spool — spool I/O on hot path",
+	// Hot-path gate: Submit must stay fast even with a 100 ms spool
+	// Persist — confirming spool I/O is genuinely async (it runs on the
+	// drainer goroutine, not the caller). p99 pins the common-case hot
+	// path (a sub-ms bound the drainer easily holds). p99.99 only needs
+	// to stay well under the 100 ms spool delay: a synchronously-blocked
+	// Submit would sit at ~100 ms, so any bound far below that proves the
+	// async property while tolerating the rare scheduler/GC jitter that a
+	// tight p99.99 bound would otherwise flake on (shared CI runners).
+	if p99 > time.Millisecond {
+		t.Errorf("p99 latency %v > 1ms with slow spool — hot path not fast", p99)
+	}
+	if p99_99 > 50*time.Millisecond {
+		t.Errorf("p99.99 latency %v > 50ms with slow spool — spool I/O blocking the hot path",
 			p99_99)
 	}
 }

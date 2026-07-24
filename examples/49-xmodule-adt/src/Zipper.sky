@@ -1,0 +1,22 @@
+-- Regression for anzellai/sky#153: a parametric ADT defined in one module and
+-- used from another. The Haskell compiler emitted a Go `arm_` dispatch helper
+-- with an unbound type parameter (`undefined: T1` on `go build`) for exactly
+-- this cross-module shape. The Rust compiler lowers ADT variants over `any`
+-- (no per-variant Go generics), so there is no unbound type parameter to leak.
+module Zipper exposing (Zipper(..), singleton, current)
+
+type Zipper a
+    = Zipper (List a) a (List a)
+
+
+singleton : a -> Zipper a
+singleton x =
+    Zipper [] x []
+
+
+current : Zipper a -> a
+current z =
+    case z of
+
+        Zipper _ x _ ->
+            x

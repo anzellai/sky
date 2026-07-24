@@ -1,0 +1,18 @@
+-- defect: integer literal too large for the target Go `int`/`int64`
+-- rust: reject [E1005] at check time (out of range for Int)
+-- oracle: ACCEPTS (silently truncates); at runtime the emitted Go panics with a
+--   classified TypeMismatch. Rust is deliberately STRICTER here — rejecting a
+--   `check`-accepted-but-runtime-crashing program upholds "if it compiles it
+--   works" (`sky check ≡ sky build`), the same direction as the other
+--   stricter-than-oracle reject cases. Reject-cleanly beats silent-wrong-value.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+big : Int
+big =
+    12345678901234567890123456789
+
+main =
+    println (String.fromInt big)

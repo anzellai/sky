@@ -1,0 +1,33 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Row-polymorphic RESULT field access. `bump`'s row variable flows from its
+-- parameter into its result: `bump : { age : Int | r } -> { age : Int | r }`.
+-- Applying it to a WIDER record (`{ name, age }`) must preserve the extra
+-- `name` field through the call, so `ada.name` type-checks AND survives codegen.
+-- Before the fix the compiler dropped the row-carried field: the checker closed
+-- `ada` to `{ age }` (missing `name`) and the emitted Go coerced the argument
+-- down to `struct{ Age int }`, so `ada.name` was undefined. Now `bump` lowers
+-- to the reflective `any -> any` form (matching the oracle) and the row-extra
+-- field is read back through `rt.Field`.
+bump r =
+    { r | age = r.age + 1 }
+
+
+ada =
+    bump { name = "ada", age = 36 }
+
+
+-- Nested: the row-poly result of one `bump` fed straight into another. Uses the
+-- SAME row shape as `ada` — Sky's row variables are monomorphic per binding, so
+-- mixing DIFFERENT extra fields across uses of one `bump` is a type error (the
+-- oracle rejects it, and so does Sky).
+grown =
+    bump (bump { name = "eve", age = 40 })
+
+
+main =
+    println (ada.name ++ " " ++ grown.name)

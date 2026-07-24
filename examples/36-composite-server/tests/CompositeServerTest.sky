@@ -5,6 +5,7 @@ module CompositeServerTest exposing (main, tests)
 -- round-trip in the health body, todo encode shape.  Effectful paths
 -- (Db / Server.listen / PubSub) get coverage via the boot probe in
 -- README — these tests cover everything that doesn't need a runtime.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String

@@ -1,0 +1,16 @@
+[package]
+name = "syntax"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+base = { path = "../base" }
+diagnostics = { path = "../diagnostics" }
+rowan.workspace = true
+logos.workspace = true
+
+[dev-dependencies]
+insta = "1"

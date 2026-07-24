@@ -1,0 +1,23 @@
+-- defect: a record UPDATE sets a field the declared record type does NOT have —
+--         `{ r | nope = 1 }` where `r : P` and `P = { name, age }`.
+-- oracle: ACCEPTS this (its update-deferral is UNSOUND — it never re-checks the
+--         updated field against the base record's declared field set, silently
+--         dropping `nope`). The Rust checker is intentionally STRICTER
+--         (better-than-oracle): with record params seeded CLOSED, the update's
+--         open-row constraint carries `nope`, which cannot be absorbed by the
+--         closed `P`, so it REJECTS. This lock guards against re-introducing the
+--         record-presence leniency that would let it slip through again.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias P =
+    { name : String, age : Int }
+
+bad : P -> P
+bad r =
+    { r | nope = 1 }
+
+main =
+    println (bad { name = "a", age = 1 }).name

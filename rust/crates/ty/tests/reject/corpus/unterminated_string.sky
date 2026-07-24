@@ -1,0 +1,17 @@
+-- defect: an unterminated string literal (no closing `"`). The lexer
+--         auto-closes it at the newline into the same `String` token, so
+--         without a parser check `msg = "oops` type-checks and go-builds
+--         clean — a check≢build hole. The parser now emits [E0001], matching
+--         the oracle.
+-- oracle: reject [E0001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+msg = "hello world
+
+
+main =
+    println msg

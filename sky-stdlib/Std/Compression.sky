@@ -9,13 +9,7 @@
 -- workload) surface as `Err Error`.
 --
 -- v0.15.47.
-module Std.Compression exposing
-    ( gzip
-    , gunzip
-    , zstdCompress
-    , zstdDecompress
-    )
-
+module Std.Compression exposing (gzip, gunzip, zstdCompress, zstdDecompress)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
@@ -25,28 +19,30 @@ import Sky.Core.Error exposing (Error)
 -- of Sky.Core.Bytes).  Bytes carry arbitrary byte sequences — not
 -- necessarily valid UTF-8 — so passing the raw gzip/zstd payload
 -- as `String` is safe (Go strings are byte slices under the hood).
-
-
 -- | `gzip bytes` — RFC 1952 gzip-compress.  Output is a complete
 -- gzip stream with header + checksum.
 gzip : String -> Task Error String
-gzip = Ffi.kernel "Compression_gzip"
+gzip =
+    Ffi.kernel "Compression_gzip"
 
 
 -- | `gunzip bytes` — RFC 1952 gzip-decompress.  Fails on truncated
 -- or corrupt input.
 gunzip : String -> Task Error String
-gunzip = Ffi.kernel "Compression_gunzip"
+gunzip =
+    Ffi.kernel "Compression_gunzip"
 
 
 -- | `zstdCompress bytes` — Zstandard (RFC 8478) compress at the
 -- default level.  Higher compression ratio than gzip with
 -- comparable decompression speed.
 zstdCompress : String -> Task Error String
-zstdCompress = Ffi.kernel "Compression_zstdCompress"
+zstdCompress =
+    Ffi.kernel "Compression_zstdCompress"
 
 
 -- | `zstdDecompress bytes` — Zstandard decompress.  Fails on
 -- truncated or corrupt input.
 zstdDecompress : String -> Task Error String
-zstdDecompress = Ffi.kernel "Compression_zstdDecompress"
+zstdDecompress =
+    Ffi.kernel "Compression_zstdDecompress"

@@ -13,20 +13,21 @@ page model content =
         []
         [ styleNode [] globalStyles
         , viewHeader model
-        , div [class "container"] [content]
+        , div [ class "container" ] [ content ]
         ]
 
 
 viewHeader model =
     headerNode
-        [class "header"]
-        [div
-            [class "header-inner"]
-            [ a
-                  [ href "/", attribute "sky-nav" "", class "logo" ]
-                  [text "♞ SkyChess"]
-            , nav [class "nav"] [viewNavItems model]
-            ]]
+        [ class "header" ]
+        [ div
+              [ class "header-inner" ]
+              [ a
+                    [ href "/", attribute "sky-nav" "", class "logo" ]
+                    [ text "♞ SkyChess" ]
+              , nav [ class "nav" ] [ viewNavItems model ]
+              ]
+        ]
 
 
 viewNavItems model =
@@ -34,11 +35,11 @@ viewNavItems model =
 
         GamePage ->
             span
-                [class "nav-info"]
-                [ span [class "nav-player"] [text model.playerName]
+                [ class "nav-info" ]
+                [ span [ class "nav-player" ] [ text model.playerName ]
                 , button
                       [ onClick BackToHome, class "btn btn-ghost btn-sm" ]
-                      [text "Home"]
+                      [ text "Home" ]
                 ]
 
         _ ->

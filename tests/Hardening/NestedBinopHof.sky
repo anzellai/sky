@@ -63,31 +63,34 @@ headOr d xs =
 
 tests : List Test
 tests =
-    [Test.suite
-        "typed-primitive binop in HOF arg slot"
-        [ Test.test
-              "addOne identity 5 == 6"
-              (\_ -> Test.equal 6 (addOne identity 5))
-        , Test.test
-              "wrapBool not False True == False"
-              (\_ -> Test.equal False (wrapBool not False True))
-        , Test.test
-              "joinThem identity then head == 11"
-              (\_ -> Test.equal 11 (headOr 0 (joinThem identity [11] [22])))
-        , Test.test
-              "consG (headOr 0) 7 [8,9] == 7"
-              (\_ -> Test.equal 7 (consG (headOr 0) 7 [ 8, 9 ]))
-        , Test.test
-              "deepF identity 4 == 10  (i.e. (4+1)*2)"
-              (\_ -> Test.equal 10 (deepF identity 4))
-        , Test.test
-              "applyStr identity \"hello \" \"world\" == \"hello world\""
-              (\_ ->
-                  Test.equal "hello world" (applyStr identity "hello " "world"))
-        , Test.test
-              "applyTwice identity 41 == 42"
-              (\_ -> Test.equal 42 (applyTwice identity 41))
-        , Test.test
-              "pickAdd plus 4 5 == 15  (i.e. (4+1)+(5*2))"
-              (\_ -> Test.equal 15 (pickAdd plus 4 5))
-        ]]
+    [ Test.suite
+          "typed-primitive binop in HOF arg slot"
+          [ Test.test
+                "addOne identity 5 == 6"
+                (\_ -> Test.equal 6 (addOne identity 5))
+          , Test.test
+                "wrapBool not False True == False"
+                (\_ -> Test.equal False (wrapBool not False True))
+          , Test.test
+                "joinThem identity then head == 11"
+                (\_ -> Test.equal 11 (headOr 0 (joinThem identity [ 11 ] [ 22 ])))
+          , Test.test
+                "consG (headOr 0) 7 [8,9] == 7"
+                (\_ -> Test.equal 7 (consG (headOr 0) 7 [ 8, 9 ]))
+          , Test.test
+                "deepF identity 4 == 10  (i.e. (4+1)*2)"
+                (\_ -> Test.equal 10 (deepF identity 4))
+          , Test.test
+                "applyStr identity \"hello \" \"world\" == \"hello world\""
+                (\_ ->
+                    Test.equal
+                        "hello world"
+                        (applyStr identity "hello " "world"))
+          , Test.test
+                "applyTwice identity 41 == 42"
+                (\_ -> Test.equal 42 (applyTwice identity 41))
+          , Test.test
+                "pickAdd plus 4 5 == 15  (i.e. (4+1)+(5*2))"
+                (\_ -> Test.equal 15 (pickAdd plus 4 5))
+          ]
+    ]

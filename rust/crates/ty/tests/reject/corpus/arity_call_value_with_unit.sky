@@ -1,0 +1,13 @@
+-- defect: arity — calling a non-function value `answer : Int` with an argument
+-- oracle: reject [E2001] + [E2007] arity gate
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+answer : Int
+answer =
+    42
+
+main =
+    println (String.fromInt (answer ()))

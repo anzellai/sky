@@ -73,32 +73,32 @@ tests =
           [ Test.test
                 "Ok True"
                 (\_ ->
-                     Test.equal
-                         "yes"
-                         (case Ok True of
+                    Test.equal
+                        "yes"
+                        (case Ok True of
 
-                              Ok True ->
-                                  "yes"
+                            Ok True ->
+                                "yes"
 
-                              Ok False ->
-                                  "no"
+                            Ok False ->
+                                "no"
 
-                              Err _ ->
-                                  "err"))
+                            Err _ ->
+                                "err"))
           , Test.test
                 "Ok False"
                 (\_ ->
-                     Test.equal
-                         "no"
-                         (case Ok False of
+                    Test.equal
+                        "no"
+                        (case Ok False of
 
-                              Ok True ->
-                                  "yes"
+                            Ok True ->
+                                "yes"
 
-                              Ok False ->
-                                  "no"
+                            Ok False ->
+                                "no"
 
-                              Err _ ->
-                                  "err"))
+                            Err _ ->
+                                "err"))
           ]
     ]

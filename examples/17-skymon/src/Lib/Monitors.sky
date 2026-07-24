@@ -34,12 +34,12 @@ deleteMonitor monId =
             Database.execOrLog
                 "Monitors.deleteMonitor/history"
                 "DELETE FROM monitor_history WHERE monitor_id = ?"
-                [monId]
+                [ monId ]
         _ =
             Database.execOrLog
                 "Monitors.deleteMonitor/row"
                 "DELETE FROM monitors WHERE id = ?"
-                [monId]
+                [ monId ]
     in
         ()
 

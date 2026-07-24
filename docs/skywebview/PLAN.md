@@ -1,5 +1,7 @@
 # Sky.Webview — design plan (v0.15.x)
 
+> **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
+
 > Status: planning draft (2026-05-28). No code shipped yet. Reviewed against `docs/archive/tea-backends.md` + `docs/archive/std-ui-cross-platform.md` + `runtime-go/rt/tui.go` + `runtime-go/rt/live.go`.
 
 ## Part 1 — Recommendation

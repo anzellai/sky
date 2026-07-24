@@ -9,7 +9,7 @@ import State exposing (..)
 import Ui.Styles exposing (globalStyles)
 
 
-viewStatus : Model -> (Html Msg)
+viewStatus : Model -> Html Msg
 viewStatus model =
     let
         publicMonitors =
@@ -19,9 +19,9 @@ viewStatus model =
     in
         div
             []
-            [ node "style" [] [text globalStyles]
+            [ node "style" [] [ text globalStyles ]
             , div
-                  [class "status-page"]
+                  [ class "status-page" ]
                   [ viewStatusHeader allHealthy hasMonitors
                   , viewStatusList publicMonitors
                   , viewStatusFooter
@@ -29,32 +29,32 @@ viewStatus model =
             ]
 
 
-viewStatusHeader : Bool -> Bool -> (Html Msg)
+viewStatusHeader : Bool -> Bool -> Html Msg
 viewStatusHeader allHealthy hasMonitors =
     div
-        [class "status-header"]
+        [ class "status-header" ]
         [ h1
-              [style "font-size: 24px; margin-bottom: 8px; color: #f1f5f9"]
-              [text "☀ SkyMon Status"]
+              [ style "font-size: 24px; margin-bottom: 8px; color: #f1f5f9" ]
+              [ text "☀ SkyMon Status" ]
         , if hasMonitors && allHealthy then
-              p [class "status-all-good"] [text "✓ All Systems Operational"]
+              p [ class "status-all-good" ] [ text "✓ All Systems Operational" ]
 
           else if hasMonitors then
               p
-                  [style "color: #eab308; font-size: 18px"]
-                  [text "⚠ Some Issues Detected"]
+                  [ style "color: #eab308; font-size: 18px" ]
+                  [ text "⚠ Some Issues Detected" ]
 
           else
-              p [style "color: #64748b"] [text "No monitors configured"]
+              p [ style "color: #64748b" ] [ text "No monitors configured" ]
         ]
 
 
-viewStatusList : List Monitor -> (Html Msg)
+viewStatusList : List Monitor -> Html Msg
 viewStatusList monitors =
     div [] (List.map viewStatusRow monitors)
 
 
-viewStatusRow : Monitor -> (Html Msg)
+viewStatusRow : Monitor -> Html Msg
 viewStatusRow monitor =
     div
         [ class "card"
@@ -64,16 +64,19 @@ viewStatusRow monitor =
         [ div
               []
               [ div
-                    [style "font-weight: 600; color: #f1f5f9; margin-bottom: 4px"]
-                    [text monitor.name]
+                    [ style
+                          "font-weight: 600; color: #f1f5f9; margin-bottom: 4px"
+                    ]
+                    [ text monitor.name ]
               , div
-                    [style "font-size: 12px; color: #64748b"]
-                    [text
-                        (String.fromInt monitor.responseTime ++ "ms • "
-                            ++ monitor.lastChecked)]
+                    [ style "font-size: 12px; color: #64748b" ]
+                    [ text
+                          (String.fromInt monitor.responseTime ++ "ms • "
+                              ++ monitor.lastChecked)
+                    ]
               ]
         , span
-              [class ("status-dot status-" ++ statusToString monitor.status)]
+              [ class ("status-dot status-" ++ statusToString monitor.status) ]
               []
         ]
 
@@ -95,9 +98,10 @@ statusToString s =
             "unknown"
 
 
-viewStatusFooter : (Html Msg)
+viewStatusFooter : Html Msg
 viewStatusFooter =
     div
-        [style
-            "text-align: center; margin-top: 32px; color: #475569; font-size: 12px"]
-        [text "Powered by SkyMon • Built with Sky"]
+        [ style
+              "text-align: center; margin-top: 32px; color: #475569; font-size: 12px"
+        ]
+        [ text "Powered by SkyMon • Built with Sky" ]

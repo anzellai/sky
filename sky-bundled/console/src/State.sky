@@ -3,11 +3,11 @@ module State exposing (..)
 -- Pure types + same-shape helpers. No Std.Ui imports here so the
 -- type-checker stays well below the heap-exhaustion limit
 -- (CLAUDE.md Limitation #17).
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict exposing (Dict)
 
 -- ─── Tabs ────────────────────────────────────────────────────────
-
 -- The console has 5 tabs. Active tab is part of Model so navigation
 -- is just a Msg dispatch (no client-side router).
 --
@@ -43,7 +43,6 @@ tabLabel tab =
             "Errors"
 
 -- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
-
 -- Overview tab payload — wire shape mirrors `OverviewResponse`
 -- in `runtime-go/rt/console.go`. Fetched periodically from
 -- `GET <parent>/_sky/console/api/overview` when running as the
@@ -148,21 +147,41 @@ type Range
 rangeMillis : Range -> Int
 rangeMillis r =
     case r of
-        Last15m  -> 15 * 60 * 1000
-        Last1h   -> 60 * 60 * 1000
-        Last24h  -> 24 * 60 * 60 * 1000
-        Last7d   -> 7 * 24 * 60 * 60 * 1000
-        RangeAll -> 0
+
+        Last15m ->
+            15 * 60 * 1000
+
+        Last1h ->
+            60 * 60 * 1000
+
+        Last24h ->
+            24 * 60 * 60 * 1000
+
+        Last7d ->
+            7 * 24 * 60 * 60 * 1000
+
+        RangeAll ->
+            0
 
 
 rangeLabel : Range -> String
 rangeLabel r =
     case r of
-        Last15m  -> "15m"
-        Last1h   -> "1h"
-        Last24h  -> "24h"
-        Last7d   -> "7d"
-        RangeAll -> "All"
+
+        Last15m ->
+            "15m"
+
+        Last1h ->
+            "1h"
+
+        Last24h ->
+            "24h"
+
+        Last7d ->
+            "7d"
+
+        RangeAll ->
+            "All"
 
 
 -- v0.16.18 #558-PR4 — URL token (lowercase) for Range. Symmetric
@@ -172,11 +191,21 @@ rangeLabel r =
 rangeKey : Range -> String
 rangeKey r =
     case r of
-        Last15m  -> "15m"
-        Last1h   -> "1h"
-        Last24h  -> "24h"
-        Last7d   -> "7d"
-        RangeAll -> "all"
+
+        Last15m ->
+            "15m"
+
+        Last1h ->
+            "1h"
+
+        Last24h ->
+            "24h"
+
+        Last7d ->
+            "7d"
+
+        RangeAll ->
+            "all"
 
 
 -- Parse a URL token back into the Range ADT. Unknown / missing
@@ -185,16 +214,26 @@ rangeKey r =
 parseRange : String -> Range
 parseRange s =
     case s of
-        "15m" -> Last15m
-        "1h"  -> Last1h
-        "24h" -> Last24h
-        "7d"  -> Last7d
-        "all" -> RangeAll
-        _     -> Last24h
 
+        "15m" ->
+            Last15m
+
+        "1h" ->
+            Last1h
+
+        "24h" ->
+            Last24h
+
+        "7d" ->
+            Last7d
+
+        "all" ->
+            RangeAll
+
+        _ ->
+            Last24h
 
 -- ─── Logs filter ────────────────────────────────────────────────
-
 -- Multi-axis filter: free-text search + level toggles + session id
 -- pivot. UI-side state; serialises into the /_sky/console/api/logs
 -- query string on every refresh.
@@ -221,7 +260,6 @@ emptyLogFilter =
     }
 
 -- ─── Store interface (v0.16.4 B3) ───────────────────────────────
-
 -- Read-only data plane for the console UI.  Each field is a
 -- Task-returning function that fetches one slice of telemetry.
 -- The bundled console doesn't care how the bytes are produced —
@@ -288,21 +326,21 @@ type alias Model =
     , serviceStats : List ServiceStat
     , identity : Maybe Identity
     , tenantPrefix : String
+    , range : Range
+    , nowMs : Int
+    , globalQuery : String
+    }
     -- v0.16.18 #558-PR1: global time-range filter applied across
     -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
     -- Cmd.perform Time.unixMillis GotNowMs — the view path uses
     -- `nowMs - rangeMillis range` as the ISO-8601 threshold
     -- (Time.formatISO8601 is pure Int -> String).
-    , range : Range
-    , nowMs : Int
     -- v0.16.18 #558-PR3: free-text search applied alongside the
     -- range + service filters. Empty string = no filter. Match
     -- is case-insensitive substring against multiple row fields
     -- (logs: message / route / reqId / sessionId; traces: name /
     -- traceId). Errors + metrics carry no useful text axis so
     -- the filter doesn't apply to them.
-    , globalQuery : String
-    }
 
 -- Identity threaded from the hub auth-gate via Hub_currentIdentity
 -- (v0.16.6 / #493 part 2c).  Match Std.Live.Console.Identity's
@@ -340,16 +378,16 @@ type Msg
     | PivotToTrace String
     | SelectService String
     | GotServiceStats (Result Error (List ServiceStat))
+    | GotIdentity (Result Error Identity)
+    | SelectRange Range
+    | GotNowMs (Result Error Int)
+    | GlobalQuery String
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
     -- A successful response with a tenant claim derives the
     -- tenantPrefix used to filter service-name queries.
-    | GotIdentity (Result Error Identity)
     -- v0.16.18 #558-PR1
-    | SelectRange Range
-    | GotNowMs (Result Error Int)
     -- v0.16.18 #558-PR3
-    | GlobalQuery String
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

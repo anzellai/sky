@@ -1,0 +1,9 @@
+-- defect: snd result type mismatches a downstream param — `snd (1, "b") : String`
+--         fed to `String.fromInt : Int -> String`. F8 check-only precise
+--         `snd : (a, b) -> b` pins the result and rejects. oracle: reject [E2001].
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+main =
+    println (String.fromInt (snd ( 1, "b" )))

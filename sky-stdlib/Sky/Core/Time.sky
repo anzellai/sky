@@ -6,71 +6,79 @@
 -- integer millisecond value directly.  `every` is the Sky.Live /
 -- Sky.Tui subscription helper that emits a `Sub msg` every N ms.
 module Sky.Core.Time exposing
-    ( now, unixMillis, sleep
+    ( now
+    , unixMillis
+    , sleep
     , timeString
-    , format, formatHTTP, formatISO8601, formatRFC3339
-    , addMillis, diffMillis
+    , format
+    , formatHTTP
+    , formatISO8601
+    , formatRFC3339
+    , addMillis
+    , diffMillis
     , every
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
 -- ─── Clock + sleep ─────────────────────────────────────────────────
-
-
 now : () -> Task Error Int
-now = Ffi.kernel "Time_now"
+now =
+    Ffi.kernel "Time_now"
 
 
 unixMillis : () -> Task Error Int
-unixMillis = Ffi.kernel "Time_unixMillis"
+unixMillis =
+    Ffi.kernel "Time_unixMillis"
 
 
 sleep : Int -> Task Error ()
-sleep = Ffi.kernel "Time_sleep"
+sleep =
+    Ffi.kernel "Time_sleep"
 
 
 -- ─── Pure formatting ───────────────────────────────────────────────
-
-
 timeString : Int -> String
-timeString = Ffi.kernel "Time_timeString"
+timeString =
+    Ffi.kernel "Time_timeString"
 
 
 format : String -> Int -> String
-format = Ffi.kernel "Time_format"
+format =
+    Ffi.kernel "Time_format"
 
 
 formatHTTP : Int -> String
-formatHTTP = Ffi.kernel "Time_formatHTTP"
+formatHTTP =
+    Ffi.kernel "Time_formatHTTP"
 
 
 formatISO8601 : Int -> String
-formatISO8601 = Ffi.kernel "Time_formatISO8601"
+formatISO8601 =
+    Ffi.kernel "Time_formatISO8601"
 
 
 formatRFC3339 : Int -> String
-formatRFC3339 = Ffi.kernel "Time_formatRFC3339"
+formatRFC3339 =
+    Ffi.kernel "Time_formatRFC3339"
 
 
 -- ─── Arithmetic ────────────────────────────────────────────────────
-
-
 addMillis : Int -> Int -> Int
-addMillis = Ffi.kernel "Time_addMillis"
+addMillis =
+    Ffi.kernel "Time_addMillis"
 
 
 diffMillis : Int -> Int -> Int
-diffMillis = Ffi.kernel "Time_diffMillis"
+diffMillis =
+    Ffi.kernel "Time_diffMillis"
 
 
 -- ─── Subscriptions ─────────────────────────────────────────────────
-
-
 -- | `every intervalMillis msg` — Sky.Live / Sky.Tui subscription
 -- that emits `msg` every `intervalMillis` milliseconds.
 every : Int -> msg -> Sub msg
-every = Ffi.kernel "Time_every"
+every =
+    Ffi.kernel "Time_every"

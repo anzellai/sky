@@ -13,13 +13,7 @@
 --
 --     myAuthed : Handler -> Handler
 --     myAuthed = Mw.withBasicAuth "user" "pass"
-module Sky.Http.Middleware exposing
-    ( withCors
-    , withLogging
-    , withBasicAuth
-    , withRateLimit
-    , withCsrf
-    )
+module Sky.Http.Middleware exposing (withCors, withLogging, withBasicAuth, withRateLimit, withCsrf)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Prelude exposing (..)

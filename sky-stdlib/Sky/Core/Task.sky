@@ -78,8 +78,6 @@ onError =
 
 
 -- ─── Runtime entry boundary ────────────────────────────────────────
-
-
 -- | Force a Task to a Result.  Used at module-top-level discard
 -- sites and inside the `let _ = TaskExpr` auto-force shape.
 run : Task e a -> Result e a
@@ -96,8 +94,6 @@ perform =
 
 
 -- ─── Result bridges (v0.10.x) ──────────────────────────────────────
-
-
 -- | Lift a Result-returning step into a Task pipeline.  Bridges the
 -- FFI trust boundary (Result) to the effect boundary (Task) without
 -- requiring a `case` ladder.
@@ -114,8 +110,6 @@ andThenResult =
 
 
 -- ─── List-of-Tasks combinators ─────────────────────────────────────
-
-
 -- | Run a list of tasks sequentially; first error short-circuits.
 sequence : List (Task e a) -> Task e (List a)
 sequence =
@@ -133,8 +127,6 @@ parallel =
 
 
 -- ─── Deferred computation ──────────────────────────────────────────
-
-
 -- | Defer evaluation of a pure thunk into a Task — handy for
 -- expensive computation that should only run inside a Task pipeline.
 lazy : (() -> a) -> Task e a
@@ -142,8 +134,6 @@ lazy =
     Ffi.kernel "Task_lazy"
 
 -- ─── Retry combinator (v0.15.44) ───────────────────────────────────
-
-
 -- | Predicate ADT for `RetryPolicy.shouldRetry`.  Encodes the two
 -- value shapes the retry combinator accepts: the default "always
 -- retry" sentinel, or a user-supplied predicate.  Replaces the
@@ -243,8 +233,6 @@ retryAlways =
 -- from `defaultRetryPolicy`, decorate field-by-field. Lets future
 -- RetryPolicy fields land additively without breaking existing
 -- record literals.
-
-
 -- | A sensible default: 3 attempts, 500 ms exponential base, no
 -- jitter, `RetryAlways`. Build on top with the `with*` helpers
 -- below.

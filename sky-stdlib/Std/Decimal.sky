@@ -11,16 +11,45 @@
 -- so the ISO-4217 currency code rides alongside the magnitude.
 module Std.Decimal exposing
     ( Decimal
-    , fromString, fromInt, fromFloat, fromMinor
-    , zero, one, oneHundred
-    , toString, toStringFixed, toFloat, toInt, toMinor
-    , add, sub, mul, div, mod
-    , neg, abs
-    , round, roundHalfUp, truncate, floor, ceil
-    , compare, eq, neq, lt, lte, gt, gte
-    , min, max
-    , isZero, isPositive, isNegative
-    , percentOf, addPercent, subPercent
+    , fromString
+    , fromInt
+    , fromFloat
+    , fromMinor
+    , zero
+    , one
+    , oneHundred
+    , toString
+    , toStringFixed
+    , toFloat
+    , toInt
+    , toMinor
+    , add
+    , sub
+    , mul
+    , div
+    , mod
+    , neg
+    , abs
+    , round
+    , roundHalfUp
+    , truncate
+    , floor
+    , ceil
+    , compare
+    , eq
+    , neq
+    , lt
+    , lte
+    , gt
+    , gte
+    , min
+    , max
+    , isZero
+    , isPositive
+    , isNegative
+    , percentOf
+    , addPercent
+    , subPercent
     , formatWith
     , sum
     )
@@ -46,16 +75,13 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error exposing (Error)
 import Sky.Ffi as Ffi
 
-
 -- ─── The opaque type ───────────────────────────────────────────────
 -- The constructor is intentionally NOT exposed.
-
 type Decimal
     = Decimal__Internal Float
 
 
 -- ─── Construction ──────────────────────────────────────────────────
-
 fromString : String -> Result Error Decimal
 fromString s =
     Ffi.callPure "Decimal_fromString" [ s ]
@@ -78,7 +104,6 @@ fromMinor places minor =
 
 
 -- ─── Constants ─────────────────────────────────────────────────────
-
 zero : Decimal
 zero =
     Ffi.callPure "Decimal_zero" []
@@ -95,7 +120,6 @@ oneHundred =
 
 
 -- ─── Conversion ────────────────────────────────────────────────────
-
 toString : Decimal -> String
 toString d =
     Ffi.callPure "Decimal_toString" [ d ]
@@ -122,7 +146,6 @@ toMinor places d =
 
 
 -- ─── Arithmetic ────────────────────────────────────────────────────
-
 add : Decimal -> Decimal -> Decimal
 add a b =
     Ffi.callPure "Decimal_add" [ a, b ]
@@ -159,7 +182,6 @@ abs d =
 
 
 -- ─── Rounding ──────────────────────────────────────────────────────
-
 -- | Banker's rounding (round-half-to-even).
 round : Int -> Decimal -> Decimal
 round places d =
@@ -187,7 +209,6 @@ ceil d =
 
 
 -- ─── Comparison ────────────────────────────────────────────────────
-
 compare : Decimal -> Decimal -> Int
 compare a b =
     Ffi.callPure "Decimal_compare" [ a, b ]
@@ -234,7 +255,6 @@ max a b =
 
 
 -- ─── Predicates ────────────────────────────────────────────────────
-
 isZero : Decimal -> Bool
 isZero d =
     Ffi.callPure "Decimal_isZero" [ d ]
@@ -251,7 +271,6 @@ isNegative d =
 
 
 -- ─── Percent helpers ───────────────────────────────────────────────
-
 percentOf : Decimal -> Decimal -> Decimal
 percentOf pct of_ =
     Ffi.callPure "Decimal_percentOf" [ pct, of_ ]
@@ -268,13 +287,13 @@ subPercent pct base =
 
 
 -- ─── Formatting ────────────────────────────────────────────────────
-
 -- | `formatWith thousandsSep decimalSep places d`
 --   `formatWith "," "." 2 d` → "1,234,567.89"  (US)
 --   `formatWith "." "," 2 d` → "1.234.567,89"  (EU)
 formatWith : String -> String -> Int -> Decimal -> String
 formatWith thousandsSep decimalSep places d =
-    Ffi.callPure "Decimal_formatWith"
+    Ffi.callPure
+        "Decimal_formatWith"
         [ Ffi.toAny thousandsSep
         , Ffi.toAny decimalSep
         , Ffi.toAny places
@@ -283,7 +302,6 @@ formatWith thousandsSep decimalSep places d =
 
 
 -- ─── List operations ───────────────────────────────────────────────
-
 -- | Sum a list of Decimals.
 sum : List Decimal -> Decimal
 sum xs =
@@ -293,6 +311,7 @@ sum xs =
 sumHelp : List Decimal -> Decimal -> Decimal
 sumHelp xs acc =
     case xs of
+
         [] ->
             acc
 

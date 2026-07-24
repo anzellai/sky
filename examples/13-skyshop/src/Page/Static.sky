@@ -17,10 +17,12 @@ viewPrivacyPolicy model =
     Layout.page
         model
         (div
-            [tw [ maxW3xl, mxAuto, py8 ]]
-            [ Html.h1 [tw [ text3xl, fontBold, mb6 ]] [text "Privacy Policy"]
+            [ tw [ maxW3xl, mxAuto, py8 ] ]
+            [ Html.h1
+                  [ tw [ text3xl, fontBold, mb6 ] ]
+                  [ text "Privacy Policy" ]
             , div
-                  [tw [ textGray600, leadingRelaxed ]]
+                  [ tw [ textGray600, leadingRelaxed ] ]
                   [ section_
                         "1. Information We Collect"
                         "We collect personal information you provide when creating an account, placing an order, or contacting us. This includes your name, email address, phone number, shipping address, and payment information (processed securely through Stripe)."
@@ -53,12 +55,12 @@ viewTerms model =
     Layout.page
         model
         (div
-            [tw [ maxW3xl, mxAuto, py8 ]]
+            [ tw [ maxW3xl, mxAuto, py8 ] ]
             [ Html.h1
-                  [tw [ text3xl, fontBold, mb6 ]]
-                  [text "Terms & Conditions"]
+                  [ tw [ text3xl, fontBold, mb6 ] ]
+                  [ text "Terms & Conditions" ]
             , div
-                  [tw [ textGray600, leadingRelaxed ]]
+                  [ tw [ textGray600, leadingRelaxed ] ]
                   [ section_
                         "1. General"
                         "By using SkyShop, you agree to these terms and conditions. We reserve the right to modify these terms at any time."
@@ -86,9 +88,9 @@ viewTerms model =
 
 section_ title body =
     div
-        [tw [mb6]]
-        [ Html.h2 [tw [ textLg, fontSemibold, mb2 ]] [text title]
-        , p [] [text body]
+        [ tw [ mb6 ] ]
+        [ Html.h2 [ tw [ textLg, fontSemibold, mb2 ] ] [ text title ]
+        , p [] [ text body ]
         ]
 
 
@@ -99,11 +101,13 @@ viewNotFound model =
     let
         content =
             div
-                [tw [ textCenter, py16 ]]
+                [ tw [ textCenter, py16 ] ]
                 [ Html.h1
-                      [tw [ text6xl, fontBold, textGray300, mb4 ]]
-                      [text "404"]
-                , p [tw [ textLg, textGray500, mb6 ]] [text "Page not found"]
+                      [ tw [ text6xl, fontBold, textGray300, mb4 ] ]
+                      [ text "404" ]
+                , p
+                      [ tw [ textLg, textGray500, mb6 ] ]
+                      [ text "Page not found" ]
                 , a
                       [ href "/"
                       , attribute "sky-nav" ""
@@ -117,7 +121,7 @@ viewNotFound model =
                             , inlineBlock
                             ]
                       ]
-                      [text "Go Home"]
+                      [ text "Go Home" ]
                 ]
     in
         Layout.page model content

@@ -64,13 +64,11 @@ import Sky.Core.List as List
 import Sky.Core.Task as Task
 import Sky.Http.Server exposing (Request, Response)
 
-
 -- | Opaque handle to one connected peer.  The wrapped `Int` is the
 -- runtime's per-socket id.  Multiple handles coexist on the same
 -- server — every accepted upgrade gets its own.
 type WebSocketServer
     = WebSocketServer Int
-
 
 -- | Server-side WebSocket cfg record.
 --

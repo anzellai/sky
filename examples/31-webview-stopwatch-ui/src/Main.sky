@@ -8,6 +8,7 @@ module Main exposing (main)
 -- renders the Std.Ui Element tree to HTML, and dispatches DOM events
 -- back through the in-process bridge — no HTTP, no SSE, no extra
 -- processes.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Task as Task
@@ -70,18 +71,20 @@ subscriptions model =
 view : Model -> Html
 view model =
     Ui.layout
-        [Background.color (Ui.rgb 24 28 48), Font.color (Ui.rgb 220 220 230)]
+        [ Background.color (Ui.rgb 24 28 48), Font.color (Ui.rgb 220 220 230) ]
         (Ui.column
-            [Ui.padding 32, Ui.spacing 16]
+            [ Ui.padding 32, Ui.spacing 16 ]
             [ Ui.el
                   [ Font.color (Ui.rgb 142 200 168), Font.size 24 ]
                   (Ui.text "Sky Webview Stopwatch")
             , Ui.el
                   [ Font.size 48, Font.color (Ui.rgb 240 240 240) ]
                   (Ui.text (formatElapsed model.elapsedMs))
-            , Ui.el [Font.color (Ui.rgb 150 150 170)] (Ui.text (statusLine model))
+            , Ui.el
+                  [ Font.color (Ui.rgb 150 150 170) ]
+                  (Ui.text (statusLine model))
             , Ui.row
-                  [Ui.spacing 16]
+                  [ Ui.spacing 16 ]
                   [ Ui.button
                         [ Background.color (Ui.rgb 60 90 70)
                         , Font.color (Ui.rgb 240 240 240)
@@ -98,7 +101,7 @@ view model =
                         { onPress = Just Reset, label = Ui.text "Reset" }
                   ]
             , Ui.el
-                  [Font.color (Ui.rgb 120 120 140)]
+                  [ Font.color (Ui.rgb 120 120 140) ]
                   (Ui.text "Click the buttons or close the window to quit.")
             ])
 

@@ -19,9 +19,10 @@
 #   MEM_GUARD_DRY            set to 1 to log only, never kill.          default unset
 #
 # Watched process names (basename of comm):
-#   Always-kill at PROC_MB:  sky, sky-ffi-inspect, cabal, ghc, ghc-iserv,
+#   Always-kill at PROC_MB:  sky, sky-ffi-inspect, cargo, rustc,
+#                            rust-analyzer, cabal, ghc, ghc-iserv,
 #                            cc1, ld64, haskell-language-server, hls-wrapper,
-#                            gopls, go (when child of a sky/cabal build)
+#                            gopls, go (when child of a sky/cargo/cabal build)
 #   Last-resort at PANIC_MB: claude, node, ghostty
 #                            (these are the host of *this* session — only kill
 #                             when they themselves are the runaway, not their
@@ -39,7 +40,7 @@ LOG="${MEM_GUARD_LOG:-/tmp/mem-guard.log}"
 DRY="${MEM_GUARD_DRY:-}"
 
 # basename(comm) regexes
-ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls)$'
+ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls)$'
 PANIC_KILL_RE='^(claude|node|ghostty)$'
 
 log() {

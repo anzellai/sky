@@ -37,17 +37,17 @@ deleteMetric metId =
             Database.execOrLog
                 "Metrics.deleteMetric/history"
                 "DELETE FROM metric_history WHERE metric_id = ?"
-                [metId]
+                [ metId ]
         _ =
             Database.execOrLog
                 "Metrics.deleteMetric/alerts"
                 "DELETE FROM alerts WHERE metric_id = ?"
-                [metId]
+                [ metId ]
         _ =
             Database.execOrLog
                 "Metrics.deleteMetric/row"
                 "DELETE FROM metrics WHERE id = ?"
-                [metId]
+                [ metId ]
     in
         ()
 
@@ -75,10 +75,10 @@ runMetric metric =
             runApiMetric metric
 
         else
+            "error: unknown source type"
         -- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
         -- Errors are surfaced as "error: <typed-cause>" AND logged so operators
         -- see the structured IoError form in stderr.
-            "error: unknown source type"
 
 
 runSqlMetric : Dict String String -> String
@@ -97,8 +97,6 @@ runSqlMetric metric =
 
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
--- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
--- with Task.run at this sync call site.
     case Task.run (Db.open "postgres" dsn) of
 
         Err e ->
@@ -115,11 +113,9 @@ runSafeQuery dsn query =
             runSafeQueryWithConn extConn query
 
 
+-- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
+-- with Task.run at this sync call site.
 runSafeQueryWithConn extConn query =
--- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
--- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
--- only worked while pass-2 dep HM masked Type errors via the
--- pass-1 fallback (round 6 fix made pass 2 authoritative).
     case SafeQuery.runReadOnly extConn query [] of
 
         Err e ->
@@ -136,6 +132,10 @@ runSafeQueryWithConn extConn query =
             extractFirstValue rows
 
 
+-- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
+-- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
+-- only worked while pass-2 dep HM masked Type errors via the
+-- pass-1 fallback (round 6 fix made pass 2 authoritative).
 extractFirstValue : List (Dict String String) -> String
 extractFirstValue rows =
     case rows of

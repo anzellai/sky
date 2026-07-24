@@ -1,0 +1,19 @@
+-- gate: reject
+-- defect: non-linear case pattern `( a, a )` (same binder twice in one arm)
+-- oracle: reject — emitted Go fails `go build`
+--         ("no new variables on left side of :=").
+--
+-- Same linearity class as duplicate params, at a `case` arm. Fixed by
+-- `check_linear_group` over each arm pattern, emitting `[E1003]`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+pick p =
+    case p of
+        ( a, a ) ->
+            a
+
+main =
+    println (String.fromInt (pick ( 1, 2 )))

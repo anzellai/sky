@@ -2,26 +2,26 @@
 --
 -- Operate on `String` paths without touching the filesystem.  Use
 -- `Sky.Core.File` for the effectful side (read / write / exists).
-module Sky.Core.Path exposing
-    ( base, dir, ext
-    , isAbsolute
-    )
-
+module Sky.Core.Path exposing (base, dir, ext, isAbsolute)
 
 import Sky.Ffi as Ffi
 
 
 base : String -> String
-base = Ffi.kernel "Path_base"
+base =
+    Ffi.kernel "Path_base"
 
 
 dir : String -> String
-dir = Ffi.kernel "Path_dir"
+dir =
+    Ffi.kernel "Path_dir"
 
 
 ext : String -> String
-ext = Ffi.kernel "Path_ext"
+ext =
+    Ffi.kernel "Path_ext"
 
 
 isAbsolute : String -> Bool
-isAbsolute = Ffi.kernel "Path_isAbsolute"
+isAbsolute =
+    Ffi.kernel "Path_isAbsolute"

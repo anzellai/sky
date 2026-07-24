@@ -20,11 +20,7 @@
 -- alwaysOnTop / transparent / decorated windows, voice intents,
 -- Windows / Linux smoke testing (the runtime is build-tagged for
 -- all three OSes; v0.1 only validates macOS).
-module Std.Webview exposing
-    ( app
-    , WindowCfg, AppCfg
-    , defaultWindow, withTitle, withSize
-    )
+module Std.Webview exposing (app, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
 
 import Sky.Ffi as Ffi
 
@@ -42,9 +38,7 @@ type alias WindowCfg =
 -- builder chain stay source-compat when v0.2 adds optional fields.
 defaultWindow : WindowCfg
 defaultWindow =
-    { title = "Sky"
-    , size = ( 800, 600 )
-    }
+    { title = "Sky", size = ( 800, 600 ) }
 
 
 -- | `withTitle "My App" cfg` — replace the window title.

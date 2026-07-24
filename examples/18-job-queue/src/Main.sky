@@ -91,7 +91,7 @@ addJob model name task =
         job = mkJob jid name
         cmd = Cmd.perform task (JobDone jid)
     in
-        ( { model | jobs = List.append model.jobs [job], nextId = jid + 1 }
+        ( { model | jobs = List.append model.jobs [ job ], nextId = jid + 1 }
         , cmd
         )
 
@@ -305,10 +305,10 @@ update msg model =
             )
 
         SaveSnapshot ->
-        -- Reuse the JobDone framing so the snapshot appears in the
-        -- jobs list with a "[running]" indicator and then flips to
-        -- the success/error message. No new dispatch path needed —
-        -- saveSnapshot already returns Task Error String.
+            -- Reuse the JobDone framing so the snapshot appears in the
+            -- jobs list with a "[running]" indicator and then flips to
+            -- the success/error message. No new dispatch path needed —
+            -- saveSnapshot already returns Task Error String.
             addJob
                 model
                 "Save snapshot"
@@ -348,7 +348,7 @@ viewJob job =
         jid = String.fromInt job.id
         jname = job.name
     in
-        div [] [text """#{{jid}} {{jname}} - {{status}}"""]
+        div [] [ text """#{{jid}} {{jname}} - {{status}}""" ]
 
 
 viewSnapshot snap =
@@ -360,16 +360,17 @@ viewSnapshot snap =
     in
         li
             []
-            [text
-                """[{{tsStr}}] ok={{okStr}} fail={{failStr}} total={{totalStr}}"""]
+            [ text
+                  """[{{tsStr}}] ok={{okStr}} fail={{failStr}} total={{totalStr}}"""
+            ]
 
 
 viewHistory model =
     if model.historyError /= "" then
-        p [] [text model.historyError]
+        p [] [ text model.historyError ]
 
     else if List.isEmpty model.history then
-        p [] [text "No snapshots yet — click Save then Load."]
+        p [] [ text "No snapshots yet — click Save then Load." ]
 
     else
         ul
@@ -384,8 +385,9 @@ viewHistory model =
                     in
                         li
                             []
-                            [text
-                                """[{{stsStr}}] ok={{sokStr}} fail={{sfailStr}} total={{stotalStr}}"""])
+                            [ text
+                                  """[{{stsStr}}] ok={{sokStr}} fail={{sfailStr}} total={{stotalStr}}"""
+                            ])
                 model.history)
 
 
@@ -400,19 +402,20 @@ view model =
     in
         div
             []
-            [ h1 [] [text "Job Queue Dashboard"]
-            , p [] [text "Async Cmd.perform with Sky.Live"]
+            [ h1 [] [ text "Job Queue Dashboard" ]
+            , p [] [ text "Async Cmd.perform with Sky.Live" ]
             , p
                   []
-                  [text
-                      """Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}"""]
+                  [ text
+                        """Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}"""
+                  ]
             , div
                   []
-                  [ button [onClick RunFast] [text "Fast Job (0.5s)"]
-                  , button [onClick RunSlow] [text "Slow Job (3s)"]
-                  , button [onClick RunFail] [text "Failing Job (2s)"]
-                  , button [onClick RunBatch] [text "Batch (3 jobs)"]
-                  , button [onClick ClearDone] [text "Clear Finished"]
+                  [ button [ onClick RunFast ] [ text "Fast Job (0.5s)" ]
+                  , button [ onClick RunSlow ] [ text "Slow Job (3s)" ]
+                  , button [ onClick RunFail ] [ text "Failing Job (2s)" ]
+                  , button [ onClick RunBatch ] [ text "Batch (3 jobs)" ]
+                  , button [ onClick ClearDone ] [ text "Clear Finished" ]
                   ]
             , div
                   []
@@ -430,18 +433,20 @@ view model =
                           in
                               div
                                   []
-                                  [text
-                                      """#{{jjid}} {{jjname}} - {{jstatus}}"""])
+                                  [ text
+                                        """#{{jjid}} {{jjname}} - {{jstatus}}"""
+                                  ])
                       (List.reverse model.jobs))
-            , h2 [] [text "Persistence (Result/Task bridges)"]
+            , h2 [] [ text "Persistence (Result/Task bridges)" ]
             , p
                   []
-                  [text
-                      "Save persists the current counters to SQLite. Load reads them back. Both flows mix Result-returning Db calls with Task-returning effects via the bridge helpers."]
+                  [ text
+                        "Save persists the current counters to SQLite. Load reads them back. Both flows mix Result-returning Db calls with Task-returning effects via the bridge helpers."
+                  ]
             , div
                   []
-                  [ button [onClick SaveSnapshot] [text "Save Snapshot"]
-                  , button [onClick LoadHistory] [text "Load History"]
+                  [ button [ onClick SaveSnapshot ] [ text "Save Snapshot" ]
+                  , button [ onClick LoadHistory ] [ text "Load History" ]
                   ]
             , viewHistory model
             ]
@@ -453,6 +458,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [route "/" DashboardPage]
+        , routes = [ route "/" DashboardPage ]
         , notFound = DashboardPage
         }

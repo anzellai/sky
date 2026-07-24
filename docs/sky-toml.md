@@ -1,10 +1,9 @@
 # `sky.toml` — project manifest reference
 
-> **v0.15 state**: type-directed lowering throughout, Go generics on
-> parametric record aliases, same-module polymorphic re-instantiation.
-> Layer-3 stdlib, whole-program DCE (Stripe-SDK scale: −82 % source),
-> LSP 100 % coverage; runtime verification across all 27 examples
-> (120 stdlib assertions + 306 cabal specs). See
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
 > [`compiler/versions.md`](compiler/versions.md) for the changelog.
 
 
@@ -150,9 +149,23 @@ Connection-status banner config is env-only (not in sky.toml):
 
 ## `[auth]`
 
-Std.Auth runtime defaults. Auth.signToken / verifyToken read
-the secret from env at runtime, so the sky.toml value is just a
-seed — production should always override via shell env or `.env`.
+Std.Auth defaults. `Std.Auth` is a library, not a framework layer:
+`signToken secret claims expirySeconds` takes the secret + TTL as
+**arguments**, and the session cookie is set by your handler
+(`Server.setCookie`). So these keys don't reconfigure the runtime
+directly — each is **seeded into a `SKY_AUTH_*` env var that your
+code reads** at the call site:
+
+```elm
+secret = System.getenvOr "SKY_AUTH_SECRET" "dev-secret"
+ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
+cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth"
+
+token  = Auth.signToken secret claims ttl
+```
+
+Production overrides via shell env / `.env` win over the sky.toml
+seed (same precedence as every other key).
 
 ```toml
 [auth]
@@ -181,12 +194,14 @@ all calls pick it up automatically.
 [database]
 driver = "sqlite"          # sqlite / postgres
 path   = "./app.db"        # sqlite file path or postgres URL
+# url  = "postgres://…"    # alias for `path` (same DB_PATH)
 ```
 
 | Key      | Env var                  | Default   | Meaning                          |
 |----------|--------------------------|-----------|----------------------------------|
 | `driver` | `<PREFIX>_DB_DRIVER`     | `sqlite`  | `sqlite` / `postgres`            |
 | `path`   | `<PREFIX>_DB_PATH`       | (empty)   | File path or connection URL      |
+| `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)  |
 
 ---
 

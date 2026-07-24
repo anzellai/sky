@@ -1,0 +1,31 @@
+[package]
+name = "sky-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sky-lsp"
+path = "src/main.rs"
+
+[lib]
+name = "sky_lsp"
+path = "src/lib.rs"
+
+[dependencies]
+base = { path = "../base" }
+syntax = { path = "../syntax" }
+hir = { path = "../hir" }
+ty = { path = "../ty" }
+fmt = { path = "../fmt" }
+skydb = { path = "../skydb" }
+project = { path = "../project" }
+ffi = { path = "../ffi" }
+diagnostics = { path = "../diagnostics" }
+tower-lsp.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time"] }
+
+[dev-dependencies]
+serde_json.workspace = true

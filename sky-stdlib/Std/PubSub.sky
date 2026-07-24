@@ -13,10 +13,14 @@
 -- running in this process (a CLI tool, an isolated unit test, a
 -- pure `Sky.Http.Server` process).
 --
--- Scope (matches `Std.Cmd.publish`): in-process only in v0.15.x.
--- The same `topicRegistry` backs both APIs, so a publish from a
--- raw handler reaches every subscribed Sky.Live session in the
--- same process, with identical ordering + echo semantics.
+-- Scope (matches `Std.Cmd.publish`): the same broker backs both
+-- APIs, so a publish from a raw handler reaches every subscribed
+-- Sky.Live session, with identical ordering + echo semantics.
+-- Single-instance uses the in-process registry; a multi-instance
+-- deploy (session store = redis, or `SKY_LIVE_BROKER_URL` set)
+-- automatically fans out ACROSS instances via the Redis broker —
+-- no call-site change. See `docs/skylive/architecture.md`
+-- §"Horizontal scale".
 --
 -- See `docs/skylive/pubsub.md` for the decision matrix and
 -- `examples/29-task-publish` for the canonical pattern.
@@ -27,12 +31,12 @@
 --                        default has no visible effect for
 --                        Task-shaped callers (no subscriber's
 --                        ownSid matches "").
---   * `publishNoEcho`  — sets the broker's SkipOrigin bit. In
---                        v0.15.x in-process broker the difference
---                        is cosmetic; in v0.16+ cross-process tiers
---                        the no-echo bit propagates across the
---                        protocol, saving the receiving node's
---                        broker a local-registry roundtrip.
+--   * `publishNoEcho`  — sets the broker's SkipOrigin bit so the
+--                        publisher's own session is skipped. With
+--                        the cross-instance Redis broker the bit
+--                        rides the wire envelope so a receiving
+--                        instance self-suppresses without a
+--                        local-registry roundtrip.
 module Std.PubSub exposing (publish, publishNoEcho)
 
 import Sky.Ffi as Ffi

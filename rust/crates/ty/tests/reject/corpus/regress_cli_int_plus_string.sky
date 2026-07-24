@@ -1,0 +1,14 @@
+-- defect: CLI-driver regression — `1 + "x"` inside `String.fromInt`.
+--         This EXACT program was ACCEPTED by the shipped `sky check`/`build`/`run`
+--         pipeline (exit 0, "No errors found") because `ty::check_modules` was
+--         never invoked by the build driver — only by the LSP + the xtask gates.
+--         The fixture pins the CLI-level regression: the driver now type-checks
+--         before lowering, so this rejects at check time.
+-- oracle: reject [E2001] (expected Int, actual String)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    println (String.fromInt (1 + "x"))

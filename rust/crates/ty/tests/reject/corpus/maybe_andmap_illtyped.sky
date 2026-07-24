@@ -1,0 +1,18 @@
+-- defect: Maybe.andMap applied to a payload that clashes with the wrapped
+--         function's argument type. `andMap : Maybe a -> Maybe (a -> b) ->
+--         Maybe b`; here the value `Just 1` is `Maybe Int` but the function
+--         `Just (\s -> s ++ "!")` wants a String argument, so `a` unifies
+--         Int vs String and must be rejected. The stdlib combinator is
+--         unannotated, so the cross-module check-sig (sig.rs maybe_specs)
+--         supplies the type. The oracle rejects this too.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+
+main =
+    case Maybe.andMap (Just 1) (Just (\s -> s ++ "!")) of
+        Just v -> println v
+        Nothing -> println "nothing"

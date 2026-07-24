@@ -18,15 +18,15 @@ postDetailView model postId =
     case findPost postId model.posts of
 
         Nothing ->
-            Ui.el [Font.color (Ui.rgb 200 60 60)] (Ui.text "Post not found.")
+            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
 
         Just post ->
             Ui.column
-                [Ui.spacing 16]
+                [ Ui.spacing 16 ]
                 [ postRow model.session 0 post
                 , composeArea model post
                 , Ui.column
-                      [Ui.spacing 8]
+                      [ Ui.spacing 8 ]
                       [ Ui.el
                             [ Font.size 14, Font.bold ]
                             (Ui.text
@@ -54,7 +54,7 @@ commentTreeView maybeSession allComments postId parentId depth =
             Ui.text ""
 
         else
-            Ui.column [Ui.spacing 8] renderedChildren
+            Ui.column [ Ui.spacing 8 ] renderedChildren
 
 
 commentNode : Maybe Session -> List Comment -> Comment -> Int -> Element Msg
@@ -72,7 +72,7 @@ commentNode maybeSession allComments c parentDepth =
             , Ui.el [] (Ui.text c.body)
             , commentActions maybeSession c
             , Ui.el
-                  [Ui.style "padding-left" (String.fromInt myDepth ++ "px")]
+                  [ Ui.style "padding-left" (String.fromInt myDepth ++ "px") ]
                   (commentTreeView maybeSession allComments c.postId c.id myDepth)
             ]
 
@@ -81,7 +81,7 @@ commentHeader : Comment -> Element Msg
 commentHeader c =
     Ui.row
         [ Ui.spacing 6, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-        [ Ui.el [Font.bold] (Ui.text c.author)
+        [ Ui.el [ Font.bold ] (Ui.text c.author)
         , Ui.text "•"
         , Ui.text (String.fromInt (commentScore c) ++ " points")
         ]

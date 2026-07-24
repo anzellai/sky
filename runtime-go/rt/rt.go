@@ -24,20 +24,20 @@ package rt
 import (
 	"bufio"
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/md5"
 	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/x509"
-	"encoding/pem"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -1618,7 +1618,57 @@ func Basics_not(b any) any {
 }
 
 func Basics_toString(v any) string {
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
 	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
+}
+
+// errorKindLabels mirrors Sky.Core.Error.kindLabel, indexed by the
+// ErrorKind constructor tag (0=Io … 10=Unexpected). Keep in sync with
+// Error.sky's kindLabel.
+var errorKindLabels = []string{
+	"IO", "Network", "FFI", "Decode", "Timeout", "NotFound",
+	"PermissionDenied", "InvalidInput", "Conflict", "Unavailable",
+	"Unexpected",
+}
+
+// renderSkyError renders a Sky.Core.Error value — SkyADT{SkyName:"Error",
+// Fields:[kind, info]} — exactly as Sky.Core.Error.toString does:
+// "<KindLabel>: <message>". Returns ok=false for anything that isn't an
+// Error ADT so the generic toString / errorToString fallbacks can defer to
+// their `%v` path. Without this, an Error flowing through errorToString /
+// toString dumped its raw Go struct (`{0 Error [10 {boom <nil>}]}`) into
+// logs and user-facing messages.
+func renderSkyError(v any) (string, bool) {
+	rv := reflect.ValueOf(derefPointer(unwrapAny(v)))
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return "", false
+	}
+	nameF := rv.FieldByName("SkyName")
+	fieldsF := rv.FieldByName("Fields")
+	if !nameF.IsValid() || nameF.Kind() != reflect.String || nameF.String() != "Error" {
+		return "", false
+	}
+	if !fieldsF.IsValid() || fieldsF.Kind() != reflect.Slice || fieldsF.Len() != 2 {
+		return "", false
+	}
+	// Fields[0] — ErrorKind tag (int). Unknown/future tags keep a sane
+	// "Error" label rather than an out-of-range panic.
+	label := "Error"
+	if kindV := reflect.ValueOf(fieldsF.Index(0).Interface()); kindV.IsValid() && kindV.CanInt() {
+		if t := int(kindV.Int()); t >= 0 && t < len(errorKindLabels) {
+			label = errorKindLabels[t]
+		}
+	}
+	// Fields[1] — ErrorInfo{Message, Details}. Read Message.
+	msg := ""
+	if infoV := reflect.ValueOf(fieldsF.Index(1).Interface()); infoV.IsValid() && infoV.Kind() == reflect.Struct {
+		if mF := infoV.FieldByName("Message"); mF.IsValid() && mF.Kind() == reflect.String {
+			msg = mF.String()
+		}
+	}
+	return label + ": " + msg, true
 }
 
 // Basics_errorToString — Prelude extractor for Result errors (the
@@ -1634,6 +1684,9 @@ func Basics_errorToString(v any) any {
 	case error:
 		return x.Error()
 	}
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
 	return fmt.Sprintf("%v", v)
 }
 
@@ -1643,6 +1696,9 @@ func Basics_errorToStringT(v any) string {
 		return x
 	case error:
 		return x.Error()
+	}
+	if s, ok := renderSkyError(v); ok {
+		return s
 	}
 	return fmt.Sprintf("%v", v)
 }
@@ -1721,11 +1777,10 @@ func Fmt_errorf(format any, args ...any) any {
 // default calling convention. modBy is (divisor, dividend) — divisor first
 // to match the Elm/Sky argument order for pipeline use.
 func Basics_modBy(divisor, n any) any {
-	d := AsInt(divisor)
-	if d == 0 {
-		return 0
-	}
-	return AsInt(n) % d
+	// Delegate to the typed companion so the any-dispatch path shares its
+	// Elm FLOORED-modulo semantics (result sign follows the divisor):
+	// `modBy 3 -1 == 2`, not Go's truncated `-1`.
+	return Basics_modByT(AsInt(divisor), AsInt(n))
 }
 
 // Basics_clamp — any-typed wrapper around Basics_clampT to match the
@@ -1758,7 +1813,13 @@ func Basics_fst(t any) any {
 	case SkyTuple3:
 		return v.V0
 	}
-	return nil
+	// Typed-tuple codegen (v0.17+) emits distinct nominal generic
+	// instantiations (`T2[string, int]`, `T3[…]`) that miss both cases
+	// above. Route through AsTuple2, which fast-paths SkyTuple2 and
+	// otherwise reflect-reboxes any tuple-shaped struct's first field
+	// (a genuine non-tuple yields a zero SkyTuple2 → nil, same as the
+	// prior `return nil`).
+	return AsTuple2(t).V0
 }
 
 func Basics_snd(t any) any {
@@ -1768,7 +1829,8 @@ func Basics_snd(t any) any {
 	case SkyTuple3:
 		return v.V1
 	}
-	return nil
+	// See Basics_fst — typed T2/T3 instantiations reflect-rebox here.
+	return AsTuple2(t).V1
 }
 
 // List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
@@ -2206,6 +2268,16 @@ func AsListT[T any](v any) []T {
 		}
 		return out
 	}
+	// Result/Maybe unwrap — mirrors `AsList`. A Sky-source list op (the
+	// CPS `List.map`/`filter`/… helpers) can receive a list routed through
+	// `Ffi.callPure` (`Money.allocate`, …) where `runWithRecover`'s
+	// auto-`Ok`-wrap parks the slice inside a `SkyResult`. Without this,
+	// `AsListT[any](Ok([...]))` returned empty and the map produced `[]`.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsListT[T](u)
+		}
+	}
 	return nil
 }
 
@@ -2485,6 +2557,23 @@ func Mul(a, b any) any {
 	return AsInt(a) * AsInt(b)
 }
 
+// Pow computes exponentiation `a ^ b`. Sky's `^` is power (Elm semantics), not
+// Go's bitwise XOR. Int^Int with a non-negative exponent stays Int; any Float
+// operand (or a negative Int exponent) promotes to Float via math.Pow.
+func Pow(a, b any) any {
+	if !isFloatish(a) && !isFloatish(b) {
+		base, exp := AsInt(a), AsInt(b)
+		if exp >= 0 {
+			result := 1
+			for i := 0; i < exp; i++ {
+				result *= base
+			}
+			return result
+		}
+	}
+	return math.Pow(AsFloat(a), AsFloat(b))
+}
+
 func Div(a, b any) any {
 	// REACHABLE-FROM-SKY: `x / 0.0` triggers this. Caught by top-level
 	// recover as `DivisionByZero` (Cycle 6 PC, v0.15.43). Sky exposes
@@ -2722,6 +2811,11 @@ func Lte(a, b any) any { return cmp(a, b) <= 0 }
 // FFI call returned `any` of either side; the HM checker would
 // normally reject this in pure Sky source. Classified `Comparison-
 // Mismatch` at the top-level recover (Cycle 6 PC).
+// Basics_compare — Sky's Prelude `compare : a -> a -> Int` (LT=-1, EQ=0, GT=1).
+// The any-dispatch shim the emitter targets (`rt.Basics_compare`); reuses the
+// shared `cmp` (numbers / strings / chars / tuples / lists lexicographic).
+func Basics_compare(a, b any) any { return cmp(a, b) }
+
 func cmp(a, b any) int {
 	// String vs string.
 	if sa, ok := a.(string); ok {
@@ -2749,6 +2843,14 @@ func cmp(a, b any) int {
 		}
 		return 0
 	}
+	// Composite comparables: Elm's `comparable` includes tuples and lists OF
+	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
+	// such types, so a tuple (rt.T2/T3/… struct) or list (slice) reaching here is
+	// well-typed — compare it recursively rather than falling through to AsInt
+	// (which panics on a struct/slice: the class this closes).
+	if c, ok := cmpComposite(a, b); ok {
+		return c
+	}
 	ia, ib := AsInt(a), AsInt(b)
 	switch {
 	case ia < ib:
@@ -2757,6 +2859,57 @@ func cmp(a, b any) int {
 		return 1
 	}
 	return 0
+}
+
+// cmpComposite compares two tuple (struct) or list (slice/array) values
+// lexicographically, returning (result, true) when both are the same composite
+// kind. Lists compare element-wise then shorter-is-less on a common prefix
+// (Elm ordering); tuples compare field-by-field in declaration order (V0, V1,
+// …). Returns (0, false) for non-composites or a kind mismatch, so the caller
+// falls back to the scalar path.
+func cmpComposite(a, b any) (int, bool) {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	switch va.Kind() {
+	case reflect.Slice, reflect.Array:
+		if k := vb.Kind(); k != reflect.Slice && k != reflect.Array {
+			return 0, false
+		}
+		n := va.Len()
+		if vb.Len() < n {
+			n = vb.Len()
+		}
+		for i := 0; i < n; i++ {
+			if c := cmp(va.Index(i).Interface(), vb.Index(i).Interface()); c != 0 {
+				return c, true
+			}
+		}
+		switch {
+		case va.Len() < vb.Len():
+			return -1, true
+		case va.Len() > vb.Len():
+			return 1, true
+		}
+		return 0, true
+	case reflect.Struct:
+		if vb.Kind() != reflect.Struct {
+			return 0, false
+		}
+		n := va.NumField()
+		if vb.NumField() < n {
+			n = vb.NumField()
+		}
+		for i := 0; i < n; i++ {
+			fa, fb := va.Field(i), vb.Field(i)
+			if !fa.CanInterface() || !fb.CanInterface() {
+				return 0, false // unexported field — not a tuple; let the caller decide
+			}
+			if c := cmp(fa.Interface(), fb.Interface()); c != 0 {
+				return c, true
+			}
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func And(a, b any) any { return AsBool(a) && AsBool(b) }
@@ -3259,6 +3412,9 @@ func String_contains(sub any, s any) any {
 }
 func String_startsWith(prefix any, s any) any {
 	return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix))
+}
+func String_endsWith(suffix any, s any) any {
+	return strings.HasSuffix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", suffix))
 }
 func String_reverse(s any) any {
 	runes := []rune(fmt.Sprintf("%v", s))
@@ -4582,10 +4738,24 @@ func Dict_isEmpty(dict any) any {
 	return len(AsDict(unwrapAny(dict))) == 0
 }
 
+// sortedDictKeys returns the map's string keys in ascending lexical order.
+// Sky's Dict is Elm-shaped: enumeration (keys/values/toList/foldl) is defined
+// to visit entries in sorted-key order, which also makes output deterministic
+// across runs (Go map iteration is randomised).
+func sortedDictKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func Dict_keys(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for k := range m {
+	for _, k := range keys {
 		result = append(result, k)
 	}
 	return result
@@ -4593,9 +4763,10 @@ func Dict_keys(dict any) any {
 
 func Dict_values(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for _, v := range m {
-		result = append(result, v)
+	for _, k := range keys {
+		result = append(result, m[k])
 	}
 	return result
 }
@@ -4626,9 +4797,10 @@ func AsDict(v any) map[string]any {
 
 func Dict_toList(dict any) any {
 	m := AsDict(unwrapAny(dict))
+	keys := sortedDictKeys(m)
 	result := make([]any, 0, len(m))
-	for k, v := range m {
-		result = append(result, SkyTuple2{V0: k, V1: v})
+	for _, k := range keys {
+		result = append(result, SkyTuple2{V0: k, V1: m[k]})
 	}
 	return result
 }
@@ -4637,7 +4809,12 @@ func Dict_fromList(list any) any {
 	items := asList(list)
 	result := make(map[string]any, len(items))
 	for _, item := range items {
-		t := item.(SkyTuple2)
+		// Typed-tuple codegen (v0.17+) can pass a distinct nominal
+		// `T2[string, V]` here; `item.(SkyTuple2)` would hard-panic.
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2.
+		// Dict.fromList's Sky type is `List (comparable, v)`, so AsTuple2
+		// always receives a tuple.
+		t := AsTuple2(item)
 		result[fmt.Sprintf("%v", t.V0)] = t.V1
 	}
 	return result
@@ -4699,17 +4876,19 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 // Strings are boxed through `any(k)` so V=any inference works when
 // the caller's dict is map[string]V for any V.
 func Dict_keysT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
 	keys := make([]any, 0, len(d))
-	for k := range d {
+	for _, k := range sk {
 		keys = append(keys, any(k))
 	}
 	return keys
 }
 
 func Dict_valuesT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
 	vals := make([]any, 0, len(d))
-	for _, v := range d {
-		vals = append(vals, any(v))
+	for _, k := range sk {
+		vals = append(vals, any(d[k]))
 	}
 	return vals
 }
@@ -4753,18 +4932,23 @@ func Dict_map2T[V, W any](fn any, d map[string]V) map[string]W {
 func Dict_fromListT[V any](list []any) map[string]V {
 	out := make(map[string]V, len(list))
 	for _, item := range list {
-		switch t := item.(type) {
-		case SkyTuple2:
-			key := fmt.Sprintf("%v", t.V0)
-			if v, ok := t.V1.(V); ok {
-				out[key] = v
-			} else {
-				// Fall back via reflect coerce for heterogeneous slices
-				out[key] = Coerce[V](t.V1)
-			}
-		default:
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed
+		// `T2[string, V]` (v0.17+ typed-tuple codegen). A genuine
+		// non-tuple yields a zero SkyTuple2 with V0==nil; a real Dict
+		// key is never nil, so the `if t.V0 == nil` guard preserves the
+		// prior `default:` silent-skip semantics.
+		t := AsTuple2(item)
+		if t.V0 == nil {
 			// Unexpected shape — leave key absent. Matches Dict_fromList's
 			// silent-on-bad-pair behaviour (would panic in the type assert).
+			continue
+		}
+		key := fmt.Sprintf("%v", t.V0)
+		if v, ok := t.V1.(V); ok {
+			out[key] = v
+		} else {
+			// Fall back via reflect coerce for heterogeneous slices
+			out[key] = Coerce[V](t.V1)
 		}
 	}
 	return out
@@ -4777,7 +4961,10 @@ func Dict_fromListT[V any](list []any) map[string]V {
 func Dict_fromListTA(list []any) any {
 	out := make(map[string]any, len(list))
 	for _, item := range list {
-		if t, ok := item.(SkyTuple2); ok {
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2;
+		// a non-tuple yields V0==nil, preserving the prior `ok` skip.
+		t := AsTuple2(item)
+		if t.V0 != nil {
 			out[fmt.Sprintf("%v", t.V0)] = t.V1
 		}
 	}
@@ -4811,17 +4998,29 @@ func Dict_fromListTA(list []any) any {
 // list" contract.
 func Dict_toListIntKey(dict any) any {
 	m := AsDict(unwrapAny(dict))
-	result := make([]any, 0, len(m))
+	// Parse each key to its Int form, then sort NUMERICALLY (Elm's Dict Int is
+	// ordered by the integer key, not its stringified form — "10" < "2"
+	// lexically but 2 < 10 numerically). Deterministic + Elm-faithful.
+	type ent struct {
+		k int
+		v any
+	}
+	ents := make([]ent, 0, len(m))
 	for k, v := range m {
 		// strconv.Atoi handles signed decimals; ParseFloat fallback
 		// covers the Float-rounded-to-Int corner case.
 		if n, err := strconv.Atoi(k); err == nil {
-			result = append(result, SkyTuple2{V0: n, V1: v})
+			ents = append(ents, ent{n, v})
 		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
-			result = append(result, SkyTuple2{V0: int(f), V1: v})
+			ents = append(ents, ent{int(f), v})
 		} else {
-			result = append(result, SkyTuple2{V0: 0, V1: v})
+			ents = append(ents, ent{0, v})
 		}
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
 	}
 	return result
 }
@@ -4831,13 +5030,22 @@ func Dict_toListIntKey(dict any) any {
 // failure falls back to 0.0.
 func Dict_toListFloatKey(dict any) any {
 	m := AsDict(unwrapAny(dict))
-	result := make([]any, 0, len(m))
+	type ent struct {
+		k float64
+		v any
+	}
+	ents := make([]ent, 0, len(m))
 	for k, v := range m {
 		if f, err := strconv.ParseFloat(k, 64); err == nil {
-			result = append(result, SkyTuple2{V0: f, V1: v})
+			ents = append(ents, ent{f, v})
 		} else {
-			result = append(result, SkyTuple2{V0: 0.0, V1: v})
+			ents = append(ents, ent{0.0, v})
 		}
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
 	}
 	return result
 }
@@ -4845,9 +5053,11 @@ func Dict_toListFloatKey(dict any) any {
 func Dict_foldl(fn any, acc any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := acc
-	for k, v := range m {
+	// Elm's Dict.foldl visits entries in ascending key order (also makes the
+	// fold deterministic despite Go's randomised map iteration).
+	for _, k := range sortedDictKeys(m) {
 		step := SkyCall(fn, k)
-		step2 := SkyCall(step, v)
+		step2 := SkyCall(step, m[k])
 		result = SkyCall(step2, result)
 	}
 	return result
@@ -4877,6 +5087,7 @@ func Math_abs(n any) any {
 	}
 	return x
 }
+
 // Math.min / Math.max are polymorphic (`a -> a -> a`, "any comparable type" —
 // Sky.Core.Math). Compare via skyLessThan, NOT AsInt: AsInt truncates Floats to
 // Int (so `Math.min` over `[0.4 … 1.3]` collapsed the range to 0..1, mis-scaling
@@ -7112,38 +7323,38 @@ func Math_logT(n float64) float64         { return math.Log(n) }
 
 // #366 — full Go math.* parity.
 // Inverse trig
-func Math_asin(n any) any              { return math.Asin(AsFloat(n)) }
-func Math_acos(n any) any              { return math.Acos(AsFloat(n)) }
-func Math_atan(n any) any              { return math.Atan(AsFloat(n)) }
-func Math_atan2(y, x any) any          { return math.Atan2(AsFloat(y), AsFloat(x)) }
+func Math_asin(n any) any     { return math.Asin(AsFloat(n)) }
+func Math_acos(n any) any     { return math.Acos(AsFloat(n)) }
+func Math_atan(n any) any     { return math.Atan(AsFloat(n)) }
+func Math_atan2(y, x any) any { return math.Atan2(AsFloat(y), AsFloat(x)) }
 
 // Hyperbolic + inverse hyperbolic
-func Math_sinh(n any) any              { return math.Sinh(AsFloat(n)) }
-func Math_cosh(n any) any              { return math.Cosh(AsFloat(n)) }
-func Math_tanh(n any) any              { return math.Tanh(AsFloat(n)) }
-func Math_asinh(n any) any             { return math.Asinh(AsFloat(n)) }
-func Math_acosh(n any) any             { return math.Acosh(AsFloat(n)) }
-func Math_atanh(n any) any             { return math.Atanh(AsFloat(n)) }
+func Math_sinh(n any) any  { return math.Sinh(AsFloat(n)) }
+func Math_cosh(n any) any  { return math.Cosh(AsFloat(n)) }
+func Math_tanh(n any) any  { return math.Tanh(AsFloat(n)) }
+func Math_asinh(n any) any { return math.Asinh(AsFloat(n)) }
+func Math_acosh(n any) any { return math.Acosh(AsFloat(n)) }
+func Math_atanh(n any) any { return math.Atanh(AsFloat(n)) }
 
 // Exp / log family
-func Math_exp(n any) any               { return math.Exp(AsFloat(n)) }
-func Math_exp2(n any) any              { return math.Exp2(AsFloat(n)) }
-func Math_log2(n any) any              { return math.Log2(AsFloat(n)) }
-func Math_log10(n any) any             { return math.Log10(AsFloat(n)) }
+func Math_exp(n any) any   { return math.Exp(AsFloat(n)) }
+func Math_exp2(n any) any  { return math.Exp2(AsFloat(n)) }
+func Math_log2(n any) any  { return math.Log2(AsFloat(n)) }
+func Math_log10(n any) any { return math.Log10(AsFloat(n)) }
 
 // Roots + utilities
-func Math_cbrt(n any) any              { return math.Cbrt(AsFloat(n)) }
-func Math_hypot(x, y any) any          { return math.Hypot(AsFloat(x), AsFloat(y)) }
-func Math_trunc(n any) any             { return int(math.Trunc(AsFloat(n))) }
-func Math_mod(x, y any) any            { return math.Mod(AsFloat(x), AsFloat(y)) }
-func Math_remainder(x, y any) any      { return math.Remainder(AsFloat(x), AsFloat(y)) }
+func Math_cbrt(n any) any         { return math.Cbrt(AsFloat(n)) }
+func Math_hypot(x, y any) any     { return math.Hypot(AsFloat(x), AsFloat(y)) }
+func Math_trunc(n any) any        { return int(math.Trunc(AsFloat(n))) }
+func Math_mod(x, y any) any       { return math.Mod(AsFloat(x), AsFloat(y)) }
+func Math_remainder(x, y any) any { return math.Remainder(AsFloat(x), AsFloat(y)) }
 
 // Additional constants
-func Math_phi() any                    { return math.Phi }
-func Math_sqrt2() any                  { return math.Sqrt2 }
-func Math_inf() any                    { return math.Inf(1) }
-func Math_nan() any                    { return math.NaN() }
-func Math_isNaN(x any) any             { return math.IsNaN(AsFloat(x)) }
+func Math_phi() any        { return math.Phi }
+func Math_sqrt2() any      { return math.Sqrt2 }
+func Math_inf() any        { return math.Inf(1) }
+func Math_nan() any        { return math.NaN() }
+func Math_isNaN(x any) any { return math.IsNaN(AsFloat(x)) }
 
 // Typed companions for the new entries
 func Math_asinT(n float64) float64         { return math.Asin(n) }
@@ -7244,7 +7455,13 @@ func String_words(s any) any {
 }
 
 func String_repeat(n any, s any) any {
-	return strings.Repeat(fmt.Sprintf("%v", s), AsInt(n))
+	// A non-positive count is "" (Elm semantics) — `strings.Repeat` panics on a
+	// negative count, and well-typed Sky must never panic.
+	count := AsInt(n)
+	if count <= 0 {
+		return ""
+	}
+	return strings.Repeat(fmt.Sprintf("%v", s), count)
 }
 
 // runeCount returns the number of Unicode code points in s.
@@ -7564,6 +7781,34 @@ func List_tail(list any) any {
 		return Nothing[any]()
 	}
 	return Just[any](items[1:])
+}
+
+// ── Cons / list pattern-destructuring raw accessors ─────────────
+// The Rust codegen's pattern-match binder uses these to destructure
+// a Sky list value in a `case`/param cons pattern (`x :: xs`, `[a, b]`).
+// Unlike List_head / List_tail (which return Maybe), these return raw
+// elements/slices — the pattern's length guard has already run. AsList
+// normalises the []any / SkyList representations.
+
+// SkyLen is the element count of a Sky list value.
+func SkyLen(x any) int { return len(AsList(x)) }
+
+// SkyElem is the i-th element (bounds-guarded; nil when out of range).
+func SkyElem(x any, i int) any {
+	l := AsList(x)
+	if i < 0 || i >= len(l) {
+		return nil
+	}
+	return l[i]
+}
+
+// SkyTailSlice is the list minus its head (empty when already empty).
+func SkyTailSlice(x any) []any {
+	l := AsList(x)
+	if len(l) == 0 {
+		return l
+	}
+	return l[1:]
 }
 
 func List_indexedMap(fn any, list any) any {
@@ -7935,6 +8180,36 @@ func httpEnvTimeout(key string, def time.Duration) time.Duration {
 	return def
 }
 
+// colonToMuxPattern translates Sky's documented `:name` path-parameter
+// syntax into Go 1.22+ ServeMux's `{name}` wildcard syntax, returning the
+// rewritten pattern plus the ordered list of captured parameter names.
+//
+// Sky.Http.Server documents `Server.get "/users/:id" h` + `Server.param
+// "id" req`. Go's stdlib mux treats `:id` as a LITERAL segment, so the raw
+// pattern only ever matched the literal URL `/users/:id` — `/users/42`
+// 404'd and `req.Params` was always empty. Rewriting each `:seg` to
+// `{seg}` lets the mux capture the segment; the caller then reads it back
+// via `req.PathValue(name)`. Only single-segment captures are produced
+// (matching Sky's per-segment `:name` semantics); a trailing-`*` catch-all
+// is out of scope. Segments that are exactly `:` (no name) are left
+// untouched so a malformed pattern surfaces as a plain literal rather than
+// a mux-panicking `{}`.
+func colonToMuxPattern(path string) (string, []string) {
+	if !strings.Contains(path, "/:") {
+		return path, nil
+	}
+	segs := strings.Split(path, "/")
+	var names []string
+	for i, seg := range segs {
+		if len(seg) > 1 && seg[0] == ':' {
+			name := seg[1:]
+			names = append(names, name)
+			segs[i] = "{" + name + "}"
+		}
+	}
+	return strings.Join(segs, "/"), names
+}
+
 func Server_listen(port any, routes any) any {
 	p := AsInt(port)
 	routeList := AsList(routes)
@@ -7993,9 +8268,13 @@ func Server_listen(port any, routes any) any {
 		// keeps Go's "wildcard-method on more-specific path" conflict
 		// rule from tripping on the console mount (#466 follow-up,
 		// caught 2026-06-04 by VerifyScenarioSpec via 15-http-server).
-		muxPattern := pattern
+		// Translate `:name` → `{name}` so Go's mux captures the segment
+		// (raw `:name` matched only the literal path). paramNames drives
+		// req.PathValue read-back inside the handler below.
+		translated, paramNames := colonToMuxPattern(pattern)
+		muxPattern := translated
 		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
-			muxPattern = route.Method + " " + pattern
+			muxPattern = route.Method + " " + translated
 		}
 		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
 			// Panic recovery — one bad handler mustn't kill the process.
@@ -8071,6 +8350,11 @@ func Server_listen(port any, routes any) any {
 				if len(v) > 0 {
 					skyReq.Query[k] = v[0]
 				}
+			}
+			// URL path captures — Server.param reads these. paramNames was
+			// derived from the `:name` segments this route registered.
+			for _, pn := range paramNames {
+				skyReq.Params[pn] = req.PathValue(pn)
 			}
 
 			// Call the Sky handler and invoke the returned Task

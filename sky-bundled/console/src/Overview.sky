@@ -17,6 +17,7 @@ module Overview exposing (viewOverview)
 --
 -- Sparklines + aggregate charts use Std.Ui.Chart primitives
 -- (v0.16.0 PR 4). Both run pure-Sky — no extra Go runtime needed.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -141,7 +142,7 @@ selectorHeader model =
             , Ui.el
                   [ Font.size 14, Font.bold, Font.color textPrimary ]
                   (Ui.text scoped)
-            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
             , allServicesChip (model.selectedService == "")
             ]
 
@@ -188,7 +189,7 @@ twoPaneLayout model =
     Ui.row
         [ Ui.width Ui.fill, Ui.spacing 16, Ui.alignTop ]
         [ serviceCardScroller model
-        , Ui.el [Ui.width Ui.fill] (rightPane model)
+        , Ui.el [ Ui.width Ui.fill ] (rightPane model)
         ]
 
 
@@ -198,7 +199,7 @@ serviceCardScroller model =
     Ui.column
         [ Ui.width (Ui.px 320), Ui.spacing 8, Ui.alignTop ]
         (if List.isEmpty model.serviceStats then
-            [emptyCard]
+            [ emptyCard ]
 
         else
             List.map (serviceCard model.selectedService) model.serviceStats)
@@ -596,12 +597,16 @@ focusedPane model =
                     , Ui.spacing 10
                     , Ui.width Ui.fill
                     ]
-                    [Ui.el
-                        [ Font.size 13, Font.color textSecondary, Font.italic ]
-                        (Ui.text
-                            ("Service \"" ++ model.selectedService
-                                ++ "\" has no recent samples yet — "
-                                ++ "click All services to return to aggregate."))]
+                    [ Ui.el
+                          [ Font.size 13
+                          , Font.color textSecondary
+                          , Font.italic
+                          ]
+                          (Ui.text
+                              ("Service \"" ++ model.selectedService
+                                  ++ "\" has no recent samples yet — "
+                                  ++ "click All services to return to aggregate."))
+                    ]
 
             Just stat ->
                 Ui.column
@@ -659,9 +664,10 @@ singleSeries label values color =
         []
 
     else
-        [Chart.series (List.indexedMap pairIndex values)
-            |> Chart.withSeriesLabel label
-            |> Chart.withSeriesColor color]
+        [ Chart.series (List.indexedMap pairIndex values)
+              |> Chart.withSeriesLabel label
+              |> Chart.withSeriesColor color
+        ]
 
 
 focusedHint : Element Msg

@@ -12,6 +12,7 @@ module Main exposing (main)
 --                           generate via `head -c 64 /dev/urandom | base64`.
 --   SKY_COMPOSITE_DB      — sqlite path; default ./composite-server.db
 --   SKY_COMPOSITE_PORT    — server port; default 8000
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -62,7 +63,7 @@ readConfig =
     , rateLimitCapacity = 60
     , rateLimitRefill = 10
     , healthCacheTtlMs = 30000
-    , corsOrigins = ["*"]
+    , corsOrigins = [ "*" ]
     }
 
 

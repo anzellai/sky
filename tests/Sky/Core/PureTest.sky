@@ -20,42 +20,66 @@ import Sky.Test as Test exposing (Test)
 tests : List Test
 tests =
     [ Test.suite
-        "Sky.Core.Pure (v0.15.50)"
-        [ Test.test
-            "uuidV4 returns a 36-char Ok"
-            (\_ ->
-                case Task.perform (Pure.uuidV4 ()) of
-                    Ok u -> Test.equal 36 (String.length u)
-                    Err _ -> Test.isFalse True)
-        , Test.test
-            "uuidV7 returns a 36-char Ok"
-            (\_ ->
-                case Task.perform (Pure.uuidV7 ()) of
-                    Ok u -> Test.equal 36 (String.length u)
-                    Err _ -> Test.isFalse True)
-        , Test.test
-            "timeNow returns Ok with non-zero millis"
-            (\_ ->
-                case Task.perform (Pure.timeNow ()) of
-                    Ok n -> Test.equal True (n > 0)
-                    Err _ -> Test.isFalse True)
-        , Test.test
-            "timeUnixMillis returns Ok with non-zero millis"
-            (\_ ->
-                case Task.perform (Pure.timeUnixMillis ()) of
-                    Ok n -> Test.equal True (n > 0)
-                    Err _ -> Test.isFalse True)
-        , Test.test
-            "systemArgs returns Ok (List String) — may be empty"
-            (\_ ->
-                case Task.perform (Pure.systemArgs ()) of
-                    Ok _ -> Test.isTrue True
-                    Err _ -> Test.isFalse True)
-        , Test.test
-            "systemCwd returns Ok with non-empty path"
-            (\_ ->
-                case Task.perform (Pure.systemCwd ()) of
-                    Ok p -> Test.equal True (String.length p > 0)
-                    Err _ -> Test.isFalse True)
-        ]
+          "Sky.Core.Pure (v0.15.50)"
+          [ Test.test
+                "uuidV4 returns a 36-char Ok"
+                (\_ ->
+                    case Task.perform (Pure.uuidV4 ()) of
+
+                        Ok u ->
+                            Test.equal 36 (String.length u)
+
+                        Err _ ->
+                            Test.isFalse True)
+          , Test.test
+                "uuidV7 returns a 36-char Ok"
+                (\_ ->
+                    case Task.perform (Pure.uuidV7 ()) of
+
+                        Ok u ->
+                            Test.equal 36 (String.length u)
+
+                        Err _ ->
+                            Test.isFalse True)
+          , Test.test
+                "timeNow returns Ok with non-zero millis"
+                (\_ ->
+                    case Task.perform (Pure.timeNow ()) of
+
+                        Ok n ->
+                            Test.equal True (n > 0)
+
+                        Err _ ->
+                            Test.isFalse True)
+          , Test.test
+                "timeUnixMillis returns Ok with non-zero millis"
+                (\_ ->
+                    case Task.perform (Pure.timeUnixMillis ()) of
+
+                        Ok n ->
+                            Test.equal True (n > 0)
+
+                        Err _ ->
+                            Test.isFalse True)
+          , Test.test
+                "systemArgs returns Ok (List String) — may be empty"
+                (\_ ->
+                    case Task.perform (Pure.systemArgs ()) of
+
+                        Ok _ ->
+                            Test.isTrue True
+
+                        Err _ ->
+                            Test.isFalse True)
+          , Test.test
+                "systemCwd returns Ok with non-empty path"
+                (\_ ->
+                    case Task.perform (Pure.systemCwd ()) of
+
+                        Ok p ->
+                            Test.equal True (String.length p > 0)
+
+                        Err _ ->
+                            Test.isFalse True)
+          ]
     ]

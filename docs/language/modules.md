@@ -1,11 +1,10 @@
 # Modules
 
-> **v0.15 state**: type-directed lowering throughout, Go generics on
-> parametric record aliases. Layer-3 stdlib, whole-program DCE
-> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
-> verification across all 27 examples (120 stdlib assertions + 306
-> cabal specs). See [`../compiler/versions.md`](../compiler/versions.md)
-> for the changelog.
+> **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
+> is the primary Sky compiler; the Haskell compiler is preserved under
+> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> suite (`cargo test` + xtask gates). See
+> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
 
 
 Modules group related declarations under a dotted name and control which names are visible to callers.

@@ -1,0 +1,14 @@
+-- defect: field access on a non-record — `n.name` where `n : Int`
+-- oracle: reject [E2001]
+-- (exercises the annotation gate seeding the param `n` from its declared type)
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+grab : Int -> String
+grab n =
+    n.name
+
+main =
+    println (grab 5)

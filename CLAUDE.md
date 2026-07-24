@@ -1,26 +1,28 @@
 # CLAUDE.md
 
 > **Quick orientation.** Sky is an Elm-family functional language
-> compiling to typed Go via a Haskell compiler (GHC 9.4.8). Current
-> release is **v0.17.5** — canonicaliser's explicit-alias-wins rule
-> silently resolves the historical dual-import friction (`import
-> Std.Db as Db` + `import Lib.Db exposing (conn)` now compiles with
-> the explicit alias winning) and every `main` entry-point sheds its
-> redundant trailing `|> Task.run` (runtime auto-forces Task-typed
-> main); v0.17.4 diagnostic wording carries forward; v0.17.3 LSP
-> FFI-alias false-positive + 5-round canonicalise+solve fixpoint in
-> `typecheckWorkspace`; v0.17.2 T-var identity-recovery gate;
-> v0.17.1 security + List.sortWith + Math.min/max Float fix;
-> v0.17.0 typed-emit fix, documented rt.Coerce residual surface
-> across 8 sound safety classes, `scopeStateRef` IORef contract +
-> audit spec, and per-panic-class emission-time regression locks
-> stay baseline. v0.15 type-directed lowering, Go generics on
-> parametric record aliases, same-module polymorphic
-> re-instantiation, and the wildcard-`any` soundness gate all carry
-> forward as baseline. The verification sweep (40 examples +
-> Sky.Test assertions + 410+ cabal specs + 17/17 Neovim LSP
-> integration tests) is the source of truth — green-everywhere is a
-> hard release gate.
+> compiling to typed Go. The compiler is now the **Rust rewrite**
+> (cargo workspace at `rust/`, primary); the retired Haskell
+> compiler lives under `legacy-haskell-compiler/` and serves as the
+> **differential oracle** (`sky-out/sky`). Current line is
+> **v0.18.x** — the Rust compiler drives every verb (`build` /
+> `run` / `check` / `watch` / `test` / `fmt` / `lsp` / `doc` / the
+> FFI + dep verbs), emits the same phased pipeline log the oracle
+> prints, and reproduces the oracle's Elm-style type-error output
+> (RHS-anchored span + filename + source-context window). `sky
+> upgrade` self-updates from GitHub releases; `sky watch` honours
+> `--clear`/`--debounce`/`--interval`/`--kill-timeout`/`--watch`.
+> All the language/runtime baselines carry forward unchanged:
+> type-directed lowering + Go generics on parametric record
+> aliases, same-module polymorphic re-instantiation, the
+> wildcard-`any` soundness gate, auto-TCO + CPS list ops on
+> constant Go stack, the documented rt.Coerce residual surface,
+> and "if it compiles it works". The Rust verification sweep
+> (`cargo test --workspace` + the xtask gate suite
+> roundtrip/resolve/infer/reject/build-run/coerce-floor/repro/fuzz +
+> golden + the example sweep, cross-checked byte-for-byte against
+> the oracle) is the source of truth — green-everywhere is a hard
+> release gate.
 
 ## Import qualifier rules (v0.17.5+)
 
@@ -49,6 +51,25 @@ canonicalisation time:
 Rationale + gate: see `Sky.Canonicalise.Module`'s
 `effectiveQualifier` + `detectImportAliasCollisions`.  Regression
 spec: `Sky.Canonicalise.DualImportCollisionSpec`.
+
+## Export enforcement — `exposing` is a real boundary (v0.18)
+
+Elm semantics: `import M exposing (name)` where `M` does **not**
+expose `name` is a hard error — `[E1011] NOT EXPOSED: module `M`
+does not expose `name``. A module-private binding (declared but
+left out of `M`'s own `exposing (...)` list) can no longer be
+reached by a consumer. This makes the export list an enforced
+contract, not documentation.
+
+* Scope is **values** (functions / bindings). Kernel-implicit
+  types (`Decoder`, `Value`, `Cmd`, `Sub`, `Error`, … — #576) stay
+  accepted in `exposing` lists.
+* Applies to project modules AND stdlib modules — Rust compiles the
+  stdlib from source, so `import Sky.Core.List exposing (typo)`
+  also errors (the oracle exempted kernel modules; the Rust primary
+  doesn't need that shortcut).
+* Rust site: `hir` `resolve.rs` `bind_exposing_dep`. The oracle
+  encodes the same intent in `checkImportExposingAgainstDep`.
 
 ## `main` entry points (v0.17.5+)
 
@@ -135,6 +156,7 @@ Production-grade code does not survive guesswork.
 | Concern              | Default                                                          |
 |----------------------|------------------------------------------------------------------|
 | View layer           | `Std.Ui` (typed no-CSS DSL).  `Std.Html` only for wrapping raw markup. |
+| Navigation (Sky.Live)| Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on the `<a>`).  ONE persistent SSE for the whole session.  A plain `<a href>` full-reload opens a fresh SSE per page and can exhaust the browser's connection pool → frozen tab.  Bare `href` only to deliberately leave the app. |
 | Auth                 | `Std.Auth` — bcrypt + HS256 JWT cookies.  Never `fmt.Sprintf("%v", secret)`. |
 | Forms with passwords | `Ui.form [Ui.onSubmit DoSignIn]` with typed record arg.  Never per-keystroke `onInput` on password. |
 | DB                   | `Std.Db` + SQLite for prototypes; PostgreSQL for multi-instance deploys. |
@@ -162,8 +184,9 @@ driver = "sqlite"               # sqlite / postgres
 url = "DATABASE_URL"
 
 [auth]                          # auth != none
-cookie = "sky_sid"
-ttl = "24h"
+cookieName = "sky_sid"          # → SKY_AUTH_COOKIE
+tokenTtl = 86400                # JWT lifetime (s) → SKY_AUTH_TOKEN_TTL
+driver = "jwt"                  # → SKY_AUTH_DRIVER
 # secret comes from SKY_AUTH_TOKEN_SECRET — never commit it
 
 [log]
@@ -183,8 +206,29 @@ Run" / "Kubernetes":
 * Confirm `SKY_CONSOLE_AUTH` is set (`token` or `app`).  Production
   with `SKY_CONSOLE_AUTH` unset emits a warn log and refuses to
   mount `/_sky/console`.
-* Confirm session store is NOT memory when there is more than one
-  replica.
+* Confirm the session store is a SHARED store (`redis` / `postgres` /
+  `firestore`) when there is more than one replica. `memory` AND
+  `sqlite` are BOTH single-instance — `memory` is per-process (lost on
+  restart) and `sqlite` is a local file (one per host, not shareable;
+  a network-FS file is a corruption hazard, not a shared store). Single
+  instance (one VM / container / desktop) → `sqlite` is the right default
+  and everything works; multiple replicas → move sessions to a shared
+  store. The app code doesn't change — only `SKY_LIVE_STORE`.
+* **Confirm the load balancer routes with session affinity (sticky
+  sessions) keyed on the `sky_sid` cookie when there is more than one
+  replica.** A Sky.Live session is single-owner: its Model + serializing
+  mutex must live on one instance at a time (same model as Phoenix
+  LiveView). Affinity keeps a session's tabs together (Phase 1 fan-out
+  reaches them; the mutex serializes them) and lets a moved session
+  re-hydrate cleanly from the shared store on reconnect. Without it, two
+  instances mutate one session's Model independently → lost updates.
+  SkyDeploy sets affinity automatically. See
+  `docs/skylive/architecture.md` §"Horizontal scale".
+* Confirm cross-instance pub/sub is wired when broadcasts must reach
+  users across replicas (chat / collab / same-user-two-devices).
+  `store=redis` selects the cross-instance Redis broker automatically;
+  otherwise set `SKY_LIVE_BROKER_URL` to a Redis. Single-instance needs
+  nothing (in-process broker).
 
 ### When in doubt — one focused question
 
@@ -381,7 +425,7 @@ Forbidden patterns:
 
 ### 0.2 Test-cadence discipline — no needless full-suite + wakeup cycles
 
-The slow-progress pattern: edit → full cabal test → schedule
+The slow-progress pattern: edit → full cargo test suite → schedule
 25-30 min wakeup → repeat. **This pattern is FORBIDDEN.**
 
 #### Rules
@@ -427,12 +471,13 @@ Forbidden patterns:
   * Re-running the example sweep more than once per milestone.
 
 Concrete cadence:
-  * **Per change**: `timeout 60 dist-newstyle/.../sky-tests --match
-    "<NarrowSpec>"`
+  * **Per change**: `cargo test -p <crate> <testname>` (narrowest
+    crate + test filter that proves the change)
   * **Per phase boundary (multiple changes)**: rebuild + a couple
-    of representative specs
-  * **Per milestone**: full cabal-test + example-sweep + verify-cli,
-    in background, notified when complete
+    of representative `cargo test -p <crate>` runs
+  * **Per milestone**: full `cargo test --workspace` + the xtask
+    gate suite (`cargo run -p xtask -- <gate>`) + example-sweep +
+    verify-cli, in background, notified when complete
 
 ### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
 
@@ -444,9 +489,12 @@ and judge verdicts.
 #### The five hard rules
 
 1. **Architecture reference is Phase 0.** All compiler-level
-   workflows MUST begin by consulting
-   `docs/architecture/sky-compiler-architecture.md` (and where
-   stdlib semantics are touched, `docs/architecture/sky-stdlib-correctness.md`)
+   workflows MUST begin by consulting `docs/rust-rewrite/` (the
+   primary Rust-compiler architecture reference; the legacy
+   `docs/architecture/sky-compiler-architecture.md` documents the
+   retired Haskell pipeline and is kept for historical context)
+   and, where stdlib semantics are touched,
+   `docs/architecture/sky-stdlib-correctness.md`,
    before claiming a tactic closes a strategic goal. The first
    phase of every compiler workflow's JS DAG is
    `phase('Architecture-Consult')`. Tactics proposed without
@@ -568,19 +616,22 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 
 #### Companion canonical references
 
-- `docs/architecture/sky-compiler-architecture.md` — compiler
-  pipeline (Parse → Canon → Type → Lower → Emit), rt.Coerce
-  origin catalog, architectural levers, irreducible floor,
-  verbatim-goal verdict.
+- `docs/rust-rewrite/` — primary Rust-compiler architecture
+  reference: pipeline (Parse → Canon → Type → Lower → Emit),
+  workspace + crate layout, rt.Coerce origin catalog,
+  architectural levers, irreducible floor, verbatim-goal verdict.
+- `docs/architecture/sky-compiler-architecture.md` — legacy
+  Haskell-pipeline reference, retained for historical context.
 - `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
   algebraic laws, Std.Ui layout invariants, Std.Html + Sky.Live
   TEA architecture, Std.Db + Std.Auth security invariants,
   cross-backend parity, per-module correctness verdicts.
 
 These are the durable ground truth across sessions, agents, and
-workflows. They are the FIRST source consulted on any compiler
-or stdlib change — not the in-memory model, not prior session
-context, not optimistic "we can do it" framing.
+workflows. `docs/rust-rewrite/` is the FIRST source consulted on
+any compiler change (stdlib-correctness for stdlib changes) — not
+the in-memory model, not prior session context, not optimistic
+"we can do it" framing.
 
 ### 0.4 Session methodology — phase pattern + agents + grilling + verify
 
@@ -747,7 +798,7 @@ Mitigations:
 
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
-A runaway `sky` / `cabal` / `ghc` / `haskell-language-server` process
+A runaway `sky` / `cargo` / `rustc` / `rust-analyzer` process
 has previously force-powered-off the host Mac. Treat the absence of
 mem-guard like a missing `set -e`.
 
@@ -757,9 +808,10 @@ disown                                # survives shell exit
 ```
 
 Defaults (16 GB Mac): per-process kill at 6 GB RSS for compiler
-tooling (`sky` / `cabal` / `ghc` / `ghc-iserv` / `cc1` / `ld` /
-`haskell-language-server` / `hls-wrapper` / `gopls` /
-`sky-ffi-inspect`); 10 GB panic tier for the dev-session host
+tooling (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
+`ld` / `go` / `gopls` / `sky-ffi-inspect`; legacy `cabal` / `ghc`
+/ `ghc-iserv` / `haskell-language-server` still covered); 10 GB
+panic tier for the dev-session host
 (`claude` / `node` / `ghostty`); system-pressure floor kicks in
 when free + inactive + speculative memory drops below 1.2 GB. Tune
 via `MEM_GUARD_PROC_MB` / `MEM_GUARD_PANIC_MB` /
@@ -801,10 +853,11 @@ have already lost 7 hours waiting on a stuck `Sky.Cli.Watch`
 subprocess. Never again.
 
 Rules:
-- **`cabal test` MUST run under `timeout`**:
-  `timeout 3600 cabal test` (60 min hard ceiling). If 60 min is
-  not enough, that's a flaky test — bisect it, don't widen the
-  ceiling.
+- **`cargo test` and the xtask gate suite MUST run under
+  `timeout`**: `timeout 3600 cargo test --workspace` /
+  `timeout 3600 cargo run -p xtask -- <gate>` (60 min hard
+  ceiling). If 60 min is not enough, that's a flaky test —
+  bisect it, don't widen the ceiling.
 - **Per-spec timeouts.** Hspec specs that exec subprocesses
   (`sky build` / `sky watch` / `sky test`) MUST wrap the child in
   `timeout 60` or use Hspec's `Test.Hspec.Wai`-style timeout
@@ -985,7 +1038,7 @@ build.
    Each is reviewed for security + scalability — UI/UX/DX/security
    are not afterthoughts.
 
-### 8. Non-regression rules (enforced by `cabal test`)
+### 8. Non-regression rules (enforced by `cargo test`)
 
 - **No `Result String a` / `Task String a`** in public surfaces.
   Use `Result Error a` / `Task Error a`.
@@ -1323,7 +1376,7 @@ cd examples/01-hello-world && sky build src/Main.sky
 - Watched scope (strict allowlist, no `.skywatchignore`): `sky.toml`
   + the entry-point's directory (recursive `.sky` walk) + `tests/`
   if present. Generated dirs (`sky-out/`, `.skycache/`, `.skydeps/`,
-  `dist-newstyle/`, `node_modules/`, `.git/`) excluded.
+  `rust/target/`, `dist-newstyle/`, `node_modules/`, `.git/`) excluded.
 - Build-error policy: on a failing rebuild, the previously-running
   binary stays alive. The next successful build kills + respawns.
 - Caches: `.skycache/source.hash` (full short-circuit on
@@ -1333,9 +1386,9 @@ cd examples/01-hello-world && sky build src/Main.sky
 
 ### Release checklist (non-negotiable)
 
-1. Rebuild: `cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky`
+1. Rebuild: `( cd rust && cargo build --release -p sky ) && cp rust/target/release/sky sky-out/sky`
 2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
-3. Cabal test sweep: `cabal test` — zero failures, pending count matches prior
+3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden) — zero failures
 4. Clean-build every example: loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`
 5. **Sky.Live + Sky.Http.Server runtime verify** — `scripts/verify-all-web.sh` (Playwright + the structural-events + round-trip-dispatch checks)
 6. **CLI / Tui / Cli runtime verify** — `scripts/verify-cli.sh`
@@ -1370,6 +1423,8 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 | `SKY_LIVE_HEARTBEAT_TTL_MS` | — | 35000 |
 | `SKY_LIVE_SSE_BUFFER` | — | 16 (clamped to [1, 1024]; drops surfaced as `sky_live_sse_drops_total{session}`) |
 | `SKY_LIVE_BASE_PATH` | — | (set by `MountSubApp`) |
+| `SKY_LIVE_BROKER_URL` | — | Redis URL for the cross-instance pub/sub broker when sessions are NOT on Redis (e.g. Postgres sessions + Redis broker). Unset → the store's broker (in-process unless store=redis). |
+| `SKY_LIVE_BROKER` | — | `inprocess` forces the in-process broker even on a Redis store (single-instance escape hatch). |
 
 ### Logging (`[log]` section)
 
@@ -1561,10 +1616,24 @@ firestore), type-safe events, VNode diffing.
 browser with no `sky_sid` cookie fires `init`. Browser reload while
 the session is alive RESTORES Model from the session store — `init`
 does NOT run. To force a fresh `init` (demo reset / e2e bootstrap):
-`Cmd.perform (Cookie.expire "sky_sid")` then reload. If the goal is
-"my other tab missed an update", reach for `Cmd.publish` instead —
-reload-as-resync is a missing broadcast, not a feature gap. Details
+`Cmd.perform (Cookie.expire "sky_sid")` then reload. Details
 in `docs/skylive/overview.md` §"Session lifecycle — when `init` runs".
+
+**Multi-tab of the SAME session mirrors one shared view (v0.18+).**
+Two tabs sharing one `sky_sid` share one server Model and are ONE
+logical window: they always show the same page AND state. Every
+committed frame — an action's patch, a server push (Cmd.perform /
+Time.every / pub-sub), AND a navigation — fans out to ALL of the
+session's live connections, with no app code and no `Cmd.publish`.
+Navigating one tab (or opening a new tab at a URL) therefore moves ALL
+tabs of that session — this is deliberate and is what keeps the
+broadcast diff sound (every tab stays at the shared `prevTree`, so a
+diff never mis-targets a stale tab's DOM). Who-wins is unchanged: the
+per-session mutex serializes dispatches (last-writer-wins), and every
+tab converges. Two people who must browse INDEPENDENTLY are two
+different sessions, not two tabs — reach for `Cmd.publish` (or a
+user-keyed topic) to sync across DIFFERENT `sky_sid`s. See
+`docs/skylive/architecture.md` §"Per-session fan-out".
 
 ### init's `req` shape (v0.16.7 #417 + v0.16.8 #423)
 
@@ -1717,6 +1786,27 @@ full-body-patches, and pushes history. No app code needed.
 ```elm
 Html.a [ Attr.href "/apps", Attr.attribute "sky-nav" "" ] [ Html.text "Dashboard" ]
 ```
+
+**Default EVERY internal link to `sky-nav`. This is a strong
+recommendation, not a nicety — a plain `<a href>` triggers a
+full-page reload, and every page load opens a fresh SSE
+(`EventSource`) connection. Each streaming SSE holds one of the
+browser's ~6-connections-per-host HTTP/1.1 budget, so an app that
+navigates full-page across several pages piles up connections until
+the pool is exhausted and the tab FREEZES (spinner stuck, every
+click a no-op).** `sky-nav` keeps ONE persistent SSE for the whole
+session and swaps the body via a client-side patch — no
+per-navigation reconnect/resync, no connection churn, and it never
+approaches the per-host limit. Reach for a bare `<a href>` (full
+reload) only when you deliberately want a fresh document (e.g.
+leaving the app, or a hard auth boundary). The runtime hardens the
+SSE lifecycle (client releases the connection on `pagehide`; server
+enforces one live SSE per session), so full-page apps no longer hang
+outright — but `sky-nav` is still the right default: it's
+fewer connections, less server work, and instant transitions.
+Production deploys behind a TLS front get HTTP/2, which multiplexes
+SSE and removes the per-host limit entirely. See
+`docs/skylive/architecture.md` §"SSE connection lifecycle + scaling".
 
 **Back / Forward** is handled by the runtime: a popstate listener
 re-fetches the URL with `X-Sky-Nav: 1` and patches. App code does
@@ -2855,18 +2945,24 @@ git push origin main
 ## Project layout
 
 ```
-src/                              -- Sky compiler (Haskell, GHC 9.4+)
-  Sky/Parse/                      -- lexer, layout filter, parser
-  Sky/Canonicalise/               -- name resolution, import validation
-  Sky/Type/                       -- HM inference, exhaustiveness
-  Sky/Build/                      -- orchestration, FFI generator, TCO
-  Sky/Generate/Go/                -- Go IR + printer
-  Sky/Lsp/                        -- language server
-  Sky/Format/                     -- opinionated formatter (Elm-compatible)
-  Sky/Doc/                        -- sky doc — index, terminal, HTTP render
-app/Main.hs                       -- CLI entry point
-runtime-go/rt/                    -- Go runtime (embedded via TH)
-sky-stdlib/                       -- Sky-side stdlib (embedded via TH)
+rust/                             -- Sky compiler (Rust, PRIMARY — cargo workspace)
+  crates/sky/                 -- CLI + `sky` binary entry point
+  crates/syntax/                  -- lexer + parser
+  crates/hir/                     -- name resolution, canonicalisation
+  crates/ty/                      -- HM inference, exhaustiveness
+  crates/lower/                   -- type-directed lowering + IR
+  crates/codegen/                 -- Go IR + printer
+  crates/ffi/                     -- FFI binding generation
+  crates/fmt/                     -- opinionated formatter (Elm-compatible)
+  crates/sky-lsp/                 -- language server
+  crates/xtask/                   -- gate suite (roundtrip/resolve/infer/…/golden)
+  rust-toolchain.toml             -- pinned Rust toolchain
+legacy-haskell-compiler/          -- retired Haskell compiler (historical)
+  src/Sky/…                       -- former Parse/Canonicalise/Type/Build/…
+  app/Main.hs                     -- former CLI entry point
+  sky-compiler.cabal              -- former cabal project
+runtime-go/rt/                    -- Go runtime (embedded)
+sky-stdlib/                       -- Sky-side stdlib (embedded)
 sky-bundled/console/              -- Sky Console mini-app
 sky-bundled/doc/                  -- sky doc HTTP server mini-app
 tools/sky-ffi-inspect/            -- Go package introspector (TH-embedded)

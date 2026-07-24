@@ -72,16 +72,13 @@ handleUpstream _ =
     ServerStream.stream
         "text/event-stream"
         (\writer ->
-            emitTick writer 1
-                |> Task.andThen (\_ -> emitTick writer 2)
+            emitTick writer 1 |> Task.andThen (\_ -> emitTick writer 2)
                 |> Task.andThen (\_ -> emitTick writer 3)
                 |> Task.andThen (\_ -> emitTick writer 4)
                 |> Task.andThen (\_ -> emitTick writer 5)
                 |> Task.andThen
                        (\_ ->
-                            ServerStream.emit
-                                "event: done\ndata: bye\n\n"
-                                writer)
+                           ServerStream.emit "event: done\ndata: bye\n\n" writer)
                 |> Task.andThen (\_ -> ServerStream.finish writer))
 
 
@@ -106,9 +103,9 @@ handleRelay _ =
             HttpStream.open upstreamRequest
                 |> Task.andThen
                        (\hdl ->
-                            HttpStream.forEachChunk
-                                hdl
-                                (\chunk -> ServerStream.emit chunk writer))
+                           HttpStream.forEachChunk
+                               hdl
+                               (\chunk -> ServerStream.emit chunk writer))
                 |> Task.andThen (\_ -> ServerStream.finish writer))
 
 

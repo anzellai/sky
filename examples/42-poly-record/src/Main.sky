@@ -1,0 +1,35 @@
+module Main exposing (main)
+
+-- examples/42-poly-record — regression lock for the polymorphic-record codegen
+-- gap. A record-returning helper that is polymorphic in one field but concrete
+-- in another (`wrap v = { val = v, tag = "w" }` → `a -> { val : a, tag : String }`)
+-- lowers its return type as `struct{ Tag string; Val any }`. The record LITERAL
+-- must render its concrete `tag` field as `string` too — rendering it all-`any`
+-- (`struct{ Tag any; Val any }`) mismatches the declared return and `go build`
+-- rejects it. See lower_record's mixed-struct case.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+wrap : a -> { val : a
+, tag : String
+}
+wrap v =
+    { val = v, tag = "w" }
+
+
+box : a -> { item : a
+, name : String
+, count : Int
+}
+box v =
+    { item = v, name = "b", count = 3 }
+
+
+main =
+    let
+        _ = println (wrap "hi").val
+        _ = println (wrap "hi").tag
+    in
+        println (String.fromInt (box "x").count)

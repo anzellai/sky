@@ -34,10 +34,10 @@
 #
 # Usage:
 #   scripts/regenerate-console.sh             # full regenerate
-#   SKY_REGEN_SKIP_CABAL=1 scripts/regenerate-console.sh
-#                                             # skip the cabal
+#   SKY_REGEN_SKIP_BUILD=1 scripts/regenerate-console.sh
+#                                             # skip the compiler
 #                                             # rebuild (CI: use the
-#                                             # binary cabal already
+#                                             # binary cargo already
 #                                             # built upstream in
 #                                             # the workflow).
 #
@@ -66,15 +66,17 @@ fi
 say() { printf '%s[regen-console]%s %s\n' "$_bold" "$_reset" "$*" >&2; }
 warn() { printf '%s[regen-console]%s %s\n' "$_red" "$_reset" "$*" >&2; }
 
-if [ "${SKY_REGEN_SKIP_CABAL:-0}" = "1" ]; then
-    say "skipping cabal rebuild (SKY_REGEN_SKIP_CABAL=1)"
+if [ "${SKY_REGEN_SKIP_BUILD:-0}" = "1" ]; then
+    say "skipping compiler rebuild (SKY_REGEN_SKIP_BUILD=1)"
     if [ ! -x "sky-out/sky" ]; then
-        warn "sky-out/sky missing — set SKY_REGEN_SKIP_CABAL=0 or pre-build it."
+        warn "sky-out/sky missing — set SKY_REGEN_SKIP_BUILD=0 or pre-build it."
         exit 1
     fi
 else
-    say "building local sky binary via cabal install (this can take ~2 min on cold cache)..."
-    cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky >&2
+    say "building local sky binary via cargo build (this can take ~2 min on cold cache)..."
+    ( cd rust && cargo build --release --locked -p sky ) >&2
+    mkdir -p ./sky-out
+    cp rust/target/release/sky ./sky-out/sky
 fi
 
 SKY="$ROOT/sky-out/sky"

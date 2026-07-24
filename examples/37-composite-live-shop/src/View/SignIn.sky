@@ -21,39 +21,41 @@ signInView model =
               (Ui.text "Sign in")
         , Ui.paragraph
               [ Font.color Common.muted, Font.size 13 ]
-              [Ui.text
-                  "Demo doesn't really authenticate. Any email + password ≥ 4 chars unlocks checkout."]
+              [ Ui.text
+                    "Demo doesn't really authenticate. Any email + password ≥ 4 chars unlocks checkout."
+              ]
         , Ui.form
-              [Ui.onSubmit DoSignIn]
-              [Ui.column
-                  [ Ui.spacing 12
-                  , Ui.paddingXY 16 16
-                  , Background.color (Ui.rgb 255 255 255)
-                  , Border.rounded 6
-                  , Border.width 1
-                  , Border.color Common.hairline
-                  ]
-                  [ labelledField "Email" "email" "email"
-                  , labelledField "Password" "password" "password"
-                  , errorLine model.signInError
-                  , Ui.input
-                        [ Ui.htmlAttribute "type" "submit"
-                        , Ui.htmlAttribute "value" "Sign in"
-                        , Background.color Common.brandAccent
-                        , Background.hoverColor (Ui.rgb 200 70 20)
-                        , Font.color (Ui.rgb 255 255 255)
-                        , Font.bold
-                        , Border.rounded 4
-                        , Ui.paddingXY 12 8
-                        ]
-                  ]]
+              [ Ui.onSubmit DoSignIn ]
+              [ Ui.column
+                    [ Ui.spacing 12
+                    , Ui.paddingXY 16 16
+                    , Background.color (Ui.rgb 255 255 255)
+                    , Border.rounded 6
+                    , Border.width 1
+                    , Border.color Common.hairline
+                    ]
+                    [ labelledField "Email" "email" "email"
+                    , labelledField "Password" "password" "password"
+                    , errorLine model.signInError
+                    , Ui.input
+                          [ Ui.htmlAttribute "type" "submit"
+                          , Ui.htmlAttribute "value" "Sign in"
+                          , Background.color Common.brandAccent
+                          , Background.hoverColor (Ui.rgb 200 70 20)
+                          , Font.color (Ui.rgb 255 255 255)
+                          , Font.bold
+                          , Border.rounded 4
+                          , Ui.paddingXY 12 8
+                          ]
+                    ]
+              ]
         ]
 
 
 labelledField : String -> String -> String -> Element Msg
 labelledField labelText nameAttr typeAttr =
     Ui.column
-        [Ui.spacing 4]
+        [ Ui.spacing 4 ]
         [ Ui.el [ Font.size 12, Font.color Common.muted ] (Ui.text labelText)
         , Ui.input
               [ Ui.htmlAttribute "type" typeAttr

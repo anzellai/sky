@@ -85,7 +85,7 @@ getIdea : String -> Result Error (Maybe (Dict String String))
 getIdea ideaId =
     case Db.query
              "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
-             [ideaId] of
+             [ ideaId ] of
 
         Err e ->
             Err e
@@ -98,7 +98,7 @@ getIdeasByStatus : String -> Result Error (List (Dict String String))
 getIdeasByStatus status =
     Db.query
         "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"
-        [status]
+        [ status ]
 
 
 toggleVote : String -> String -> Result Error ()
@@ -184,7 +184,9 @@ hasVoted ideaId userId =
 -- getVoteCount: same view-helper degradation pattern as hasVoted.
 getVoteCount : String -> String
 getVoteCount ideaId =
-    case Db.query "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?" [ideaId] of
+    case Db.query
+             "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?"
+             [ ideaId ] of
 
         Err e ->
             let

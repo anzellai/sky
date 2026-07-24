@@ -40,18 +40,15 @@ module Std.Cache exposing
     , stats
     )
 
-
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Task as Task
 
-
 -- | Opaque handle to a cache.  The wrapped `Int` is the runtime's
 -- per-cache id; user code treats it as opaque.
 type Cache k v
     = Cache Int
-
 
 -- | Configuration record for `new`.  All-defaults via `defaultCfg`;
 -- tweak via `withMaxEntries` / `withTTL` / `withMaxBytes`.
@@ -65,10 +62,7 @@ type alias CacheCfg =
 -- | Default cache config: 1024 entries, no TTL, no byte cap.
 defaultCfg : CacheCfg
 defaultCfg =
-    { maxEntries = 1024
-    , ttlMs = 0
-    , maxBytes = 0
-    }
+    { maxEntries = 1024, ttlMs = 0, maxBytes = 0 }
 
 
 -- | Override the max number of entries.  Triggers LRU eviction when
@@ -181,7 +175,10 @@ size cache =
             sizeRaw raw
 
 
-statsRaw : Int -> Task Error { hits : Int, misses : Int, evictions : Int }
+statsRaw : Int -> Task Error { hits : Int
+, misses : Int
+, evictions : Int
+}
 statsRaw =
     Ffi.kernel "Cache_stats"
 
@@ -189,7 +186,10 @@ statsRaw =
 -- | `stats cache` — running totals of `{ hits, misses, evictions }`
 -- since the cache was created.  Counters are monotone — they
 -- survive `clear`.
-stats : Cache k v -> Task Error { hits : Int, misses : Int, evictions : Int }
+stats : Cache k v -> Task Error { hits : Int
+, misses : Int
+, evictions : Int
+}
 stats cache =
     case cache of
 

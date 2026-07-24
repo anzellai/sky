@@ -1,0 +1,21 @@
+-- Float literal patterns are unsupported (float equality is unreliable); the
+-- oracle rejects them at canonicalisation, and Sky-rust must reject them at
+-- resolve time [E1006] rather than silently recover-as-wildcard and emit
+-- go-build-broken Go (a check≢build hole). Both arms below are floats.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+
+
+classify : Float -> String
+classify f =
+    case f of
+        1.0 ->
+            "one"
+
+        _ ->
+            "other"
+
+
+main =
+    classify 1.0

@@ -1,6 +1,7 @@
 module Lib.Stripe exposing (createCheckoutSession, verifyPayment, deductStock, CheckoutInfo)
 
 -- Stripe Go SDK imports
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
@@ -37,12 +38,12 @@ type alias CheckoutInfo =
 
 initStripe _ =
     let
-    -- FFI trust boundary: every Stripe getter returns
-    -- Result Error T so a nil receiver / unexpected
-    -- Go panic surfaces as Err rather than corrupting
-    -- downstream logic. Unwrap with sensible defaults
-    -- at the call site since Stripe rarely fails on a
-    -- completed session.
+        -- FFI trust boundary: every Stripe getter returns
+        -- Result Error T so a nil receiver / unexpected
+        -- Go panic surfaces as Err rather than corrupting
+        -- downstream logic. Unwrap with sensible defaults
+        -- at the call site since Stripe rarely fails on a
+        -- completed session.
         key =
             Result.withDefault "" (Task.run (System.getenv "STRIPE_API_KEY"))
         _ = Stripe.setKey key
@@ -416,13 +417,15 @@ verifyPayment orderId =
 
 
 verifyStripeSession cartId sessionId =
--- Stripe SDK accepts a nil RetrieveParams; bridge via Basics.js
--- so the FFI sees a Go nil at this typed boundary.
     case Session.get sessionId (js "nil") of
 
         Ok sess ->
             let
-                rd = \d r -> Result.withDefault d r
+                rd =
+                    \d r ->
+                        -- Stripe SDK accepts a nil RetrieveParams; bridge via Basics.js
+                        -- so the FFI sees a Go nil at this typed boundary.
+                        Result.withDefault d r
                 status = rd "" (Stripe.checkoutSessionStatus sess)
                 paymentStatus =
                     rd "" (Stripe.checkoutSessionPaymentStatus sess)

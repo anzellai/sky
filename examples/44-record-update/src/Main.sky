@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Unannotated record + updates at TOP-LEVEL bindings whose base is a sibling
+-- def. Each update must yield the FULL record (not the updated-field subset),
+-- so the later field accesses resolve. (D2: the base def otherwise resolved to a
+-- fresh flex on the lowering path → subset return type → go build failure.)
+base =
+    { name = "ada", age = 36, active = 1 }
+
+
+older =
+    { base | age = base.age + 1 }
+
+
+-- Nested: the inner update's full record flows into the outer.
+retired =
+    { older | active = 0 }
+
+
+main =
+    println
+        (retired.name ++ " " ++ String.fromInt retired.age ++ " "
+            ++ String.fromInt retired.active)

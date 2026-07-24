@@ -1,0 +1,39 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- A concrete anonymous record whose fields include TWO function values
+-- (`onChange`, `format`) alongside plain data (`label`, `count`), passed as a
+-- LITERAL to a function whose parameter is that concrete anon-struct type.
+--
+-- This used to miscompile (check ≢ build): the record literal lowered all-`any`
+-- (`struct{ Count any; Format any; Label any; OnChange any }`) but claimed the
+-- CONCRETE param type (`struct{ Count int; Format func(int) string; Label string;
+-- OnChange func(string) int }`), so no coercion was inserted and `go build`
+-- rejected the mismatch. The `concrete_struct` detector deliberately skips records
+-- with func fields (a Sky function value is a runtime `func(any) any` that can't be
+-- assigned to a concretely-typed Go func field), so the fix bridges the all-`any`
+-- literal to the concrete slot via `rt.Coerce[<concrete struct>]`, which narrows
+-- field-by-field — including the func fields — at runtime (oracle parity).
+--
+-- `apply` READS a data field, and CALLS both func fields, so the runtime narrowing
+-- of func fields is exercised, not just the build.
+apply : { onChange : String -> Int
+, format : Int -> String
+, label : String
+, count : Int
+} -> String
+apply c =
+    c.label ++ ": " ++ c.format (c.onChange "hello" + c.count)
+
+
+main =
+    println
+        (apply
+            { onChange = String.length
+            , format = String.fromInt
+            , label = "len"
+            , count = 3
+            })

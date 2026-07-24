@@ -42,6 +42,7 @@ module Std.Ui exposing (..)
 -- parameterised types (`Element msg`, `Attribute msg`) and their
 -- constructors live in this single module rather than splitting them
 -- into Std.Ui.Internal.Model.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -55,17 +56,17 @@ type Element msg
     = Empty
     | Text String
     | Node Description (List (Attribute msg)) (List (Element msg))
+    | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
+    | Raw any
     -- TaggedNode carries an explicit HTML tag override so `link`
     -- → <a>, `image` → <img>, `paragraph` → <p>, `heading 1` → <h1>
     -- dispatch to semantically-correct tags. Plain Node still
     -- defaults to <div>.
-    | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
     -- Raw escape hatch — wrap an arbitrary Std.Html node so user
     -- code can drop into native HTML (<video>, <canvas>, <table>,
     -- third-party widgets) without leaving the Std.Ui tree. The
     -- `any` payload is the Std.Html VNode (kernel type opaque to
     -- Sky's HM); the renderer passes it through unchanged.
-    | Raw any
 
 type Attribute msg
     = NoAttribute
@@ -103,6 +104,9 @@ type Attribute msg
     | AttrBorderInsetShadow Int Int Int Int Color
     | AttrPointer
     | AttrOverflow String String
+    | AttrPseudoRule PseudoClass String
+    | AttrTransition String Bool
+    | AttrAnimation String String String Bool
     -- Pseudo-class rule marker (issue #377). Carries the pre-
     -- rendered CSS rules-string for ONE pseudo-class. The renderer
     -- collects all `AttrPseudoRule` entries on an element, joins
@@ -112,7 +116,6 @@ type Attribute msg
     -- scoped by `[sky-id="<sid>"]:<pseudo>`, and prepends it.
     -- `:hover` rules are auto-gated behind `@media (hover: hover)`
     -- so they don't fire as sticky-hover on touch devices.
-    | AttrPseudoRule PseudoClass String
     -- Transition rule marker (issue #378). Carries the pre-built
     -- CSS `transition` shorthand value (e.g. "background-color
     -- 200ms ease-out"). The renderer harvests every AttrTransition
@@ -121,7 +124,6 @@ type Attribute msg
     -- `injectTransitionStyles` pass scopes the rule by sky-id and
     -- wraps it in `@media (prefers-reduced-motion: no-preference)`
     -- when `respectReducedMotion = True` (the default).
-    | AttrTransition String Bool
     -- Animation marker (issue #378). Payload:
     --   1. effective-name (auto-suffixed with sky-id-disambiguator
     --      by the renderer so two `name = "fadeIn"` elements with
@@ -135,7 +137,6 @@ type Attribute msg
     --   4. respectReducedMotion flag — when True (default) the
     --      animation rule is wrapped in
     --      `@media (prefers-reduced-motion: no-preference)`.
-    | AttrAnimation String String String Bool
 
 -- Pseudo-class selector tag. `FocusVisible` (the safer default —
 -- only fires on keyboard nav, not on click-induced focus rings)
@@ -177,10 +178,10 @@ type Location
 
 type Color
     = Rgba Int Int Int Float
-
       -- R G B as 0-255 ints. Alpha stays Float in [0,1]. Storing
       -- ints sidesteps Sky's HM friction with Float arithmetic
       -- during CSS rendering.
+
 type Description
     = NoDescription
     | DescMain
@@ -218,7 +219,7 @@ text s =
 
 el : List (Attribute msg) -> Element msg -> Element msg
 el attrs child =
-    Node NoDescription attrs [child]
+    Node NoDescription attrs [ child ]
 
 
 row : List (Attribute msg) -> List (Element msg) -> Element msg
@@ -306,8 +307,6 @@ gridTracksRaw cols rows =
 
 
 -- ─── Aspect ratio (issue #379) ───────────────────────────────────
-
-
 -- Lock an element to a fixed width/height ratio. Compiles to inline
 -- `aspect-ratio: <r>`. Pair with `Ui.width Ui.fill` (or a specific
 -- pixel width) so height auto-scales — `aspect-ratio` is a ONE-axis
@@ -776,7 +775,6 @@ descLiveAssertive =
 
 
 -- ─── Events ──────────────────────────────────────────────────────
-
 -- Bind a click handler. The msg is dispatched on the wire when the
 -- user clicks the element. Inside Sky.Live, this becomes an SSE
 -- round-trip + Msg dispatch through update. The Std.Html.Events
@@ -895,7 +893,6 @@ fileMaxHeight px =
 
 
 -- ─── Common element shortcuts ────────────────────────────────────
-
 -- Hyperlink. Renders as `<a href=…>…</a>`. The href is set as an
 -- HTML attribute; click navigation happens through standard browser
 -- behaviour (Sky.Live intercepts same-origin navigation if you've
@@ -905,14 +902,14 @@ link : List (Attribute msg) -> { url : String
 } -> Element msg
 link attrs cfg =
     let
-    -- `Ui.grid` carries a `__grid` marker that switches the
-    -- container to CSS Grid auto-fit. When present, we OVERRIDE
-    -- `displayFor`'s default flex output entirely (grid is not
-    -- compatible with `display: flex`). Otherwise we use the
-    -- ctx-driven display + the optional flex-wrap continuation.
+        -- `Ui.grid` carries a `__grid` marker that switches the
+        -- container to CSS Grid auto-fit. When present, we OVERRIDE
+        -- `displayFor`'s default flex output entirely (grid is not
+        -- compatible with `display: flex`). Otherwise we use the
+        -- ctx-driven display + the optional flex-wrap continuation.
         nodeAttrs = AttrAttribute "href" cfg.url :: attrs
     in
-        TaggedNode "a" NoDescription nodeAttrs [cfg.label]
+        TaggedNode "a" NoDescription nodeAttrs [ cfg.label ]
 
 
 -- Inline image with required src + alt for accessibility. Renders
@@ -968,13 +965,13 @@ button attrs cfg =
             case cfg.onPress of
 
                 Just msg ->
-                    [onClick msg]
+                    [ onClick msg ]
 
                 Nothing ->
-                    [AttrAttribute "disabled" "true"]
+                    [ AttrAttribute "disabled" "true" ]
         allAttrs = clickAttr ++ pointer :: attrs
     in
-        TaggedNode "button" NoDescription allAttrs [cfg.label]
+        TaggedNode "button" NoDescription allAttrs [ cfg.label ]
 
 
 -- A `<input>`. The browser fires `input` and `change` events
@@ -1069,8 +1066,6 @@ type Breakpoint
     | Portrait
     | Landscape
     | Custom Int Int
-
-
         -- `Custom minPx maxPx`. 0 = unset (no min / no max).
         -- `Custom 600 0`   → `(min-width: 600px)`
         -- `Custom 0 800`   → `(max-width: 800px)`
@@ -1211,9 +1206,9 @@ customRangeQuery minPx maxPx =
         "(max-width: " ++ String.fromInt maxPx ++ "px)"
 
     else
+        "all"
             -- Generic fallback for arbitrary attribute names (sky-key,
             -- aria-*, custom data-*, etc.).
-        "all"
 
 
 -- `breakpoint bp attrs child` — wrap `child` so the attrs apply only
@@ -1244,7 +1239,7 @@ mediaQuery query attrs child =
         markerQuery = AttrAttribute "data-sky-mq-q" query
         markerRules = AttrAttribute "data-sky-mq-rules" rulesCss
     in
-        Node NoDescription [ markerQuery, markerRules ] [child]
+        Node NoDescription [ markerQuery, markerRules ] [ child ]
 
 
 -- Lower a media-query attribute list into a CSS-rules string with
@@ -1295,8 +1290,6 @@ mediaQueryRulesCss attrs =
 -- naturally because the breakpoint wraps the element and the
 -- pseudo-class rule attaches to the same sky-id inside the
 -- breakpoint wrapper's tree.
-
-
 -- Typed-constant shortcuts so user code can write `Ui.hover` /
 -- `Ui.focus` without `Ui.PseudoClass.Hover`. Bare-value pattern
 -- mirrors `Ui.mobile` / `Ui.darkMode`.
@@ -1602,7 +1595,6 @@ elementText el =
 
 
 -- ─── Overflow / clip / scrollbars ────────────────────────────────
-
 -- Clip overflow on both axes (overflow: hidden). Use when an
 -- element's content might overflow and you want it cut off rather
 -- than wrapped.
@@ -1645,7 +1637,6 @@ scrollbarY =
 
 
 -- ─── Color ───────────────────────────────────────────────────────
-
 -- 0-255 integer channels. Recommended for predictable colours.
 -- (Sky's HM doesn't currently round-trip [0,1] floats through the
 -- CSS render path correctly, so for now `rgb` only models the
@@ -1684,7 +1675,6 @@ transparent =
 
 
 -- ─── Render ──────────────────────────────────────────────────────
-
 -- Render an Element tree to plain Html. Wrap your top-level view
 -- function with `layout [] view` to produce a Sky.Live or
 -- Sky.Http.Server view value.
@@ -1728,24 +1718,6 @@ layoutWith : { wrapperAttrs : List (Attribute msg)
 , rootAttrs : List (Attribute msg)
 } -> Element msg -> any
 layoutWith cfg root =
--- Wrap the tree in a viewport-tall flex column. The page <body>
--- is content-height by default, so a root with `height fill`
--- rendered as a bare `height: 100%` (what the old AsEl path
--- emitted) collapsed to its content — issue #63. The outer div
--- gives a real 100vh floor to fill; rendering the root under
--- AsColumn makes its `height fill` resolve to `flex-grow`, so it
--- (and the fill chain beneath it) stretches to the viewport.
---
--- min-height (not height) at every level — the wrapper must
--- expand beyond 100vh when content overflows, otherwise the
--- theme background stays locked at viewport height and the
--- scrolled-past region exposes bare <body>. Same goes for the
--- injected html,body style.
---
--- `wrapperAttrs` are CSS-folded via `buildStyleString` and the
--- result is APPENDED after the default style, so later (= user)
--- rules win on the cascade. HTML attrs in `wrapperAttrs` (class,
--- data-*, aria-*, etc.) attach to the wrapper alongside the style.
     let
         defaultWrapperStyle =
             "min-height: 100vh; display: flex; flex-direction: column;"
@@ -1764,16 +1736,34 @@ layoutWith cfg root =
             [ Html.node
                   "style"
                   []
-                  [Html.text "html,body{min-height:100%;margin:0;padding:0}"]
+                  [ Html.text "html,body{min-height:100%;margin:0;padding:0}" ]
             , renderElement AsColumn cfg.rootAttrs root
             ]
-
-
         -- Animations (issue #378) — collect into
         -- `data-sky-anim-rules` data-attr; the runtime's
         -- `injectAnimationStyles` pass auto-suffixes the
         -- @keyframes name with the sky-id to avoid global
         -- collisions across elements.
+
+
+-- Wrap the tree in a viewport-tall flex column. The page <body>
+-- is content-height by default, so a root with `height fill`
+-- rendered as a bare `height: 100%` (what the old AsEl path
+-- emitted) collapsed to its content — issue #63. The outer div
+-- gives a real 100vh floor to fill; rendering the root under
+-- AsColumn makes its `height fill` resolve to `flex-grow`, so it
+-- (and the fill chain beneath it) stretches to the viewport.
+--
+-- min-height (not height) at every level — the wrapper must
+-- expand beyond 100vh when content overflows, otherwise the
+-- theme background stays locked at viewport height and the
+-- scrolled-past region exposes bare <body>. Same goes for the
+-- injected html,body style.
+--
+-- `wrapperAttrs` are CSS-folded via `buildStyleString` and the
+-- result is APPENDED after the default style, so later (= user)
+-- rules win on the cascade. HTML attrs in `wrapperAttrs` (class,
+-- data-*, aria-*, etc.) attach to the wrapper alongside the style.
 renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
 renderElement ctx extraAttrs elem =
     case elem of
@@ -1785,11 +1775,11 @@ renderElement ctx extraAttrs elem =
             Html.text s
 
         Node desc attrs children ->
-        -- Pick a semantic HTML tag from the Description (see
-        -- `tagForDescription`) — falls back to <div> when the
-        -- element has no Description attached. Region.* helpers
-        -- attach AttrDescribe to control this; we honour the
-        -- *first* AttrDescribe encountered.
+            -- Pick a semantic HTML tag from the Description (see
+            -- `tagForDescription`) — falls back to <div> when the
+            -- element has no Description attached. Region.* helpers
+            -- attach AttrDescribe to control this; we honour the
+            -- *first* AttrDescribe encountered.
             let
                 chosenTag = pickSemanticTag "div" attrs
             in
@@ -1799,10 +1789,10 @@ renderElement ctx extraAttrs elem =
             renderNodeAs tag ctx extraAttrs attrs children
 
         Raw node ->
-        -- Pass the wrapped Std.Html VNode through unchanged.
-        -- `extraAttrs` from the parent are dropped — Raw is an
-        -- escape hatch and the user is responsible for whatever
-        -- attributes they want on the wrapped node.
+            -- Pass the wrapped Std.Html VNode through unchanged.
+            -- `extraAttrs` from the parent are dropped — Raw is an
+            -- escape hatch and the user is responsible for whatever
+            -- attributes they want on the wrapped node.
             node
 
 
@@ -1942,9 +1932,10 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 []
 
             else
-                [Attr.attribute
-                    "data-sky-pc-rules"
-                    (encodePseudoRules pseudoEntries)]
+                [ Attr.attribute
+                      "data-sky-pc-rules"
+                      (encodePseudoRules pseudoEntries)
+                ]
         -- Transitions (issue #378) — collect into a single
         -- `data-sky-tr-rules` data-attr; the runtime's
         -- `injectTransitionStyles` pass scopes it by sky-id and
@@ -1973,9 +1964,10 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 []
 
             else
-                [Attr.attribute
-                    "data-sky-anim-rules"
-                    (encodeAnimations animationEntries)]
+                [ Attr.attribute
+                      "data-sky-anim-rules"
+                      (encodeAnimations animationEntries)
+                ]
         renderedMain = List.map (renderElement renderCtx []) children
         renderedNearby = List.map renderNearby nearbyChildren
         renderedChildren = renderedMain ++ renderedNearby
@@ -2205,7 +2197,7 @@ renderNearby ( loc, el ) =
             "position: absolute; display: flex; " ++ locationCss loc
         rendered = renderElement AsEl [] el
     in
-        Html.div [Attr.style positionStyle] [rendered]
+        Html.div [ Attr.style positionStyle ] [ rendered ]
 
 
 -- Map a Location to the CSS offsets that pin the absolute child to
@@ -2292,7 +2284,6 @@ dispatchTag tag attrs children =
         Html.aside attrs children
 
     else if tag == "img" then
-    -- <img> is void in HTML; Sky's Html.img takes attrs only.
         let
             _ = children
         in
@@ -2305,6 +2296,11 @@ dispatchTag tag attrs children =
             Html.input attrs
 
     else if tag == "textarea" then
+        Html.textarea attrs children
+
+    else
+        Html.div attrs children
+    -- <img> is void in HTML; Sky's Html.img takes attrs only.
     -- <textarea> is NOT a void element — its value lives between
     -- the tags as text content. The `Std.Ui.Input.multiline` path
     -- builds `TaggedNode "textarea"` directly; pre-fix it routed
@@ -2315,10 +2311,6 @@ dispatchTag tag attrs children =
     -- VNode renderer already understands textarea (strips the
     -- `value` attr and splices it in as text content); routing
     -- through Html.textarea here is the missing link.
-        Html.textarea attrs children
-
-    else
-        Html.div attrs children
 
 
 -- Pull every AttrAttribute into a flat list of Attr.attribute values.
@@ -2476,16 +2468,16 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
 
             else
                 displayFor myCtx
-                -- `wrappedRow` carries a `__wrap` marker that asks for
-                -- `flex-wrap: wrap`. The marker itself is stripped by the
-                -- AttrStyle case in `collectStyle`; we just check for its
-                -- presence here and append the corresponding CSS. No-op when
-                -- `__grid` is on (grid wraps natively via auto-fill).
         wrapPart =
             if not gridOn && hasMarker "__wrap" attrs then
                 " flex-wrap: wrap;"
 
             else
+                -- `wrappedRow` carries a `__wrap` marker that asks for
+                -- `flex-wrap: wrap`. The marker itself is stripped by the
+                -- AttrStyle case in `collectStyle`; we just check for its
+                -- presence here and append the corresponding CSS. No-op when
+                -- `__grid` is on (grid wraps natively via auto-fill).
                 ""
         attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
         -- A border needs a style to render. `border-width` no longer
@@ -2698,28 +2690,15 @@ collectStyle parentCtx myCtx attr acc =
                 acc
 
             else if k == "__wrap" then
-            -- Wrap marker is consumed by `displayFor` (which
-            -- appends `flex-wrap: wrap` to the row's display
-            -- block); stripped here so it doesn't leak as a
-            -- literal CSS property.
                 acc
 
             else if k == "__grid" then
-            -- Grid marker is consumed by `buildStyleString`
-            -- (overrides displayFor with `display: grid; ...`);
-            -- stripped here so it doesn't leak.
                 acc
 
             else if k == "__gridMin" then
-            -- Grid-minmax-floor value, read out by `findGridMin`
-            -- to build the `repeat(auto-fill, minmax(<v>px,
-            -- 1fr))` declaration. Stripped here.
                 acc
 
             else if k == "__gridTracks" then
-            -- Explicit `grid-template-columns|grid-template-rows`
-            -- value, read out by `findGridTemplate` (overrides the
-            -- legacy `__gridMin` shape). Stripped here.
                 acc
 
             else
@@ -2732,19 +2711,19 @@ collectStyle parentCtx myCtx attr acc =
             acc
 
         AttrNearby _ _ ->
-        -- Nearby positioning is rendered as an absolute-positioned
-        -- child by renderNodeAs, not as an inline style on the
-        -- parent. Skip here.
+            -- Nearby positioning is rendered as an absolute-positioned
+            -- child by renderNodeAs, not as an inline style on the
+            -- parent. Skip here.
             acc
 
         AttrEvent _ ->
-        -- Events are attached as separate VNode event entries,
-        -- not inline style — handled in renderElement.
+            -- Events are attached as separate VNode event entries,
+            -- not inline style — handled in renderElement.
             acc
 
         AttrAttribute _ _ ->
-        -- HTML attributes (href, src, name, ...) are attached to
-        -- the VNode separately, not inline style.
+            -- HTML attributes (href, src, name, ...) are attached to
+            -- the VNode separately, not inline style.
             acc
 
         AttrFontSize n ->
@@ -2836,27 +2815,40 @@ collectStyle parentCtx myCtx attr acc =
             acc ++ " overflow-x: " ++ x ++ "; overflow-y: " ++ y ++ ";"
 
         AttrPseudoRule _ _ ->
-        -- Pseudo-class rules don't emit inline CSS — they're
-        -- harvested by `renderNodeAs` into the
-        -- `data-sky-pc-rules` marker, then turned into a scoped
-        -- <style> child by the runtime's
-        -- `injectPseudoClassStyles` pass. Skip here.
+            -- Pseudo-class rules don't emit inline CSS — they're
+            -- harvested by `renderNodeAs` into the
+            -- `data-sky-pc-rules` marker, then turned into a scoped
+            -- <style> child by the runtime's
+            -- `injectPseudoClassStyles` pass. Skip here.
             acc
 
         AttrTransition _ _ ->
-        -- Transitions don't emit inline CSS — they're harvested
-        -- by `renderNodeAs` into the `data-sky-tr-rules` marker,
-        -- then turned into a scoped <style> child by the runtime's
-        -- `injectTransitionStyles` pass (issue #378).
+            -- Transitions don't emit inline CSS — they're harvested
+            -- by `renderNodeAs` into the `data-sky-tr-rules` marker,
+            -- then turned into a scoped <style> child by the runtime's
+            -- `injectTransitionStyles` pass (issue #378).
             acc
 
         AttrAnimation _ _ _ _ ->
-        -- Animations are harvested by `renderNodeAs` into the
-        -- `data-sky-anim-rules` marker; the runtime's
-        -- `injectAnimationStyles` pass emits a sky-id-scoped
-        -- <style> child containing the `@keyframes` block + the
-        -- `animation: ...` rule (issue #378).
+            -- Animations are harvested by `renderNodeAs` into the
+            -- `data-sky-anim-rules` marker; the runtime's
+            -- `injectAnimationStyles` pass emits a sky-id-scoped
+            -- <style> child containing the `@keyframes` block + the
+            -- `animation: ...` rule (issue #378).
             acc
+            -- Wrap marker is consumed by `displayFor` (which
+            -- appends `flex-wrap: wrap` to the row's display
+            -- block); stripped here so it doesn't leak as a
+            -- literal CSS property.
+            -- Grid marker is consumed by `buildStyleString`
+            -- (overrides displayFor with `display: grid; ...`);
+            -- stripped here so it doesn't leak.
+            -- Grid-minmax-floor value, read out by `findGridMin`
+            -- to build the `repeat(auto-fill, minmax(<v>px,
+            -- 1fr))` declaration. Stripped here.
+            -- Explicit `grid-template-columns|grid-template-rows`
+            -- value, read out by `findGridTemplate` (overrides the
+            -- legacy `__gridMin` shape). Stripped here.
 
 
 -- Render a Color as a CSS rgba(...) string using percentage

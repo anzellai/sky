@@ -5,7 +5,7 @@ doc explains HOW Sky source becomes Go; this doc explains WHAT the
 stdlib surfaces guarantee.
 
 This reference is grounded in the v0.17 HEAD sources at
-`sky-stdlib/`, the Haskell kernel registry, and the Go runtime in
+`sky-stdlib/`, the Rust kernel registry, and the Go runtime in
 `runtime-go/rt/`. Every claim either cites a `file:line` location,
 flags itself UNVERIFIED, or notes the regression spec that proves it.
 
@@ -173,8 +173,8 @@ type Result e a = Ok a | Err e
   value is preserved (later `Err`s discarded).
 
 **Verification**: by inspection. The CLAUDE.md non-regression rule
-"no `Result String a` in public surfaces" is enforced by `cabal test`
-(error-shape gates).
+"no `Result String a` in public surfaces" is enforced by the compiler
+test suite (`cargo test`, error-shape gates).
 
 **Known gaps**: None.
 
@@ -366,8 +366,8 @@ words/lines    : String -> List String
   documented gap).
 
 **Verification**: stdlib smoke test (examples/00) hits ~30 of 38
-entries. `cabal test` `Sky.Build.UiFillCssSpec` etc. don't cover
-String, but the cabal `tests/Sky.Core.String*` covers padding,
+entries. The compiler test suite's UI-layout specs don't cover
+String, but the `tests/Sky.Core.String*` suite covers padding,
 trim, and contains.
 
 **Known gaps**:
@@ -730,7 +730,7 @@ void element's sky-id, so the rule applies correctly.
 **Implication**: `Input.text [Background.activeColor (...), ...] cfg`
 now correctly applies `:active` / `:hover` colours to the `<input>`.
 
-**Verification**: cabal spec exists under
+**Verification**: a compiler-test spec exists under
 `Sky.Build.UiPseudoClassHoist*Spec` (UNVERIFIED at this read — file
 exists per CLAUDE.md reference; line counts not checked).
 
@@ -1049,7 +1049,7 @@ case-insensitive `json.Unmarshal`. No per-Msg decoder boilerplate.
 | Property                                       | Status                                                   |
 |------------------------------------------------|----------------------------------------------------------|
 | TEA shape (init/update/view/subs) is total     | Verified by HM type-checker |
-| Cmd/Sub `none`/`batch` monoid                  | Held by inspection; cabal-side specs cover `batch` |
+| Cmd/Sub `none`/`batch` monoid                  | Held by inspection; compiler-test specs cover `batch` |
 | SSE patch idempotence                          | `__skyApplyPatches` is idempotent on no-op patches |
 | Input preservation across re-renders           | Closed via 3 documented mechanisms (C1 residuals) |
 | XSS-resistant `__skyReviveScripts`             | Allowlist + event-handler stripping (#338) |
@@ -1261,7 +1261,7 @@ Sky.Live).
 | `Sky.Core.Task`       | Monad laws + effect tier discipline | Panic gate v0.15.43 | rt/task_test.go + retry_test.go | SOLID |
 | `Std.Ui`              | n/a (DSL) | `fill` asymmetry + `align-self` single-emission + pseudo-class hoist + media-query auto-wrap | `UiFillCssSpec` + `UiAlignSelfSpec` + 39-example sweep | SOLID (v0.15.55-57 close) |
 | `Std.Html`            | Compositional generators | Escape contract | Inspection | SOLID |
-| `Std.Live` runtime    | TEA shape + Cmd/Sub monoid | SSE + XSS hardening + input preservation | Many cabal specs + 39-example sweep + Playwright | SOLID-with-caveats (password rule docs-only) |
+| `Std.Live` runtime    | TEA shape + Cmd/Sub monoid | SSE + XSS hardening + input preservation | Many compiler-test specs + 39-example sweep + Playwright | SOLID-with-caveats (password rule docs-only) |
 | `Std.Db`              | n/a | SqlValue + tenant SQL gate + migration checksum | rt/db tests + v0.16.6 gate | SOLID (v0.16.26 close) |
 | `Std.Auth`            | n/a | Typed secret + bcrypt + JWT exp/nbf | rt/auth_test.go | SOLID-with-gap (no Argon2id) |
 
@@ -1347,7 +1347,7 @@ implementation step OR a clear spec to write.
 **G7. `Cmd.batch` ordering specification**.
 * Status: Documented as "preserves dispatch order" but no spec
   encoding the guarantee.
-* Action: Add a cabal spec that batches a chain of `Cmd.publish`
+* Action: Add a `cargo test` spec that batches a chain of `Cmd.publish`
   + `Cmd.perform` and asserts the resulting Msg order is
   left-to-right.
 * Effort: 0.5 session.

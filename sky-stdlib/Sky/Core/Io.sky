@@ -1,11 +1,7 @@
 -- | Sky.Core.Io — standard input / output (Layer 3 Sky source).
 --
 -- Effectful by nature — every function returns `Task Error _`.
-module Sky.Core.Io exposing
-    ( readLine
-    , writeStdout, writeStderr
-    )
-
+module Sky.Core.Io exposing (readLine, writeStdout, writeStderr)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
@@ -14,12 +10,15 @@ import Sky.Core.Error exposing (Error)
 -- | Read one line from stdin (trailing newline stripped).
 -- Returns `Err` if stdin is closed.
 readLine : () -> Task Error String
-readLine = Ffi.kernel "Io_readLine"
+readLine =
+    Ffi.kernel "Io_readLine"
 
 
 writeStdout : String -> Task Error ()
-writeStdout = Ffi.kernel "Io_writeStdout"
+writeStdout =
+    Ffi.kernel "Io_writeStdout"
 
 
 writeStderr : String -> Task Error ()
-writeStderr = Ffi.kernel "Io_writeStderr"
+writeStderr =
+    Ffi.kernel "Io_writeStderr"

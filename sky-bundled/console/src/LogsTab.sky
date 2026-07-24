@@ -16,6 +16,7 @@ module LogsTab exposing (viewLogsTab)
 -- Per HUB-UI.md §"Tab: Logs": SSE-live updates, level-filter
 -- chips, click a log → expand (deferred to v0.17), service filter
 -- inherited from the multi-service Overview's scope.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -135,7 +136,7 @@ scopeBanner selected =
             , Ui.el
                   [ Font.size 14, Font.bold, Font.color textPrimary ]
                   (Ui.text label)
-            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
             , allServicesChip (selected == "")
             ]
 
@@ -268,8 +269,9 @@ logsPanel entries =
     panel
         "Recent log entries"
         (if List.isEmpty entries then
-            [emptyState
-                "No log entries for this service yet — the SSE tail will fill this in."]
+            [ emptyState
+                  "No log entries for this service yet — the SSE tail will fill this in."
+            ]
 
         else
             List.map logRow entries)
@@ -313,7 +315,7 @@ logRow e =
 sessionBadge : String -> Element Msg
 sessionBadge sid =
     if sid == "" then
-        Ui.el [Ui.width (Ui.px 80)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 80) ] (Ui.text "")
 
     else
         Ui.el
@@ -333,7 +335,7 @@ sessionBadge sid =
 traceBadge : String -> Element Msg
 traceBadge tid =
     if tid == "" then
-        Ui.el [Ui.width (Ui.px 92)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 92) ] (Ui.text "")
 
     else
         Ui.el
@@ -353,7 +355,7 @@ traceBadge tid =
 subappBadge : String -> Element Msg
 subappBadge sub =
     if sub == "" then
-        Ui.el [Ui.width (Ui.px 70)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 70) ] (Ui.text "")
 
     else
         Ui.el

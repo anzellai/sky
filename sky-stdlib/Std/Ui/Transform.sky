@@ -49,10 +49,10 @@ module Std.Ui.Transform exposing
 -- Use these helpers ONLY inside `Ui.animate` keyframes — they're
 -- not `Attribute msg` values and won't apply to a plain element
 -- without an animation wrapper.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
-
 
 -- A single keyframe property. Each variant either folds into the
 -- `transform: ...` shorthand (`TransformPart`) or emits a
@@ -65,8 +65,6 @@ type Prop
 
 
 -- ─── Transform builders ──────────────────────────────────────────
-
-
 -- Translate horizontally by `n` pixels.
 translateX : Int -> Prop
 translateX n =
@@ -83,9 +81,7 @@ translateY n =
 translate : Int -> Int -> Prop
 translate x y =
     TransformPart
-        ("translate(" ++ String.fromInt x ++ "px, "
-            ++ String.fromInt y
-            ++ "px)")
+        ("translate(" ++ String.fromInt x ++ "px, " ++ String.fromInt y ++ "px)")
 
 
 -- Uniform scale. `1.0` = no change; `0.9` = 90 %.
@@ -127,8 +123,6 @@ opacity a =
 
 
 -- ─── CSS lowering ────────────────────────────────────────────────
-
-
 -- Map one Prop to a (cssKey, cssValue) pair. `TransformPart` is
 -- pre-stringified — the renderer joins multiple TransformParts
 -- into a single `transform: ...` rule, so the "key" portion is the
@@ -160,8 +154,7 @@ propsToCss props =
 
             else
                 "transform: " ++ String.join " " transformParts ++ ";"
-        otherRules =
-            List.foldl appendPair "" otherPairs
+        otherRules = List.foldl appendPair "" otherPairs
     in
         transformRule ++ otherRules
 

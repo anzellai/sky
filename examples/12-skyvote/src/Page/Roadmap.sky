@@ -26,14 +26,15 @@ viewRoadmap model =
         Layout.page
             model
             (div
-                [class "mt-32"]
-                [ h1 [class "page-title"] [text "Roadmap"]
+                [ class "mt-32" ]
+                [ h1 [ class "page-title" ] [ text "Roadmap" ]
                 , p
-                      [class "page-subtitle"]
-                      [text
-                          "Track the progress of community ideas from submission to completion."]
+                      [ class "page-subtitle" ]
+                      [ text
+                            "Track the progress of community ideas from submission to completion."
+                      ]
                 , div
-                      [class "roadmap-grid"]
+                      [ class "roadmap-grid" ]
                       [ roadmapColumn "Open" "Awaiting review" open_
                       , roadmapColumn "Planned" "On the roadmap" planned
                       , roadmapColumn
@@ -47,19 +48,19 @@ viewRoadmap model =
 
 roadmapColumn title subtitle items =
     div
-        [class "roadmap-column"]
+        [ class "roadmap-column" ]
         [ div
-              [class "roadmap-column-title"]
+              [ class "roadmap-column-title" ]
               [ text title
               , span
-                    [class "roadmap-count"]
-                    [text ("(" ++ String.fromInt (List.length items) ++ ")")]
+                    [ class "roadmap-count" ]
+                    [ text ("(" ++ String.fromInt (List.length items) ++ ")") ]
               ]
-        , p [class "roadmap-subtitle"] [text subtitle]
+        , p [ class "roadmap-subtitle" ] [ text subtitle ]
         , div
               []
               (if List.isEmpty items then
-                  [p [class "roadmap-empty"] [text "Nothing here yet"]]
+                  [ p [ class "roadmap-empty" ] [ text "Nothing here yet" ] ]
 
               else
                   List.map roadmapItem items)
@@ -72,9 +73,11 @@ roadmapItem idea =
         voteCount = Db.getField "vote_count" idea
     in
         div
-            [class "roadmap-item"]
+            [ class "roadmap-item" ]
             [ button
                   [ onClick (ViewIdea ideaId), class "roadmap-item-title" ]
-                  [text (Db.getField "title" idea)]
-            , div [class "roadmap-item-votes"] [text (voteCount ++ " votes")]
+                  [ text (Db.getField "title" idea) ]
+            , div
+                  [ class "roadmap-item-votes" ]
+                  [ text (voteCount ++ " votes") ]
             ]

@@ -1,0 +1,122 @@
+Sky Composite Generics — Transaction Report
+------------------------------------------------------------
+Rows: 20  Accounts: 7  Categories: 10
+Total: $9316.52  Avg: $465.83  Median: -$12.30  Max: $4200.00  Min: -$1800.00
+------------------------------------------------------------
+Bucket       Count        Total      Average   Top Accounts
+income          0        $0.00        $0.00  
+expense         0        $0.00        $0.00  
+refund          0        $0.00        $0.00  
+transfer        0        $0.00        $0.00  
+unknown         0        $0.00        $0.00  
+------------------------------------------------------------
+Per-account totals
+acme             -$649.44
+beta             $3684.50
+delta             $628.25
+epsilon          $1964.60
+eta              $2800.00
+gamma             $180.90
+zeta              $707.71
+------------------------------------------------------------
+Generated at: <ts>
+
+--- JSON ---
+{
+  "rowCount": 20,
+  "uniqueAccounts": 7,
+  "uniqueCategories": 10,
+  "totalCents": 931652,
+  "averageCents": 46582.6,
+  "medianCents": -1230,
+  "maxCents": 420000,
+  "minCents": -180000,
+  "buckets": [
+    {
+      "bucket": "income",
+      "count": 0,
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
+    },
+    {
+      "bucket": "expense",
+      "count": 0,
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
+    },
+    {
+      "bucket": "refund",
+      "count": 0,
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
+    },
+    {
+      "bucket": "transfer",
+      "count": 0,
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
+    },
+    {
+      "bucket": "unknown",
+      "count": 0,
+      "totalCents": 0,
+      "averageCents": 0,
+      "topAccounts": []
+    }
+  ],
+  "byAccount": [
+    {
+      "account": "acme",
+      "totalCents": -64944
+    },
+    {
+      "account": "beta",
+      "totalCents": 368450
+    },
+    {
+      "account": "delta",
+      "totalCents": 62825
+    },
+    {
+      "account": "epsilon",
+      "totalCents": 196460
+    },
+    {
+      "account": "eta",
+      "totalCents": 280000
+    },
+    {
+      "account": "gamma",
+      "totalCents": 18090
+    },
+    {
+      "account": "zeta",
+      "totalCents": 70771
+    }
+  ],
+  "byBucketId": [
+    {
+      "bucketId": 0,
+      "count": 6
+    },
+    {
+      "bucketId": 1,
+      "count": 11
+    },
+    {
+      "bucketId": 2,
+      "count": 2
+    },
+    {
+      "bucketId": 3,
+      "count": 1
+    }
+  ],
+  "generatedAt": "<ts>",
+  "validBool": true,
+  "literalNull": null
+}

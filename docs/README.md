@@ -1,8 +1,10 @@
 # Sky docs
 
-Live reference for v0.17.x.  Compiler-journey history (per-version
-design notes, audits, plans, postmortems) is preserved under
-[`archive/`](archive/) and the per-version directories below.
+Live reference for the Sky language, stdlib, and toolchain.  The
+primary compiler is the Rust implementation (`rust/`) — see
+[`rust-rewrite/`](rust-rewrite/).  Compiler-journey history
+(per-version design notes, audits, plans, postmortems) is preserved
+under [`archive/`](archive/) and the per-version directories below.
 
 ## Start here
 
@@ -35,8 +37,8 @@ design notes, audits, plans, postmortems) is preserved under
 * [`tooling/cli.md`](tooling/cli.md) — every `sky <command>`.
 * [`tooling/lsp.md`](tooling/lsp.md) — language server features
   (completion, hover, references, code actions, call-hierarchy).
-* [`tooling/testing.md`](tooling/testing.md) — `sky test`, hspec
-  cabal-tests, runtime verification.
+* [`tooling/testing.md`](tooling/testing.md) — `sky test`,
+  `cargo test` + xtask gates, runtime verification.
 
 ## Operations
 
@@ -45,16 +47,27 @@ design notes, audits, plans, postmortems) is preserved under
 
 ## Compiler internals (contributors)
 
+The primary compiler is the Rust implementation.  Start with
+[`rust-rewrite/`](rust-rewrite/) — architecture, pipeline, codegen,
+runtime + FFI, testing, and milestones.
+
+The Haskell compiler is preserved under `legacy-haskell-compiler/`;
+the `compiler/*` docs below describe it and are kept as **legacy
+reference**:
+
 * [`compiler/architecture.md`](compiler/architecture.md) —
-  pipeline overview.
+  pipeline overview (legacy Haskell).
 * [`compiler/pipeline.md`](compiler/pipeline.md) — phase-by-phase
-  data flow (parse → canonicalise → type → lower → emit).
+  data flow (legacy Haskell).
 * [`compiler/runtime-verification.md`](compiler/runtime-verification.md)
-  — example sweep + Playwright drive.
+  — example sweep + Playwright drive (legacy Haskell).
 * [`compiler/journey.md`](compiler/journey.md) — historical narrative
   of how Sky got here.  Kept for contributors.
 * [`compiler/versions.md`](compiler/versions.md) — per-version
   feature ledger.
+
+Language + interop references (backend-neutral):
+
 * [`language/`](language/) — syntax, types, pattern matching,
   modules.
 * [`errors/`](errors/) — error model + diagnostic format.
@@ -65,15 +78,12 @@ design notes, audits, plans, postmortems) is preserved under
 * [`architecture/`](architecture/) — canonical compiler + stdlib
   architecture references. First source consulted on any compiler
   or stdlib change.
-* [`v0.17/`](v0.17/) — active v0.17.x release docs (release plan,
+* [`v0.17/`](v0.17/) — v0.17.x release docs (release plan,
   rt.Coerce residual surface, Judge verdicts, session checkpoints).
 * [`v0.17-roadmap/`](v0.17-roadmap/) — multi-PR roadmap for the
   v0.17 typed-emit close.
 * [`v0.17.x/`](v0.17.x/), [`v1-rfc/`](v1-rfc/) — forward-looking
   release + RFC drafts.
-* [`v0.16.x-console/`](v0.16.x-console/) — v0.16 Sky Console
-  embedded mode, hub mode (`sky console-serve`), HubExporter,
-  telemetry flow.
 * [`archive/`](archive/) — pre-v0.16 design docs, v0.15.x hardening
   cycle log, v0.17 per-PR design notes (moved here 2026-06-28),
   superseded roadmaps. Useful as historical context; the live

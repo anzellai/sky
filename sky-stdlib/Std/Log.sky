@@ -6,57 +6,65 @@
 -- (JSON when `SKY_LOG_FORMAT=json`, plain text otherwise).
 module Std.Log exposing
     ( println
-    , debug, info, warn, error
-    , debugWith, infoWith, warnWith, errorWith
+    , debug
+    , info
+    , warn
+    , error
+    , debugWith
+    , infoWith
+    , warnWith
+    , errorWith
     )
-
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
 -- ─── Plain output ──────────────────────────────────────────────────
-
-
 -- | Print a message + newline to stdout.  No log-level routing —
 -- use the level helpers below for structured logging.
 println : String -> Task Error ()
-println = Ffi.kernel "Log_println"
+println =
+    Ffi.kernel "Log_println"
 
 
 -- ─── Level-tagged messages ─────────────────────────────────────────
-
-
 debug : String -> Task Error ()
-debug = Ffi.kernel "Log_debug"
+debug =
+    Ffi.kernel "Log_debug"
 
 
 info : String -> Task Error ()
-info = Ffi.kernel "Log_info"
+info =
+    Ffi.kernel "Log_info"
 
 
 warn : String -> Task Error ()
-warn = Ffi.kernel "Log_warn"
+warn =
+    Ffi.kernel "Log_warn"
 
 
 error : String -> Task Error ()
-error = Ffi.kernel "Log_error"
+error =
+    Ffi.kernel "Log_error"
 
 
 -- ─── Structured (level + key/value attributes) ─────────────────────
-
-
 debugWith : String -> List a -> Task Error ()
-debugWith = Ffi.kernel "Log_debugWith"
+debugWith =
+    Ffi.kernel "Log_debugWith"
 
 
 infoWith : String -> List a -> Task Error ()
-infoWith = Ffi.kernel "Log_infoWith"
+infoWith =
+    Ffi.kernel "Log_infoWith"
 
 
 warnWith : String -> List a -> Task Error ()
-warnWith = Ffi.kernel "Log_warnWith"
+warnWith =
+    Ffi.kernel "Log_warnWith"
 
 
 errorWith : String -> List a -> Task Error ()
-errorWith = Ffi.kernel "Log_errorWith"
+errorWith =
+    Ffi.kernel "Log_errorWith"

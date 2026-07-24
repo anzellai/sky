@@ -2,9 +2,9 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure
 functional, ML-family language compiling to Go (with surface syntax that
-is Elm-compatible). The compiler is written in Haskell (GHC 9.4+) and
-ships as a single `sky` binary. Users only need the `sky` binary and
-Go 1.21+ — no Haskell toolchain required to use Sky.
+is Elm-compatible). The compiler is written in Rust and ships as a
+single `sky` binary. Users only need the `sky` binary and Go 1.21+ —
+no Rust toolchain required to use Sky.
 
 **Core principle: if it compiles, it works.** Every side effect flows
 through `Task`, every fallible value returns `Result Error a`, and
@@ -134,8 +134,9 @@ driver = "sqlite"               # sqlite / postgres
 url = "DATABASE_URL"            # env-var reference for production
 
 [auth]                          # only if auth != none
-cookie = "sky_sid"
-ttl = "24h"
+cookieName = "sky_sid"          # session cookie name (→ SKY_AUTH_COOKIE)
+tokenTtl = 86400                # JWT lifetime in seconds (→ SKY_AUTH_TOKEN_TTL)
+driver = "jwt"                  # jwt / session / oauth
 # secret comes from SKY_AUTH_TOKEN_SECRET — never commit it
 
 [log]
@@ -419,12 +420,12 @@ codegen.
 
 **12. Every long-running command MUST be timeout-bounded.** Tests,
 builds, sweeps, even smoke runs of `sky-out/app`. A hung subprocess
-without a timeout will silently steal hours. `cabal test` runs under
-`timeout 3600` (60 min ceiling); per-spec subprocess calls wrap children
-in `timeout 60`; `scripts/example-sweep.sh` already enforces
-`run_with_timeout 10` per example; never `wait $PID` unbounded — kill
-after a finite ceiling. If a test legitimately needs more than 60 min,
-that's a flaky test — bisect, don't widen.
+without a timeout will silently steal hours. Wrap `sky test` and
+project builds under `timeout` (e.g. `timeout 600 sky build src/Main.sky`);
+per-spec subprocess calls wrap children in `timeout 60`; never
+`wait $PID` unbounded — kill after a finite ceiling. If a test
+legitimately needs more than its ceiling, that's a flaky test —
+bisect, don't widen.
 
 **13. No "pre-existing" dismissal — every bug enters the pipeline.**
 When you spot a test failure / sweep failure / runtime panic / log
@@ -448,6 +449,7 @@ before writing non-trivial code.
 | `TYPE ERROR: Type mismatch: ( { ... }, Cmd Msg ) vs ( Model, Cmd Msg )` | `init` returns an anonymous record but annotation expects named alias | Make sure field set matches `Model` exactly; if it does and still fails, annotate `init : a -> ( Model, Cmd Msg )` to force the expectation |
 | `interface conversion: interface {} is int, not struct {}` at runtime | Annotation says `Result Error ()` but body returns `Result Error Int` | Change annotation to match actual return type, or use `Result.map (\_ -> ())` to discard |
 | `undefined: Error` in generated Go | Missing `import Sky.Core.Error as Error exposing (Error)` | Add the import — Prelude does not re-export it |
+| `[E1011] NOT EXPOSED: module `M` does not expose `name`` | You imported a name that `M`'s own `module M exposing (...)` list doesn't include (it's module-private, or a typo) | Import only exposed names; if the name should be public, add it to `M`'s `exposing (...)` list |
 | Input/button renders as always-disabled | (fixed in v0.9-dev) boolean attrs now honour their value — regenerate sky-out after `sky upgrade` | — |
 | `case xs of [] -> _` panics with `[]main.T, not []interface {}` | (fixed in v0.9-dev) typed list patterns | — |
 | Add-a-row updates DB but page doesn't refresh | (fixed in v0.9-dev) `rt.RecordUpdate` now narrows `[]any → []T` | — |
@@ -1437,9 +1439,18 @@ every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N millis
 
 ### Pub/sub (`Cmd.publish` + `Sub.subscribeTopic`)
 
-Server-side broadcast channel between Sky.Live sessions. Use to push
+Server-side broadcast channel between Sky.Live sessions (DIFFERENT
+`sky_sid` — different users, or one user on two devices). Use to push
 real-time updates WITHOUT polling — chatrooms, collaborative editors,
 live dashboards, presence indicators.
+
+**Note: multiple TABS of the SAME session mirror one shared view**
+(v0.18+) — they share one server Model and are ONE logical window:
+always the same page AND state. Actions, server pushes, AND navigation
+all fan out to every tab, so navigating one tab moves all tabs of that
+session. You only need pub/sub to cross a SESSION boundary (different
+`sky_sid` — two users, or one user browsing independently on two
+devices), never a tab boundary.
 
 **Decision rule.** **DB writes in your own Sky.Live app → pub/sub.**
 **External state changing on another service → `Time.every` poll.**
@@ -1447,8 +1458,18 @@ live dashboards, presence indicators.
 | Use case | Primitive |
 |---|---|
 | Chat / collab / multi-session UI | `Cmd.publish` + `Sub.subscribeTopic` |
+| Same user, two devices (keep them in sync) | `Cmd.publish ("user:" ++ userId)` + each session `Sub.subscribeTopic ("user:" ++ userId) OnUserEvent` |
 | Animation tick, clock, watchdog heartbeat | `Sub.every` / `Time.every` |
 | Periodic refresh of state from an external HTTP API that doesn't push | `Time.every` + `Cmd.perform` |
+
+**Horizontal scale (multiple instances).** Pub/sub fans out ACROSS
+instances automatically when the session store is Redis
+(`SKY_LIVE_STORE=redis`) — no code change; the same `Cmd.publish` reaches
+subscribers on every instance via the Redis broker. (Postgres sessions +
+Redis pub/sub: set `SKY_LIVE_BROKER_URL`.) **Multi-instance deploys MUST
+use sticky sessions (load-balancer affinity on the `sky_sid` cookie)** — a
+Sky.Live session's Model is single-owner and must live on one instance at
+a time; SkyDeploy sets this automatically. Single-instance needs nothing.
 
 **Mandatory pattern: persist FIRST, publish SECOND.** Notification
 loss is acceptable (process crash, network blip); data loss is not.
@@ -1940,6 +1961,34 @@ Example: `rule ".btn" [ display Flex, padding (px 12), color (hex
 app : config -> config     -- marks as Sky.Live app (compiler detects this)
 route : String -> page -> (String, page)   -- route "/" MyPage (supports :param)
 ```
+
+**Navigation: make every internal link a `sky-nav` link.** Add the
+`sky-nav` attribute to each in-app `<a>` — the runtime intercepts the
+click, fetches the target, patches the body, and updates history, all
+without leaving the page:
+
+```elm
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+Html.a [ Attr.href "/products", Attr.attribute "sky-nav" "" ]
+    [ Html.text "Shop" ]
+```
+
+Why this matters (not optional for multi-page apps): a Sky.Live page
+holds one persistent SSE (`EventSource`) connection for live updates.
+A plain `<a href>` does a FULL-PAGE reload, which opens a BRAND-NEW SSE
+on every navigation. Each streaming connection uses one of the
+browser's ~6-per-host HTTP/1.1 slots, so clicking through several
+full-reload pages piles up connections until the pool is exhausted and
+the tab FREEZES — spinner stuck, every click a no-op. `sky-nav` keeps
+ONE SSE for the whole session and swaps the body via a client-side
+patch: no per-navigation reconnect, no connection churn, instant
+transitions. Use a bare `<a href>` only to deliberately leave the app
+(external site, hard sign-out). Back/Forward and the address bar are
+handled by the runtime automatically for `sky-nav` links — no app code
+needed. (Deploy behind a TLS front for HTTP/2, which multiplexes SSE
+and removes the per-host limit entirely.)
 
 **Sensitive inputs (passwords, API keys, card details): collect via `onSubmit` form data, not `onInput` per keystroke.** This is the recommended pattern as of v0.9.8:
 
@@ -4771,9 +4820,9 @@ result = Decode.decodeString userDecoder jsonString
 
 ---
 
-## New Compiler Additions (Haskell-based Sky compiler)
+## New Compiler Additions (Rust-based Sky compiler)
 
-The following features are available in the new Haskell-based compiler.
+The following features are available in the Rust-based compiler.
 Everything in the sections above still applies — this appends new surface.
 
 ### Safety Guarantees (on by default)
