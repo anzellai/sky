@@ -165,6 +165,15 @@ jobs:
           file: Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          # Pin the version explicitly so the image build never falls back to
+          # the unauthenticated GitHub `releases/latest` API call inside the
+          # Dockerfile. That fallback fires once PER platform (amd64 + arm64
+          # under QEMU) and hit the 60/hr unauthenticated rate limit, failing
+          # the multi-arch build even after the release assets were live. The
+          # tag is already known here (this job `needs: release`), so pass it
+          # straight through — deterministic, no network guesswork.
+          build-args: |
+            SKY_VERSION=${{ steps.version.outputs.VERSION }}
           tags: |
             anzel/sky:latest
             anzel/sky:${{ steps.version.outputs.VERSION }}
