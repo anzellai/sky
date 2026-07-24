@@ -99,3 +99,13 @@ skydeploy control-plane build.
   `examples/50-open-row-closure` (Bug A). Because the oracle cannot build it,
   this example is Rust-only in `build-run` and is NOT in the oracle-matched
   `CLI_FAMILY` golden set.
+
+- **C002 — builtin constructor used as a first-class value (v0.18.1).**
+  `JsonDec.map Just dec` / any bare reference to an arity-1 builtin constructor
+  (`Just`, `Ok`, `Err`) as a function value. The oracle's codegen emitted a
+  zero-arg call of the constructor (`rt.Just()`), which `go build` rejects — *"not
+  enough arguments in call to rt.Just"*. Rust eta-expands the constructor value
+  into a closure of the right arity. Rust is strictly **more capable**; the oracle
+  never built this shape. Surfaced by the sky-lang.org site (via the sky-github
+  dependency's `Github.User` JSON decoder); regression-covered by
+  `examples/50-open-row-closure` (Bug C), same Rust-only status as C001.

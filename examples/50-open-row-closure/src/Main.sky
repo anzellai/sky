@@ -26,6 +26,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Json.Decode as JsonDec
 import Std.Log exposing (println)
 
 type alias Contact =
@@ -64,6 +65,18 @@ encodeVals =
         JsonEnc.encode 0 (JsonEnc.list identity vals)
 
 
+-- Bug C (Rust beyond oracle): a builtin CONSTRUCTOR (`Just`) handed to
+-- `JsonDec.map : (a -> b) -> Decoder a -> Decoder b` as a first-class function.
+-- The oracle's codegen emitted `rt.Just()` (a zero-arg call of the arity-1 ctor)
+-- → "not enough arguments in call to rt.Just". Rust eta-expands the ctor value
+-- into a closure of the right arity.
+decodeMaybeName : String -> Maybe String
+decodeMaybeName json =
+    Result.withDefault
+        Nothing
+        (JsonDec.decodeString (JsonDec.map Just JsonDec.string) json)
+
+
 main =
     let
         contacts =
@@ -72,5 +85,7 @@ main =
             ]
         _ = println (pickPrimary contacts)
         _ = println encodeVals
+        _ =
+            println (Maybe.withDefault "nothing" (decodeMaybeName "\"parsed\""))
     in
         println "done"

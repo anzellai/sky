@@ -1034,6 +1034,21 @@ fn collect_types(
     (nominal, nominal_by_module, decls)
 }
 
+/// Arity of a BUILTIN constructor (`Just`, `Ok`, `Err`, `Nothing`, …). These are
+/// interned under the synthetic `BUILTIN_MOD`, not the per-module `ctor_arity`
+/// map, so a bare VALUE reference to one (`JsonDec.map Just dec` — the ctor as a
+/// first-class function) fell through `ctor_arity_pinned`'s map lookup to the old
+/// `unwrap_or(0)` default and emitted a zero-arg call `rt.Just()` → "not enough
+/// arguments in call to rt.Just". The arity-1 builtins must eta-expand into a
+/// closure of the right arity instead. `Nothing` / `True` / `False` are genuinely
+/// nullary and correctly stay 0 (their value path emits `rt.Nothing[T]()`).
+fn builtin_ctor_arity(cname: &str) -> usize {
+    match cname {
+        "Just" | "Ok" | "Err" => 1,
+        _ => 0,
+    }
+}
+
 /// The DISTINCT non-`"any"` type-param vars of a record alias's field types, in
 /// first-appearance order (the Go generic param order `T1, T2, …`). `"any"` is
 /// the per-occurrence wildcard floor (`ty::is_polymorphic`), never a real
@@ -2592,7 +2607,10 @@ impl<'a> Ctx<'a> {
                 return *a;
             }
         }
-        self.ctor_arity.get(cname).copied().unwrap_or(0)
+        self.ctor_arity
+            .get(cname)
+            .copied()
+            .unwrap_or_else(|| builtin_ctor_arity(cname))
     }
 
     /// Build the owning-union Go name (`Std_Css_TextAlign`) from a union's
