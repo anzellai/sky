@@ -146,10 +146,14 @@ fn cap_first(s: &str) -> String {
 /// share this). The child inherits stdin/stdout/stderr so interactive CLIs and
 /// test output surface directly; the exit code propagates for CI.
 pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<ExitStatus> {
-    // The binary name honours sky.toml `bin` (default `app`). The project dir is
-    // the out dir's parent (`<project>/sky-out`); if that read fails we fall back
-    // to `app`, matching the build default.
-    let project_dir = out_dir.parent();
+    // The project root is the out dir's parent (`<project>/sky-out` ->
+    // `<project>`) — the directory that holds THIS app's `sky.toml`. `resolve()`
+    // walks up from the entry file to the NEAREST sky.toml, so a sub-app with its
+    // own sky.toml (deeper than any monorepo root) roots at ITS OWN dir, while a
+    // sub-app without one shares its parent's root. Either way this is exactly
+    // where the app's relative paths (.env, data/, the sqlite store, static dirs)
+    // are meant to resolve, and it is independent of where `sky run` was invoked.
+    let project_dir = out_dir.parent().filter(|p| !p.as_os_str().is_empty());
     let bin_name = project_dir
         .map(crate::build::configured_bin_name)
         .unwrap_or_else(|| "app".to_string());
@@ -161,18 +165,16 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
     let bin_abs = std::fs::canonicalize(out_dir.join(&bin_name))
         .unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
-    // Run from the directory the user INVOKED the command from — NOT sky-out/.
-    // The old `current_dir(out_dir)` ran the app inside sky-out/, so every
-    // relative path the app uses (.env, data/, the sqlite store path, static
-    // dirs) resolved against sky-out/ and silently broke — e.g. the sqlite store
-    // reported "unable to open database file" and fell back to the memory store.
-    // The `sky` process never chdirs, so `current_dir()` is the invocation dir;
-    // running there makes relative paths resolve exactly as `./sky-out/app`
-    // would when launched from that same directory. Falls back to the project
-    // dir if the cwd is somehow unavailable.
-    let cwd = std::env::current_dir()
-        .ok()
-        .or_else(|| project_dir.map(|p| p.to_path_buf()))
+    // Run from the PROJECT ROOT (the sky.toml dir), NOT sky-out/. The old
+    // `current_dir(out_dir)` ran the app inside sky-out/, so every relative path
+    // the app uses (.env, data/, the sqlite store path, static dirs) resolved
+    // against sky-out/ and silently broke — e.g. the sqlite store reported
+    // "unable to open database file" and fell back to the memory store. Canonical
+    // absolute cwd so it's stable regardless of the invocation dir. Falls back to
+    // the invocation dir, then out_dir, if the project dir can't be resolved.
+    let cwd = project_dir
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| out_dir.to_path_buf());
     cmd.current_dir(&cwd);
     for (k, v) in envs {
