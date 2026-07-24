@@ -10,6 +10,7 @@
 
 mod build_run_gate;
 mod coerce_floor_gate;
+mod divergences_gate;
 mod fmt_gate;
 mod fuzz_gate;
 mod infer_gate;
@@ -36,6 +37,7 @@ fn main() {
         Some("reject") => reject_gate::run(&args[1..], &repo_root()),
         Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
         Some("coerce-floor") => coerce_floor_gate::run(&args[1..], &repo_root()),
+        Some("divergences") => divergences_gate::run(&args[1..], &repo_root()),
         Some("fmt") => fmt_gate::run(&args[1..], &repo_root()),
         Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
@@ -49,7 +51,7 @@ fn main() {
         _ => {
             println!("{VERSION}");
             println!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|fmt|repro|s8|lsp|fuzz> [args]"
+                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz> [args]"
             );
             0
         }

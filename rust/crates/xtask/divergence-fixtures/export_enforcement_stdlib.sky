@@ -1,0 +1,14 @@
+-- divergence: D001-export-enforcement-stdlib code=E1011 rust=REJECT
+-- The Haskell oracle ACCEPTS this program (it exempts kernel/stdlib modules
+-- from `exposing` enforcement); the Rust primary REJECTS it with [E1011]
+-- because it enforces the export boundary uniformly. `appendHelp` is a
+-- module-private helper of Sky.Core.List (declared, not in its exposing list),
+-- so a consumer must not be able to import it. See known-divergences.toml D001.
+module DivExportEnforcement exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List exposing (appendHelp)
+
+
+main =
+    println "this program must be REJECTED [E1011] by the Rust checker"

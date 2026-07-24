@@ -90,6 +90,16 @@ jobs:
       - name: Gate — reject (reject-parity)
         run: cargo run -q -p xtask -- reject
 
+      # known-divergences ledger: the authoritative list of INTENTIONAL
+      # Rust-vs-oracle differences (known-divergences.toml). reject above covers
+      # the rust-lenient direction; this covers rust-stricter (oracle ACCEPTS,
+      # Rust REJECTS) which falls between the accept- and reject-parity gates.
+      # Re-verifies each entry's fixture still rejects with the ledgered code
+      # in-process, and that fixtures ↔ ledger stay in sync. The paper trail
+      # that lets us retire the oracle at v1.
+      - name: Gate — divergences (known Rust-vs-oracle ledger)
+        run: cargo run -q -p xtask -- divergences
+
       # CLAUDE.md §8 forbidden-pattern lint over sky-stdlib/ + examples/:
       # no `Result String` / `Task String` (String-as-error), no `Std.IoError`,
       # no `RemoteData`. Restores the enforcement the Haskell sky verify carried.

@@ -1555,6 +1555,7 @@ version = "0.1.0"
 dependencies = [
  "base",
  "diagnostics",
+ "fmt",
  "hir",
  "lower",
  "project",

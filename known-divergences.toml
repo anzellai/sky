@@ -1,0 +1,56 @@
+# known-divergences.toml
+#
+# The authoritative ledger of INTENTIONAL differences between the Rust compiler
+# (the primary toolchain) and the Haskell oracle (legacy-haskell-compiler/,
+# retained as the differential oracle + one-flag rollback).
+#
+# ── The contract ────────────────────────────────────────────────────────────
+# The Rust compiler matches the oracle EXCEPT for the entries below. Any
+# UNLISTED divergence is a BUG, not a feature. This file is the paper trail that
+# lets us confidently retire the oracle at v1: after it is deleted we can no
+# longer diff against it, so this ledger is the permanent record of exactly how
+# the Rust compiler intentionally departed from the thing we removed.
+#
+# ── How it is enforced ──────────────────────────────────────────────────────
+#   * `xtask divergences` — for every `rust-stricter` entry, re-verifies the
+#     Rust checker still REJECTS the entry's fixture with the ledgered code
+#     (in-process, against the real stdlib), and cross-checks that every fixture
+#     under rust/crates/xtask/divergence-fixtures/ is documented here.
+#   * `xtask reject` — reject-parity for the OTHER direction: the Rust checker
+#     rejects every program the oracle rejects; the few intentional `rust-lenient`
+#     exceptions are tagged `-- gate: known-leniency` in
+#     crates/ty/tests/reject/corpus/ (currently none active).
+#   * `xtask infer` / `golden` / `build-run` — accept-parity + emitted-Go
+#     byte-match on programs BOTH compilers accept (40/40 deterministic examples).
+#
+# ── How an entry is authored ────────────────────────────────────────────────
+# Empirically, with a differential probe against the ABSOLUTE oracle path
+# (sky-out/sky): build the fixture with BOTH compilers and record the outcomes.
+# Never ledger a divergence you have not observed. See
+# docs/rust-rewrite/known-divergences.md.
+#
+# Direction is small on purpose: Rust and the current oracle are in strong
+# parity. As of 2026-07-24 there is exactly one active behavioural divergence.
+
+[[divergence]]
+id = "D001-export-enforcement-stdlib"
+direction = "rust-stricter"     # rust-stricter | rust-lenient | equivalent-output
+oracle = "ACCEPT"
+rust = "REJECT"
+code = "E1011"
+fixture = "rust/crates/xtask/divergence-fixtures/export_enforcement_stdlib.sky"
+summary = "Rust enforces `exposing` on stdlib/kernel modules; the oracle exempts them."
+detail = """
+Elm semantics: `import M exposing (name)` where M does not expose `name` is a
+hard error [E1011 NOT EXPOSED]. The oracle exempted kernel/stdlib modules from
+this check as a shortcut. The Rust primary compiles the stdlib from source and
+enforces the export boundary UNIFORMLY, so a module-private stdlib binding
+(e.g. `Sky.Core.List.appendHelp`, declared but not in List's exposing list)
+cannot be reached by a consumer. This makes the export list an enforced
+contract everywhere, not documentation — an intentional hardening.
+
+Verified 2026-07-24: `import Sky.Core.List exposing (appendHelp)` builds clean
+on the oracle (ACCEPT) and fails on Rust with [E1011] at the import site.
+Site: crates/hir resolve.rs `bind_exposing_dep`. See CLAUDE.md
+§"Export enforcement — `exposing` is a real boundary".
+"""
