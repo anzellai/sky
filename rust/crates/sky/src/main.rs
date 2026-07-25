@@ -452,10 +452,11 @@ fn verb(check_only: bool) -> &'static str {
 /// `sky run <file>` — build, then exec the produced binary with inherited
 /// stdio, propagating its exit code.
 fn cmd_run(args: &[String]) -> ExitCode {
-    let (positional, out_override) = parse_out(args);
+    let (args, profile) = parse_profile(args);
+    let (positional, out_override) = parse_out(&args);
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky run <file.sky>  (or run inside a project directory with a sky.toml)",
+        "usage: sky run <file.sky> [--profile [--profile-dir <dir>] [--profile-timeout <dur>]]  (or run inside a project directory with a sky.toml)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -490,9 +491,26 @@ fn cmd_run(args: &[String]) -> ExitCode {
     if let Some(note) = &report.cgo_note {
         eprintln!("sky run: go build {note}");
     }
+    let mut envs: Vec<(String, String)> = Vec::new();
+    if let Some(p) = &profile {
+        // A relative dir resolves against the app's cwd (the project root, where
+        // `run_app` runs it) → profiles land in `<project>/profile/` by default.
+        let dir = p.dir.clone().unwrap_or_else(|| "profile".to_string());
+        envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
+        if let Some(t) = &p.timeout {
+            envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
+        }
+        println!(
+            "Profiling enabled — writing to {dir}/ (cpu.pprof, heap.pprof, goroutines.txt, REPORT.md){}.",
+            p.timeout
+                .as_ref()
+                .map(|t| format!("; hang dump after {t}"))
+                .unwrap_or_default()
+        );
+    }
     println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app(&out_dir, &[]) {
+    match run_app(&out_dir, &envs) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky run: could not launch binary: {e}");
@@ -2603,6 +2621,49 @@ fn resolve(file: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 /// Split `args` into positionals and an optional `--out <dir>` override.
+/// Runtime-profiling options for `sky run --profile` (see `runtime-go/rt/profile.go`).
+struct ProfileOpts {
+    dir: Option<String>,
+    timeout: Option<String>,
+}
+
+/// Strip `--profile[-dir <d>|-timeout <t>]` from the arg list (consuming their
+/// values so `parse_out`/`resolve_entry_arg` don't mistake them for the entry
+/// file) and return the remaining args + the parsed options.
+fn parse_profile(args: &[String]) -> (Vec<String>, Option<ProfileOpts>) {
+    let mut rest = Vec::new();
+    let mut enabled = false;
+    let mut dir = None;
+    let mut timeout = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--profile" => enabled = true,
+            "--profile-dir" => {
+                enabled = true;
+                dir = it.next().cloned();
+            }
+            s if s.starts_with("--profile-dir=") => {
+                enabled = true;
+                dir = Some(s["--profile-dir=".len()..].to_string());
+            }
+            "--profile-timeout" => {
+                enabled = true;
+                timeout = it.next().cloned();
+            }
+            s if s.starts_with("--profile-timeout=") => {
+                enabled = true;
+                timeout = Some(s["--profile-timeout=".len()..].to_string());
+            }
+            other => rest.push(other.to_string()),
+        }
+    }
+    (
+        rest,
+        enabled.then_some(ProfileOpts { dir, timeout }),
+    )
+}
+
 fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
     let mut positional = Vec::new();
     let mut out = None;

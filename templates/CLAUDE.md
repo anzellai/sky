@@ -472,6 +472,7 @@ before writing non-trivial code.
 sky init [name]           # Create a new Sky project (sky.toml, src/Main.sky, .gitignore, CLAUDE.md)
 sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
+sky run src/Main.sky --profile   # Build + run with runtime profiling (writes profile/: cpu.pprof, heap.pprof, goroutines.txt, REPORT.md). --profile-timeout <dur> auto-dumps if the app hangs. Use when an app hangs / spins CPU / eats memory.
 sky watch src/Main.sky    # Watch sources; rebuild + restart on save (incremental caches reused)
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading commas)

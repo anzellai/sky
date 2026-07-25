@@ -46,8 +46,12 @@ import (
 func LogPanicAndExit() {
 	r := recover()
 	if r == nil {
+		// Normal main return. Flush profiles if `sky run --profile` armed them
+		// (no-op otherwise) — folded here so no extra line is emitted into main.
+		stopProfiling("exit")
 		return
 	}
+	stopProfiling("panic")
 	emitPanicLog(r, debug.Stack())
 	os.Exit(1)
 }

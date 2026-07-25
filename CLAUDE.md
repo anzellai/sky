@@ -1351,6 +1351,7 @@ closes the remaining synchronous surface.
 sky init [name]                    # new project
 sky build src/Main.sky             # compile → sky-out/app
 sky run src/Main.sky               # build + run
+sky run src/Main.sky --profile     # + runtime profiling (cpu/heap/goroutines + REPORT.md); --profile-timeout <dur> auto-dumps on hang
 sky watch src/Main.sky             # file-watch rebuild + restart
 sky check src/Main.sky             # type-check + go build
 sky fmt src/Main.sky               # opinionated formatter

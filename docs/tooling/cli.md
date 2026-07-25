@@ -30,6 +30,32 @@ Pipeline:
 
 `sky build` + execute the resulting binary.
 
+**`--profile`** turns on runtime profiling of the app (not the compiler) — for
+when an app hangs, spins the CPU, or eats memory and you can't tell which. It
+writes a `profile/` directory next to your project on stop:
+
+| File | What |
+|---|---|
+| `REPORT.md` | Human-readable summary: stop reason (exit / panic / signal / hang), wall time, goroutine count + a state breakdown, and a **⚠️ Likely hang** verdict when goroutines sit blocked. Start here. |
+| `cpu.pprof` | CPU profile for the whole run — `go tool pprof -http=: cpu.pprof` for a flame graph. |
+| `heap.pprof` | Heap profile at stop — `go tool pprof -http=: heap.pprof`. |
+| `goroutines.txt` | Full goroutine stack dump; the top frame of each blocked goroutine is where it's stuck. |
+
+Options:
+
+- `--profile-dir <dir>` — where to write (default `profile/`, relative to the project root).
+- `--profile-timeout <dur>` — if the app hasn't exited after `<dur>` (e.g. `30s`, `2m`), dump profiles with a hang verdict and exit. **Opt-in** — leave it off for a server (which "hangs" by design); it still profiles until you Ctrl-C it.
+
+```sh
+sky run src/Main.sky --profile                     # profile until exit / Ctrl-C
+sky run src/Main.sky --profile --profile-timeout 30s   # + auto-dump if it hangs
+```
+
+The stop fires whichever comes first: normal exit / panic, a signal
+(SIGINT/SIGTERM/SIGQUIT), or the timeout. `--profile` off means zero overhead —
+profiling is armed purely by an env var the flag sets, and the emitted Go is
+byte-identical either way.
+
 ### `sky check [path]`
 
 Fully validate the program. `sky check` is a strict superset of `sky build`:
