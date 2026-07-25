@@ -5,7 +5,8 @@
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
 use project::{
-    assets_root_for, build_project, module_name_from_path, project_dir_for, run_app, BuildOptions,
+    assets_root_for, build_project, configured_bin_name, module_name_from_path, project_dir_for,
+    BuildOptions,
 };
 use std::path::Path;
 
@@ -117,7 +118,15 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
             .to_string();
     } else {
         // Run the compiled test binary with inherited stdio; propagate exit code.
-        match run_app(&out_dir, &[]) {
+        // The binary was emitted under the PROJECT's configured `bin` name (the
+        // build reads `project_dir`'s sky.toml), NOT the scratch's — so derive the
+        // name the same way, or a project with `bin = "myapp"` would look for a
+        // non-existent `sky-out/app`. cwd is the project dir so a suite's relative
+        // fixtures / data files resolve where the author expects (#5).
+        let bin_abs = out_dir.join(configured_bin_name(&project_dir));
+        let mut cmd = std::process::Command::new(&bin_abs);
+        cmd.current_dir(&project_dir);
+        match cmd.status() {
             Ok(status) => run.exit_code = Some(status.code().unwrap_or(1)),
             Err(e) => run.note = format!("run failed: {e}"),
         }
@@ -156,5 +165,54 @@ mod tests {
     fn runs_over_the_project_driver() {
         let s = run_stub(&["a\n", "b\nc\n"]);
         assert_eq!(s.files_analyzed, 2);
+    }
+
+    /// #5: a project with a custom `bin` name must still run its tests. Before the
+    /// fix, `run_test` looked for `sky-out/app` while the build emitted the
+    /// binary under the configured `bin` (e.g. `custombin`), so `sky test`
+    /// reported "run failed: … No such file". This builds a real project with
+    /// `bin = "custombin"` + a passing suite and asserts a clean exit 0.
+    #[test]
+    fn respects_custom_bin_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-testrunner-custombin-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&tests_dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"custombintest\"\nversion = \"0.1.0\"\n\
+             entry = \"src/Main.sky\"\nbin = \"custombin\"\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        let suite = tests_dir.join("SmokeTest.sky");
+        std::fs::write(
+            &suite,
+            "module SmokeTest exposing (tests)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Test as Test exposing (Test)\n\n\
+             tests : List Test\n\
+             tests =\n    [ Test.suite \"smoke\" [ Test.test \"ok\" (\\_ -> Test.equal 2 (1 + 1)) ] ]\n",
+        )
+        .unwrap();
+
+        let run = run_test(&suite, "sky-out").expect("run_test should not error");
+        assert!(
+            run.emitted && run.build_ok,
+            "custom-bin project must build; note: {}",
+            run.note
+        );
+        assert_eq!(
+            run.exit_code,
+            Some(0),
+            "custom-bin test binary must run to a clean exit; note: {}",
+            run.note
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

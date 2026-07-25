@@ -657,7 +657,25 @@ fn cmd_clean(_args: &[String]) -> ExitCode {
 /// `<name>/src/Main.sky` (a hello-world), and `<name>/.gitignore`. Mirrors
 /// `app/Main.hs`'s `Init` handler (name defaults to `sky-project`). The CLAUDE.md
 /// coding guide is copied from the repo's `templates/CLAUDE.md` when reachable.
+/// True if the args request help (`--help` / `-h`) — checked BEFORE a verb acts,
+/// so `sky init --help` prints help instead of scaffolding a `sky-project` (#6).
+fn wants_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--help" || a == "-h")
+}
+
 fn cmd_init(args: &[String]) -> ExitCode {
+    if wants_help(args) {
+        println!(
+            "sky init [name]\n\n\
+             Scaffold a new Sky project in ./<name> (default: sky-project):\n  \
+             sky.toml, src/Main.sky (hello-world), .gitignore, CLAUDE.md.\n\n\
+             Arguments:\n  \
+             name        Project directory + name (default: sky-project)\n\n\
+             Options:\n  \
+             -h, --help  Show this help and exit (does NOT create a project)."
+        );
+        return ExitCode::SUCCESS;
+    }
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))
@@ -2743,6 +2761,32 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wants_help_detects_help_flags_only() {
+        // #6: `--help`/`-h` are recognised so `sky init --help` shows help instead
+        // of scaffolding `sky-project`. A plain name (or no args) does not.
+        assert!(wants_help(&["--help".to_string()]));
+        assert!(wants_help(&["-h".to_string()]));
+        assert!(wants_help(&["myproj".to_string(), "--help".to_string()]));
+        assert!(!wants_help(&["myproj".to_string()]));
+        assert!(!wants_help(&[]));
+    }
+
+    #[test]
+    fn profile_flags_stripped_from_args() {
+        // `sky run app.sky --profile --profile-timeout 30s` → the entry file is
+        // still the only positional; the profile flags + their values are consumed.
+        let (rest, opts) = parse_profile(&[
+            "app.sky".to_string(),
+            "--profile".to_string(),
+            "--profile-timeout".to_string(),
+            "30s".to_string(),
+        ]);
+        assert_eq!(rest, vec!["app.sky".to_string()]);
+        let opts = opts.expect("profiling enabled");
+        assert_eq!(opts.timeout.as_deref(), Some("30s"));
+    }
 
     #[test]
     fn upgrade_json_tag_extraction() {

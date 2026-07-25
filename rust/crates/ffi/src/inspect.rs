@@ -303,17 +303,85 @@ fn content_hash(files: &[(String, Vec<u8>)]) -> String {
 }
 
 pub(crate) fn xdg_cache_sky() -> PathBuf {
+    // Explicit override, first — the escape hatch for locked-down environments.
+    if let Ok(d) = std::env::var("SKY_CACHE_DIR") {
+        if !d.is_empty() {
+            return PathBuf::from(d).join("sky");
+        }
+    }
+    // Try the standard locations, but only accept one we can actually WRITE to.
+    // An unprivileged environment (container, sandbox, CI, nix build) often has
+    // HOME set to a read-only or nonexistent path; the old code committed to
+    // `$HOME/.cache/sky` regardless and then failed at extraction time with a
+    // permission error (#7). Probe each candidate and fall through to $TMPDIR,
+    // which is writable virtually everywhere.
+    let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
         if !x.is_empty() {
-            return PathBuf::from(x).join("sky");
+            candidates.push(PathBuf::from(x).join("sky"));
         }
     }
     if let Ok(home) = std::env::var("HOME") {
         if !home.is_empty() {
-            return PathBuf::from(home).join(".cache").join("sky");
+            candidates.push(PathBuf::from(home).join(".cache").join("sky"));
+        }
+    }
+    for c in &candidates {
+        if is_writable_dir(c) {
+            return c.clone();
         }
     }
     std::env::temp_dir().join("sky-cache")
+}
+
+/// Go env overrides (`GOCACHE`, `GOPATH`) to apply to `go build` when `$HOME`
+/// isn't writable — Go's build cache defaults under `$HOME` (`~/.cache/go-build`
+/// / `~/Library/Caches/go-build`) and its module cache under `$HOME/go`, so an
+/// unprivileged environment fails `go build` even after the Sky asset cache falls
+/// back (#7). Routes both to the (probed-writable) Sky cache base. Empty when HOME
+/// is writable or the user already set these — normal setups are untouched.
+pub fn go_env_for_constrained_home() -> Vec<(String, String)> {
+    let home_writable = std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|h| is_writable_dir(&PathBuf::from(h).join(".cache")))
+        .unwrap_or(false);
+    if home_writable {
+        return Vec::new();
+    }
+    let base = xdg_cache_sky();
+    let mut out = Vec::new();
+    // Treat an EMPTY value as unset — an empty GOCACHE makes `go` fall back to its
+    // HOME default, which is exactly the unwritable path we're routing around.
+    if env_unset_or_empty("GOCACHE") {
+        out.push((
+            "GOCACHE".to_string(),
+            base.join("go-build").display().to_string(),
+        ));
+    }
+    if env_unset_or_empty("GOPATH") && env_unset_or_empty("GOMODCACHE") {
+        out.push(("GOPATH".to_string(), base.join("go").display().to_string()));
+    }
+    out
+}
+
+fn env_unset_or_empty(key: &str) -> bool {
+    std::env::var(key).map(|v| v.is_empty()).unwrap_or(true)
+}
+
+/// True iff `dir` can be created and written to — a create + probe-file write.
+fn is_writable_dir(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".sky-write-probe");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn build_inspector(
@@ -387,5 +455,43 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort();
         assert_eq!(names, sorted, "functions must be name-sorted");
+    }
+
+    #[test]
+    fn is_writable_dir_probes_correctly() {
+        // #7: a creatable temp dir is writable; a path under a read-only root is
+        // not — this is the probe the cache-dir fallback relies on.
+        let tmp = std::env::temp_dir().join(format!(
+            "sky-writable-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        assert!(super::is_writable_dir(&tmp), "fresh temp dir must be writable");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // A path whose parent cannot be created (root is read-only on any sane CI
+        // host) must probe as NOT writable, so selection falls through.
+        assert!(
+            !super::is_writable_dir(std::path::Path::new(
+                "/proc/sky-cannot-create-here/nested"
+            )),
+            "an uncreatable path must be reported unwritable"
+        );
+    }
+
+    #[test]
+    fn env_unset_or_empty_treats_empty_as_unset() {
+        // #7: an empty GOCACHE must be treated as unset (Go would fall back to its
+        // HOME default otherwise). Uses a unique key so it can't race other tests.
+        let key = format!("SKY_TEST_ENVCHECK_{}", std::process::id());
+        assert!(super::env_unset_or_empty(&key), "absent → true");
+        std::env::set_var(&key, "");
+        assert!(super::env_unset_or_empty(&key), "empty → true");
+        std::env::set_var(&key, "x");
+        assert!(!super::env_unset_or_empty(&key), "non-empty → false");
+        std::env::remove_var(&key);
     }
 }

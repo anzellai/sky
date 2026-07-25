@@ -625,6 +625,12 @@ fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuil
         .current_dir(out_dir)
         .env("GOFLAGS", "-mod=mod")
         .env("CGO_ENABLED", cgo);
+    // Unprivileged environments (unwritable $HOME) can't use Go's default
+    // build/module caches — route them to the writable Sky cache (#7). No-op on
+    // a normal setup.
+    for (k, v) in ffi::inspect::go_env_for_constrained_home() {
+        cmd.env(k, v);
+    }
     match run_bounded(cmd, GO_BUILD_TIMEOUT) {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
