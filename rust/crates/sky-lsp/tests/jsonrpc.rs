@@ -260,6 +260,50 @@ impl Client {
         out
     }
 
+    /// Like [`collect_diagnostic_counts`] but returns as soon as a publish
+    /// carrying >= 1 diagnostic is seen (or at `max`). Decouples the "final
+    /// broken edit's diagnostic surfaced" check from a fixed wall-clock window:
+    /// on a loaded CI runner the server's analyze+publish for the final edit can
+    /// land well after a fixed window would have closed, which is what made the
+    /// fixed-window assertion flaky (jsonrpc.rs:944). Polling until the diagnostic
+    /// arrives removes the timing dependency entirely yet stays fast in the common
+    /// case (breaks ~one debounce window in). It also keeps the coalescing guard
+    /// honest: a broken (per-edit) debouncer emits the four valid buffers' empty
+    /// publishes THEN the broken one, so `out` collects all five and `len() < 5`
+    /// still fails — exactly the regression we want to catch.
+    fn collect_diagnostic_counts_until(&self, max: Duration) -> Vec<usize> {
+        let deadline = std::time::Instant::now() + max;
+        let mut out = Vec::new();
+        loop {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match self.rx.recv_timeout(deadline - now) {
+                Ok(msg) => {
+                    if msg.get("method").and_then(Value::as_str)
+                        == Some("textDocument/publishDiagnostics")
+                    {
+                        let n = msg
+                            .get("params")
+                            .and_then(|p| p.get("diagnostics"))
+                            .and_then(Value::as_array)
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        out.push(n);
+                        if n >= 1 {
+                            // The final (broken-buffer) edit's diagnostic landed —
+                            // stop; no need to wait out the rest of the window.
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
     fn completion_items(&mut self, line: u32, ch: u32) -> Vec<(String, Option<String>)> {
         let id = self.request(
             "textDocument/completion",
@@ -908,10 +952,12 @@ fn did_change_publish_is_debounced_over_jsonrpc() {
     let final_buf = "module Main exposing (main)\n\nmain =\n    undefinedRefXyz\n";
     c.change(final_buf);
 
-    // Collect publishes for well past the debounce window. Generous so the
-    // final (broken-buffer) publish reliably lands even when a loaded CI runner
-    // delays the server's analyze+publish.
-    let counts = c.collect_diagnostic_counts(Duration::from_millis(1500));
+    // Collect publishes until the final (broken-buffer) edit's diagnostic
+    // arrives, or a generous 6 s cap. Polling-until (rather than a fixed window)
+    // makes the correctness check below independent of how long a loaded CI
+    // runner takes to analyze+publish — the fixed 1500 ms window it replaced
+    // still occasionally lost the final publish under CI load (jsonrpc.rs:944).
+    let counts = c.collect_diagnostic_counts_until(Duration::from_secs(6));
 
     // Coalesced: the five edits produced FEWER than five publishes (ideally
     // one). The exact surviving count is scheduler-dependent — on a loaded CI
