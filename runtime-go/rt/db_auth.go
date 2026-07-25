@@ -1837,11 +1837,13 @@ func Auth_login(db any, email any, password any) any {
 			if b, isB := ok2.(bool); !isB || !b {
 				return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
 			}
-			return Ok[any, any](map[string]any{
-				"id":    id,
-				"email": em,
-				"role":  role,
-			})
+			// Contract: `login : Db -> String -> String -> Task Error Int` returns
+			// the user id (matching `register` + the doc comment). Previously this
+			// returned a `map{id,email,role}` — a record the typed contract never
+			// promised, so well-typed Sky code (expecting Int) mis-coerced it (#3).
+			_ = em
+			_ = role
+			return Ok[any, any](id)
 		})
 	}
 }
