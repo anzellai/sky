@@ -115,23 +115,30 @@ curl --create-dirs --output-dir ~/.config/helix/runtime/queries/sky \
 
 ### Zed
 
-`.zed/config.json`:
+Zed can't register a brand-new language from project settings alone — it needs
+an **extension**. Use the community Sky extension, which wires the
+`tree-sitter-sky` grammar for highlighting and runs `sky lsp` for hover /
+completion / goto / rename / format:
 
-```json
-{
-  "languages": {
-    "Sky": {
-      "language_servers": ["sky-lsp"],
-      "formatter": { "external": { "command": "sky", "arguments": ["fmt", "--stdin"] } }
-    }
-  },
-  "lsp": {
-    "sky-lsp": {
-      "binary": { "path": "sky", "arguments": ["lsp"] }
-    }
-  }
-}
+**[github.com/TheGB0077/sky-zed](https://github.com/TheGB0077/sky-zed)**
+
+It isn't in the Zed extension registry, so install it as a dev extension:
+
+```bash
+git clone https://github.com/TheGB0077/sky-zed
 ```
+
+Then in Zed: **Extensions** (`cmd-shift-x` / `ctrl-shift-x`) →
+**Install Dev Extension** → select the cloned `sky-zed` folder. Zed builds the
+extension, fetches the grammar, and registers `.sky` files.
+
+Make sure `sky` is on Zed's `PATH` — the extension locates the binary with
+`which sky`. GUI editors often don't inherit your shell `PATH`, so launch Zed
+from a shell, or put `sky` somewhere already on the system `PATH`.
+
+> The older `.zed/config.json` snippet these docs used to show never worked on
+> modern Zed — settings can only configure languages Zed already knows, not
+> define a new one. The extension above is the supported path.
 
 ### VS Code
 
