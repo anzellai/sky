@@ -64,6 +64,7 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 | 10 | [`10-lsp-and-tooling.md`](10-lsp-and-tooling.md) | LSP on the query core; fmt/doc/test/build/watch | agent |
 | 11 | [`11-testing-and-verification.md`](11-testing-and-verification.md) | Conformance corpus, differential + rejection testing, repro gate | agent |
 | 12 | [`12-migration-and-milestones.md`](12-migration-and-milestones.md) | Phased bring-up with the Haskell compiler as oracle | agent |
+| 13 | [`13-change-verification-and-edge-cases.md`](13-change-verification-and-edge-cases.md) | The edge-case matrix + mandatory verification protocol for `hir`/`ty`/`lower` changes (corpus gates ≠ sufficient) | agent |
 
 ## Status
 

@@ -132,9 +132,17 @@ Then in Zed: **Extensions** (`cmd-shift-x` / `ctrl-shift-x`) →
 **Install Dev Extension** → select the cloned `sky-zed` folder. Zed builds the
 extension, fetches the grammar, and registers `.sky` files.
 
-Make sure `sky` is on Zed's `PATH` — the extension locates the binary with
-`which sky`. GUI editors often don't inherit your shell `PATH`, so launch Zed
-from a shell, or put `sky` somewhere already on the system `PATH`.
+Two things need to be on Zed's `PATH`:
+
+- **`sky`** — the extension locates the binary with `which sky` and runs
+  `sky lsp`.
+- **Rust / `cargo`** — Zed compiles the `tree-sitter-sky` grammar and the WASM
+  extension itself when you install the dev extension, so a Rust toolchain
+  (`rustup` / `cargo`) must be available. Install from
+  [rustup.rs](https://rustup.rs) if you don't have it.
+
+GUI editors often don't inherit your shell `PATH`, so launch Zed from a shell,
+or put both on the system `PATH`.
 
 > The older `.zed/config.json` snippet these docs used to show never worked on
 > modern Zed — settings can only configure languages Zed already knows, not

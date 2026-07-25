@@ -626,6 +626,18 @@ if (archRef.inFloor && !userAuthorizedFloor) {
   algebraic laws, Std.Ui layout invariants, Std.Html + Sky.Live
   TEA architecture, Std.Db + Std.Auth security invariants,
   cross-backend parity, per-module correctness verdicts.
+- `docs/rust-rewrite/13-change-verification-and-edge-cases.md` —
+  **read before landing any `hir`/`ty`/`lower` change.** The
+  edge-case matrix (D1 type-reference resolution, D2 record shapes /
+  row-poly, D3 annotation state, D4 module structure, D5 app shape)
+  + the MANDATORY verification protocol. The corpus gates
+  (`infer`/`roundtrip`/`reject`/`repro`) are necessary but NOT
+  sufficient — a change is not "verified" until it has also passed
+  `scripts/example-sweep.sh` (the FULL sweep, incl. Std.Db/FFI
+  examples) + a real app. Multiple fixes this cycle passed every
+  corpus gate and still regressed real apps (#164 import-alias,
+  #164 stdlib-name collision, #166 Std.Db `Dict` field); this doc
+  catalogues those traps so they are considered up front.
 
 These are the durable ground truth across sessions, agents, and
 workflows. `docs/rust-rewrite/` is the FIRST source consulted on
