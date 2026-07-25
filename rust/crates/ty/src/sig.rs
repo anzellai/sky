@@ -410,6 +410,10 @@ impl World {
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
             let pseudo = path_to_pseudo.get(mname.as_str()).map(|s| s.to_string());
+            // Names this module sees as UNIONS (own decls + `exposing`-imported).
+            // Passed to `expand` so the bare `aliases` fallback can't rewrite a
+            // union `Model` into a foreign same-named alias (#164 follow-up).
+            let protect = union_names_in_module(db, m);
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 match &decl {
@@ -419,7 +423,7 @@ impl World {
                         };
                         let Some(t) = a.ty() else { continue };
                         let raw = resolve_type_names(db, m, &t, &world.alias_keys);
-                        let expanded = world.expand(&raw, 0);
+                        let expanded = world.expand(&raw, 0, &protect);
                         let scheme = Scheme::generalize(expanded);
                         let def = intern_value(db, m, &name);
                         world.value_sigs.insert(def, scheme.clone());
@@ -431,7 +435,7 @@ impl World {
                         }
                     }
                     ast::Decl::Union(u) => {
-                        world.record_union(db, m, u);
+                        world.record_union(db, m, u, &protect);
                     }
                     ast::Decl::Alias(a) => {
                         // a record alias' name doubles as a positional ctor value.
@@ -442,7 +446,7 @@ impl World {
                                 .ty()
                                 .map(|t| resolve_type_names(db, m, &t, &world.alias_keys))
                                 .unwrap_or(Ty::Error);
-                            let expanded = world.expand(&raw, 0);
+                            let expanded = world.expand(&raw, 0, &protect);
                             let scheme = record_ctor_scheme(&expanded);
                             let def = intern_value(db, m, &name);
                             world.value_sigs.entry(def).or_insert(scheme.clone());
@@ -1026,7 +1030,13 @@ impl World {
         }
     }
 
-    fn record_union(&mut self, db: &dyn SkyDb, m: ModuleId, u: &ast::UnionDecl) {
+    fn record_union(
+        &mut self,
+        db: &dyn SkyDb,
+        m: ModuleId,
+        u: &ast::UnionDecl,
+        protect: &HashSet<String>,
+    ) {
         let Some(tname) = u.name().map(|t| t.text().to_string()) else {
             return;
         };
@@ -1042,7 +1052,7 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&resolve_type_names(db, m, t, &self.alias_keys), 0))
+                .map(|t| self.expand(&resolve_type_names(db, m, t, &self.alias_keys), 0, protect))
                 .collect();
             let ty = arg_tys
                 .into_iter()
@@ -1103,47 +1113,74 @@ impl World {
     /// 37-composite-live-shop: the struct-field decl must agree with the function
     /// signatures, which come pre-expanded from the sig world).
     pub fn expand_ty(&self, ty: &Ty) -> Ty {
-        self.expand(ty, 0)
+        // Lowering path: field types arrive as BARE names (`collect_types` uses
+        // `ast_type_to_ty_qualified`, not `resolve_type_names`), so the bare
+        // last-writer-wins `aliases` fallback IS needed to expand e.g. a bare
+        // `Point` field to its tuple. No union-protection here — behaviour is
+        // byte-identical to before the #164-follow-up fix.
+        self.expand(ty, 0, &HashSet::new())
     }
 
     /// Expand a type transparently through the alias table (record/function
     /// aliases). Guarded against runaway recursion (aliases are non-recursive in
     /// Sky, but a malformed corpus must not hang — L7).
-    fn expand(&self, ty: &Ty, depth: u32) -> Ty {
+    /// `protect`: bare type names that must NOT be alias-expanded via the
+    /// last-writer-wins bare `aliases` fallback, because in the CURRENT module's
+    /// view they name a UNION (their `type_refs` entry resolves to a `TypeCon`).
+    /// Without this, a local union `Model` would be hijacked by a DIFFERENT
+    /// module's same-named alias `Model` sitting in the global `aliases` table
+    /// (#164 follow-up: importing module also defines the name). The fallback is
+    /// still consulted for every non-protected bare name — that leniency is
+    /// load-bearing (e.g. control-plane's `Store.insightsSummary : () ->
+    /// InsightsSummary`, where `InsightsSummary` is used without an explicit
+    /// import and resolves only through this global table). A module-qualified
+    /// `alias_by_mod` key (from `resolve_type_names`) is never affected. On the
+    /// lowering path (`expand_ty`) `protect` is empty — behaviour is unchanged.
+    fn expand(&self, ty: &Ty, depth: u32, protect: &HashSet<String>) -> Ty {
         if depth > 40 {
             return ty.clone();
         }
         match ty {
             Ty::App(name, args) => {
-                let args: Vec<Ty> = args.iter().map(|a| self.expand(a, depth + 1)).collect();
+                let args: Vec<Ty> = args
+                    .iter()
+                    .map(|a| self.expand(a, depth + 1, protect))
+                    .collect();
                 // A module-qualified key (`"<module>.<name>"`, produced only by
                 // `resolve_type_names` for a reference HIR resolved to an alias)
-                // hits `alias_by_mod` — the #164-correct table. A bare name
-                // (emission path, or a reference HIR could not resolve) falls
-                // back to the last-writer-wins `aliases` table — byte-identical
-                // to pre-#164 for unique alias names.
-                if let Some(def) = self
-                    .alias_by_mod
-                    .get(name.as_str())
-                    .or_else(|| self.aliases.get(name.as_str()))
-                {
+                // always hits `alias_by_mod` — the #164-correct table. The bare
+                // `aliases` fallback is consulted for every other name EXCEPT one
+                // that this module sees as a union (`protect`), so a bare union
+                // name can't be hijacked by a foreign alias of the same name.
+                let hit = self.alias_by_mod.get(name.as_str()).or_else(|| {
+                    if protect.contains(name.as_str()) {
+                        None
+                    } else {
+                        self.aliases.get(name.as_str())
+                    }
+                });
+                if let Some(def) = hit {
                     let mut sub: HashMap<String, Ty> = HashMap::new();
                     for (p, arg) in def.params.iter().zip(args.iter()) {
                         sub.insert(p.clone(), arg.clone());
                     }
                     let substituted = substitute(&def.body, &sub);
-                    return self.expand(&substituted, depth + 1);
+                    return self.expand(&substituted, depth + 1, protect);
                 }
                 Ty::App(name.clone(), args)
             }
             Ty::Fun(a, b) => Ty::Fun(
-                Box::new(self.expand(a, depth + 1)),
-                Box::new(self.expand(b, depth + 1)),
+                Box::new(self.expand(a, depth + 1, protect)),
+                Box::new(self.expand(b, depth + 1, protect)),
             ),
-            Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| self.expand(x, depth + 1)).collect()),
+            Ty::Tuple(xs) => Ty::Tuple(
+                xs.iter()
+                    .map(|x| self.expand(x, depth + 1, protect))
+                    .collect(),
+            ),
             Ty::Record(fs, ext) => Ty::Record(
                 fs.iter()
-                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1)))
+                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, protect)))
                     .collect(),
                 ext.clone(),
             ),
@@ -1463,6 +1500,29 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
 /// resolver (which already models `exposing`-imports, import aliases,
 /// auto-qualifiers, and local-shadows-import), never from a syntactic heuristic
 /// on the reference's qualifier. `m` is the module the annotation lives in;
+/// The set of bare type names module `m` sees as UNIONS — every name in its
+/// `type_refs` (own decls + `exposing`-imported types) whose def is a
+/// `DefKind::TypeCon`. Used as the `protect` set for `expand`: a name here must
+/// not be alias-expanded through the last-writer-wins bare `aliases` table, so a
+/// local union `Model` can't be hijacked by a different module's same-named alias
+/// (#164 follow-up). Aliases stay OUT of the set, so genuine bare-alias leniency
+/// (an un-imported alias resolving only through the global table) is preserved.
+fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
+    let resolved = db.resolve(m);
+    let mut out = HashSet::new();
+    for (name, tr) in &resolved.type_refs {
+        if let Some(loc) = db.def_loc(tr.con) {
+            if loc.kind == DefKind::TypeCon {
+                // key on the bare final segment — `expand` sees bare `App` names
+                // (qualified alias refs already went through `alias_by_mod`).
+                let base = name.rsplit('.').next().unwrap_or(name);
+                out.insert(base.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// `alias_keys` is the program-wide set of `"<module>.<name>"` alias keys.
 fn resolve_type_names(
     db: &dyn SkyDb,

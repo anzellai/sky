@@ -1137,6 +1137,81 @@ fn issue164_same_named_aliases_in_different_modules_not_conflated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #164 FOLLOW-UP (roovo): the sub-module conflation was fixed, but when the
+/// IMPORTING module also defines a type with the same name as an imported alias
+/// — here a union `Model` in `Main` while `Page.A` exposes an alias `Model` — the
+/// two still clashed: `Main`'s union `Model` was expanded via the global bare
+/// `aliases` table into `Page.A`'s record, so `( Active PageA.init, Cmd.none )`
+/// reported `Model vs record`. The fix protects a name the current module sees as
+/// a UNION from that bare-alias fallback. The guard must ALSO keep the legitimate
+/// bare-alias leniency working (an un-imported alias resolving only through the
+/// global table — verified by the real-app sweep, not expressible minimally
+/// here), so this test only pins the union-vs-alias clash.
+#[test]
+fn issue164_followup_importing_module_union_vs_imported_alias_same_name() {
+    let repo = repo_root();
+    let uniq = format!(
+        "sky-typecheck-gate-issue164f-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dir = std::env::temp_dir().join(uniq);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("Page")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"issue164f\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    // Page.A exposes an ALIAS `Model` (a record).
+    std::fs::write(
+        src.join("Page").join("A.sky"),
+        "module Page.A exposing (Model, init, view)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Ui as Ui\nimport Std.Ui exposing (Element)\n\n\
+         type alias Model =\n    { name : String\n    }\n\n\
+         init : Model\ninit =\n    { name = \"Page A\" }\n\n\
+         view : Model -> Element msg\nview model =\n    Ui.text model.name\n",
+    )
+    .unwrap();
+    // Main defines a UNION `Model` (same bare name) wrapping the imported alias.
+    std::fs::write(
+        src.join("Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Page.A as PageA\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Tui as Tui\nimport Std.Cmd as Cmd\nimport Std.Sub as Sub\n\
+         import Std.Ui as Ui\nimport Std.Ui exposing (Element)\n\n\
+         type Model\n    = Active PageA.Model\n\n\
+         type Msg\n    = NoOp\n\n\
+         init : () -> ( Model, Cmd Msg )\ninit _ =\n    ( Active PageA.init, Cmd.none )\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\nupdate _ model =\n    ( model, Cmd.none )\n\n\
+         view : Model -> Element Msg\nview model =\n    case model of\n\n        Active subModel ->\n            PageA.view subModel\n\n\
+         main =\n    Tui.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = \\_ -> Sub.none\n        , onKey = \\_ -> NoOp\n        }\n",
+    )
+    .unwrap();
+
+    let out = dir.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &dir, &out));
+
+    assert!(
+        !report.note.contains("vs record") && !report.note.contains("type mismatch"),
+        "issue #164-follow: importing module's union `Model` conflated with the \
+         imported alias `Model` (spurious `Model vs record`); note: {}",
+        report.note
+    );
+    assert!(
+        report.emitted && report.go_build_ok,
+        "issue #164-follow: expected type-check + go build to succeed; note: {}, go_stderr: {}",
+        report.note, report.go_build_stderr
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Issue #166: a record update on an ANNOTATED param, returned in a tuple
 /// (`( { model | f = v }, Cmd )` — the TEA update shape), must keep the base's
 /// FULL record type. Before the fix, the lowering path (unlike the check path)
