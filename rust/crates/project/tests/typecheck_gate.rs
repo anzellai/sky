@@ -1356,6 +1356,28 @@ fn assert_single_file_builds(tag: &str, main_src: &str) {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// The `<main>` HTML landmark is `Std.Html.mainNode`, not `main` — a binding
+/// named `main` collided with every program's own `main` entry point (`import
+/// Std.Html exposing (main)` + a program `main` resolves the bare `main` to the
+/// entry, so `main [..]` fails with an arity mismatch). This builds an app that
+/// exposes `mainNode` unqualified alongside a program `main` — the shape that used
+/// to break — and asserts it compiles + `go build`s.
+#[test]
+fn html_main_landmark_is_mainnode_no_entrypoint_collision() {
+    assert_single_file_builds(
+        "html-mainnode",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Html exposing (mainNode, div, text, Html)\n\
+         import Std.Log exposing (println)\n\n\
+         page : Html msg\n\
+         page =\n    div [] [ mainNode [] [ text \"hi\" ] ]\n\n\
+         renderIt : Html msg -> String\n\
+         renderIt _ =\n    \"ok\"\n\n\
+         main =\n    println (renderIt page)\n",
+    );
+}
+
 #[test]
 fn issue161_field_accessor_in_pipeline_builds() {
     assert_single_file_builds(

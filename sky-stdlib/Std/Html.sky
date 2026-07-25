@@ -143,11 +143,11 @@ footer attrs children =
     HElement "footer" attrs children
 
 
-main : List (Attribute msg) -> List (Html msg) -> Html msg
-main attrs children =
-    HElement "main" attrs children
-
-
+-- NOTE: the `<main>` landmark element is `mainNode` (defined below), NOT `main`.
+-- A binding named `main` here collides with every program's own `main` entry
+-- point: `import Std.Html exposing (main)` in a module that also defines `main`
+-- resolves the bare `main` to the PROGRAM entry (local shadows import, C7), so
+-- `Html.main [...]` fails with an arity mismatch. `mainNode` sidesteps that. (#4)
 aside : List (Attribute msg) -> List (Html msg) -> Html msg
 aside attrs children =
     HElement "aside" attrs children

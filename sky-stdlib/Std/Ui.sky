@@ -2278,7 +2278,7 @@ dispatchTag tag attrs children =
         Html.header attrs children
 
     else if tag == "main" then
-        Html.main attrs children
+        Html.mainNode attrs children
 
     else if tag == "aside" then
         Html.aside attrs children
