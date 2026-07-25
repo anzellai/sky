@@ -1203,6 +1203,66 @@ fn issue166_record_update_on_annotated_param_keeps_full_record() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// #166 (UNANNOTATED case). The same record-update-in-tuple shape, but `handle`
+/// has NO signature, so the checker's sig-seeding can't close the row and — before
+/// the call-site harvest — the update narrowed to the subset of updated fields,
+/// dropping `items` (an ADT → nil interface → `Unreachable` panic at the next
+/// `case`). The fix harvests the CONCRETE record each direct caller passes
+/// (`callsite_param_records_query`, demanded when `body_updates_a_param`) and
+/// closes the open row to it. This guards the consumer-chasing path specifically:
+/// the ONLY difference from the annotated test is the missing `handle : M -> …`.
+#[test]
+fn issue166_record_update_on_unannotated_param_keeps_full_record() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "i166u",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Log exposing (println)\n\n\
+         type Status a = Loading | Loaded a | Failed String\n\n\
+         type alias M =\n\
+         \x20   { path : String\n\
+         \x20   , items : Status (List Int)\n\
+         \x20   , adding : Maybe String\n\
+         \x20   }\n\n\
+         handle model =\n\
+         \x20   ( { model | adding = Just \"\", path = \"x\" }, Cmd.none )\n\n\
+         main =\n\
+         \x20   let\n\
+         \x20       m0 = { path = \"a\", items = Loaded [ 1, 2 ], adding = Nothing }\n\
+         \x20       ( m1, _ ) = handle m0\n\
+         \x20       report =\n\
+         \x20           case m1.items of\n\
+         \x20               Loading -> \"loading\"\n\
+         \x20               Loaded xs -> \"loaded \" ++ String.fromInt (List.length xs)\n\
+         \x20               Failed e -> \"failed \" ++ e\n\
+         \x20   in\n\
+         \x20   println report\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted && report.go_build_ok,
+        "issue #166u: expected type-check + go build to succeed; note: {}, go_stderr: {}",
+        report.note, report.go_build_stderr
+    );
+    let go = std::fs::read_to_string(out.join("main.go")).unwrap_or_default();
+    assert!(
+        !go.contains("rt.T2[struct{"),
+        "issue #166u: unannotated record update narrowed the tuple to an anonymous \
+         struct (drops un-updated fields); the call-site harvest did not close the row"
+    );
+    assert!(
+        go.contains("Main_M_R"),
+        "issue #166u: the update's tuple return must carry the full `Main_M_R` record \
+         (harvested from the caller's concrete argument)"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// Helper: build a single-file program and assert it type-checks AND `go build`
 /// succeeds. Used by the boundary-codegen regressions (#161/#162/#163) — these
 /// fail in the Haskell oracle too, so they can't be oracle-matched golden

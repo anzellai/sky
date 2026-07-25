@@ -23,7 +23,8 @@ mod unify;
 pub use check::{check_modules, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer};
 pub use db::{compute_body_types, TyDb};
 pub use sig::{
-    record_alias_fields, update_base_defs, variant_arg_types, variant_arg_types_qualified, World,
+    body_updates_a_param, callsite_param_records_for, record_alias_fields, update_base_defs,
+    variant_arg_types, variant_arg_types_qualified, World,
 };
 pub use unify::{SuperType, UnionFind};
 

@@ -250,6 +250,35 @@ pub fn record_result_sig_query(
     world.record_result_scheme_for(db.sky_db(), def)
 }
 
+/// Per-def call-site param-record harvest for the lowering `infer_query` (#166,
+/// UNANNOTATED case). For a `callee` that record-updates one of its own params
+/// but has no signature to close the row from, this returns the CONCRETE record
+/// (`Ty::Record(_, None)`) each direct caller passes at each param position —
+/// so the update's open row can close to the real Model instead of collapsing to
+/// the narrow subset of updated fields (which codegen would emit as an anon
+/// struct, silently dropping every un-updated field / nil-panicking an ADT one).
+///
+/// Demanded ONLY when `ty::body_updates_a_param(body)` — so a body without a
+/// param-update creates no dependency, preserving backdating for the common case.
+/// Built against the FULL [`check_world_query`] so caller inference is
+/// byte-identical to the eager backend's whole-program harvest
+/// (`World::harvest_callsite_param_records`). Cheap when `callee` is only ever
+/// reached reflectively (e.g. the TEA `update` dispatch): the internal `calls_it`
+/// scan finds no direct `Call` site and skips all caller inference.
+/// `_module` / `_file` are salsa carrier keys (the CONSUMING def's module/file);
+/// the value depends only on `callee` + the world, so at worst they cause a benign
+/// duplicate memo, and invalidation flows through the `check_world_query` read.
+#[salsa::tracked]
+pub fn callsite_param_records_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    _module: ModuleId,
+    _file: SourceFile,
+) -> Vec<Option<ty::Ty>> {
+    let world = check_world_query(db);
+    ty::callsite_param_records_for(db.sky_db(), &world, def)
+}
+
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
 /// per-region type map`) — memoised at **per-def granularity**, the ideal
 /// incremental unit. Builds the def's per-expression/per-local type table against
@@ -291,11 +320,22 @@ pub fn infer_query(
     let resolved = sky.resolve(module);
     if let Some(body) = resolved.bodies.get(&def) {
         let bases = ty::update_base_defs(body);
-        if !bases.is_empty() {
+        // #166: an UNANNOTATED def that record-updates one of its own params has
+        // no sig to close the row from — harvest the concrete record its callers
+        // pass. Demanded ONLY when the body actually has such a param-update, so
+        // the common case keeps its `type_world`-only (backdated) dependency.
+        let updates_param = ty::body_updates_a_param(body);
+        if !bases.is_empty() || updates_param {
             let mut w = world.clone();
             for d in bases {
                 if let Some(scheme) = record_result_sig_query(db, d, module, _file) {
                     w.record_result_sigs.insert(d, scheme.clone());
+                }
+            }
+            if updates_param {
+                let recs = callsite_param_records_query(db, def, module, _file);
+                if recs.iter().any(|o| o.is_some()) {
+                    w.callsite_param_records.insert(def, recs.clone());
                 }
             }
             return ty::compute_body_types(&w, sky, module, def);

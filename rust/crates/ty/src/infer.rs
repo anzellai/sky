@@ -596,34 +596,54 @@ impl<'a> Infer<'a> {
                                 let pidx = body.params.iter().position(|p| {
                                     matches!(&body.pats[*p], Pattern::Var(pid) if *pid == id)
                                 });
-                                if let (Some(idx), Some(scheme)) =
-                                    (pidx, self.world.value_sigs.get(&def).cloned())
-                                {
-                                    let mut sub: HashMap<String, TyVarId> = HashMap::new();
-                                    for name in &scheme.vars {
-                                        if name.as_str() != "any" {
-                                            let fresh = self.uf.fresh_flex();
-                                            sub.insert(name.as_str().to_string(), fresh);
-                                        }
-                                    }
-                                    let mut cur = &scheme.ty;
-                                    let mut ok = true;
-                                    for _ in 0..idx {
-                                        match cur {
-                                            Ty::Fun(_, b) => cur = b,
-                                            _ => {
-                                                ok = false;
-                                                break;
+                                if let Some(idx) = pidx {
+                                    // The param's full record comes from EITHER the
+                                    // declared sig (annotated) OR the concrete
+                                    // record its callers pass (unannotated —
+                                    // harvested into `callsite_param_records`,
+                                    // #166). Both give the full record so the
+                                    // update's open row closes to it.
+                                    let param_record: Option<Ty> = self
+                                        .world
+                                        .value_sigs
+                                        .get(&def)
+                                        .and_then(|scheme| {
+                                            let mut cur = &scheme.ty;
+                                            for _ in 0..idx {
+                                                match cur {
+                                                    Ty::Fun(_, b) => cur = b,
+                                                    _ => return None,
+                                                }
                                             }
-                                        }
-                                    }
-                                    if ok {
-                                        if let Ty::Fun(a, _) = cur {
-                                            if matches!(a.as_ref(), Ty::Record(..)) {
-                                                let av = self.ty_to_var(a, &mut sub);
-                                                self.unify(tb, av);
+                                            match cur {
+                                                // ONLY a CLOSED record from the sig closes
+                                                // the row. An annotated `model : M` gives
+                                                // `Record(_, None)`. An UNANNOTATED param's
+                                                // inferred sig is an OPEN row (the narrow
+                                                // subset of updated fields) — that must NOT
+                                                // win, or it re-narrows the update; fall
+                                                // through to the callsite harvest below.
+                                                Ty::Fun(a, _)
+                                                    if matches!(
+                                                        a.as_ref(),
+                                                        Ty::Record(_, None)
+                                                    ) =>
+                                                {
+                                                    Some((**a).clone())
+                                                }
+                                                _ => None,
                                             }
-                                        }
+                                        })
+                                        .or_else(|| {
+                                            self.world
+                                                .callsite_param_records
+                                                .get(&def)
+                                                .and_then(|v| v.get(idx))
+                                                .and_then(|o| o.clone())
+                                        });                                    if let Some(rec) = param_record {
+                                        let mut sub: HashMap<String, TyVarId> = HashMap::new();
+                                        let av = self.ty_to_var(&rec, &mut sub);
+                                        self.unify(tb, av);
                                     }
                                 }
                             }

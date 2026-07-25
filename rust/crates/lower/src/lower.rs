@@ -2199,10 +2199,26 @@ impl<'a> Ctx<'a> {
                         // through `rt.Field` (see `Expr::Access`). Only overrides
                         // toward `any` (never away from a concrete type), so every
                         // ordinary zero-param call is byte-identical.
+                        // NOTE: `actual` (the caller's region inference) can
+                        // disagree with the func's REAL emitted return, and NOT only
+                        // by full erasure to `any`: an unannotated def whose body
+                        // infers `[]any` in isolation but is pinned to a concrete
+                        // `[]map[string]string` by THIS consumer leaves the func
+                        // emitting `[]any` while `actual` says the concrete slice
+                        // (13-skyshop `listAllProducts` into a `Model.products`
+                        // update). Typing the call by `actual` there skips the
+                        // coercion (types look equal) and `go build` rejects the
+                        // `[]any` value in the concrete field. Type the call by the
+                        // func's real return (`def_result_tys` invariant: equals what
+                        // `lower_def` emits) so the outer `coerce_if_needed` bridges
+                        // it to the slot (`rt.AsListT[map[string]string](…)`). When
+                        // `def_ret` and `actual` agree (the common case) this is
+                        // byte-identical; `any` field reads still route through
+                        // `rt.Field` because `def_ret == any → call_ty == any`.
                         let def_ret = self.def_result_tys.get(&d).cloned();
                         let call_ty = match def_ret {
-                            Some(t) if self.goty(&t) == GoTy::Any => GoTy::Any,
-                            _ => actual.clone(),
+                            Some(t) => self.goty(&t),
+                            None => actual.clone(),
                         };
                         let fn_ty = GoTy::Func(vec![], Box::new(call_ty.clone()));
                         GoExpr::new(

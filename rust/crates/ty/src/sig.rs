@@ -82,6 +82,20 @@ pub struct World {
     /// mismatch). Never consulted on the check path, so accept/reject + LSP are
     /// byte-identical. Populated by the pass after `any_result_check_sigs`.
     pub record_result_sigs: HashMap<DefId, Scheme>,
+    /// The CONCRETE record type each call site passes at each param position of
+    /// an UNANNOTATED def — harvested from every caller's inferred arg types
+    /// (`harvest_callsite_param_records`). The checker resolves this at the call
+    /// site (a call unifies the callee's param with the arg's type), but the
+    /// callee's own per-def inference never sees it, so an unannotated
+    /// `{ model | … }` update inside the callee is compiled with a polymorphic
+    /// (open) `model` and DROPS un-updated fields (#166 unannotated). The
+    /// record-update close in `infer` consults this to pin the base param to the
+    /// concrete record its callers pass — the same record the checker already
+    /// knows. `None` at a slot = no concrete record OR conflicting call sites
+    /// (genuinely polymorphic use) → left open, reflective path preserved.
+    /// Lowering-path only (never read on the check path). Keyed by def; the
+    /// `Vec` is indexed by top-level param position.
+    pub callsite_param_records: HashMap<DefId, Vec<Option<Ty>>>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -140,9 +154,178 @@ impl World {
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         world.infer_record_result_sigs(db);
 
+        // ---- pass 8: call-site param records for UNANNOTATED defs (#166,
+        // lowering-path only) — the concrete record each caller passes, so the
+        // record-update close can pin an unannotated `{ model | … }` base. ----
+        world.harvest_callsite_param_records(db);
+
         world
     }
 
+    /// Pass 8 (see `build`). For every UNANNOTATED def, record the CONCRETE
+    /// record type its callers pass at each param position — by inferring each
+    /// caller's body and reading the arg types at every `Call` whose callee is an
+    /// unannotated def. This hands the record-update close in `infer` the same
+    /// concrete record the checker already unifies at the call site, so an
+    /// unannotated `handle model = ( { model | … }, Cmd )` compiles with the full
+    /// `model` record instead of the polymorphic subset that drops fields (#166).
+    ///
+    /// Conservative on purpose (so it can never widen a genuine polymorphic use
+    /// into a wrong concrete type):
+    /// * only a CONCRETE (closed, all-fields-known) record arg is recorded;
+    /// * a param seen with CONFLICTING records across call sites is dropped to
+    ///   `None` (genuinely polymorphic → stays open → reflective path);
+    /// * annotated callees are skipped (they use `value_sigs`).
+    /// Lowering-path only — `infer` reads it under `use_inferred`, so accept/
+    /// reject + LSP are byte-identical.
+    fn harvest_callsite_param_records(&mut self, db: &dyn SkyDb) {
+        use crate::infer::Infer;
+        let mut collected: HashMap<DefId, Vec<Option<Ty>>> = HashMap::new();
+        let mut conflict: std::collections::HashSet<(DefId, usize)> = std::collections::HashSet::new();
+        for m in db.module_ids() {
+            let resolved = db.resolve(m);
+            for body in resolved.bodies.values() {
+                let mut infer = Infer::new(self, db).with_inferred(true);
+                let (_r, _s, exprs, locals) = infer.infer_def_typed(body);
+                for (_eid, expr) in body.exprs.iter() {
+                    let (callee, args) = match expr {
+                        hir::Expr::Call(c, a) => (*c, a),
+                        _ => continue,
+                    };
+                    let f = match &body.exprs[callee] {
+                        hir::Expr::Var(hir::Res::Def(d)) => *d,
+                        _ => continue,
+                    };
+                    // Annotated callees are pinned by their declared sig already.
+                    if self.value_sigs.contains_key(&f) {
+                        continue;
+                    }
+                    for (i, arg) in args.iter().enumerate() {
+                        // Prefer the arg node's recorded type; fall back to the
+                        // per-local table for a bare `Var(Local)` arg (which
+                        // often carries no node-level type).
+                        let aty = exprs.get(arg).cloned().or_else(|| {
+                            if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*arg] {
+                                locals.get(l).cloned()
+                            } else {
+                                None
+                            }
+                        });
+                        // Only a CONCRETE closed record counts.
+                        let t = match aty {
+                            Some(t @ Ty::Record(_, None)) => t,
+                            _ => continue,
+                        };
+                        let slot = collected.entry(f).or_default();
+                        while slot.len() <= i {
+                            slot.push(None);
+                        }                        match &slot[i] {
+                            None if !conflict.contains(&(f, i)) => slot[i] = Some(t),
+                            Some(prev) if *prev != t => {
+                                slot[i] = None;
+                                conflict.insert((f, i));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        self.callsite_param_records = collected;
+    }
+}
+
+/// Per-callee variant of the call-site harvest (see
+/// [`World::harvest_callsite_param_records`]) — the CONCRETE record each caller
+/// passes at each param position of a single `callee`. The salsa lowering path
+/// uses the declaration-only `type_world` (for backdating) and demands per-def
+/// facts through separate queries, so it can't read the whole-program harvest
+/// baked into `World::build`; this is the per-def primitive that query wraps.
+/// `world` is the (declaration-only) world used to infer each caller — the arg
+/// types it needs don't depend on the harvest, so this is not circular.
+pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) -> Vec<Option<Ty>> {
+    use crate::infer::Infer;
+    let mut slot: Vec<Option<Ty>> = Vec::new();
+    let mut conflict: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for m in db.module_ids() {
+        let resolved = db.resolve(m);
+        for body in resolved.bodies.values() {
+            // Cheap skip: only infer a body that actually calls `callee`.
+            let calls_it = body.exprs.iter().any(|(_, e)| {
+                matches!(e, hir::Expr::Call(c, _)
+                    if matches!(&body.exprs[*c], hir::Expr::Var(hir::Res::Def(d)) if *d == callee))
+            });
+            if !calls_it {
+                continue;
+            }
+            let mut infer = Infer::new(world, db).with_inferred(true);
+            let (_r, _s, exprs, locals) = infer.infer_def_typed(body);
+            for (_eid, expr) in body.exprs.iter() {
+                let (c, args) = match expr {
+                    hir::Expr::Call(c, a) => (*c, a),
+                    _ => continue,
+                };
+                if !matches!(&body.exprs[c], hir::Expr::Var(hir::Res::Def(d)) if *d == callee) {
+                    continue;
+                }
+                for (i, arg) in args.iter().enumerate() {
+                    let aty = exprs.get(arg).cloned().or_else(|| {
+                        if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*arg] {
+                            locals.get(l).cloned()
+                        } else {
+                            None
+                        }
+                    });
+                    let t = match aty {
+                        Some(t @ Ty::Record(_, None)) => t,
+                        _ => continue,
+                    };
+                    while slot.len() <= i {
+                        slot.push(None);
+                    }
+                    if conflict.contains(&i) {
+                        continue;
+                    }
+                    match &slot[i] {
+                        None => slot[i] = Some(t),
+                        Some(prev) if *prev != t => {
+                            slot[i] = None;
+                            conflict.insert(i);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    slot
+}
+
+/// True iff `body` contains a record update whose base is a top-level PARAM
+/// (`Res::Local` bound by a param pattern). Used by the lowering `infer_query`
+/// to decide whether to demand this def's call-site param records (#166).
+pub fn body_updates_a_param(body: &hir::Body) -> bool {
+    let param_locals: std::collections::HashSet<hir::LocalId> = body
+        .params
+        .iter()
+        .filter_map(|p| match &body.pats[*p] {
+            hir::Pattern::Var(l) => Some(*l),
+            _ => None,
+        })
+        .collect();
+    for (_, expr) in body.exprs.iter() {
+        if let hir::Expr::Update { base, .. } = expr {
+            if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*base] {
+                if param_locals.contains(l) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+impl World {
     /// Build the DECLARATION-ONLY world (passes 1-4): aliases, unions,
     /// annotations, kernel/stdlib pass-3 inference of unannotated combinators, and
     /// the static CHECK-ONLY combinator seeds (pass 4). **Body-independent w.r.t.
@@ -169,6 +352,7 @@ impl World {
             ctors_by_def: HashMap::new(),
             ctor_union: HashMap::new(),
             union_ctors: HashMap::new(),
+            callsite_param_records: HashMap::new(),
             union_members_by_def: HashMap::new(),
             aliases: HashMap::new(),
             alias_by_mod: HashMap::new(),
