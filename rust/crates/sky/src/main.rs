@@ -2131,10 +2131,29 @@ enum Shape {
 /// build-run`). Builds into `sky-out-rust/` so it never clobbers an example's
 /// `sky-out/` oracle binary. Non-zero exit on any failure.
 fn cmd_verify(args: &[String]) -> ExitCode {
+    if wants_help(args) {
+        println!(
+            "sky verify [project]\n\n\
+             In a project (a dir with sky.toml), run the full pre-release gate:\n  \
+             1. fmt     — every .sky file is already `sky fmt`-clean\n  \
+             2. check   — type-checks + `go build`s (the production build)\n  \
+             3. test    — every tests/*.sky suite passes\n\n\
+             In the compiler repo (an examples/ dir), build AND run every example.\n\
+             Non-zero exit if any phase fails."
+        );
+        return ExitCode::SUCCESS;
+    }
     let (positional, out_override) = parse_out(args);
-    let out_dir_name = out_override.unwrap_or_else(|| "sky-out-rust".to_string());
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
+    // Single-project gate: an explicit project path, or the cwd is itself a
+    // project and there's no examples/ sweep to run. (A named example, or the
+    // compiler repo's examples/ dir, keeps the build+run sweep below.)
+    if let Some(dir) = single_project_target(&cwd, positional.first().map(String::as_str)) {
+        return verify_project_gate(&dir, out_override);
+    }
+
+    let out_dir_name = out_override.unwrap_or_else(|| "sky-out-rust".to_string());
     let targets = match resolve_verify_targets(&cwd, positional.first().map(String::as_str)) {
         Ok(t) => t,
         Err(msg) => {
@@ -2211,6 +2230,184 @@ fn cmd_verify(args: &[String]) -> ExitCode {
         println!("verify: {failures} of {} target(s) failed", targets.len());
         ExitCode::FAILURE
     }
+}
+
+/// The single project a `sky verify` should run the full gate on: an explicit
+/// path holding a `sky.toml`, or `cwd` itself when it's a project AND there's no
+/// `examples/` dir (which would mean the compiler repo → the build+run sweep).
+/// A named `examples/<x>` target returns `None` so the sweep path handles it.
+fn single_project_target(cwd: &Path, target: Option<&str>) -> Option<PathBuf> {
+    match target {
+        Some(t) => {
+            let p = Path::new(t);
+            if p.join("sky.toml").is_file() {
+                Some(p.canonicalize().unwrap_or_else(|_| cwd.join(p)))
+            } else {
+                None
+            }
+        }
+        None => {
+            if cwd.join("sky.toml").is_file() && !cwd.join("examples").is_dir() {
+                Some(cwd.to_path_buf())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The full project pre-release gate (#11): fmt-clean, type-check + build, tests.
+fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
+    let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    println!("Verifying {name} — fmt, type-check, build, tests\n");
+
+    let Some(repo_root) = assets_root_for(dir) else {
+        eprintln!("  ✗ could not locate the Sky stdlib + runtime");
+        return ExitCode::FAILURE;
+    };
+    let mut failed: Vec<&str> = Vec::new();
+
+    // 1. fmt — every project .sky file must already be `sky fmt`-clean.
+    let files = project_sky_files(dir);
+    let mut unformatted = Vec::new();
+    for f in &files {
+        if let Ok(src) = std::fs::read_to_string(f) {
+            if !fmt::is_formatted(&src) {
+                unformatted.push(f.clone());
+            }
+        }
+    }
+    if unformatted.is_empty() {
+        println!("  ✓ fmt      ({} file(s) clean)", files.len());
+    } else {
+        println!(
+            "  ✗ fmt      {} file(s) need `sky fmt`:",
+            unformatted.len()
+        );
+        for f in unformatted.iter().take(10) {
+            println!("             {}", rel_display(dir, f));
+        }
+        failed.push("fmt");
+    }
+
+    // 2. check + build — type-checks + `go build`s + emits the (production)
+    //    binary. This single build covers both "type checking" and "production
+    //    build": `sky check` ≡ `sky build` minus the artefact.
+    let opts = BuildOptions {
+        repo_root,
+        example_dir: dir.to_path_buf(),
+        out_dir_name: out_dir_name.clone(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: None,
+        progress: false,
+    };
+    let report = build_example(&opts);
+    if report.emitted && report.go_build_ok {
+        println!("  ✓ check    (type-checks + builds → {out_dir_name}/)");
+    } else if !report.emitted {
+        println!("  ✗ check    {}", report.note.trim());
+        failed.push("check");
+    } else {
+        println!(
+            "  ✗ build    go build failed:\n{}",
+            report.go_build_stderr.trim()
+        );
+        failed.push("build");
+    }
+
+    // 3. tests — run every tests/*.sky suite (only when a build succeeded, so a
+    //    type error isn't reported twice).
+    let suites = test_suites(dir);
+    if suites.is_empty() {
+        println!("  – tests    (none under tests/)");
+    } else if failed.contains(&"check") {
+        println!("  – tests    (skipped — fix the type error first)");
+    } else {
+        let mut test_fail = 0;
+        for suite in &suites {
+            match testrunner::run_test(suite, &out_dir_name) {
+                Ok(run) if run.exit_code == Some(0) => {}
+                Ok(run) => {
+                    println!(
+                        "  ✗ test     {} ({})",
+                        rel_display(dir, suite),
+                        if run.note.is_empty() {
+                            "failed".into()
+                        } else {
+                            run.note
+                        }
+                    );
+                    test_fail += 1;
+                }
+                Err(e) => {
+                    println!("  ✗ test     {}: {e}", rel_display(dir, suite));
+                    test_fail += 1;
+                }
+            }
+        }
+        if test_fail == 0 {
+            println!("  ✓ tests    ({} suite(s) passed)", suites.len());
+        } else {
+            failed.push("tests");
+        }
+    }
+
+    println!();
+    if failed.is_empty() {
+        println!("✓ verify passed — ready to ship");
+        ExitCode::SUCCESS
+    } else {
+        println!("✗ verify failed: {}", failed.join(", "));
+        ExitCode::FAILURE
+    }
+}
+
+/// Project `.sky` files under the configured source root + `tests/`, skipping
+/// generated dirs. Used by `sky verify`'s fmt phase.
+fn project_sky_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let root = project::configured_source_root(dir);
+    walk_sky(&dir.join(root), &mut out);
+    walk_sky(&dir.join("tests"), &mut out);
+    out.sort();
+    out
+}
+
+fn test_suites(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_sky(&dir.join("tests"), &mut out);
+    out.sort();
+    out
+}
+
+fn walk_sky(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if p.is_dir() {
+            if !matches!(name, "sky-out" | "sky-out-rust" | ".skycache" | ".skydeps" | ".git") {
+                walk_sky(&p, out);
+            }
+        } else if name.ends_with(".sky") {
+            out.push(p);
+        }
+    }
+}
+
+fn rel_display(base: &Path, p: &Path) -> String {
+    p.strip_prefix(base)
+        .unwrap_or(p)
+        .display()
+        .to_string()
 }
 
 /// Resolve the set of project dirs to verify from `cwd` + an optional target:
@@ -2771,6 +2968,41 @@ mod tests {
         assert!(wants_help(&["myproj".to_string(), "--help".to_string()]));
         assert!(!wants_help(&["myproj".to_string()]));
         assert!(!wants_help(&[]));
+    }
+
+    #[test]
+    fn verify_walk_sky_skips_generated_dirs() {
+        // #11: the fmt phase must not scan generated output (sky-out/.skycache).
+        let dir = std::env::temp_dir().join(format!("sky-verify-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("sky-out")).unwrap();
+        std::fs::create_dir_all(dir.join(".skycache")).unwrap();
+        std::fs::write(dir.join("src/Main.sky"), "module Main exposing (main)\n").unwrap();
+        std::fs::write(dir.join("sky-out/gen.sky"), "x\n").unwrap();
+        std::fs::write(dir.join(".skycache/c.sky"), "x\n").unwrap();
+        let mut out = Vec::new();
+        walk_sky(&dir, &mut out);
+        assert_eq!(out.len(), 1, "only src/Main.sky, not generated dirs: {out:?}");
+        assert!(out[0].ends_with("Main.sky"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn verify_single_project_routing() {
+        // #11: cwd-with-sky.toml (no examples/) → single-project gate; a cwd with
+        // examples/ → None (the build+run sweep handles it).
+        let dir = std::env::temp_dir().join(format!("sky-verify-route-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sky.toml"), "name=\"x\"\n").unwrap();
+        assert!(single_project_target(&dir, None).is_some());
+        std::fs::create_dir_all(dir.join("examples")).unwrap();
+        assert!(
+            single_project_target(&dir, None).is_none(),
+            "a repo with examples/ runs the sweep, not the single-project gate"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

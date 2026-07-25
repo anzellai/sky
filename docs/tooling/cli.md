@@ -56,6 +56,26 @@ The stop fires whichever comes first: normal exit / panic, a signal
 profiling is armed purely by an env var the flag sets, and the emitted Go is
 byte-identical either way.
 
+### `sky verify [project]`
+
+The one-command pre-release gate for a project. Run inside a project dir (or
+pass its path) and it runs, in order, stopping non-zero on the first failure:
+
+1. **fmt** — every `.sky` file under the source root + `tests/` is already
+   `sky fmt`-clean.
+2. **check** — type-checks + `go build`s and emits the production binary
+   (`sky check` ≡ `sky build` minus the artefact, so this one build covers both).
+3. **test** — every `tests/*.sky` suite passes.
+
+```sh
+sky verify           # gate the current project
+sky verify path/to/app
+```
+
+In the **compiler repo** (a dir with `examples/`), `sky verify` instead builds
+AND runs every example — the runtime smoke sweep. `sky verify --help` documents
+both modes.
+
 ### `sky check [path]`
 
 Fully validate the program. `sky check` is a strict superset of `sky build`:

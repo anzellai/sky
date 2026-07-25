@@ -1354,6 +1354,7 @@ sky run src/Main.sky               # build + run
 sky run src/Main.sky --profile     # + runtime profiling (cpu/heap/goroutines + REPORT.md); --profile-timeout <dur> auto-dumps on hang
 sky watch src/Main.sky             # file-watch rebuild + restart
 sky check src/Main.sky             # type-check + go build
+sky verify                         # project pre-release gate: fmt + check + build + tests (one command)
 sky fmt src/Main.sky               # opinionated formatter
 sky test tests/MyTest.sky          # Sky.Test runner
 sky db status                      # Std.Db migrations: applied / pending / drift
