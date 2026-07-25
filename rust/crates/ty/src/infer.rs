@@ -567,12 +567,68 @@ impl<'a> Infer<'a> {
                 // + LSP) is untouched and acceptance stays byte-identical; it only
                 // ADDS already-committed field info, so it can't clash.
                 if self.use_inferred {
-                    if let Expr::Var(Res::Def(d)) = &body.exprs[*base] {
-                        if let Some(s) = self.world.record_result_sigs.get(d) {
-                            let s = s.clone();
-                            let full = self.instantiate(&s);
-                            self.unify(tb, full);
+                    match &body.exprs[*base] {
+                        Expr::Var(Res::Def(d)) => {
+                            if let Some(s) = self.world.record_result_sigs.get(d) {
+                                let s = s.clone();
+                                let full = self.instantiate(&s);
+                                self.unify(tb, full);
+                            }
                         }
+                        // #166: the base is a PARAM of this def. Close the update's
+                        // row with that param's DECLARED record from the def's
+                        // signature — the local-param analogue of the `Res::Def`
+                        // close above. The lowering path (unlike the check path)
+                        // does NOT seed params from the sig, so without this an
+                        // annotated `{ model | f = v }` leaves the row open and
+                        // reads back as the NARROW subset of updated fields, and
+                        // codegen drops every un-updated field (silent for value
+                        // fields; a nil-interface `case` panic for an ADT field).
+                        // SCOPED to the single updated param + additive (only
+                        // unifies already-committed field info), so it does NOT
+                        // perturb unrelated inference the way whole-def param
+                        // seeding did (that broke a `List (Dict String String)`
+                        // field in 12-skyvote/16-skychess). Only a DECLARED record
+                        // param closes; a bare type var adds nothing.
+                        Expr::Var(Res::Local(id)) => {
+                            let id = *id;
+                            if let Some(def) = self.self_def {
+                                let pidx = body.params.iter().position(|p| {
+                                    matches!(&body.pats[*p], Pattern::Var(pid) if *pid == id)
+                                });
+                                if let (Some(idx), Some(scheme)) =
+                                    (pidx, self.world.value_sigs.get(&def).cloned())
+                                {
+                                    let mut sub: HashMap<String, TyVarId> = HashMap::new();
+                                    for name in &scheme.vars {
+                                        if name.as_str() != "any" {
+                                            let fresh = self.uf.fresh_flex();
+                                            sub.insert(name.as_str().to_string(), fresh);
+                                        }
+                                    }
+                                    let mut cur = &scheme.ty;
+                                    let mut ok = true;
+                                    for _ in 0..idx {
+                                        match cur {
+                                            Ty::Fun(_, b) => cur = b,
+                                            _ => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if ok {
+                                        if let Ty::Fun(a, _) = cur {
+                                            if matches!(a.as_ref(), Ty::Record(..)) {
+                                                let av = self.ty_to_var(a, &mut sub);
+                                                self.unify(tb, av);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 tb

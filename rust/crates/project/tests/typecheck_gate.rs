@@ -1137,6 +1137,72 @@ fn issue164_same_named_aliases_in_different_modules_not_conflated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Issue #166: a record update on an ANNOTATED param, returned in a tuple
+/// (`( { model | f = v }, Cmd )` — the TEA update shape), must keep the base's
+/// FULL record type. Before the fix, the lowering path (unlike the check path)
+/// never seeded the annotated param from its signature, so the update's row
+/// stayed open and read back as the NARROW subset of updated fields; codegen
+/// emitted that narrow anonymous struct as the tuple's element type and coerced
+/// the full record through it, DROPPING every un-updated field. Silent for value
+/// fields; for the `Status (List Int)` ADT field here the dropped value is a nil
+/// interface, so the next `case` on it panics with `Unreachable`. The guard reads
+/// the emitted Go and asserts the tuple return carries the full record `_R`, not
+/// a narrowed `rt.T2[struct{…}]`.
+#[test]
+fn issue166_record_update_on_annotated_param_keeps_full_record() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "i166",
+        "module Main exposing (main)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Log exposing (println)\n\n\
+         type Status a = Loading | Loaded a | Failed String\n\n\
+         type alias M =\n\
+         \x20   { path : String\n\
+         \x20   , items : Status (List Int)\n\
+         \x20   , adding : Maybe String\n\
+         \x20   }\n\n\
+         handle : M -> ( M, Cmd msg )\n\
+         handle model =\n\
+         \x20   ( { model | adding = Just \"\", path = \"x\" }, Cmd.none )\n\n\
+         main =\n\
+         \x20   let\n\
+         \x20       m0 = { path = \"a\", items = Loaded [ 1, 2 ], adding = Nothing }\n\
+         \x20       ( m1, _ ) = handle m0\n\
+         \x20       report =\n\
+         \x20           case m1.items of\n\
+         \x20               Loading -> \"loading\"\n\
+         \x20               Loaded xs -> \"loaded \" ++ String.fromInt (List.length xs)\n\
+         \x20               Failed e -> \"failed \" ++ e\n\
+         \x20   in\n\
+         \x20   println report\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        report.emitted && report.go_build_ok,
+        "issue #166: expected type-check + go build to succeed; note: {}, go_stderr: {}",
+        report.note, report.go_build_stderr
+    );
+    let go = std::fs::read_to_string(out.join("main.go")).unwrap_or_default();
+    // The `handle` update must NOT narrow to an anon struct of only the updated
+    // fields (which would drop `items` → nil ADT → runtime `Unreachable` panic).
+    assert!(
+        !go.contains("rt.T2[struct{"),
+        "issue #166: record update narrowed the tuple to an anonymous struct \
+         (drops un-updated fields); emitted Go still narrows"
+    );
+    assert!(
+        go.contains("Main_M_R"),
+        "issue #166: the update's tuple return must carry the full `Main_M_R` \
+         record type"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// Helper: build a single-file program and assert it type-checks AND `go build`
 /// succeeds. Used by the boundary-codegen regressions (#161/#162/#163) — these
 /// fail in the Haskell oracle too, so they can't be oracle-matched golden
