@@ -21,7 +21,7 @@ pub use db::{ImportSource, SkyDb, SourceDb};
 pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
 pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
-pub use kernel::{KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED};
+pub use kernel::{kernel_functions, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED};
 pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, RefKind, RefOcc, ResolveResult,
     ScopeNameKind, TypeOcc,

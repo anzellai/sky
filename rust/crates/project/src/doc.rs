@@ -27,6 +27,14 @@ pub fn render_module(
     module_arg: &str,
 ) -> Result<String, String> {
     let Some(path) = resolve_module_file(repo_root, project_dir, module_arg) else {
+        // Not a .sky-source module — it may be a KERNEL module (Std.Live, Std.Tui,
+        // …): its bindings live in the Go runtime, not Sky source, so there's no
+        // file to parse. Render its exported names from the kernel registry so it
+        // is still queryable (#1). Bindings with a .sky surface fall through here
+        // only when the surface is absent.
+        if let Some(page) = render_kernel_module(module_arg) {
+            return Ok(page);
+        }
         return Err(format!(
             "sky doc: no module named `{module_arg}` under sky-stdlib/ or src/.\n\
              Try `sky doc --list` to see every documented module."
@@ -35,6 +43,41 @@ pub fn render_module(
     let src = std::fs::read_to_string(&path)
         .map_err(|e| format!("sky doc: cannot read {}: {e}", path.display()))?;
     Ok(render_source(&src))
+}
+
+/// Kernel-only modules: `(full_name, pseudo)` from the kernel registry whose
+/// full name has no `.sky` source file — the ones the file scan misses.
+fn kernel_only_modules() -> Vec<(&'static str, &'static [&'static str])> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (full, pseudo) in hir::KERNEL_MODULES {
+        if !seen.insert(*full) {
+            continue;
+        }
+        if let Some(funcs) = hir::kernel_functions(pseudo) {
+            if !funcs.is_empty() {
+                out.push((*full, funcs));
+            }
+        }
+    }
+    out
+}
+
+/// Render a kernel module's page: its exported binding names, noting they're
+/// runtime-provided. Matches by full name or trailing segment (`Live` →
+/// `Std.Live`). Returns `None` when `module_arg` names no kernel module.
+fn render_kernel_module(module_arg: &str) -> Option<String> {
+    let suffix = format!(".{module_arg}");
+    let (full, funcs) = kernel_only_modules().into_iter().find(|(full, _)| {
+        *full == module_arg || full.ends_with(&suffix)
+    })?;
+    let mut out = format!("── {full} ──\n\n");
+    out.push_str("Runtime-provided module (its bindings live in the Sky runtime,\n");
+    out.push_str("not in Sky source). Exported bindings:\n\n");
+    for f in funcs {
+        out.push_str(&format!("  {f}\n"));
+    }
+    Some(out)
 }
 
 /// Render a static doc-site into `out_dir` for `sky doc --serve`: an
@@ -258,6 +301,15 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
             stdlib.push(name);
         }
     }
+    // Kernel-only stdlib modules (Std.Live, Std.Tui, …) have no .sky file, so the
+    // file scan misses them — add them so every stdlib module is listed (#1).
+    let have: std::collections::HashSet<&str> = stdlib.iter().map(String::as_str).collect();
+    let kernel_extra: Vec<String> = kernel_only_modules()
+        .into_iter()
+        .map(|(full, _)| full.to_string())
+        .filter(|full| !have.contains(full.as_str()))
+        .collect();
+    stdlib.extend(kernel_extra);
     for v in [&mut project, &mut stdlib] {
         v.sort();
         v.dedup();
@@ -674,6 +726,24 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kernel_only_module_is_queryable() {
+        // #1: Std.Live is a kernel module (no .sky file); it must still be
+        // renderable + listed so every stdlib module is queryable.
+        let mods = kernel_only_modules();
+        assert!(
+            mods.iter().any(|(full, _)| *full == "Std.Live"),
+            "Std.Live must appear among kernel-only modules"
+        );
+        let page = render_kernel_module("Std.Live").expect("Std.Live must render");
+        assert!(page.contains("Std.Live"));
+        assert!(page.contains("app"), "must list the `app` binding");
+        // Trailing-segment match too.
+        assert!(render_kernel_module("Live").is_some());
+        // A non-module returns None.
+        assert!(render_kernel_module("DefinitelyNotAModule").is_none());
+    }
 
     #[test]
     fn extracts_signatures_and_docs() {
