@@ -27,11 +27,13 @@ pub fn render_module(
     module_arg: &str,
 ) -> Result<String, String> {
     let Some(path) = resolve_module_file(repo_root, project_dir, module_arg) else {
-        // Not a .sky-source module — it may be a KERNEL module (Std.Live, Std.Tui,
-        // …): its bindings live in the Go runtime, not Sky source, so there's no
-        // file to parse. Render its exported names from the kernel registry so it
-        // is still queryable (#1). Bindings with a .sky surface fall through here
-        // only when the surface is absent.
+        // Not a .sky-source module. Prefer the CURATED kernel API (full typed
+        // signatures + example) for a kernel module (Std.Live, Std.Tui, Std.Jobs);
+        // fall back to the bare kernel name-list for any kernel module we haven't
+        // documented yet. Either keeps every stdlib module queryable (#1).
+        if let Some(m) = crate::kernel_api::for_module(module_arg) {
+            return Ok(crate::kernel_api::render(m));
+        }
         if let Some(page) = render_kernel_module(module_arg) {
             return Ok(page);
         }
@@ -42,7 +44,21 @@ pub fn render_module(
     };
     let src = std::fs::read_to_string(&path)
         .map_err(|e| format!("sky doc: cannot read {}: {e}", path.display()))?;
-    Ok(render_source(&src))
+    let mut page = render_source(&src);
+    // A module that has BOTH a .sky surface AND kernel-only verbs
+    // (`Sky.Http.Server`: `param`/`static` are in the .sky, `get`/`post`/`listen`
+    // are kernel) — append the curated kernel bindings so `sky doc` shows the
+    // whole API, not just the .sky half.
+    if let Some(m) = crate::kernel_api::for_module(module_arg) {
+        let header = header_name(&std::fs::read_to_string(&path).unwrap_or_default());
+        if header.as_deref() == Some(m.module) {
+            page.push_str("\n── kernel-provided bindings ──\n\n");
+            for b in m.bindings {
+                page.push_str(&format!("  {}\n      {}\n\n", b.sig, b.summary));
+            }
+        }
+    }
+    Ok(page)
 }
 
 /// Kernel-only modules: `(full_name, pseudo)` from the kernel registry whose
@@ -302,13 +318,20 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
         }
     }
     // Kernel-only stdlib modules (Std.Live, Std.Tui, …) have no .sky file, so the
-    // file scan misses them — add them so every stdlib module is listed (#1).
+    // file scan misses them — add them so every stdlib module is listed (#1). Both
+    // sources: the curated kernel-API table AND the kernel-function registry.
     let have: std::collections::HashSet<&str> = stdlib.iter().map(String::as_str).collect();
-    let kernel_extra: Vec<String> = kernel_only_modules()
-        .into_iter()
-        .map(|(full, _)| full.to_string())
-        .filter(|full| !have.contains(full.as_str()))
-        .collect();
+    let mut kernel_extra: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in crate::kernel_api::KERNEL_API {
+        if !have.contains(m.module) {
+            kernel_extra.insert(m.module.to_string());
+        }
+    }
+    for (full, _) in kernel_only_modules() {
+        if !have.contains(full) {
+            kernel_extra.insert(full.to_string());
+        }
+    }
     stdlib.extend(kernel_extra);
     for v in [&mut project, &mut stdlib] {
         v.sort();
@@ -726,6 +749,49 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curated_kernel_api_renders_full_sigs_and_example() {
+        // Std.Live must render typed signatures + an example, not bare names.
+        let m = crate::kernel_api::for_module("Std.Live").expect("Std.Live curated");
+        let page = crate::kernel_api::render(m);
+        assert!(page.contains("app :"), "must show a typed `app` signature");
+        assert!(page.contains("-> Task Error ()"));
+        assert!(page.contains("Example:"), "must include a usage example");
+        // Trailing-segment lookup works too.
+        assert!(crate::kernel_api::for_module("Live").is_some());
+    }
+
+    /// SYNC GATE: every binding the compiler registers for a kernel module in
+    /// `hir::KERNEL_FUNCTIONS` must have a curated doc entry — so a stdlib change
+    /// that adds/renames a kernel binding can't silently ship undocumented.
+    /// (Modules NOT in KERNEL_FUNCTIONS, e.g. Std.Tui, are covered by the CLAUDE.md
+    /// rule; this gate enforces the ones the registry knows about.)
+    #[test]
+    fn kernel_api_covers_registered_kernel_functions() {
+        for (full, pseudo) in hir::KERNEL_MODULES {
+            // Only the kernel-ONLY modules we've committed to documenting (a dual
+            // module like Sky.Http.Server documents part of its surface in its .sky
+            // file, so completeness can't be required here).
+            let Some(api) = crate::kernel_api::for_module(full) else {
+                continue;
+            };
+            if !api.kernel_only {
+                continue;
+            }
+            let Some(funcs) = hir::kernel_functions(pseudo) else {
+                continue;
+            };
+            for f in funcs {
+                assert!(
+                    api.bindings.iter().any(|b| b.name == *f),
+                    "kernel binding `{full}.{f}` is registered in KERNEL_FUNCTIONS but \
+                     has no doc entry in kernel_api.rs — add it (see CLAUDE.md \
+                     \"Kernel-module doc sync\")"
+                );
+            }
+        }
+    }
 
     #[test]
     fn kernel_only_module_is_queryable() {

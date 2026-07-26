@@ -3004,3 +3004,22 @@ Sky code in user projects.
 | LSP capabilities | `docs/tooling/lsp.md` |
 | `sky.toml` schema | `docs/sky-toml.md` |
 | Brand-new module | "What's in the box" in `README.md` |
+
+### Kernel-module doc sync (non-negotiable)
+
+Most stdlib modules are Sky source (`sky-stdlib/**/*.sky`), so `sky doc`
+parses their signatures + `-- |` summaries straight from the file — those
+stay correct for free. But the KERNEL-ONLY modules — `Std.Live`, `Std.Tui`,
+`Std.Jobs`, and the kernel-only verbs of `Sky.Http.Server`
+(`get`/`post`/`listen`/…) — have NO `.sky` file; their bindings live in the Go
+runtime. Their `sky doc` API (typed signatures + summaries + a usage example)
+is hand-curated in **`rust/crates/project/src/kernel_api.rs`**.
+
+**When you add / rename / re-type a kernel binding (a new `("Pseudo", &[…])`
+entry or member in `hir::KERNEL_FUNCTIONS`, or a change to `Live.app`'s cfg
+shape, etc.), update `kernel_api.rs` in the SAME commit.** The gate
+`kernel_api_covers_registered_kernel_functions` (in
+`crates/project/src/doc.rs`) fails CI if a binding registered in
+`KERNEL_FUNCTIONS` for a `kernel_only` module has no doc entry — so a drifted
+kernel doc can't ship. Modules NOT in `KERNEL_FUNCTIONS` (e.g. `Std.Tui`) rely
+on this rule rather than the gate; keep them current by hand.

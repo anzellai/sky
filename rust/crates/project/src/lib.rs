@@ -10,6 +10,7 @@ mod build;
 mod doc;
 mod driver;
 mod ffi_ops;
+mod kernel_api;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, emit_example_source,
     enumerate_skydep_files, load_ffi_surface, BuildOptions, BuildReport,
