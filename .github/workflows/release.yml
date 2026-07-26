@@ -99,7 +99,10 @@ jobs:
               7z a "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
               ;;
             *)
-              tar czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
+              # --owner=0 --group=0 --numeric-owner: stamp root:root, not the CI
+              # runner's UID/GID, so the installer never has to chown on extract
+              # (unprivileged containers can't, and it blocked `sky` installs).
+              tar --owner=0 --group=0 --numeric-owner -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
               ;;
           esac
           ls -la

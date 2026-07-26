@@ -93,7 +93,10 @@ install_sky() {
         if [ "$PLATFORM" = "windows" ]; then
             unzip -q "$ARCHIVE"
         else
-            tar xzf "$ARCHIVE"
+            # --no-same-owner: never try to restore the archive's UID/GID. An
+            # unprivileged container (no CAP_CHOWN) can't chown to the builder's
+            # uid and tar would fail the whole extraction. We only need the files.
+            tar --no-same-owner -xzf "$ARCHIVE"
         fi
         DOWNLOADED=1
     elif curl -fsSL "$RAW_URL" -o "$TMPDIR/${ARTIFACT}${EXT}" 2>/dev/null; then

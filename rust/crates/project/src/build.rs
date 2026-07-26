@@ -616,6 +616,29 @@ struct GoBuildAttempt {
     stderr: String,
 }
 
+/// `GOFLAGS` for `go build`. Preserves whatever the user set (so a container's
+/// `-buildvcs=false` survives — the old hard-coded `GOFLAGS=-mod=mod` OVERWROTE
+/// the env, so Go then tried to VCS-stamp a Go-workspace synthetic parent repo
+/// and failed), then forces the two Sky always needs: `-mod=mod` (Sky manages
+/// the emitted `go.mod`) and `-buildvcs=false` (the emitted Go is generated —
+/// there is never a source revision to stamp, and stamping breaks inside odd
+/// git/workspace boundaries). Sky's values replace any conflicting user `-mod=`
+/// / `-buildvcs=`; every other user flag is kept.
+fn sky_build_goflags() -> String {
+    sky_build_goflags_from(&std::env::var("GOFLAGS").unwrap_or_default())
+}
+
+fn sky_build_goflags_from(existing: &str) -> String {
+    let mut flags: Vec<String> = existing
+        .split_whitespace()
+        .filter(|f| !f.starts_with("-mod=") && !f.starts_with("-buildvcs="))
+        .map(String::from)
+        .collect();
+    flags.push("-mod=mod".to_string());
+    flags.push("-buildvcs=false".to_string());
+    flags.join(" ")
+}
+
 fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
     let mut cmd = Command::new("go");
     cmd.arg("build")
@@ -623,7 +646,7 @@ fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuil
         .arg(bin_name)
         .arg(".")
         .current_dir(out_dir)
-        .env("GOFLAGS", "-mod=mod")
+        .env("GOFLAGS", sky_build_goflags())
         .env("CGO_ENABLED", cgo);
     // Unprivileged environments (unwritable $HOME) can't use Go's default
     // build/module caches — route them to the writable Sky cache (#7). No-op on
@@ -1251,7 +1274,26 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod sky_toml_tests {
-    use super::{configured_bin_name, configured_source_root, read_sky_toml_config};
+    use super::{
+        configured_bin_name, configured_source_root, read_sky_toml_config, sky_build_goflags_from,
+    };
+
+    #[test]
+    fn goflags_preserve_user_flags_and_force_mod_and_buildvcs() {
+        // Empty env → just Sky's two required flags.
+        assert_eq!(sky_build_goflags_from(""), "-mod=mod -buildvcs=false");
+        // A user's -buildvcs=false is honoured (dedup — Sky forces it anyway);
+        // an unrelated flag is kept.
+        assert_eq!(
+            sky_build_goflags_from("-buildvcs=false -tags netgo"),
+            "-tags netgo -mod=mod -buildvcs=false"
+        );
+        // A conflicting user -mod / -buildvcs is replaced by Sky's values.
+        assert_eq!(
+            sky_build_goflags_from("-mod=vendor -buildvcs=true"),
+            "-mod=mod -buildvcs=false"
+        );
+    }
 
     #[test]
     fn live_and_auth_keys_map_to_runtime_default_suffixes() {
