@@ -713,6 +713,18 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
 /// `Sky.Http.Server.WebSocket` all match; `Std.LiveX` / `Sky.Http.ServerX`
 /// (a different final segment) do not.
 fn program_needs_console(db: &dyn SkyDb, entry: base::ModuleId) -> bool {
+    // Building the bundled inline console itself: suppress the blank
+    // `_ "sky-app/rt/console_app"` self-import. The emitted package is
+    // transformed to `package console_app` (see
+    // scripts/regenerate-console.sh), so a console_app that imported
+    // `sky-app/rt/console_app` would import itself — `go build` rejects
+    // the cycle. Mirrors the oracle's `globalIsInlineConsoleBuild` gate
+    // (Compile.hs). The console still needs Std.Live, so the import
+    // scan below WOULD return true; this env override is what lets the
+    // console be a Live app without self-importing.
+    if std::env::var("SKY_BUILD_IS_INLINE_CONSOLE").as_deref() == Ok("1") {
+        return false;
+    }
     let mut seen: HashSet<base::ModuleId> = HashSet::new();
     let mut stack: Vec<base::ModuleId> = vec![entry];
     while let Some(m) = stack.pop() {

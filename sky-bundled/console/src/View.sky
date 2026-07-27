@@ -16,6 +16,7 @@ import LogsTab exposing (viewLogsTab)
 import MetricsTab exposing (viewMetricsTab)
 import TracesTab exposing (viewTracesTab)
 import ErrorsTab exposing (viewErrorsTab)
+import AnalyticsTab exposing (analyticsView)
 
 
 -- ─── Palette ─────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ tabStrip active =
         ]
         (List.map
             (tabButton active)
-            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab ])
+            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab, AnalyticsTab ])
 
 
 -- ─── Global filter strip (v0.16.18 #558-PR1 + PR2) ──────────────
@@ -582,7 +583,13 @@ content model =
                     viewErrorsTab model
 
                 else
-                    errorsView model.errors)
+                    errorsView model.errors
+
+            -- Host-app product analytics (Std.Analytics). Same view in
+            -- both modes — the data is the app's own event store, read
+            -- via the parent's /_sky/console/api/analytics endpoint.
+            AnalyticsTab ->
+                analyticsView model.analytics)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────

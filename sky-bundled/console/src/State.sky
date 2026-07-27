@@ -21,6 +21,7 @@ type Tab
     | LogsTab
     | TracesTab
     | ErrorsTab
+    | AnalyticsTab
 
 
 tabLabel : Tab -> String
@@ -41,6 +42,9 @@ tabLabel tab =
 
         ErrorsTab ->
             "Errors"
+
+        AnalyticsTab ->
+            "Analytics"
 
 -- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
 -- Overview tab payload — wire shape mirrors `OverviewResponse`
@@ -102,6 +106,37 @@ type alias ErrorRow =
     { count : Int
     , message : String
     }
+
+-- Std.Analytics tab payloads — wire shape mirrors the parent's
+-- `GET /_sky/console/api/analytics` handler (HandleConsoleAnalytics
+-- in runtime-go/rt/console_analytics.go). Because the embedded
+-- console runs IN-PROCESS with the host app, that handler reads the
+-- SAME analytics store the app writes — no separate DB, no env
+-- plumbing. `total` / `uniqueUsers` are scalar aggregates; `counts`
+-- is per-event-name frequency (most frequent first); `recent` is the
+-- newest events for the live stream.
+type alias EventCount =
+    { event : String
+    , count : Int
+    }
+
+type alias AnalyticsEvent =
+    { ts : Int
+    , event : String
+    , userId : String
+    }
+
+type alias Analytics =
+    { total : Int
+    , uniqueUsers : Int
+    , counts : List EventCount
+    , recent : List AnalyticsEvent
+    }
+
+
+emptyAnalytics : Analytics
+emptyAnalytics =
+    { total = 0, uniqueUsers = 0, counts = [], recent = [] }
 
 -- Per-service rollup row consumed by the multi-service Overview
 -- (v0.16.4 B5). One ServiceStat per distinct service_name in the
@@ -300,6 +335,7 @@ type alias Store =
     , readFilteredMetrics : String -> Task Error (List MetricRow)
     , readFilteredTraces : String -> Task Error (List TraceRow)
     , readFilteredErrors : String -> Task Error (List ErrorRow)
+    , readAnalytics : () -> Task Error Analytics
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
@@ -329,6 +365,7 @@ type alias Model =
     , range : Range
     , nowMs : Int
     , globalQuery : String
+    , analytics : Analytics
     }
     -- v0.16.18 #558-PR1: global time-range filter applied across
     -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
@@ -370,6 +407,7 @@ type Msg
     | GotMetrics (Result Error (List MetricRow))
     | GotTraces (Result Error (List TraceRow))
     | GotErrors (Result Error (List ErrorRow))
+    | GotAnalytics (Result Error Analytics)
     | LogFilterQuery String
     | LogFilterToggleLevel String
     | LogFilterPickSession String

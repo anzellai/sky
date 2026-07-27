@@ -12,6 +12,7 @@ module HubStore exposing (hubStore, hubCurrentIdentity)
 -- (set by the hub at Run() startup) and forwards the query.
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Sky.Ffi as Ffi
 import State exposing
     ( Store
@@ -23,6 +24,8 @@ import State exposing
     , LogFilter
     , ServiceStat
     , Identity
+    , Analytics
+    , emptyAnalytics
     )
 
 
@@ -51,6 +54,11 @@ hubStore dbPath =
     , readFilteredMetrics = \svc -> hubReadFilteredMetrics dbPath svc
     , readFilteredTraces = \svc -> hubReadFilteredTraces dbPath svc
     , readFilteredErrors = \svc -> hubReadFilteredErrors dbPath svc
+    -- Product analytics is per-host-app (the app's own Std.Analytics
+    -- event store), not aggregated into the hub's console-hot.db, so
+    -- the hub Store surfaces an empty payload. The embedded console
+    -- (httpStore) is where the Analytics tab renders real data.
+    , readAnalytics = \_ -> Task.succeed emptyAnalytics
     }
 
 

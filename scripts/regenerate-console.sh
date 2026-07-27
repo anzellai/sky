@@ -110,6 +110,25 @@ say "running sky build against sky-bundled/console/src/Main.sky"
 # root (which would clobber the compiler binary; see CLAUDE.md
 # "Never run sky build from the repo root").
 #
+# The console ships TWO `module Main` entries — Main.sky (Sky.Live) and
+# MainTui.sky (Sky.Tui) — sharing State.sky / View.sky / the tab
+# modules. The Rust compiler discovers EVERY `src/*.sky` as a project
+# module, so if both entries are present it sees two `main`s and the
+# Tui one can win — the emitted `func main()` calls `Tui_app` and the
+# Live-only bindings (`viewWrapped`, `Ui.layout`) get DCE'd, producing a
+# Tui-flavoured console_app that renders an empty body when mounted as a
+# Live sub-app. `crates/sky/src/bundled.rs::materialise` handles this
+# for the runtime `sky console` build by DROPPING the non-target entry;
+# we mirror that here — move MainTui.sky aside for the duration of the
+# Live build so the compiler sees exactly one `module Main`.
+_tui_entry="$CONSOLE_SRC/src/MainTui.sky"
+_tui_stash="$CONSOLE_SRC/MainTui.sky.stash"
+if [ -f "$_tui_entry" ]; then
+    mv -f "$_tui_entry" "$_tui_stash"
+    # Always restore, even on build failure / early exit.
+    trap 'mv -f "$_tui_stash" "$_tui_entry" 2>/dev/null || true' EXIT
+fi
+#
 # v0.16.4 — SKY_BUILD_IS_INLINE_CONSOLE=1 tells the compiler to skip
 # the otherwise-automatic `_ "sky-app/rt/console_app"` self-import
 # in the emitted `main.go`. Without this, the post-transform

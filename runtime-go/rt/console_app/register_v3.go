@@ -39,18 +39,30 @@ func init() {
 // generated `main.go` of any user Sky.Live app would put on the cfg
 // record — rt.Field(cfg, "Init") etc. resolves them via reflect.
 //
-// CFG SHAPE
+// CFG SHAPE (Rust-compiler symbol names — the primary toolchain)
 //
-//   - Init: typed wrapper around the generic `init_[T1 any](_req T1)`.
-//     Wrapping closes the type parameter so reflect sees a concrete
-//     `func(any) SkyTuple2` callable through sky_call.
-//   - Update: the bundled `update(msg State_Msg, model State_Model_R) SkyTuple2`.
-//     sky_call2 handles the 2-arg dispatch via reflect; the reflect
-//     path coerces opaque msg + model values back to the typed shape.
-//   - View: `viewWrapped(model State_Model_R) SkyValue`. sky_call's
-//     reflect path coerces model back to State_Model_R.
-//   - Subscriptions: `subscriptions(model State_Model_R) SkySub` —
-//     reflect-coerces model back to State_Model_R.
+// The bundled console's Go is emitted by `sky build` (Rust) via
+// scripts/regenerate-console.sh — which builds the Sky.Live entry
+// (Main.sky) with the sibling Sky.Tui entry (MainTui.sky) dropped, so
+// the Live `main` wins and the Live-only bindings survive DCE. The
+// entry points carry the Rust codegen's module-prefixed names + typed
+// signatures, and are referenced DIRECTLY here exactly as a real
+// Rust-compiled Sky.Live app's generated `main()` passes them to
+// rt.Live_app:
+//
+//   - Init: `Main_init_(_req any) rt.T2[State_Model_R, any]` — the Live
+//     `init _req` is row-polymorphic so its param lowers to `any`; the
+//     console ignores the request (it reads SKY_PARENT_URL from the
+//     environment).
+//   - Update: `Main_update(msg State_Msg, model State_Model_R) rt.T2[State_Model_R, any]`
+//     — the mount's sky_call2 reflect path coerces the opaque msg +
+//     model back to the typed shape.
+//   - View: `Main_viewWrapped(model State_Model_R) any` — the Live
+//     wrapper that returns `Ui.layout [] (view model)`, i.e. a
+//     renderable `Html`. (The bare `view` in View.sky returns a raw
+//     `Element` for the Tui backend; the Live mount's HtmlToVNode needs
+//     the layout-wrapped Html, so we point at the wrapper.)
+//   - Subscriptions: `Main_subscriptions(model State_Model_R) any`.
 //   - Store: "memory" — the inline console doesn't need to survive
 //     restarts; admin tools that need history use the persistent
 //     telemetry store the console READS from.
@@ -77,23 +89,24 @@ func init() {
 //   - Head: nil. The inline console body lives inside the host's HTML
 //     page wrapper.
 func buildInlineConsoleCfg() any {
-	// Wrap the generic init_ to a concrete `func(any) SkyTuple2`
-	// closure. The bundled console's init ignores _req's contents —
-	// it only reads SKY_PARENT_URL — so any value passed through
-	// here flows safely. The wrapping ALSO lets us elide the type
-	// argument that reflect can't infer (`init_[T1 any](_req T1)`
-	// has a phantom T1).
-	initFn := func(req any) rt.SkyTuple2 {
-		return init_[any](req)
-	}
-
 	return map[string]any{
-		"Init":          initFn,
-		"Update":        update,
-		"View":          viewWrapped,
-		"Subscriptions": subscriptions,
-		"Store":         "memory",
-		"Ttl":           "30m",
+		"Init":          Main_init_,
+		"Update":        Main_update,
+		"View":          Main_viewWrapped,
+		"Subscriptions": Main_subscriptions,
+		// Routes + NotFound mirror the console's Sky `main` cfg
+		// (`routes = [ route "/" () ]`, `notFound = ()`), matching what a
+		// standalone `sky console` build passes to rt.Live_app. The
+		// single `/` route is load-bearing: handleInitial's guard 404s a
+		// GET whose path matches no route once a session exists, so
+		// omitting Routes leaves `routed == false` and the sub-app
+		// renders an empty body. `()` (Go `struct{}{}`) is the unit page
+		// — the console is single-page and dispatches on model.tab, not
+		// on URL routing.
+		"Routes":   []any{rt.Live_route(any("/"), any(struct{}{}))},
+		"NotFound": struct{}{},
+		"Store":    "memory",
+		"Ttl":      "30m",
 		// All other Live.app cfg fields fall through to Field(cfg, X) == nil.
 	}
 }

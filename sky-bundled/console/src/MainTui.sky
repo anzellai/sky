@@ -21,10 +21,34 @@ import State exposing (..)
 import View exposing (view)
 
 
+-- Offline mock Store for the terminal backend — the Sky.Tui console
+-- has no HTTP wire, so every reader resolves synchronously to the
+-- same mock telemetry the Live variant falls back to when standalone.
+-- Keeps the shared Store contract satisfied (every field present) so
+-- View.sky renders identically.
+tuiStore : Store
+tuiStore =
+    { readOverview = \_ -> Task.succeed mockOverview
+    , readLogs = \_ -> Task.succeed mockLogs
+    , readMetrics = \_ -> Task.succeed mockMetrics
+    , readTraces = \_ -> Task.succeed mockTraces
+    , readErrors = \_ -> Task.succeed mockErrors
+    , listServices = \_ -> Task.succeed []
+    , readServiceStats = \_ -> Task.succeed []
+    , readFilteredLogs = \_ _ -> Task.succeed mockLogs
+    , readFilteredMetrics = \_ -> Task.succeed mockMetrics
+    , readFilteredTraces = \_ -> Task.succeed mockTraces
+    , readFilteredErrors = \_ -> Task.succeed mockErrors
+    , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    }
+
+
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { tab = OverviewTab
       , parentUrl = ""
+      , hubDbPath = ""
+      , store = tuiStore
       , overview = mockOverview
       , logs = mockLogs
       , metrics = mockMetrics
@@ -33,6 +57,14 @@ init _ =
       , lastError = ""
       , logFilter = emptyLogFilter
       , traceQuery = ""
+      , selectedService = ""
+      , serviceStats = []
+      , identity = Nothing
+      , tenantPrefix = ""
+      , range = Last24h
+      , nowMs = 0
+      , globalQuery = ""
+      , analytics = emptyAnalytics
       }
     , Cmd.none
     )

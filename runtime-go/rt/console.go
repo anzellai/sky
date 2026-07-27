@@ -24,6 +24,7 @@ package rt
 //   /_sky/console/api/logs              — recent log ring entries
 //   /_sky/console/api/traces            — recent trace spans
 //   /_sky/console/api/errors            — ranked distinct error logs
+//   /_sky/console/api/analytics         — Std.Analytics totals/counts/recent
 //
 // Tabs deferred to v1.x: Live Sessions, Msg Flow, Routes, DB, FFI,
 // Jobs (Jobs depends on Phase 1.3 metrics integration which now
@@ -246,6 +247,7 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	safeMount(mux, "/_sky/console/api/logs", HandleConsoleLogs)
 	safeMount(mux, "/_sky/console/api/traces", HandleConsoleTraces)
 	safeMount(mux, "/_sky/console/api/errors", HandleConsoleErrors)
+	safeMount(mux, "/_sky/console/api/analytics", HandleConsoleAnalytics)
 }
 
 // MountEmbeddedConsole wires the inline Std.Ui-rendered Sky Console

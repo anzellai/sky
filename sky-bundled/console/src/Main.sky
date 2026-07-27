@@ -143,6 +143,27 @@ errorRowDecoder =
         |> Pipeline.optional "message" Decode.string ""
 
 
+analyticsDecoder : Decode.Decoder Analytics
+analyticsDecoder =
+    Decode.succeed Analytics |> Pipeline.optional "total" Decode.int 0
+        |> Pipeline.optional "uniqueUsers" Decode.int 0
+        |> Pipeline.optional "counts" (Decode.list eventCountDecoder) []
+        |> Pipeline.optional "recent" (Decode.list analyticsEventDecoder) []
+
+
+eventCountDecoder : Decode.Decoder EventCount
+eventCountDecoder =
+    Decode.succeed EventCount |> Pipeline.optional "event" Decode.string ""
+        |> Pipeline.optional "count" Decode.int 0
+
+
+analyticsEventDecoder : Decode.Decoder AnalyticsEvent
+analyticsEventDecoder =
+    Decode.succeed AnalyticsEvent |> Pipeline.optional "ts" Decode.int 0
+        |> Pipeline.optional "event" Decode.string ""
+        |> Pipeline.optional "userId" Decode.string ""
+
+
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
@@ -174,6 +195,7 @@ httpStore parent =
     , readFilteredMetrics = \_svc -> fetchMetrics parent
     , readFilteredTraces = \_svc -> fetchTraces parent
     , readFilteredErrors = \_svc -> fetchErrors parent
+    , readAnalytics = \_ -> fetchAnalytics parent
     }
 
 
@@ -259,6 +281,7 @@ init _req =
             , nowMs = 0
             -- v0.16.18 #558-PR3: empty = no filter.
             , globalQuery = initialQuery
+            , analytics = emptyAnalytics
             }
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the
@@ -340,6 +363,12 @@ update msg model =
             ( { model | errors = es, lastError = "" }, Cmd.none )
 
         GotErrors (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        GotAnalytics (Ok a) ->
+            ( { model | analytics = a, lastError = "" }, Cmd.none )
+
+        GotAnalytics (Err e) ->
             ( { model | lastError = errorToString e }, Cmd.none )
 
         LogFilterQuery q ->
@@ -557,6 +586,12 @@ tabFetches model tab filter =
                       GotErrors
                 ]
 
+            -- Analytics is host-app-scoped (the app's own event
+            -- store), not per-service hub telemetry, so both modes
+            -- read the same store-backed endpoint.
+            AnalyticsTab ->
+                [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
+
     else
         case tab of
 
@@ -581,6 +616,9 @@ tabFetches model tab filter =
 
             ErrorsTab ->
                 [ Cmd.perform (model.store.readErrors ()) GotErrors ]
+
+            AnalyticsTab ->
+                [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
 
 
 fetchOverview : String -> Task Error Overview
@@ -654,6 +692,13 @@ fetchErrors parent =
     Http.get (parent ++ "/_sky/console/api/errors")
         |> Task.andThenResult
                (\resp -> Decode.decodeString errorsDecoder resp.body)
+
+
+fetchAnalytics : String -> Task Error Analytics
+fetchAnalytics parent =
+    Http.get (parent ++ "/_sky/console/api/analytics")
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString analyticsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg
