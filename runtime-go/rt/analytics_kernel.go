@@ -77,6 +77,10 @@ func analyticsRenderValue(v any) any {
 		return AsFloat(fields[0])
 	case "VBool":
 		return AsBool(fields[0])
+	case "VMoney":
+		// Lossless "ISO_CODE AMOUNT" (e.g. "USD 19.99") — same rendering
+		// Std.Db uses for SqlMoney, so revenue round-trips exactly.
+		return sqlMoneyToString(fields[0])
 	case "VPii":
 		pTag, _ := reflectExtractCtor(fields[0])
 		return "<pii:" + analyticsPiiKind(pTag) + ">"
