@@ -1,6 +1,27 @@
 # RFC: `Std.Analytics` — typed product analytics for Sky
 
-**Status:** Draft · **Milestone:** v1 · **Author:** design pass (grilled)
+**Status:** In progress (`feat/std-analytics`) · **Milestone:** v1 · **Author:** design pass (grilled)
+
+### Progress (implemented on the branch)
+
+- ✅ **Capture core** — open typed-payload builder (`event` + `string`/`int`/
+  `float`/`bool`/`money`/`pii`), load-bearing `Pii` redaction.
+- ✅ **`trackEvent` derive** — reflective payload from the app's own typed union
+  (ctor → snake_case name, record fields → typed props); handles both SkyADT +
+  sealed-iface representations via `unwrapADTShape`.
+- ✅ **Consent + identity backbone** — `Consent` (Anonymous default / Granted /
+  Denied), `identify` (explicit, never automatic), anonymous-by-default,
+  session-scoped via the goroutine-local session stamp (multi-session isolation
+  proven).
+- ✅ **Auto page-views** — opt-in `analytics = { pageViews = True }` on Live.app;
+  consent-gated, from the single `handleInitial` funnel.
+- ✅ **Context + IP-anon** — device (User-Agent) + IP truncated (v4 last octet,
+  v6 last 80 bits) before storage.
+- ✅ **Pluggable sinks** — `Sink = StderrSink | FileSink | Custom fn` +
+  `configure`; `Custom` defers all provider choice to userland.
+- ⏳ **Remaining** (need product/infra decisions — §15): per-sink Pii clearance,
+  first-class provider wrappers, the console dashboard + store, `erase`, the
+  opt-in Level-2 encoder, docs/example + template sync.
 
 ---
 
