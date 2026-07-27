@@ -778,6 +778,12 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // CLAUDE.md app-matrix wording; a bare `postgres://` DSN in either
             // key just works.
             ("database", "path" | "url") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
+            // `[analytics] dbPath` → the Std.Analytics store override
+            // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
+            // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
+            ("analytics", "dbPath" | "dbpath") => {
+                cfg.extra_defaults.push(("ANALYTICS_DB_PATH".into(), val))
+            }
             ("live", "port") => cfg.port = Some(val),
             // `[live]` runtime keys → the suffixes the runtime reads (live.go /
             // live_store.go). Without these, only the `SKY_LIVE_*` env vars were

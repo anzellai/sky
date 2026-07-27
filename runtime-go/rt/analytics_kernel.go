@@ -64,7 +64,8 @@ func analyticsEmit(name string, props map[string]any) {
 	if err := enc.Encode(payload); err != nil {
 		return
 	}
-	analyticsFanOut(buf.String())
+	analyticsStoreInsert(payload) // persist (console DB / override) — no-op if unconfigured
+	analyticsFanOut(buf.String()) // fan the JSON line out to configured sinks
 }
 
 // ── pluggable sinks (P3) ─────────────────────────────────────────────────
