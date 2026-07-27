@@ -163,6 +163,17 @@ pub struct LowerConfig {
     /// disables the partial-kernel path — safe, since a full application still
     /// lowers to the correct direct call.
     pub kernel_arity: BTreeMap<String, usize>,
+    /// Runtime kernel symbols (keyed WITHOUT the `rt.` prefix) whose Go func is
+    /// declared VARIADIC (`func Http_request(arg any, rest ...any)`). Populated
+    /// from `abi_guard::runtime_variadic_kernels`. For these — and ONLY these —
+    /// the Go-source param scan in `kernel_arity` is NOT the true currying arity
+    /// (a variadic tail is zero-or-more; a fully-variadic `func(args ...any)`
+    /// scans as 1 regardless of the Sky arg count). A kernel ALIAS backed by a
+    /// variadic symbol takes its arity from the declared Sky signature instead.
+    /// Non-variadic symbols keep the Go scan, which is authoritative and — for a
+    /// `Handler`-returning alias like `withCors` — the ONLY correct source (the
+    /// curried sig over-counts because its result type is itself a function).
+    pub variadic_kernels: std::collections::BTreeSet<String>,
 }
 
 pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
@@ -509,6 +520,37 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             kernel_alias.insert(*d, raw);
         }
     }
+    // ---- kernel-alias arity override for VARIADIC runtime symbols ----
+    // A bare kernel alias (`request = Ffi.kernel "Http_request"`) carries its
+    // arity entirely in the declared signature — the body has no value params.
+    // For MOST aliases the Go-source param scan (`LowerConfig.kernel_arity`) is
+    // the authoritative currying arity AND the only correct one: a middleware
+    // alias like `withCors : List String -> Handler -> Handler` returns a
+    // `Handler` (itself `Request -> Task …`), so its curried sig arrow-count (3,
+    // after the result alias unfolds) OVER-counts the runtime symbol's real 2
+    // params — the Go scan reads 2 and is right.
+    //
+    // The scan is wrong ONLY for VARIADIC Go funcs, which don't encode a fixed
+    // arity: `func Http_request(arg any, rest ...any)` scans as 2 (so a full
+    // 1-arg call under-counts and mis-eta-expands into a partial closure the
+    // Task machinery mishandles), and a fully-variadic `func(args ...any)`
+    // scans as 1 regardless of how many Sky args it takes (JsonEnc.list / a
+    // partial Db.open never eta-expand). For those — and only those — the
+    // declared Sky signature's arrow-count is the true arity (every variadic
+    // kernel has a non-function result, so the sig doesn't over-count). The call
+    // arm falls back to the Go scan for every non-variadic alias.
+    let mut kernel_alias_arity: HashMap<DefId, usize> = HashMap::new();
+    for (d, e) in &defs {
+        if let Some(raw) = kernel_alias.get(d) {
+            let sym = alias_go_name(raw);
+            let sym = sym.strip_prefix("rt.").unwrap_or(&sym);
+            if cfg.variadic_kernels.contains(sym) {
+                if let Some(sig) = &e.sig {
+                    kernel_alias_arity.insert(*d, peel_params(sig).len());
+                }
+            }
+        }
+    }
 
     // ---- find `main` in the entry module ----
     let main_def = defs.iter().find_map(|(d, e)| {
@@ -553,6 +595,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             db: db.as_sky_db(),
             defs: &defs,
             kernel_alias: &kernel_alias,
+            kernel_alias_arity: &kernel_alias_arity,
             env: &env,
             record_fields: &record_fields,
             ctor_owner: &ctor_owner,
@@ -1409,6 +1452,14 @@ struct Ctx<'a> {
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
     kernel_alias: &'a HashMap<DefId, String>,
+    /// kernel-alias def → its DECLARED Sky signature arrow-count, present ONLY
+    /// for aliases backed by a VARIADIC runtime symbol (see
+    /// `LowerConfig.variadic_kernels`). For those the Go-source param scan
+    /// mis-counts the currying arity; the sig is the authority. Non-variadic
+    /// aliases are absent here and fall back to the Go scan in the call arm —
+    /// which is authoritative and, for a `Handler`-returning alias like
+    /// `withCors`, the only correct source (the curried sig over-counts).
+    kernel_alias_arity: &'a HashMap<DefId, usize>,
     env: &'a TypeEnv,
     record_fields: &'a HashMap<String, Vec<(String, Ty)>>,
     ctor_owner: &'a HashMap<String, (String, NominalKind)>,
@@ -2708,7 +2759,17 @@ impl<'a> Ctx<'a> {
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
             if let Some(raw) = self.kernel_alias.get(d) {
                 let go = alias_go_name(raw);
-                if let Some(arity) = self.kernel_runtime_arity(&go) {
+                // A VARIADIC-backed alias takes its arity from the declared Sky
+                // sig (`kernel_alias_arity`), correcting the Go-source scan's
+                // mis-count. Every other alias falls back to the Go scan, which
+                // is authoritative (and the only correct source for a
+                // `Handler`-returning alias whose curried sig over-counts).
+                let arity = self
+                    .kernel_alias_arity
+                    .get(d)
+                    .copied()
+                    .or_else(|| self.kernel_runtime_arity(&go));
+                if let Some(arity) = arity {
                     if arity > args.len() {
                         return self.kernel_partial(&go, args, arity, actual);
                     }

@@ -267,6 +267,12 @@ declare -a EXAMPLES=(
     # (running needs a display, same skip semantics as the Fyne GUI
     # example). v0.1 is macOS only.
     "31-webview-stopwatch-ui:gui"
+    # 51 — kernel-alias currying-arity regression (anzellai/sky#155). A CLI
+    # binary that lowers a full-application of a variadic Go kernel
+    # (`Http.request`, arity 1) AND a partial-application eta-expansion of
+    # another (`Db.open`, arity 2); neither task runs, so output is the
+    # deterministic "kernel-arity ok" — the successful build is the assertion.
+    "51-kernel-variadic-arity:cli"
 )
 
 # Per-worker result files. Each call to run_example writes ONE LINE

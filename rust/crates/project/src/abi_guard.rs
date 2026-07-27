@@ -70,11 +70,11 @@ fn scan_arity_dir(dir: &Path, out: &mut BTreeMap<String, usize>) {
     }
 }
 
-/// For a top-level `func Name(params) …` line, return `(Name, param_count)`.
-/// Methods (`func (r *T) M`) and non-func decls yield `None`; a generic
-/// `[T any]` list is skipped before the value params. Only column-0 `func `
-/// declarations count.
-fn extract_func_arity(line: &str) -> Option<(String, usize)> {
+/// For a top-level `func Name(params) …` line, return `(Name, params_inner)` —
+/// the function name and the raw text between its outermost parens. Methods
+/// (`func (r *T) M`) and non-func decls yield `None`; a generic `[T any]` list
+/// is skipped before the value params. Only column-0 `func ` declarations count.
+fn func_head(line: &str) -> Option<(String, &str)> {
     let rest = line.strip_prefix("func ")?;
     // Method receiver (`func (r *T) …`) → the char after `func ` is `(`.
     let name: String = rest.chars().take_while(|c| is_ident_char(*c)).collect();
@@ -106,7 +106,58 @@ fn extract_func_arity(line: &str) -> Option<(String, usize)> {
         after
     };
     let params_inner = param_list_inner(after)?;
+    Some((name, params_inner))
+}
+
+/// For a top-level `func Name(params) …` line, return `(Name, param_count)`.
+fn extract_func_arity(line: &str) -> Option<(String, usize)> {
+    let (name, params_inner) = func_head(line)?;
     Some((name, count_params(params_inner)))
+}
+
+/// The names of runtime kernel funcs declared with a trailing Go VARIADIC
+/// parameter (`func Http_request(arg any, rest ...any)`). For these the Go-
+/// source param scan is NOT the true currying arity (a variadic tail is
+/// zero-or-more, and a fully-variadic `func(args ...any)` scans as 1 regardless
+/// of the Sky arg count); the lowerer overrides them with the declared Sky
+/// signature's arrow-count. Cached once per process, keyed WITHOUT `rt.`.
+pub fn runtime_variadic_kernels(repo_root: &Path) -> &'static BTreeSet<String> {
+    static CACHE: OnceLock<BTreeSet<String>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut out = BTreeSet::new();
+        scan_variadic_dir(&repo_root.join("runtime-go").join("rt"), &mut out);
+        out
+    })
+}
+
+fn scan_variadic_dir(dir: &Path, out: &mut BTreeSet<String>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            scan_variadic_dir(p.as_path(), out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("go") {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with("_test.go") {
+                continue;
+            }
+            if let Ok(src) = std::fs::read_to_string(&p) {
+                for line in src.lines() {
+                    if let Some((n, params)) = func_head(line) {
+                        // `...` only appears in a Go param list as a variadic tail
+                        // marker (`rest ...any`) — never in a well-formed non-
+                        // variadic param type.
+                        if params.contains("...") {
+                            out.insert(n);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// The text between the outermost `(` and its matching `)` in `s` (the value
@@ -495,6 +546,32 @@ mod tests {
             None
         );
         assert_eq!(extract_func_arity("type Foo struct {"), None);
+    }
+
+    #[test]
+    fn func_head_detects_variadic_kernels() {
+        // A trailing `...T` marks a variadic runtime symbol — the one case the
+        // param scan mis-counts the currying arity, so the lowerer must override
+        // it with the declared Sky sig (anzellai/sky#155).
+        let is_variadic = |line: &str| {
+            func_head(line)
+                .map(|(_, params)| params.contains("..."))
+                .unwrap_or(false)
+        };
+        // leading-fixed + variadic tail (`Http.request` shape) — scans as 2 but is
+        // Sky-arity 1.
+        assert!(is_variadic("func Http_request(firstArg any, rest ...any) any {"));
+        // fully-variadic (`JsonEnc.list` shape) — scans as 1 but is Sky-arity 2.
+        assert!(is_variadic("func JsonEnc_list(args ...any) any {"));
+        assert!(is_variadic("func Db_open(args ...any) any {"));
+        // NON-variadic middleware whose result type is itself a function
+        // (`withCors : … -> Handler -> Handler`): the Go scan (2) is authoritative
+        // and MUST NOT be overridden, else the curried sig over-counts to 3.
+        assert!(!is_variadic(
+            "func Middleware_withCors(origins any, handler any) any {"
+        ));
+        assert!(!is_variadic("func String_append(a any, b any) any {"));
+        assert!(!is_variadic("func Dict_empty() any {"));
     }
 
     #[test]

@@ -55,6 +55,9 @@ const CLI_FAMILY: &[&str] = &[
     "49-xmodule-adt",
     // Regression for the v0.18.1 open-row closure-param codegen fix.
     "50-open-row-closure",
+    // Regression for anzellai/sky#155 — kernel-alias currying arity comes from
+    // the declared Sky sig, not the Go runtime func's (variadic) param scan.
+    "51-kernel-variadic-arity",
 ];
 
 /// Heavy-FFI GUI examples that build but cannot be headless-verified (native

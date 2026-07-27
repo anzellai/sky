@@ -1,0 +1,46 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Std.Db as Db
+import Std.Log exposing (println)
+
+
+-- Regression (anzellai/sky#155): a kernel-alias's currying arity is its DECLARED
+-- Sky signature's arrow-count — NOT the Go runtime func's scanned param count.
+-- Two directions, both from variadic Go kernel funcs the ABI scan mis-counts:
+--
+--   over-count  — `Http.request : HttpRequest -> Task Error HttpResponse` (arity
+--                 1). Its Go func is `func(a any, rest ...any)` → scanned as 2,
+--                 so a full 1-arg call (`req |> Http.request`) used to UNDER-count
+--                 and eta-expand into a partial closure the Task machinery then
+--                 mishandled (the continuation received the closure instead of the
+--                 resolved HttpResponse). It must FULL-apply.
+--
+--   under-count — `Db.open : String -> String -> Task Error Db` (arity 2). Its Go
+--                 func is `func(rest ...any)` → scanned as 1, so a partial 1-arg
+--                 call (`Db.open "sqlite"`) used to NEVER eta-expand into a
+--                 closure. It must curry.
+--
+-- Both call sites below are lowered (referenced from `main`, so DCE keeps them)
+-- and validated by `go build`; neither task is executed, so the binary's output
+-- is deterministic — the successful build IS the assertion.
+-- over-count case: `Http.request` full-application inside an andThen chain.
+fetchBody : Http.HttpRequest -> Task Error String
+fetchBody req =
+    Http.request req |> Task.andThen (\r -> Task.succeed r.body)
+
+
+-- under-count case: `Db.open` partial-application (a curried closure).
+openSqlite : String -> Task Error Db.Db
+openSqlite =
+    Db.open "sqlite"
+
+
+main =
+    let
+        _ = fetchBody
+        _ = openSqlite
+    in
+        println "kernel-arity ok"

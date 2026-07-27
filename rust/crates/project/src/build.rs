@@ -358,6 +358,11 @@ fn assemble_and_emit_with(
     // type over-counts for function-returning kernels, so the runtime symbol's
     // actual parameter count is the only sound arity source.
     cfg.kernel_arity = crate::abi_guard::runtime_arities(repo_root).clone();
+    // The subset of kernel symbols whose Go func is VARIADIC — the one case the
+    // param scan above mis-counts. A kernel ALIAS backed by one of these takes
+    // its currying arity from the declared Sky signature instead (see
+    // `LowerConfig.variadic_kernels`); every non-variadic alias keeps the scan.
+    cfg.variadic_kernels = crate::abi_guard::runtime_variadic_kernels(repo_root).clone();
     // Stage E (doc 01 bottom-of-DAG): route lowering + codegen through the salsa
     // `go_program` tracked query, closing the query DAG below `infer`. The config
     // is a salsa **input** created once for this build; `go_program` reads the
