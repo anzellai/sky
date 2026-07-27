@@ -61,6 +61,27 @@ func analyticsEmit(name string, props map[string]any) {
 	}
 }
 
+// analyticsPageViewsFromCfg reads the opt-in `analytics = { pageViews = True }`
+// field off a Live.app cfg record. Absent → false (no auto-tracking).
+func analyticsPageViewsFromCfg(cfg any) bool {
+	a := Field(cfg, "Analytics")
+	if a == nil {
+		return false
+	}
+	b, _ := Field(a, "PageViews").(bool)
+	return b
+}
+
+// analyticsTrackPageView emits a consent-gated `page_view` for the Sky.Live
+// auto-capture path. Called from handleInitial with the session already stamped.
+func analyticsTrackPageView(path, referrer string) {
+	props := map[string]any{"path": path}
+	if referrer != "" {
+		props["referrer"] = referrer
+	}
+	analyticsEmit("page_view", props)
+}
+
 // ── session-scoped identity + consent (P2, default-safe) ─────────────────
 
 type analyticsConsent int

@@ -2820,7 +2820,14 @@ type liveApp struct {
 	// `consoleAuth` — apps that omit `onNavigate` build
 	// byte-identical.
 	onNavigate any
-	api        []apiRoute    // REST-style custom handlers alongside Live pages
+	// analyticsPageViews — opt-in Std.Analytics auto page-view capture. Set
+	// from the optional `analytics = { pageViews = True }` field on the
+	// Live.app cfg (row-open, like `head`); false → no auto-tracking, so apps
+	// that omit it build byte-identical. When true, handleInitial emits a
+	// consent-gated `page_view` event on every full page render (initial mount,
+	// sky-nav fetch, popstate) — see analytics_kernel.go.
+	analyticsPageViews bool
+	api                []apiRoute // REST-style custom handlers alongside Live pages
 	staticDir  string        // Serves files from this directory under /static/…
 	staticURL  string        // URL mount prefix (default "/static")
 	store      SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
@@ -3446,9 +3453,10 @@ func liveAppRun(cfg any) any {
 		subscriptions: Field(cfg, "Subscriptions"),
 		notFound:      Field(cfg, "NotFound"),
 		guard:         Field(cfg, "Guard"),
-		head:          Field(cfg, "Head"),
-		consoleAuth:   Field(cfg, "ConsoleAuth"),
-		onNavigate:    Field(cfg, "OnNavigate"),
+		head:               Field(cfg, "Head"),
+		consoleAuth:        Field(cfg, "ConsoleAuth"),
+		onNavigate:         Field(cfg, "OnNavigate"),
+		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -3956,6 +3964,13 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// splice it into model.Page via RecordUpdate. Always run so the
 	// returning visitor lands on the URL they requested.
 	model = applyRoute(app, model, r.URL.Path)
+	// Opt-in Std.Analytics auto page-view. handleInitial is the single funnel
+	// for every full page render (initial mount, sky-nav fetch, popstate), and
+	// the session is stamped above, so this one call captures all navigations,
+	// consent-gated + session-scoped. Referer gives the previous page.
+	if app.analyticsPageViews {
+		analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
+	}
 	// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
 	// route update.  No-op when cfg.onNavigate is nil (the default).
 	// Fires on initial mount, sky-nav fetches, and popstate

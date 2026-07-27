@@ -154,6 +154,31 @@ func TestAnalyticsSessionIsolation(t *testing.T) {
 	}
 }
 
+// TestAnalyticsTrackPageView — the Sky.Live auto page-view path emits a
+// consent-gated `page_view` (path + referrer), anonymous by default.
+func TestAnalyticsTrackPageView(t *testing.T) {
+	sess := &liveSession{sid: "pv"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	var buf bytes.Buffer
+	old := analyticsSink
+	analyticsSink = &buf
+	defer func() { analyticsSink = old }()
+
+	analyticsTrackPageView("/about", "http://ref/")
+
+	out := buf.String()
+	if !strings.Contains(out, `"event":"page_view"`) ||
+		!strings.Contains(out, `"path":"/about"`) ||
+		!strings.Contains(out, `"referrer":"http://ref/"`) {
+		t.Errorf("page_view not emitted correctly: %s", out)
+	}
+	if strings.Contains(out, "user_id") {
+		t.Errorf("auto page_view must be anonymous by default: %s", out)
+	}
+}
+
 // TestAnalyticsTrackEvent_NullaryVariant — a nullary variant emits the name
 // with empty props.
 func TestAnalyticsTrackEvent_NullaryVariant(t *testing.T) {

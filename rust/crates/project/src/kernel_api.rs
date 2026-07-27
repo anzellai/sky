@@ -76,7 +76,7 @@ pub const KERNEL_API: &[KernelModuleApi] = &[
             KernelBinding {
                 name: "app",
                 sig: "app : { init : Request -> ( model, Cmd msg ), update : msg -> model -> ( model, Cmd msg ), view : model -> Element msg, subscriptions : model -> Sub msg, routes : List Route, notFound : page } -> Task Error ()",
-                summary: "Run a Sky.Live app. The cfg record is ROW-OPEN — you may also add the optional fields `head : Model -> List (Html msg)`, `consoleAuth : Request -> Task Error (Maybe Identity)`, and `status : { reconnecting : String, offline : String }`.",
+                summary: "Run a Sky.Live app. The cfg record is ROW-OPEN — you may also add the optional fields `head : Model -> List (Html msg)`, `consoleAuth : Request -> Task Error (Maybe Identity)`, `status : { reconnecting : String, offline : String }`, and `analytics : { pageViews : Bool }` (opt-in Std.Analytics auto page-view capture — consent-gated, anonymous by default).",
             },
             KernelBinding {
                 name: "route",
