@@ -13,6 +13,7 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"os"
 	"strings"
 
@@ -274,6 +275,16 @@ func castConfigDecoder(v any) configDecoder {
 	// through generic any-pipelines. Re-wrap a function-shaped value.
 	if fn, ok := v.(func(any) any); ok {
 		return configDecoder(fn)
+	}
+	// A TYPED Sky decoder closure lowers with a concrete return type
+	// (`func(any) SkyResult[Error, a]`), so the `func(any) any` assertion
+	// above misses it — apply via sky_call (reflect-based, the canonical way
+	// to invoke any Sky function value) rather than degrading to an error
+	// decoder. Same root cause as the historical Db.withTransaction "body is
+	// not a function" defect: a kernel must never raw-assert a Sky callback
+	// to a Go func type.
+	if reflect.ValueOf(v).Kind() == reflect.Func {
+		return configDecoder(func(arg any) any { return sky_call(v, arg) })
 	}
 	return configDecoder(func(_ any) any {
 		return Err[any, any](ErrDecode(fmt.Sprintf("config: not a decoder (%T)", v)))
