@@ -29,6 +29,31 @@ type SkyDb struct {
 	conn   *sql.DB
 	name   string
 	driver string // "sqlite" or "pgx"
+	// tx is non-nil only for the tx-scoped handle Db_withTransaction hands
+	// to a transaction body. When set, every data op (exec/query/execRaw/
+	// insertRow/getById/updateById/deleteById/find*) runs on THIS *sql.Tx
+	// instead of the pool, so the body's writes are actually inside the
+	// BEGIN…COMMIT. nil for the ordinary pool handle.
+	tx *sql.Tx
+}
+
+// dbExecutor is the intersection of *sql.DB and *sql.Tx — both expose the
+// same Exec/Query/QueryRow surface, so a data op can run on either without
+// knowing which it holds.
+type dbExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// executor returns the tx handle when this SkyDb is transaction-scoped, else
+// the connection pool. Data ops call d.executor() rather than d.conn directly
+// so they transparently participate in an open transaction.
+func (d *SkyDb) executor() dbExecutor {
+	if d.tx != nil {
+		return d.tx
+	}
+	return d.conn
 }
 
 // placeholder returns "?" for SQLite, "$N" for Postgres.
@@ -552,7 +577,7 @@ func Db_updateFields(db any, table any, whereCols any, setFields any) any {
 			if len(whereClauses) > 0 {
 				sql += " WHERE " + strings.Join(whereClauses, " AND ")
 			}
-			res, err := d.conn.Exec(sql, goArgs...)
+			res, err := d.executor().Exec(sql, goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.updateFields: " + err.Error()))
 			}
@@ -592,7 +617,7 @@ func Db_insertFields(db any, table any, setFields any) any {
 			if buildErr != nil {
 				return buildErr
 			}
-			res, err := d.conn.Exec(sql, goArgs...)
+			res, err := d.executor().Exec(sql, goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.insertFields: " + err.Error()))
 			}
@@ -703,7 +728,7 @@ func Db_insertFieldsReturning(db any, table any, setFields any, projection any, 
 			}
 			sql += " RETURNING " + proj
 
-			rows, err := d.conn.Query(sql, goArgs...)
+			rows, err := d.executor().Query(sql, goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.insertFieldsReturning: " + err.Error()))
 			}
@@ -824,7 +849,7 @@ func Db_exec(db any, query any, args any) any {
 			if errRes != nil {
 				return errRes
 			}
-			res, err := d.conn.Exec(q, goArgs...)
+			res, err := d.executor().Exec(q, goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.exec: " + err.Error()))
 			}
@@ -874,7 +899,7 @@ func Db_query(db any, query any, args any) any {
 			if errRes != nil {
 				return errRes
 			}
-			rows, err := d.conn.Query(q, goArgs...)
+			rows, err := d.executor().Query(q, goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.query: " + err.Error()))
 			}
@@ -1024,12 +1049,12 @@ func dbInsertRowBody(capDb, capTable, capRow any) any {
 			// Postgres doesn't support LastInsertId — use RETURNING id
 			q += " RETURNING id"
 			var id int64
-			if err := d.conn.QueryRow(q, vals...).Scan(&id); err != nil {
+			if err := d.executor().QueryRow(q, vals...).Scan(&id); err != nil {
 				return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
 			}
 			return Ok[any, any](int(id))
 		}
-		res, err := d.conn.Exec(q, vals...)
+		res, err := d.executor().Exec(q, vals...)
 		if err != nil {
 			return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
 		}
@@ -1096,7 +1121,7 @@ func Db_updateById(db any, table any, id any, row any) any {
 		}
 		vals = append(vals, AsInt(capId))
 		q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
-		res, err := d.conn.Exec(q, vals...)
+		res, err := d.executor().Exec(q, vals...)
 		if err != nil {
 			return Err[any, any](ErrIo("db.updateById: " + err.Error()))
 		}
@@ -1119,7 +1144,7 @@ func Db_deleteById(db any, table any, id any) any {
 			return Err[any, any](ErrInvalidInput("db.deleteById: invalid table name"))
 		}
 		q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
-		res, err := d.conn.Exec(q, AsInt(capId))
+		res, err := d.executor().Exec(q, AsInt(capId))
 		if err != nil {
 			return Err[any, any](ErrIo("db.deleteById: " + err.Error()))
 		}
@@ -1274,21 +1299,37 @@ func dbWithTransactionBody(capDb, capBody any) any {
 		if err != nil {
 			return Err[any, any](ErrFfi("tx begin: " + err.Error()))
 		}
-		// We don't have a separate tx handle type yet — pass the db. The semantics
-		// are conservative: if body returns Err, roll back. Otherwise commit.
-		fn, ok := capBody.(func(any) any)
-		if !ok {
+		// Hand the body a tx-SCOPED Db: same pool + name + driver, but with
+		// `tx` set so its exec/query/execRaw run on THIS transaction, not the
+		// pool. This is the fix for the historical "the body wrote outside the
+		// tx" defect — a rollback now actually rolls back the body's writes.
+		txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
+		// Apply the body via sky_call — compiled Sky closures are adapter-
+		// wrapped values, NOT plain `func(any) any`, so a raw type assertion
+		// always failed ("body is not a function"). sky_call is the same
+		// adapter-aware apply List.map / Task.andThen use. A panic inside the
+		// body (e.g. a bad Coerce) must roll back too, so we recover.
+		var result any
+		panicked := false
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					panicked = true
+					result = Err[any, any](ErrUnexpected(fmt.Sprintf("withTransaction: body panicked: %v", r)))
+				}
+			}()
+			result = AnyTaskRun(sky_call(capBody, txDb))
+		}()
+		// Commit only on a clean Ok. Roll back on panic, on an Err result, or
+		// on a non-Result body (there's no success signal to trust).
+		sr, isResult := result.(SkyResult[any, any])
+		if panicked || !isResult || sr.Tag != 0 {
 			tx.Rollback()
-			return Err[any, any](ErrInvalidInput("withTransaction: body is not a function"))
-		}
-		result := AnyTaskRun(fn(capDb))
-		if sr, ok := result.(SkyResult[any, any]); ok && sr.Tag == 0 {
-			if err := tx.Commit(); err != nil {
-				return Err[any, any](ErrFfi("tx commit: " + err.Error()))
-			}
 			return result
 		}
-		tx.Rollback()
+		if err := tx.Commit(); err != nil {
+			return Err[any, any](ErrFfi("tx commit: " + err.Error()))
+		}
 		return result
 	}
 }
