@@ -4491,6 +4491,33 @@ impl<'a> Ctx<'a> {
         // in the body is a different closure (its own combinator call sets its own
         // `closure_elem`). Clear so the body doesn't inherit this one.
         self.closure_elem = None;
+        // Record-update-over-param narrowing fix (DarraghStudio bug #2).
+        // For `\r -> { r | f = v }` mapped over a typed list, the row-poly
+        // solver (on the erased-`List.map` lowering path) leaves the update's
+        // row OPEN and it reads back as the SUBSET of updated fields — so the
+        // expected return `rt` is an anonymous `struct{ F }` that has PHYSICALLY
+        // DROPPED the un-updated fields. A later `List.map` reading a different
+        // field then invokes its closure on that subset struct → `reflect:
+        // Call using struct{F} as struct{G}`. But the param `r` is pinned to
+        // the list's element type (a concrete record), and updating a record
+        // yields the SAME record — so the real result type is that full record.
+        // Emit it: the lambda is boxed to `any` at the erased call site (no
+        // caller signature to violate), and a downstream narrow consumer can
+        // narrow FROM the full record, which the subset can't reconstruct.
+        let rt = if matches!(rt, GoTy::Struct(_)) {
+            match &self.body.exprs[body] {
+                Expr::Update { base, .. } => match &self.body.exprs[*base] {
+                    Expr::Var(Res::Local(pid)) => match self.local_tys.get(pid) {
+                        Some(full @ GoTy::Named(_, _)) => full.clone(),
+                        _ => rt,
+                    },
+                    _ => rt,
+                },
+                _ => rt,
+            }
+        } else {
+            rt
+        };
         let b = if eta_extra.is_empty() {
             self.lower_expr(body, &rt)
         } else {

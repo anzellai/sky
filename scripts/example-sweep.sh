@@ -273,6 +273,12 @@ declare -a EXAMPLES=(
     # another (`Db.open`, arity 2); neither task runs, so output is the
     # deterministic "kernel-arity ok" — the successful build is the assertion.
     "51-kernel-variadic-arity:cli"
+    # 53 — record-update-over-lambda-param narrowing regression
+    # (DarraghStudio bug #2). Two List.maps in one function: map #1 is a
+    # capturing record-update, map #2 reads other fields of its result.
+    # Panicked with `reflect: struct{OrderId} as struct{ProductId;Qty}`
+    # before the lower_lambda full-record-return fix.
+    "53-record-update-map:cli"
 )
 
 # Per-worker result files. Each call to run_example writes ONE LINE

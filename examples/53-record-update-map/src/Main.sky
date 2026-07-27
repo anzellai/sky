@@ -1,0 +1,44 @@
+module Main exposing (main)
+
+-- Regression for the record-update-over-lambda-param narrowing panic
+-- (DarraghStudio bug #2). The trigger is all three together:
+--   1. two `List.map`s in one function over the same record type;
+--   2. map #1's closure is a record UPDATE (`{ r | orderId = .. }`)
+--      capturing an outer variable (`oid`);
+--   3. map #2 consumes map #1's RESULT and reads DIFFERENT fields.
+-- Before the fix, map #1's element type erased to `struct{ OrderId }`
+-- (the un-updated fields physically dropped), so map #2 invoked its
+-- closure on that subset → `reflect: Call using struct{OrderId} as
+-- struct{ProductId; Qty}`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+
+type alias Line =
+    { orderId : String
+    , productId : String
+    , qty : Int
+    }
+
+
+sample : List Line
+sample =
+    [ { orderId = "", productId = "px", qty = 2 }
+    , { orderId = "", productId = "py", qty = 3 }
+    ]
+
+
+stampAndSummarise : String -> List String
+stampAndSummarise oid =
+    let
+        stamped =
+            List.map (\r -> { r | orderId = oid }) sample
+    in
+    List.map (\r -> r.productId ++ "x" ++ String.fromInt r.qty) stamped
+
+
+main =
+    println (String.join ", " (stampAndSummarise "ORD-1") ++ " ok")
