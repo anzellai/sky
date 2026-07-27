@@ -2087,7 +2087,13 @@ type liveSession struct {
 	// and replicas (sqlite / postgres / redis / firestore).
 	identity      ConsoleIdentity
 	identityValid bool
-	model         any
+	// analytics — per-session Std.Analytics state (random anon id, consent
+	// posture, identified user). Session-scoped so one user's identity never
+	// leaks into another's events. In-memory only (re-established per session
+	// by the app's identify/setConsent calls); nil until the first analytics
+	// call. See analytics_kernel.go.
+	analytics *analyticsSessionState
+	model     any
 	handlers      map[string]any
 	prevTree      *VNode // Last rendered tree; used by the diff protocol.
 	// View-body bookkeeping for the SSE no-op suppression contract

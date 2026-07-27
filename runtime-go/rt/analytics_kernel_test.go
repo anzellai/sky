@@ -74,6 +74,86 @@ func TestAnalyticsTrackEvent_DerivesTypedProps(t *testing.T) {
 	}
 }
 
+// TestAnalyticsConsentGate — the default-safe posture: anonymous by default
+// (anon id, no user_id), identify records but does NOT attach identity until
+// consent is Granted, and a Denied consent drops capture entirely.
+func TestAnalyticsConsentGate(t *testing.T) {
+	sess := &liveSession{sid: "gate-test"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	var buf bytes.Buffer
+	old := analyticsSink
+	analyticsSink = &buf
+	defer func() { analyticsSink = old }()
+
+	analyticsEmit("e1_default_anon", map[string]any{})   // Anonymous default
+	anyTaskInvoke(Analytics_identify("user-9", nil))     // records, must not attach
+	analyticsEmit("e2_after_identify", map[string]any{}) // still anonymous
+	anyTaskInvoke(Analytics_setConsent(1))               // Granted (tag 1)
+	analyticsEmit("e3_granted", map[string]any{})        // now attaches user_id
+	anyTaskInvoke(Analytics_setConsent(2))               // Denied (tag 2)
+	analyticsEmit("e4_denied_dropped", map[string]any{}) // dropped
+
+	out := buf.String()
+	if !strings.Contains(out, "e1_default_anon") || !strings.Contains(out, "anonymous_id") {
+		t.Errorf("default event missing / no anon id: %s", out)
+	}
+	// Identity must NOT appear before consent is Granted.
+	if idx := strings.Index(out, "e2_after_identify"); idx >= 0 {
+		line := out[idx:]
+		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+			line = line[:nl]
+		}
+		if strings.Contains(line, "user_id") {
+			t.Errorf("user_id LEAKED before consent: %s", line)
+		}
+	}
+	if !strings.Contains(out, `"event":"e3_granted"`) || !strings.Contains(out, `"user_id":"user-9"`) {
+		t.Errorf("user_id not attached after Granted: %s", out)
+	}
+	if strings.Contains(out, "e4_denied_dropped") {
+		t.Errorf("event captured after Denied — consent gate breached: %s", out)
+	}
+}
+
+// TestAnalyticsSessionIsolation — the architectural crux: analytics state is
+// SESSION-scoped (via the goroutine-local session stamp), so one Sky.Live
+// user's consent/identity never bleeds into another's. Two sessions must keep
+// independent consent, user id, and anon id.
+func TestAnalyticsSessionIsolation(t *testing.T) {
+	a := &liveSession{sid: "sess-A"}
+	b := &liveSession{sid: "sess-B"}
+
+	setGoroutineLiveSession(a)
+	anyTaskInvoke(Analytics_setConsent(1)) // A: Granted
+	anyTaskInvoke(Analytics_identify("alice", nil))
+	_, anonA, _ := currentAnalyticsState().snapshot()
+	clearGoroutineLiveSession()
+
+	setGoroutineLiveSession(b)
+	anyTaskInvoke(Analytics_setConsent(2)) // B: Denied
+	_, anonB, _ := currentAnalyticsState().snapshot()
+	clearGoroutineLiveSession()
+
+	setGoroutineLiveSession(a)
+	ca, _, ua := currentAnalyticsState().snapshot()
+	clearGoroutineLiveSession()
+	if ca != consentGranted || ua != "alice" {
+		t.Errorf("session A state wrong (leak?): consent=%v user=%q", ca, ua)
+	}
+
+	setGoroutineLiveSession(b)
+	cb, _, ub := currentAnalyticsState().snapshot()
+	clearGoroutineLiveSession()
+	if cb != consentDenied || ub != "" {
+		t.Errorf("session B state wrong (leak from A?): consent=%v user=%q", cb, ub)
+	}
+	if anonA == anonB || anonA == "" || anonB == "" {
+		t.Errorf("anon ids must be distinct + non-empty per session: A=%q B=%q", anonA, anonB)
+	}
+}
+
 // TestAnalyticsTrackEvent_NullaryVariant — a nullary variant emits the name
 // with empty props.
 func TestAnalyticsTrackEvent_NullaryVariant(t *testing.T) {

@@ -16,16 +16,21 @@
 -- `String`), and PII is a distinct type the pipeline can redact by
 -- construction (see `Pii`).
 --
--- STATUS: P1+ (capture core). `identify`, auto page-views, consent
--- gating, pluggable sinks, and the console view land in later phases —
--- see docs/rfcs/std-analytics.md. Every tracked event is written to a
--- structured `[analytics]` line (the default local/debug sink); PII
--- props are redacted.
+-- STATUS: P2 (capture + consent). Shipped: the open builder + typed
+-- props (incl. `Money`), `trackEvent` reflective derive, load-bearing
+-- `Pii` redaction, and the default-safe identity/consent backbone
+-- (`identify`, `setConsent`, anonymous-by-default, session-scoped so one
+-- Sky.Live user's identity never bleeds into another's). Landing later:
+-- context enrichment + auto page-views (+ IP-anon), pluggable export
+-- sinks (+ per-sink Pii clearance), the console view, and `erase` — see
+-- docs/rfcs/std-analytics.md. Every event is written to a structured
+-- `[analytics]` line (the default local/debug sink); PII stays redacted.
 module Std.Analytics exposing
     ( Event
     , Prop
     , PropValue(..)
     , Pii(..)
+    , Consent(..)
     , event
     , string
     , int
@@ -37,6 +42,8 @@ module Std.Analytics exposing
     , piiRaw
     , track
     , trackEvent
+    , identify
+    , setConsent
     )
 
 import Sky.Ffi as Ffi
@@ -165,3 +172,32 @@ track =
 trackEvent : a -> Task Error ()
 trackEvent =
     Ffi.kernel "Analytics_trackEvent"
+
+-- | Consent posture for the current session. The DEFAULT is `Anonymous`, and
+-- the module ships default-safe: until you `setConsent Granted`, events are
+-- captured with a random anonymous id and NO identity — `identify` records the
+-- user but does not attach or send it. `Denied` drops all capture.
+type Consent
+    = Anonymous
+    | Granted
+    | Denied
+
+
+-- | Attach a user id (+ typed traits) to the CURRENT session — the ONLY way
+-- identity enters analytics; it is never automatic. The user id is attached to
+-- subsequent events, and the traits are sent as an `identify` profile, ONLY
+-- once consent is `Granted`. Before that, `identify` just records the id
+-- locally, so calling it early (e.g. right after sign-in) is safe.
+--
+--     Analytics.identify user.id [ Analytics.pii "email" (Analytics.piiEmail user.email) ]
+identify : String -> List Prop -> Task Error ()
+identify =
+    Ffi.kernel "Analytics_identify"
+
+
+-- | Set the current session's consent posture (see `Consent`). Wire it to your
+-- consent banner: `setConsent Granted` on accept, `setConsent Denied` on
+-- reject. The default until you call this is `Anonymous`.
+setConsent : Consent -> Task Error ()
+setConsent =
+    Ffi.kernel "Analytics_setConsent"

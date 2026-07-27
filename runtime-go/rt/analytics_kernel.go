@@ -9,12 +9,15 @@ package rt
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,17 +31,160 @@ var analyticsSink io.Writer = os.Stderr
 // Both `track` (typed prop builders) and `trackEvent` (reflective derive)
 // funnel through here, so downstream everything is uniform. HTML escaping is
 // off — these are human-read lines and the `<pii:…>` marker must read cleanly.
+//
+// Identity + consent are applied HERE, uniformly (default-safe, RFC §11):
+//   - every event carries the session's random `anonymous_id`;
+//   - a `user_id` is attached ONLY when consent is Granted and identify ran;
+//   - a Denied consent DROPS the event entirely (no capture).
 func analyticsEmit(name string, props map[string]any) {
+	consent, anonID, userID := currentAnalyticsState().snapshot()
+	if consent == consentDenied {
+		return // no capture without consent
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
 	payload := map[string]any{
-		"event": name,
-		"props": props,
-		"ts":    time.Now().UnixMilli(),
+		"event":        name,
+		"props":        props,
+		"anonymous_id": anonID,
+		"ts":           time.Now().UnixMilli(),
+	}
+	if consent == consentGranted && userID != "" {
+		payload["user_id"] = userID
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(payload); err == nil {
 		fmt.Fprint(analyticsSink, "[analytics] "+buf.String())
+	}
+}
+
+// ── session-scoped identity + consent (P2, default-safe) ─────────────────
+
+type analyticsConsent int
+
+const (
+	// consentAnonymous is the DEFAULT: capture anonymously (anon id only, no
+	// identity, no export). Identity is recorded by `identify` but not attached.
+	consentAnonymous analyticsConsent = iota
+	// consentGranted: attach identity (user_id + the identify profile).
+	consentGranted
+	// consentDenied: do not capture at all.
+	consentDenied
+)
+
+// analyticsSessionState is per-session (Sky.Live) or per-process (CLI). Default
+// posture is anonymous: a random anon id, no identity, until the app calls
+// `identify` and `setConsent Granted`.
+type analyticsSessionState struct {
+	mu      sync.Mutex
+	consent analyticsConsent
+	anonID  string
+	userID  string
+}
+
+func newAnalyticsState() *analyticsSessionState {
+	return &analyticsSessionState{consent: consentAnonymous, anonID: analyticsNewAnonID()}
+}
+
+func (s *analyticsSessionState) snapshot() (analyticsConsent, string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.consent, s.anonID, s.userID
+}
+
+func (s *analyticsSessionState) setConsent(c analyticsConsent) {
+	s.mu.Lock()
+	s.consent = c
+	s.mu.Unlock()
+}
+
+func (s *analyticsSessionState) setUserID(u string) {
+	s.mu.Lock()
+	s.userID = u
+	s.mu.Unlock()
+}
+
+var (
+	analyticsInitMu    sync.Mutex // guards lazy-init of per-session + process state
+	analyticsProcState *analyticsSessionState
+)
+
+// currentAnalyticsState returns the CURRENT session's analytics state — for a
+// Sky.Live app the goroutine-local session stamp keys it PER SESSION, so one
+// user's identity never bleeds into another's events; for a CLI / non-Live
+// Task (no live session in scope) it returns the single process-global state.
+func currentAnalyticsState() *analyticsSessionState {
+	if sess := currentLiveSession(); sess != nil {
+		analyticsInitMu.Lock()
+		defer analyticsInitMu.Unlock()
+		if sess.analytics == nil {
+			sess.analytics = newAnalyticsState()
+		}
+		return sess.analytics
+	}
+	analyticsInitMu.Lock()
+	defer analyticsInitMu.Unlock()
+	if analyticsProcState == nil {
+		analyticsProcState = newAnalyticsState()
+	}
+	return analyticsProcState
+}
+
+// analyticsNewAnonID mints a random anonymous id — deliberately SEPARATE from
+// the auth session token, so the session cookie never lands in analytics.
+func analyticsNewAnonID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "anon"
+	}
+	return "anon_" + hex.EncodeToString(b[:])
+}
+
+// Analytics_identify implements:
+//
+//	Std.Analytics.identify : String -> List Prop -> Task Error ()
+//
+// Records the user id for subsequent events (attached only under Granted
+// consent) and, WHEN consent is Granted, emits an `identify` profile event with
+// the traits. Identity is NEVER attached automatically — this explicit call is
+// the only way user id enters analytics.
+func Analytics_identify(userIDArg, traitsArg any) any {
+	return func() any {
+		uid := fmt.Sprintf("%v", unwrapAny(userIDArg))
+		st := currentAnalyticsState()
+		st.setUserID(uid)
+		if consent, _, _ := st.snapshot(); consent == consentGranted {
+			analyticsEmit("identify", analyticsReadProps(traitsArg))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Analytics_setConsent implements:
+//
+//	Std.Analytics.setConsent : Consent -> Task Error ()
+//
+// Sets the session's consent posture. `Anonymous` (default) captures
+// anonymously; `Granted` attaches identity; `Denied` drops all capture.
+func Analytics_setConsent(consentArg any) any {
+	return func() any {
+		// `Consent = Anonymous | Granted | Denied` is an all-nullary enum, so the
+		// Can.Enum optimisation lowers it to a bare int TAG (Anonymous=0,
+		// Granted=1, Denied=2 in declaration order), NOT a named SkyADT. EnumTagIs
+		// reads either representation.
+		st := currentAnalyticsState()
+		switch {
+		case EnumTagIs(consentArg, 1):
+			st.setConsent(consentGranted)
+		case EnumTagIs(consentArg, 2):
+			st.setConsent(consentDenied)
+		default:
+			st.setConsent(consentAnonymous)
+		}
+		return Ok[any, any](struct{}{})
 	}
 }
 
