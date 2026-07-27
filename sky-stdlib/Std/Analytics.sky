@@ -16,15 +16,17 @@
 -- `String`), and PII is a distinct type the pipeline can redact by
 -- construction (see `Pii`).
 --
--- STATUS: capture + consent + sinks + context. Shipped: the open builder
--- + typed props (incl. `Money`), `trackEvent` reflective derive,
--- load-bearing `Pii` redaction, the default-safe identity/consent backbone
--- (`identify`, `setConsent`, anonymous-by-default, session-scoped so one
--- Sky.Live user's identity never bleeds into another's), opt-in Sky.Live
--- auto page-views, device + IP-anonymised context enrichment, and
--- pluggable `Sink`s (`configure`: stderr / JSONL file / a `Custom` userland
--- handler for any provider). Landing later: per-sink Pii clearance,
--- first-class provider wrappers, the console dashboard, and `erase` — see
+-- STATUS: data layer complete. Shipped: the open builder + typed props
+-- (incl. `Money`), `trackEvent` reflective derive, load-bearing `Pii`
+-- redaction, the default-safe identity/consent backbone (`identify`,
+-- `setConsent`, anonymous-by-default, session-scoped so one Sky.Live user's
+-- identity never bleeds into another's), opt-in Sky.Live auto page-views,
+-- device + IP-anonymised context, pluggable `Sink`s (`configure`: stderr /
+-- JSONL file / a `Custom` userland handler for any provider), a SQLite
+-- store (reuse the console DB or a `[analytics] dbPath` override), `erase`,
+-- and the aggregate queries (`totalEvents` / `uniqueUsers` / `eventCounts`
+-- / `recentEvents`). Landing later: per-sink Pii clearance, first-class
+-- provider wrappers, the console dashboard tab — see
 -- docs/rfcs/std-analytics.md. PII stays redacted across every sink.
 module Std.Analytics exposing
     ( Event
@@ -48,6 +50,10 @@ module Std.Analytics exposing
     , setConsent
     , configure
     , erase
+    , totalEvents
+    , uniqueUsers
+    , eventCounts
+    , recentEvents
     )
 
 import Sky.Ffi as Ffi
@@ -239,3 +245,36 @@ configure =
 erase : String -> Task Error Int
 erase =
     Ffi.kernel "Analytics_erase"
+
+
+-- ── query / aggregate helpers (read the store) ─────────────────────────────
+-- Common aggregates over the local store — enough for an admin view or the
+-- console's "verify + counts". Deep questions (funnels at scale, retention,
+-- cohorts) are an export concern: send events to a warehouse and query there.
+-- Each returns an empty / zero result when no store is configured.
+-- | Total number of captured events in the store.
+totalEvents : () -> Task Error Int
+totalEvents =
+    Ffi.kernel "Analytics_totalEvents"
+
+
+-- | Count of DISTINCT identified users (events captured after `identify` under
+-- `Granted` consent).
+uniqueUsers : () -> Task Error Int
+uniqueUsers =
+    Ffi.kernel "Analytics_uniqueUsers"
+
+
+-- | Count per event name, most frequent first — e.g. `[ ("page_view", 128),
+-- ("product_viewed", 42), ... ]`.
+eventCounts : () -> Task Error (List ( String, Int ))
+eventCounts =
+    Ffi.kernel "Analytics_eventCounts"
+
+
+-- | The last N events, each a JSON object string (ts, event, and any of
+-- anonymous_id / user_id / props / context). Decode with `Sky.Core.Json.Decode`
+-- or render as-is; the newest event is first.
+recentEvents : Int -> Task Error (List String)
+recentEvents =
+    Ffi.kernel "Analytics_recentEvents"
