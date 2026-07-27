@@ -259,6 +259,12 @@ declare -a EXAMPLES=(
     # GET /ws and echoes back. Sweep checks plain HTTP GET / for the
     # index page, NOT the /ws upgrade itself (which curl can't speak).
     "33-websocket-echo:server:8033:/"
+    # 52 — production-shaped blog SPA: Sky.Live + Std.Db + Std.Auth +
+    # Std.Analytics (auto page-views + consent + admin dashboard) wired
+    # together from the stdlib. Port 8052 (sky.toml [live]) so the
+    # parallel sweep doesn't collide with the 8000 crowd. Sweep checks
+    # GET / (public home render); the admin flow is event-driven.
+    "52-blog-analytics:server:8052:/"
     # 29 — Sky.Webview spike: Three.js + WebGL2 under the new
     # loopback-asset pipeline (bug #370). Same gui-kind skip
     # semantics as 31 (display + macOS-only cgo).
