@@ -1,6 +1,6 @@
 // Package rt — Std.Analytics runtime kernels.
 //
-// P1 (capture core): render a tracked event to a structured `[analytics]`
+// P1+ (capture core): render a tracked event to a structured `[analytics]`
 // line on stderr — the default local/debug sink — with PII redacted. Later
 // phases route events through the consent gate, context enrichment, and the
 // pluggable sinks (console SQLite store + external providers). See
@@ -11,39 +11,89 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 )
+
+// analyticsSink is where the P1 local/debug sink writes its `[analytics]`
+// lines. Defaults to stderr; a package-level var so tests can capture output
+// (and the seam the real pluggable sinks will replace in a later phase).
+var analyticsSink io.Writer = os.Stderr
+
+// analyticsEmit writes one event (name + already-rendered props) to the
+// default local/debug sink: a structured `[analytics]` JSON line on stderr.
+// Both `track` (typed prop builders) and `trackEvent` (reflective derive)
+// funnel through here, so downstream everything is uniform. HTML escaping is
+// off — these are human-read lines and the `<pii:…>` marker must read cleanly.
+func analyticsEmit(name string, props map[string]any) {
+	payload := map[string]any{
+		"event": name,
+		"props": props,
+		"ts":    time.Now().UnixMilli(),
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err == nil {
+		fmt.Fprint(analyticsSink, "[analytics] "+buf.String())
+	}
+}
 
 // Analytics_track implements:
 //
 //	Std.Analytics.track : Event -> Task Error ()
 //
 // The event is `{ name : String, props : List Prop }`, each `Prop` a
-// `{ key : String, value : PropValue }`. PII props are redacted to their
-// kind (`<pii:email>`) — never their value — so redaction is load-bearing
-// even before the full consent pipeline lands.
+// `{ key : String, value : PropValue }`. PII props are redacted to their kind.
 func Analytics_track(eventArg any) any {
 	return func() any {
 		name := fmt.Sprintf("%v", recordField(eventArg, "Name", "name"))
-		props := analyticsReadProps(recordField(eventArg, "Props", "props"))
-		payload := map[string]any{
-			"event": name,
-			"props": props,
-			"ts":    time.Now().UnixMilli(),
-		}
-		// Don't HTML-escape (`<`/`>`/`&`) — these are human-read log lines,
-		// and the PII redaction marker `<pii:email>` should read cleanly.
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(payload); err == nil {
-			fmt.Fprint(os.Stderr, "[analytics] "+buf.String())
-		}
+		analyticsEmit(name, analyticsReadProps(recordField(eventArg, "Props", "props")))
 		return Ok[any, any](struct{}{})
 	}
 }
+
+// Analytics_trackEvent implements:
+//
+//	Std.Analytics.trackEvent : a -> Task Error ()
+//
+// The payload is DERIVED reflectively from a value of the app's own typed
+// event union: the constructor name becomes a snake_case event name
+// (`ProductViewed` → `"product_viewed"`), and the variant's record payload's
+// fields become typed props. Money is rendered lossless, Pii is redacted by
+// type, and a plain `String` field is NEVER treated as PII (only a `Pii`-typed
+// value redacts). No encoder needed for the common case; reach for
+// `track`+`event` to shape the payload by hand.
+func Analytics_trackEvent(ev any) any {
+	return func() any {
+		name, _, fields, ok := unwrapADTShape(unwrapAny(ev))
+		if !ok {
+			// Not an ADT value (a bare record / scalar) — derive from it directly.
+			analyticsEmit("event", analyticsDeriveProps(ev))
+			return Ok[any, any](struct{}{})
+		}
+		props := map[string]any{}
+		switch len(fields) {
+		case 0:
+			// Nullary variant (e.g. `AppOpened`) — a name with no props.
+		case 1:
+			// The common shape: a single record payload — ProductViewed {…}.
+			props = analyticsDeriveProps(fields[0])
+		default:
+			// Positional payloads → arg0, arg1, …
+			for i, f := range fields {
+				props[fmt.Sprintf("arg%d", i)] = analyticsRenderGoValue(f)
+			}
+		}
+		analyticsEmit(analyticsSnakeCase(name), props)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// ── typed-prop path (`track`) ────────────────────────────────────────────
 
 // analyticsReadProps turns the Sky `List Prop` into a JSON-ready map,
 // rendering each typed PropValue and redacting PII.
@@ -98,4 +148,94 @@ func analyticsPiiKind(tag string) string {
 	default:
 		return "pii"
 	}
+}
+
+// ── reflective-derive path (`trackEvent`) ────────────────────────────────
+
+// analyticsDeriveProps reflects a variant's payload into props. A record
+// (struct with domain fields, or a map) becomes one prop per field; anything
+// else (a scalar / an ADT like Money) becomes a single "value" prop.
+func analyticsDeriveProps(v any) map[string]any {
+	out := map[string]any{}
+	u := derefPointer(unwrapAny(v))
+	// An ADT payload (Money, Pii, an enum) is a value, not a record.
+	if _, _, _, isADT := unwrapADTShape(u); isADT {
+		out["value"] = analyticsRenderGoValue(u)
+		return out
+	}
+	rv := reflect.ValueOf(u)
+	switch rv.Kind() {
+	case reflect.Map:
+		for _, k := range rv.MapKeys() {
+			if k.Kind() == reflect.String {
+				out[analyticsSnakeCase(k.String())] = analyticsRenderGoValue(rv.MapIndex(k).Interface())
+			}
+		}
+	case reflect.Struct:
+		t := rv.Type()
+		for i := 0; i < rv.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" { // unexported
+				continue
+			}
+			out[analyticsSnakeCase(f.Name)] = analyticsRenderGoValue(rv.Field(i).Interface())
+		}
+	default:
+		out["value"] = analyticsRenderGoValue(u)
+	}
+	return out
+}
+
+// analyticsRenderGoValue renders an arbitrary Sky value to a JSON value by its
+// runtime type: Money lossless, Pii redacted, scalars as-is, other ADTs by
+// their constructor name, everything else via %v.
+func analyticsRenderGoValue(v any) any {
+	u := derefPointer(unwrapAny(v))
+	if name, _, fields, isADT := unwrapADTShape(u); isADT {
+		switch name {
+		case "Money":
+			return sqlMoneyToString(u)
+		case "PiiEmail", "PiiRaw":
+			return "<pii:" + analyticsPiiKind(name) + ">"
+		default:
+			// A nullary enum (a status/kind) → its constructor name; a
+			// single-payload wrapper → the payload; else the name.
+			if len(fields) == 1 {
+				return analyticsRenderGoValue(fields[0])
+			}
+			return name
+		}
+	}
+	rv := reflect.ValueOf(u)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String()
+	case reflect.Bool:
+		return rv.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return rv.Uint()
+	case reflect.Float32, reflect.Float64:
+		return rv.Float()
+	default:
+		return fmt.Sprintf("%v", u)
+	}
+}
+
+// analyticsSnakeCase converts a Sky constructor / field name to snake_case:
+// `ProductViewed` → `product_viewed`, `OrderId` → `order_id`, `id` → `id`.
+func analyticsSnakeCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r - 'A' + 'a')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

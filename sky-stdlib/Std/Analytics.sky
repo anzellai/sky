@@ -36,6 +36,7 @@ module Std.Analytics exposing
     , piiEmail
     , piiRaw
     , track
+    , trackEvent
     )
 
 import Sky.Ffi as Ffi
@@ -139,9 +140,28 @@ piiRaw v =
     PiiRaw v
 
 
--- | Emit an event. In P1 this writes a structured `[analytics]` line
--- (the default local sink) with PII redacted; later phases route it
--- through the consent gate, context enrichment, and configured sinks.
+-- | Emit an event built with `event` + the typed prop builders. Writes a
+-- structured `[analytics]` line (the default local sink) with PII redacted;
+-- later phases route it through the consent gate, context enrichment, and the
+-- configured sinks.
 track : Event -> Task Error ()
 track =
     Ffi.kernel "Analytics_track"
+
+
+-- | Track a value of your app's OWN typed event union — the ergonomic path.
+-- The payload is DERIVED reflectively, so no encoder is needed for the common
+-- case: the constructor name becomes a snake_case event name
+-- (`ProductViewed` → `"product_viewed"`) and the variant's record fields
+-- become typed props (`Money` lossless, a `Pii` field redacted, a plain
+-- `String` NEVER treated as PII). Reach for `track` + `event` when you want to
+-- rename / reshape / redact a payload by hand.
+--
+--     type Event
+--         = ProductViewed { id : String, price : Money }
+--         | Purchased { orderId : String, total : Money }
+--
+--     Analytics.trackEvent (ProductViewed { id = "SKU-42", price = p })
+trackEvent : a -> Task Error ()
+trackEvent =
+    Ffi.kernel "Analytics_trackEvent"
