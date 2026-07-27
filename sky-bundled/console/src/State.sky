@@ -126,17 +126,28 @@ type alias AnalyticsEvent =
     , userId : String
     }
 
+-- One currency's summed revenue. Money props are stored losslessly as
+-- "ISO_CODE AMOUNT", so revenue is summed WITHIN a currency, never
+-- across — `amount` is the exact decimal total as a String (formatted
+-- server-side via shopspring/decimal so cents never drift).
+type alias CurrencyTotal =
+    { currency : String
+    , amount : String
+    , count : Int
+    }
+
 type alias Analytics =
     { total : Int
     , uniqueUsers : Int
     , counts : List EventCount
     , recent : List AnalyticsEvent
+    , revenue : List CurrencyTotal
     }
 
 
 emptyAnalytics : Analytics
 emptyAnalytics =
-    { total = 0, uniqueUsers = 0, counts = [], recent = [] }
+    { total = 0, uniqueUsers = 0, counts = [], recent = [], revenue = [] }
 
 -- Per-service rollup row consumed by the multi-service Overview
 -- (v0.16.4 B5). One ServiceStat per distinct service_name in the

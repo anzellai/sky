@@ -138,12 +138,25 @@ type State_Analytics_R struct {
 	UniqueUsers int
 	Counts      []State_EventCount_R
 	Recent      []State_AnalyticsEvent_R
+	Revenue     []State_CurrencyTotal_R
 }
 
 func init() { rt.RegisterGobType(State_Analytics_R{}) }
 
-func State_Analytics(p0 int, p1 int, p2 []State_EventCount_R, p3 []State_AnalyticsEvent_R) State_Analytics_R {
-	return State_Analytics_R{Total: p0, UniqueUsers: p1, Counts: p2, Recent: p3}
+func State_Analytics(p0 int, p1 int, p2 []State_EventCount_R, p3 []State_AnalyticsEvent_R, p4 []State_CurrencyTotal_R) State_Analytics_R {
+	return State_Analytics_R{Total: p0, UniqueUsers: p1, Counts: p2, Recent: p3, Revenue: p4}
+}
+
+type State_CurrencyTotal_R struct {
+	Currency string
+	Amount   string
+	Count    int
+}
+
+func init() { rt.RegisterGobType(State_CurrencyTotal_R{}) }
+
+func State_CurrencyTotal(p0 string, p1 string, p2 int) State_CurrencyTotal_R {
+	return State_CurrencyTotal_R{Currency: p0, Amount: p1, Count: p2}
 }
 
 type State_ErrorRow_R struct {
@@ -1334,7 +1347,7 @@ func View_content(v_0 State_Model_R) Std_Ui_Element {
 }
 
 func AnalyticsTab_analyticsView(v_0 State_Analytics_R) []Std_Ui_Element {
-	return []Std_Ui_Element{AnalyticsTab_statRow(v_0), AnalyticsTab_eventsPanel(v_0.Counts), AnalyticsTab_recentPanel(v_0.Recent)}
+	return []Std_Ui_Element{AnalyticsTab_statRow(v_0), AnalyticsTab_revenuePanel(v_0.Revenue), AnalyticsTab_eventsPanel(v_0.Counts), AnalyticsTab_recentPanel(v_0.Recent)}
 }
 
 func AnalyticsTab_recentPanel(v_0 []State_AnalyticsEvent_R) Std_Ui_Element {
@@ -1598,6 +1611,25 @@ func AnalyticsTab_accent() Std_Ui_Color {
 
 func AnalyticsTab_textPrimary() Std_Ui_Color {
 	return Std_Ui_rgb(240, 243, 247)
+}
+
+func AnalyticsTab_revenuePanel(v_0 []State_CurrencyTotal_R) Std_Ui_Element {
+	return AnalyticsTab_panel("Revenue by currency", func() []Std_Ui_Element {
+		if Sky_Core_List_isEmpty( /* primitive join */ rt.AsListT[any](v_0)) {
+			return []Std_Ui_Element{AnalyticsTab_emptyState("No revenue captured — track a Money prop to see totals.")}
+		} else {
+			return /* FFI return */ rt.AsListT[Std_Ui_Element](Sky_Core_List_map_(AnalyticsTab_currencyRowView, v_0))
+		}
+	}())
+}
+
+func AnalyticsTab_currencyRowView(v_0 State_CurrencyTotal_R) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+		Bottom int
+		Left   int
+		Right  int
+		Top    int
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AnalyticsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(60)), Std_Ui_Font_size(13), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Currency)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(15), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textPrimary()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Amount)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Count))) + "×")))})
 }
 
 func AnalyticsTab_statRow(v_0 State_Analytics_R) Std_Ui_Element {
@@ -6670,7 +6702,7 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 }
 
 func State_emptyAnalytics() State_Analytics_R {
-	return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{})}
+	return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{}), Revenue: /* primitive join */ rt.AsListT[State_CurrencyTotal_R]([]any{})}
 }
 
 func State_mockLogs() []State_LogEntry_R {
@@ -6704,9 +6736,9 @@ func Main_fetchAnalytics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Anal
 }
 
 func Main_analyticsDecoder() any {
-	return rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 int, _p2 []State_EventCount_R, _p3 []State_AnalyticsEvent_R) State_Analytics_R {
-		return State_Analytics(_p0, _p1, _p2, _p3)
-	}))))))
+	return rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 int, _p2 []State_EventCount_R, _p3 []State_AnalyticsEvent_R, _p4 []State_CurrencyTotal_R) State_Analytics_R {
+		return State_Analytics(_p0, _p1, _p2, _p3, _p4)
+	})))))))
 }
 
 func Main_eventCountDecoder() any {
@@ -6717,6 +6749,10 @@ func Main_analyticsEventDecoder() any {
 	return rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string) State_AnalyticsEvent_R {
 		return State_AnalyticsEvent(_p0, _p1, _p2)
 	})))))
+}
+
+func Main_currencyTotalDecoder() any {
+	return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 int) State_CurrencyTotal_R { return State_CurrencyTotal(_p0, _p1, _p2) })))))
 }
 
 func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {

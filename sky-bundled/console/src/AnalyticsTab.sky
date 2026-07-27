@@ -79,7 +79,56 @@ mono =
 -- ─── Entry point ────────────────────────────────────────────────
 analyticsView : Analytics -> List (Element Msg)
 analyticsView a =
-    [ statRow a, eventsPanel a.counts, recentPanel a.recent ]
+    [ statRow a
+    , revenuePanel a.revenue
+    , eventsPanel a.counts
+    , recentPanel a.recent
+    ]
+
+
+-- ── revenue (Money summed per currency) ─────────────────────────
+revenuePanel : List CurrencyTotal -> Element Msg
+revenuePanel rows =
+    panel
+        "Revenue by currency"
+        (if List.isEmpty rows then
+            [ emptyState
+                  "No revenue captured — track a Money prop to see totals."
+            ]
+
+        else
+            List.map currencyRowView rows)
+
+
+currencyRowView : CurrencyTotal -> Element Msg
+currencyRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 60)
+              , Font.size 13
+              , Font.bold
+              , Font.color textMuted
+              , Font.family mono
+              ]
+              (Ui.text r.currency)
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Font.size 15
+              , Font.bold
+              , Font.color textPrimary
+              , Font.family mono
+              ]
+              (Ui.text r.amount)
+        , Ui.el
+              [ Font.size 12, Font.color textMuted, Font.family mono ]
+              (Ui.text (String.fromInt r.count ++ "×"))
+        ]
 
 
 -- ── summary stat cards ──────────────────────────────────────────

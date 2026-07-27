@@ -20,7 +20,13 @@ package rt
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 type consoleEventCount struct {
@@ -34,12 +40,30 @@ type consoleAnalyticsEvent struct {
 	UserID string `json:"userId"`
 }
 
+// consoleCurrencyTotal is one currency's summed revenue. Money props are
+// stored losslessly as "ISO_CODE AMOUNT" (e.g. "USD 19.99"), so revenue can
+// only be summed WITHIN a currency — never across — which is exactly what
+// grouping by currency gives.
+type consoleCurrencyTotal struct {
+	Currency string `json:"currency"`
+	Amount   string `json:"amount"`
+	Count    int64  `json:"count"`
+}
+
 type consoleAnalyticsResponse struct {
 	Total       int64                   `json:"total"`
 	UniqueUsers int64                   `json:"uniqueUsers"`
 	Counts      []consoleEventCount     `json:"counts"`
 	Recent      []consoleAnalyticsEvent `json:"recent"`
+	Revenue     []consoleCurrencyTotal  `json:"revenue"`
 }
+
+// moneyPropRe matches a stored Money prop value: a 3-5 letter uppercase ISO
+// (or crypto) code, a space, then a signed decimal amount — the exact shape
+// sqlMoneyToString emits. A plain string prop won't match unless it happens to
+// be a bare "CODE 12.34", which is an acceptable (and vanishingly rare)
+// heuristic for a dev-console revenue rollup.
+var moneyPropRe = regexp.MustCompile(`^[A-Z]{3,5} -?[0-9]+(\.[0-9]+)?$`)
 
 // HandleConsoleAnalytics implements GET /_sky/console/api/analytics.
 func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +73,9 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 	// Always emit non-nil slices so the JSON is `[]` not `null`
 	// (keeps the Sky decoder's List path happy either way).
 	out := consoleAnalyticsResponse{
-		Counts: []consoleEventCount{},
-		Recent: []consoleAnalyticsEvent{},
+		Counts:  []consoleEventCount{},
+		Recent:  []consoleAnalyticsEvent{},
+		Revenue: []consoleCurrencyTotal{},
 	}
 	db := analyticsStore()
 	if db == nil {
@@ -91,5 +116,71 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
+	out.Revenue = analyticsRevenueByCurrency(db)
+
 	writeJSON(w, out)
+}
+
+// analyticsRevenueByCurrency scans every event's props for Money-shaped
+// values and returns the exact per-currency sum (+ occurrence count), most
+// valuable currency-count first. Sums use shopspring/decimal so cents never
+// drift. Currencies are summed independently — "USD 10 + EUR 5" is two rows,
+// never one — because adding across currencies is meaningless.
+func analyticsRevenueByCurrency(db *sql.DB) []consoleCurrencyTotal {
+	rows, err := db.Query(`SELECT props FROM analytics_events WHERE props IS NOT NULL`)
+	if err != nil {
+		return []consoleCurrencyTotal{}
+	}
+	defer rows.Close()
+
+	sums := map[string]decimal.Decimal{}
+	counts := map[string]int64{}
+	for rows.Next() {
+		var props string
+		if err := rows.Scan(&props); err != nil {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(props), &m) != nil {
+			continue
+		}
+		for _, v := range m {
+			s, ok := v.(string)
+			if !ok || !moneyPropRe.MatchString(s) {
+				continue
+			}
+			sp := strings.SplitN(s, " ", 2)
+			if len(sp) != 2 {
+				continue
+			}
+			amt, err := decimal.NewFromString(sp[1])
+			if err != nil {
+				continue
+			}
+			cur := sp[0]
+			if prev, seen := sums[cur]; seen {
+				sums[cur] = prev.Add(amt)
+			} else {
+				sums[cur] = amt
+			}
+			counts[cur]++
+		}
+	}
+
+	out := make([]consoleCurrencyTotal, 0, len(sums))
+	for cur, sum := range sums {
+		out = append(out, consoleCurrencyTotal{
+			Currency: cur,
+			Amount:   sum.String(),
+			Count:    counts[cur],
+		})
+	}
+	// Most transactions first, then currency code for a stable order.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Currency < out[j].Currency
+	})
+	return out
 }

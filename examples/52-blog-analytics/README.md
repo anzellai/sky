@@ -17,6 +17,7 @@ the batteries are actually wired together?*
 | Content in SQLite (typed queries, params) | **Std.Db** | `loadPosts` / `loadPost` / `seed` |
 | Admin login (bcrypt, never plaintext) | **Std.Auth** | `adminHash` / `checkAdmin` |
 | Auto page-views, consent-gated | **Std.Analytics** | `analytics = { pageViews = True }` |
+| Typed-`Money` revenue tracking | **Std.Analytics** + **Std.Money** | `tipBar` / `Tip` → `Analytics.money` |
 | Admin analytics dashboard (totals / counts / recent) | **Std.Analytics** queries | `loadTotal` / `loadCounts` / `loadRecent` |
 
 ## The production wiring lives in `sky.toml`

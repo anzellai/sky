@@ -17,8 +17,9 @@ import Std.Sub as Sub
 import Std.Db as Db
 import Std.Auth as Auth
 import Std.Analytics as Analytics
+import Std.Money as Money
+import Std.Money exposing (Money, Currency(..))
 import Std.Log exposing (println)
-
 
 -- ═══════════════════════════════════════════════════════════════════
 -- A tiny production-shaped blog, showing Sky's batteries working together:
@@ -29,21 +30,17 @@ import Std.Log exposing (println)
 -- Configure it in sky.toml ([database], [analytics], [auth]) — see the
 -- committed file. Nothing here is Sky-internal; it's all stdlib.
 -- ═══════════════════════════════════════════════════════════════════
-
-
 -- ─── Data model ────────────────────────────────────────────────────
 type Page
     = Home
     | PostPage String
     | AdminPage
 
-
 type alias Post =
     { slug : String
     , title : String
     , body : String
     }
-
 
 type alias Model =
     { page : Page
@@ -55,30 +52,31 @@ type alias Model =
     , recent : List String
     }
 
-
 type alias Creds =
     { password : String }
-
 
 type Msg
     = Navigate Page
     | AcceptConsent
     | DoSignIn Creds
     | SignOut
+    | Tip Money
 
 
 -- ─── Database (posts) ──────────────────────────────────────────────
 dbConn =
     case Task.run (Db.connect ()) of
+
         Ok c ->
             c
 
         Err e ->
             let
                 _ =
-                    println ("[FATAL] blog: cannot open db: " ++ Error.toString e)
+                    println
+                        ("[FATAL] blog: cannot open db: " ++ Error.toString e)
             in
-            System.exit 1
+                System.exit 1
 
 
 ensureSchema : ()
@@ -86,29 +84,41 @@ ensureSchema =
     let
         _ =
             Task.run
-                (Db.execRaw dbConn
-                    "CREATE TABLE IF NOT EXISTS posts (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)"
-                )
-
+                (Db.execRaw
+                    dbConn
+                    "CREATE TABLE IF NOT EXISTS posts (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)")
         _ =
-            Task.run (seed "hello" "Hello, Sky" "A blog built entirely with Sky — server-driven UI, a typed SQLite layer, bcrypt auth, and product analytics, all from the standard library.")
-
+            Task.run
+                (seed
+                    "hello"
+                    "Hello, Sky"
+                    "A blog built entirely with Sky — server-driven UI, a typed SQLite layer, bcrypt auth, and product analytics, all from the standard library.")
         _ =
-            Task.run (seed "batteries" "Batteries included" "No user-written FFI, no glue. Std.Auth for login, Std.Db for content, Std.Analytics for insight — each reviewed for security and scale.")
+            Task.run
+                (seed
+                    "batteries"
+                    "Batteries included"
+                    "No user-written FFI, no glue. Std.Auth for login, Std.Db for content, Std.Analytics for insight — each reviewed for security and scale.")
     in
-    ()
+        ()
 
 
 seed : String -> String -> String -> Task Error Int
 seed slug title body =
-    Db.exec dbConn
+    Db.exec
+        dbConn
         "INSERT OR IGNORE INTO posts (slug, title, body) VALUES (?, ?, ?)"
         [ slug, title, body ]
 
 
 loadPosts : List Post
 loadPosts =
-    case Task.run (Db.query dbConn "SELECT slug, title, body FROM posts ORDER BY slug" []) of
+    case Task.run
+             (Db.query
+                 dbConn
+                 "SELECT slug, title, body FROM posts ORDER BY slug"
+                 []) of
+
         Ok rows ->
             List.map rowToPost rows
 
@@ -118,7 +128,12 @@ loadPosts =
 
 loadPost : String -> Maybe Post
 loadPost slug =
-    case Task.run (Db.query dbConn "SELECT slug, title, body FROM posts WHERE slug = ?" [ slug ]) of
+    case Task.run
+             (Db.query
+                 dbConn
+                 "SELECT slug, title, body FROM posts WHERE slug = ?"
+                 [ slug ]) of
+
         Ok rows ->
             List.head (List.map rowToPost rows)
 
@@ -138,6 +153,7 @@ rowToPost row =
 adminHash : String
 adminHash =
     case Auth.hashPassword (System.getenvOr "BLOG_ADMIN_PASSWORD" "admin123") of
+
         Ok h ->
             h
 
@@ -148,6 +164,7 @@ adminHash =
 checkAdmin : String -> Bool
 checkAdmin pw =
     case Auth.verifyPassword pw adminHash of
+
         Ok ok ->
             ok
 
@@ -159,6 +176,7 @@ checkAdmin pw =
 loadCounts : List ( String, Int )
 loadCounts =
     case Task.run (Analytics.eventCounts ()) of
+
         Ok c ->
             c
 
@@ -169,6 +187,7 @@ loadCounts =
 loadTotal : Int
 loadTotal =
     case Task.run (Analytics.totalEvents ()) of
+
         Ok n ->
             n
 
@@ -179,6 +198,7 @@ loadTotal =
 loadRecent : List String
 loadRecent =
     case Task.run (Analytics.recentEvents 8) of
+
         Ok r ->
             r
 
@@ -195,36 +215,44 @@ withDashboard model =
 init : a -> ( Model, Cmd Msg )
 init _req =
     let
-        _ =
-            ensureSchema
+        _ = ensureSchema
     in
-    ( { page = Home
-      , consent = False
-      , isAdmin = False
-      , adminError = ""
-      , total = 0
-      , counts = []
-      , recent = []
-      }
-    , Cmd.none
-    )
+        ( { page = Home
+          , consent = False
+          , isAdmin = False
+          , adminError = ""
+          , total = 0
+          , counts = []
+          , recent = []
+          }
+        , Cmd.none
+        )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Navigate page ->
             ( { model | page = page }, Cmd.none )
 
         AcceptConsent ->
             ( { model | consent = True }
-            , Cmd.perform (Analytics.setConsent Analytics.Granted) (\_ -> Navigate model.page)
+            , Cmd.perform
+                  (Analytics.setConsent Analytics.Granted)
+                  (\_ -> Navigate model.page)
             )
 
         DoSignIn creds ->
             if checkAdmin creds.password then
-                ( withDashboard { model | isAdmin = True, adminError = "", page = AdminPage }
-                , Cmd.perform (Analytics.track (Analytics.event "admin_login" [])) (\_ -> Navigate AdminPage)
+                ( withDashboard
+                      { model | isAdmin = True
+                      , adminError = ""
+                      , page = AdminPage
+                      }
+                , Cmd.perform
+                      (Analytics.track (Analytics.event "admin_login" []))
+                      (\_ -> Navigate AdminPage)
                 )
 
             else
@@ -232,6 +260,19 @@ update msg model =
 
         SignOut ->
             ( { model | isAdmin = False, page = Home }, Cmd.none )
+
+        -- A tip is a real purchase event: a typed `Money` prop the
+        -- analytics store keeps losslessly, so the console's revenue
+        -- rollup sums it exactly, grouped by currency.
+        Tip amount ->
+            ( model
+            , Cmd.perform
+                  (Analytics.track
+                      (Analytics.event
+                          "purchase"
+                          [ Analytics.money "amount" amount ]))
+                  (\_ -> Navigate model.page)
+            )
 
 
 subscriptions : Model -> Sub Msg
@@ -271,25 +312,24 @@ view model =
             , Ui.centerX
             , Font.color ink
             ]
-            [ headerView
-            , pageBody model
-            , consentBanner model
-            ]
-        )
+            [ headerView, pageBody model, consentBanner model ])
 
 
 headerView : Element Msg
 headerView =
-    Ui.column [ Ui.spacing 6 ]
+    Ui.column
+        [ Ui.spacing 6 ]
         [ titleLink "/" "Sky Blog" 28
-        , Ui.row [ Ui.spacing 10, Font.size 14, Font.color grey ]
-            [ navLink "/" "home", Ui.text "·", navLink "/admin" "admin" ]
+        , Ui.row
+              [ Ui.spacing 10, Font.size 14, Font.color grey ]
+              [ navLink "/" "home", Ui.text "·", navLink "/admin" "admin" ]
         ]
 
 
 pageBody : Model -> Element Msg
 pageBody model =
     case model.page of
+
         Home ->
             homeView
 
@@ -302,32 +342,65 @@ pageBody model =
 
 homeView : Element Msg
 homeView =
-    Ui.column [ Ui.spacing 24, Ui.width Ui.fill ]
-        (List.map postCard loadPosts)
+    Ui.column [ Ui.spacing 24, Ui.width Ui.fill ] (List.map postCard loadPosts)
 
 
 postCard : Post -> Element Msg
 postCard post =
-    Ui.column [ Ui.spacing 6 ]
+    Ui.column
+        [ Ui.spacing 6 ]
         [ titleLink ("/post/" ++ post.slug) post.title 20
-        , Ui.paragraph [ Font.color (Ui.rgb 85 85 85) ]
-            [ Ui.text (String.slice 0 120 post.body ++ "…") ]
+        , Ui.paragraph
+              [ Font.color (Ui.rgb 85 85 85) ]
+              [ Ui.text (String.slice 0 120 post.body ++ "…") ]
         ]
 
 
 postView : String -> Element Msg
 postView slug =
     case loadPost slug of
+
         Just post ->
-            Ui.column [ Ui.spacing 16, Ui.width Ui.fill ]
+            Ui.column
+                [ Ui.spacing 16, Ui.width Ui.fill ]
                 [ Ui.el [ Font.size 26, Font.bold ] (Ui.text post.title)
-                , Ui.paragraph [ Font.color (Ui.rgb 60 60 60) ] [ Ui.text post.body ]
+                , Ui.paragraph
+                      [ Font.color (Ui.rgb 60 60 60) ]
+                      [ Ui.text post.body ]
+                , tipBar
                 , navLink "/" "← back"
                 ]
 
         Nothing ->
-            Ui.column [ Ui.spacing 8 ]
+            Ui.column
+                [ Ui.spacing 8 ]
                 [ Ui.text "Post not found.", navLink "/" "← home" ]
+
+
+-- A "tip the author" bar — each button tracks a `purchase` event with a
+-- typed Money prop, so the console's revenue rollup shows real totals
+-- grouped by currency ($ and € land in separate rows).
+tipBar : Element Msg
+tipBar =
+    Ui.row
+        [ Ui.spacing 10, Ui.paddingXY 0 8 ]
+        [ Ui.el
+              [ Font.size 14, Font.color grey ]
+              (Ui.text "Enjoyed this? Tip the author:")
+        , tipButton "$5" (Money.fromMajor USD 5)
+        , tipButton "€5" (Money.fromMajor EUR 5)
+        ]
+
+
+tipButton : String -> Money -> Element Msg
+tipButton label amount =
+    Ui.button
+        [ Background.color blue
+        , Font.color white
+        , Ui.paddingXY 12 6
+        , Border.rounded 6
+        ]
+        { onPress = Just (Tip amount), label = Ui.text label }
 
 
 adminView : Model -> Element Msg
@@ -344,68 +417,87 @@ signInView model =
     Ui.form
         [ Ui.onSubmit DoSignIn ]
         [ Ui.column
-            [ Ui.spacing 12, Ui.width (Ui.px 320) ]
-            [ Ui.el [ Region.heading 2, Font.size 20, Font.bold ] (Ui.text "Admin sign-in")
-            , Ui.el [ Font.size 13, Font.color grey ]
-                (Ui.text "bcrypt-checked via Std.Auth (default: admin123).")
-            , Ui.input
-                [ Ui.htmlAttribute "type" "password"
-                , Ui.name "password"
-                , Border.width 1
-                , Border.color (Ui.rgb 210 210 210)
-                , Border.rounded 4
-                , Ui.padding 8
-                , Ui.width Ui.fill
-                ]
-            , if model.adminError == "" then
-                Ui.text ""
+              [ Ui.spacing 12, Ui.width (Ui.px 320) ]
+              [ Ui.el
+                    [ Region.heading 2, Font.size 20, Font.bold ]
+                    (Ui.text "Admin sign-in")
+              , Ui.el
+                    [ Font.size 13, Font.color grey ]
+                    (Ui.text "bcrypt-checked via Std.Auth (default: admin123).")
+              , Ui.input
+                    [ Ui.htmlAttribute "type" "password"
+                    , Ui.name "password"
+                    , Border.width 1
+                    , Border.color (Ui.rgb 210 210 210)
+                    , Border.rounded 4
+                    , Ui.padding 8
+                    , Ui.width Ui.fill
+                    ]
+              , if model.adminError == "" then
+                    Ui.text ""
 
-              else
-                Ui.el [ Font.color (Ui.rgb 192 57 43), Font.size 13 ]
-                    (Ui.text model.adminError)
-            , Ui.input
-                [ Ui.htmlAttribute "type" "submit"
-                , Ui.htmlAttribute "value" "Sign in"
-                , Background.color blue
-                , Font.color white
-                , Border.rounded 4
-                , Ui.padding 8
-                ]
-            ]
+                else
+                    Ui.el
+                        [ Font.color (Ui.rgb 192 57 43), Font.size 13 ]
+                        (Ui.text model.adminError)
+              , Ui.input
+                    [ Ui.htmlAttribute "type" "submit"
+                    , Ui.htmlAttribute "value" "Sign in"
+                    , Background.color blue
+                    , Font.color white
+                    , Border.rounded 4
+                    , Ui.padding 8
+                    ]
+              ]
         ]
 
 
 dashboardView : Model -> Element Msg
 dashboardView model =
-    Ui.column [ Ui.spacing 16, Ui.width Ui.fill ]
-        [ Ui.row [ Ui.width Ui.fill ]
-            [ Ui.el [ Ui.width Ui.fill, Font.size 22, Font.bold ] (Ui.text "Analytics")
-            , Ui.button
-                [ Border.width 1, Border.color (Ui.rgb 200 200 200), Border.rounded 4, Ui.padding 6 ]
-                { onPress = Just SignOut, label = Ui.text "Sign out" }
-            ]
-        , Ui.paragraph [ Font.color (Ui.rgb 85 85 85) ]
-            [ Ui.text (String.fromInt model.total ++ " events captured — auto page-views, consent-gated, in the SQLite store.") ]
+    Ui.column
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        [ Ui.row
+              [ Ui.width Ui.fill ]
+              [ Ui.el
+                    [ Ui.width Ui.fill, Font.size 22, Font.bold ]
+                    (Ui.text "Analytics")
+              , Ui.button
+                    [ Border.width 1
+                    , Border.color (Ui.rgb 200 200 200)
+                    , Border.rounded 4
+                    , Ui.padding 6
+                    ]
+                    { onPress = Just SignOut, label = Ui.text "Sign out" }
+              ]
+        , Ui.paragraph
+              [ Font.color (Ui.rgb 85 85 85) ]
+              [ Ui.text
+                    (String.fromInt model.total
+                        ++ " events captured — auto page-views, consent-gated, in the SQLite store.")
+              ]
         , Ui.el [ Font.size 16, Font.bold ] (Ui.text "Events")
-        , Ui.column [ Ui.spacing 6, Ui.width Ui.fill ] (List.map countRow model.counts)
+        , Ui.column
+              [ Ui.spacing 6, Ui.width Ui.fill ]
+              (List.map countRow model.counts)
         , Ui.el [ Font.size 16, Font.bold ] (Ui.text "Recent")
         , Ui.column
-            [ Ui.spacing 4
-            , Ui.width Ui.fill
-            , Ui.padding 12
-            , Background.color (Ui.rgb 246 246 249)
-            , Border.rounded 6
-            , Font.size 12
-            , Font.family Font.monospace
-            , Ui.scrollbarX
-            ]
-            (List.map (\line -> Ui.el [] (Ui.text line)) model.recent)
+              [ Ui.spacing 4
+              , Ui.width Ui.fill
+              , Ui.padding 12
+              , Background.color (Ui.rgb 246 246 249)
+              , Border.rounded 6
+              , Font.size 12
+              , Font.family Font.monospace
+              , Ui.scrollbarX
+              ]
+              (List.map (\line -> Ui.el [] (Ui.text line)) model.recent)
         ]
 
 
 countRow : ( String, Int ) -> Element Msg
 countRow pair =
-    Ui.row [ Ui.width Ui.fill ]
+    Ui.row
+        [ Ui.width Ui.fill ]
         [ Ui.el [ Ui.width Ui.fill ] (Ui.text (fst pair))
         , Ui.text (String.fromInt (snd pair))
         ]
@@ -425,11 +517,18 @@ consentBanner model =
             , Font.color white
             , Border.rounded 8
             ]
-            [ Ui.paragraph [ Ui.width Ui.fill ]
-                [ Ui.text "We capture anonymous analytics. Allow identified analytics?" ]
+            [ Ui.paragraph
+                  [ Ui.width Ui.fill ]
+                  [ Ui.text
+                        "We capture anonymous analytics. Allow identified analytics?"
+                  ]
             , Ui.button
-                [ Background.color blue, Font.color white, Ui.padding 8, Border.rounded 6 ]
-                { onPress = Just AcceptConsent, label = Ui.text "Allow" }
+                  [ Background.color blue
+                  , Font.color white
+                  , Ui.padding 8
+                  , Border.rounded 6
+                  ]
+                  { onPress = Just AcceptConsent, label = Ui.text "Allow" }
             ]
 
 
@@ -443,7 +542,11 @@ navLink url label =
 titleLink : String -> String -> Int -> Element Msg
 titleLink url label size =
     Ui.link
-        [ Ui.htmlAttribute "sky-nav" "", Font.color ink, Font.size size, Font.bold ]
+        [ Ui.htmlAttribute "sky-nav" ""
+        , Font.color ink
+        , Font.size size
+        , Font.bold
+        ]
         { url = url, label = Ui.text label }
 
 
@@ -453,11 +556,10 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes =
-            [ route "/" Home
-            , route "/post/:slug" PostPage
-            , route "/admin" AdminPage
-            ]
+        , routes = [ route "/" Home
+          , route "/post/:slug" PostPage
+          , route "/admin" AdminPage
+          ]
         , notFound = Home
         , analytics = { pageViews = True }
         }
