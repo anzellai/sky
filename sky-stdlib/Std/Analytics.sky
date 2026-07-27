@@ -1,0 +1,134 @@
+-- | Std.Analytics — typed product analytics (Layer 3 Sky source).
+--
+-- Capture page views, actions, and e-commerce events with typed
+-- properties. The foundation is an OPEN typed-payload builder — any
+-- code (your app OR a reusable library) can emit an event without
+-- coupling to a central union:
+--
+--     Analytics.track
+--         (Analytics.event "product_viewed"
+--             [ Analytics.string "sku" "SKU-42"
+--             , Analytics.int "qty" 1
+--             ])
+--
+-- The differentiator vs every stringly-typed SDK: property VALUES are
+-- Sky-typed (an `Int` is an `Int`, identity is a `Pii`, not a stray
+-- `String`), and PII is a distinct type the pipeline can redact by
+-- construction (see `Pii`).
+--
+-- STATUS: P1 (capture core). `money` props, `identify`, auto page-views,
+-- consent gating, pluggable sinks, and the console view land in later
+-- phases — see docs/rfcs/std-analytics.md. In P1 every tracked event is
+-- written to a structured `[analytics]` line (the default local/debug
+-- sink); PII props are redacted.
+module Std.Analytics exposing
+    ( Event
+    , Prop
+    , PropValue(..)
+    , Pii(..)
+    , event
+    , string
+    , int
+    , float
+    , bool
+    , pii
+    , piiEmail
+    , piiRaw
+    , track
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A typed property value. New scalar kinds (e.g. `Money`, `Time`)
+-- are added as variants; the pipeline renders each per its type.
+type PropValue
+    = VString String
+    | VInt Int
+    | VFloat Float
+    | VBool Bool
+    | VPii Pii
+
+-- | One event property: a key and a typed value.
+type alias Prop =
+    { key : String
+    , value : PropValue
+    }
+
+-- | Personally-identifiable information. Identity (email, a raw
+-- identifier) may enter an event ONLY through this type, never as a
+-- bare `String` prop. That makes redaction load-bearing: a sink or
+-- context not cleared for PII strips or hashes `Pii` props by type,
+-- and the reflective payload deriver (later phase) never emits a plain
+-- `String` as PII by accident. In P1 all `Pii` props are redacted.
+type Pii
+    = PiiEmail String
+    | PiiRaw String
+
+-- | An event: a name plus typed properties. This is the open wire
+-- shape — a library emits `event "auth.login_succeeded" [...]` with no
+-- coupling to the app's own event types. Namespace library event names
+-- (`auth.*`, `datepicker.*`).
+type alias Event =
+    { name : String
+    , props : List Prop
+    }
+
+
+-- | Build an event from a name and a list of typed properties.
+event : String -> List Prop -> Event
+event name props =
+    { name = name, props = props }
+
+
+-- | A `String` property.
+string : String -> String -> Prop
+string k v =
+    { key = k, value = VString v }
+
+
+-- | An `Int` property.
+int : String -> Int -> Prop
+int k v =
+    { key = k, value = VInt v }
+
+
+-- | A `Float` property.
+float : String -> Float -> Prop
+float k v =
+    { key = k, value = VFloat v }
+
+
+-- | A `Bool` property.
+bool : String -> Bool -> Prop
+bool k v =
+    { key = k, value = VBool v }
+
+
+-- | A PII property — the only way identity enters an event. Pair with
+-- `piiEmail` / `piiRaw` (or the `Pii` constructors) so the value is
+-- typed as `Pii` and the pipeline can redact it.
+pii : String -> Pii -> Prop
+pii k v =
+    { key = k, value = VPii v }
+
+
+-- | Tag a value as an email address (PII).
+piiEmail : String -> Pii
+piiEmail v =
+    PiiEmail v
+
+
+-- | Tag an arbitrary identifier as PII (a phone number, a raw user id
+-- you consider sensitive).
+piiRaw : String -> Pii
+piiRaw v =
+    PiiRaw v
+
+
+-- | Emit an event. In P1 this writes a structured `[analytics]` line
+-- (the default local sink) with PII redacted; later phases route it
+-- through the consent gate, context enrichment, and configured sinks.
+track : Event -> Task Error ()
+track =
+    Ffi.kernel "Analytics_track"
