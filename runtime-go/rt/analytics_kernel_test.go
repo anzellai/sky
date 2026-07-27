@@ -2,9 +2,68 @@ package rt
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func resetAnalyticsSinks() {
+	analyticsSinksMu.Lock()
+	analyticsSinks = []analyticsSinkT{{kind: "stderr"}}
+	analyticsSinksMu.Unlock()
+}
+
+// TestAnalyticsFileSink — configure a FileSink and confirm events are appended
+// as JSONL (one event per line).
+func TestAnalyticsFileSink(t *testing.T) {
+	defer resetAnalyticsSinks()
+	tmp := filepath.Join(t.TempDir(), "ev.jsonl")
+	anyTaskInvoke(Analytics_configure([]any{SkyADT{SkyName: "FileSink", Fields: []any{tmp}}}))
+
+	sess := &liveSession{sid: "fsink"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	analyticsEmit("e1", map[string]any{"k": "v"})
+	analyticsEmit("e2", map[string]any{"n": int64(2)})
+
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read file sink: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSONL lines, got %d: %q", len(lines), data)
+	}
+	if !strings.Contains(lines[0], `"event":"e1"`) || !strings.Contains(lines[1], `"event":"e2"`) {
+		t.Errorf("file sink lines wrong: %q", data)
+	}
+}
+
+// TestAnalyticsCustomSink — a Custom sink hands each rendered JSON line to a
+// user function (the userland-destination escape hatch).
+func TestAnalyticsCustomSink(t *testing.T) {
+	defer resetAnalyticsSinks()
+	var got string
+	fn := func(line any) any {
+		return func() any {
+			got = fmt.Sprintf("%v", line)
+			return Ok[any, any](struct{}{})
+		}
+	}
+	anyTaskInvoke(Analytics_configure([]any{SkyADT{SkyName: "Custom", Fields: []any{fn}}}))
+
+	sess := &liveSession{sid: "csink"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	analyticsEmit("ce", map[string]any{})
+	if !strings.Contains(got, `"event":"ce"`) {
+		t.Errorf("custom sink did not receive the line: %q", got)
+	}
+}
 
 func TestAnalyticsSnakeCase(t *testing.T) {
 	cases := map[string]string{

@@ -16,21 +16,23 @@
 -- `String`), and PII is a distinct type the pipeline can redact by
 -- construction (see `Pii`).
 --
--- STATUS: P2 (capture + consent). Shipped: the open builder + typed
--- props (incl. `Money`), `trackEvent` reflective derive, load-bearing
--- `Pii` redaction, and the default-safe identity/consent backbone
--- (`identify`, `setConsent`, anonymous-by-default, session-scoped so one
--- Sky.Live user's identity never bleeds into another's). Landing later:
--- context enrichment + auto page-views (+ IP-anon), pluggable export
--- sinks (+ per-sink Pii clearance), the console view, and `erase` — see
--- docs/rfcs/std-analytics.md. Every event is written to a structured
--- `[analytics]` line (the default local/debug sink); PII stays redacted.
+-- STATUS: P3a (capture + consent + sinks). Shipped: the open builder +
+-- typed props (incl. `Money`), `trackEvent` reflective derive,
+-- load-bearing `Pii` redaction, the default-safe identity/consent
+-- backbone (`identify`, `setConsent`, anonymous-by-default, session-scoped
+-- so one Sky.Live user's identity never bleeds into another's), opt-in
+-- Sky.Live auto page-views, and pluggable `Sink`s (`configure`:
+-- stderr / JSONL file / a `Custom` userland handler for any provider).
+-- Landing later: context enrichment (+ IP-anon), per-sink Pii clearance,
+-- first-class provider wrappers, the console view, and `erase` — see
+-- docs/rfcs/std-analytics.md. PII stays redacted across every sink.
 module Std.Analytics exposing
     ( Event
     , Prop
     , PropValue(..)
     , Pii(..)
     , Consent(..)
+    , Sink(..)
     , event
     , string
     , int
@@ -44,6 +46,7 @@ module Std.Analytics exposing
     , trackEvent
     , identify
     , setConsent
+    , configure
     )
 
 import Sky.Ffi as Ffi
@@ -201,3 +204,26 @@ identify =
 setConsent : Consent -> Task Error ()
 setConsent =
     Ffi.kernel "Analytics_setConsent"
+
+-- | Where captured events are written. Destinations are app-wide (process
+-- global), so `configure` them once at startup. `StderrSink` is the default
+-- local/debug sink; `FileSink path` appends JSONL (one event per line, ready
+-- for `jq` / DuckDB); `Custom` hands each rendered JSON line to your own Sky
+-- function — so ANY destination (a provider POST, a queue) lives in your code
+-- without the stdlib pinning a vendor.
+--
+--     Analytics.configure
+--         [ Analytics.FileSink "events.jsonl"
+--         , Analytics.Custom (\line -> Http.post "https://collector/ingest" line)
+--         ]
+type Sink
+    = StderrSink
+    | FileSink String
+    | Custom (String -> Task Error ())
+
+
+-- | Set the process-global sink list (default `[ StderrSink ]`). Call once at
+-- startup, before tracking. An empty list falls back to `StderrSink`.
+configure : List Sink -> Task Error ()
+configure =
+    Ffi.kernel "Analytics_configure"

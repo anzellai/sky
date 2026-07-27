@@ -56,8 +56,106 @@ func analyticsEmit(name string, props map[string]any) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(payload); err == nil {
-		fmt.Fprint(analyticsSink, "[analytics] "+buf.String())
+	if err := enc.Encode(payload); err != nil {
+		return
+	}
+	analyticsFanOut(buf.String())
+}
+
+// ── pluggable sinks (P3) ─────────────────────────────────────────────────
+//
+// Destinations are process-global (app-wide), UNLIKE identity/consent which
+// are per-session. `Sink = StderrSink | FileSink path | Custom fn` — the
+// `Custom (String -> Task Error ())` variant hands the JSON line to a Sky
+// function, so ANY destination (a provider HTTP POST, a queue) lives in
+// userland without the stdlib hardcoding vendors. Default is [StderrSink].
+// The already-rendered line has PII redacted, so every sink is safe today;
+// per-sink PII clearance (raw PII to a cleared sink) is a later refinement.
+
+type analyticsSinkT struct {
+	kind string // "stderr" | "file" | "custom"
+	path string // file path (kind == file)
+	fn   any    // Sky `String -> Task Error ()` (kind == custom)
+}
+
+var (
+	analyticsSinksMu sync.RWMutex
+	analyticsSinks   = []analyticsSinkT{{kind: "stderr"}}
+	analyticsFileMu  sync.Mutex // serialise concurrent file appends
+)
+
+// analyticsFanOut writes the rendered JSON line to every configured sink.
+func analyticsFanOut(line string) {
+	analyticsSinksMu.RLock()
+	sinks := analyticsSinks
+	analyticsSinksMu.RUnlock()
+	for _, s := range sinks {
+		switch s.kind {
+		case "stderr":
+			fmt.Fprint(analyticsSink, "[analytics] "+line)
+		case "file":
+			analyticsWriteFile(s.path, line)
+		case "custom":
+			// Synchronous + panic-shielded: guarantees delivery (a fire-and-
+			// forget goroutine would be lost when a CLI one-shot exits). Keep the
+			// handler fast, or drive heavy sends via Cmd.perform / a queue — a
+			// batching async spool is a documented later refinement.
+			func(fn any, payload string) {
+				defer func() { _ = recover() }()
+				anyTaskInvoke(SkyCall(fn, payload))
+			}(s.fn, strings.TrimRight(line, "\n"))
+		}
+	}
+}
+
+func analyticsWriteFile(path, line string) {
+	analyticsFileMu.Lock()
+	defer analyticsFileMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(line) // line already carries a trailing newline (JSONL)
+}
+
+// Analytics_configure implements:
+//
+//	Std.Analytics.configure : List Sink -> Task Error ()
+//
+// Sets the process-global sink list. Called once at startup, before track
+// calls; an empty / unparseable list falls back to [StderrSink].
+func Analytics_configure(sinksArg any) any {
+	return func() any {
+		var out []analyticsSinkT
+		rv := reflect.ValueOf(derefPointer(unwrapAny(sinksArg)))
+		if rv.IsValid() && rv.Kind() == reflect.Slice {
+			for i := 0; i < rv.Len(); i++ {
+				name, _, fields, ok := unwrapADTShape(unwrapAny(rv.Index(i).Interface()))
+				if !ok {
+					continue
+				}
+				switch name {
+				case "StderrSink":
+					out = append(out, analyticsSinkT{kind: "stderr"})
+				case "FileSink":
+					if len(fields) == 1 {
+						out = append(out, analyticsSinkT{kind: "file", path: fmt.Sprintf("%v", fields[0])})
+					}
+				case "Custom":
+					if len(fields) == 1 {
+						out = append(out, analyticsSinkT{kind: "custom", fn: fields[0]})
+					}
+				}
+			}
+		}
+		if len(out) == 0 {
+			out = []analyticsSinkT{{kind: "stderr"}}
+		}
+		analyticsSinksMu.Lock()
+		analyticsSinks = out
+		analyticsSinksMu.Unlock()
+		return Ok[any, any](struct{}{})
 	}
 }
 
