@@ -16,6 +16,11 @@
 
 /// One documented kernel binding.
 pub struct KernelBinding {
+    /// The binding's Sky name. Read by the `kernel_api_covers_registered_kernel_functions`
+    /// sync gate (doc.rs, `#[cfg(test)]`) to match against `hir::KERNEL_FUNCTIONS`;
+    /// `render` shows the `sig` (which leads with the name), so a non-test build
+    /// never reads this field directly.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub name: &'static str,
     pub sig: &'static str,
     pub summary: &'static str,
@@ -29,6 +34,9 @@ pub struct KernelModuleApi {
     /// source and the sync gate requires every registered kernel binding here.
     /// `false` for a DUAL module (`Sky.Http.Server`) whose `.sky` file documents
     /// part of the surface — the gate then can't require completeness here.
+    /// Read by the `kernel_api_covers_registered_kernel_functions` sync gate
+    /// (doc.rs, `#[cfg(test)]`); a non-test build never reads it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub kernel_only: bool,
     /// One-paragraph orientation.
     pub overview: &'static str,
