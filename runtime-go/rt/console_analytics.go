@@ -169,9 +169,14 @@ func analyticsRevenueByCurrency(db *sql.DB) []consoleCurrencyTotal {
 
 	out := make([]consoleCurrencyTotal, 0, len(sums))
 	for cur, sum := range sums {
+		// Format to the currency's minor units with banker's rounding —
+		// the SAME currency table (lookupCurrency: USD→2, JPY→0, BTC→8, …)
+		// and rounding mode Std.Money uses, so the console's totals read
+		// identically to Money.format elsewhere (USD "10.00", not "10").
+		minor := int32(lookupCurrency(cur).Minor)
 		out = append(out, consoleCurrencyTotal{
 			Currency: cur,
-			Amount:   sum.String(),
+			Amount:   sum.StringFixedBank(minor),
 			Count:    counts[cur],
 		})
 	}
