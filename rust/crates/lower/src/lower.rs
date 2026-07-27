@@ -624,7 +624,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             cur_def: d,
             tco: None,
         };
-        let item = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
+        let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         // determinism (L4): `discovered` is a Vec (ordered), and the two set
         // drains below are order-INDEPENDENT — they only union into another
         // set/BTreeSet, so the resulting membership is identical regardless of the
@@ -643,7 +643,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
         warnings.extend(cx.warnings);
         errors.extend(cx.errors);
-        funcs.push(item);
+        funcs.extend(def_items);
     }
 
     // ---- type-decl reachability: BFS over Go type names used in emitted code ----
@@ -1624,7 +1624,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn lower_def(&mut self, name: &str, module: &str, sig: Option<&Ty>, is_main: bool) -> GoItem {
+    fn lower_def(&mut self, name: &str, module: &str, sig: Option<&Ty>, is_main: bool) -> Vec<GoItem> {
         // bind params
         let param_pats: Vec<PatId> = self.body.params.clone();
         let mut params = Vec::new();
@@ -1663,7 +1663,7 @@ impl<'a> Ctx<'a> {
         let result_row_poly = sig.is_none() && rp_result;
 
         if is_main {
-            return self.lower_main(name, module);
+            return vec![self.lower_main(name, module)];
         }
 
         let go_name = top_go_name(module, name);
@@ -1739,14 +1739,59 @@ impl<'a> Ctx<'a> {
             }
             None => declared_ret.unwrap_or(GoTy::Unit),
         };
-        GoItem::Func(GoFuncDecl {
+        // ── CAF memoisation ────────────────────────────────────────────────
+        // A zero-parameter top-level binding is a VALUE, not a function — a
+        // single thing evaluated once and shared (Elm/Haskell CAF semantics,
+        // the "memoised handle" contract). Emit it through a lazy once-cell so
+        // every `Foo_bar()` call returns the SAME value instead of re-running
+        // the body (which reopened a DB pool / re-read env / recomputed per
+        // reference). Gate:
+        //   * no value params (it's a CAF, not a function);
+        //   * not `main` (handled above);
+        //   * has a body (`root`);
+        //   * NOT self-referential — a self-ref compute would re-enter the
+        //     cell's sync.Once and deadlock, so those stay plain functions
+        //     (also the right behaviour for a `Err _ -> conn` retry loop).
+        // type_params is always empty here (top-level defs erase polymorphism
+        // to `any`), so a memoised cell holds one representation safely.
+        let self_referential = root.is_some_and(|r| self.body_references_def(r, self.cur_def));
+        if params.is_empty() && root.is_some() && !self_referential {
+            let caf_var = format!("{go_name}__caf");
+            let cell_ty = GoTy::Named("rt.LazyCaf".to_string(), vec![ret_ty.clone()]);
+            // compute := func() T { <original body> }
+            let compute = GoExpr::new(
+                GoExprKind::FuncLit(Vec::new(), ret_ty.clone(), body),
+                GoTy::Func(Vec::new(), Box::new(ret_ty.clone())),
+            );
+            // {caf_var}.Get(compute)
+            let cell_ident = GoExpr::new(GoExprKind::Ident(caf_var.clone()), cell_ty.clone());
+            let get_sel = GoExpr::new(
+                GoExprKind::Selector(Box::new(cell_ident), "Get".to_string()),
+                GoTy::Any,
+            );
+            let get_call = GoExpr::new(
+                GoExprKind::Call(Box::new(get_sel), vec![compute]),
+                ret_ty.clone(),
+            );
+            let accessor = GoFuncDecl {
+                name: go_name.clone(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                ret: ret_ty,
+                body: vec![GoStmt::Return(Some(get_call))],
+                doc: None,
+            };
+            return vec![GoItem::Var(caf_var, cell_ty, None), GoItem::Func(accessor)];
+        }
+
+        vec![GoItem::Func(GoFuncDecl {
             name: go_name,
             type_params: Vec::new(),
             params,
             ret: ret_ty,
             body,
             doc: None,
-        })
+        })]
     }
 
     /// Bind a function parameter. Returns the Go param name, its Go type, and
@@ -3553,6 +3598,23 @@ impl<'a> Ctx<'a> {
     /// `callee` resolves to the top-level def `def` (a self-reference).
     fn is_self_call(&self, callee: ExprId, def: DefId) -> bool {
         matches!(&self.body.exprs[callee], Expr::Var(Res::Def(d)) if *d == def)
+    }
+
+    /// Any reference to top-level `def` ANYWHERE in the subtree rooted at `e`
+    /// (not just tail / call position). Used to gate CAF memoisation: a
+    /// self-referential zero-arg binding (`conn = case … Err _ -> conn`) must
+    /// NOT be memoised, because its compute closure would re-enter the cell's
+    /// `sync.Once.Do` and deadlock — it stays a plain re-evaluating function
+    /// (which is also the correct behaviour for such a retry loop). Walks via
+    /// `expr_children`, the canonical complete child enumerator, so a new AST
+    /// node that adds a child there is covered here too.
+    fn body_references_def(&self, e: ExprId, def: DefId) -> bool {
+        if matches!(&self.body.exprs[e], Expr::Var(Res::Def(d)) if *d == def) {
+            return true;
+        }
+        self.expr_children(e)
+            .into_iter()
+            .any(|c| self.body_references_def(c, def))
     }
 
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
