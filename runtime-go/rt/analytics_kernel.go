@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"reflect"
 	"strings"
@@ -37,7 +38,8 @@ var analyticsSink io.Writer = os.Stderr
 //   - a `user_id` is attached ONLY when consent is Granted and identify ran;
 //   - a Denied consent DROPS the event entirely (no capture).
 func analyticsEmit(name string, props map[string]any) {
-	consent, anonID, userID := currentAnalyticsState().snapshot()
+	st := currentAnalyticsState()
+	consent, anonID, userID := st.snapshot()
 	if consent == consentDenied {
 		return // no capture without consent
 	}
@@ -52,6 +54,9 @@ func analyticsEmit(name string, props map[string]any) {
 	}
 	if consent == consentGranted && userID != "" {
 		payload["user_id"] = userID
+	}
+	if ctx := st.contextSnapshot(); ctx != nil {
+		payload["context"] = ctx
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -170,6 +175,50 @@ func analyticsPageViewsFromCfg(cfg any) bool {
 	return b
 }
 
+// analyticsSetContext records device + anonymised-IP context on the current
+// session, attached to every subsequent event. IP is truncated BEFORE storage
+// (GDPR-style: a full IP is personal data) — the raw address never lands in an
+// event. Called from handleInitial (which has the request) under the analytics
+// opt-in, with the session stamped.
+func analyticsSetContext(userAgent, remoteAddr string) {
+	ctx := map[string]any{}
+	if userAgent != "" {
+		ctx["user_agent"] = userAgent
+	}
+	if ip := analyticsAnonIP(remoteAddr); ip != "" {
+		ctx["ip"] = ip
+	}
+	if len(ctx) > 0 {
+		currentAnalyticsState().setContext(ctx)
+	}
+}
+
+// analyticsAnonIP truncates a client IP to its network prefix: the last octet
+// of an IPv4 (1.2.3.4 -> 1.2.3.0), the last 80 bits of an IPv6 (keep the /48) —
+// the standard "IP anonymisation" GA/Matomo apply. Returns "" for an
+// unparseable address, so nothing personal leaks by accident.
+func analyticsAnonIP(remoteAddr string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return ""
+	}
+	if v4 := ip.To4(); v4 != nil {
+		v4[3] = 0
+		return v4.String()
+	}
+	if v6 := ip.To16(); v6 != nil {
+		for i := 6; i < 16; i++ {
+			v6[i] = 0
+		}
+		return v6.String()
+	}
+	return ""
+}
+
 // analyticsTrackPageView emits a consent-gated `page_view` for the Sky.Live
 // auto-capture path. Called from handleInitial with the session already stamped.
 func analyticsTrackPageView(path, referrer string) {
@@ -202,6 +251,7 @@ type analyticsSessionState struct {
 	consent analyticsConsent
 	anonID  string
 	userID  string
+	context map[string]any // device / anonymised IP, attached to every event
 }
 
 func newAnalyticsState() *analyticsSessionState {
@@ -224,6 +274,25 @@ func (s *analyticsSessionState) setUserID(u string) {
 	s.mu.Lock()
 	s.userID = u
 	s.mu.Unlock()
+}
+
+func (s *analyticsSessionState) setContext(c map[string]any) {
+	s.mu.Lock()
+	s.context = c
+	s.mu.Unlock()
+}
+
+func (s *analyticsSessionState) contextSnapshot() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.context) == 0 {
+		return nil
+	}
+	cp := make(map[string]any, len(s.context))
+	for k, v := range s.context {
+		cp[k] = v
+	}
+	return cp
 }
 
 var (

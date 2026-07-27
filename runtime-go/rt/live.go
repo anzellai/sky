@@ -3969,6 +3969,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// the session is stamped above, so this one call captures all navigations,
 	// consent-gated + session-scoped. Referer gives the previous page.
 	if app.analyticsPageViews {
+		analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
 		analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
 	}
 	// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven

@@ -213,6 +213,44 @@ func TestAnalyticsSessionIsolation(t *testing.T) {
 	}
 }
 
+// TestAnalyticsAnonIP — IP anonymisation: raw client IPs are truncated to
+// their network prefix before they can reach an event (GDPR-style).
+func TestAnalyticsAnonIP(t *testing.T) {
+	cases := map[string]string{
+		"1.2.3.4:5678":     "1.2.3.0",
+		"1.2.3.4":          "1.2.3.0",
+		"203.0.113.42:443": "203.0.113.0",
+		"not-an-ip":        "",
+		"":                 "",
+	}
+	for in, want := range cases {
+		if got := analyticsAnonIP(in); got != want {
+			t.Errorf("anonIP(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// IPv6: last 80 bits zeroed (keep the /48).
+	if got := analyticsAnonIP("2001:db8:1234:5678:9abc:def0:1234:5678"); !strings.HasPrefix(got, "2001:db8:1234:") || strings.Contains(got, "9abc") {
+		t.Errorf("ipv6 anon = %q, want the host bits zeroed", got)
+	}
+}
+
+// TestAnalyticsSetContext — device + anonymised IP land on the session context;
+// the raw IP is never stored.
+func TestAnalyticsSetContext(t *testing.T) {
+	sess := &liveSession{sid: "ctx"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	analyticsSetContext("UA-X", "9.8.7.6:1234")
+	ctx := currentAnalyticsState().contextSnapshot()
+	if ctx["user_agent"] != "UA-X" {
+		t.Errorf("user_agent not captured: %v", ctx)
+	}
+	if ctx["ip"] != "9.8.7.0" {
+		t.Errorf("ip not anonymised (raw IP leaked?): %v", ctx)
+	}
+}
+
 // TestAnalyticsTrackPageView — the Sky.Live auto page-view path emits a
 // consent-gated `page_view` (path + referrer), anonymous by default.
 func TestAnalyticsTrackPageView(t *testing.T) {

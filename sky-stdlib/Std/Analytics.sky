@@ -16,15 +16,15 @@
 -- `String`), and PII is a distinct type the pipeline can redact by
 -- construction (see `Pii`).
 --
--- STATUS: P3a (capture + consent + sinks). Shipped: the open builder +
--- typed props (incl. `Money`), `trackEvent` reflective derive,
--- load-bearing `Pii` redaction, the default-safe identity/consent
--- backbone (`identify`, `setConsent`, anonymous-by-default, session-scoped
--- so one Sky.Live user's identity never bleeds into another's), opt-in
--- Sky.Live auto page-views, and pluggable `Sink`s (`configure`:
--- stderr / JSONL file / a `Custom` userland handler for any provider).
--- Landing later: context enrichment (+ IP-anon), per-sink Pii clearance,
--- first-class provider wrappers, the console view, and `erase` — see
+-- STATUS: capture + consent + sinks + context. Shipped: the open builder
+-- + typed props (incl. `Money`), `trackEvent` reflective derive,
+-- load-bearing `Pii` redaction, the default-safe identity/consent backbone
+-- (`identify`, `setConsent`, anonymous-by-default, session-scoped so one
+-- Sky.Live user's identity never bleeds into another's), opt-in Sky.Live
+-- auto page-views, device + IP-anonymised context enrichment, and
+-- pluggable `Sink`s (`configure`: stderr / JSONL file / a `Custom` userland
+-- handler for any provider). Landing later: per-sink Pii clearance,
+-- first-class provider wrappers, the console dashboard, and `erase` — see
 -- docs/rfcs/std-analytics.md. PII stays redacted across every sink.
 module Std.Analytics exposing
     ( Event
