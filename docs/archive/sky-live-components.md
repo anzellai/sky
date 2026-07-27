@@ -1,5 +1,25 @@
 # Sky.Live — Component Protocol & Package Ecosystem
 
+> **⚠️ STATUS (archived design note — read before relying on this).**
+> The `toMsg` / `Config msg` component pattern described here IS the real,
+> shipped idiom for embedding a stateful component in a Sky.Live/Tui/Webview
+> app — see the working `examples/10-live-component`. **However, the
+> "auto-wiring" the compiler is claimed to do below (running `Foo.update`
+> for a `FooMsg Foo.Msg` variant with *no explicit case*) was never
+> implemented in the Rust compiler.** In real code the parent MUST delegate
+> explicitly:
+> ```elm
+> FooMsg m ->
+>     let ( foo2, _ ) = Foo.update m model.foo
+>     in ( { model | foo = foo2 }, Cmd.none )
+> ```
+> Treat every "auto-wired" claim in this document as an unbuilt proposal, not
+> current behaviour. Sky also has no `Cmd.map`/`Sub.map`/`Html.map`/
+> `Element.map`: a component that produces real effects takes a `toMsg`/`Config`
+> and builds its `Cmd`/`Sub`/`Html` in the PARENT's Msg space from the start
+> (e.g. `Cmd.perform task (\r -> config.toMsg (Loaded r))`), rather than mapping
+> child-space output after the fact.
+
 ## The Core Idea
 
 Every embeddable component exposes a type with **the same name as the module**.

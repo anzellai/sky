@@ -12,7 +12,7 @@ import Std.Sub as Sub
 import Counter exposing (Counter)
 
 -- ======================================================
--- MSG -- CounterMsg wraps Counter.Msg (auto-wired!)
+-- MODEL -- the parent owns the component's state as a field
 -- ======================================================
 type alias Model =
     { page : Page
@@ -21,7 +21,8 @@ type alias Model =
     }
 
 -- ======================================================
--- MODEL -- unified with component state
+-- MSG -- CounterMsg wraps Counter.Msg; the parent lifts and
+-- delegates it explicitly in `update` (see below).
 -- ======================================================
 type Page
     = MainPage
@@ -46,7 +47,11 @@ init _req =
 
 
 -- ======================================================
--- UPDATE -- no CounterMsg case needed! Auto-wired by compiler.
+-- UPDATE -- the parent delegates a CounterMsg to Counter.update
+-- explicitly, then stores the returned state back on the Model.
+-- (Sky has no Cmd.map: a component that produced real effects
+-- would take a `toMsg`/Config so it builds Cmds in THIS Msg space
+-- directly. Counter is pure, so its Cmd is Cmd.none and dropped.)
 -- ======================================================
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -64,9 +69,6 @@ update msg model =
                     Counter.update counterMsg model.myCounter
             in
                 ( { model | myCounter = newCounter }, Cmd.none )
-
-        _ ->
-            ( model, Cmd.none )
 
 
 -- ======================================================
