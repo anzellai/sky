@@ -22,6 +22,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -3033,30 +3034,137 @@ func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
+// collectLiveRoutes splits a `Live.app` cfg's routes into page routes and api
+// routes. `route` and `api` BOTH return a `Route`, so both kinds arrive in the
+// single `routes` list — that is the documented `Std.Live.api` shape
+// (`api : String -> Handler -> Route`). Splitting them by concrete type is
+// load-bearing: page routes drive the TEA render, api routes mount as raw REST
+// handlers that `dispatchRoot` matches BEFORE the page fallthrough. Dropping
+// the apiRoute arm here (as an older revision did) silently swallowed every api
+// route placed in `routes` — GET fell through to the notFound page, POST 405'd.
+// A separate `api = [...]` cfg field is also honoured for back-compat (the
+// documented surface puts api routes in `routes`, so it is normally absent).
+func collectLiveRoutes(cfg any) ([]liveRoute, []apiRoute) {
+	var pages []liveRoute
+	var apis []apiRoute
+	for _, r := range asList(Field(cfg, "Routes")) {
+		switch rr := r.(type) {
+		case liveRoute:
+			pages = append(pages, rr)
+		case apiRoute:
+			apis = append(apis, rr)
+		}
+	}
+	for _, r := range asList(Field(cfg, "Api")) {
+		if ar, ok := r.(apiRoute); ok {
+			apis = append(apis, ar)
+		}
+	}
+	return pages, apis
+}
+
 // serveAPI calls the Sky handler with a Request-like map and renders
 // the returned Response.
 func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20))
-	req := map[string]any{
-		"method": r.Method,
-		"path":   r.URL.Path,
-		"query":  r.URL.RawQuery,
-		"body":   string(body),
-		"params": params,
-		"headers": func() map[string]any {
-			m := map[string]any{}
-			for k, v := range r.Header {
-				if len(v) > 0 {
-					m[k] = v[0]
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, serverMaxBodyBytes))
+	// Build the SAME canonical SkyRequest the Sky.Http.Server listener passes
+	// to handlers (rt.go), so every Server.* accessor works identically on the
+	// Live api path — `header`, `getCookie`, `queryParam`, `param` — plus form
+	// parsing and RemoteAddr. The earlier ad-hoc `map[string]any` with
+	// lowercase keys was REJECTED by `asSkyRequest` (which requires a struct),
+	// so `Server.header` returned Nothing for every header: a Stripe-Signature
+	// webhook mounted via `Std.Live.api` could never verify its HMAC.
+	skyReq := SkyRequest{
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Body:       string(body),
+		Headers:    make(map[string]any),
+		Params:     make(map[string]any),
+		Query:      make(map[string]any),
+		Cookies:    make(map[string]string),
+		Form:       make(map[string]string),
+		RemoteAddr: r.RemoteAddr,
+	}
+	for k, v := range r.Header {
+		if len(v) > 0 {
+			skyReq.Headers[k] = v[0]
+		}
+	}
+	for _, ck := range r.Cookies() {
+		skyReq.Cookies[ck.Name] = ck.Value
+	}
+	for k, v := range r.URL.Query() {
+		if len(v) > 0 {
+			skyReq.Query[k] = v[0]
+		}
+	}
+	// Pair each `:name` in the route pattern with its captured value.
+	pi := 0
+	for _, seg := range splitPath(ar.pattern) {
+		if strings.HasPrefix(seg, ":") {
+			if pi < len(params) {
+				skyReq.Params[strings.TrimPrefix(seg, ":")] = params[pi]
+			}
+			pi++
+		}
+	}
+	// Parse urlencoded form bodies so Server.formValue works.
+	if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+		if ct := r.Header.Get("Content-Type"); strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
+			if vals, err := url.ParseQuery(skyReq.Body); err == nil {
+				for k, v := range vals {
+					if len(v) > 0 {
+						skyReq.Form[k] = v[0]
+					}
 				}
 			}
-			return m
-		}(),
+		}
 	}
-	result := sky_call(ar.handler, req)
-	// Accept either a rendered response map {status, headers, body} or
-	// a bare string body (defaults to 200 text/plain).
-	status, headers, respBody := unpackResponse(result)
+	// The handler is `Request -> Task Error Response`. Invoke via `SkyCall`
+	// (NOT `sky_call`): `SkyCall` maps the `SkyRequest` onto the handler's
+	// typed record parameter field-by-field — the same call the Sky.Http.Server
+	// listener uses. `sky_call`'s stricter reflect-convert panics converting
+	// `SkyRequest.Headers` (map[string]any) to a `map[string]string` field.
+	// Then FORCE the task and unwrap the Result: Ok → render the Response;
+	// Err → 500 with the error message. (An older serveAPI passed the un-run
+	// Task straight to the renderer, which reflected the thunk and wrote a raw
+	// pointer address to the wire.)
+	res := any(anyTaskInvoke(SkyCall(ar.handler, skyReq)))
+	sr, isResult := res.(SkyResult[any, any])
+	if isResult && sr.Tag != 0 {
+		msg, ok := renderSkyError(sr.ErrValue)
+		if !ok || msg == "" {
+			msg = "internal server error"
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(msg))
+		return
+	}
+	payload := res
+	if isResult {
+		payload = sr.OkValue
+	}
+	if resp, ok := asSkyResponse(payload); ok {
+		status := resp.Status
+		if status == 0 {
+			status = 200
+		}
+		for k, v := range resp.Headers {
+			w.Header().Set(k, v)
+		}
+		if resp.ContentType != "" && w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", resp.ContentType)
+		}
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(resp.Body))
+		return
+	}
+	// Bare / non-Response Ok value → best-effort render (defaults 200 text).
+	status, headers, respBody := unpackResponse(payload)
 	for k, v := range headers {
 		w.Header().Set(k, v)
 	}
@@ -3342,17 +3450,7 @@ func liveAppRun(cfg any) any {
 		cookieName:    "sky_sid",
 		skyIDPrefix:   "r",
 	}
-	for _, r := range asList(Field(cfg, "Routes")) {
-		if lr, ok := r.(liveRoute); ok {
-			app.routes = append(app.routes, lr)
-		}
-	}
-	// Custom REST-style routes (OAuth callbacks, webhooks, API endpoints).
-	for _, r := range asList(Field(cfg, "Api")) {
-		if ar, ok := r.(apiRoute); ok {
-			app.api = append(app.api, ar)
-		}
-	}
+	app.routes, app.api = collectLiveRoutes(cfg)
 	// Static file serving. Sky-side: `static = "public"` → serve
 	// <cwd>/public/* at /static/*. Mount URL can be overridden with
 	// `staticUrl = "/assets"`.
