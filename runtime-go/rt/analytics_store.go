@@ -21,6 +21,7 @@ package rt
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -104,6 +105,30 @@ func nullableStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Analytics_erase implements:
+//
+//	Std.Analytics.erase : String -> Task Error Int
+//
+// Right-to-erasure: delete every stored event for an anonymous OR user id from
+// the LOCAL store, returning the row count. Events already exported to a
+// provider must be erased there (out of the stdlib's reach). No-op (Ok 0) when
+// no store is configured.
+func Analytics_erase(idArg any) any {
+	return func() any {
+		db := analyticsStore()
+		if db == nil {
+			return Ok[any, any](int64(0))
+		}
+		id := fmt.Sprintf("%v", unwrapAny(idArg))
+		res, err := db.Exec(`DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`, id, id)
+		if err != nil {
+			return Err[any, any](ErrUnexpected("analytics.erase: " + err.Error()))
+		}
+		n, _ := res.RowsAffected()
+		return Ok[any, any](n)
+	}
 }
 
 // analyticsJSONText marshals props/context to a JSON TEXT column (nil → NULL).

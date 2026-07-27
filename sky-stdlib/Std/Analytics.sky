@@ -47,6 +47,7 @@ module Std.Analytics exposing
     , identify
     , setConsent
     , configure
+    , erase
     )
 
 import Sky.Ffi as Ffi
@@ -227,3 +228,14 @@ type Sink
 configure : List Sink -> Task Error ()
 configure =
     Ffi.kernel "Analytics_configure"
+
+
+-- | Right-to-erasure: delete every STORED event for an anonymous or user id,
+-- returning the number of rows removed. Deletes from the local store only —
+-- events already exported to a provider must be erased there. A no-op (returns
+-- 0) when no store is configured.
+--
+--     Analytics.erase user.id
+erase : String -> Task Error Int
+erase =
+    Ffi.kernel "Analytics_erase"

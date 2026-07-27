@@ -62,6 +62,44 @@ func TestAnalyticsStore(t *testing.T) {
 	}
 }
 
+// TestAnalyticsErase — right-to-erasure deletes every event for an anonymous
+// OR user id and returns the count.
+func TestAnalyticsErase(t *testing.T) {
+	defer resetAnalyticsStore()
+	resetAnalyticsStore()
+	path := filepath.Join(t.TempDir(), "e.db")
+	t.Setenv("SKY_ANALYTICS_DB_PATH", path)
+	db := analyticsStore()
+
+	analyticsStoreInsert(map[string]any{"ts": int64(1), "event": "x", "anonymous_id": "anon_a"})
+	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "y", "anonymous_id": "anon_a", "user_id": "u1"})
+	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "z", "anonymous_id": "anon_b"})
+
+	erased := analyticsEraseResult(t, "anon_a")
+	if erased != 2 {
+		t.Errorf("erased %d for anon_a, want 2", erased)
+	}
+	var remaining int
+	db.QueryRow(`SELECT count(*) FROM analytics_events`).Scan(&remaining)
+	if remaining != 1 {
+		t.Errorf("remaining %d, want 1", remaining)
+	}
+	// user id u1's row was under anon_a → already gone → 0.
+	if again := analyticsEraseResult(t, "u1"); again != 0 {
+		t.Errorf("erased %d for already-gone u1, want 0", again)
+	}
+}
+
+func analyticsEraseResult(t *testing.T, id string) int {
+	t.Helper()
+	res := any(anyTaskInvoke(Analytics_erase(id)))
+	sr, ok := res.(SkyResult[any, any])
+	if !ok || sr.Tag != 0 {
+		t.Fatalf("erase(%q) failed: %v", id, res)
+	}
+	return AsInt(sr.OkValue)
+}
+
 // TestAnalyticsStorePathResolution — override wins; else reuse console DB; else
 // none.
 func TestAnalyticsStorePathResolution(t *testing.T) {
