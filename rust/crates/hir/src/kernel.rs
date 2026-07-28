@@ -598,7 +598,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Live", &["app", "route", "api", "lifecycle"]),
-    ("Jobs", &["define", "enqueue", "enqueueIn", "cancel"]),
+    // Std.Jobs migrated to Layer-3 Sky source (sky-stdlib/Std/Jobs.sky) —
+    // resolves Res::Def via qual_vars, so it no longer needs a KERNEL_FUNCTIONS
+    // registry entry (v0.19 kernel-metadata unification).
     ("Sub", &["none", "every"]),
     (
         "JsonEnc",

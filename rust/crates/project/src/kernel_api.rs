@@ -117,41 +117,10 @@ pub const KERNEL_API: &[KernelModuleApi] = &[
             summary: "Run a Sky.Tui app. The cfg record is ROW-OPEN — optional fields: `guard : msg -> model -> Result Error ()`, `canvasWidth : Int` (default 1280), `canvasHeight : Int` (default 720).",
         }],
     },
-    KernelModuleApi {
-        module: "Std.Jobs",
-        kernel_only: true,
-        overview: "Durable background jobs: define a typed handler once, enqueue \
-                   payloads to run it (optionally after a delay), and cancel a \
-                   pending job by id.",
-        example: "sendEmail : Job EmailPayload\n\
-                  sendEmail =\n    \
-                  Jobs.define \"send-email\" (\\payload -> Email.send provider payload)\n\n\
-                  enqueueWelcome : EmailPayload -> Task Error JobId\n\
-                  enqueueWelcome payload =\n    \
-                  Jobs.enqueue sendEmail payload",
-        bindings: &[
-            KernelBinding {
-                name: "define",
-                sig: "define : String -> (a -> Task Error ()) -> Job a",
-                summary: "Register a named job handler over a typed payload `a`.",
-            },
-            KernelBinding {
-                name: "enqueue",
-                sig: "enqueue : Job a -> a -> Task Error JobId",
-                summary: "Enqueue a payload to run its job as soon as a worker is free.",
-            },
-            KernelBinding {
-                name: "enqueueIn",
-                sig: "enqueueIn : Int -> Job a -> a -> Task Error JobId",
-                summary: "Enqueue a payload to run after a delay (milliseconds).",
-            },
-            KernelBinding {
-                name: "cancel",
-                sig: "cancel : JobId -> Task Error ()",
-                summary: "Cancel a pending job by its id (no-op if already run).",
-            },
-        ],
-    },
+    // Std.Jobs migrated to Layer-3 Sky source (sky-stdlib/Std/Jobs.sky) — its
+    // sigs + docs + example now live in the .sky file, read by the type-checker,
+    // LSP hover, and `sky doc` from that ONE source (v0.19 kernel-metadata
+    // unification). No kernel_api entry needed.
     KernelModuleApi {
         module: "Sky.Http.Server",
         kernel_only: false,

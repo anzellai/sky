@@ -1,87 +1,93 @@
-# AUTONOMOUS MANDATE — sweep for ALL achievable v1 improvements/fixes in this patch
+# Autonomous mandate — kernel-metadata unification + builder cfg (v0.19.x)
 
-**Set:** 2026-07-22. **Branch:** `rewrite/rust-compiler` (PR #154). **Mode:**
-fully autonomous, agents + grilling. Directive: don't stop midway.
-
-> Follows a chain of shipped v1-closure work (v1-blockers, `_subj` hole,
-> pseudo-class runtime fix, cross-module hover, external-deps LSP resolution).
-> The pattern: we keep finding small gaps + missed things one at a time. This
-> mandate SYSTEMATICALLY discovers everything achievable, so we stop trickling.
+**Set:** 2026-07-28. **Branch:** `feat/std-analytics`. **Mode:** fully
+autonomous + grilling. (Supersedes the completed-and-held 2026-07-27
+Std.Analytics mandate — that work is DONE on this branch and ships together
+in the same v0.19.x release; see the prior mandate archived at
+`docs/v0.19/kernel-metadata-unification.md` §Context.)
 
 ## Verbatim user goal (the authority on "done")
 
-> you see, we keep finding small things we could improve on, and something we've
-> missed. could you again run agents + grilling + autonomous mode to find out
-> what can be done for this patch to improve/fix as much as we can for our v1
-> goals?
-
-## Scope
-
-DISCOVER every issue/improvement that is ACHIEVABLE IN THIS PATCH (small→medium,
-self-contained, low-risk, LSP/tooling/diagnostics/edge-case-correctness) and
-advances v1, then FIX as many as verified-safe. Explicitly OUT: the deep §8
-irreducible floor (FFI-return / wire-decode / TEA reflect-dispatch), server-shape
-CI verification, known-divergences enforcement gate — those are post-merge.
-
-Surfaces to audit (real repros via the pre-built `~/.cargo/bin/debug/sky` +
-differential vs oracle `sky-out/sky`, NOT speculation):
-LSP completeness (every feature × symbol class × edge case) · diagnostics
-quality (message + location + missing/wrong) · parser/syntax edge cases ·
-type-checker accept-wrong / reject-valid / bad-inference · codegen/runtime
-well-typed-miscompile or panic (closable) · tooling papercuts (fmt/doc/test/db/
-add/install/watch/doctor) · stdlib correctness/completeness · DX / "if it
-compiles it works" residual closable gaps.
-
-## Method
-
-Workflow: parallel discovery agents (each a surface, with REAL repros) → grill
-each finding (real? achievable-in-patch? genuine v1 improvement? not deep floor?)
-→ synthesize a prioritized actionable list (close-now / stretch / defer) with
-effort + repro. Then implement the close-now bucket (verify each empirically,
-commit per fix), grill, Judge.
-
-## ADDED 2026-07-23 (user, mid-sweep) — expanded scope
-
-1. **`sky upgrade` not wired** — implement real self-update (was STRETCH).
-2. **`sky run`/`install` progress logging** — not Haskell-compatible; log
-   progress info to the console like the oracle does.
-3. **Full agents scan of the `sky` CLI** — discover every verb/flag/behaviour
-   NOT implemented (or stubbed / diverging from the oracle) and implement
-   properly.
-4. **Docs/comments tidy-up (DO LAST, after all code settles)** — README (must
-   reference v0.18.x), CLAUDE.md + `templates/CLAUDE.md`, docs/*: streamline
-   outdated info, ensure everything reflects the shipped state.
-
-## ADDED 2026-07-23 (user, AFK) — full autonomous close-out toward PR-ready
-
-> use agents + grilling + full autonomous mode to close as many as possible
-> for this patch closer or reaching v1. only stop when you're genuinely stuck
-> or reaching the goals and ready for me to review + PR ready to merge.
+> [smart unification, agreed] we don't want to maintain 2 logics of LSP + sky
+> docs, they shouldn't be competing... ALL kernel functions/vars in module we
+> have a dedicated sky kernel files? so essentially lsp + docs reference to sky
+> source files directly? and doc' description/example will just be from their
+> comment... as kernel functions are used via FFI anyway, so sky's source can
+> call that directly, and that with sky source code LSP + docs will render the
+> same thing.
 >
-> every milestone reached please ensure to:
-> - update all relevant docs, read me, claude.md, Claude template etc.
-> - comments tidy up — don't leave unnecessary comments in code, only leave
->   comments for those with decisions value and the strong why
+> [row-open holdouts] A. use builder cfg i like this, the migration path is
+> clear, we just need to document it + show on readme with breakage, the
+> release will be v0.19.x. use analytics branch for this? as v0.19.x we can
+> ship the whole changes.
+>
+> remember to take deep consideration on the whole arch e2e with soundness,
+> grill the design + implementation, test & verify. ok now fully autonomous
+> mode on.
 
-**Standing directive while AFK:** run the discovery→grill→implement→verify loop
-autonomously. At EACH milestone (a coherent batch of verified fixes): (a) sync
-docs/README/CLAUDE.md/template to the shipped state, (b) tidy comments in the
-touched code — delete narration/obvious comments, keep only decision-value "why"
-comments, (c) commit, (d) push at meaningful milestones. Continue until the
-close-now surface is exhausted (Judge-verified thorough) OR genuinely blocked on
-a user decision. End state: PR-ready, whole-repo gate green, a written summary of
-found/fixed/deferred.
+## Goal
 
-## Definition of done
+Make the **`.sky` source file the single source of truth** for every
+kernel/runtime function's Sky type signature + doc + example, so the
+type-checker, LSP hover, and `sky doc` all render the SAME thing from ONE
+place — eliminating the competing `kernel_api.rs` (project) vs `kernel_sigs`
+(ty) registries and the drift they cause. Ship on `feat/std-analytics` as
+v0.19.x.
 
-Every close-now-bucket item implemented + verified (empirical repro fixed) +
-regression test + committed. Whole-repo gate green (cargo test --workspace + all
-xtask gates + golden + build-run oracle parity + nvim 17/17). Independent Judge
-verifies the discovery was thorough + the shipped fixes are real. A written list
-of what was found, fixed, and honestly deferred (with why). Comments tidied +
-docs synced at every milestone.
+### The four outcomes that define "done"
 
-## Resume protocol
+1. **Every kernel-only binding lives in a `.sky` Layer-3 interface file**
+   (`name : <sig>` + `-- |` doc [+ example] + `name = Ffi.kernel "Sym"`),
+   exactly like the already-migrated `Sky.Http.Server` (Server.sky proves the
+   pattern). Targets: `Std.Jobs` (define/enqueue/enqueueIn/cancel),
+   `Std.Live` (route/api/lifecycle), plus the row-open holdouts below.
+2. **Row-open cfgs (`Live.app`, `Tui.app`, and `Webview.app` for parity) move
+   to Path A typed-builder cfg** — a closed `AppConfig` record built via
+   `Live.config { ...required... } |> Live.withHead ... |> Live.withConsoleAuth
+   ...`, fully expressible in Sky, no open-row syntax needed. Runtime kernels
+   (`Live_config`/`Live_withHead`/… + `Live_app` reading the built config)
+   updated to match. EVERY app in `examples/` + the bundled console migrated to
+   the builder form. Backward-compat is intentionally BROKEN (v0.19.x major-ish
+   bump) and DOCUMENTED.
+3. **`kernel_api.rs` is deleted** (or reduced to nothing the gate needs), and
+   the coverage gate flips to: *every registered kernel-only function has a
+   `.sky` declaration, or CI fails.* Drift becomes a build error, not a
+   CLAUDE.md hope. LSP hover shows the `.sky` sig for every kernel fn — no `?`,
+   no "not found"; generics render as real type vars (`a -> a`).
+4. **Docs + migration**: CLAUDE.md + templates/CLAUDE.md + docs/skylive +
+   docs/skytui + README updated; a **migration guide with the breakage note**
+   (record-literal `Live.app {...}` → builder `Live.app (Live.config {...} |>
+   ...)`) on the README + a `docs/v0.19/` migration doc.
 
-Read THIS file + `git log --oneline -20`. Prior mandates' work is committed;
-this sweep is additive. Discovery findings tracked in docs/v0.18/.
+## Hard rules
+
+1. **Grill the design against Sky architecture BEFORE implementing** — cite the
+   concrete mechanism (Res::Def kernel_alias lowering, Ffi.kernel dispatch,
+   runtime reflect-read of cfg, LSP `hover_ref` sig source, the doc gate).
+   Especially grill Path A: the runtime must reflect-read the built `AppConfig`
+   soundly (no raw `.(T)` on a Sky value — same class as the Db.withTransaction
+   / config-decoder defects already fixed this session).
+2. **Soundness is INVIOLABLE.** "If it compiles it works" — the builder cfg must
+   type-check precisely AND run. No kernel may raw-assert a Sky callback to a Go
+   func type; route via `sky_call`/reflect. Every optional-field-omitted app
+   must produce byte-identical runtime behaviour to supplying the default.
+3. **No two logics.** After this, there is ONE source (the `.sky` file). If any
+   kernel genuinely can't be expressed, it stays in `.sky` with the closest
+   expressible sig + a `-- |` note, and the gate records the exception
+   explicitly — never a silent second registry.
+4. **Verify per phase**: narrowest gate per change; at phase close rebuild +
+   representative `cargo test` + `scripts/example-sweep.sh` (FULL) +
+   `sky doc`/LSP-hover smoke + a real app build+run. Commit per phase locally;
+   push only at milestone boundaries. HOLD ship/tag until the user asks.
+5. **Stop only on a genuine blocker** — a Sky-architecture decision needing the
+   user. Describe it concretely, continue with their direction. No deferral
+   framings ("out of scope for this iter", "session boundary").
+
+## Verify-at-close (independent adversarial Judge)
+
+Done only when: all kernel-only fns are `.sky`-sourced; `kernel_api.rs` gone +
+gate enforces `.sky` coverage; `Live.app`/`Tui.app`/`Webview.app` are builder
+cfgs with runtime + ALL apps migrated; LSP hover + `sky doc` render identically
+from `.sky` for every kernel fn (no `?`); full example sweep + rt suite green;
+docs + README breakage migration shipped. A fresh-context Judge confirms with
+NO "but/except/however/mostly/for-the-scope-of".
