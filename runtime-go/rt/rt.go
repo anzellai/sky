@@ -8543,6 +8543,10 @@ func Server_listen(port any, routes any) any {
 	err := srv.ListenAndServe()
 	signal.Stop(srvSigCh)
 	if err != nil && err != http.ErrServerClosed {
+		if isAddrInUse(err) {
+			reportPortInUse(p, "pass a different port to Server.listen")
+			os.Exit(1)
+		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})

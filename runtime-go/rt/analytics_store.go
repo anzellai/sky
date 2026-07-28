@@ -1,11 +1,15 @@
 // analytics_store.go — Std.Analytics SQLite persistence.
 //
 // Events are persisted to a SQLite store so the console can render history +
-// aggregates. DB path resolution (env > sky.toml > reuse):
+// aggregates. DB path resolution (override > reuse console > sensible default):
 //
 //	SKY_ANALYTICS_DB_PATH  (env, or sky.toml `[analytics] dbPath`)  — override
-//	SKY_CONSOLE_DB_PATH    (reuse the console DB — the default)
-//	(unset)                — no store; the configured Sinks are the only output
+//	SKY_CONSOLE_DB_PATH    (reuse the console DB when set)
+//	(unset)                — DEFAULT to a project-local `.sky/analytics.db`, so
+//	                         enabling analytics WORKS OUT-OF-THE-BOX (no config)
+//	                         and the console Analytics tab reads the same file.
+//	                         The file is only created when analytics is actually
+//	                         used. gitignore `.sky/`.
 //
 // Concurrency (the single-vs-multi-writer question): the MAIN app process is
 // the sole analytics WRITER (track / trackEvent / page-view all run here); the
@@ -23,12 +27,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
+// analyticsDefaultStorePath is where analytics persists when neither
+// SKY_ANALYTICS_DB_PATH nor SKY_CONSOLE_DB_PATH is set — so enabling analytics
+// works with no extra config. Project-local + hidden; the console reads it too.
+const analyticsDefaultStorePath = ".sky/analytics.db"
+
 var (
-	analyticsStoreOnce sync.Once
-	analyticsStoreDB   *sql.DB
+	analyticsStoreOnce       sync.Once
+	analyticsStoreDB         *sql.DB
+	analyticsNoStoreWarnOnce sync.Once
 )
 
 const analyticsSchema = `
@@ -51,7 +62,10 @@ func analyticsStorePath() string {
 	if p := skyGetenv("ANALYTICS_DB_PATH"); p != "" {
 		return p
 	}
-	return os.Getenv("SKY_CONSOLE_DB_PATH")
+	if p := os.Getenv("SKY_CONSOLE_DB_PATH"); p != "" {
+		return p
+	}
+	return analyticsDefaultStorePath
 }
 
 // analyticsStore lazily opens (once) the analytics store, or nil when no path is
@@ -61,6 +75,10 @@ func analyticsStore() *sql.DB {
 		path := analyticsStorePath()
 		if path == "" {
 			return
+		}
+		// Ensure the parent dir exists (the default `.sky/` won't exist yet).
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0o755)
 		}
 		db, err := sql.Open("sqlite", path)
 		if err != nil {
@@ -87,6 +105,15 @@ func analyticsStore() *sql.DB {
 func analyticsStoreInsert(payload map[string]any) {
 	db := analyticsStore()
 	if db == nil {
+		// With the default `.sky/analytics.db` fallback a nil store means the
+		// store FAILED to open (unwritable dir, bad path) — warn ONCE so the
+		// dropped events are discoverable rather than silent.
+		analyticsNoStoreWarnOnce.Do(func() {
+			logStructured("warn", "analytics.store_unavailable",
+				"detail", "analytics store could not be opened — events are being dropped",
+				"path", analyticsStorePath(),
+				"fix", "check the path is writable, or set [analytics] dbPath in sky.toml")
+		})
 		return
 	}
 	ts, _ := payload["ts"].(int64)

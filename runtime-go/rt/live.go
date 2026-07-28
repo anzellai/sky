@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -2094,8 +2095,8 @@ type liveSession struct {
 	// call. See analytics_kernel.go.
 	analytics *analyticsSessionState
 	model     any
-	handlers      map[string]any
-	prevTree      *VNode // Last rendered tree; used by the diff protocol.
+	handlers  map[string]any
+	prevTree  *VNode // Last rendered tree; used by the diff protocol.
 	// View-body bookkeeping for the SSE no-op suppression contract
 	// (Cycle 3 P39 / Gap C2 — split out from the historical single
 	// `prevBody` field whose dual meaning had bitten v0.15.14).
@@ -2827,15 +2828,15 @@ type liveApp struct {
 	// consent-gated `page_view` event on every full page render (initial mount,
 	// sky-nav fetch, popstate) — see analytics_kernel.go.
 	analyticsPageViews bool
-	api                []apiRoute // REST-style custom handlers alongside Live pages
-	staticDir  string        // Serves files from this directory under /static/…
-	staticURL  string        // URL mount prefix (default "/static")
-	store      SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
-	sessionTTL time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
-	locker     *sessionLocker
-	msgTags    map[string]int // SkyName → Tag cache for direct-send events
-	msgTagsMu  sync.Mutex
-	bannerCfg  liveBannerConfig // resolved env-vars + cfg.status overrides
+	api                []apiRoute    // REST-style custom handlers alongside Live pages
+	staticDir          string        // Serves files from this directory under /static/…
+	staticURL          string        // URL mount prefix (default "/static")
+	store              SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
+	sessionTTL         time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
+	locker             *sessionLocker
+	msgTags            map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu          sync.Mutex
+	bannerCfg          liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
 	// parent Sky.Live runtime). Empty for root-mount (the common
@@ -3447,22 +3448,22 @@ func Live_app(cfg any) any {
 
 func liveAppRun(cfg any) any {
 	app := &liveApp{
-		init:          Field(cfg, "Init"),
-		update:        Field(cfg, "Update"),
-		view:          Field(cfg, "View"),
-		subscriptions: Field(cfg, "Subscriptions"),
-		notFound:      Field(cfg, "NotFound"),
-		guard:         Field(cfg, "Guard"),
+		init:               Field(cfg, "Init"),
+		update:             Field(cfg, "Update"),
+		view:               Field(cfg, "View"),
+		subscriptions:      Field(cfg, "Subscriptions"),
+		notFound:           Field(cfg, "NotFound"),
+		guard:              Field(cfg, "Guard"),
 		head:               Field(cfg, "Head"),
 		consoleAuth:        Field(cfg, "ConsoleAuth"),
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
-		locker:        newSessionLocker(),
-		msgTags:       make(map[string]int),
-		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
-		basePath:      normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
-		cookieName:    "sky_sid",
-		skyIDPrefix:   "r",
+		locker:             newSessionLocker(),
+		msgTags:            make(map[string]int),
+		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
+		basePath:           normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
+		cookieName:         "sky_sid",
+		skyIDPrefix:        "r",
 	}
 	app.routes, app.api = collectLiveRoutes(cfg)
 	// Static file serving. Sky-side: `static = "public"` → serve
@@ -3791,9 +3792,33 @@ func liveAppRun(cfg any) any {
 	err := srv.ListenAndServe()
 	signal.Stop(sigCh)
 	if err != nil && err != http.ErrServerClosed {
+		// A port-already-bound failure is the common startup error — make it
+		// LOUD + actionable on stderr instead of a silent Task-Err exit.
+		if isAddrInUse(err) {
+			reportPortInUse(port, "set SKY_LIVE_PORT, or [live] port in sky.toml")
+			os.Exit(1)
+		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
+}
+
+// isAddrInUse reports whether a listen error is a port-already-bound failure.
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) ||
+		strings.Contains(err.Error(), "address already in use")
+}
+
+// reportPortInUse prints a clear, actionable message for a bind failure so a
+// server doesn't appear to "silently quit" when the port is taken. changeHint
+// tells the user how to change the port for this app shape.
+func reportPortInUse(port int, changeHint string) {
+	fmt.Fprintf(os.Stderr,
+		"\n[sky] Cannot start: port %d is already in use.\n"+
+			"      Another instance is probably running, or another program holds the port.\n"+
+			"      • Free it:      lsof -ti :%d | xargs kill\n"+
+			"      • Or change it: %s\n\n",
+		port, port, changeHint)
 }
 
 // setSecurityHeaders applies safe-by-default security headers.

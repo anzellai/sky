@@ -165,7 +165,7 @@ func analyticsEraseResult(t *testing.T, id string) int {
 }
 
 // TestAnalyticsStorePathResolution — override wins; else reuse console DB; else
-// none.
+// the project-local default (so analytics works out-of-the-box).
 func TestAnalyticsStorePathResolution(t *testing.T) {
 	t.Setenv("SKY_ANALYTICS_DB_PATH", "/override.db")
 	t.Setenv("SKY_CONSOLE_DB_PATH", "/console.db")
@@ -177,7 +177,7 @@ func TestAnalyticsStorePathResolution(t *testing.T) {
 		t.Errorf("should reuse console DB: %q", got)
 	}
 	t.Setenv("SKY_CONSOLE_DB_PATH", "")
-	if got := analyticsStorePath(); got != "" {
-		t.Errorf("no path configured should be empty: %q", got)
+	if got := analyticsStorePath(); got != analyticsDefaultStorePath {
+		t.Errorf("no path configured should fall back to the default: %q", got)
 	}
 }
