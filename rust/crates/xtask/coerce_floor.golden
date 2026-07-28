@@ -21,7 +21,7 @@
 15-http-server	13
 16-skychess	544
 17-skymon	632
-18-job-queue	52
+18-job-queue	55
 19-skyforum	347
 20-cli-counter	3
 21-tui-stopwatch	9
@@ -54,4 +54,4 @@
 49-xmodule-adt	2
 50-open-row-closure	7
 51-kernel-variadic-arity	1
-53-record-update-map	8
+53-record-update-map	19

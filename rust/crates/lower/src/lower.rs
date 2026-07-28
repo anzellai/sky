@@ -3003,7 +3003,26 @@ impl<'a> Ctx<'a> {
                 let last = args.last().unwrap_or_else(|| {
                     base::bug!("combinator arg list emptied under len>=2 guard")
                 });
-                match self.expr_ty(*last) {
+                // Prefer the source's DECLARED Go type over its use-expr's
+                // solved type. When the source list is a function PARAMETER
+                // (`panics lines = List.map … lines`), the use-expr's solved
+                // type erases to `any` on the lowering path — so `expr_ty`
+                // would miss the element and leave the closure param an
+                // un-pinned subset struct (the record-update-over-param panic,
+                // DarraghStudio bug #2 param variant). The param's `local_ty`
+                // carries the annotated `[]Rec`, which pins the element
+                // correctly. A CAF source already reports a concrete `Slice`
+                // via `expr_ty`, so this only ADDS coverage for the param case.
+                let src_ty = match &self.body.exprs[*last] {
+                    Expr::Var(Res::Local(id)) => self
+                        .local_tys
+                        .get(id)
+                        .cloned()
+                        .filter(|t| matches!(t, GoTy::Slice(_)))
+                        .unwrap_or_else(|| self.expr_ty(*last)),
+                    _ => self.expr_ty(*last),
+                };
+                match src_ty {
                     GoTy::Slice(e) => Some(*e),
                     _ => None,
                 }
@@ -3671,6 +3690,25 @@ impl<'a> Ctx<'a> {
         self.expr_children(e)
             .into_iter()
             .any(|c| self.body_references_def(c, def))
+    }
+
+    /// True when the subtree rooted at `e` contains a record UPDATE whose base
+    /// is the local `pid` (`{ pid | f = v }`). Used to widen a subset-struct
+    /// param to `any` so its update goes reflective — an anonymous struct can't
+    /// carry a full-record update without dropping fields. Does NOT descend into
+    /// nested lambdas (a different param binds `pid` there).
+    fn param_is_updated(&self, e: ExprId, pid: LocalId) -> bool {
+        if let Expr::Update { base, .. } = &self.body.exprs[e] {
+            if matches!(&self.body.exprs[*base], Expr::Var(Res::Local(l)) if *l == pid) {
+                return true;
+            }
+        }
+        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+            return false;
+        }
+        self.expr_children(e)
+            .into_iter()
+            .any(|c| self.param_is_updated(c, pid))
     }
 
     /// The first "fresh-value" kernel (`Uuid.v4` / entropy `Random.*` /
@@ -4554,7 +4592,30 @@ impl<'a> Ctx<'a> {
                         None => String::new(),
                     }
                 };
+                // Widen when the body reads a field the subset struct lacks, OR
+                // when the param is the base of a record-UPDATE. An anonymous
+                // subset `struct{…}` cannot soundly carry `{ r | f = v }`: the
+                // update yields the FULL record, but a struct-typed slot drops
+                // the un-updated fields (physically), so a later consumer that
+                // reads them hits `reflect: struct{F} as struct{G}`. Widening to
+                // `any` routes the update through the reflective rt.RecordUpdate
+                // path, which preserves every field. The ROOT fix for the
+                // record-update-narrowing panic class (DarraghStudio bug #2) —
+                // covers map-chains ([]any element), foldl accumulators, and any
+                // source whose concrete element type isn't recoverable. A param
+                // pinned to a concrete Named record is NOT a `struct{…}` here, so
+                // it keeps the fast typed path.
                 read.iter().any(|f| !present.contains(&capf(f)))
+                    // Update-base widening ONLY when the param was NOT pinned to
+                    // the source list's real element (`!elem_pinned`). A pinned
+                    // subset struct IS the honest runtime element (a genuinely
+                    // `[]struct{…}` list — 18-job-queue), so its update is
+                    // already sound and staying typed avoids needless reflective
+                    // coercions. An UN-pinned subset struct is the update-row
+                    // narrowing artifact over an erased ([]any) element whose
+                    // true value is a full record — THAT is the unsound case to
+                    // widen (map-chains, caseD).
+                    || (!elem_pinned && self.param_is_updated(body, pid))
             } else {
                 false
             };
@@ -4601,8 +4662,14 @@ impl<'a> Ctx<'a> {
         let rt = if matches!(rt, GoTy::Struct(_)) {
             match &self.body.exprs[body] {
                 Expr::Update { base, .. } => match &self.body.exprs[*base] {
+                    // The update yields its base param's type. A concrete Named
+                    // record → the full typed record. A param WIDENED to `any`
+                    // (subset-struct base — see widen_param) → `any`, so the
+                    // reflective rt.RecordUpdate result isn't re-narrowed to the
+                    // dropping struct. Either way, never the narrow struct.
                     Expr::Var(Res::Local(pid)) => match self.local_tys.get(pid) {
                         Some(full @ GoTy::Named(_, _)) => full.clone(),
+                        Some(GoTy::Any) => GoTy::Any,
                         _ => rt,
                     },
                     _ => rt,

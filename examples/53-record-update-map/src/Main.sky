@@ -1,15 +1,17 @@
 module Main exposing (main)
 
--- Regression for the record-update-over-lambda-param narrowing panic
--- (DarraghStudio bug #2). The trigger is all three together:
---   1. two `List.map`s in one function over the same record type;
---   2. map #1's closure is a record UPDATE (`{ r | orderId = .. }`)
---      capturing an outer variable (`oid`);
---   3. map #2 consumes map #1's RESULT and reads DIFFERENT fields.
--- Before the fix, map #1's element type erased to `struct{ OrderId }`
--- (the un-updated fields physically dropped), so map #2 invoked its
--- closure on that subset → `reflect: Call using struct{OrderId} as
--- struct{ProductId; Qty}`.
+-- Regression for the record-update-over-map narrowing panic class
+-- (DarraghStudio bug #2). A record-update closure `\r -> { r | f = v }`
+-- mapped over a list left the update's row OPEN on the erased-List.map
+-- lowering path, so its result type narrowed to `struct{ f }` — PHYSICALLY
+-- dropping the un-updated fields. A later consumer reading a dropped field
+-- then hit `reflect: Call using struct{F} as struct{G}`.
+--
+-- The fix keeps a record-update's value carrying the FULL record: pinned to
+-- the concrete element where recoverable (CAF / param source), else widened
+-- to the reflective rt.RecordUpdate path (map-chains / erased elements),
+-- which preserves every field. This example exercises every variant that
+-- reproduced during the grill — each must run clean.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -18,27 +20,60 @@ import Std.Log exposing (println)
 
 
 type alias Line =
-    { orderId : String
-    , productId : String
-    , qty : Int
-    }
+    { orderId : String, productId : String, name : String, qty : Int, total : Int }
 
 
 sample : List Line
 sample =
-    [ { orderId = "", productId = "px", qty = 2 }
-    , { orderId = "", productId = "py", qty = 3 }
+    [ { orderId = "", productId = "px", name = "A", qty = 2, total = 0 }
+    , { orderId = "", productId = "py", name = "B", qty = 3, total = 0 }
     ]
 
 
-stampAndSummarise : String -> List String
-stampAndSummarise oid =
+-- 1. update over a CAF source, consumer reads other fields
+overCaf : Int
+overCaf =
     let
-        stamped =
-            List.map (\r -> { r | orderId = oid }) sample
+        stamped = List.map (\r -> { r | orderId = "o" }) sample
     in
-    List.map (\r -> r.productId ++ "x" ++ String.fromInt r.qty) stamped
+    List.length (List.map (\r -> r.productId ++ r.name) stamped)
+
+
+-- 2. update over a PARAMETER source (the surviving darraghstudio variant)
+overParam : List Line -> Int
+overParam lines =
+    let
+        stamped = List.map (\r -> { r | orderId = "o" }) lines
+    in
+    List.length (List.map (\r -> r.name ++ r.productId) stamped)
+
+
+-- 3. map-of-map-of-map: a middle update over an ERASED ([]any) map result,
+--    updating+reading the same field, then a consumer reads other fields
+overMapChain : List Line -> Int
+overMapChain lines =
+    let
+        s1 = List.map (\r -> { r | orderId = "a" }) lines
+        s2 = List.map (\r -> { r | name = r.name ++ "!" }) s1
+    in
+    List.length (List.map (\r -> r.productId ++ String.fromInt r.qty) s2)
+
+
+-- 4. foldl accumulator record-update, then read the accumulator's fields
+foldAcc : List Line -> Int
+foldAcc lines =
+    let
+        acc =
+            List.foldl (\r a -> { a | total = a.total + r.qty }) { total = 0 } lines
+    in
+    acc.total
 
 
 main =
-    println (String.join ", " (stampAndSummarise "ORD-1") ++ " ok")
+    println
+        ("caf=" ++ String.fromInt overCaf
+            ++ " param=" ++ String.fromInt (overParam sample)
+            ++ " chain=" ++ String.fromInt (overMapChain sample)
+            ++ " fold=" ++ String.fromInt (foldAcc sample)
+            ++ " ok"
+        )
