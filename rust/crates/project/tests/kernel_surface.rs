@@ -57,6 +57,10 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
         "sky-stdlib/Std/Db/Store.sky",
         &["fromCodec", "primaryKey", "create", "migrate", "insert", "all", "findBy"],
     ),
+    (
+        "sky-stdlib/Std/Db/Migrate.sky",
+        &["migrateOps", "renderMigrations"],
+    ),
 ];
 
 /// Extract every `Ffi.kernel "Sym"` symbol from a `.sky` source.
