@@ -15,7 +15,8 @@ import (
 	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
-	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver registered as "pgx"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib" // Postgres driver registered as "pgx"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -62,6 +63,34 @@ func (d *SkyDb) placeholder(i int) string {
 		return fmt.Sprintf("$%d", i)
 	}
 	return "?"
+}
+
+// rebind rewrites `?` placeholders in a RAW query to `$1,$2,…` for Postgres
+// (pgx wants `$n`, not `?`), skipping `?` inside single-quoted string literals.
+// SQLite keeps `?`. Std.Db-BUILT queries already emit `$n` via placeholder(), so
+// they contain no `?` and pass through unchanged — no double conversion.
+func (d *SkyDb) rebind(query string) string {
+	if d.driver != "pgx" || !strings.Contains(query, "?") {
+		return query
+	}
+	var b strings.Builder
+	n := 0
+	inStr := false
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		switch {
+		case c == '\'':
+			inStr = !inStr
+			b.WriteByte(c)
+		case c == '?' && !inStr:
+			n++
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // placeholders produces a joined list of placeholders "$1,$2,$3" or "?,?,?"
@@ -204,6 +233,19 @@ func Db_connect(path any) any {
 			return Ok[any, any](existing)
 		}
 		driver, dsn := detectDriver(p)
+		if driver == "pgx" {
+			// Use pgx's SIMPLE protocol for the app DB so string-bound params
+			// inline as unknown-type literals that Postgres casts per column —
+			// mirroring SQLite's lenient typing. This lets SQLite-era apps (which
+			// stringify ints for `?` params, e.g. `String.fromInt n`) run on
+			// Postgres UNCHANGED. Typed SqlValue params still bind precisely.
+			// (Sessions / analytics / telemetry bind already-typed Go args, so
+			// they keep the extended protocol + prepared statements.)
+			if cfg, cfgErr := pgx.ParseConfig(dsn); cfgErr == nil {
+				cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+				dsn = stdlib.RegisterConnConfig(cfg)
+			}
+		}
 		conn, err := sql.Open(driver, dsn)
 		if err != nil {
 			return Err[any, any](ErrIo("db connect: " + err.Error()))
@@ -858,7 +900,7 @@ func Db_exec(db any, query any, args any) any {
 			if errRes != nil {
 				return errRes
 			}
-			res, err := d.executor().Exec(q, goArgs...)
+			res, err := d.executor().Exec(d.rebind(q), goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.exec: " + err.Error()))
 			}
@@ -908,7 +950,7 @@ func Db_query(db any, query any, args any) any {
 			if errRes != nil {
 				return errRes
 			}
-			rows, err := d.executor().Query(q, goArgs...)
+			rows, err := d.executor().Query(d.rebind(q), goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.query: " + err.Error()))
 			}
