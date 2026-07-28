@@ -50,6 +50,22 @@ A working, verified `Std.Codec` + `Std.Db.Table` stack:
 - **S6 — Auto-migration architecture (grilled).** Introspect current schema →
   derive target → emit checksummed `Db.migrate` ops. v1 manual.
 
+## Progress
+
+- **S1 ✅** — `Std.Codec` core + JSON (records, primitives, Maybe, list, map).
+  Round-trip verified. Commit 17c417f8.
+- **S1b ✅** — ADT codecs (`taggedUnion`/`varN` + `enum`). Round-trip verified
+  (enum, 0/2/3-arg variants). Commit 91f58fdc. Found + documented a compiler
+  codegen bug (multi-arg function values; worked around with 1-arg matcher).
+- **S2 ✅** — `Std.Db.Store` codec-driven DB (create/insert/all/select/findBy/
+  delete). One codec → schema + read + write; scalars→columns, ADT/nested→JSON
+  blob, Maybe→nullable. Verified e2e on SQLite AND Postgres (identical output;
+  dialect-correct DDL). Runtime bridge: `runtime-go/rt/db_codec.go`.
+- **S3 ⏳** — compiler field tags + ADT registry (P0). NEXT.
+- **S4 ⏳** — `Codec.auto` (runtime derive, cached).
+- **S5 ⏳** — production hardening (mass-assignment, DoS limits, naming, wire).
+- **S6 ⏳** — auto-migration architecture (grilled; v1 manual).
+
 ## Rules
 
 - Grill each step against plan §4 before implementing.
