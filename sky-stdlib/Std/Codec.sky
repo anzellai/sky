@@ -44,6 +44,7 @@ module Std.Codec exposing
     , object
     , field
     , buildObject
+    , auto
     , Variant
     , taggedUnion
     , var0
@@ -53,9 +54,11 @@ module Std.Codec exposing
     , enum
     )
 
+import Sky.Ffi as Ffi
 import Sky.Core.Json.Encode as E exposing (Value)
 import Sky.Core.Json.Decode as D exposing (Decoder)
 import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
 
 -- | The column type a codec maps to on the DB side.
 type ColType
@@ -195,6 +198,60 @@ buildObject (ObjectCodec o) =
         , dec = o.decValue
         , shp = SRecord o.cols
         }
+
+
+-- ── Derivation ───────────────────────────────────────────────────────────────
+-- | Derive a codec from a record type by reflection — no field-by-field
+-- pipeline. The argument is a zero-value witness (a `blank` record) that hands
+-- the runtime the type. Handles scalars, `Maybe` (↔ null), nested records,
+-- lists, and nullary enums (stored as their ordinal int). Data-carrying ADTs
+-- are NOT derivable — give those an explicit `taggedUnion` codec.
+--
+--     userCodec : Codec User
+--     userCodec = Codec.auto blankUser
+auto : a -> Codec a
+auto witness =
+    Codec
+        { enc = autoEnc
+        , dec = autoDecoder witness
+        , shp = SRecord
+              (List.map (\( n, k ) -> ( n, kindToColType k )) (autoCols witness))
+        }
+
+
+autoEnc : a -> Value
+autoEnc =
+    Ffi.kernel "Codec_autoEnc"
+
+
+autoDecoder : a -> Decoder a
+autoDecoder =
+    Ffi.kernel "Codec_autoDecoder"
+
+
+autoCols : a -> List ( String, String )
+autoCols =
+    Ffi.kernel "Codec_autoCols"
+
+
+kindToColType : String -> ColType
+kindToColType k =
+    case k of
+
+        "text" ->
+            CText
+
+        "int" ->
+            CInt
+
+        "real" ->
+            CReal
+
+        "bool" ->
+            CBool
+
+        _ ->
+            CBlob
 
 -- ── ADTs / custom types (tagged unions) ─────────────────────────────────────
 -- | A decode arm for one variant of a custom type.

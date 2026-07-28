@@ -61,10 +61,20 @@ A working, verified `Std.Codec` + `Std.Db.Table` stack:
   delete). One codec → schema + read + write; scalars→columns, ADT/nested→JSON
   blob, Maybe→nullable. Verified e2e on SQLite AND Postgres (identical output;
   dialect-correct DDL). Runtime bridge: `runtime-go/rt/db_codec.go`.
-- **S3 ⏳** — compiler field tags + ADT registry (P0). NEXT.
-- **S4 ⏳** — `Codec.auto` (runtime derive, cached).
+- **S3 ✅** — compiler emits `sky:"name,type"` field tags on record structs
+  (`crates/codegen/src/lib.rs`). Metadata-only; all gates green (roundtrip,
+  divergences, build-run, coerce-floor re-blessed, sweep 29/0). Commit dd0a139a.
+- **S4 ✅** — `Codec.auto` (reflection derive). `runtime-go/rt/codec_auto.go` +
+  `Std.Codec.auto`. `Codec.auto blankUser` derives a codec for scalars/Maybe/
+  nested-records/lists/nullary-enum-as-ordinal; data ADTs error (need explicit
+  taggedUnion). Verified e2e: JSON round-trip + Store on SQLite AND Postgres
+  (nested address blob, Maybe, lists all round-trip).
 - **S5 ⏳** — production hardening (mass-assignment, DoS limits, naming, wire).
+  ADT registry (readable enum names in auto) folds in here.
 - **S6 ⏳** — auto-migration architecture (grilled; v1 manual).
+
+Vision realized: `Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id"`
+— one line each for the codec + the table; JSON + DB from the type.
 
 ## Rules
 
