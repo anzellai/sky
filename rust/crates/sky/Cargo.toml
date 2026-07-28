@@ -16,6 +16,8 @@ fmt = { path = "../fmt" }
 testrunner = { path = "../testrunner" }
 sky-lsp = { path = "../sky-lsp" }
 notify = "8"
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # Safe SIGTERM wrapper for `sky watch --kill-timeout` graceful shutdown — the

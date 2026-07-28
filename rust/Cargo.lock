@@ -1117,6 +1117,8 @@ dependencies = [
  "nix",
  "notify",
  "project",
+ "serde",
+ "serde_json",
  "sky-lsp",
  "testrunner",
 ]

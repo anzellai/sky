@@ -8,6 +8,8 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+
+mod db_migrate;
 use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
@@ -1292,6 +1294,143 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 
 // ---- db ------------------------------------------------------------------
 
+fn extract_between<'a>(s: &'a str, begin: &str, end: &str) -> Option<&'a str> {
+    let start = s.find(begin)? + begin.len();
+    let rest = &s[start..];
+    let stop = rest.find(end)?;
+    Some(&rest[..stop])
+}
+
+/// `sky db migrate --gen [name]` — derive the target schema from the project's
+/// `db` (via a temp, DB-free schema-dump entry), diff it against
+/// `db/schema.json`, and write a migration file + updated snapshot. Additive ops
+/// are active; destructive ops are quarantined (docs/v0.19/auto-migration-architecture.md).
+fn cmd_db_gen(args: &[String]) -> ExitCode {
+    let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let name = positional.first().map(|s| s.as_str()).unwrap_or("migration");
+    let file = Path::new("src/Main.sky");
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    if is_compiler_repo_root(&project_dir) {
+        eprintln!("sky db: refusing to run from the Sky compiler repo root");
+        return ExitCode::FAILURE;
+    }
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+
+    // 1. Write the temp DB-free schema-dump entry.
+    let gen_src = project_dir.join("src").join("_skydbgen.sky");
+    let gen_code = format!(
+        "module SkyDbGen exposing (main)\n\nimport {entry_module} exposing (db)\nimport Std.Db.Store as Store\n\nmain =\n    Store.dumpSchema db\n"
+    );
+    if let Err(e) = std::fs::write(&gen_src, gen_code) {
+        eprintln!("sky db --gen: cannot write temp entry: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    // 2. Build the temp entry.
+    let opts = BuildOptions {
+        repo_root,
+        example_dir: project_dir.clone(),
+        out_dir_name: "sky-out".into(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: Some("SkyDbGen".into()),
+        progress: false,
+    };
+    let report = build_example(&opts);
+    let ok = report.emitted && report.go_build_ok;
+    if !ok {
+        let _ = std::fs::remove_file(&gen_src);
+        eprintln!(
+            "sky db --gen: build failed — does module {entry_module} `exposing (db)` with `db = Store.project [...]`?\n{}\n{}",
+            report.note, report.go_build_stderr
+        );
+        return ExitCode::FAILURE;
+    }
+
+    // 3. Run the dump binary, capture stdout.
+    let bin = project_dir
+        .join("sky-out")
+        .join(project::configured_bin_name(&project_dir));
+    let output = Command::new(&bin).current_dir(&project_dir).output();
+    let _ = std::fs::remove_file(&gen_src);
+    let stdout = match output {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(e) => {
+            eprintln!("sky db --gen: dump run failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(json) = extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END") else {
+        eprintln!("sky db --gen: schema-dump produced no output (is `db` a Store.Project?)");
+        return ExitCode::FAILURE;
+    };
+    let target: db_migrate::Schema = match serde_json::from_str(json.trim()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("sky db --gen: bad schema JSON: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // 4. Read the committed snapshot.
+    let db_dir = project_dir.join("db");
+    let snapshot_path = db_dir.join("schema.json");
+    let snapshot: db_migrate::Schema = std::fs::read_to_string(&snapshot_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    // 5. Diff.
+    let d = db_migrate::diff(&target, &snapshot);
+    if d.is_empty() {
+        println!("sky db --gen: no schema changes — nothing to generate.");
+        return ExitCode::SUCCESS;
+    }
+
+    // 6. Write migration + snapshot.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let id = format!("{ts}_{name}");
+    let migrations_dir = db_dir.join("migrations");
+    if let Err(e) = std::fs::create_dir_all(&migrations_dir) {
+        eprintln!("sky db --gen: cannot create db/migrations: {e}");
+        return ExitCode::FAILURE;
+    }
+    let mig_path = migrations_dir.join(format!("{id}.json"));
+    if let Err(e) = std::fs::write(&mig_path, db_migrate::migration_file_json(&id, &d)) {
+        eprintln!("sky db --gen: cannot write migration: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = std::fs::write(
+        &snapshot_path,
+        serde_json::to_string_pretty(&target).unwrap_or_default(),
+    ) {
+        eprintln!("sky db --gen: cannot write snapshot: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "sky db --gen: wrote db/migrations/{id}.json ({} additive op(s)) + updated db/schema.json",
+        d.ops.len()
+    );
+    if !d.destructive.is_empty() {
+        eprintln!(
+            "\n⚠  {} destructive change(s) QUARANTINED in the `destructive` array (NOT applied):",
+            d.destructive.len()
+        );
+        for w in &d.warnings {
+            eprintln!("   - {w}");
+        }
+        eprintln!("   Review the file; move an entry into `ops` (or edit a drop into a renameColumn) to activate.");
+    }
+    ExitCode::SUCCESS
+}
+
 /// `sky db status` / `sky db migrate` — build the project, then run it once with
 /// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
 /// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
@@ -1299,11 +1438,15 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 /// Go runtime, so this is a thin build+run+env wrapper — no separate rust DB
 /// introspection is needed.
 fn cmd_db(args: &[String]) -> ExitCode {
+    // `sky db migrate --gen [name]` — file-based migration generation (no DB).
+    if args.first().map(String::as_str) == Some("migrate") && args.iter().any(|a| a == "--gen") {
+        return cmd_db_gen(&args[1..]);
+    }
     let op = match args.first().map(String::as_str) {
         Some("status") => "status",
         Some("migrate") => "migrate",
         _ => {
-            eprintln!("usage: sky db <status|migrate> [file.sky]");
+            eprintln!("usage: sky db <status|migrate [--gen [name]]> [file.sky]");
             return ExitCode::from(2);
         }
     };
