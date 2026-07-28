@@ -103,6 +103,59 @@ layer (below) already handles the rest.
 use `Db.migrate` — the two are complementary (see `examples/36-composite-server`
 for the migration-tooling shape).
 
+## `Std.Db.Table` — one definition, no decoder, no `SqlValue` lists
+
+`Schema` + a hand-written decoder + hand-written `insertFields` means restating
+your columns three times. `Std.Db.Table` collapses that: **one `Table a` value —
+carrying a zero-value witness of your record — is the single source of truth**
+for the DDL, typed reads, and typed writes. The record type declares the columns
+(the runtime reflects the Go struct it lowers to); field ↔ column is
+camelCase ↔ snake_case, and type ↔ column is the same dialect-safe mapping
+(`Int`→BIGINT, `Bool`→bool, `Maybe a`→nullable, `String`→TEXT, `Float`→REAL).
+
+```elm
+import Std.Db.Table as T exposing (Table)
+
+type Category = Stickers | Bookmarks | Prints
+
+type alias Product =
+    { id : String, slug : String, priceMinor : Int, active : Bool
+    , category : Category, note : Maybe String }
+
+blank : Product
+blank = { id = "", slug = "", priceMinor = 0, active = False, category = Stickers, note = Nothing }
+
+products : Table Product
+products =
+    T.table "products" blank
+        |> T.primaryKey "id"
+        |> T.unique "slug"
+        |> T.enum "category" [ ( Stickers, "stickers" ), ( Bookmarks, "bookmarks" ), ( Prints, "prints" ) ]
+
+-- setup:  T.createTable conn products
+-- read:   T.all conn products                                   : Task Error (List Product)
+--         T.select conn products "WHERE active = ? ORDER BY slug" [ SqlBool True ]
+--         T.findBy conn products "slug" "sticker-pack"          : Task Error (Maybe Product)
+-- write:  T.insert conn products p / T.update conn products "id" p.id p / T.delete conn products "id" p.id
+```
+
+**The boundary (the sqlx split):** `Table` owns the record↔row *mapping*; **SQL
+stays SQL**. `select` takes a raw `WHERE`/`ORDER BY`/`JOIN`/`LIMIT` tail, and a
+join decodes into *any* record whose fields match the projection — define an
+`OrderSummary = { id, reference, itemCount }` and
+`T.select conn orderSummary "SELECT o.id, o.reference, COUNT(i.id) AS item_count FROM orders o JOIN order_items i … GROUP BY o.id" []`.
+No relations / eager-loading magic — associations are an explicit second query.
+
+**Enums & custom types.** Nullary enums lower to a runtime int (no name), so map
+them with explicit `(value, name)` pairs via `T.enum` (stable across reordering,
+stored as readable TEXT). For any other type — data-carrying ADTs, JSON blobs,
+nested records — use `T.codec "col" encode decode` with your own `encode : v ->
+String` / `decode : String -> v` (the runtime calls them).
+
+**When to drop down.** `Schema` / `Decode` / `SqlValue` remain the escape hatch
+for the cases `Table` doesn't cover (partial indexes, bespoke projections,
+performance-critical hot paths). `Table` is the default for single-table CRUD.
+
 ## What's in the surface
 
 Every operation that touches the disk returns `Task Error a` (per the [Task-everywhere doctrine](../../CLAUDE.md#effect-boundary-task-everywhere-v0100)). Parameter-supplied helpers (`Db.getString`, `Db.getInt`) return bare values because the default plugs the failure case at the call site.
