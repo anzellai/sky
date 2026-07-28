@@ -5,7 +5,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Css exposing (..)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -82,13 +82,15 @@ subscriptions model =
 -- ======================================================
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" CounterPage, route "/about" AboutPage ]
-        , notFound = CounterPage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" CounterPage, route "/about" AboutPage ]
+            , notFound = CounterPage
+            }
+        )
 
 
 -- ======================================================

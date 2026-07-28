@@ -8,7 +8,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -67,19 +67,21 @@ init _req =
 -- ======================================================
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" BoardPage
-          , route "/submit" SubmitPage
-          , route "/auth/signin" SignInPage
-          , route "/auth/signup" SignUpPage
-          , route "/about" AboutPage
-          , route "/roadmap" RoadmapPage
-          ]
-        , notFound = NotFoundPage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" BoardPage
+              , route "/submit" SubmitPage
+              , route "/auth/signin" SignInPage
+              , route "/auth/signup" SignUpPage
+              , route "/about" AboutPage
+              , route "/roadmap" RoadmapPage
+              ]
+            , notFound = NotFoundPage
+            }
+        )
 
 
 -- ======================================================

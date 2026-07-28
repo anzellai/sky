@@ -108,14 +108,16 @@ main =
 
         _ ->
             Live.app
-                { init = init
-                , update = update
-                , view = view
-                , subscriptions = subscriptions
-                , routes = [ Live.route "/" HomePage ]
-                , notFound = HomePage
-                , head = Head.headFor
-                }
+                (Live.config
+                    { init = init
+                    , update = update
+                    , view = view
+                    , subscriptions = subscriptions
+                    , routes = [ Live.route "/" HomePage ]
+                    , notFound = HomePage
+                    }
+                    |> Live.withHead Head.headFor
+                )
                 |> Task.run
 
 -- Single page constructor — the Live branch uses Page (an ADT

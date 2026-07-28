@@ -616,10 +616,12 @@ view model =
 
 main =
     Live.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = []
-        , notFound = ()
-        }
+        (Live.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = []
+            , notFound = ()
+            }
+        )

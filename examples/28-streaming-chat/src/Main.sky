@@ -38,7 +38,7 @@ import Std.Log exposing (println)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Html.Events exposing (onSubmit)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
@@ -301,13 +301,15 @@ noticeView notice =
 -- ─── App wiring ──────────────────────────────────────────────────
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HomePage ]
-        , notFound = HomePage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            }
+        )
 
 
 -- ─── Styles ──────────────────────────────────────────────────────

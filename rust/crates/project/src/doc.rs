@@ -752,14 +752,15 @@ mod tests {
 
     #[test]
     fn curated_kernel_api_renders_full_sigs_and_example() {
-        // Std.Live must render typed signatures + an example, not bare names.
-        let m = crate::kernel_api::for_module("Std.Live").expect("Std.Live curated");
+        // A still-curated kernel-only module (Std.Tui — Std.Live migrated to
+        // Layer-3 .sky in v0.19) must render typed signatures + an example.
+        let m = crate::kernel_api::for_module("Std.Tui").expect("Std.Tui curated");
         let page = crate::kernel_api::render(m);
         assert!(page.contains("app :"), "must show a typed `app` signature");
         assert!(page.contains("-> Task Error ()"));
         assert!(page.contains("Example:"), "must include a usage example");
         // Trailing-segment lookup works too.
-        assert!(crate::kernel_api::for_module("Live").is_some());
+        assert!(crate::kernel_api::for_module("Tui").is_some());
     }
 
     /// SYNC GATE: every binding the compiler registers for a kernel module in
@@ -795,19 +796,19 @@ mod tests {
 
     #[test]
     fn kernel_only_module_is_queryable() {
-        // #1: Std.Live is a kernel module (no .sky file); it must still be
-        // renderable + listed so every stdlib module is queryable.
-        let mods = kernel_only_modules();
-        assert!(
-            mods.iter().any(|(full, _)| *full == "Std.Live"),
-            "Std.Live must appear among kernel-only modules"
-        );
-        let page = render_kernel_module("Std.Live").expect("Std.Live must render");
-        assert!(page.contains("Std.Live"));
+        // Std.Tui remains curated in kernel_api (not yet Layer-3); render_module's
+        // fallback serves it so `sky doc Std.Tui` still works.
+        let m = crate::kernel_api::for_module("Std.Tui").expect("Std.Tui curated");
+        let page = crate::kernel_api::render(m);
+        assert!(page.contains("Std.Tui"));
         assert!(page.contains("app"), "must list the `app` binding");
-        // Trailing-segment match too.
-        assert!(render_kernel_module("Live").is_some());
-        // A non-module returns None.
+        // A v0.19-migrated module (Std.Live) is no longer in the kernel_api
+        // registry — it renders from its .sky source via render_module instead.
+        assert!(
+            crate::kernel_api::for_module("Std.Live").is_none(),
+            "Std.Live moved to Layer-3 .sky; must NOT have a kernel_api entry"
+        );
+        // A non-module returns None from the legacy kernel path.
         assert!(render_kernel_module("DefinitelyNotAModule").is_none());
     }
 

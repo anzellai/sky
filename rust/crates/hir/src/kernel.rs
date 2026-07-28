@@ -597,7 +597,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "call", "callPure", "callTask", "has", "isPure", "toAny", "kernel",
         ],
     ),
-    ("Live", &["app", "route", "api", "lifecycle"]),
+    // Std.Live migrated to Layer-3 Sky source (sky-stdlib/Std/Live.sky) —
+    // app/config/route/api/lifecycle/withX resolve Res::Def via qual_vars, so no
+    // KERNEL_FUNCTIONS registry entry is needed (v0.19 kernel-metadata unification).
     // Std.Jobs migrated to Layer-3 Sky source (sky-stdlib/Std/Jobs.sky) —
     // resolves Res::Def via qual_vars, so it no longer needs a KERNEL_FUNCTIONS
     // registry entry (v0.19 kernel-metadata unification).

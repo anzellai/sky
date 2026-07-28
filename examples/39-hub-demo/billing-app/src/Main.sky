@@ -23,7 +23,7 @@ import Sky.Core.Task as Task
 import Std.Cmd as Cmd
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Log as Log
 import Std.Sub as Sub
 
@@ -113,10 +113,12 @@ subscriptions _model =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HomePage ]
-        , notFound = HomePage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            }
+        )

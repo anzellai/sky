@@ -54,47 +54,11 @@ pub fn for_module(name: &str) -> Option<&'static KernelModuleApi> {
 }
 
 pub const KERNEL_API: &[KernelModuleApi] = &[
-    KernelModuleApi {
-        module: "Std.Live",
-        kernel_only: true,
-        overview: "Server-driven web UI on The Elm Architecture. HTTP-first: the \
-                   first request returns full HTML; every later event streams a \
-                   DOM-diff patch over one persistent SSE connection. Sessions, \
-                   cookies, URL routing, and async commands are built in. `init` \
-                   runs once per session (a browser reload restores the Model from \
-                   the session store — it does NOT re-run `init`).",
-        example: "main =\n    \
-                  Live.app\n        \
-                  { init = init\n        \
-                  , update = update\n        \
-                  , view = view\n        \
-                  , subscriptions = subscriptions\n        \
-                  , routes = [ route \"/\" HomePage, route \"/apps/:slug\" AppPage ]\n        \
-                  , notFound = HomePage\n        \
-                  }",
-        bindings: &[
-            KernelBinding {
-                name: "app",
-                sig: "app : { init : Request -> ( model, Cmd msg ), update : msg -> model -> ( model, Cmd msg ), view : model -> Element msg, subscriptions : model -> Sub msg, routes : List Route, notFound : page } -> Task Error ()",
-                summary: "Run a Sky.Live app. The cfg record is ROW-OPEN — you may also add the optional fields `head : Model -> List (Html msg)`, `consoleAuth : Request -> Task Error (Maybe Identity)`, `status : { reconnecting : String, offline : String }`, and `analytics : { pageViews : Bool }` (opt-in Std.Analytics auto page-view capture — consent-gated, anonymous by default).",
-            },
-            KernelBinding {
-                name: "route",
-                sig: "route : String -> page -> Route",
-                summary: "Map a URL path to a Page value; `:name` segments are captured and delivered to the Page constructor as String. Declare literals before patterns (`route \"/apps/new\" NewAppPage` before `route \"/apps/:slug\" AppPage`).",
-            },
-            KernelBinding {
-                name: "api",
-                sig: "api : String -> (Request -> Task Error Response) -> Route",
-                summary: "Mount a raw HTTP/JSON handler OUTSIDE the TEA cycle (file uploads, webhooks, a JSON API next to the UI). The spec is `\"METHOD /path\"` (e.g. `\"POST /api/upload\"`); an omitted method matches any.",
-            },
-            KernelBinding {
-                name: "lifecycle",
-                sig: "lifecycle : msg -> msg",
-                summary: "Wrap a Msg to tag it for lifecycle logging/tracing in the dev console. Idempotent; returns the same Msg for dispatch.",
-            },
-        ],
-    },
+    // Std.Live migrated to Layer-3 Sky source (sky-stdlib/Std/Live.sky) — its
+    // sigs + docs + example now live in the .sky file, read by the type-checker,
+    // LSP hover, and `sky doc` from that ONE source (v0.19 kernel-metadata
+    // unification). The row-open `app` record became the typed `config`/`withX`
+    // builder. No kernel_api entry needed.
     KernelModuleApi {
         module: "Std.Tui",
         kernel_only: true,

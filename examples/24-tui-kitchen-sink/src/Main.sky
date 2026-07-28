@@ -540,13 +540,15 @@ main =
 
         Just "live" ->
             Live.app
-                { init = init
-                , update = update
-                , view = viewLive
-                , subscriptions = subscriptions
-                , routes = [ Live.route "/" KitchenSink ]
-                , notFound = KitchenSink
-                }
+                (Live.config
+                    { init = init
+                    , update = update
+                    , view = viewLive
+                    , subscriptions = subscriptions
+                    , routes = [ Live.route "/" KitchenSink ]
+                    , notFound = KitchenSink
+                    }
+                )
 
         _ ->
             Tui.app

@@ -9,7 +9,7 @@ import Sky.Core.Dict as Dict
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config, withGuard)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -1177,26 +1177,28 @@ requireAdmin model =
 -- ══════════════════════════════════════════════════════
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HomePage
-          , route "/products" ProductsPage
-          , route "/product/:id" (ProductPage "")
-          , route "/cart" CartPage
-          , route "/orders" OrdersPage
-          , route "/order/:id" (OrderPage "")
-          , route "/order/:id/success" (OrderSuccessPage "")
-          , route "/auth/signin" AuthSignInPage
-          , route "/admin/products" AdminProductsPage
-          , route "/admin/products/new" AdminNewProductPage
-          , route "/admin/products/:id" (AdminEditProductPage "")
-          , route "/admin/orders" AdminOrdersPage
-          , route "/admin/orders/:id" (AdminOrderPage "")
-          , route "/privacy-policy" PrivacyPolicyPage
-          , route "/terms" TermsPage
-          ]
-        , notFound = NotFoundPage
-        , guard = guard
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage
+              , route "/products" ProductsPage
+              , route "/product/:id" (ProductPage "")
+              , route "/cart" CartPage
+              , route "/orders" OrdersPage
+              , route "/order/:id" (OrderPage "")
+              , route "/order/:id/success" (OrderSuccessPage "")
+              , route "/auth/signin" AuthSignInPage
+              , route "/admin/products" AdminProductsPage
+              , route "/admin/products/new" AdminNewProductPage
+              , route "/admin/products/:id" (AdminEditProductPage "")
+              , route "/admin/orders" AdminOrdersPage
+              , route "/admin/orders/:id" (AdminOrderPage "")
+              , route "/privacy-policy" PrivacyPolicyPage
+              , route "/terms" TermsPage
+              ]
+            , notFound = NotFoundPage
+            }
+            |> withGuard guard
+        )

@@ -9,7 +9,7 @@ import Sky.Core.Result as Result
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Html.Events exposing (onClick, onInput)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -52,18 +52,20 @@ init _req =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" DashboardPage
-          , route "/status" StatusPage
-          , route "/settings" SettingsPage
-          , route "/alerts" AlertsPage
-          , route "/auth" AuthPage
-          ]
-        , notFound = NotFoundPage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" DashboardPage
+              , route "/status" StatusPage
+              , route "/settings" SettingsPage
+              , route "/alerts" AlertsPage
+              , route "/auth" AuthPage
+              ]
+            , notFound = NotFoundPage
+            }
+        )
 
 
 view : Model -> Html Msg

@@ -7,7 +7,7 @@ import Std.Css exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Html.Events exposing (onClick)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Log as Log
 import Std.Sub as Sub
 
@@ -328,14 +328,16 @@ subscriptions _ =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HostPage
-          , route "/billing" BillingPage
-          , route "/jobs" JobsPage
-          , route "/auth" AuthPage
-          ]
-        , notFound = HostPage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HostPage
+              , route "/billing" BillingPage
+              , route "/jobs" JobsPage
+              , route "/auth" AuthPage
+              ]
+            , notFound = HostPage
+            }
+        )

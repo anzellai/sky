@@ -11,7 +11,7 @@ import Sky.Core.Random as Random
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
-import Std.Live as Live exposing (app, route)
+import Std.Live as Live exposing (app, route, config)
 import Std.Html exposing (..)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
@@ -454,10 +454,12 @@ view model =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" DashboardPage ]
-        , notFound = DashboardPage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" DashboardPage ]
+            , notFound = DashboardPage
+            }
+        )

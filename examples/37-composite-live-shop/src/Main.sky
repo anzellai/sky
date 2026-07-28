@@ -10,7 +10,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config, withHead)
 import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
@@ -97,16 +97,18 @@ subscriptions _ =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HomePage
-          , route "/cart" CartPage
-          , route "/analytics" AnalyticsPage
-          , route "/sign-in" SignInPage
-          , route "/products/:slug" ProductPage
-          ]
-        , notFound = HomePage
-        , head = Head.headFor
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage
+              , route "/cart" CartPage
+              , route "/analytics" AnalyticsPage
+              , route "/sign-in" SignInPage
+              , route "/products/:slug" ProductPage
+              ]
+            , notFound = HomePage
+            }
+            |> withHead Head.headFor
+        )

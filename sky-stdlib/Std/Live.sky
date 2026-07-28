@@ -1,15 +1,23 @@
 -- | Std.Live — server-driven web UI backend (Layer 3 Sky source).
 --
--- P3 TURNKEY ARTIFACT (v0.19). This is the VALIDATED shape — the builder
--- path (config + withHead + withGuard + app) was proven end-to-end via the
--- Std.LiveBuilder probe: build + run + curl 200 + <head> renders + omitted
--- optionals don't crash. To land P3: move this to sky-stdlib/Std/Live.sky,
--- remove ("Live", &[...]) from KERNEL_FUNCTIONS, strip the Std.Live entry
--- from kernel_api.rs (mirror commit 6f382eda), rebuild, then migrate ALL
--- Live call-sites (atomic — see docs/v0.19/kernel-metadata-unification.md).
+-- `Live.app` takes a typed builder config: `Live.config { init, update,
+-- view, subscriptions, routes, notFound }` produces an opaque `AppConfig`,
+-- and optional fields (head / guard / static / analytics / …) are attached
+-- with the `withX` builders. Every binding is an `Ffi.kernel` alias carrying
+-- its real HM signature, so the type-checker, LSP hover, and `sky doc` all
+-- read this ONE file.
 --
--- Every binding is an `Ffi.kernel` alias carrying its real HM signature, so
--- the type-checker, LSP hover, and `sky doc` all read this ONE file.
+-- ```elm
+-- main =
+--     Live.app
+--         (Live.config
+--             { init = init, update = update, view = view
+--             , subscriptions = subscriptions
+--             , routes = [ Live.route "/" Home ], notFound = Home
+--             }
+--             |> Live.withHead headFor
+--         )
+-- ```
 module Std.Live exposing
     ( AppConfig
     , app

@@ -210,6 +210,16 @@ Grill verdict: `readyToImplement=true`, no blockers, floorTouch=false. Decisions
      until P-Tui. Bundled console (sky-bundled/console/src/Main.sky) too.
   4. `sky fmt` ×2 each; full `scripts/example-sweep.sh` green; commit.
   Runtime kernels already shipped (P2, commit 88a9dde0) + guard-tested.
+  **P3 DONE 2026-07-28.** Std/Live.sky in place; app precise sig; removed from
+  KERNEL_FUNCTIONS + kernel_api (+ repointed 2 doc tests to Std.Tui). Migrated 20
+  call-sites (16 required-only via perl wrap; 37 head / 52 analytics / 13 guard;
+  24/26/38 qualified) + bundled console + heap-bound fixture. VERIFIED: full
+  example-sweep 29/0; 5 sweep-uncovered examples + bundled console clean;
+  coerce-floor PASS (builder widened NOTHING — 37=616/38=465/etc. unchanged; only
+  blessed the new 52-blog-analytics); doc/hir/ty tests green; `sky doc Std.Live`
+  renders builder API from source, no `?`. NOTE for P7: regenerate the embedded
+  console (scripts/regenerate-console.sh) so runtime-go/rt/console_app matches the
+  migrated sky-bundled/console source.
 - **P4 — migrate all ~25-30 call-sites** to builder form (both `exposing (app)`
   bare + qualified `Live.app`/`Tui.app`); add fixtures for the zero-coverage
   optionals (consoleAuth/onNavigate/static/api/status); re-bless coerce_floor

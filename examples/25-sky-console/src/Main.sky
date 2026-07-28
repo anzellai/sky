@@ -16,7 +16,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import State exposing (..)
@@ -62,10 +62,12 @@ viewWrapped model =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = viewWrapped
-        , subscriptions = subscriptions
-        , routes = [ route "/" () ]
-        , notFound = ()
-        }
+        (config
+            { init = init
+            , update = update
+            , view = viewWrapped
+            , subscriptions = subscriptions
+            , routes = [ route "/" () ]
+            , notFound = ()
+            }
+        )

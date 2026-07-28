@@ -29,7 +29,7 @@ import Sky.Core.Time as Time
 import Sky.Core.Encoding as Encoding
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, route, config)
 import Std.Ui as Ui
 import State exposing (..)
 import View exposing (view)
@@ -757,10 +757,12 @@ viewWrapped model =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = viewWrapped
-        , subscriptions = subscriptions
-        , routes = [ route "/" () ]
-        , notFound = ()
-        }
+        (config
+            { init = init
+            , update = update
+            , view = viewWrapped
+            , subscriptions = subscriptions
+            , routes = [ route "/" () ]
+            , notFound = ()
+            }
+        )
