@@ -147,10 +147,18 @@ main =
         )
 ```
 
-The pre-v0.19 record literal (`app { …, head = … }`) is removed —
-see `docs/v0.19/migration-builder-cfg.md`. Same pattern for `Tui.app` /
+**Migrating an older project:** if you see the pre-v0.19 record literal
+`Live.app { init = …, update = …, …, head = … }` (or `Tui.app` / `Tui.program` /
+`Cli.program`), migrate it — that form is REMOVED and won't compile. Keep the six
+required fields (`init`/`update`/`view`/`subscriptions`/`routes`/`notFound`) inside
+`config { … }`, and move every OPTIONAL field to a `|> withX` in the pipe
+(`head` → `withHead`, `guard` → `withGuard`, `analytics` → `withAnalytics`,
+`onKey` → `withOnKey`, `onLine` → `withOnLine`, …); add `config` + the `withX`
+names you use to the `exposing (…)` list. The compiler error for the old form
+prints this same recipe. `Webview.app` keeps its closed record. Full guide:
+`docs/v0.19/migration-builder-cfg.md`. Same pattern for `Tui.app` /
 `Tui.program` (`Tui.config` + `withOnKey`) and `Cli.program` (`Cli.config` +
-`withOnLine`); `Webview.app` keeps its closed record. `init` runs
+`withOnLine`). `init` runs
 per-session (a reload restores Model from the store; it does NOT re-run `init`).
 `init` receives a `req` with `path` / `query` / `params` / `method` / `headers` /
 `cookies`. `update msg model` returns `(Model, Cmd Msg)`; `Cmd.perform task ToMsg`

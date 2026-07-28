@@ -149,6 +149,25 @@ impl<'a> Typer<'a> {
 /// carries at the head of a body-RHS region. The end byte is untouched. If the
 /// span is entirely whitespace (never expected for a real expression) or already
 /// tight, it is returned unchanged.
+/// When a type error is an `AppConfig` vs `record` mismatch, the user almost
+/// certainly wrote the pre-v0.19 row-open record form for `Live.app` / `Tui.app`
+/// / `Cli.program`. Turn the cryptic `type mismatch: AppConfig _ _ vs record`
+/// into an actionable migration hint (rendered as `Try: …`).
+fn builder_cfg_migration_hint(message: &str) -> Option<String> {
+    if message.contains("AppConfig") && message.contains("record") {
+        Some(
+            "the app config is a typed BUILDER since v0.19, not a record — wrap it: \
+             `Live.app (Live.config { …required… } |> Live.withHead … )`. Optional \
+             fields (head / guard / analytics / onKey / onLine / …) become `|> withX …`. \
+             Same for Tui.app / Tui.program / Cli.program. \
+             See docs/v0.19/migration-builder-cfg.md"
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     let start = span.range.0 as usize;
     let end = (span.range.1 as usize).min(src.len());
@@ -282,7 +301,7 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
                             }]
                         })
                         .unwrap_or_default(),
-                    suggestion: None,
+                    suggestion: builder_cfg_migration_hint(&err.message),
                 });
             }
 
