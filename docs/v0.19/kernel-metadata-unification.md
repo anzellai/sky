@@ -187,6 +187,29 @@ Grill verdict: `readyToImplement=true`, no blockers, floorTouch=false. Decisions
   config + withX + route/api/lifecycle (Live) / onKey builder (Tui); remove from
   KERNEL_FUNCTIONS + kernel_api; add implicit types; sky fmt ×2. Std/Cli.sky
   (program). Commit.
+  **DESIGN VALIDATED 2026-07-28** via the throwaway `Std.LiveBuilder` probe:
+  the full `config {...} |> withHead |> withGuard |> app` chain BUILDS + RUNS +
+  serves HTTP 200, `<head>` renders, and omitted optionals do NOT crash (guard 1
+  holds). Confirmed: `config` sig accepts the examples' `init : a -> ...` +
+  `view : model -> Html msg`; in-module `type AppConfig model msg = AppConfig_OPAQUE`
+  flows as `any` (no goty.rs arm / KERNEL_IMPLICIT_TYPES needed — same as `Job`).
+  **TURNKEY P3 EXECUTION:**
+  1. `mv docs/v0.19/staging-Std-Live.sky sky-stdlib/Std/Live.sky` (validated full
+     content — all withX + route/api/lifecycle; `Html` via `import Std.Html
+     exposing (Html)`).
+  2. Remove `("Live", &["app","route","api","lifecycle"])` from KERNEL_FUNCTIONS
+     (kernel.rs) + strip the `Std.Live` kernel_api.rs entry (mirror commit
+     6f382eda's Jobs style). Rebuild `cargo build -p sky`.
+  3. Migrate ALL Live call-sites (atomic — tree won't build until done). The 18
+     Live SPAs use `import Std.Live exposing (app, route)` + bare `app { init=…,
+     …optionals… }`; rewrite each to `app (config { <required 6> } |> withHead …
+     |> withGuard … )`, moving ONLY optionals (head/guard/analytics/status/store
+     — the used set) into `withX`, and extend each `exposing (...)` with `config`
+     + the `withX` used. Multi-backend ex 24/38: migrate their `Live.app` record;
+     Tui.app there is still kernel-only (fresh_flex) so its record still builds
+     until P-Tui. Bundled console (sky-bundled/console/src/Main.sky) too.
+  4. `sky fmt` ×2 each; full `scripts/example-sweep.sh` green; commit.
+  Runtime kernels already shipped (P2, commit 88a9dde0) + guard-tested.
 - **P4 — migrate all ~25-30 call-sites** to builder form (both `exposing (app)`
   bare + qualified `Live.app`/`Tui.app`); add fixtures for the zero-coverage
   optionals (consoleAuth/onNavigate/static/api/status); re-bless coerce_floor
