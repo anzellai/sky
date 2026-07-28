@@ -172,9 +172,14 @@ Grill verdict: `readyToImplement=true`, no blockers, floorTouch=false. Decisions
 
 ## Revised phases (BREAK + atomicity)
 
-- **P1 — Std.Jobs → Std/Jobs.sky** (standalone, low-risk pilot): aliases +
-  in-module `type Job a`/`type JobId`; remove from KERNEL_FUNCTIONS + kernel_api;
-  verify ex 18-job-queue builds/runs + hover + `sky doc`. Commit.
+- **P1 — Std.Jobs → Std/Jobs.sky** ✅ DONE + verified (commit 6f382eda).
+  `sky doc Std.Jobs` renders from source; e2e fixture builds+runs (`enqueued ok`,
+  2 kernel calls in codegen); phantom `a` constrains (`enqueue greet 42` →
+  `E2001 record vs Int`); doc gate + hir resolve green; zero example blast radius.
+  Proven: opaque-kernel-value flows as `any` end-to-end (runtime mechanism for
+  the Path A configs). NOTE: `Live_config` returns `map[string]any` typed as an
+  OPAQUE config type → must flow as `any` (KERNEL_IMPLICIT_TYPES + `GoTy::Any`
+  arm, OR in-module opaque decl like `type Job a` which proved to flow as any).
 - **P2 — Path A runtime kernels + `AppConfig` type**: `Live_config`/`Live_withX`
   + `Tui_config`/`Tui_withX` (4 guards); AppConfig implicit + goty.rs arm; rt
   tests. Commit.
