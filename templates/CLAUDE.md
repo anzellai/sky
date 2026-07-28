@@ -76,6 +76,7 @@ landmarks anyway.
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |
 | Logs | `Std.Log` structured logs; `/_sky/console` auto-mounts in dev. |
+| Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent-gated + anonymous by default, opt-in Sky.Live auto page-views (`analytics = { pageViews = True }`), SQLite store + Sky Console **Analytics** tab. |
 
 ## Effect boundary — Task everywhere
 
@@ -86,6 +87,15 @@ Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,
 auto-forced. Bridge with `Task.fromResult` / `Result.andThenTask` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
 still needs the explicit `Task.run`.
+
+**Top-level bindings are memoised — evaluated once, then cached.** A
+zero-parameter top-level binding is a single VALUE: `apiKey` reads the env
+once, `db = Task.run (Db.connect ())` opens ONE shared connection pool. If
+you need a FRESH value per use — a UUID, the current time, a random number
+— make it a function, not a binding: `newId : () -> String; newId _ =
+Task.run Uuid.v4 |> Result.withDefault ""`, called `newId ()`. `newId =
+Task.run Uuid.v4` at top level freezes to one UUID forever (the compiler
+warns). A bare `x = Uuid.v4` (an un-forced `Task` value) is fine.
 
 Two-level error pattern: log a structured line with a short `errId` server-side,
 return a user-facing `Task.fail (Error.unexpected ("... ref " ++ errId))`.

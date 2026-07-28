@@ -194,6 +194,7 @@ A short tour. Full reference at `sky doc --serve` or
 | `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. |
 | `Std.Money` + `Std.Decimal` | Arbitrary-precision Decimal + currency-typed Money (50+ ISO 4217 codes + crypto) with `allocate` for fair splits and conversion rates. |
 | `Std.Cache`            | LRU + TTL in-memory cache, parametric on key + value, monotone stats. |
+| `Std.Analytics`        | Typed product analytics — typed event props (`Money` lossless, `Pii` redactable), consent-gated + anonymous by default, opt-in Sky.Live auto page-views, SQLite store, and a Sky Console **Analytics** tab (counts / recent / revenue-by-currency). |
 | `Std.Email`            | Resend / SES / SendGrid / SMTP under one typed `EmailProvider`. `SKY_EMAIL_DRY_RUN=1` for tests. |
 | `Std.Compression` / `Std.Csv` / `Std.Config` | gzip / zstd; RFC 4180 CSV; TOML / YAML / JSON decoders that mirror `Sky.Core.Json.Decode`. |
 | `Sky.Core.WebSocket`   | Client + server bidirectional sockets. |

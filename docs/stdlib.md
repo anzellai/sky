@@ -1427,6 +1427,52 @@ in every case.
 
 ---
 
+## Product analytics — `Std.Analytics`
+
+Typed product analytics: page views, actions, and e-commerce events with
+**typed property values**. The differentiator vs a stringly-typed SDK is
+that a prop's VALUE is Sky-typed — an `Int` is an `Int`, `Money` is
+lossless (never a float), and identity is a distinct `Pii` type the
+pipeline can redact by construction, never a stray `String`.
+
+```elm
+import Std.Analytics as Analytics
+
+-- open payload builder: any code (your app OR a library) emits without
+-- coupling to a central union
+Analytics.track
+    (Analytics.event "product_viewed"
+        [ Analytics.string "sku" "SKU-42"
+        , Analytics.money "price" price
+        , Analytics.pii "email" (Analytics.piiEmail user.email)  -- redacted
+        ])
+
+-- or derive the payload from your OWN typed event union (no encoder):
+Analytics.trackEvent (Purchased { orderId = id, total = cart })
+```
+
+**Default-safe identity + consent.** Anonymous by default — events carry a
+random anonymous id and NO identity until you `setConsent Granted`;
+`identify user.id traits` attaches the user only under `Granted`; `Denied`
+drops all capture. Consent is session-scoped, so one Sky.Live user's
+identity never bleeds into another's.
+
+**Auto page-views (opt-in).** Add `analytics = { pageViews = True }` to the
+`Live.app` cfg — every full page load is captured (consent-gated), with
+anonymised device + IP context.
+
+**Sinks + store.** `configure [ StderrSink, FileSink "events.jsonl",
+Custom (\line -> Http.post collector line) ]` fans every event to your
+destinations. A SQLite store persists events — it reuses the console DB by
+default, or a `[analytics] dbPath` override in `sky.toml`. `erase id`
+(right-to-erasure) + `totalEvents` / `uniqueUsers` / `eventCounts` /
+`recentEvents` back an admin view; the Sky Console's **Analytics** tab
+renders totals, per-event counts, the recent stream, and revenue grouped
+by currency. Full API + per-binding docs: `sky doc Std.Analytics`. Worked
+example: `examples/52-blog-analytics`.
+
+---
+
 ## Low-level FFI proxies
 
 These are thin wrappers around Go stdlib types — usually you'll reach for them only when interfacing with auto-generated FFI bindings.

@@ -1123,6 +1123,32 @@ apiKey =
     System.getenv "OPENAI_KEY" |> Task.run |> Result.withDefault ""
 ```
 
+**Top-level bindings are MEMOISED — evaluated once, then cached (CAF
+semantics).** A zero-parameter top-level binding is a single VALUE, not a
+re-run recipe. `apiKey` above reads the env ONCE at first use and every
+reference returns that same string; `db = Task.run (Db.connect ())` opens
+ONE connection pool shared by every query (the "memoised handle"
+contract). This is correct Elm/Haskell CAF behaviour and what production
+apps want.
+
+**Footgun: don't force a FRESH-value effect at top level.** `newId =
+Task.run Uuid.v4 |> Result.withDefault ""` freezes to ONE UUID for the
+whole program (colliding PKs); `nowMs = Task.run (Time.now ())` freezes
+the clock at process start. If you need a fresh value per use, make it a
+FUNCTION — the unit-arg idiom:
+
+```elm
+newId : () -> String
+newId _ =
+    Task.run Uuid.v4 |> Result.withDefault ""
+-- call site: newId ()
+```
+
+The compiler WARNS when a memoised top-level binding forces a fresh-value
+kernel (`Uuid.v4` / `Random.*` / `Time.now` / `Crypto.random*`) so this
+never bites silently. A bare `x = Uuid.v4` (a re-runnable `Task` value,
+not forced) is fine and not warned.
+
 **Result/Task bridges:**
 
 | Helper | Type |
@@ -1585,6 +1611,7 @@ Each binding is either:
 | `Auth` | `Std.Auth` | register, login, setRole (Task) + hashPassword, hashPasswordCost, verifyPassword, passwordStrength, signToken, verifyToken (Result); v0.15.48+ signTokenWithClaims / verifyTokenWithAlgorithm — typed-builder aliases over Sky.Core.Jwt for fine-grained algorithm + claims control |
 | `Log` | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith |
 | `Trace` | `Std.Trace` | span, event, attr — opt-in app-level tracing spans. Tier-1 spans (HTTP/session/Msg/DB/Auth/Http/File) are automatic; see `docs/observability.md` |
+| `Analytics` | `Std.Analytics` | Typed product analytics. Open payload builder — `event name [ string k v, int k v, money k v, pii k (piiEmail e) ]` — with typed prop VALUES (`Money` lossless, `Pii` a distinct redactable type, never a bare `String`). `track` / `trackEvent` (reflective derive of your own event union). Default-safe identity + consent: `Anonymous` by default, `identify` + `setConsent Granted` opt-in, session-scoped (one Sky.Live user's identity never bleeds into another's), `Denied` drops capture. Opt-in Sky.Live auto page-views (`analytics = { pageViews = True }` on `Live.app` cfg). Pluggable `Sink`s (`configure`: stderr / JSONL file / `Custom` provider POST). SQLite store — reuses the console DB or a `[analytics] dbPath` override; `erase` (right-to-erasure) + aggregate queries (`totalEvents` / `uniqueUsers` / `eventCounts` / `recentEvents`). Renders in the Sky Console's **Analytics** tab (totals / per-event counts / recent stream / revenue-by-currency). See `examples/52-blog-analytics`. |
 | `Server` | `Sky.Http.Server` | param, queryParam, header, getCookie, static (Layer 3 surface); higher-level `get/post/listen/text/json/html` stay kernel-only |
 | `Stream` | `Sky.Http.Server.Stream` | stream, emit, finish, withContentType — server-side streaming HTTP responses (SSE / LLM token forwarding / chunked downloads). Mirror of `Sky.Core.Http.Stream` (which reads upstream bodies as Sub events). See `docs/skylive/http-streaming.md` §"Server-side" + `examples/30-sse-server-demo`. Synchronous bridge: `Sky.Core.Http.Stream.forEachChunk hdl body` (v0.15.41+) drains an upstream stream from inside a plain Sky.Http.Server handler goroutine — needed for the relay shape (upstream chunks → `Server.Stream.emit` downstream chunk-for-chunk; no Sky.Live update loop required). See `docs/skylive/http-streaming.md` §"Synchronous relay" + `examples/32-sse-relay`. |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit, **withCsrf** (v0.17 task #663 — double-submit cookie pattern; safe-method passes set `__Host-sky_csrf`, unsafe methods require matching `X-Csrf-Token` header or `_csrf` form field; constant-time compare; 403 + clear diagnostic on missing/mismatched token) |
