@@ -786,6 +786,42 @@ fn top_go_name(module: &str, name: &str) -> String {
     format!("{}_{}", module_prefix(module), reserved_rewrite(name))
 }
 
+/// A kernel that returns a DIFFERENT value on each run (entropy / clock). If a
+/// memoised top-level CAF FORCES one of these to a plain value it freezes to a
+/// single result — the post-CAF-memoisation footgun (colliding UUIDs, frozen
+/// clock). `module` is the canonical kernel alias (`Uuid` / `Random` / `Time`
+/// / `Crypto`). Deterministic seeded variants (`seededInt`, …) are excluded —
+/// they are pure given their seed, so memoising them is sound.
+fn is_fresh_value_kernel(module: &str, func: &str) -> bool {
+    // Match on the last path segment so both the canonical alias (`Uuid`) and a
+    // fully-qualified form (`Sky.Core.Uuid`) resolve identically.
+    let m = module.rsplit('.').next().unwrap_or(module);
+    matches!(
+        (m, func),
+        ("Uuid", "v4")
+            | ("Uuid", "v7")
+            | ("Random", "int")
+            | ("Random", "float")
+            | ("Random", "range")
+            | ("Random", "choice")
+            | ("Random", "shuffle")
+            | ("Random", "weighted")
+            | ("Time", "now")
+            | ("Time", "unixMillis")
+            | ("Crypto", "randomBytes")
+            | ("Crypto", "randomToken")
+    )
+}
+
+/// Parse a kernel-alias symbol (`"Uuid_v4"`, `"Time_unixMillis"`) into
+/// `(module, func)` iff it names a fresh-value kernel. `split_once('_')` keeps
+/// multi-word funcs intact (`"Crypto_randomToken"` → `("Crypto",
+/// "randomToken")`).
+fn fresh_value_symbol_parts(sym: &str) -> Option<(String, String)> {
+    let (m, f) = sym.split_once('_')?;
+    is_fresh_value_kernel(m, f).then(|| (m.to_string(), f.to_string()))
+}
+
 const RESERVED: &[&str] = &[
     "init",
     "string",
@@ -1756,6 +1792,26 @@ impl<'a> Ctx<'a> {
         // to `any`), so a memoised cell holds one representation safely.
         let self_referential = root.is_some_and(|r| self.body_references_def(r, self.cur_def));
         if params.is_empty() && root.is_some() && !self_referential {
+            // Footgun lint: a memoised CAF that FORCES a fresh-value effect
+            // (Uuid.v4 / Random.* / Time.now / Crypto.random*) freezes it to a
+            // single value. `expr_is_task` skips a bare `x = Uuid.v4` (a
+            // re-runnable Task value — not forced, no footgun); it fires only
+            // when the effect was run to a plain value (`Task.run Uuid.v4 |>
+            // …`). Warn, don't error — a single shared value is occasionally
+            // intended.
+            if let Some(r) = root {
+                if !self.expr_is_task(r) {
+                    if let Some((m, f)) = self.find_fresh_value_kernel(r) {
+                        let short = m.rsplit('.').next().unwrap_or(&m).to_string();
+                        self.warnings.push(format!(
+                            "top-level `{name}` runs `{short}.{f}` and is memoised to a SINGLE \
+                             value (evaluated once, then cached). If you want a fresh value per \
+                             use, make it a function: `{name} () = …` and call `{name} ()`. \
+                             Ignore this if one shared value is intended."
+                        ));
+                    }
+                }
+            }
             let caf_var = format!("{go_name}__caf");
             let cell_ty = GoTy::Named("rt.LazyCaf".to_string(), vec![ret_ty.clone()]);
             // compute := func() T { <original body> }
@@ -3615,6 +3671,44 @@ impl<'a> Ctx<'a> {
         self.expr_children(e)
             .into_iter()
             .any(|c| self.body_references_def(c, def))
+    }
+
+    /// The first "fresh-value" kernel (`Uuid.v4` / entropy `Random.*` /
+    /// `Time.now` / `Crypto.random*`) reached in the subtree rooted at `e`,
+    /// WITHOUT descending into nested lambda bodies (a fresh-value call inside
+    /// a lambda runs per-invocation, not at memoisation time). Used to warn
+    /// when a memoised top-level CAF forces one of these to a single frozen
+    /// value — the footgun that silently gave colliding UUIDs / a frozen clock
+    /// after CAF memoisation landed.
+    fn find_fresh_value_kernel(&self, e: ExprId) -> Option<(String, String)> {
+        match &self.body.exprs[e] {
+            // Direct kernel reference (rare at user sites).
+            Expr::Var(Res::Kernel { module, func })
+                if is_fresh_value_kernel(module.as_str(), func.as_str()) =>
+            {
+                return Some((module.as_str().to_string(), func.as_str().to_string()));
+            }
+            // The usual case: `Uuid.v4` is a `Res::Def` to the stdlib alias
+            // whose body is `Ffi.kernel "Uuid_v4"` — resolve it to the symbol.
+            Expr::Var(Res::Def(d)) => {
+                if let Some(sym) = self.kernel_alias.get(d) {
+                    if let Some((m, f)) = fresh_value_symbol_parts(sym) {
+                        return Some((m, f));
+                    }
+                }
+            }
+            _ => {}
+        }
+        // A fresh-value call inside a lambda fires per-call; skip that subtree.
+        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+            return None;
+        }
+        for c in self.expr_children(e) {
+            if let Some(hit) = self.find_fresh_value_kernel(c) {
+                return Some(hit);
+            }
+        }
+        None
     }
 
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
