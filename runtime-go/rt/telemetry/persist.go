@@ -39,52 +39,92 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver "pgx" (one-DB-for-everything)
 	_ "modernc.org/sqlite"
 )
 
-// consoleDBSchema is the embedded canonical schema for /data/console.db.
-// Kept in sync with `control-plane/static/console.db.schema.sql` in
-// SkyDeploy.  When the file changes there, mirror it here AND bump
-// the EmbeddedRuntime TH marker.
-const consoleDBSchema = `
-CREATE TABLE IF NOT EXISTS telemetry_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    namespace  TEXT NOT NULL DEFAULT '',
-    level      TEXT NOT NULL,
-    message    TEXT NOT NULL,
-    attrs      TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+// The console telemetry store (logs / metrics / spans) — the embedded schema
+// mirrors `control-plane/static/console.db.schema.sql` in SkyDeploy. v0.19 makes
+// it dialect-aware so it can share the app's Postgres (one DB for everything);
+// SQLite stays the default. Only the write path lives here — the console
+// mini-app / SkyDeploy own the reads.
+//
+// telemetryBackend classifies a configured path into a (driver, dsn) pair —
+// a postgres:// URL uses the shared pgx driver (one DB for everything); anything
+// else is a local SQLite file.
+func telemetryBackend(path string) (driver, dsn string) {
+	if strings.HasPrefix(path, "postgres://") || strings.HasPrefix(path, "postgresql://") {
+		return "pgx", path
+	}
+	return "sqlite", path
+}
 
-CREATE TABLE IF NOT EXISTS telemetry_metric (
-    name        TEXT NOT NULL,
-    labels      TEXT NOT NULL DEFAULT '{}',
-    value       REAL NOT NULL,
-    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+// telemetryQ rewrites `?` placeholders to `$1,$2,…` for pgx; SQLite keeps `?`.
+func telemetryQ(driver, sql string) string {
+	if driver != "pgx" {
+		return sql
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range sql {
+		if r == '?' {
+			n++
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
-CREATE TABLE IF NOT EXISTS telemetry_span (
-    id         TEXT NOT NULL,
-    trace_id   TEXT NOT NULL,
-    parent_id  TEXT NOT NULL DEFAULT '',
-    name       TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    ended_at   TEXT NOT NULL,
-    attrs      TEXT NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX IF NOT EXISTS idx_log_created
-    ON telemetry_log (created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_metric_observed
-    ON telemetry_metric (name, observed_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_span_started
-    ON telemetry_span (started_at DESC);
-`
+// consoleDBSchemaStmts returns the CREATE statements for the driver, run
+// individually (pgx doesn't batch `;`-separated statements). Only the id
+// column, the timestamp DEFAULT, and the float type differ; the inserts always
+// supply created_at/observed_at, so dropping the default on Postgres is safe.
+func consoleDBSchemaStmts(driver string) []string {
+	logID := "id INTEGER PRIMARY KEY AUTOINCREMENT"
+	tsDefault := " DEFAULT (datetime('now'))"
+	valueType := "REAL"
+	if driver == "pgx" {
+		logID = "id BIGSERIAL PRIMARY KEY"
+		tsDefault = ""
+		valueType = "DOUBLE PRECISION"
+	}
+	return []string{
+		`CREATE TABLE IF NOT EXISTS telemetry_log (
+			` + logID + `,
+			namespace  TEXT NOT NULL DEFAULT '',
+			level      TEXT NOT NULL,
+			message    TEXT NOT NULL,
+			attrs      TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL` + tsDefault + `
+		)`,
+		`CREATE TABLE IF NOT EXISTS telemetry_metric (
+			name        TEXT NOT NULL,
+			labels      TEXT NOT NULL DEFAULT '{}',
+			value       ` + valueType + ` NOT NULL,
+			observed_at TEXT NOT NULL` + tsDefault + `
+		)`,
+		`CREATE TABLE IF NOT EXISTS telemetry_span (
+			id         TEXT NOT NULL,
+			trace_id   TEXT NOT NULL,
+			parent_id  TEXT NOT NULL DEFAULT '',
+			name       TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			ended_at   TEXT NOT NULL,
+			attrs      TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_log_created ON telemetry_log (created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_observed ON telemetry_metric (name, observed_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_span_started ON telemetry_span (started_at DESC)`,
+	}
+}
 
 // persistEnvVar is the env var SkyDeploy injects on Pro+ tenants.
 // When set + non-empty, the store dual-writes to the SQLite file.
@@ -116,10 +156,11 @@ type persistMetric struct {
 // persistence wraps the DB handle + writer goroutine.  One per Store.
 // nil when SKY_CONSOLE_DB_PATH is unset (in-RAM-only).
 type persistence struct {
-	db    *sql.DB
-	queue chan persistEntry
-	stop  chan struct{}
-	wg    sync.WaitGroup
+	db     *sql.DB
+	driver string // "sqlite" or "pgx" — drives placeholder style
+	queue  chan persistEntry
+	stop   chan struct{}
+	wg     sync.WaitGroup
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
@@ -143,33 +184,39 @@ func (s *Store) EnablePersistence(path string) error {
 	if path == "" {
 		return nil
 	}
-	db, err := sql.Open("sqlite", path)
+	driver, dsn := telemetryBackend(path)
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return err
 	}
-	// WAL mode → console mini-app can read concurrently with our writes.
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		db.Close()
-		return err
+	if driver == "sqlite" {
+		// WAL mode → console mini-app can read concurrently with our writes.
+		if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+			db.Close()
+			return err
+		}
 	}
-	// busy_timeout: tolerate contention with the console mini-app's reader
-	// (and WAL checkpoints) without surfacing SQLITE_BUSY. 2s proved too short
-	// under load — a WAL checkpoint / a second writer holding the write lock
-	// briefly could exceed it, surfacing `database is locked` (SQLITE_BUSY) on a
-	// loaded CI runner (TestPersistence_PrunerDropsOldRows flake). 5s is still
-	// short for a background telemetry store yet absorbs the contention.
-	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
-		db.Close()
-		return err
+	if driver == "sqlite" {
+		// busy_timeout: tolerate contention with the console mini-app's reader
+		// (and WAL checkpoints) without surfacing SQLITE_BUSY. 5s absorbs a WAL
+		// checkpoint / a second writer briefly holding the write lock. Postgres
+		// handles concurrency natively — no PRAGMA.
+		if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+			db.Close()
+			return err
+		}
 	}
-	if _, err := db.Exec(consoleDBSchema); err != nil {
-		db.Close()
-		return err
+	for _, stmt := range consoleDBSchemaStmts(driver) {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return err
+		}
 	}
 	p := &persistence{
-		db:    db,
-		queue: make(chan persistEntry, persistQueueCap),
-		stop:  make(chan struct{}),
+		db:     db,
+		driver: driver,
+		queue:  make(chan persistEntry, persistQueueCap),
+		stop:   make(chan struct{}),
 	}
 	s.persist = p
 	p.wg.Add(2)
@@ -183,6 +230,14 @@ func (s *Store) EnablePersistence(path string) error {
 // dual-write boot path so callers don't have to repeat the env check.
 func (s *Store) EnablePersistenceFromEnv() error {
 	path := os.Getenv(persistEnvVar)
+	// One-DB-for-everything: fall back to a Postgres DATABASE_URL (the same var
+	// the app DB, sessions, and analytics use) so console telemetry lands in the
+	// shared database too. SKY_CONSOLE_DB_PATH still wins when set.
+	if path == "" {
+		if p := os.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
+			path = p
+		}
+	}
 	if path == "" {
 		return nil
 	}
@@ -310,9 +365,9 @@ func (p *persistence) writeBatch(batch []persistEntry) error {
 		switch e.kind {
 		case "log":
 			if insLog == nil {
-				insLog, err = tx.Prepare(`INSERT INTO telemetry_log
+				insLog, err = tx.Prepare(telemetryQ(p.driver, `INSERT INTO telemetry_log
                     (namespace, level, message, attrs, created_at)
-                    VALUES (?, ?, ?, ?, ?)`)
+                    VALUES (?, ?, ?, ?, ?)`))
 				if err != nil {
 					return err
 				}
@@ -333,9 +388,9 @@ func (p *persistence) writeBatch(batch []persistEntry) error {
 			}
 		case "metric":
 			if insMetric == nil {
-				insMetric, err = tx.Prepare(`INSERT INTO telemetry_metric
+				insMetric, err = tx.Prepare(telemetryQ(p.driver, `INSERT INTO telemetry_metric
                     (name, labels, value, observed_at)
-                    VALUES (?, ?, ?, ?)`)
+                    VALUES (?, ?, ?, ?)`))
 				if err != nil {
 					return err
 				}
@@ -354,9 +409,9 @@ func (p *persistence) writeBatch(batch []persistEntry) error {
 			}
 		case "span":
 			if insSpan == nil {
-				insSpan, err = tx.Prepare(`INSERT INTO telemetry_span
+				insSpan, err = tx.Prepare(telemetryQ(p.driver, `INSERT INTO telemetry_span
                     (id, trace_id, parent_id, name, started_at, ended_at, attrs)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`))
 				if err != nil {
 					return err
 				}
@@ -447,13 +502,13 @@ func (p *persistence) runPrune() error {
 	logCutoff := now.Add(-24 * time.Hour).Format("2006-01-02 15:04:05.000")
 	metricCutoff := now.Add(-7 * 24 * time.Hour).Format("2006-01-02 15:04:05.000")
 	spanCutoff := now.Add(-24 * time.Hour).Format("2006-01-02 15:04:05.000")
-	if _, err := p.db.Exec(`DELETE FROM telemetry_log WHERE created_at < ?`, logCutoff); err != nil {
+	if _, err := p.db.Exec(telemetryQ(p.driver, `DELETE FROM telemetry_log WHERE created_at < ?`), logCutoff); err != nil {
 		return err
 	}
-	if _, err := p.db.Exec(`DELETE FROM telemetry_metric WHERE observed_at < ?`, metricCutoff); err != nil {
+	if _, err := p.db.Exec(telemetryQ(p.driver, `DELETE FROM telemetry_metric WHERE observed_at < ?`), metricCutoff); err != nil {
 		return err
 	}
-	if _, err := p.db.Exec(`DELETE FROM telemetry_span WHERE started_at < ?`, spanCutoff); err != nil {
+	if _, err := p.db.Exec(telemetryQ(p.driver, `DELETE FROM telemetry_span WHERE started_at < ?`), spanCutoff); err != nil {
 		return err
 	}
 	return nil
