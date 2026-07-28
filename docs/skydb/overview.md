@@ -79,13 +79,14 @@ AUTOINCREMENT` on SQLite, `BIGSERIAL PRIMARY KEY` on Postgres).
 `autoIncrement`, `defaultInt n`, `defaultText s`, `defaultBool b`, `defaultNow`
 (`datetime('now')` / `now()`), `references "table" "col"` (foreign key).
 
-**Type mapping** — chosen for dev==prod *read* consistency: `bool` is `INTEGER`
-0/1 and `json` is `TEXT` on **both** backends (a value reads back the same
-shape everywhere); `bigint`/`timestamp` diverge to `BIGINT` on Postgres (the
-one that must, for the overflow) but still read back as int64; `real`→`DOUBLE
-PRECISION`, `blob`→`BYTEA` on Postgres. `createTable` is idempotent
-(`CREATE TABLE / INDEX IF NOT EXISTS`); `createSchema conn tables` runs a list
-in order.
+**Type mapping** — each backend's natural column type, with dev==prod
+consistency at the *decoded-value* level (via `Std.Db.Decode`): `bool` →
+`BOOLEAN` on Postgres / `INTEGER` 0/1 on SQLite (a `SqlBool` param binds to
+both, and `Decode.bool` reads both back to a Sky `Bool`); `bigint`/`timestamp`
+→ `BIGINT` on Postgres / `INTEGER` on SQLite (the overflow-safe one — both read
+as int64); `real`→`DOUBLE PRECISION`, `blob`→`BYTEA` on Postgres; `json`→`TEXT`
+on both. `createTable` is idempotent (`CREATE TABLE / INDEX IF NOT EXISTS`);
+`createSchema conn tables` runs a list in order.
 
 `Schema` only builds the tables — you still write `Db.exec` / `Db.query` for
 data. It removes the one dialect-specific string from your app; the parameter

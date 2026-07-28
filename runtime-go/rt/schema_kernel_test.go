@@ -63,12 +63,18 @@ func TestSchemaDialectMapping(t *testing.T) {
 		t.Errorf("pg serial wrong:\n%s", pq)
 	}
 
-	// --- read-consistency choices: bool is INTEGER on BOTH ---
-	if !strings.Contains(sq, "active INTEGER") || !strings.Contains(pq, "active INTEGER") {
-		t.Errorf("bool should be INTEGER on both:\nsqlite=%s\npg=%s", sq, pq)
+	// --- bool: INTEGER 0/1 on SQLite, native BOOLEAN on Postgres ---
+	if !strings.Contains(sq, "active INTEGER") {
+		t.Errorf("sqlite bool should be INTEGER:\n%s", sq)
 	}
-	if !strings.Contains(sq, "DEFAULT 1") || !strings.Contains(pq, "DEFAULT 1") {
-		t.Errorf("bool default should be 1 on both:\nsqlite=%s\npg=%s", sq, pq)
+	if !strings.Contains(pq, "active BOOLEAN") {
+		t.Errorf("pg bool should be BOOLEAN:\n%s", pq)
+	}
+	if !strings.Contains(sq, "active INTEGER NOT NULL DEFAULT 1") {
+		t.Errorf("sqlite bool default should be 1:\n%s", sq)
+	}
+	if !strings.Contains(pq, "active BOOLEAN NOT NULL DEFAULT TRUE") {
+		t.Errorf("pg bool default should be TRUE:\n%s", pq)
 	}
 
 	// --- shared structure ---

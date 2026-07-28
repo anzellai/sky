@@ -4,11 +4,15 @@
 // schema definition run unchanged on both, killing the INTEGER/BIGINT,
 // AUTOINCREMENT/BIGSERIAL, and datetime()/now() drift.
 //
-// Type mapping is chosen for dev==prod READ consistency, not native-per-dialect
-// types: `bool` and `json` map to INTEGER/TEXT on BOTH backends so a value reads
-// back the same shape whether you developed on SQLite or deployed on Postgres.
-// `bigint` is the one that MUST diverge (SQLite INTEGER is 8-byte; Postgres
-// INTEGER is 4-byte and overflows on millis) — but both read back as int64.
+// Type mapping favours dev==prod consistency at the DECODED-VALUE level (via
+// Std.Db.Decode), while using each backend's natural column type:
+//   - `bool` → BOOLEAN on Postgres, INTEGER 0/1 on SQLite. A `SqlBool` param
+//     (a native Go bool) binds cleanly to both, and `Decode.bool` reads both
+//     representations back to a Sky Bool.
+//   - `json` → TEXT on both (native JSONB is a future opt-in).
+//   - `bigint`/`timestamp` → BIGINT on Postgres, INTEGER on SQLite (SQLite
+//     INTEGER is 8-byte; Postgres INTEGER is 4-byte and overflows on millis) —
+//     both read back as int64.
 package rt
 
 import (
@@ -144,7 +148,11 @@ func schemaTypeName(driver, kind string) string {
 		}
 		return "REAL"
 	case "bool":
-		// INTEGER (0/1) on BOTH for dev==prod read consistency.
+		// Native BOOLEAN on Postgres; INTEGER 0/1 on SQLite. A SqlBool (Go bool)
+		// binds to both, and Decode.bool reads both back.
+		if pg {
+			return "BOOLEAN"
+		}
 		return "INTEGER"
 	case "blob":
 		if pg {
@@ -169,7 +177,13 @@ func schemaDefault(driver, kind, val string) string {
 	case "text":
 		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
 	case "bool":
-		// bool columns are INTEGER 0/1 on both dialects.
+		// BOOLEAN on Postgres (TRUE/FALSE); INTEGER 0/1 on SQLite.
+		if driver == "pgx" {
+			if val == "true" {
+				return "TRUE"
+			}
+			return "FALSE"
+		}
 		if val == "true" {
 			return "1"
 		}

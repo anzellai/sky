@@ -2074,19 +2074,28 @@ func Db_getFloat(fname any, row any) float64 {
 
 // Sky type: Db.getBool : String -> row -> Bool
 // Returns false when the field is missing. SQLite stores booleans as
-// 0/1 strings; "1" / "true" map to true.
+// 0/1; Postgres BOOLEAN reads back as "t"/"f" (or "true"/"false"). Accept
+// all of them so a bool column reads the same on both backends.
+func dbTruthy(s string) bool {
+	switch s {
+	case "1", "true", "TRUE", "True", "t", "T":
+		return true
+	}
+	return false
+}
+
 func Db_getBool(fname any, row any) bool {
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
-			return v == "1" || v == "true"
+			return dbTruthy(v)
 		}
 		return false
 	}
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[key]; exists {
 			if s, isStr := v.(string); isStr {
-				return s == "1" || s == "true"
+				return dbTruthy(s)
 			}
 			if b, isBool := v.(bool); isBool {
 				return b
