@@ -1,0 +1,209 @@
+-- | Std.Codec — one bidirectional codec per type, reused for JSON now and DB
+-- later (Layer 3 pure Sky, built on `Sky.Core.Json.Encode`/`Decode`).
+--
+-- A `Codec a` bundles an encoder + a decoder + a structural `shape` (used by the
+-- DB backend to derive columns). Write it once; get JSON encode AND decode — and
+-- eventually DB read/write/schema — from the single definition.
+--
+-- ```elm
+-- import Std.Codec as Codec exposing (Codec)
+--
+-- type alias User = { id : String, age : Int, active : Bool, nick : Maybe String }
+--
+-- userCodec : Codec User
+-- userCodec =
+--     Codec.object User
+--         |> Codec.field "id" .id Codec.string
+--         |> Codec.field "age" .age Codec.int
+--         |> Codec.field "active" .active Codec.bool
+--         |> Codec.field "nick" .nick (Codec.maybe Codec.string)
+--         |> Codec.buildObject
+--
+-- Codec.toJson userCodec user          -- : String
+-- Codec.fromJson userCodec jsonString  -- : Result Error User
+-- ```
+--
+-- ADT support (`custom` / `variantN`) lands next; this module covers records,
+-- primitives, `Maybe`, `List`, and `map`.
+module Std.Codec exposing
+    ( Codec
+    , ColType(..)
+    , Shape(..)
+    , ObjectCodec
+    , shape
+    , toValue
+    , toJson
+    , fromJson
+    , string
+    , int
+    , float
+    , bool
+    , maybe
+    , list
+    , map
+    , object
+    , field
+    , buildObject
+    )
+
+import Sky.Core.Json.Encode as E exposing (Value)
+import Sky.Core.Json.Decode as D exposing (Decoder)
+import Sky.Core.Error exposing (Error)
+
+-- | The column type a codec maps to on the DB side.
+type ColType
+    = CText
+    | CInt
+    | CReal
+    | CBool
+    | CBlob
+
+-- | The structural shape of a codec — a record maps to columns, a scalar to one
+-- typed column, anything else (list / nested / ADT) to a JSON TEXT blob.
+type Shape
+    = SRecord (List ( String, ColType ))
+    | SScalar ColType
+    | SBlob
+
+-- | A bidirectional codec for `a`: encoder + decoder + shape.
+type Codec a
+    = Codec { enc : a -> Value
+, dec : Decoder a
+, shp : Shape
+}
+
+
+-- ── Introspection / run ──────────────────────────────────────────────────────
+shape : Codec a -> Shape
+shape (Codec c) =
+    c.shp
+
+
+toValue : Codec a -> a -> Value
+toValue (Codec c) =
+    c.enc
+
+
+-- | Encode to a compact JSON string.
+toJson : Codec a -> a -> String
+toJson (Codec c) x =
+    E.encode 0 (c.enc x)
+
+
+-- | Decode from a JSON string.
+fromJson : Codec a -> String -> Result Error a
+fromJson (Codec c) s =
+    D.decodeString c.dec s
+
+
+-- ── Primitives ───────────────────────────────────────────────────────────────
+string : Codec String
+string =
+    Codec { enc = E.string, dec = D.string, shp = SScalar CText }
+
+
+int : Codec Int
+int =
+    Codec { enc = E.int, dec = D.int, shp = SScalar CInt }
+
+
+float : Codec Float
+float =
+    Codec { enc = E.float, dec = D.float, shp = SScalar CReal }
+
+
+bool : Codec Bool
+bool =
+    Codec { enc = E.bool, dec = D.bool, shp = SScalar CBool }
+
+
+-- ── Combinators ──────────────────────────────────────────────────────────────
+-- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
+-- on decode yields `Nothing`. A `Maybe scalar` stays a (nullable) scalar column;
+-- anything deeper becomes a blob.
+maybe : Codec a -> Codec (Maybe a)
+maybe (Codec c) =
+    Codec
+        { enc = \m ->
+              case m of
+
+                  Just x ->
+                      c.enc x
+
+                  Nothing ->
+                      E.null
+        , dec = D.oneOf [ D.map Just c.dec, D.succeed Nothing ]
+        , shp = case c.shp of
+
+              SScalar t ->
+                  SScalar t
+
+              _ ->
+                  SBlob
+        }
+
+
+list : Codec a -> Codec (List a)
+list (Codec c) =
+    Codec { enc = E.list c.enc, dec = D.list c.dec, shp = SBlob }
+
+
+-- | Adapt a codec to another type via a bijection (`to` on decode, `from` on
+-- encode). Useful for newtype-style wrappers.
+map : (a -> b) -> (b -> a) -> Codec a -> Codec b
+map to from (Codec c) =
+    Codec { enc = \b -> c.enc (from b), dec = D.map to c.dec, shp = c.shp }
+
+-- ── Records (object builder) ─────────────────────────────────────────────────
+-- | Intermediate builder for a record codec. `a` is the record type; `b` is the
+-- constructor still awaiting fields.
+type ObjectCodec a b
+    = ObjectCodec { encFields : a -> List ( String, Value )
+, decValue : Decoder b
+, cols : List ( String, ColType )
+}
+
+
+-- | Start a record codec from its constructor.
+object : b -> ObjectCodec a b
+object ctor =
+    ObjectCodec { encFields = \_ -> [], decValue = D.succeed ctor, cols = [] }
+
+
+-- | Add a field: its JSON key, a getter, and the field's codec.
+field : String -> (a -> f) -> Codec f -> ObjectCodec a (f -> b) -> ObjectCodec a b
+field name getter (Codec fc) (ObjectCodec o) =
+    ObjectCodec
+        { encFields = \rec -> o.encFields rec ++ [ ( name, fc.enc (getter rec) ) ]
+        , decValue = codecAndMap (D.field name fc.dec) o.decValue
+        , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
+        }
+
+
+-- | Finish a record codec.
+buildObject : ObjectCodec a a -> Codec a
+buildObject (ObjectCodec o) =
+    Codec
+        { enc = \rec -> E.object (o.encFields rec)
+        , dec = o.decValue
+        , shp = SRecord o.cols
+        }
+
+
+-- ── Internal ─────────────────────────────────────────────────────────────────
+-- applicative `andMap` for decoders, built from map2.
+codecAndMap : Decoder a -> Decoder (a -> b) -> Decoder b
+codecAndMap da df =
+    D.map2 (\f a -> f a) df da
+
+
+-- a field's DB column type: scalars keep their type, everything else is a blob.
+colTypeOf : Shape -> ColType
+colTypeOf s =
+    case s of
+
+        SScalar t ->
+            t
+
+        _ ->
+            CBlob
