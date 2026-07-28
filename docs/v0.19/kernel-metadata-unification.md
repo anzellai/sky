@@ -273,3 +273,36 @@ precise sig already, so it's OUT of Path A by design.
   build/run a migrated app
 - milestone: xtask gates (roundtrip/resolve/infer/reject/build-run/coerce-floor/
   repro/golden) + `scripts/verify-cli.sh` + `scripts/verify-all-web.sh`
+
+## Residual outcomes (2026-07-28)
+
+- **kernel_api.rs DELETED (P5-follow, 054f6d26).** The last entry
+  (Sky.Http.Server) fully duplicated Server.sky (which already declares every
+  verb as an Ffi.kernel alias + 9 more) and was the source of a redirect
+  302-vs-303 doc contradiction. Now there is genuinely ONE source (the .sky
+  file) for EVERY stdlib module — kernel-only AND dual. `render_module` renders
+  from .sky alone.
+- **Runtime verified:** `verify-cli.sh` 13/0 (migrated Cli/Tui 20/21/22/23/24 run
+  no-panic); `verify-all-web.sh` 10/0 Live/Server + console-e2e PASS.
+- **Full `cargo test --workspace` green (exit 0);** example-sweep 29/0 (×2);
+  coerce-floor PASS (×2, builder widened nothing); kernel-surface gate green.
+
+### Known PRE-EXISTING issue (NOT v0.19 — separate follow-up)
+
+`verify-ui-showcase.sh` fails one snapshot: `hover-button-state-desktop`
+(99.58% pixel diff, CONSISTENT across re-runs). PROVEN unrelated to v0.19: the
+only diff to `examples/26-ui-showcase/src` is the entry-point builder migration
+(0 rendering-affecting lines), the golden was last recorded at v0.16.11
+(`4ee869f4`), and all 30+ other ui-showcase snapshots are byte-identical
+(0.00% diff). A pre-v0.19 change to `:hover` rendering (Std.Ui hoverColor CSS
+emission, or a headless-browser bump) drifted the hover state without
+re-recording the golden. **Fix separately** — investigate whether the current
+hover render is correct (then re-bless) or a real regression (then fix); do NOT
+blind-rebless, as that could hide a real `:hover` bug. Not a v0.19 blocker.
+
+### Still open
+
+- **Independent adversarial Judge** — could not run (subagent budget 200/200
+  exhausted). Multi-gate verification stands in; a fresh session can run the Judge.
+- **Downstream (P8)** — skydeploy + sky-lang.org need the same mechanical builder
+  migration (separate PRs, post Sky-release + SKY_VERSION bump).
