@@ -5,7 +5,7 @@
 //! `project::build_example` / `build_project`, then formats/runs/tests as the
 //! verb dictates. `sky check` ≡ `sky build` minus running (both run `go build`).
 
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -1305,6 +1305,16 @@ fn extract_between<'a>(s: &'a str, begin: &str, end: &str) -> Option<&'a str> {
 /// `db` (via a temp, DB-free schema-dump entry), diff it against
 /// `db/schema.json`, and write a migration file + updated snapshot. Additive ops
 /// are active; destructive ops are quarantined (docs/v0.19/auto-migration-architecture.md).
+/// Print a prompt (no newline) and read one line from stdin. Empty on EOF.
+fn prompt_line(prompt: &str) -> String {
+    use std::io::Write as _;
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    line
+}
+
 fn cmd_db_gen(args: &[String]) -> ExitCode {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     let name = positional.first().map(|s| s.as_str()).unwrap_or("migration");
@@ -1384,10 +1394,61 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
         .unwrap_or_default();
 
     // 5. Diff.
-    let d = db_migrate::diff(&target, &snapshot);
+    let mut d = db_migrate::diff(&target, &snapshot);
     if d.is_empty() {
         println!("sky db --gen: no schema changes — nothing to generate.");
         return ExitCode::SUCCESS;
+    }
+
+    // 5b. Interactive resolution — only on a TTY. In CI / non-interactive runs the
+    //     safe defaults stand (drops quarantined, required columns get a zero
+    //     backfill), so scripted gen is deterministic and never blocks on a prompt.
+    if std::io::stdin().is_terminal() {
+        for dec in d.drop_decisions() {
+            let hint = if dec.rename_candidates.is_empty() {
+                String::new()
+            } else {
+                format!(" (new column(s) here: {})", dec.rename_candidates.join(", "))
+            };
+            println!("\nColumn {}.{} was removed{hint}.", dec.table, dec.column);
+            let ans = prompt_line("  (r)enamed, (d)ropped for good, or (s)kip [s]? ");
+            match ans.trim().to_lowercase().chars().next() {
+                Some('r') => {
+                    let to = if dec.rename_candidates.len() == 1 {
+                        dec.rename_candidates[0].clone()
+                    } else {
+                        prompt_line("    new column name: ").trim().to_string()
+                    };
+                    if to.is_empty() {
+                        println!("    no target given — left quarantined.");
+                    } else {
+                        d.rename(&dec.table, &dec.column, &to);
+                        println!("    → renameColumn {} → {to}", dec.column);
+                    }
+                }
+                Some('d') => {
+                    d.confirm_drop(&dec.table, &dec.column);
+                    println!("    → dropColumn {} (data lost on apply)", dec.column);
+                }
+                _ => println!("    left quarantined (inert)."),
+            }
+        }
+        for (table, column, kind, cur) in d.defaulted_adds() {
+            let ans = prompt_line(&format!(
+                "Backfill default for existing rows in {table}.{column} ({kind}) [{cur}]: "
+            ));
+            let t = ans.trim();
+            if !t.is_empty() {
+                match db_migrate::parse_default(&kind, t) {
+                    Some(v) => d.set_default(&table, &column, v),
+                    None => println!("  (couldn't parse '{t}' as {kind} — keeping {cur})"),
+                }
+            }
+        }
+        if d.is_empty() {
+            println!("sky db --gen: all changes resolved away — nothing to generate.");
+            return ExitCode::SUCCESS;
+        }
     }
 
     // 6. Write migration + snapshot.
