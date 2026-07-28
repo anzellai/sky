@@ -5,6 +5,11 @@ bcrypt-gated admin dashboard and built-in product analytics. Every
 capability comes from the Sky standard library — no user-written FFI, no
 glue code, no external services to stand up.
 
+> **Deploying this for real?** See [`PRODUCTION.md`](PRODUCTION.md) +
+> [`docker-compose.yml`](docker-compose.yml): the same code runs on one Postgres
+> for app data + sessions + analytics + telemetry via a single `DATABASE_URL`.
+> Dev stays zero-config (SQLite + in-memory) — just `sky run`.
+
 It exists to answer one question: *what does a real Sky app look like when
 the batteries are actually wired together?*
 

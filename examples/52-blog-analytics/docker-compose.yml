@@ -1,0 +1,35 @@
+# Production data store for the blog — ONE Postgres for everything:
+#   app data (Std.Db) + Sky.Live sessions + Std.Analytics + console telemetry.
+#
+# Dev needs NONE of this — `sky run` works out of the box on SQLite + in-memory
+# sessions (see sky.toml). This is the PRODUCTION path.
+#
+#   docker compose up -d          # start Postgres (host 5452 → container 5432)
+#   cp .env.production.example .env && edit the secret, then `sky run`
+#   docker compose down           # stop (keeps the volume)
+#   docker compose down -v        # stop + wipe data
+#
+# Host port 5452 avoids clashing with a default local Postgres on 5432.
+# The single DATABASE_URL in .env wires app data, sessions, analytics, and
+# telemetry into this one database — see PRODUCTION.md.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sky-blog-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: blog
+      POSTGRES_PASSWORD: blog
+      POSTGRES_DB: blog
+    ports:
+      - "5452:5432"
+    volumes:
+      - sky-blog-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blog -d blog"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sky-blog-pgdata:
