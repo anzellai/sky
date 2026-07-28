@@ -275,6 +275,21 @@ hook.
 10. **Identifier quoting** (reserved words) + **column-name validation** in
     findBy/select. (§C/§E)
 
+## Known compiler issue (found during S1b)
+
+**Multi-arg function values passed as arguments call curried-vs-uncurried
+inconsistently.** The elm-codec `custom`/`variantN` matcher (a `\h0 h1 … value ->
+case …` where each `hN` is a multi-arg handler like `String -> Int -> Value`)
+panics at runtime: `skyCallDirect: argument 1 type mismatch — function expects
+func(string, int), got func(interface {})`. A value of type `A -> B -> C` gets
+compiled as an uncurried `func(A,B)C` at the call site but a curried
+`func(A)func(B)C` at the value site; they meet at `skyCallDirect`. This is the
+first-class-callable-value class (cf. the v0.18.1 fixes). **Worked around** in
+`Std.Codec` by using a 1-arg encode matcher (`taggedUnion : (v -> (String, List
+Value)) -> …`) — no multi-arg handler values. The underlying codegen bug should
+still be fixed (enters the pipeline); until then, avoid passing multi-arg
+lambdas as function arguments that are later applied to multiple args at once.
+
 ## 6. Open questions for the user
 
 1. **Migrations**: is auto-generating `Db.migrate` DDL from the derived schema in

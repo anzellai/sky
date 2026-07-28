@@ -23,7 +23,7 @@
 -- Codec.fromJson userCodec jsonString  -- : Result Error User
 -- ```
 --
--- ADT support (`custom` / `variantN`) lands next; this module covers records,
+-- Covers records (`object`/`field`), ADTs (`taggedUnion`/`varN`, `enum`),
 -- primitives, `Maybe`, `List`, and `map`.
 module Std.Codec exposing
     ( Codec
@@ -44,6 +44,13 @@ module Std.Codec exposing
     , object
     , field
     , buildObject
+    , Variant
+    , taggedUnion
+    , var0
+    , var1
+    , var2
+    , var3
+    , enum
     )
 
 import Sky.Core.Json.Encode as E exposing (Value)
@@ -188,6 +195,123 @@ buildObject (ObjectCodec o) =
         , dec = o.decValue
         , shp = SRecord o.cols
         }
+
+-- ── ADTs / custom types (tagged unions) ─────────────────────────────────────
+-- | A decode arm for one variant of a custom type.
+type Variant v
+    = Variant String (Decoder v)
+
+
+-- | A variant with no arguments.
+var0 : String -> v -> Variant v
+var0 name ctor =
+    Variant name (D.succeed ctor)
+
+
+-- | A variant with one argument.
+var1 : String -> (a -> v) -> Codec a -> Variant v
+var1 name ctor (Codec c1) =
+    Variant name (D.map ctor (D.index 1 c1.dec))
+
+
+-- | A variant with two arguments.
+var2 : String -> (a -> b2 -> v) -> Codec a -> Codec b2 -> Variant v
+var2 name ctor (Codec c1) (Codec c2) =
+    Variant name (D.map2 ctor (D.index 1 c1.dec) (D.index 2 c2.dec))
+
+
+-- | A variant with three arguments.
+var3 : String -> (a -> b2 -> c2 -> v) -> Codec a -> Codec b2 -> Codec c2 -> Variant v
+var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
+    Variant
+        name
+        (D.map3 ctor (D.index 1 c1.dec) (D.index 2 c2.dec) (D.index 3 c3.dec))
+
+
+-- | Codec for a custom type (tagged union). The first argument maps a value to
+-- its `(tag, encoded-args)`; the second lists the per-tag decoders. Encodes each
+-- variant as a tagged JSON array `["Tag", arg0, …]`; stored as a JSON TEXT blob
+-- on the DB side.
+--
+--     shipmentCodec =
+--         Codec.taggedUnion
+--             (\v ->
+--                 case v of
+--                     NotShipped -> ( "NotShipped", [] )
+--                     Shipped c ts -> ( "Shipped", [ Codec.toValue Codec.string c, Codec.toValue Codec.int ts ] )
+--             )
+--             [ Codec.var0 "NotShipped" NotShipped
+--             , Codec.var2 "Shipped" Shipped Codec.string Codec.int
+--             ]
+taggedUnion : (v -> ( String, List Value )) -> List (Variant v) -> Codec v
+taggedUnion toTagged variants =
+    Codec
+        { enc = \v ->
+              let
+                  ( tag, args ) = toTagged v
+              in
+                  E.list identity (E.string tag :: args)
+        , dec = D.andThen (\tag -> pickVariant tag variants) (D.index 0 D.string)
+        , shp = SBlob
+        }
+
+
+pickVariant : String -> List (Variant v) -> Decoder v
+pickVariant tag variants =
+    case variants of
+
+        [] ->
+            D.fail ("Codec: unknown variant tag: " ++ tag)
+
+        (Variant name d) :: rest ->
+            if name == tag then
+                d
+
+            else
+                pickVariant tag rest
+
+
+-- | A nullary enum stored as a readable TEXT name, via `(value, name)` pairs:
+-- `enum [ ( Stickers, "stickers" ), ( Bookmarks, "bookmarks" ) ]`. Unlike
+-- `taggedUnion`, an enum maps to a queryable scalar column (not a blob). For
+-- data-carrying variants use `taggedUnion` / `varN`.
+enum : List ( v, String ) -> Codec v
+enum pairs =
+    Codec
+        { enc = \v -> E.string (enumNameFor v pairs)
+        , dec = D.andThen (\name -> enumValueFor name pairs) D.string
+        , shp = SScalar CText
+        }
+
+
+enumNameFor : v -> List ( v, String ) -> String
+enumNameFor v pairs =
+    case pairs of
+
+        [] ->
+            ""
+
+        ( val, name ) :: rest ->
+            if val == v then
+                name
+
+            else
+                enumNameFor v rest
+
+
+enumValueFor : String -> List ( v, String ) -> Decoder v
+enumValueFor name pairs =
+    case pairs of
+
+        [] ->
+            D.fail ("Codec.enum: unknown name: " ++ name)
+
+        ( val, nm ) :: rest ->
+            if nm == name then
+                D.succeed val
+
+            else
+                enumValueFor name rest
 
 
 -- ── Internal ─────────────────────────────────────────────────────────────────
