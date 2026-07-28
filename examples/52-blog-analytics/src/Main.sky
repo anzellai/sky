@@ -15,6 +15,7 @@ import Std.Live exposing (app, route, config, withAnalytics)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Db as Db
+import Std.Db.Schema as Schema exposing (text)
 import Std.Auth as Auth
 import Std.Analytics as Analytics
 import Std.Money as Money
@@ -79,14 +80,23 @@ dbConn =
                 System.exit 1
 
 
+-- The schema as a typed value — `Schema.createTable` emits the dialect-correct
+-- DDL for whichever backend the connection uses (SQLite in dev, Postgres in
+-- prod), so this ONE definition is right on both. No hand-written CREATE TABLE.
+postsTable : Schema.Table
+postsTable =
+    Schema.table
+        "posts"
+        [ Schema.id "slug"
+        , text "title" |> Schema.notNull
+        , text "body" |> Schema.notNull
+        ]
+
+
 ensureSchema : ()
 ensureSchema =
     let
-        _ =
-            Task.run
-                (Db.execRaw
-                    dbConn
-                    "CREATE TABLE IF NOT EXISTS posts (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)")
+        _ = Task.run (Schema.createTable dbConn postsTable)
         _ =
             Task.run
                 (seed
@@ -563,5 +573,4 @@ main =
               ]
             , notFound = Home
             }
-            |> withAnalytics { pageViews = True }
-        )
+            |> withAnalytics { pageViews = True })

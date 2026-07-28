@@ -34,6 +34,63 @@ main =
         |> Task.run
 ```
 
+## Typed schema — `Std.Db.Schema` (dialect-safe DDL)
+
+Hand-written `CREATE TABLE` is the one place the "two backends, one API"
+promise leaks: `INTEGER` is 8-byte on SQLite but 4-byte on Postgres (a
+millisecond timestamp overflows it), `AUTOINCREMENT` is `BIGSERIAL` on
+Postgres, and `datetime('now')` is `now()`. Develop on SQLite, deploy on
+Postgres, and these bite you in production.
+
+`Std.Db.Schema` closes that: define the table as a **typed value**, and
+`Schema.createTable` emits the dialect-correct DDL for whichever backend the
+connection uses. The **same definition is right on both** — Ecto/Diesel in
+spirit (explicit, composable), no magic ORM.
+
+```elm
+import Std.Db.Schema as Schema exposing (text, int, bigInt, bool)
+
+products : Schema.Table
+products =
+    Schema.table "products"
+        [ Schema.id "id"                                  -- TEXT PRIMARY KEY
+        , text "slug" |> Schema.notNull |> Schema.unique
+        , text "name" |> Schema.notNull
+        , int "price_minor" |> Schema.notNull |> Schema.defaultInt 0
+        , bool "active" |> Schema.notNull |> Schema.defaultBool True
+        , bigInt "created_at" |> Schema.notNull |> Schema.defaultInt 0
+        ]
+        |> Schema.withIndex "idx_products_slug" [ "slug" ]
+
+setup : Db -> Task Error ()
+setup conn =
+    Schema.createTable conn products
+```
+
+`created_at` above renders as `INTEGER` on SQLite (which is 8-byte, so millis
+fit) and `BIGINT` on Postgres — one `bigInt` declaration, correct on both.
+
+**Column types** (`Schema.<type> "name"`): `text`, `int`, `bigInt`, `real`,
+`bool`, `timestamp`, `blob`, `json`, plus `id` (TEXT primary key — the common
+Sky pattern) and `serial` (auto-increment integer PK → `INTEGER PRIMARY KEY
+AUTOINCREMENT` on SQLite, `BIGSERIAL PRIMARY KEY` on Postgres).
+
+**Modifiers** (pipe them on): `primaryKey`, `notNull`, `unique`,
+`autoIncrement`, `defaultInt n`, `defaultText s`, `defaultBool b`, `defaultNow`
+(`datetime('now')` / `now()`), `references "table" "col"` (foreign key).
+
+**Type mapping** — chosen for dev==prod *read* consistency: `bool` is `INTEGER`
+0/1 and `json` is `TEXT` on **both** backends (a value reads back the same
+shape everywhere); `bigint`/`timestamp` diverge to `BIGINT` on Postgres (the
+one that must, for the overflow) but still read back as int64; `real`→`DOUBLE
+PRECISION`, `blob`→`BYTEA` on Postgres. `createTable` is idempotent
+(`CREATE TABLE / INDEX IF NOT EXISTS`); `createSchema conn tables` runs a list
+in order.
+
+`Schema` only builds the tables — you still write `Db.exec` / `Db.query` for
+data. It removes the one dialect-specific string from your app; the parameter
+layer (below) already handles the rest.
+
 ## What's in the surface
 
 Every operation that touches the disk returns `Task Error a` (per the [Task-everywhere doctrine](../../CLAUDE.md#effect-boundary-task-everywhere-v0100)). Parameter-supplied helpers (`Db.getString`, `Db.getInt`) return bare values because the default plugs the failure case at the call site.

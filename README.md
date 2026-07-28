@@ -199,6 +199,7 @@ A short tour. Full reference at `sky doc --serve` or
 | `Sky.Http.Server`      | HTTP server with typed routes, middleware (CORS / logging / rate-limit / basic-auth), streaming responses, WebSocket upgrade. |
 | `Std.Auth`             | bcrypt password hashing, HS256 / RS256 JWT, register / login / roles. Typed secrets — never `fmt.Sprintf("%v", token)`. |
 | `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. |
+| `Std.Db.Schema`        | Typed, dialect-safe schema DSL — define tables as values; `createTable` emits the correct `CREATE TABLE` for SQLite **and** Postgres from one definition (no `INTEGER`-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). |
 | `Std.Money` + `Std.Decimal` | Arbitrary-precision Decimal + currency-typed Money (50+ ISO 4217 codes + crypto) with `allocate` for fair splits and conversion rates. |
 | `Std.Cache`            | LRU + TTL in-memory cache, parametric on key + value, monotone stats. |
 | `Std.Analytics`        | Typed product analytics — typed event props (`Money` lossless, `Pii` redactable), consent-gated + anonymous by default, opt-in Sky.Live auto page-views, SQLite store, and a Sky Console **Analytics** tab (counts / recent / revenue-by-currency). |

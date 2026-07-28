@@ -1,0 +1,258 @@
+-- | Std.Db.Schema — a typed, dialect-aware schema builder (Layer 3 Sky source).
+--
+-- Define tables + columns as typed values; `Schema.createTable` emits the
+-- DIALECT-CORRECT DDL for the connection's backend (SQLite or Postgres). The
+-- SAME definition works on both — no hand-written CREATE TABLE, no
+-- `INTEGER`-vs-`BIGINT` / `AUTOINCREMENT`-vs-`BIGSERIAL` / `datetime()`-vs-`now()`
+-- surprises when you move from a SQLite dev box to a Postgres deployment.
+--
+-- In the Ecto / Diesel spirit: explicit, composable, no magic ORM.
+--
+-- ```elm
+-- import Std.Db.Schema as Schema exposing (text, bigInt, int, bool)
+--
+-- products : Schema.Table
+-- products =
+--     Schema.table "products"
+--         [ Schema.id "id"                       -- TEXT primary key
+--         , text "slug" |> Schema.notNull |> Schema.unique
+--         , text "name" |> Schema.notNull
+--         , int "price_minor" |> Schema.notNull |> Schema.defaultInt 0
+--         , bool "active" |> Schema.notNull |> Schema.defaultBool True
+--         , bigInt "created_at" |> Schema.notNull |> Schema.defaultInt 0
+--         ]
+--         |> Schema.withIndex "idx_products_slug" [ "slug" ]
+--
+-- setup : Db -> Task Error ()
+-- setup conn =
+--     Schema.createTable conn products
+-- ```
+module Std.Db.Schema exposing
+    ( Table
+    , Column
+    , table
+    , withIndex
+    , withUniqueIndex
+    , text
+    , int
+    , bigInt
+    , real
+    , bool
+    , timestamp
+    , blob
+    , json
+    , id
+    , serial
+    , primaryKey
+    , notNull
+    , unique
+    , autoIncrement
+    , defaultInt
+    , defaultText
+    , defaultBool
+    , defaultNow
+    , references
+    , createTable
+    , createSchema
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+
+-- | A column definition. Build with the typed constructors + pipe the
+-- modifiers; don't construct the record by hand.
+type alias Column =
+    { name : String
+    , kind : String
+    , isPk : Bool
+    , isNotNull : Bool
+    , isUnique : Bool
+    , isAutoInc : Bool
+    , defaultKind : String
+    , defaultVal : String
+    , foreignKey : String
+    }
+
+-- | A secondary index over one or more columns.
+type alias Index =
+    { name : String
+    , columns : List String
+    , isUniqueIndex : Bool
+    }
+
+-- | A table definition (name + columns + indexes).
+type alias Table =
+    { name : String
+    , columns : List Column
+    , indexes : List Index
+    }
+
+
+newColumn : String -> String -> Column
+newColumn n k =
+    { name = n
+    , kind = k
+    , isPk = False
+    , isNotNull = False
+    , isUnique = False
+    , isAutoInc = False
+    , defaultKind = "none"
+    , defaultVal = ""
+    , foreignKey = ""
+    }
+
+
+-- ── Column type constructors — the portable type is chosen per dialect at
+--    create time (see the mapping in the runtime). ─────────────────────────
+-- | TEXT on both backends.
+text : String -> Column
+text n =
+    newColumn n "text"
+
+
+-- | 32-bit integer (INTEGER on both). Use `bigInt` for large / millisecond values.
+int : String -> Column
+int n =
+    newColumn n "int"
+
+
+-- | 64-bit integer — INTEGER on SQLite, BIGINT on Postgres. Use this for
+-- millisecond timestamps (Postgres INTEGER overflows at ~2.1s of millis).
+bigInt : String -> Column
+bigInt n =
+    newColumn n "bigint"
+
+
+-- | Floating point — REAL on SQLite, DOUBLE PRECISION on Postgres.
+real : String -> Column
+real n =
+    newColumn n "real"
+
+
+-- | Boolean, stored as INTEGER 0/1 on BOTH backends — so a value reads back the
+-- same shape whether you developed on SQLite or deployed on Postgres.
+bool : String -> Column
+bool n =
+    newColumn n "bool"
+
+
+-- | A millisecond-epoch timestamp — INTEGER on SQLite, BIGINT on Postgres.
+timestamp : String -> Column
+timestamp n =
+    newColumn n "timestamp"
+
+
+-- | Binary — BLOB on SQLite, BYTEA on Postgres.
+blob : String -> Column
+blob n =
+    newColumn n "blob"
+
+
+-- | JSON, stored as TEXT on BOTH backends (read consistency; native JSONB is a
+-- future opt-in).
+json : String -> Column
+json n =
+    newColumn n "json"
+
+
+-- | A TEXT primary key — the common Sky pattern (app-generated ids / UUIDs).
+id : String -> Column
+id n =
+    primaryKey (newColumn n "text")
+
+
+-- | An auto-incrementing integer primary key — INTEGER PRIMARY KEY AUTOINCREMENT
+-- on SQLite, BIGSERIAL PRIMARY KEY on Postgres.
+serial : String -> Column
+serial n =
+    autoIncrement (primaryKey (newColumn n "bigint"))
+
+
+-- ── Modifiers (pipe-friendly) ─────────────────────────────────────────────
+primaryKey : Column -> Column
+primaryKey c =
+    { c | isPk = True }
+
+
+notNull : Column -> Column
+notNull c =
+    { c | isNotNull = True }
+
+
+unique : Column -> Column
+unique c =
+    { c | isUnique = True }
+
+
+autoIncrement : Column -> Column
+autoIncrement c =
+    { c | isAutoInc = True }
+
+
+-- | Integer/real default: `int "n" |> defaultInt 0`.
+defaultInt : Int -> Column -> Column
+defaultInt n c =
+    { c | defaultKind = "int", defaultVal = String.fromInt n }
+
+
+-- | Text default (quoted + escaped per dialect): `text "role" |> defaultText "customer"`.
+defaultText : String -> Column -> Column
+defaultText s c =
+    { c | defaultKind = "text", defaultVal = s }
+
+
+-- | Boolean default: `bool "active" |> defaultBool True`.
+defaultBool : Bool -> Column -> Column
+defaultBool b c =
+    { c | defaultKind = "bool"
+    , defaultVal = if b then
+          "true"
+
+      else
+          "false"
+    }
+
+
+-- | Current-timestamp default — `datetime('now')` on SQLite, `now()` on Postgres.
+defaultNow : Column -> Column
+defaultNow c =
+    { c | defaultKind = "now", defaultVal = "" }
+
+
+-- | Foreign key: `text "order_id" |> references "orders" "id"`.
+references : String -> String -> Column -> Column
+references tbl col c =
+    { c | foreignKey = tbl ++ "(" ++ col ++ ")" }
+
+
+-- ── Table builders ────────────────────────────────────────────────────────
+table : String -> List Column -> Table
+table n cols =
+    { name = n, columns = cols, indexes = [] }
+
+
+withIndex : String -> List String -> Table -> Table
+withIndex nm cols t =
+    { t | indexes = t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = False } ]
+    }
+
+
+withUniqueIndex : String -> List String -> Table -> Table
+withUniqueIndex nm cols t =
+    { t | indexes = t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = True } ]
+    }
+
+
+-- ── Run ────────────────────────────────────────────────────────────────────
+-- | Create the table (+ its indexes) using the DIALECT-CORRECT DDL for the
+-- connection's backend. Idempotent (CREATE TABLE / INDEX IF NOT EXISTS).
+createTable : Db -> Table -> Task Error ()
+createTable =
+    Ffi.kernel "Schema_createTable"
+
+
+-- | Create a whole schema (a list of tables, in order).
+createSchema : Db -> List Table -> Task Error ()
+createSchema =
+    Ffi.kernel "Schema_createSchema"

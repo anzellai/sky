@@ -71,7 +71,7 @@ landmarks anyway.
 | Sky.Live navigation | Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on `<a>`). ONE persistent SSE per session; a plain `<a href>` full-reload opens a fresh SSE each page and can freeze the tab. |
 | Auth | `Std.Auth` — bcrypt + HS256 JWT cookies. `Auth.login` / `Auth.register` return `Task Error Int` (the user id). Never `fmt`-print a secret. |
 | Password forms | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record arg. Never per-keystroke `onInput` on a password field. |
-| DB | `Std.Db` + SQLite for prototypes; PostgreSQL for multi-instance. |
+| DB | `Std.Db` + SQLite for prototypes; PostgreSQL for multi-instance. Define tables with `Std.Db.Schema` (typed, dialect-safe DDL) — one definition compiles to correct SQLite AND Postgres `CREATE TABLE`, so dev-on-SQLite / deploy-on-Postgres never drifts (no `INTEGER`-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` surprises). |
 | Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |

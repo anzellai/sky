@@ -45,6 +45,10 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
         "sky-stdlib/Std/Cli.sky",
         &["program", "config", "withOnLine"],
     ),
+    (
+        "sky-stdlib/Std/Db/Schema.sky",
+        &["table", "text", "bigInt", "createTable", "createSchema"],
+    ),
 ];
 
 /// Extract every `Ffi.kernel "Sym"` symbol from a `.sky` source.
