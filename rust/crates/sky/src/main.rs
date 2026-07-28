@@ -1431,6 +1431,132 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `sky db migrate` in a file-based project — apply the committed
+/// `db/migrations/*.json` files through the checksummed `_sky_migrations` ledger
+/// (`Std.Db.Migrate.migrateOps`), at most once each, dialect-correct for the live
+/// connection. Non-interactive + idempotent: only the active `ops` of each file
+/// apply; the quarantined `destructive` array is ignored by the runtime.
+fn cmd_db_apply(args: &[String]) -> ExitCode {
+    let file = Path::new("src/Main.sky");
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    if is_compiler_repo_root(&project_dir) {
+        eprintln!("sky db: refusing to run from the Sky compiler repo root");
+        return ExitCode::FAILURE;
+    }
+
+    // 1. Collect db/migrations/*.json (sorted by filename = chronological), wrap
+    //    the raw file bodies into one JSON array the runtime parses as [{id,ops}].
+    let migrations_dir = project_dir.join("db").join("migrations");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        println!("sky db migrate: no migration files in db/migrations — run `sky db migrate --gen` first.");
+        return ExitCode::SUCCESS;
+    }
+    let bodies: Vec<String> = files
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let apply_json = format!("[{}]", bodies.join(","));
+    let apply_path = project_dir.join("db").join("_apply.json");
+    if let Err(e) = std::fs::write(&apply_path, &apply_json) {
+        eprintln!("sky db migrate: cannot stage migrations: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    // 2. Write a temp entry that reads the staged file, connects, and applies.
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+    let _ = &entry_module; // apply entry is self-contained; project only supplies config/env
+    let apply_src = project_dir.join("src").join("_skydbapply.sky");
+    let apply_code = r#"module SkyDbApply exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db as Db
+import Std.Db.Migrate as Migrate
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    File.readFile "db/_apply.json"
+        |> Task.andThen applyAll
+
+
+applyAll : String -> Task Error ()
+applyAll json =
+    Db.connect ()
+        |> Task.andThen (\conn -> Migrate.migrateOps conn json)
+        |> Task.andThen report
+
+
+report : List String -> Task Error ()
+report applied =
+    let
+        _ =
+            println ("sky db migrate: applied " ++ String.fromInt (List.length applied) ++ " migration(s)")
+    in
+    Task.succeed ()
+"#;
+    if let Err(e) = std::fs::write(&apply_src, apply_code) {
+        eprintln!("sky db migrate: cannot write temp entry: {e}");
+        let _ = std::fs::remove_file(&apply_path);
+        return ExitCode::FAILURE;
+    }
+
+    // 3. Build it.
+    let opts = BuildOptions {
+        repo_root,
+        example_dir: project_dir.clone(),
+        out_dir_name: "sky-out".into(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: Some("SkyDbApply".into()),
+        progress: false,
+    };
+    let report = build_example(&opts);
+    if !(report.emitted && report.go_build_ok) {
+        let _ = std::fs::remove_file(&apply_src);
+        let _ = std::fs::remove_file(&apply_path);
+        eprintln!(
+            "sky db migrate: build failed\n{}\n{}",
+            report.note, report.go_build_stderr
+        );
+        return ExitCode::FAILURE;
+    }
+
+    // 4. Run — the app's Db.connect reads the project's DB config from the env
+    //    (SKY_DB_PATH / DATABASE_URL), inherited from this process.
+    let bin = project_dir
+        .join("sky-out")
+        .join(project::configured_bin_name(&project_dir));
+    let status = Command::new(&bin).current_dir(&project_dir).status();
+    let _ = std::fs::remove_file(&apply_src);
+    let _ = std::fs::remove_file(&apply_path);
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("sky db migrate: apply run failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `sky db status` / `sky db migrate` — build the project, then run it once with
 /// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
 /// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
@@ -1441,6 +1567,13 @@ fn cmd_db(args: &[String]) -> ExitCode {
     // `sky db migrate --gen [name]` — file-based migration generation (no DB).
     if args.first().map(String::as_str) == Some("migrate") && args.iter().any(|a| a == "--gen") {
         return cmd_db_gen(&args[1..]);
+    }
+    // `sky db migrate` in a file-based project (db/migrations/ present) → apply the
+    // committed migration files.
+    if args.first().map(String::as_str) == Some("migrate")
+        && Path::new("db").join("migrations").is_dir()
+    {
+        return cmd_db_apply(&args[1..]);
     }
     let op = match args.first().map(String::as_str) {
         Some("status") => "status",
