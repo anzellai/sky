@@ -69,9 +69,20 @@ A working, verified `Std.Codec` + `Std.Db.Table` stack:
   nested-records/lists/nullary-enum-as-ordinal; data ADTs error (need explicit
   taggedUnion). Verified e2e: JSON round-trip + Store on SQLite AND Postgres
   (nested address blob, Maybe, lists all round-trip).
-- **S5 ⏳** — production hardening (mass-assignment, DoS limits, naming, wire).
-  ADT registry (readable enum names in auto) folds in here.
-- **S6 ⏳** — auto-migration architecture (grilled; v1 manual).
+- **S5 ✅** — hardening. S5a: readable enum names in `Codec.auto` (codegen
+  `rt.RegisterEnum` + runtime registry + tag-typed walkers; enums store names,
+  incl. in Maybe/lists). S5b: `Codec.fromJsonSafe` (untrusted-decode size guard)
+  + documented mass-assignment (input-record pattern), naming, and public-wire
+  boundary rules. Commits a7416b9a, e279f64d. (Non-code items are enforced
+  patterns per plan §5.)
+- **S6 ✅** — auto-migration architecture (`docs/v0.19/auto-migration-architecture.md`,
+  grilled; v1 manual `Db.migrate`). Commit b8d5b744.
+
+**ALL STEPS DONE.** The codec-derivation stack is complete: one `Codec` (or
+`Codec.auto blank`) → JSON + dialect-safe DB, readable enums, verified SQLite +
+Postgres. Migration automation designed (v1 manual). Remaining future work is
+the auto-migration IMPLEMENTATION (S6 designed it) + optional `Codec.pick`/`omit`
++ the multi-arg-function-value codegen bug (plan §"Known compiler issue").
 
 Vision realized: `Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id"`
 — one line each for the codec + the table; JSON + DB from the type.
