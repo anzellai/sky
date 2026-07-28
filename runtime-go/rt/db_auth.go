@@ -156,14 +156,15 @@ var (
 
 // Db.connect : (String | ()) -> Result Error Db
 // Accepts:
-//   ":memory:"             — in-memory SQLite
-//   "/path/file.db"        — file-backed SQLite
-//   "postgres://user:pw@host:5432/dbname?sslmode=disable"
-//   "postgresql://..."     — equivalent
-//   "host=... user=... ..." — libpq-style keyword connection string
-//   ()                     — read <PREFIX>_DB_PATH (set from
-//                            sky.toml's [database].path at program
-//                            startup).
+//
+//	":memory:"             — in-memory SQLite
+//	"/path/file.db"        — file-backed SQLite
+//	"postgres://user:pw@host:5432/dbname?sslmode=disable"
+//	"postgresql://..."     — equivalent
+//	"host=... user=... ..." — libpq-style keyword connection string
+//	()                     — read <PREFIX>_DB_PATH (set from
+//	                         sky.toml's [database].path at program
+//	                         startup).
 //
 // The unit-arg form is the idiomatic "use the project default"
 // convenience. If <PREFIX>_DB_PATH is unset, it returns Err so the
@@ -179,10 +180,17 @@ func Db_connect(path any) any {
 		// same treatment for codegen tolerance.
 		if _, isUnit := path.(struct{}); isUnit || path == nil {
 			env := skyGetenv("DB_PATH")
+			// One-DB-for-everything: fall back to a shared DATABASE_URL (same var
+			// sessions + analytics use) so a single Postgres connection string
+			// configures the whole app. DB_PATH still wins when set explicitly.
+			if env == "" {
+				env = os.Getenv("DATABASE_URL")
+			}
 			if env == "" {
 				return Err[any, any](ErrInvalidInput(
 					"db.connect: no path given and " + skyEnvName("DB_PATH") +
-						" is unset (set [database].path in sky.toml, or pass a path)"))
+						" / DATABASE_URL are unset (set [database].path/url in sky.toml, " +
+						"or pass a path)"))
 			}
 			path = env
 		}
@@ -280,8 +288,9 @@ func detectDriver(s string) (string, string) {
 }
 
 // Db.open — alias of connect. Accepts either:
-//   Db.open path               (1 arg)
-//   Db.open driver path        (2 args; driver arg informational, path is used)
+//
+//	Db.open path               (1 arg)
+//	Db.open driver path        (2 args; driver arg informational, path is used)
 func Db_open(args ...any) any {
 	switch len(args) {
 	case 1:
@@ -386,16 +395,17 @@ func dbBindArg(a any) any {
 // the Maybe-shape check.
 //
 // Variant ↔ Go type mapping (v0.16.26 #582):
-//   SqlString s   → string
-//   SqlInt i      → int64
-//   SqlFloat f    → float64
-//   SqlBool b     → bool
-//   SqlBytes s    → []byte
-//   SqlDecimal d  → string (Decimal.toString — driver-portable)
-//   SqlTime t     → time.Time (from Unix millis)
-//   SqlMoney m    → string ("ISO_CODE AMOUNT" — lossless round-trip)
-//   SqlNull w     → nil (wrapped value's data is ignored; type-witness
-//                   only matters at the schema-design level)
+//
+//	SqlString s   → string
+//	SqlInt i      → int64
+//	SqlFloat f    → float64
+//	SqlBool b     → bool
+//	SqlBytes s    → []byte
+//	SqlDecimal d  → string (Decimal.toString — driver-portable)
+//	SqlTime t     → time.Time (from Unix millis)
+//	SqlMoney m    → string ("ISO_CODE AMOUNT" — lossless round-trip)
+//	SqlNull w     → nil (wrapped value's data is ignored; type-witness
+//	                only matters at the schema-design level)
 func sqlValueToGo(adt SkyADT) (any, bool) {
 	switch adt.SkyName {
 	case "SqlString":
@@ -827,7 +837,6 @@ func validSqlIdent(s string) bool {
 	}
 	return true
 }
-
 
 // Db.exec : Db -> String -> List any -> Task Error Int
 // Runs a statement that doesn't return rows. Returns rows affected.
