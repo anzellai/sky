@@ -30,7 +30,7 @@
 -- docs/rfcs/std-analytics.md. PII stays redacted across every sink.
 module Std.Analytics exposing
     ( Event
-    , Prop
+    , EventProp
     , PropValue(..)
     , Pii(..)
     , Consent(..)
@@ -73,7 +73,7 @@ type PropValue
     | VPii Pii
 
 -- | One event property: a key and a typed value.
-type alias Prop =
+type alias EventProp =
     { key : String
     , value : PropValue
     }
@@ -94,36 +94,36 @@ type Pii
 -- (`auth.*`, `datepicker.*`).
 type alias Event =
     { name : String
-    , props : List Prop
+    , props : List EventProp
     }
 
 
 -- | Build an event from a name and a list of typed properties.
-event : String -> List Prop -> Event
+event : String -> List EventProp -> Event
 event name props =
     { name = name, props = props }
 
 
 -- | A `String` property.
-string : String -> String -> Prop
+string : String -> String -> EventProp
 string k v =
     { key = k, value = VString v }
 
 
 -- | An `Int` property.
-int : String -> Int -> Prop
+int : String -> Int -> EventProp
 int k v =
     { key = k, value = VInt v }
 
 
 -- | A `Float` property.
-float : String -> Float -> Prop
+float : String -> Float -> EventProp
 float k v =
     { key = k, value = VFloat v }
 
 
 -- | A `Bool` property.
-bool : String -> Bool -> Prop
+bool : String -> Bool -> EventProp
 bool k v =
     { key = k, value = VBool v }
 
@@ -131,7 +131,7 @@ bool k v =
 -- | A `Money` property — the right type for prices, revenue, and cart
 -- totals. Serialises losslessly (never as a float), so downstream
 -- revenue aggregation stays exact.
-money : String -> Money -> Prop
+money : String -> Money -> EventProp
 money k v =
     { key = k, value = VMoney v }
 
@@ -139,7 +139,7 @@ money k v =
 -- | A PII property — the only way identity enters an event. Pair with
 -- `piiEmail` / `piiRaw` (or the `Pii` constructors) so the value is
 -- typed as `Pii` and the pipeline can redact it.
-pii : String -> Pii -> Prop
+pii : String -> Pii -> EventProp
 pii k v =
     { key = k, value = VPii v }
 
@@ -200,7 +200,7 @@ type Consent
 -- locally, so calling it early (e.g. right after sign-in) is safe.
 --
 --     Analytics.identify user.id [ Analytics.pii "email" (Analytics.piiEmail user.email) ]
-identify : String -> List Prop -> Task Error ()
+identify : String -> List EventProp -> Task Error ()
 identify =
     Ffi.kernel "Analytics_identify"
 
