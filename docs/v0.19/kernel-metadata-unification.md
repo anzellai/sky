@@ -170,6 +170,23 @@ Grill verdict: `readyToImplement=true`, no blockers, floorTouch=false. Decisions
   (ex13/.skydeps) migrates upstream separately. Downstream skydeploy +
   sky-lang.org migrate post-release (P8, separate PRs, then SKY_VERSION bump).
 
+## P-Tui/Cli DONE 2026-07-28
+
+Std/Tui.sky (app/program/config/withOnKey/withGuard/withCanvasWidth/
+withCanvasHeight) + Std/Cli.sky (program/config/withOnLine/readPassword) landed
+as Layer-3 builders; runtime cli_config.go added (tui_config.go was P-Tui-runtime
+271b3adb). `config`'s `view` is POLYMORPHIC (`model -> render`) so it fits both
+`Tui.app`'s `Element` and `Tui.program`/`Cli.program`'s `String` views. Stripped
+Std.Tui from kernel_api; rewrote the 2 doc tests to assert `.sky`-source
+rendering (`migrated_kernel_module_renders_full_sigs_from_sky_source` reads
+Std/{Tui,Live,Cli,Jobs}.sky + asserts real sigs, no `?`); fixed the issue164
+typecheck_gate fixture to the builder form. Migrated 8 call-sites (20 Cli, 21
+Tui.program, 22/23/24/38 Tui.app, bundled console+doc MainTui). VERIFIED: sweep
+29/0; post-fmt stdlib builds; `sky doc Std.Tui`/`Std.Cli` render builder API from
+source (no `?`); project tests green; coerce-floor PASS (no widening). Now only
+Webview.app remains on a record — but it's a CLOSED AppCfg (no optionals) with a
+precise sig already, so it's OUT of Path A by design.
+
 ## Revised phases (BREAK + atomicity)
 
 - **P1 — Std.Jobs → Std/Jobs.sky** ✅ DONE + verified (commit 6f382eda).

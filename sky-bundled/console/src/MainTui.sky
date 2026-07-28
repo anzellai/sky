@@ -107,9 +107,10 @@ subscriptions _ =
 -- before reaching user code).
 main =
     Tui.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        }
+        (Tui.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
         |> Task.run

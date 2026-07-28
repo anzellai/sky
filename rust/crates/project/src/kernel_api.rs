@@ -59,28 +59,10 @@ pub const KERNEL_API: &[KernelModuleApi] = &[
     // LSP hover, and `sky doc` from that ONE source (v0.19 kernel-metadata
     // unification). The row-open `app` record became the typed `config`/`withX`
     // builder. No kernel_api entry needed.
-    KernelModuleApi {
-        module: "Std.Tui",
-        kernel_only: true,
-        overview: "Terminal UI on The Elm Architecture — the same init/update/view/\
-                   subscriptions shape as Sky.Live, rendered to ANSI cells on a \
-                   logical-pixel canvas. `Std.Ui` views render identically across \
-                   Sky.Live, Sky.Tui, and Sky.Webview.",
-        example: "main =\n    \
-                  Tui.app\n        \
-                  { init = init\n        \
-                  , update = update\n        \
-                  , view = view\n        \
-                  , subscriptions = subscriptions\n        \
-                  , onKey = KeyPressed\n        \
-                  }\n        \
-                  |> Task.run",
-        bindings: &[KernelBinding {
-            name: "app",
-            sig: "app : { init : () -> ( model, Cmd msg ), update : msg -> model -> ( model, Cmd msg ), view : model -> Element msg, subscriptions : model -> Sub msg, onKey : KeyEvent -> msg } -> Task Error ()",
-            summary: "Run a Sky.Tui app. The cfg record is ROW-OPEN — optional fields: `guard : msg -> model -> Result Error ()`, `canvasWidth : Int` (default 1280), `canvasHeight : Int` (default 720).",
-        }],
-    },
+    // Std.Tui + Std.Cli migrated to Layer-3 Sky source (sky-stdlib/Std/Tui.sky,
+    // sky-stdlib/Std/Cli.sky) — the row-open `app`/`program` records became the
+    // typed `config`/`withX` builder; sigs + docs now read from the .sky source
+    // (v0.19 kernel-metadata unification). No kernel_api entries needed.
     // Std.Jobs migrated to Layer-3 Sky source (sky-stdlib/Std/Jobs.sky) — its
     // sigs + docs + example now live in the .sky file, read by the type-checker,
     // LSP hover, and `sky doc` from that ONE source (v0.19 kernel-metadata

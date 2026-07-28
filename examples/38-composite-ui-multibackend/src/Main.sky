@@ -88,12 +88,13 @@ main =
 
         Just "--tui" ->
             Tui.app
-                { init = init
-                , update = update
-                , view = viewElement
-                , subscriptions = subscriptions
-                , onKey = onKey
-                }
+                (Tui.config
+                    { init = init
+                    , update = update
+                    , view = viewElement
+                    , subscriptions = subscriptions
+                    }
+                    |> Tui.withOnKey onKey)
                 |> Task.run
 
         Just "--webview" ->
@@ -116,8 +117,7 @@ main =
                     , routes = [ Live.route "/" HomePage ]
                     , notFound = HomePage
                     }
-                    |> Live.withHead Head.headFor
-                )
+                    |> Live.withHead Head.headFor)
                 |> Task.run
 
 -- Single page constructor — the Live branch uses Page (an ADT

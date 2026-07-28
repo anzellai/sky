@@ -94,9 +94,10 @@ onLine line =
 
 main =
     Cli.program
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , onLine = onLine
-        }
+        (Cli.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> Cli.withOnLine onLine)

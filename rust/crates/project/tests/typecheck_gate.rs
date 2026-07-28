@@ -1190,7 +1190,7 @@ fn issue164_followup_importing_module_union_vs_imported_alias_same_name() {
          init : () -> ( Model, Cmd Msg )\ninit _ =\n    ( Active PageA.init, Cmd.none )\n\n\
          update : Msg -> Model -> ( Model, Cmd Msg )\nupdate _ model =\n    ( model, Cmd.none )\n\n\
          view : Model -> Element Msg\nview model =\n    case model of\n\n        Active subModel ->\n            PageA.view subModel\n\n\
-         main =\n    Tui.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = \\_ -> Sub.none\n        , onKey = \\_ -> NoOp\n        }\n",
+         main =\n    Tui.app\n        (Tui.config\n            { init = init\n            , update = update\n            , view = view\n            , subscriptions = \\_ -> Sub.none\n            }\n            |> Tui.withOnKey (\\_ -> NoOp)\n        )\n",
     )
     .unwrap();
 

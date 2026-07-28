@@ -750,17 +750,36 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 mod tests {
     use super::*;
 
+    /// The v0.19-migrated kernel modules render their full typed signatures +
+    /// doc + example FROM the .sky source (single source of truth — no
+    /// kernel_api entry). Reads the embedded stdlib .sky off disk and renders it
+    /// the same way `render_module` does for a .sky-backed module.
     #[test]
-    fn curated_kernel_api_renders_full_sigs_and_example() {
-        // A still-curated kernel-only module (Std.Tui — Std.Live migrated to
-        // Layer-3 .sky in v0.19) must render typed signatures + an example.
-        let m = crate::kernel_api::for_module("Std.Tui").expect("Std.Tui curated");
-        let page = crate::kernel_api::render(m);
-        assert!(page.contains("app :"), "must show a typed `app` signature");
-        assert!(page.contains("-> Task Error ()"));
-        assert!(page.contains("Example:"), "must include a usage example");
-        // Trailing-segment lookup works too.
-        assert!(crate::kernel_api::for_module("Tui").is_some());
+    fn migrated_kernel_module_renders_full_sigs_from_sky_source() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("repo root")
+            .to_path_buf();
+        for module in ["Std/Tui", "Std/Live", "Std/Cli", "Std/Jobs"] {
+            let path = repo.join("sky-stdlib").join(format!("{module}.sky"));
+            let src = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let page = render_source(&src);
+            assert!(
+                page.contains("-> Task Error ()") || page.contains("Task Error"),
+                "{module}.sky must render typed Task signatures, got:\n{page}"
+            );
+            // No `?` / bare-name placeholders — real HM sigs only.
+            assert!(!page.contains(" : ?"), "{module}.sky rendered a `?` sig");
+        }
+        // The migrated modules are NOT in the curated kernel_api registry.
+        for m in ["Std.Tui", "Std.Live", "Std.Cli", "Std.Jobs"] {
+            assert!(
+                crate::kernel_api::for_module(m).is_none(),
+                "{m} moved to Layer-3 .sky; must NOT have a kernel_api entry"
+            );
+        }
     }
 
     /// SYNC GATE: every binding the compiler registers for a kernel module in
@@ -796,20 +815,13 @@ mod tests {
 
     #[test]
     fn kernel_only_module_is_queryable() {
-        // Std.Tui remains curated in kernel_api (not yet Layer-3); render_module's
-        // fallback serves it so `sky doc Std.Tui` still works.
-        let m = crate::kernel_api::for_module("Std.Tui").expect("Std.Tui curated");
-        let page = crate::kernel_api::render(m);
-        assert!(page.contains("Std.Tui"));
-        assert!(page.contains("app"), "must list the `app` binding");
-        // A v0.19-migrated module (Std.Live) is no longer in the kernel_api
-        // registry — it renders from its .sky source via render_module instead.
-        assert!(
-            crate::kernel_api::for_module("Std.Live").is_none(),
-            "Std.Live moved to Layer-3 .sky; must NOT have a kernel_api entry"
-        );
-        // A non-module returns None from the legacy kernel path.
+        // The legacy kernel-name render path returns None for a non-module.
         assert!(render_kernel_module("DefinitelyNotAModule").is_none());
+        // Sky.Http.Server keeps a kernel_api entry (dual module: some verbs are
+        // .sky, the kernel verbs are curated) — its bindings stay queryable.
+        let srv = crate::kernel_api::for_module("Sky.Http.Server")
+            .expect("Sky.Http.Server curated");
+        assert!(!srv.bindings.is_empty(), "Server kernel verbs must be documented");
     }
 
     #[test]
