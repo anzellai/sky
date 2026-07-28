@@ -91,6 +91,17 @@ in order.
 data. It removes the one dialect-specific string from your app; the parameter
 layer (below) already handles the rest.
 
+> **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
+> both are exposed unqualified. In a module that already does
+> `import Std.Html exposing (..)` (or `Std.Ui`), import the schema module
+> qualified — `import Std.Db.Schema as Schema` and write `Schema.text "col"` —
+> rather than `exposing (text)`. `int` / `bigInt` / `bool` don't collide.
+
+`Schema` is declarative table setup (idempotent `CREATE … IF NOT EXISTS`). For
+*versioned* schema evolution with checksums and an applied-migrations ledger,
+use `Db.migrate` — the two are complementary (see `examples/36-composite-server`
+for the migration-tooling shape).
+
 ## What's in the surface
 
 Every operation that touches the disk returns `Task Error a` (per the [Task-everywhere doctrine](../../CLAUDE.md#effect-boundary-task-everywhere-v0100)). Parameter-supplied helpers (`Db.getString`, `Db.getInt`) return bare values because the default plugs the failure case at the call site.

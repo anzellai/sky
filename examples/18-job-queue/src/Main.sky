@@ -11,6 +11,7 @@ import Sky.Core.Random as Random
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
+import Std.Db.Schema as Schema exposing (int, bigInt)
 import Std.Live as Live exposing (app, route, config)
 import Std.Html exposing (..)
 import Std.Html.Events exposing (onClick)
@@ -62,10 +63,14 @@ dbPath =
     "jobs.db"
 
 
-createSnapshotTable : String
-createSnapshotTable =
-    "CREATE TABLE IF NOT EXISTS snapshots ("
-        ++ "ok INTEGER, failed INTEGER, total INTEGER, ts INTEGER)"
+-- `ts` is a millisecond epoch — `bigInt` renders INTEGER on SQLite but BIGINT
+-- on Postgres, so it can't overflow the 4-byte Postgres INTEGER. One typed
+-- definition, correct on both backends.
+snapshotTable : Schema.Table
+snapshotTable =
+    Schema.table
+        "snapshots"
+        [ int "ok", int "failed", int "total", bigInt "ts" ]
 
 
 init _ =
@@ -154,7 +159,7 @@ saveSnapshot okCount failCount total =
                 "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
                 [ okCount, failCount, total, ts ]
         writeAll db =
-            Db.execRaw db createSnapshotTable
+            Schema.createTable db snapshotTable
                 |> Task.andThen (\_ -> Time.now ())
                 |> Task.andThen (\ts -> insertRow db ts)
         successMsg =
@@ -178,7 +183,7 @@ loadHistory =
                 "SELECT ok, failed, total, ts FROM snapshots ORDER BY ts DESC LIMIT 5"
                 []
         readAll db =
-            Db.execRaw db createSnapshotTable
+            Schema.createTable db snapshotTable
                 |> Task.andThen (\_ -> selectRecent db)
     in
         Db.open "sqlite" dbPath |> Task.andThen readAll
@@ -461,5 +466,4 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" DashboardPage ]
             , notFound = DashboardPage
-            }
-        )
+            })

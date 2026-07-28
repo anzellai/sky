@@ -23,6 +23,7 @@ import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Task as Task
 import Std.Db as Db
+import Std.Db.Schema as Schema exposing (text, int)
 import Sky.Core.Error as Error exposing (Error)
 import System
 import Std.Log exposing (println)
@@ -78,16 +79,19 @@ reportError e =
         System.exit 1
 
 
+todosTable : Schema.Table
+todosTable =
+    Schema.table
+        "todos"
+        [ Schema.serial "id"
+        , text "title" |> Schema.notNull
+        , int "done" |> Schema.defaultInt 0
+        ]
+
+
 initDb : Db -> Task Error ()
 initDb conn =
-    Db.execRaw
-        conn
-        """CREATE TABLE IF NOT EXISTS todos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            done INTEGER DEFAULT 0
-        )"""
-        |> Task.map (\_ -> ())
+    Schema.createTable conn todosTable
 
 
 addTodo : Db -> String -> Task Error ()

@@ -35,6 +35,7 @@ import Std.Live exposing (app, route, config)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Db as Db
+import Std.Db.Schema as Schema
 
 -- ─── Model ───────────────────────────────────────────────────────
 type Page
@@ -86,19 +87,21 @@ dbConn =
                 System.exit 1
 
 
+messagesTable : Schema.Table
+messagesTable =
+    Schema.table
+        "messages"
+        [ Schema.serial "id"
+        , Schema.text "room" |> Schema.notNull
+        , Schema.text "author" |> Schema.notNull
+        , Schema.text "text" |> Schema.notNull
+        , Schema.text "at" |> Schema.notNull
+        ]
+
+
 initSchema =
     let
-        _ =
-            Task.run
-                (Db.execRaw
-                    dbConn
-                    """CREATE TABLE IF NOT EXISTS messages (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        room TEXT NOT NULL,
-                        author TEXT NOT NULL,
-                        text TEXT NOT NULL,
-                        at TEXT NOT NULL
-                    )""")
+        _ = Task.run (Schema.createTable dbConn messagesTable)
     in
         ()
 
@@ -451,8 +454,7 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" LobbyPage, route "/chat/:room" RoomPage ]
             , notFound = LobbyPage
-            }
-        )
+            })
 
 
 -- ─── Styles ──────────────────────────────────────────────────────

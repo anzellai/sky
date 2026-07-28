@@ -9,6 +9,7 @@ import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 import Std.Log exposing (println)
 import Lib.Db as Db
+import Std.Db.Schema as Schema exposing (text, int)
 import Lib.Auth as Auth
 import Lib.Notes as Notes
 import Lib.View as View
@@ -34,45 +35,56 @@ runInit label result =
                 ()
 
 
+-- The schema as typed values — Schema.createTable emits the dialect-correct
+-- DDL for the connection's backend (SQLite here), so the same definitions
+-- would be right on Postgres too.
+usersTable : Schema.Table
+usersTable =
+    Schema.table
+        "users"
+        [ Schema.serial "id"
+        , text "email" |> Schema.notNull |> Schema.unique
+        , text "password_hash" |> Schema.notNull
+        , int "verified" |> Schema.defaultInt 0
+        , text "verification_token"
+        , text "created_at" |> Schema.defaultNow
+        ]
+
+
+sessionsTable : Schema.Table
+sessionsTable =
+    Schema.table
+        "sessions"
+        [ Schema.serial "id"
+        , text "user_id" |> Schema.notNull
+        , text "token" |> Schema.notNull |> Schema.unique
+        , text "created_at" |> Schema.defaultNow
+        ]
+
+
+notesTable : Schema.Table
+notesTable =
+    Schema.table
+        "notes"
+        [ Schema.serial "id"
+        , text "user_id" |> Schema.notNull
+        , text "title" |> Schema.notNull
+        , text "content" |> Schema.notNull |> Schema.defaultText ""
+        , text "created_at" |> Schema.defaultNow
+        , text "updated_at" |> Schema.defaultText ""
+        ]
+
+
 initDb _ =
     let
         _ =
-            runInit
-                "users"
-                (Db.exec
-                    """CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        email TEXT NOT NULL UNIQUE,
-                        password_hash TEXT NOT NULL,
-                        verified INTEGER DEFAULT 0,
-                        verification_token TEXT,
-                        created_at TEXT DEFAULT (datetime('now'))
-                    )"""
-                    [])
+            runInit "users" (Task.run (Schema.createTable Db.conn usersTable))
         _ =
             runInit
                 "sessions"
-                (Db.exec
-                    """CREATE TABLE IF NOT EXISTS sessions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT NOT NULL,
-                        token TEXT NOT NULL UNIQUE,
-                        created_at TEXT DEFAULT (datetime('now'))
-                    )"""
-                    [])
+                (Task.run (Schema.createTable Db.conn sessionsTable))
         _ =
-            runInit
-                "notes"
-                (Db.exec
-                    """CREATE TABLE IF NOT EXISTS notes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        content TEXT NOT NULL DEFAULT '',
-                        created_at TEXT DEFAULT (datetime('now')),
-                        updated_at TEXT DEFAULT ''
-                    )"""
-                    [])
+            runInit "notes" (Task.run (Schema.createTable Db.conn notesTable))
     in
         ()
 
