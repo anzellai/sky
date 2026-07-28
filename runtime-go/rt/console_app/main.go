@@ -1101,8 +1101,10 @@ func View_urlSync(v_0 State_Model_R) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_htmlAttribute("data-sky-query", View_encodeFilters(v_0)), Std_Ui_width(Std_Ui_px(0)), Std_Ui_height(Std_Ui_px(0))}, Std_Ui_none())
 }
 
+var Std_Ui_none__caf rt.LazyCaf[Std_Ui_Element]
+
 func Std_Ui_none() Std_Ui_Element {
-	return Std_Ui_Element_Empty()
+	return Std_Ui_none__caf.Get(func() Std_Ui_Element { return Std_Ui_Element_Empty() })
 }
 
 func Std_Ui_px(v_0 int) Std_Ui_Length {
@@ -1383,8 +1385,10 @@ func Std_Ui_text(v_0 string) Std_Ui_Element {
 	return Std_Ui_Element_Text(v_0)
 }
 
+var AnalyticsTab_mono__caf rt.LazyCaf[string]
+
 func AnalyticsTab_mono() string {
-	return "ui-monospace, Menlo, monospace"
+	return AnalyticsTab_mono__caf.Get(func() string { return "ui-monospace, Menlo, monospace" })
 }
 
 func Std_Ui_Font_family(v_0 string) Std_Ui_Attribute {
@@ -1395,8 +1399,10 @@ func Std_Ui_fontFamily(v_0 string) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrFontFamily(v_0)
 }
 
+var AnalyticsTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return AnalyticsTab_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
 func Std_Ui_rgb(v_0 int, v_1 int, v_2 int) Std_Ui_Color {
@@ -1419,16 +1425,22 @@ func Std_Ui_fontSize(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrFontSize(v_0)
 }
 
+var AnalyticsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return AnalyticsTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
+
+var Std_Ui_fill__caf rt.LazyCaf[Std_Ui_Length]
 
 func Std_Ui_fill() Std_Ui_Length {
-	return Std_Ui_Length_Fill(1)
+	return Std_Ui_fill__caf.Get(func() Std_Ui_Length { return Std_Ui_Length_Fill(1) })
 }
 
+var AnalyticsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return AnalyticsTab_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func Std_Ui_Border_color(v_0 Std_Ui_Color) Std_Ui_Attribute {
@@ -1464,8 +1476,10 @@ func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_rowMarker()), any(v_0)), v_1)
 }
 
+var Std_Ui_rowMarker__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_rowMarker() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrStyle("__row", "true")
+	return Std_Ui_rowMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__row", "true") })
 }
 
 func Sky_Core_List_map_(v_0 any, v_1 any) []any {
@@ -1499,16 +1513,22 @@ func AnalyticsTab_emptyState(v_0 string) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_italic()}, Std_Ui_text(v_0))
 }
 
+var Std_Ui_Font_italic__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_Font_italic() Std_Ui_Attribute {
-	return Std_Ui_fontItalic()
+	return Std_Ui_Font_italic__caf.Get(func() Std_Ui_Attribute { return Std_Ui_fontItalic() })
 }
+
+var Std_Ui_fontItalic__caf rt.LazyCaf[Std_Ui_Attribute]
 
 func Std_Ui_fontItalic() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrFontItalic()
+	return Std_Ui_fontItalic__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrFontItalic() })
 }
 
+var Std_Ui_centerX__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_centerX() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrAlignX(Std_Ui_HAlign_CenterX)
+	return Std_Ui_centerX__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrAlignX(Std_Ui_HAlign_CenterX) })
 }
 
 func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
@@ -1538,8 +1558,10 @@ func Std_Ui_fontLetterSpacing(v_0 float64) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrFontLetterSpacing(v_0)
 }
 
+var Std_Ui_Font_bold__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_Font_bold() Std_Ui_Attribute {
-	return Std_Ui_fontWeight(700)
+	return Std_Ui_Font_bold__caf.Get(func() Std_Ui_Attribute { return Std_Ui_fontWeight(700) })
 }
 
 func Std_Ui_fontWeight(v_0 int) Std_Ui_Attribute {
@@ -1554,8 +1576,10 @@ func Std_Ui_borderRounded(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrBorderRounded(v_0)
 }
 
+var AnalyticsTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return AnalyticsTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
 func Std_Ui_Border_width(v_0 int) Std_Ui_Attribute {
@@ -1566,8 +1590,10 @@ func Std_Ui_borderWidth(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrBorderWidth(v_0)
 }
 
+var AnalyticsTab_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return AnalyticsTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func Std_Ui_Background_color(v_0 Std_Ui_Color) Std_Ui_Attribute {
@@ -1582,8 +1608,10 @@ func Std_Ui_column(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element 
 	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_colMarker()), any(v_0)), v_1)
 }
 
+var Std_Ui_colMarker__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_colMarker() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrStyle("__col", "true")
+	return Std_Ui_colMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__col", "true") })
 }
 
 func AnalyticsTab_eventsPanel(v_0 []State_EventCount_R) Std_Ui_Element {
@@ -1605,12 +1633,16 @@ func AnalyticsTab_eventCountView(v_0 State_EventCount_R) Std_Ui_Element {
 	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AnalyticsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(AnalyticsTab_textPrimary()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Event)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_accent()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Count)))))})
 }
 
+var AnalyticsTab_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return AnalyticsTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
+var AnalyticsTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func AnalyticsTab_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return AnalyticsTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
 
 func AnalyticsTab_revenuePanel(v_0 []State_CurrencyTotal_R) Std_Ui_Element {
@@ -1659,36 +1691,48 @@ func View_errorRowView(v_0 State_ErrorRow_R) Std_Ui_Element {
 	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(60)), Std_Ui_Font_color(View_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(("×" + /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Count)))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(View_textPrimary())}, Std_Ui_text(v_0.Message))})
 }
 
+var View_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return View_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
+
+var View_err__caf rt.LazyCaf[Std_Ui_Color]
 
 func View_err() Std_Ui_Color {
-	return Std_Ui_rgb(255, 117, 117)
+	return View_err__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 117, 117) })
 }
 
+var View_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return View_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func View_emptyState(v_0 string) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_italic()}, Std_Ui_text(v_0))
 }
 
+var View_textMuted__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return View_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
 func View_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
 }
 
+var View_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func View_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return View_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var View_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return View_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func ErrorsTab_viewErrorsTab(v_0 State_Model_R) []Std_Ui_Element {
@@ -1714,36 +1758,48 @@ func ErrorsTab_errorRowView(v_0 State_ErrorRow_R) Std_Ui_Element {
 	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(ErrorsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(60)), Std_Ui_Font_color(ErrorsTab_err()), Std_Ui_Font_bold(), Std_Ui_Font_size(13), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(("×" + /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Count)))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(ErrorsTab_textPrimary())}, Std_Ui_text(v_0.Message))})
 }
 
+var ErrorsTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return ErrorsTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
+
+var ErrorsTab_err__caf rt.LazyCaf[Std_Ui_Color]
 
 func ErrorsTab_err() Std_Ui_Color {
-	return Std_Ui_rgb(255, 117, 117)
+	return ErrorsTab_err__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 117, 117) })
 }
 
+var ErrorsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return ErrorsTab_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func ErrorsTab_emptyState(v_0 string) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_padding(20), Std_Ui_centerX(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_italic()}, Std_Ui_text(v_0))
 }
 
+var ErrorsTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return ErrorsTab_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
 func ErrorsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
 }
 
+var ErrorsTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return ErrorsTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var ErrorsTab_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return ErrorsTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func ErrorsTab_scopeBanner(v_0 string) Std_Ui_Element {
@@ -1790,24 +1846,34 @@ func Std_Html_Events_onClick(v_0 any) Std_Ui_Attribute {
 	return /* primitive join */ rt.Coerce[Std_Ui_Attribute](Std_Html_Attributes_Attribute_EventAttr(Std_Html_Attributes_Event_OnMsg("click", v_0)))
 }
 
+var Std_Ui_pointer__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_pointer() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrPointer()
+	return Std_Ui_pointer__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrPointer() })
 }
+
+var ErrorsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
 
 func ErrorsTab_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return ErrorsTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
+
+var ErrorsTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
 
 func ErrorsTab_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return ErrorsTab_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
+
+var ErrorsTab_bgCode__caf rt.LazyCaf[Std_Ui_Color]
 
 func ErrorsTab_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return ErrorsTab_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
 
+var ErrorsTab_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func ErrorsTab_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return ErrorsTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
 func View_tracesView(v_0 string, v_1 []State_TraceRow_R) []Std_Ui_Element {
@@ -1962,8 +2028,10 @@ func View_formatFloat(v_0 float64) string {
 	}()
 }
 
+var View_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return View_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
 
 func View_compactTime(v_0 string) string {
@@ -2059,12 +2127,16 @@ func Sky_Core_List_lengthHelp(v_0 []any, v_1 int) int {
 	}
 }
 
+var View_bgCode__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return View_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
 
+var View_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return View_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
 func Sky_Core_List_head(v_0 []any) rt.SkyMaybe[any] {
@@ -2099,7 +2171,7 @@ func Std_Ui_input(v_0 []Std_Ui_Attribute) Std_Ui_Element {
 }
 
 func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
-	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 struct{ TraceId string }, v_2 []string) []string {
+	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 State_TraceRow_R, v_2 []string) []string {
 		return func() []string {
 			if (v_1.TraceId == "") || Sky_Core_List_member(v_1.TraceId /* primitive join */, rt.AsListT[any](v_2)) {
 				return v_2
@@ -2339,20 +2411,28 @@ func TracesTab_formatFloat(v_0 float64) string {
 	}()
 }
 
+var TracesTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return TracesTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
+
+var TracesTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
 
 func TracesTab_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return TracesTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
+
+var TracesTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
 
 func TracesTab_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return TracesTab_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
+var TracesTab_err__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_err() Std_Ui_Color {
-	return Std_Ui_rgb(255, 117, 117)
+	return TracesTab_err__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 117, 117) })
 }
 
 func TracesTab_compactTime(v_0 string) string {
@@ -2391,16 +2471,22 @@ func TracesTab_spanDepth(v_0 []State_TraceRow_R, v_1 int, v_2 string) int {
 	}()
 }
 
+var TracesTab_bgCode__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return TracesTab_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
+
+var TracesTab_accent__caf rt.LazyCaf[Std_Ui_Color]
 
 func TracesTab_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return TracesTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
+var TracesTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return TracesTab_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func TracesTab_emptyState(v_0 string) Std_Ui_Element {
@@ -2411,16 +2497,20 @@ func TracesTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
 }
 
+var TracesTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return TracesTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var TracesTab_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return TracesTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func TracesTab_distinctTraceIds(v_0 []State_TraceRow_R) []string {
-	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 struct{ TraceId string }, v_2 []string) []string {
+	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 State_TraceRow_R, v_2 []string) []string {
 		return func() []string {
 			if (v_1.TraceId == "") || Sky_Core_List_member(v_1.TraceId /* primitive join */, rt.AsListT[any](v_2)) {
 				return v_2
@@ -2471,8 +2561,10 @@ func TracesTab_allServicesChip(v_0 bool) Std_Ui_Element {
 	}()
 }
 
+var TracesTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
+
 func TracesTab_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return TracesTab_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func View_logsView(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
@@ -2514,8 +2606,10 @@ func View_levelTextColor(v_0 string) Std_Ui_Color {
 	}()
 }
 
+var View_warn__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_warn() Std_Ui_Color {
-	return Std_Ui_rgb(255, 178, 77)
+	return View_warn__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 178, 77) })
 }
 
 func View_traceBadge(v_0 string) Std_Ui_Element {
@@ -2594,8 +2688,10 @@ func View_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
 	}()
 }
 
+var View_bgSurface__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_bgSurface() Std_Ui_Color {
-	return Std_Ui_rgb(28, 32, 39)
+	return View_bgSurface__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(28, 32, 39) })
 }
 
 func View_matchFilter(v_0 State_LogFilter_R, v_1 State_LogEntry_R) bool {
@@ -2663,16 +2759,22 @@ func LogsTab_levelTextColor(v_0 string) Std_Ui_Color {
 	}()
 }
 
+var LogsTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return LogsTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
+
+var LogsTab_err__caf rt.LazyCaf[Std_Ui_Color]
 
 func LogsTab_err() Std_Ui_Color {
-	return Std_Ui_rgb(255, 117, 117)
+	return LogsTab_err__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 117, 117) })
 }
 
+var LogsTab_warn__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_warn() Std_Ui_Color {
-	return Std_Ui_rgb(255, 178, 77)
+	return LogsTab_warn__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 178, 77) })
 }
 
 func LogsTab_traceBadge(v_0 string) Std_Ui_Element {
@@ -2685,12 +2787,16 @@ func LogsTab_traceBadge(v_0 string) Std_Ui_Element {
 	}()
 }
 
+var LogsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return LogsTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
 
+var LogsTab_bgCode__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return LogsTab_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
 
 func LogsTab_sessionBadge(v_0 string) Std_Ui_Element {
@@ -2703,8 +2809,10 @@ func LogsTab_sessionBadge(v_0 string) Std_Ui_Element {
 	}()
 }
 
+var LogsTab_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return LogsTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
 func LogsTab_subappBadge(v_0 string) Std_Ui_Element {
@@ -2731,8 +2839,10 @@ func LogsTab_levelColor(v_0 string) Std_Ui_Color {
 	}()
 }
 
+var LogsTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return LogsTab_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
 func LogsTab_compactTime(v_0 string) string {
@@ -2750,8 +2860,10 @@ func LogsTab_compactTime(v_0 string) string {
 	}()
 }
 
+var LogsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return LogsTab_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func LogsTab_emptyState(v_0 string) Std_Ui_Element {
@@ -2762,12 +2874,16 @@ func LogsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
 }
 
+var LogsTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return LogsTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var LogsTab_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return LogsTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func LogsTab_filterPanel(v_0 State_LogFilter_R) Std_Ui_Element {
@@ -2802,8 +2918,10 @@ func LogsTab_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
 	}()
 }
 
+var LogsTab_bgSurface__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_bgSurface() Std_Ui_Color {
-	return Std_Ui_rgb(28, 32, 39)
+	return LogsTab_bgSurface__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(28, 32, 39) })
 }
 
 func LogsTab_scopeBanner(v_0 string) Std_Ui_Element {
@@ -2842,8 +2960,10 @@ func LogsTab_allServicesChip(v_0 bool) Std_Ui_Element {
 	}()
 }
 
+var LogsTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
+
 func LogsTab_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return LogsTab_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func View_metricsView(v_0 []State_MetricRow_R) []Std_Ui_Element {
@@ -2928,20 +3048,28 @@ func MetricsTab_codeBadge(v_0 string) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(MetricsTab_textPrimary())}, Std_Ui_text(v_0))
 }
 
+var MetricsTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return MetricsTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
+
+var MetricsTab_bgCode__caf rt.LazyCaf[Std_Ui_Color]
 
 func MetricsTab_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return MetricsTab_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
+
+var MetricsTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
 
 func MetricsTab_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return MetricsTab_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
 
+var MetricsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return MetricsTab_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func MetricsTab_formatFloat(v_0 float64) string {
@@ -2988,12 +3116,16 @@ func MetricsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
 }
 
+var MetricsTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return MetricsTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var MetricsTab_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return MetricsTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func MetricsTab_scopeBanner(v_0 string) Std_Ui_Element {
@@ -3032,16 +3164,22 @@ func MetricsTab_allServicesChip(v_0 bool) Std_Ui_Element {
 	}()
 }
 
+var MetricsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return MetricsTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
+
+var MetricsTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
 
 func MetricsTab_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return MetricsTab_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
+var MetricsTab_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func MetricsTab_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return MetricsTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
 func View_overviewView(v_0 State_Overview_R) []Std_Ui_Element {
@@ -3119,8 +3257,10 @@ func Std_Ui_grid(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
 	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_gridMarker()), any(v_0)), v_1)
 }
 
+var Std_Ui_gridMarker__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_gridMarker() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrStyle("__grid", "true")
+	return Std_Ui_gridMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__grid", "true") })
 }
 
 func Overview_viewOverview(v_0 State_Model_R) []Std_Ui_Element {
@@ -3160,24 +3300,34 @@ func Overview_focusedPane(v_0 State_Model_R) Std_Ui_Element {
 	}()
 }
 
+var Overview_focusedHint__caf rt.LazyCaf[Std_Ui_Element]
+
 func Overview_focusedHint() Std_Ui_Element {
-	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_padding(10), Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text(("Drill into Logs / Traces / Errors tabs above — they'll " + "auto-filter to the selected service once B6 ships.")))
+	return Overview_focusedHint__caf.Get(func() Std_Ui_Element {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_padding(10), Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text(("Drill into Logs / Traces / Errors tabs above — they'll " + "auto-filter to the selected service once B6 ships.")))
+	})
 }
+
+var Overview_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
 
 func Overview_textSecondary() Std_Ui_Color {
-	return Std_Ui_rgb(197, 203, 212)
+	return Overview_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
 
+var Overview_bgCode__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_bgCode() Std_Ui_Color {
-	return Std_Ui_rgb(44, 50, 60)
+	return Overview_bgCode__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 50, 60) })
 }
 
 func Overview_focusedCharts(v_0 State_ServiceStat_R) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{Overview_aggregateChartPanel("Requests / second", Overview_singleSeries(v_0.Name, v_0.SparkRps, Overview_accent())), Overview_aggregateChartPanel("p95 latency (ms)", Overview_singleSeries(v_0.Name, v_0.SparkP95, Overview_pillWarn()))})
 }
 
+var Overview_pillWarn__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_pillWarn() Std_Ui_Color {
-	return Std_Ui_rgb(255, 178, 77)
+	return Overview_pillWarn__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 178, 77) })
 }
 
 func Overview_singleSeries(v_0 string, v_1 []float64, v_2 Std_Ui_Color) []Std_Ui_Chart_Series_R {
@@ -3358,18 +3508,30 @@ func Std_Ui_Chart_axesNodes(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 	}()
 }
 
+var Std_Ui_Chart_plotInset__caf rt.LazyCaf[struct {
+	Bottom int
+	Left   int
+	Right  int
+	Top    int
+}]
+
 func Std_Ui_Chart_plotInset() struct {
 	Bottom int
 	Left   int
 	Right  int
 	Top    int
 } {
-	return struct {
+	return Std_Ui_Chart_plotInset__caf.Get(func() struct {
 		Bottom int
 		Left   int
 		Right  int
 		Top    int
-	}{Left: 32, Right: 8, Top: 24, Bottom: 24}
+	} { return struct {
+		Bottom int
+		Left   int
+		Right  int
+		Top    int
+	}{Left: 32, Right: 8, Top: 24, Bottom: 24} })
 }
 
 func Std_Ui_Chart_gridLines(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {
@@ -3844,8 +4006,12 @@ func Std_Ui_Chart_xRangeAllHelp(v_0 rt.T2[float64, float64], v_1 []Std_Ui_Chart_
 	}
 }
 
+var Std_Ui_Chart_defaultCfg__caf rt.LazyCaf[Std_Ui_Chart_Cfg_R]
+
 func Std_Ui_Chart_defaultCfg() Std_Ui_Chart_Cfg_R {
-	return Std_Ui_Chart_Cfg_R{Width: 480, Height: 200, Color: Std_Ui_rgb(64, 128, 224), Title: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), YRange: /* primitive join */ rt.MaybeCoerce[rt.T2[float64, float64]](rt.Nothing[any]()), GridLines: true}
+	return Std_Ui_Chart_defaultCfg__caf.Get(func() Std_Ui_Chart_Cfg_R {
+		return Std_Ui_Chart_Cfg_R{Width: 480, Height: 200, Color: Std_Ui_rgb(64, 128, 224), Title: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), YRange: /* primitive join */ rt.MaybeCoerce[rt.T2[float64, float64]](rt.Nothing[any]()), GridLines: true}
+	})
 }
 
 func Std_Ui_Chart_withWidth(v_0 int, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
@@ -3856,24 +4022,32 @@ func Std_Ui_Chart_withHeight(v_0 int, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R
 	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.Height = v_0; return _u }()
 }
 
+var Overview_accent__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_accent() Std_Ui_Color {
-	return Std_Ui_rgb(126, 182, 255)
+	return Overview_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
 func Std_Ui_Chart_withColor(v_0 Std_Ui_Color, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
 	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.Color = v_0; return _u }()
 }
 
+var Overview_textMuted__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_textMuted() Std_Ui_Color {
-	return Std_Ui_rgb(141, 150, 163)
+	return Overview_textMuted__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(141, 150, 163) })
 }
+
+var Overview_border___caf rt.LazyCaf[Std_Ui_Color]
 
 func Overview_border_() Std_Ui_Color {
-	return Std_Ui_rgb(53, 59, 70)
+	return Overview_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
+var Overview_bgRaised__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_bgRaised() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return Overview_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func Overview_focusedHeader(v_0 State_ServiceStat_R) Std_Ui_Element {
@@ -3904,8 +4078,10 @@ func Overview_statBlock(v_0 string, v_1 string) Std_Ui_Element {
 	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_spacing(2), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(9), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text(v_0)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(v_1))})
 }
 
+var Overview_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_textPrimary() Std_Ui_Color {
-	return Std_Ui_rgb(240, 243, 247)
+	return Overview_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
 }
 
 func Overview_formatFloat(v_0 float64) string {
@@ -3944,8 +4120,10 @@ func Overview_statusPill(v_0 string) Std_Ui_Element {
 	}()
 }
 
+var Overview_bgPage__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return Overview_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func Overview_statusColor(v_0 string) Std_Ui_Color {
@@ -3965,16 +4143,20 @@ func Overview_statusColor(v_0 string) Std_Ui_Color {
 	}()
 }
 
+var Overview_pillErr__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_pillErr() Std_Ui_Color {
-	return Std_Ui_rgb(255, 117, 117)
+	return Overview_pillErr__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(255, 117, 117) })
 }
 
+var Overview_pillOk__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_pillOk() Std_Ui_Color {
-	return Std_Ui_rgb(88, 199, 116)
+	return Overview_pillOk__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(88, 199, 116) })
 }
 
 func Overview_findStat(v_0 string, v_1 []State_ServiceStat_R) rt.SkyMaybe[State_ServiceStat_R] {
-	return /* primitive join */ rt.MaybeCoerce[State_ServiceStat_R](Sky_Core_List_find( /* primitive join */ rt.Coerce[func(any) bool](func(v_2 struct{ Name any }) bool { return /* FFI return */ rt.AsBool(rt.Eq(v_2.Name, any(v_0))) }) /* primitive join */, rt.AsListT[any](v_1)))
+	return /* primitive join */ rt.MaybeCoerce[State_ServiceStat_R](Sky_Core_List_find( /* primitive join */ rt.Coerce[func(any) bool](func(v_2 State_ServiceStat_R) bool { return /* FFI return */ rt.AsBool(rt.Eq(v_2.Name, any(v_0))) }) /* primitive join */, rt.AsListT[any](v_1)))
 }
 
 func Overview_aggregatePane(v_0 []State_ServiceStat_R) Std_Ui_Element {
@@ -4000,17 +4182,18 @@ func Overview_errorRateRow(v_0 State_ServiceStat_R) Std_Ui_Element {
 	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(Overview_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(180)), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textPrimary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(v_0.Name)), Overview_statusPill(v_0.Status), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(Overview_formatPercent(v_0.ErrorRate)))})
 }
 
+var Overview_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
+
 func Overview_borderSoft() Std_Ui_Color {
-	return Std_Ui_rgb(42, 47, 56)
+	return Overview_borderSoft__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(42, 47, 56) })
 }
 
 func Overview_aggregateP95Series(v_0 []State_ServiceStat_R) []Std_Ui_Chart_Series_R {
 	return /* FFI return */ rt.AsListT[Std_Ui_Chart_Series_R](Sky_Core_List_filter(func(v_1 struct{ Points any }) any {
 		return rt.Basics_not(any(Sky_Core_List_isEmpty( /* FFI return */ rt.AsListT[any](v_1.Points))))
-	}, Sky_Core_List_map_(func(v_2 struct {
-		Name     string
-		SparkP95 []float64
-	}) Std_Ui_Chart_Series_R { return Overview_seriesFromValues(v_2.Name, v_2.SparkP95) }, v_0)))
+	}, Sky_Core_List_map_(func(v_2 State_ServiceStat_R) Std_Ui_Chart_Series_R {
+		return Overview_seriesFromValues(v_2.Name, v_2.SparkP95)
+	}, v_0)))
 }
 
 func Overview_seriesFromValues(v_0 string, v_1 []float64) Std_Ui_Chart_Series_R {
@@ -4024,10 +4207,9 @@ func Overview_seriesFromValues(v_0 string, v_1 []float64) Std_Ui_Chart_Series_R 
 func Overview_aggregateRpsSeries(v_0 []State_ServiceStat_R) []Std_Ui_Chart_Series_R {
 	return /* FFI return */ rt.AsListT[Std_Ui_Chart_Series_R](Sky_Core_List_filter(func(v_1 struct{ Points any }) any {
 		return rt.Basics_not(any(Sky_Core_List_isEmpty( /* FFI return */ rt.AsListT[any](v_1.Points))))
-	}, Sky_Core_List_map_(func(v_2 struct {
-		Name     string
-		SparkRps []float64
-	}) Std_Ui_Chart_Series_R { return Overview_seriesFromValues(v_2.Name, v_2.SparkRps) }, v_0)))
+	}, Sky_Core_List_map_(func(v_2 State_ServiceStat_R) Std_Ui_Chart_Series_R {
+		return Overview_seriesFromValues(v_2.Name, v_2.SparkRps)
+	}, v_0)))
 }
 
 func Overview_serviceCardScroller(v_0 State_Model_R) Std_Ui_Element {
@@ -4203,12 +4385,18 @@ func Overview_cardHeader(v_0 State_ServiceStat_R) Std_Ui_Element {
 	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}, Std_Ui_text(v_0.Name)), Overview_statusPill(v_0.Status)})
 }
 
+var Overview_emptyCard__caf rt.LazyCaf[Std_Ui_Element]
+
 func Overview_emptyCard() Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("NO SERVICES YET")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text("Push telemetry to the hub via OTLP HTTP or the Sky exporter."))})
+	return Overview_emptyCard__caf.Get(func() Std_Ui_Element {
+		return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("NO SERVICES YET")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text("Push telemetry to the hub via OTLP HTTP or the Sky exporter."))})
+	})
 }
 
+var Std_Ui_alignTop__caf rt.LazyCaf[Std_Ui_Attribute]
+
 func Std_Ui_alignTop() Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrAlignY(Std_Ui_VAlign_AlignTop)
+	return Std_Ui_alignTop__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrAlignY(Std_Ui_VAlign_AlignTop) })
 }
 
 func Overview_selectorHeader(v_0 State_Model_R) Std_Ui_Element {
@@ -4313,12 +4501,14 @@ func View_queryRow(v_0 string) Std_Ui_Element {
 	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Search")), Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter logs + traces by message, route, name, id…"), Std_Ui_htmlAttribute("value", v_0), Std_Ui_onInput( /* primitive join */ rt.Coerce[func(string) any](func(_p0 any) State_Msg { return State_Msg_GlobalQuery(_p0) })), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(11)})})
 }
 
+var View_bgPage__caf rt.LazyCaf[Std_Ui_Color]
+
 func View_bgPage() Std_Ui_Color {
-	return Std_Ui_rgb(20, 23, 28)
+	return View_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
 func View_serviceRow(v_0 string, v_1 []State_ServiceStat_R) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service"))), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(View_serviceChip(v_0, "")), any( /* FFI return */ rt.AsListT[Std_Ui_Element](Sky_Core_List_map_(func(v_2 struct{ Name string }) Std_Ui_Element { return View_serviceChip(v_0, v_2.Name) }, v_1)))))))))
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service"))), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(View_serviceChip(v_0, "")), any( /* FFI return */ rt.AsListT[Std_Ui_Element](Sky_Core_List_map_(func(v_2 State_ServiceStat_R) Std_Ui_Element { return View_serviceChip(v_0, v_2.Name) }, v_1)))))))))
 }
 
 func View_serviceChip(v_0 string, v_1 string) Std_Ui_Element {
@@ -6633,8 +6823,12 @@ func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []
 	}()
 }
 
+var State_emptyLogFilter__caf rt.LazyCaf[State_LogFilter_R]
+
 func State_emptyLogFilter() State_LogFilter_R {
-	return State_LogFilter_R{Query: "", Session: "", ShowDebug: false, ShowInfo: true, ShowWarn: true, ShowError: true}
+	return State_emptyLogFilter__caf.Get(func() State_LogFilter_R {
+		return State_LogFilter_R{Query: "", Session: "", ShowDebug: false, ShowInfo: true, ShowWarn: true, ShowError: true}
+	})
 }
 
 func Main_fetchLogsOnly(v_0 State_Model_R, v_1 State_LogFilter_R) any {
@@ -6701,20 +6895,34 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 	}()
 }
 
+var State_emptyAnalytics__caf rt.LazyCaf[State_Analytics_R]
+
 func State_emptyAnalytics() State_Analytics_R {
-	return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{}), Revenue: /* primitive join */ rt.AsListT[State_CurrencyTotal_R]([]any{})}
+	return State_emptyAnalytics__caf.Get(func() State_Analytics_R {
+		return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{}), Revenue: /* primitive join */ rt.AsListT[State_CurrencyTotal_R]([]any{})}
+	})
 }
+
+var State_mockLogs__caf rt.LazyCaf[[]State_LogEntry_R]
 
 func State_mockLogs() []State_LogEntry_R {
-	return []State_LogEntry_R{State_LogEntry_R{Time: "—", Level: "info", Message: "Standalone mode — no parent URL configured.", Subapp: "", ReqId: "", SessionId: "", UserLabel: "", Route: "", Status: 0.0, LatencyMs: 0.0}, State_LogEntry_R{Time: "—", Level: "info", Message: "Run from a host app to see live telemetry.", Subapp: "", ReqId: "", SessionId: "", UserLabel: "", Route: "", Status: 0.0, LatencyMs: 0.0}}
+	return State_mockLogs__caf.Get(func() []State_LogEntry_R {
+		return []State_LogEntry_R{State_LogEntry_R{Time: "—", Level: "info", Message: "Standalone mode — no parent URL configured.", Subapp: "", ReqId: "", SessionId: "", UserLabel: "", Route: "", Status: 0.0, LatencyMs: 0.0}, State_LogEntry_R{Time: "—", Level: "info", Message: "Run from a host app to see live telemetry.", Subapp: "", ReqId: "", SessionId: "", UserLabel: "", Route: "", Status: 0.0, LatencyMs: 0.0}}
+	})
 }
+
+var State_emptyOverview__caf rt.LazyCaf[State_Overview_R]
 
 func State_emptyOverview() State_Overview_R {
-	return State_Overview_R{SkyVersion: "—", Commit: "—", BuiltAt: "—", UptimeSeconds: 0, RequestsTotal: 0, ErrorRate5xx: 0.0, BufferLogUsed: 0, BufferTraceUsed: 0, ProductionMode: false}
+	return State_emptyOverview__caf.Get(func() State_Overview_R {
+		return State_Overview_R{SkyVersion: "—", Commit: "—", BuiltAt: "—", UptimeSeconds: 0, RequestsTotal: 0, ErrorRate5xx: 0.0, BufferLogUsed: 0, BufferTraceUsed: 0, ProductionMode: false}
+	})
 }
 
+var State_mockOverview__caf rt.LazyCaf[State_Overview_R]
+
 func State_mockOverview() State_Overview_R {
-	return State_emptyOverview()
+	return State_mockOverview__caf.Get(func() State_Overview_R { return State_emptyOverview() })
 }
 
 func Main_httpStore(v_0 string) State_Store_R {
@@ -6735,24 +6943,40 @@ func Main_fetchAnalytics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Anal
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/analytics")))))))
 }
 
+var Main_analyticsDecoder__caf rt.LazyCaf[any]
+
 func Main_analyticsDecoder() any {
-	return rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 int, _p2 []State_EventCount_R, _p3 []State_AnalyticsEvent_R, _p4 []State_CurrencyTotal_R) State_Analytics_R {
-		return State_Analytics(_p0, _p1, _p2, _p3, _p4)
-	})))))))
+	return Main_analyticsDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 int, _p2 []State_EventCount_R, _p3 []State_AnalyticsEvent_R, _p4 []State_CurrencyTotal_R) State_Analytics_R {
+			return State_Analytics(_p0, _p1, _p2, _p3, _p4)
+		})))))))
+	})
 }
+
+var Main_eventCountDecoder__caf rt.LazyCaf[any]
 
 func Main_eventCountDecoder() any {
-	return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 int) State_EventCount_R { return State_EventCount(_p0, _p1) }))))
+	return Main_eventCountDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 int) State_EventCount_R { return State_EventCount(_p0, _p1) }))))
+	})
 }
+
+var Main_analyticsEventDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsEventDecoder() any {
-	return rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string) State_AnalyticsEvent_R {
-		return State_AnalyticsEvent(_p0, _p1, _p2)
-	})))))
+	return Main_analyticsEventDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string) State_AnalyticsEvent_R {
+			return State_AnalyticsEvent(_p0, _p1, _p2)
+		})))))
+	})
 }
 
+var Main_currencyTotalDecoder__caf rt.LazyCaf[any]
+
 func Main_currencyTotalDecoder() any {
-	return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 int) State_CurrencyTotal_R { return State_CurrencyTotal(_p0, _p1, _p2) })))))
+	return Main_currencyTotalDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 int) State_CurrencyTotal_R { return State_CurrencyTotal(_p0, _p1, _p2) })))))
+	})
 }
 
 func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
@@ -6761,12 +6985,18 @@ func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_Error
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/errors")))))))
 }
 
+var Main_errorsDecoder__caf rt.LazyCaf[any]
+
 func Main_errorsDecoder() any {
-	return rt.JsonDec_list(Main_errorRowDecoder())
+	return Main_errorsDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_errorRowDecoder()) })
 }
 
+var Main_errorRowDecoder__caf rt.LazyCaf[any]
+
 func Main_errorRowDecoder() any {
-	return rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string) State_ErrorRow_R { return State_ErrorRow(_p0, _p1) }))))
+	return Main_errorRowDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string) State_ErrorRow_R { return State_ErrorRow(_p0, _p1) }))))
+	})
 }
 
 func Main_fetchTraces(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
@@ -6775,14 +7005,20 @@ func Main_fetchTraces(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_Trace
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/traces?limit=100")))))))
 }
 
+var Main_tracesDecoder__caf rt.LazyCaf[any]
+
 func Main_tracesDecoder() any {
-	return rt.JsonDec_list(Main_traceRowDecoder())
+	return Main_tracesDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_traceRowDecoder()) })
 }
 
+var Main_traceRowDecoder__caf rt.LazyCaf[any]
+
 func Main_traceRowDecoder() any {
-	return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 float64, _p7 string) State_TraceRow_R {
-		return State_TraceRow(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7)
-	}))))))))))
+	return Main_traceRowDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 float64, _p7 string) State_TraceRow_R {
+			return State_TraceRow(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7)
+		}))))))))))
+	})
 }
 
 func Main_fetchMetrics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
@@ -6791,14 +7027,20 @@ func Main_fetchMetrics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_Metr
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/metrics-summary")))))))
 }
 
+var Main_metricsDecoder__caf rt.LazyCaf[any]
+
 func Main_metricsDecoder() any {
-	return rt.JsonDec_list(Main_metricRowDecoder())
+	return Main_metricsDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_metricRowDecoder()) })
 }
 
+var Main_metricRowDecoder__caf rt.LazyCaf[any]
+
 func Main_metricRowDecoder() any {
-	return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 float64, _p4 float64, _p5 float64) State_MetricRow_R {
-		return State_MetricRow(_p0, _p1, _p2, _p3, _p4, _p5)
-	}))))))))
+	return Main_metricRowDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 float64, _p4 float64, _p5 float64) State_MetricRow_R {
+			return State_MetricRow(_p0, _p1, _p2, _p3, _p4, _p5)
+		}))))))))
+	})
 }
 
 func Main_fetchLogs(v_0 string, v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
@@ -6845,14 +7087,20 @@ func Main_buildLogQuery(v_0 State_LogFilter_R) string {
 	}()
 }
 
+var Main_logsDecoder__caf rt.LazyCaf[any]
+
 func Main_logsDecoder() any {
-	return rt.JsonDec_list(Main_logEntryDecoder())
+	return Main_logsDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_logEntryDecoder()) })
 }
 
+var Main_logEntryDecoder__caf rt.LazyCaf[any]
+
 func Main_logEntryDecoder() any {
-	return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 string, _p7 string, _p8 float64, _p9 float64) State_LogEntry_R {
-		return State_LogEntry(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9)
-	}))))))))))))
+	return Main_logEntryDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 string, _p7 string, _p8 float64, _p9 float64) State_LogEntry_R {
+			return State_LogEntry(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9)
+		}))))))))))))
+	})
 }
 
 func Main_fieldFromFields(v_0 string) any {
@@ -6865,14 +7113,22 @@ func Main_fetchOverview(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Overv
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/overview")))))))
 }
 
+var Main_overviewDecoder__caf rt.LazyCaf[any]
+
 func Main_overviewDecoder() any {
-	return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 int, _p4 int, _p5 float64, _p6 int, _p7 int, _p8 bool) State_Overview_R {
-		return State_Overview(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8)
-	})))))))))))
+	return Main_overviewDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 int, _p4 int, _p5 float64, _p6 int, _p7 int, _p8 bool) State_Overview_R {
+			return State_Overview(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8)
+		})))))))))))
+	})
 }
 
+var Main_intFromFloat__caf rt.LazyCaf[any]
+
 func Main_intFromFloat() any {
-	return rt.JsonDec_map(any(func(v_0 float64) int { return /* FFI return */ rt.AsInt(rt.Math_round(any(v_0))) }), rt.JsonDec_float())
+	return Main_intFromFloat__caf.Get(func() any {
+		return rt.JsonDec_map(any(func(v_0 float64) int { return /* FFI return */ rt.AsInt(rt.Math_round(any(v_0))) }), rt.JsonDec_float())
+	})
 }
 
 func HubStore_hubStore(v_0 string) State_Store_R {
