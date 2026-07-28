@@ -189,15 +189,33 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
             w.line(")");
         }
         GoTypeDef::Struct(fields) => {
+            // Emit a `sky:"<field>,<declaredType>"` tag per field. The declared
+            // Go type survives here even when it is an enum alias to `int` that
+            // reflection would otherwise resolve away — this is the metadata
+            // `Std.Codec.auto` reads to recover a field's true Sky type.
             let fs: Vec<String> = fields
                 .iter()
-                .map(|(n, t)| format!("{n} {}", render_ty(t)))
+                .map(|(n, t)| {
+                    let ty = render_ty(t);
+                    let sky_name = sky_field_name(n);
+                    format!("{n} {ty} `sky:\"{sky_name},{ty}\"`")
+                })
                 .collect();
             w.line(&format!("type {name} struct {{ {} }}", fs.join("; ")));
         }
         GoTypeDef::Alias(t) => {
             w.line(&format!("type {name} = {}", render_ty(t)));
         }
+    }
+}
+
+/// The Sky (camelCase) field name for a Go (PascalCase) struct field: lowercase
+/// the first character. `PriceMinor` -> `priceMinor`, `Id` -> `id`.
+fn sky_field_name(go_name: &str) -> String {
+    let mut chars = go_name.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 

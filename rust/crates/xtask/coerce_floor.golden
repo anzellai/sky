@@ -10,8 +10,8 @@
 04-local-pkg	2
 05-mux-server	9
 06-json	41
-07-todo-cli	18
-08-notes-app	545
+07-todo-cli	20
+08-notes-app	547
 09-live-counter	92
 10-live-component	90
 11-fyne-stopwatch	10
@@ -21,7 +21,7 @@
 15-http-server	13
 16-skychess	544
 17-skymon	632
-18-job-queue	55
+18-job-queue	56
 19-skyforum	347
 20-cli-counter	3
 21-tui-stopwatch	9
@@ -30,7 +30,7 @@
 24-tui-kitchen-sink	276
 25-sky-console	287
 26-ui-showcase	633
-27-multi-session-chat	72
+27-multi-session-chat	73
 28-streaming-chat	56
 29-webview-threejs-spike	19
 30-sse-server-demo	7
@@ -54,5 +54,5 @@
 49-xmodule-adt	2
 50-open-row-closure	7
 51-kernel-variadic-arity	1
-52-blog-analytics	293
+52-blog-analytics	294
 53-record-update-map	19
