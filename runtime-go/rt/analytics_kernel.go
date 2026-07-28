@@ -259,6 +259,21 @@ func newAnalyticsState() *analyticsSessionState {
 	return &analyticsSessionState{consent: consentAnonymous, anonID: analyticsNewAnonID()}
 }
 
+// restoreAnalyticsState rebuilds a session's analytics state from persisted
+// values (consent posture + anon/user id), so a DB-backed session store keeps an
+// identified user across a restart / replica reshuffle — matching the auth
+// `identity` round-trip. A blank anonID (pre-v0.19 blob) mints a fresh one.
+func restoreAnalyticsState(consent int, anonID, userID string) *analyticsSessionState {
+	if anonID == "" {
+		anonID = analyticsNewAnonID()
+	}
+	return &analyticsSessionState{
+		consent: analyticsConsent(consent),
+		anonID:  anonID,
+		userID:  userID,
+	}
+}
+
 func (s *analyticsSessionState) snapshot() (analyticsConsent, string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

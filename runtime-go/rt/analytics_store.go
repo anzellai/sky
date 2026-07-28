@@ -28,7 +28,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 // analyticsDefaultStorePath is where analytics persists when neither
@@ -37,9 +40,10 @@ import (
 const analyticsDefaultStorePath = ".sky/analytics.db"
 
 var (
-	analyticsStoreOnce       sync.Once
-	analyticsStoreDB         *sql.DB
-	analyticsNoStoreWarnOnce sync.Once
+	analyticsStoreOnce        sync.Once
+	analyticsStoreDB          *sql.DB
+	analyticsNoStoreWarnOnce  sync.Once
+	analyticsWriteErrWarnOnce sync.Once
 )
 
 const analyticsSchema = `
@@ -96,8 +100,53 @@ func analyticsStore() *sql.DB {
 			return
 		}
 		analyticsStoreDB = db
+		analyticsStartRetention(db)
 	})
 	return analyticsStoreDB
+}
+
+// analyticsStartRetention launches a periodic pruner when
+// `[analytics] retention` (SKY_ANALYTICS_RETENTION, e.g. "90d" / "720h") is set,
+// deleting events older than the window so the table stays bounded in
+// long-running production. Unset = keep everything (no prune). One goroutine,
+// one indexed DELETE — cheap + simple.
+func analyticsStartRetention(db *sql.DB) {
+	window := analyticsRetentionWindow()
+	if window <= 0 {
+		return
+	}
+	go func() {
+		defer func() { _ = recover() }()
+		prune := func() {
+			cutoff := time.Now().Add(-window).UnixMilli()
+			_, _ = db.Exec(`DELETE FROM analytics_events WHERE ts < ?`, cutoff)
+		}
+		prune() // once at startup
+		t := time.NewTicker(6 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			prune()
+		}
+	}()
+}
+
+// analyticsRetentionWindow parses SKY_ANALYTICS_RETENTION — a Go duration
+// ("720h") or an "<n>d" day form ("90d"). 0 when unset/invalid (keep all).
+func analyticsRetentionWindow() time.Duration {
+	v := skyGetenv("ANALYTICS_RETENTION")
+	if v == "" {
+		return 0
+	}
+	if strings.HasSuffix(v, "d") {
+		if n, err := strconv.Atoi(strings.TrimSuffix(v, "d")); err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour
+		}
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d
+	}
+	return 0
 }
 
 // analyticsStoreInsert persists one already-gated event row. No-op when no
@@ -120,11 +169,19 @@ func analyticsStoreInsert(payload map[string]any) {
 	event, _ := payload["event"].(string)
 	anonID, _ := payload["anonymous_id"].(string)
 	userID, _ := payload["user_id"].(string)
-	_, _ = db.Exec(
+	if _, err := db.Exec(
 		`INSERT INTO analytics_events (ts, anonymous_id, user_id, event, props, context) VALUES (?, ?, ?, ?, ?, ?)`,
 		ts, nullableStr(anonID), nullableStr(userID), event,
 		analyticsJSONText(payload["props"]), analyticsJSONText(payload["context"]),
-	)
+	); err != nil {
+		// A write failure used to be dropped silently — warn ONCE so a broken
+		// store (disk full, locked, permissions) is diagnosable.
+		analyticsWriteErrWarnOnce.Do(func() {
+			logStructured("warn", "analytics.write_failed",
+				"detail", "an analytics event failed to persist",
+				"error", err.Error())
+		})
+	}
 }
 
 func nullableStr(s string) any {

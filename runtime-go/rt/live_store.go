@@ -874,6 +874,15 @@ type storableSession struct {
 	// matches "no gate ran" semantics, no migration required.
 	Identity      ConsoleIdentity
 	IdentityValid bool
+	// v0.19 — persist Std.Analytics identity (consent posture + anon/user id) so
+	// a DB-backed store keeps an identified analytics user across restart /
+	// replica reshuffle, matching the Identity round-trip above. HasAnalytics
+	// distinguishes "analytics was used" from "never used"; pre-v0.19 blobs decode
+	// with HasAnalytics=false → state recreated fresh on first use, no migration.
+	HasAnalytics     bool
+	AnalyticsConsent int
+	AnalyticsAnonID  string
+	AnalyticsUserID  string
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
@@ -894,13 +903,21 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	gobRegisterAll(s.model)
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(storableSession{
+	blob := storableSession{
 		Model:         s.model,
 		LastSeen:      s.lastSeenTime(),
 		OutSeq:        s.localSeq,
 		Identity:      s.identity,
 		IdentityValid: s.identityValid,
-	}); err != nil {
+	}
+	if s.analytics != nil {
+		c, anon, user := s.analytics.snapshot()
+		blob.HasAnalytics = true
+		blob.AnalyticsConsent = int(c)
+		blob.AnalyticsAnonID = anon
+		blob.AnalyticsUserID = user
+	}
+	if err := enc.Encode(blob); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -1000,6 +1017,11 @@ func decodeSession(blob []byte) (*liveSession, error) {
 	// Task #326: lastSeen is now an atomic.Int64 — can't be set in a
 	// struct literal, so seed it after construction.
 	sess.setLastSeenTime(st.LastSeen)
+	// v0.19 — rehydrate analytics identity so an identified user survives a
+	// restart / replica reshuffle on a DB-backed store.
+	if st.HasAnalytics {
+		sess.analytics = restoreAnalyticsState(st.AnalyticsConsent, st.AnalyticsAnonID, st.AnalyticsUserID)
+	}
 	return sess, nil
 }
 

@@ -784,6 +784,11 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("analytics", "dbPath" | "dbpath") => {
                 cfg.extra_defaults.push(("ANALYTICS_DB_PATH".into(), val))
             }
+            // `[analytics] retention` (e.g. "90d" / "720h") → prune events older
+            // than the window so the store stays bounded. Unset → keep all.
+            ("analytics", "retention") => {
+                cfg.extra_defaults.push(("ANALYTICS_RETENTION".into(), val))
+            }
             ("live", "port") => cfg.port = Some(val),
             // `[live]` runtime keys → the suffixes the runtime reads (live.go /
             // live_store.go). Without these, only the `SKY_LIVE_*` env vars were
