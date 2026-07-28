@@ -241,6 +241,38 @@ usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
 
 See [Sky.Db — Schema migrations](../skydb/overview.md#schema-migrations).
 
+### `sky db migrate --gen [NAME]` — file-based migrations (no live DB)
+
+When you define your schema with `Std.Db.Store` + `Std.Codec` and expose a
+`db : Store.Project` binding, `--gen` derives migration **files** from the
+types — **no database connection required**:
+
+```bash
+sky db migrate --gen init        # first migration: CREATE TABLE for every store
+# …add a field to a record, then:
+sky db migrate --gen add_stock   # → addColumn (required cols get a safe backfill DEFAULT)
+sky db migrate                   # apply the committed db/migrations/*.json to the live DB
+```
+
+How it works — gen builds a temporary DB-free entry (`main =
+Store.dumpSchema db`), captures the type-derived schema, and diffs it against
+the committed snapshot `db/schema.json`:
+
+- **new table** → `createTable`; **new required column** → `addColumn NOT NULL
+  DEFAULT <zero>` (backfills existing rows); **new `Maybe` column** → nullable.
+- **dropped column / table / type change** → **quarantined** in a `destructive`
+  array in the migration file, *never auto-applied* (the "never silently lossy"
+  rule). On a TTY, gen instead **asks**: a drop can be resolved as a
+  `(r)ename` (rewritten to one `renameColumn`, data preserved), a confirmed
+  `(d)rop`, or `(s)kip`; a required new column can take a custom backfill
+  default. Non-interactive (CI / piped) runs keep the safe quarantine defaults.
+
+The output is committed to git (`db/migrations/*.json` + `db/schema.json`), so
+review + history live in the repo. `sky db migrate` (with `db/migrations/`
+present) applies the files through the same checksummed `_sky_migrations`
+ledger as the code-defined path — at most once each, **dialect-correct** for
+the live connection (one file → correct on SQLite *and* Postgres).
+
 ## Cache & cleanup
 
 ### `sky clean`
