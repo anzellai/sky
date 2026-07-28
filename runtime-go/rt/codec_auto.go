@@ -318,7 +318,11 @@ func Codec_autoCols(witness any) any {
 		if f.PkgPath != "" {
 			continue
 		}
-		out = append(out, T2[any, any]{V0: skyTagName(f), V1: codecColKindTyped(f.Type, skyTagType(f))})
+		kind := codecColKindTyped(f.Type, skyTagType(f))
+		if isSkyMaybeType(f.Type) { // Maybe field → nullable column (marked with `?`)
+			kind += "?"
+		}
+		out = append(out, T2[any, any]{V0: skyTagName(f), V1: kind})
 	}
 	return out
 }

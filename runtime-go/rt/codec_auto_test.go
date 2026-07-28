@@ -87,7 +87,7 @@ func TestCodecAutoCols(t *testing.T) {
 	cols := AsList(Codec_autoCols(acUser{}))
 	want := map[string]string{
 		"id": "text", "age": "int", "active": "bool",
-		"nick": "text", "address": "blob", "tags": "blob",
+		"nick": "text?", "address": "blob", "tags": "blob", // nick is Maybe → nullable
 	}
 	if len(cols) != len(want) {
 		t.Fatalf("cols count = %d, want %d", len(cols), len(want))

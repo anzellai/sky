@@ -69,6 +69,7 @@ type ColType
     | CReal
     | CBool
     | CBlob
+    | CNull ColType
 
 -- | The structural shape of a codec — a record maps to columns, a scalar to one
 -- typed column, anything else (list / nested / ADT) to a JSON TEXT blob.
@@ -162,7 +163,7 @@ maybe (Codec c) =
         , shp = case c.shp of
 
               SScalar t ->
-                  SScalar t
+                  SScalar (CNull t)
 
               _ ->
                   SBlob
@@ -252,22 +253,26 @@ autoCols =
 
 kindToColType : String -> ColType
 kindToColType k =
-    case k of
+    if String.endsWith "?" k then
+        CNull (kindToColType (String.dropRight 1 k))
 
-        "text" ->
-            CText
+    else
+        case k of
 
-        "int" ->
-            CInt
+            "text" ->
+                CText
 
-        "real" ->
-            CReal
+            "int" ->
+                CInt
 
-        "bool" ->
-            CBool
+            "real" ->
+                CReal
 
-        _ ->
-            CBlob
+            "bool" ->
+                CBool
+
+            _ ->
+                CBlob
 
 -- ── ADTs / custom types (tagged unions) ─────────────────────────────────────
 -- | A decode arm for one variant of a custom type.

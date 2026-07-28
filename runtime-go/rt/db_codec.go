@@ -17,7 +17,17 @@ import (
 	"strings"
 )
 
+// codecSplitKind splits a colspec kind into (baseKind, nullable). A trailing `?`
+// marks a nullable column (a Maybe field); its absence means NOT NULL.
+func codecSplitKind(kind string) (string, bool) {
+	if strings.HasSuffix(kind, "?") {
+		return kind[:len(kind)-1], true
+	}
+	return kind, false
+}
+
 func codecColKindToSchema(kind string) string {
+	kind, _ = codecSplitKind(kind)
 	switch kind {
 	case "int":
 		return "bigint"
@@ -37,9 +47,13 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 	for _, cs := range AsList(colspecArg) {
 		t := AsTuple2(cs)
 		name := AsString(t.V0)
+		_, nullable := codecSplitKind(AsString(t.V1))
 		cols = append(cols, map[string]any{
 			"Name": name, "Kind": codecColKindToSchema(AsString(t.V1)),
-			"IsPk": name == pk, "IsNotNull": name == pk, "IsUnique": false,
+			// A required (non-Maybe) column is NOT NULL on a FRESH table; the PK
+			// always is. (ALTER ADD on an existing table stays nullable — see
+			// Db_autoMigrate — since existing rows can't satisfy NOT NULL.)
+			"IsPk": name == pk, "IsNotNull": !nullable || name == pk, "IsUnique": false,
 			"IsAutoInc": false, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
 		})
 	}
@@ -218,8 +232,9 @@ func Db_execObject(connArg, tableArg, colspecArg, objArg any) any {
 		for _, cs := range AsList(colspecArg) {
 			t := AsTuple2(cs)
 			name := AsString(t.V0)
+			base, _ := codecSplitKind(AsString(t.V1))
 			cols = append(cols, name)
-			params = append(params, rawToSqlArg(fields[name], AsString(t.V1)))
+			params = append(params, rawToSqlArg(fields[name], base))
 		}
 		ph := make([]string, len(cols))
 		for i := range ph {
@@ -283,9 +298,10 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 			for _, cs := range AsList(colspecArg) {
 				t := AsTuple2(cs)
 				name := AsString(t.V0)
+				base, _ := codecSplitKind(AsString(t.V1))
 				raw, present := m[name]
 				obj.keys = append(obj.keys, name)
-				obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, AsString(t.V1)))
+				obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, base))
 			}
 			b, err := json.Marshal(obj)
 			if err != nil {
@@ -294,5 +310,46 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 			out = append(out, string(b))
 		}
 		return Ok[any, any](out)
+	}
+}
+
+// Db_dumpProject prints a project's schema as JSON between markers (SKY_SCHEMA_*)
+// so `sky db migrate --gen` can capture the target schema WITHOUT a live DB —
+// this is the pure schema-dump the file-based migration flow diffs against.
+func Db_dumpProject(tablesArg any) any {
+	return func() any {
+		type jcol struct {
+			Name     string `json:"name"`
+			Kind     string `json:"kind"`
+			Nullable bool   `json:"nullable"`
+		}
+		type jtable struct {
+			Name    string `json:"name"`
+			Pk      string `json:"pk"`
+			Columns []jcol `json:"columns"`
+		}
+		out := struct {
+			Tables []jtable `json:"tables"`
+		}{}
+		for _, t := range AsList(tablesArg) {
+			jt := jtable{
+				Name: fmt.Sprintf("%v", Field(t, "Name")),
+				Pk:   fmt.Sprintf("%v", Field(t, "Pk")),
+			}
+			for _, c := range AsList(Field(t, "Cols")) {
+				tup := AsTuple2(c)
+				base, nullable := codecSplitKind(AsString(tup.V1))
+				jt.Columns = append(jt.Columns, jcol{Name: AsString(tup.V0), Kind: base, Nullable: nullable})
+			}
+			out.Tables = append(out.Tables, jt)
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return Err[any, any](ErrIo("dumpProject: " + err.Error()))
+		}
+		fmt.Println("SKY_SCHEMA_BEGIN")
+		fmt.Println(string(b))
+		fmt.Println("SKY_SCHEMA_END")
+		return Ok[any, any](struct{}{})
 	}
 }

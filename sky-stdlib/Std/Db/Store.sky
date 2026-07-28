@@ -34,6 +34,11 @@ module Std.Db.Store exposing
     , select
     , findBy
     , delete
+    , Table
+    , toTable
+    , Project
+    , project
+    , dumpSchema
     )
 
 import Sky.Ffi as Ffi
@@ -131,6 +136,44 @@ delete conn (Store s) col value =
         ("DELETE FROM " ++ s.name ++ " WHERE " ++ col ++ " = ?")
         [ value ]
 
+-- ── Project (schema-dump for file-based migrations) ─────────────────────────
+-- | A table's schema erased of its record type — name, primary key, and
+-- (column, kind) list — for the migration schema-dump.
+type alias Table =
+    { name : String
+    , pk : String
+    , cols : List ( String, String )
+    }
+
+
+-- | Erase a store to its `Table` schema.
+toTable : Store a -> Table
+toTable (Store s) =
+    { name = s.name, pk = s.pk, cols = s.cols }
+
+-- | A project's set of tables — the single declaration `sky db` reads to derive
+-- the target schema: `db = Store.project [ Store.toTable users, Store.toTable orders ]`.
+type Project
+    = Project (List Table)
+
+
+project : List Table -> Project
+project tables =
+    Project tables
+
+
+-- | Print the project's schema as JSON (between SKY_SCHEMA_* markers) and exit —
+-- the pure, DB-free schema-dump that `sky db migrate --gen` captures to diff
+-- against `db/schema.json`. Make this a project's `main` in the gen entry.
+dumpSchema : Project -> Task Error ()
+dumpSchema (Project tables) =
+    dbDumpProject tables
+
+
+dbDumpProject : List Table -> Task Error ()
+dbDumpProject =
+    Ffi.kernel "Db_dumpProject"
+
 
 -- ── Internal ─────────────────────────────────────────────────────────────────
 emptyParams : List String
@@ -184,6 +227,9 @@ colTypeStr ct =
 
         CBlob ->
             "blob"
+
+        CNull inner ->
+            colTypeStr inner ++ "?"
 
 
 dbCreateCols : Db -> String -> List ( String, String ) -> String -> Task Error ()
