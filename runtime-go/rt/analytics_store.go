@@ -46,19 +46,63 @@ var (
 	analyticsWriteErrWarnOnce sync.Once
 )
 
-const analyticsSchema = `
-CREATE TABLE IF NOT EXISTS analytics_events (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
-	ts           INTEGER NOT NULL,
-	anonymous_id TEXT,
-	user_id      TEXT,
-	event        TEXT NOT NULL,
-	props        TEXT,
-	context      TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics_events(ts);
-CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event);
-`
+// analyticsDriverName is "sqlite" or "pgx", set when the store opens. It drives
+// the dialect differences: `?` vs `$1` placeholders + the autoincrement column.
+var analyticsDriverName = "sqlite"
+
+// analyticsBackend classifies the configured store into a (driver, dsn) pair.
+// A `postgres://` / `postgresql://` value → the shared Postgres (same pgx driver
+// the session store uses); anything else is a local SQLite file path.
+func analyticsBackend(path string) (driver, dsn string) {
+	if strings.HasPrefix(path, "postgres://") || strings.HasPrefix(path, "postgresql://") {
+		return "pgx", path
+	}
+	return "sqlite", path
+}
+
+// analyticsQ rewrites `?` placeholders to `$1,$2,…` for pgx; SQLite keeps `?`.
+// Queries are AUTHORED with `?` and passed through this once so there is a single
+// SQL string per query, not a per-dialect fork.
+func analyticsQ(sql string) string {
+	if analyticsDriverName != "pgx" {
+		return sql
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range sql {
+		if r == '?' {
+			n++
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// analyticsSchemaStmts returns the CREATE statements for the driver, run
+// individually (pgx's simple protocol doesn't batch `;`-separated statements).
+// Only the id column differs; `BIGINT` ts + `TEXT` cols are portable.
+func analyticsSchemaStmts(driver string) []string {
+	idCol := "id INTEGER PRIMARY KEY AUTOINCREMENT"
+	if driver == "pgx" {
+		idCol = "id BIGSERIAL PRIMARY KEY"
+	}
+	return []string{
+		`CREATE TABLE IF NOT EXISTS analytics_events (
+			` + idCol + `,
+			ts           BIGINT NOT NULL,
+			anonymous_id TEXT,
+			user_id      TEXT,
+			event        TEXT NOT NULL,
+			props        TEXT,
+			context      TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics_events(ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event)`,
+	}
+}
 
 // analyticsStorePath resolves the configured store path (override > console DB
 // reuse > none).
@@ -67,6 +111,12 @@ func analyticsStorePath() string {
 		return p
 	}
 	if p := os.Getenv("SKY_CONSOLE_DB_PATH"); p != "" {
+		return p
+	}
+	// One-DB-for-everything: if the app is on a Postgres DATABASE_URL, analytics
+	// lands in the SAME database (one connection string for app data, sessions,
+	// and analytics). Falls through to the local SQLite default otherwise.
+	if p := os.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
 		return p
 	}
 	return analyticsDefaultStorePath
@@ -80,24 +130,35 @@ func analyticsStore() *sql.DB {
 		if path == "" {
 			return
 		}
-		// Ensure the parent dir exists (the default `.sky/` won't exist yet).
-		if dir := filepath.Dir(path); dir != "" && dir != "." {
-			_ = os.MkdirAll(dir, 0o755)
+		driver, dsn := analyticsBackend(path)
+		analyticsDriverName = driver
+		if driver == "sqlite" {
+			// Ensure the parent dir exists (the default `.sky/` won't exist yet).
+			if dir := filepath.Dir(dsn); dir != "" && dir != "." {
+				_ = os.MkdirAll(dir, 0o755)
+			}
 		}
-		db, err := sql.Open("sqlite", path)
+		db, err := sql.Open(driver, dsn)
 		if err != nil {
 			return
 		}
-		db.SetMaxOpenConns(1)
-		for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
-			if _, err := db.Exec(p); err != nil {
+		if driver == "sqlite" {
+			// SQLite is single-file: serialise this process's writes + WAL so the
+			// console reader coexists. Postgres handles concurrency natively — no
+			// single-conn cap, no PRAGMAs.
+			db.SetMaxOpenConns(1)
+			for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
+				if _, err := db.Exec(p); err != nil {
+					db.Close()
+					return
+				}
+			}
+		}
+		for _, stmt := range analyticsSchemaStmts(driver) {
+			if _, err := db.Exec(stmt); err != nil {
 				db.Close()
 				return
 			}
-		}
-		if _, err := db.Exec(analyticsSchema); err != nil {
-			db.Close()
-			return
 		}
 		analyticsStoreDB = db
 		analyticsStartRetention(db)
@@ -119,7 +180,7 @@ func analyticsStartRetention(db *sql.DB) {
 		defer func() { _ = recover() }()
 		prune := func() {
 			cutoff := time.Now().Add(-window).UnixMilli()
-			_, _ = db.Exec(`DELETE FROM analytics_events WHERE ts < ?`, cutoff)
+			_, _ = db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE ts < ?`), cutoff)
 		}
 		prune() // once at startup
 		t := time.NewTicker(6 * time.Hour)
@@ -170,7 +231,7 @@ func analyticsStoreInsert(payload map[string]any) {
 	anonID, _ := payload["anonymous_id"].(string)
 	userID, _ := payload["user_id"].(string)
 	if _, err := db.Exec(
-		`INSERT INTO analytics_events (ts, anonymous_id, user_id, event, props, context) VALUES (?, ?, ?, ?, ?, ?)`,
+		analyticsQ(`INSERT INTO analytics_events (ts, anonymous_id, user_id, event, props, context) VALUES (?, ?, ?, ?, ?, ?)`),
 		ts, nullableStr(anonID), nullableStr(userID), event,
 		analyticsJSONText(payload["props"]), analyticsJSONText(payload["context"]),
 	); err != nil {
@@ -206,7 +267,7 @@ func Analytics_erase(idArg any) any {
 			return Ok[any, any](int64(0))
 		}
 		id := fmt.Sprintf("%v", unwrapAny(idArg))
-		res, err := db.Exec(`DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`, id, id)
+		res, err := db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`), id, id)
 		if err != nil {
 			return Err[any, any](ErrUnexpected("analytics.erase: " + err.Error()))
 		}
@@ -284,7 +345,7 @@ func Analytics_recentEvents(nArg any) any {
 			n = 50
 		}
 		rows, err := db.Query(
-			`SELECT ts, event, anonymous_id, user_id, props, context FROM analytics_events ORDER BY id DESC LIMIT ?`, n)
+			analyticsQ(`SELECT ts, event, anonymous_id, user_id, props, context FROM analytics_events ORDER BY id DESC LIMIT ?`), n)
 		if err != nil {
 			return Err[any, any](ErrUnexpected("analytics.recentEvents: " + err.Error()))
 		}
