@@ -127,11 +127,31 @@ sky db migrate         # apply pending steps (unchanged; existing verb)
 - `--allow-drop` / uncommenting a `-- DESTRUCTIVE:` line — the only ways a lossy
   op runs.
 
-## v1 line (now)
+## v1 shipped — the safe additive core
 
-Ship **manual** `Db.migrate` (already exists: versioned, checksummed, forward-
-only). `Store`/`Table` `create` is greenfield/test only. The derived schema
-already knows the target, so step 1 of the pipeline is free; `sky db diff` +
-`--gen` are the increments that automate the rest — built against *this* grilled
-architecture so correctness (never-silently-lossy) is designed in, not patched
-on.
+`Store.migrate conn store` implements the **non-destructive** slice of the
+pipeline (the #1 real-world need — a record gains a field):
+
+- Table absent → **create** it (dialect-correct DDL from the codec).
+- Table exists → introspect current columns (SQLite `PRAGMA table_info` /
+  Postgres `information_schema.columns`), diff against the codec's columns, and
+  **`ALTER TABLE … ADD COLUMN`** each missing one (nullable — the codec supplies
+  defaults on read, so legacy rows decode cleanly). Dialect-correct type
+  (`INTEGER` on SQLite, `BIGINT` on Postgres).
+- **Idempotent** — re-running an up-to-date table applies nothing (returns `[]`).
+- Returns the applied statements for logging/audit.
+- **Never drops, renames, or retypes** — those are the gated/destructive ops
+  above (§grill) and stay manual: a dropped field just leaves an orphan column
+  (harmless; the codec ignores unknown columns on read), and rename/retype need
+  an explicit migration so no data is silently lost.
+
+Verified e2e on SQLite AND Postgres: a v1 `(id, name)` table migrates to a v2
+`(id, name, age, email)` store — adds `age`/`email`, the legacy row decodes with
+defaults, the second migrate is a no-op.
+
+## Still to build (the destructive/diff tooling)
+
+`sky db diff` (report `target − current` without applying) and `sky db migrate
+--gen` (emit a checksummed `Db.migrate` step, additive inline + `-- DESTRUCTIVE:`
+gated) — built against the grill above so "never silently lossy" is designed in.
+Manual `Db.migrate` (versioned, checksummed) remains for hand-authored evolution.

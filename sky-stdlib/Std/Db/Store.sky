@@ -28,6 +28,7 @@ module Std.Db.Store exposing
     , fromCodec
     , primaryKey
     , create
+    , migrate
     , insert
     , all
     , select
@@ -67,6 +68,15 @@ primaryKey pk (Store s) =
 create : Db -> Store a -> Task Error ()
 create conn (Store s) =
     dbCreateCols conn s.name s.cols s.pk
+
+
+-- | Safe additive migration: create the table if absent, and ADD any columns
+-- the record type has gained (nullable). Never drops, renames, or retypes a
+-- column — those stay manual (see docs/v0.19/auto-migration-architecture.md).
+-- Idempotent; returns the SQL statements it applied (empty when up to date).
+migrate : Db -> Store a -> Task Error (List String)
+migrate conn (Store s) =
+    dbAutoMigrate conn s.name s.cols s.pk
 
 
 -- | Insert a record.
@@ -179,6 +189,11 @@ colTypeStr ct =
 dbCreateCols : Db -> String -> List ( String, String ) -> String -> Task Error ()
 dbCreateCols =
     Ffi.kernel "Db_createCols"
+
+
+dbAutoMigrate : Db -> String -> List ( String, String ) -> String -> Task Error (List String)
+dbAutoMigrate =
+    Ffi.kernel "Db_autoMigrate"
 
 
 dbExecObject : Db -> String -> List ( String, String ) -> Value -> Task Error Int

@@ -55,7 +55,7 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Db/Store.sky",
-        &["fromCodec", "primaryKey", "create", "insert", "all", "findBy"],
+        &["fromCodec", "primaryKey", "create", "migrate", "insert", "all", "findBy"],
     ),
 ];
 

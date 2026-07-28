@@ -30,32 +30,131 @@ func codecColKindToSchema(kind string) string {
 	}
 }
 
-// Db_createCols renders + executes the CREATE TABLE derived from a colspec.
+// codecColspecSchemaMap builds a Schema-Table map from a (name,kind) colspec.
 // The PK column is NOT NULL; all others are nullable (the codec enforces types).
+func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]any {
+	cols := []any{}
+	for _, cs := range AsList(colspecArg) {
+		t := AsTuple2(cs)
+		name := AsString(t.V0)
+		cols = append(cols, map[string]any{
+			"Name": name, "Kind": codecColKindToSchema(AsString(t.V1)),
+			"IsPk": name == pk, "IsNotNull": name == pk, "IsUnique": false,
+			"IsAutoInc": false, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
+		})
+	}
+	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}
+}
+
+// Db_createCols renders + executes the CREATE TABLE derived from a colspec.
 func Db_createCols(connArg, tableArg, colspecArg, pkArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.create: first argument is not a Db"))
 		}
-		pk := AsString(pkArg)
-		cols := []any{}
-		for _, cs := range AsList(colspecArg) {
-			t := AsTuple2(cs)
-			name := AsString(t.V0)
-			cols = append(cols, map[string]any{
-				"Name": name, "Kind": codecColKindToSchema(AsString(t.V1)),
-				"IsPk": name == pk, "IsNotNull": name == pk, "IsUnique": false,
-				"IsAutoInc": false, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
-			})
-		}
-		sm := map[string]any{"Name": AsString(tableArg), "Columns": cols, "Indexes": []any{}}
+		sm := codecColspecSchemaMap(AsString(tableArg), colspecArg, AsString(pkArg))
 		for _, stmt := range schemaRenderTable(d.driver, sm) {
 			if _, err := d.executor().Exec(stmt); err != nil {
 				return Err[any, any](ErrIo("Store.create: " + err.Error()))
 			}
 		}
 		return Ok[any, any](struct{}{})
+	}
+}
+
+// codecValidIdent guards interpolated identifiers (table/column names, which come
+// from the codec's field names — but validate defensively).
+func codecValidIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// codecTableColumns returns the set of existing column names for a table, or an
+// empty set if the table doesn't exist.
+func codecTableColumns(d *SkyDb, table string) (map[string]bool, error) {
+	var sql string
+	var params []any
+	if d.driver == "pgx" {
+		sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
+		params = []any{table}
+	} else {
+		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params
+		params = []any{}
+	}
+	resp := AnyTaskRun(Db_query(d, sql, params))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return nil, fmt.Errorf("introspection failed")
+	}
+	out := map[string]bool{}
+	for _, row := range AsList(r.OkValue) {
+		m, ok := dbRowAsMap(row)
+		if !ok {
+			continue
+		}
+		// SQLite PRAGMA → "name"; Postgres information_schema → "column_name".
+		if v, present := m["name"]; present {
+			out[dbRawToString(v)] = true
+		} else if v, present := m["column_name"]; present {
+			out[dbRawToString(v)] = true
+		}
+	}
+	return out, nil
+}
+
+// Db_autoMigrate : Db -> String -> colspec -> String -> Task Error (List String).
+// SAFE additive migration: creates the table if absent; ADDs any columns the
+// type gained (nullable — the codec supplies defaults on read). Never drops,
+// renames, or retypes a column — those are gated/manual per the migration
+// architecture. Returns the applied statements (empty on an up-to-date table).
+func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg any) any {
+	return func() any {
+		d, ok := connArg.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.migrate: first argument is not a Db"))
+		}
+		table := AsString(tableArg)
+		if !codecValidIdent(table) {
+			return Err[any, any](ErrInvalidInput("Store.migrate: invalid table name"))
+		}
+		current, err := codecTableColumns(d, table)
+		if err != nil {
+			return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
+		}
+		applied := []any{}
+		if len(current) == 0 {
+			// table absent → create it
+			for _, stmt := range schemaRenderTable(d.driver, codecColspecSchemaMap(table, colspecArg, AsString(pkArg))) {
+				if _, e := d.executor().Exec(stmt); e != nil {
+					return Err[any, any](ErrIo("Store.migrate: " + e.Error()))
+				}
+				applied = append(applied, stmt)
+			}
+			return Ok[any, any](applied)
+		}
+		// existing → add any missing columns (nullable)
+		for _, cs := range AsList(colspecArg) {
+			t := AsTuple2(cs)
+			name := AsString(t.V0)
+			if !codecValidIdent(name) || current[name] {
+				continue
+			}
+			sqlType := schemaTypeName(d.driver, codecColKindToSchema(AsString(t.V1)))
+			stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, sqlType)
+			if _, e := d.executor().Exec(stmt); e != nil {
+				return Err[any, any](ErrIo("Store.migrate: " + e.Error()))
+			}
+			applied = append(applied, stmt)
+		}
+		return Ok[any, any](applied)
 	}
 }
 
