@@ -187,6 +187,13 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
             }
             w.indent -= 1;
             w.line(")");
+            // Register the ordinal↔name mapping so Codec.auto can store this
+            // enum as a readable name rather than its ordinal int.
+            let names: Vec<String> = variants.iter().map(|v| format!("\"{v}\"")).collect();
+            w.line(&format!(
+                "func init() {{ rt.RegisterEnum(\"{name}\", []string{{{}}}) }}",
+                names.join(", ")
+            ));
         }
         GoTypeDef::Struct(fields) => {
             // Emit a `sky:"<field>,<declaredType>"` tag per field. The declared

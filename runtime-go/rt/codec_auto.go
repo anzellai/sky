@@ -28,6 +28,17 @@ func skyTagName(f reflect.StructField) string {
 	return strings.ToLower(f.Name[:1]) + f.Name[1:]
 }
 
+// skyTagType returns the declared Go type from a field's `sky:"name,type"` tag,
+// or "" if absent — this is the metadata enum fields need (their Go kind is a
+// bare int that reflection can't map to the enum registry without it).
+func skyTagType(f reflect.StructField) string {
+	tag := f.Tag.Get("sky")
+	if i := strings.IndexByte(tag, ','); i >= 0 {
+		return tag[i+1:]
+	}
+	return ""
+}
+
 func isSkyMaybeType(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
 		return false
@@ -104,7 +115,7 @@ func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
 		if f.PkgPath != "" { // unexported
 			continue
 		}
-		raw, err := codecAutoEncodeVal(rv.Field(i))
+		raw, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f))
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +123,40 @@ func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
 		obj.vals = append(obj.vals, raw)
 	}
 	return obj, nil
+}
+
+// codecAutoEncodeTyped encodes a value using its declared Sky type (from the
+// field tag): a registered enum → its readable name; Maybe[T]/[]T unwrap the
+// inner type; everything else falls back to value-based encoding.
+func codecAutoEncodeTyped(rv reflect.Value, declaredType string) (any, error) {
+	if declaredType != "" {
+		if isRegisteredEnum(declaredType) {
+			switch rv.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				if name, ok := enumNameForOrdinal(declaredType, int(rv.Int())); ok {
+					return name, nil
+				}
+			}
+		}
+		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyMaybe["); ok && rv.Kind() == reflect.Struct && isSkyMaybeType(rv.Type()) {
+			if rv.FieldByName("Tag").Int() != 0 {
+				return nil, nil
+			}
+			return codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"))
+		}
+		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
+			out := make([]any, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				e, err := codecAutoEncodeTyped(rv.Index(i), elem)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = e
+			}
+			return out, nil
+		}
+	}
+	return codecAutoEncodeVal(rv)
 }
 
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
@@ -192,13 +237,58 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any) (reflect.Value, error) {
 		if f.PkgPath != "" {
 			continue
 		}
-		fv, err := codecAutoDecodeVal(f.Type, m[skyTagName(f)])
+		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyTagName(f)])
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		out.Field(i).Set(fv)
 	}
 	return out, nil
+}
+
+// codecAutoDecodeTyped decodes using the declared Sky type (from the field tag):
+// a registered enum decodes its name back to the ordinal; Maybe[T]/[]T unwrap.
+func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any) (reflect.Value, error) {
+	if declaredType != "" {
+		if isRegisteredEnum(declaredType) {
+			switch gt.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				if ord, ok := enumOrdinalForName(declaredType, codecRawStr(raw)); ok {
+					return reflect.ValueOf(int64(ord)).Convert(gt), nil
+				}
+			}
+		}
+		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyMaybe["); ok && isSkyMaybeType(gt) {
+			out := reflect.New(gt).Elem()
+			if raw == nil {
+				out.FieldByName("Tag").SetInt(1)
+				return out, nil
+			}
+			out.FieldByName("Tag").SetInt(0)
+			iv, err := codecAutoDecodeTyped(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.FieldByName("JustValue").Set(iv)
+			return out, nil
+		}
+		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && gt.Kind() == reflect.Slice {
+			items, isList := raw.([]any)
+			if !isList {
+				return reflect.MakeSlice(gt, 0, 0), nil
+			}
+			out := reflect.MakeSlice(gt, len(items), len(items))
+			for i, it := range items {
+				ev, err := codecAutoDecodeTyped(gt.Elem(), elem, it)
+				if err != nil {
+					return reflect.Value{}, err
+				}
+				out.Index(i).Set(ev)
+			}
+			return out, nil
+		}
+	}
+	return codecAutoDecodeVal(gt, raw)
 }
 
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
@@ -228,9 +318,25 @@ func Codec_autoCols(witness any) any {
 		if f.PkgPath != "" {
 			continue
 		}
-		out = append(out, T2[any, any]{V0: skyTagName(f), V1: codecColKind(f.Type)})
+		out = append(out, T2[any, any]{V0: skyTagName(f), V1: codecColKindTyped(f.Type, skyTagType(f))})
 	}
 	return out
+}
+
+// codecColKindTyped: an enum column (registered type, incl. inside Maybe) is
+// stored as its readable name → "text"; otherwise fall back to the Go type.
+func codecColKindTyped(t reflect.Type, declaredType string) string {
+	if declaredType != "" {
+		if isRegisteredEnum(declaredType) {
+			return "text"
+		}
+		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyMaybe["); ok {
+			if isRegisteredEnum(strings.TrimSuffix(inner, "]")) {
+				return "text"
+			}
+		}
+	}
+	return codecColKind(t)
 }
 
 func codecColKind(t reflect.Type) string {
@@ -296,4 +402,36 @@ func codecRawFloat(raw any) float64 {
 		}
 	}
 	return 0
+}
+
+// ── Enum registry (populated by codegen init()s) ─────────────────────────────
+
+// enumRegistry maps an enum type name → its ordered variant names. Written only
+// from generated init() functions (single-threaded at startup); read-only after.
+var enumRegistry = map[string][]string{}
+
+// RegisterEnum records an enum type's variant names, in ordinal order.
+func RegisterEnum(name string, variants []string) { enumRegistry[name] = variants }
+
+func isRegisteredEnum(typeName string) bool { _, ok := enumRegistry[typeName]; return ok }
+
+func enumNameForOrdinal(typeName string, ord int) (string, bool) {
+	vs, ok := enumRegistry[typeName]
+	if !ok || ord < 0 || ord >= len(vs) {
+		return "", false
+	}
+	return vs[ord], true
+}
+
+func enumOrdinalForName(typeName, name string) (int, bool) {
+	vs, ok := enumRegistry[typeName]
+	if !ok {
+		return 0, false
+	}
+	for i, v := range vs {
+		if v == name {
+			return i, true
+		}
+	}
+	return 0, false
 }
