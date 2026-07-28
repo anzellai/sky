@@ -666,13 +666,18 @@ fn wants_help(args: &[String]) -> bool {
 fn cmd_init(args: &[String]) -> ExitCode {
     if wants_help(args) {
         println!(
-            "sky init [name]\n\n\
+            "sky init [name] [--production]\n\n\
              Scaffold a new Sky project in ./<name> (default: sky-project):\n  \
-             sky.toml, src/Main.sky (hello-world), .gitignore, CLAUDE.md.\n\n\
+             sky.toml, src/Main.sky, .gitignore, docker-compose.yml, .env.example, CLAUDE.md.\n\n\
+             Default is SQLite + in-memory sessions — zero setup, `sky run` and go.\n\
+             The production path (one Postgres for app data + sessions + analytics +\n\
+             telemetry) is documented inline in sky.toml + ready in docker-compose.yml.\n\n\
              Arguments:\n  \
-             name        Project directory + name (default: sky-project)\n\n\
+             name          Project directory + name (default: sky-project)\n\n\
              Options:\n  \
-             -h, --help  Show this help and exit (does NOT create a project)."
+             --production  Scaffold production-grade (Postgres) config ACTIVE from day 1\n                \
+             (aliases: --postgres, --prod). Use when you know you'll scale.\n  \
+             -h, --help    Show this help and exit (does NOT create a project)."
         );
         return ExitCode::SUCCESS;
     }
@@ -689,6 +694,59 @@ fn cmd_init(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // `--production` (aka `--postgres` / `--prod`) scaffolds the Postgres
+    // one-DB-for-everything config ACTIVE from day 1 — for apps that KNOW they'll
+    // scale (multi-instance). Default keeps SQLite: zero setup, ideal for a
+    // prototype / playground / single-instance small app, with the production
+    // path documented inline + a ready-to-use docker-compose.yml.
+    let production = args
+        .iter()
+        .any(|a| a == "--production" || a == "--postgres" || a == "--prod");
+    // Postgres identifiers can't contain '-', so derive a safe db/user/role name.
+    let pg = name.replace(['-', '.', ' '], "_");
+
+    let live_db_block = if production {
+        format!(
+            "[live]\n\
+             port  = 8000\n\
+             store = \"postgres\"        # sessions in the shared Postgres (DATABASE_URL)\n\
+             ttl   = 1800\n\n\
+             [database]\n\
+             driver = \"postgres\"       # no path → falls back to DATABASE_URL (.env)\n\n\
+             [analytics]\n\
+             retention = \"180d\"        # prune old events so the table stays bounded\n\n\
+             # PRODUCTION-GRADE scaffold. `docker compose up -d` starts Postgres; copy\n\
+             # .env.example → .env (set DATABASE_URL + the secret). ONE connection string\n\
+             # wires app data + sessions + analytics + telemetry into one database.\n\
+             # For a quick local run WITHOUT Docker: set store=\"memory\" + driver=\"sqlite\"\n\
+             # path=\"app.db\". Use BIGINT (not INTEGER) for millisecond timestamps.\n"
+        )
+    } else {
+        "# ── Local dev: SQLite + in-memory sessions. Zero setup — just `sky run`.\n\
+         #    Ideal for a prototype, playground, or single-instance small app.\n\
+         [live]\n\
+         port  = 8000\n\
+         store = \"memory\"          # dev sessions (memory | sqlite | postgres | redis)\n\n\
+         [database]\n\
+         driver = \"sqlite\"\n\
+         path   = \"app.db\"\n\n\
+         # ── PRODUCTION (scaling / multi-instance): one Postgres for everything.\n\
+         #    `docker compose up -d`, copy .env.example → .env, then uncomment below.\n\
+         #    ONE DATABASE_URL (.env) wires app data + sessions + analytics + telemetry\n\
+         #    into a single database — no separate paths. Also set ENV=production\n\
+         #    (locks the dev console; requires SKY_AUTH_TOKEN_SECRET >= 32 bytes).\n\
+         #    Use BIGINT (not INTEGER) for millisecond timestamps on Postgres.\n\
+         #    Know you'll scale? Scaffold production-grade: `sky init <name> --production`.\n\
+         #\n\
+         # [live]\n\
+         # store = \"postgres\"\n\
+         # [database]\n\
+         # driver = \"postgres\"      # falls back to DATABASE_URL\n\
+         # [analytics]\n\
+         # retention = \"180d\"\n"
+            .to_string()
+    };
+
     let toml = format!(
         "# sky.toml — project configuration.\n\
          # Full reference: https://github.com/anzellai/sky#skytoml\n\n\
@@ -698,25 +756,12 @@ fn cmd_init(args: &[String]) -> ExitCode {
          bin     = \"app\"\n\n\
          [source]\n\
          root = \"src\"\n\n\
-         # [live]            # Sky.Live runtime (uncomment to configure)\n\
-         # port         = 8000\n\
-         # store        = \"memory\"   # memory | sqlite | postgres | redis | firestore\n\
-         # storePath    = \"sky.db\"      # sqlite file, or DATABASE_URL / REDIS_URL\n\
-         # ttl          = 1800          # session TTL in seconds\n\
-         # static       = \"public\"      # directory served at /static\n\
-         # maxBodyBytes = 5242880       # POST cap on /_sky/event (5 MiB)\n\n\
-         # [auth]            # Std.Auth configuration (uncomment to use)\n\
+         {live_db_block}\n\
+         # [auth]            # Std.Auth (uncomment to use)\n\
          # driver     = \"jwt\"\n\
-         # secret     = \"change-me\"     # prefer SKY_AUTH_TOKEN_SECRET (>=32 bytes)\n\
-         # tokenTtl   = \"24h\"\n\
-         # cookieName = \"sky_sid\"\n\n\
-         # [database]        # Std.Db configuration (uncomment to use)\n\
-         # driver = \"sqlite\"\n\
-         # path   = \"app.db\"\n\n\
-         # [\"go.dependencies\"]        # `sky add <pkg>` records these here\n\
-         # \"github.com/google/uuid\" = \"latest\"\n\n\
-         # [dependencies]              # Sky-source dependencies (from git)\n\
-         # \"github.com/anzellai/sky-tailwind\" = \"latest\"\n"
+         # cookieName = \"sky_sid\"       # secret from SKY_AUTH_TOKEN_SECRET (>=32 bytes)\n\n\
+         # [\"go.dependencies\"]         # `sky add <pkg>` records these\n\
+         # \"github.com/google/uuid\" = \"latest\"\n"
     );
     let main_sky = format!(
         "module Main exposing (main)\n\n\
@@ -726,10 +771,67 @@ fn cmd_init(args: &[String]) -> ExitCode {
     );
     let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
 
+    // docker-compose.yml — always scaffolded so the production path is one command
+    // away, whether or not you start on Postgres. Host port 5433 avoids clashing
+    // with a default local Postgres on 5432.
+    let compose = format!(
+        "# Production data store — ONE Postgres for everything: app data (Std.Db) +\n\
+         # Sky.Live sessions + Std.Analytics + console telemetry.\n\
+         #\n\
+         # Dev needs NONE of this — `sky run` works on SQLite + in-memory (sky.toml).\n\
+         # This is the production path (or dev-on-your-prod-backend from day 1).\n\
+         #\n\
+         #   docker compose up -d        # start Postgres (host 5433 -> container 5432)\n\
+         #   cp .env.example .env         # then set DATABASE_URL + the secret\n\
+         #   docker compose down          # stop (keeps data)  |  down -v to wipe\n\
+         #\n\
+         # Change the LEFT port (5433) if it's taken by another Postgres.\n\
+         services:\n  \
+         postgres:\n    \
+         image: postgres:16-alpine\n    \
+         container_name: {name}-pg\n    \
+         restart: unless-stopped\n    \
+         environment:\n      \
+         POSTGRES_USER: {pg}\n      \
+         POSTGRES_PASSWORD: {pg}\n      \
+         POSTGRES_DB: {pg}\n    \
+         ports:\n      \
+         - \"5433:5432\"\n    \
+         volumes:\n      \
+         - {pg}-pgdata:/var/lib/postgresql/data\n    \
+         healthcheck:\n      \
+         test: [\"CMD-SHELL\", \"pg_isready -U {pg} -d {pg}\"]\n      \
+         interval: 5s\n      \
+         timeout: 3s\n      \
+         retries: 10\n\n\
+         volumes:\n  \
+         {pg}-pgdata:\n"
+    );
+
+    // .env.example — copy to `.env`. Production vars are ACTIVE in --production
+    // mode (so `cp .env.example .env` runs immediately) and COMMENTED otherwise
+    // (dev needs none of them; they document the on-ramp).
+    let c = if production { "" } else { "# " };
+    let env_example = format!(
+        "# Copy to `.env` (gitignored) and edit. Sky loads .env via System.loadEnv.\n\
+         # Precedence: process env > .env > sky.toml.\n\n\
+         # Production gate — locks the dev console/banner, requires the auth secret.\n\
+         {c}ENV=production\n\n\
+         # ── ONE database for everything (Postgres from docker-compose.yml) ──\n\
+         # This single URL wires app data + sessions + analytics + telemetry into one DB.\n\
+         {c}DATABASE_URL=postgres://{pg}:{pg}@localhost:5433/{pg}?sslmode=disable\n\
+         {c}SKY_LIVE_STORE=postgres\n\
+         {c}SKY_ANALYTICS_RETENTION=180d\n\n\
+         # Secret (never commit a real value). Generate: openssl rand -hex 32\n\
+         {c}SKY_AUTH_TOKEN_SECRET=change-me-to-a-32-byte-random-secret\n"
+    );
+
     let writes = [
         (root.join("sky.toml"), toml),
         (root.join("src/Main.sky"), main_sky),
         (root.join(".gitignore"), gitignore.to_string()),
+        (root.join("docker-compose.yml"), compose),
+        (root.join(".env.example"), env_example),
     ];
     for (path, body) in &writes {
         if let Err(e) = std::fs::write(path, body) {
@@ -757,11 +859,27 @@ fn cmd_init(args: &[String]) -> ExitCode {
     println!("  sky.toml");
     println!("  src/Main.sky");
     println!("  .gitignore");
+    println!("  docker-compose.yml   (production Postgres — optional)");
+    println!("  .env.example         (copy to .env for production)");
     if copied_claude {
         println!("  CLAUDE.md");
     }
     println!();
-    println!("Next: cd {name} && sky build src/Main.sky");
+    if production {
+        println!("Production-grade scaffold (Postgres). Start the database, then run:");
+        println!("  cd {name}");
+        println!("  docker compose up -d");
+        println!("  cp .env.example .env      # set DATABASE_URL + the secret");
+        println!("  sky run src/Main.sky");
+        println!();
+        println!("One DATABASE_URL wires app data + sessions + analytics + telemetry into");
+        println!("one Postgres. For a quick run without Docker, switch to sqlite in sky.toml.");
+    } else {
+        println!("Next: cd {name} && sky run src/Main.sky   # SQLite + in-memory, zero setup");
+        println!();
+        println!("Going to production / need to scale? See the commented block in sky.toml +");
+        println!("docker-compose.yml, or scaffold Postgres from day 1: sky init {name} --production");
+    }
     ExitCode::SUCCESS
 }
 

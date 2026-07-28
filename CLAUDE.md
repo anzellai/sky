@@ -1374,7 +1374,7 @@ closes the remaining synchronous surface.
 ## Build & test
 
 ```bash
-sky init [name]                    # new project
+sky init [name] [--production]     # new project (default SQLite; --production scaffolds Postgres/docker-compose one-DB config from day 1)
 sky build src/Main.sky             # compile → sky-out/app
 sky run src/Main.sky               # build + run
 sky run src/Main.sky --profile     # + runtime profiling (cpu/heap/goroutines + REPORT.md); --profile-timeout <dur> auto-dumps on hang

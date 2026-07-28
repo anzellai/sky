@@ -176,7 +176,7 @@ or the session store, and password managers don't re-prompt.
 ## Commands
 
 ```sh
-sky init [name]              # new project
+sky init [name] [--production]  # new project — SQLite default; --production = Postgres one-DB + docker-compose
 sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (no binary)
