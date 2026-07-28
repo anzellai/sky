@@ -34,6 +34,7 @@ module Std.Codec exposing
     , toValue
     , toJson
     , fromJson
+    , fromJsonSafe
     , string
     , int
     , float
@@ -57,8 +58,9 @@ module Std.Codec exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Json.Encode as E exposing (Value)
 import Sky.Core.Json.Decode as D exposing (Decoder)
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
+import Sky.Core.String as String
 
 -- | The column type a codec maps to on the DB side.
 type ColType
@@ -104,6 +106,20 @@ toJson (Codec c) x =
 fromJson : Codec a -> String -> Result Error a
 fromJson (Codec c) s =
     D.decodeString c.dec s
+
+
+-- | Decode from JSON, rejecting input longer than `maxChars` BEFORE parsing —
+-- a size guard for UNTRUSTED input (request bodies, webhooks). Parser nesting
+-- depth is separately bounded. To avoid mass-assignment, decode into a
+-- dedicated input record (only client-settable fields), never straight into a
+-- persistence record.
+fromJsonSafe : Int -> Codec a -> String -> Result Error a
+fromJsonSafe maxChars (Codec c) s =
+    if String.length s > maxChars then
+        Err (Error.invalidInput "Codec.fromJsonSafe: input exceeds size limit")
+
+    else
+        D.decodeString c.dec s
 
 
 -- ── Primitives ───────────────────────────────────────────────────────────────

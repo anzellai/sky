@@ -275,6 +275,31 @@ hook.
 10. **Identifier quoting** (reserved words) + **column-name validation** in
     findBy/select. (§C/§E)
 
+## S5 — production hardening (status)
+
+- **Readable enum names in `Codec.auto`** — ✅ done (S5a). Codegen emits an enum
+  name registry (`rt.RegisterEnum`); `Codec.auto` stores/reads enums as names,
+  incl. inside `Maybe`/lists. Enum columns are TEXT (queryable).
+- **Untrusted-decode size limit** — ✅ done (S5b). `Codec.fromJsonSafe maxChars
+  codec s` rejects oversized input before parsing; parser bounds nesting depth.
+  Use it at every untrusted boundary (request bodies, webhooks). HTTP bodies are
+  additionally capped by `[live] maxBodyBytes`.
+- **Mass-assignment** — PATTERN (no new API needed): decode untrusted requests
+  into a dedicated **input record** that contains only client-settable fields
+  (`Codec.auto blankSignupInput`), then map it to the persistence record
+  server-side, setting `id`/`ownerId`/`createdAt`/`role` yourself. NEVER decode a
+  request straight into a persistence record — that lets a client set protected
+  fields. This is the enforced guidance; a future `Codec.pick`/`omit` is a
+  convenience, not a requirement.
+- **Naming strategy** — `Codec.auto` uses the Sky field name (camelCase) as the
+  JSON key and snake_case for DB columns (via the Store). For a fixed public wire
+  format, use an **explicit** codec (`object`/`field` with the exact keys) rather
+  than `auto` — which brings us to:
+- **Public-API wire boundary** — RULE: `Codec.auto` is for INTERNAL services +
+  DB, where the wire can track the type. For PUBLIC/versioned API contracts, use
+  an **explicit `Codec`** as the decoupling boundary (a per-version DTO record +
+  explicit codec) so renaming an internal field never silently breaks clients.
+
 ## Known compiler issue (found during S1b)
 
 **Multi-arg function values passed as arguments call curried-vs-uncurried
