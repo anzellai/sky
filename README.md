@@ -168,13 +168,20 @@ codegen.
 Match the application to the right surface — every shape uses the
 same TEA-style `init / update / view / subscriptions`.
 
-| What you're building                    | Surface           | Entry point                | Default deployment   |
-|-----------------------------------------|-------------------|----------------------------|----------------------|
-| Web app (server-driven, real-time)      | **Sky.Live**      | `Std.Live.app cfg`         | Cloud Run / VM       |
-| HTTP / JSON API (no UI)                 | **Sky.Http.Server** | `Server.listen 8000 [...]` | Cloud Run / VM     |
-| Terminal UI (TUI)                       | **Sky.Tui**       | `Std.Tui.app cfg`          | `brew install` / CLI |
-| CLI tool (no UI loop)                   | **Sky.Cli**       | `main = Task.run ...`      | `brew install`       |
-| Native desktop app                      | **Sky.Webview**   | `Std.Webview.app cfg`      | `.app` / `.exe`      |
+| What you're building                    | Surface           | Entry point                     | Default deployment   |
+|-----------------------------------------|-------------------|---------------------------------|----------------------|
+| Web app (server-driven, real-time)      | **Sky.Live**      | `Live.app (Live.config {…})`    | Cloud Run / VM       |
+| HTTP / JSON API (no UI)                 | **Sky.Http.Server** | `Server.listen 8000 [...]`    | Cloud Run / VM     |
+| Terminal UI (TUI)                       | **Sky.Tui**       | `Tui.app (Tui.config {…})`      | `brew install` / CLI |
+| CLI tool (no UI loop)                   | **Sky.Cli**       | `main = Task.run ...`           | `brew install`       |
+| Native desktop app                      | **Sky.Webview**   | `Webview.app { … }`             | `.app` / `.exe`      |
+
+> **v0.19 breaking change.** The TEA app config is now a typed builder:
+> `Live.app (Live.config { …required… } |> Live.withHead … )` replaces the old
+> row-open record literal `Live.app { …, head = … }`. Same for `Tui.app` /
+> `Tui.program` / `Cli.program`; `Webview.app` is unchanged. It gives the app
+> entry a precise, hover-able type and unifies its docs onto the module's `.sky`
+> source. Mechanical migration guide: [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
 
 Every backend shares `Std.Ui` for layout, `Std.Auth` for sessions,
 `Std.Db` for persistence, `Std.Log` / `Std.Trace` for

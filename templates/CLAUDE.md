@@ -28,10 +28,10 @@ memorise or inline signatures here — they drift; `sky doc` doesn't.
 
 | You want… | Use | Entry |
 |---|---|---|
-| Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app cfg` |
+| Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app (Live.config {…})` |
 | HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
-| Terminal UI | **Sky.Tui** | `Tui.app cfg` |
-| Desktop app (macOS) | **Sky.Webview** | `Webview.app cfg` |
+| Terminal UI | **Sky.Tui** | `Tui.app (Tui.config {…})` |
+| Desktop app (macOS) | **Sky.Webview** | `Webview.app { … }` (closed record) |
 | One-shot CLI / cron | **Sky.Cli** | `main = Task.run cmd` |
 
 Before scaffolding more than a proof of concept, confirm with the user:
@@ -129,7 +129,28 @@ error (`[E1011] NOT EXPOSED`).
 
 ## Sky.Live essentials
 
-`Live.app { init, update, view, subscriptions, routes, notFound }`. `init` runs
+`Live.app` takes a typed **builder** config (v0.19): `Live.config { init, update,
+view, subscriptions, routes, notFound }` builds an opaque `AppConfig`; attach
+optional fields with `withX` builders in a pipe:
+
+```elm
+import Std.Live exposing (app, config, route, withHead)
+
+main =
+    app
+        (config
+            { init = init, update = update, view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" Home ], notFound = Home
+            }
+            |> withHead headFor      -- optional; also withGuard/withAnalytics/withStatic/…
+        )
+```
+
+The pre-v0.19 record literal (`app { …, head = … }`) is removed —
+see `docs/v0.19/migration-builder-cfg.md`. Same pattern for `Tui.app` /
+`Tui.program` (`Tui.config` + `withOnKey`) and `Cli.program` (`Cli.config` +
+`withOnLine`); `Webview.app` keeps its closed record. `init` runs
 per-session (a reload restores Model from the store; it does NOT re-run `init`).
 `init` receives a `req` with `path` / `query` / `params` / `method` / `headers` /
 `cookies`. `update msg model` returns `(Model, Cmd Msg)`; `Cmd.perform task ToMsg`

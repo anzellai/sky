@@ -1638,16 +1638,33 @@ Each binding is either:
 
 ## Sky.Live + Sky.Http.Server
 
-### Live.app shape
+### Live.app shape (v0.19 typed builder)
+
+`Live.app` takes an opaque `AppConfig` built by `Live.config` + `withX`
+builders. The six required fields go in `config`; optional fields
+(`head`/`guard`/`consoleAuth`/`static`/`analytics`/`status`/…) attach via
+`withX` in a pipe. The pre-v0.19 row-open record literal is REMOVED — see
+`docs/v0.19/migration-builder-cfg.md`.
 
 ```elm
+import Std.Live exposing (app, config, route, withHead)
+
 main =
-    Live.app
-        { init = init, update = update, view = view, subscriptions = subscriptions
-        , routes = [ route "/" HomePage, route "/about" AboutPage ]
-        , notFound = HomePage
-        }
+    app
+        (config
+            { init = init, update = update, view = view, subscriptions = subscriptions
+            , routes = [ route "/" HomePage, route "/about" AboutPage ]
+            , notFound = HomePage
+            }
+            |> withHead headFor          -- optional; drop the whole `|>` line if unused
+        )
 ```
+
+Same builder shape for `Tui.app`/`Tui.program` (`Tui.config` + `withOnKey`) and
+`Cli.program` (`Cli.config` + `withOnLine`). `Webview.app` keeps its closed
+record (it has no optional fields). Every builder binding is an `Ffi.kernel`
+alias declared in the module's `.sky` source, so `sky doc`, LSP hover, and the
+type-checker all read one place — no `?` on hover, no drifting doc registry.
 
 HTTP-first (full HTML on load, patches on events), SSE
 subscriptions, session stores (memory / sqlite / redis / postgres /
