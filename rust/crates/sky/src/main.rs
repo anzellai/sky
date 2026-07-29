@@ -614,6 +614,19 @@ fn verb(check_only: bool) -> &'static str {
 /// `sky run <file>` — build, then exec the produced binary with inherited
 /// stdio, propagating its exit code.
 fn cmd_run(args: &[String]) -> ExitCode {
+    // Pre-run DB steps (composed by re-invoking this binary's own `db`
+    // subcommands, so they reuse the exact migrate/seed logic + env inheritance).
+    // Order: db push/migrate, then seed, then serve — the container-entrypoint
+    // "migrate-then-serve" shape.
+    let db_push = args.iter().any(|a| a == "--db-push");
+    let db_migrate = args.iter().any(|a| a == "--db-migrate");
+    let db_seed = args.iter().any(|a| a == "--db-seed");
+    let args: Vec<String> = args
+        .iter()
+        .filter(|a| !matches!(a.as_str(), "--db-push" | "--db-migrate" | "--db-seed"))
+        .cloned()
+        .collect();
+    let args = args.as_slice();
     let (args, profile) = parse_profile(args);
     let (positional, out_override) = parse_out(&args);
     let file = match resolve_entry_arg(
@@ -669,6 +682,31 @@ fn cmd_run(args: &[String]) -> ExitCode {
                 .map(|t| format!("; hang dump after {t}"))
                 .unwrap_or_default()
         );
+    }
+    // Run the requested DB steps before serving. Each re-invokes this binary's
+    // own `sky db <op>` in the project dir; a failure aborts the run.
+    for (flag, op) in [(db_push, "push"), (db_migrate, "migrate"), (db_seed, "seed")] {
+        if !flag {
+            continue;
+        }
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("sky run --db-{op}: could not locate sky binary: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let ok = Command::new(&exe)
+            .arg("db")
+            .arg(op)
+            .current_dir(&project_dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
+            return ExitCode::FAILURE;
+        }
     }
     println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
@@ -2002,6 +2040,58 @@ done _ =
     }
 }
 
+/// `sky db push` — sync the live DB to the current types with NO migration files:
+/// create each missing table + add new columns for every store in `db :
+/// Store.Project`. The fast dev loop (Prisma-style `db push`); production uses the
+/// committed `db/migrations/` via `sky db migrate`.
+fn cmd_db_push(_args: &[String]) -> ExitCode {
+    let file = Path::new("src/Main.sky");
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+    let code = format!(
+        r#"module SkyDbPush exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db as Db
+import Std.Db.Store as Store
+import {entry_module} exposing (db)
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen (\conn -> Store.pushProject conn db)
+        |> Task.andThen report
+
+
+report : List String -> Task Error ()
+report applied =
+    let
+        _ =
+            println ("sky db push: applied " ++ String.fromInt (List.length applied) ++ " change(s)")
+    in
+    Task.succeed ()
+"#
+    );
+    let Some((bin, project_dir)) =
+        build_temp_db_entry("sky db push", "SkyDbPush", "_skydbpush.sky", &code)
+    else {
+        eprintln!("sky db push: your entry module must expose `db : Store.Project`.");
+        return ExitCode::FAILURE;
+    };
+    match Command::new(&bin).current_dir(&project_dir).status() {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("sky db push: run failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `sky db status` / `sky db migrate` — build the project, then run it once with
 /// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
 /// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
@@ -2031,11 +2121,17 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("seed") {
         return cmd_db_seed(&args[1..]);
     }
+    // `sky db push` — sync the live DB to the types with no migration files.
+    if args.first().map(String::as_str) == Some("push") {
+        return cmd_db_push(&args[1..]);
+    }
     let op = match args.first().map(String::as_str) {
         Some("status") => "status",
         Some("migrate") => "migrate",
         _ => {
-            eprintln!("usage: sky db <status|migrate [--gen [name]]|seed|init> [file.sky]");
+            eprintln!(
+                "usage: sky db <status|migrate [--gen [name]]|push|seed|init> [file.sky]"
+            );
             return ExitCode::from(2);
         }
     };

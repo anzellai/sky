@@ -39,6 +39,7 @@ module Std.Db.Store exposing
     , Project
     , project
     , dumpSchema
+    , pushProject
     )
 
 import Sky.Ffi as Ffi
@@ -173,6 +174,31 @@ dumpSchema (Project tables) =
 dbDumpProject : List Table -> Task Error ()
 dbDumpProject =
     Ffi.kernel "Db_dumpProject"
+
+
+-- | Push the whole project's schema to the live DB — create each missing table
+-- and ADD any new columns (nullable), for every store. The no-migration-files
+-- "make my dev DB match my types" path (`sky db push`); production uses the
+-- committed `db/migrations/` files via `sky db migrate`. Returns the SQL applied.
+pushProject : Db -> Project -> Task Error (List String)
+pushProject conn (Project tables) =
+    pushTables conn tables
+
+
+pushTables : Db -> List Table -> Task Error (List String)
+pushTables conn tables =
+    case tables of
+
+        [] ->
+            Task.succeed []
+
+        t :: rest ->
+            dbAutoMigrate conn t.name t.cols t.pk
+                |> Task.andThen
+                       (\applied ->
+                           Task.map
+                               (\more -> applied ++ more)
+                               (pushTables conn rest))
 
 
 -- ── Internal ─────────────────────────────────────────────────────────────────

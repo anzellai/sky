@@ -262,6 +262,29 @@ ledger and **exits non-zero while anything is pending** — a ready-made "is thi
 DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
 module exposes (`module Main exposing (main, db, seed)`), against the live DB.
 
+### `sky db push` — no-migration-files dev sync
+
+```bash
+sky db push        # create missing tables + add new columns to match your types
+```
+
+The fast prototyping loop (Prisma-style `db push`): syncs the live DB to your
+current `db : Store.Project` with **no migration files** — creates each missing
+table and adds any new (nullable) columns. Additive + idempotent; never drops or
+retypes. Use `sky db migrate --gen` once your schema stabilises and you want
+reviewable, committed history for production.
+
+### Running migrations as part of `sky run`
+
+`sky run` takes `--db-push`, `--db-migrate`, and `--db-seed` flags that run those
+steps (in that order) before the app starts — the container-entrypoint
+"migrate-then-serve" shape. Any step failing aborts the run.
+
+```bash
+sky run --db-migrate --db-seed src/Main.sky   # apply committed migrations, seed, serve
+sky run --db-push src/Main.sky                # dev: sync schema, serve
+```
+
 How it works — gen builds a temporary DB-free entry (`main =
 Store.dumpSchema db`), captures the type-derived schema, and diffs it against
 the committed snapshot `db/schema.json`:
