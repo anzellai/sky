@@ -2,27 +2,56 @@ module Lib.Monitors exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
-import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Http as Http
 import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
-import Std.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db.Store as Store
 import Std.Log exposing (println)
-import Lib.Database as Database
+import Lib.Database as Db exposing (Monitor, MonitorSample)
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
+reportWrite : String -> Result Error a -> ()
+reportWrite label result =
+    case result of
+
+        Ok _ ->
+            ()
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[DB ERROR] Monitors." ++ label ++ ": "
+                            ++ Error.toString e)
+            in
+                ()
+
+
+-- createMonitor : upsert by natural id (name+url hash) — re-creating the same
+-- monitor updates it in place.
 createMonitor : String -> String -> Int -> String -> String
 createMonitor name url interval visibility =
     let
         monId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ url))
+        monitor =
+            { id = monId
+            , name = name
+            , url = url
+            , intervalSecs = interval
+            , status = "unknown"
+            , responseTime = 0
+            , lastChecked = ""
+            , visibility = visibility
+            , createdAt = ""
+            }
         _ =
-            Database.execOrLog
-                "Monitors.createMonitor"
-                "INSERT OR REPLACE INTO monitors (id, name, url, interval_secs, visibility) VALUES (?, ?, ?, ?, ?)"
-                [ monId, name, url, String.fromInt interval, visibility ]
+            reportWrite
+                "createMonitor"
+                (Task.run (Store.upsert Db.conn Db.monitorStore monitor))
     in
         monId
 
@@ -31,34 +60,30 @@ deleteMonitor : String -> ()
 deleteMonitor monId =
     let
         _ =
-            Database.execOrLog
-                "Monitors.deleteMonitor/history"
-                "DELETE FROM monitor_history WHERE monitor_id = ?"
-                [ monId ]
+            reportWrite
+                "deleteMonitor/history"
+                (Task.run
+                    (Store.deleteWhere
+                        Db.conn
+                        Db.monitorHistoryStore
+                        (Store.eq "monitorId" (SqlString monId))))
         _ =
-            Database.execOrLog
-                "Monitors.deleteMonitor/row"
-                "DELETE FROM monitors WHERE id = ?"
-                [ monId ]
+            reportWrite
+                "deleteMonitor/row"
+                (Task.run (Store.delete Db.conn Db.monitorStore "id" monId))
     in
         ()
 
 
-getMonitors : List (Dict String String)
+getMonitors : List Monitor
 getMonitors =
-    Database.queryOrLog
-        "Monitors.getMonitors"
-        "SELECT * FROM monitors ORDER BY name"
+    Result.withDefault
         []
+        (Task.run
+            (Store.query Db.monitorStore |> Store.orderAsc "name"
+                |> Store.toList Db.conn))
 
 
--- checkEndpoint : probe an HTTP endpoint. Returns a (status, responseTime)
--- tuple for monitor-state recording. Classifies errors into typed IoError
--- for structured logging:
---   * NetworkError  — connection refused / DNS / timeout → "down"
---   * fromHttpStatus — 4xx → "degraded", 5xx → "down" (via checkResponseStatus)
--- Monitor status remains a plain string because the schema/view uses it
--- for rendering; the typed cause is only logged here.
 checkEndpoint : String -> ( String, Int )
 checkEndpoint url =
     case Task.run (Http.get url) of
@@ -68,11 +93,10 @@ checkEndpoint url =
 
         Err e ->
             let
-                typedErr = e
                 _ =
                     println
                         ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": "
-                            ++ Error.toString typedErr)
+                            ++ Error.toString e)
             in
                 ( "down", 0 )
 
@@ -91,26 +115,49 @@ checkResponseStatus resp =
             ( "down", 0 )
 
 
+-- recordCheck : update the monitor's live status (read-modify-write; touchOnUpdate
+-- bumps last_checked) + append a history sample.
 recordCheck : String -> String -> Int -> ()
 recordCheck monId status responseTime =
     let
         _ =
-            Database.execOrLog
-                "Monitors.recordCheck/update"
-                "UPDATE monitors SET status = ?, response_time = ?, last_checked = datetime('now') WHERE id = ?"
-                [ status, String.fromInt responseTime, monId ]
+            case Task.run (Store.findBy Db.conn Db.monitorStore "id" monId) of
+
+                Ok (Just mon) ->
+                    reportWrite
+                        "recordCheck/update"
+                        (Task.run
+                            (Store.update
+                                Db.conn
+                                Db.monitorStore
+                                { mon | status = status
+                                , responseTime = responseTime
+                                }))
+
+                _ ->
+                    ()
+        sample =
+            { id = 0
+            , monitorId = monId
+            , status = status
+            , responseTime = responseTime
+            , checkedAt = ""
+            }
         _ =
-            Database.execOrLog
-                "Monitors.recordCheck/history"
-                "INSERT INTO monitor_history (monitor_id, status, response_time) VALUES (?, ?, ?)"
-                [ monId, status, String.fromInt responseTime ]
+            reportWrite
+                "recordCheck/history"
+                (Task.run (Store.insert Db.conn Db.monitorHistoryStore sample))
     in
         ()
 
 
-getMonitorHistory : String -> Int -> List (Dict String String)
+getMonitorHistory : String -> Int -> List MonitorSample
 getMonitorHistory monId limit =
-    Database.queryOrLog
-        "Monitors.getMonitorHistory"
-        "SELECT status, response_time, checked_at FROM monitor_history WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?"
-        [ monId, String.fromInt limit ]
+    Result.withDefault
+        []
+        (Task.run
+            (Store.query Db.monitorHistoryStore
+                |> Store.where_ (Store.eq "monitorId" (SqlString monId))
+                |> Store.orderDesc "checkedAt"
+                |> Store.limit limit
+                |> Store.toList Db.conn))

@@ -1,23 +1,34 @@
-module Lib.Database exposing (conn, getField, getInt, getBool, exec, query, queryOrLog, execOrLog)
+module Lib.Database exposing
+    ( conn
+    , Monitor
+    , Metric
+    , Alert
+    , Session
+    , MetricSample
+    , MonitorSample
+    , AlertEvent
+    , monitorStore
+    , metricStore
+    , alertStore
+    , sessionStore
+    , metricHistoryStore
+    , monitorHistoryStore
+    , alertHistoryStore
+    )
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Maybe as Maybe
-import Sky.Core.Dict as Dict
 import Sky.Core.System as System
 import Sky.Core.Task as Task
+import Std.Codec as Codec exposing (Codec)
 import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
 import Std.Log exposing (println)
-import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+import Sky.Core.Error as Error exposing (Error)
 
 
--- Db.* now returns Task Error a per the effect-boundary doctrine.
--- This Lib layer bridges through Task.run inside each wrapper so the
--- rest of skymon's update / view code keeps its existing Result
--- contracts unchanged. For long-running batched writes or background
--- reads, factor into a top-level Task and dispatch via Cmd.perform —
--- see 18-job-queue/src/Main.sky for the canonical async pattern.
+-- One memoised connection shared by every Store op (reads SKY_DB_PATH).
 conn =
-    case Task.run (Db.open "sqlite" "skymon.db") of
+    case Task.run (Db.connect ()) of
 
         Ok c ->
             c
@@ -26,66 +37,193 @@ conn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skymon.db: " ++ Error.toString e)
+                        ("[FATAL] Cannot open the database: " ++ Error.toString e)
             in
                 System.exit 1
 
+-- ── Config rows (natural/app TEXT ids → upsert; numeric fields typed) ──
+type alias Monitor =
+    { id : String
+    , name : String
+    , url : String
+    , intervalSecs : Int
+    , status : String
+    , responseTime : Int
+    , lastChecked : String
+    , visibility : String
+    , createdAt : String
+    }
 
-getField field row =
-    Db.getField field row
+type alias Metric =
+    { id : String
+    , name : String
+    , sourceType : String
+    , configJson : String
+    , lastValue : String
+    , lastUpdated : String
+    , visibility : String
+    , createdAt : String
+    }
+
+type alias Alert =
+    { id : String
+    , metricId : String
+    , condition : String
+    , threshold : String
+    , notifyType : String
+    , notifyTarget : String
+    , enabled : Int
+    , createdAt : String
+    }
+
+type alias Session =
+    { id : String
+    , username : String
+    , avatarUrl : String
+    , role : String
+    , createdAt : String
+    }
+
+-- ── Time-series rows (serial id → insert / insertMany) ──────────────
+type alias MetricSample =
+    { id : Int
+    , metricId : String
+    , value : String
+    , recordedAt : String
+    }
+
+type alias MonitorSample =
+    { id : Int
+    , monitorId : String
+    , status : String
+    , responseTime : Int
+    , checkedAt : String
+    }
+
+type alias AlertEvent =
+    { id : Int
+    , alertId : String
+    , metricId : String
+    , metricValue : String
+    , condition : String
+    , threshold : String
+    , notifyType : String
+    , firedAt : String
+    }
 
 
-getInt field row =
-    Db.getInt field row
+-- ── Stores ──────────────────────────────────────────────────────────
+monitorStore : Store Monitor
+monitorStore =
+    Store.fromCodec
+        "monitors"
+        (Codec.auto
+            { id = ""
+            , name = ""
+            , url = ""
+            , intervalSecs = 30
+            , status = "unknown"
+            , responseTime = 0
+            , lastChecked = ""
+            , visibility = "user"
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultInt "intervalSecs" 30
+        |> Store.defaultNow "createdAt"
+        |> Store.touchOnUpdate "lastChecked"
 
 
-getBool field row =
-    Db.getBool field row
+metricStore : Store Metric
+metricStore =
+    Store.fromCodec
+        "metrics"
+        (Codec.auto
+            { id = ""
+            , name = ""
+            , sourceType = ""
+            , configJson = "{}"
+            , lastValue = ""
+            , lastUpdated = ""
+            , visibility = "user"
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultNow "createdAt"
+        |> Store.touchOnUpdate "lastUpdated"
 
 
--- Typed boundary: returns Result Error (). Callers in `update` MUST
--- pattern-match and decide what to do (log, notification, retry).
-exec queryStr args =
-    case Task.run (Db.exec conn queryStr args) of
-
-        Ok _ ->
-            Ok ()
-
-        Err e ->
-            Err e
-
-
--- Typed boundary: returns Result Error (List Row).
-query queryStr args =
-    Task.run (Db.query conn queryStr args)
-
-
--- Legacy logging fallback helpers. Prefer `query` / `exec` at update
--- boundaries; use these in view-helper contexts or fire-and-forget
--- sites where there's no model to update.
-queryOrLog label queryStr args =
-    case query queryStr args of
-
-        Ok rows ->
-            rows
-
-        Err e ->
-            let
-                _ =
-                    println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
-            in
-                []
+alertStore : Store Alert
+alertStore =
+    Store.fromCodec
+        "alerts"
+        (Codec.auto
+            { id = ""
+            , metricId = ""
+            , condition = ""
+            , threshold = ""
+            , notifyType = "webhook"
+            , notifyTarget = ""
+            , enabled = 1
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultInt "enabled" 1
+        |> Store.defaultNow "createdAt"
 
 
-execOrLog label queryStr args =
-    case exec queryStr args of
+sessionStore : Store Session
+sessionStore =
+    Store.fromCodec
+        "sessions"
+        (Codec.auto
+            { id = ""
+            , username = ""
+            , avatarUrl = ""
+            , role = "user"
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultNow "createdAt"
 
-        Ok _ ->
-            ()
 
-        Err e ->
-            let
-                _ =
-                    println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
-            in
-                ()
+metricHistoryStore : Store MetricSample
+metricHistoryStore =
+    Store.fromCodec
+        "metric_history"
+        (Codec.auto { id = 0, metricId = "", value = "", recordedAt = "" })
+        |> Store.serial "id"
+        |> Store.defaultNow "recordedAt"
+
+
+monitorHistoryStore : Store MonitorSample
+monitorHistoryStore =
+    Store.fromCodec
+        "monitor_history"
+        (Codec.auto
+            { id = 0
+            , monitorId = ""
+            , status = ""
+            , responseTime = 0
+            , checkedAt = ""
+            })
+        |> Store.serial "id"
+        |> Store.defaultNow "checkedAt"
+
+
+alertHistoryStore : Store AlertEvent
+alertHistoryStore =
+    Store.fromCodec
+        "alert_history"
+        (Codec.auto
+            { id = 0
+            , alertId = ""
+            , metricId = ""
+            , metricValue = ""
+            , condition = ""
+            , threshold = ""
+            , notifyType = ""
+            , firedAt = ""
+            })
+        |> Store.serial "id"
+        |> Store.defaultNow "firedAt"

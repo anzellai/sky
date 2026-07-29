@@ -118,8 +118,7 @@ viewMetricHistory : String -> Html Msg
 viewMetricHistory metId =
     let
         history = Metrics.getMetricHistory metId 50
-        values =
-            List.map (\r -> parseIntOr0 (Database.getField "value" r)) history
+        values = List.map (\r -> parseIntOr0 (r.value)) history
     in
         div
             [ class "card" ]
@@ -132,7 +131,7 @@ viewMetricHistory metId =
             ]
 
 
-viewHistoryTable : List (Dict String String) -> Html Msg
+viewHistoryTable : List Database.MetricSample -> Html Msg
 viewHistoryTable history =
     if List.isEmpty history then
         p
@@ -161,16 +160,14 @@ viewHistoryTable history =
             ]
 
 
-viewHistoryRow : Dict String String -> Html Msg
+viewHistoryRow : Database.MetricSample -> Html Msg
 viewHistoryRow row =
     tr
         []
         [ td
               [ style "color: #64748b; font-size: 12px" ]
-              [ text (Database.getField "recorded_at" row) ]
-        , td
-              [ style "color: #38bdf8; font-weight: 600" ]
-              [ text (Database.getField "value" row) ]
+              [ text (row.recordedAt) ]
+        , td [ style "color: #38bdf8; font-weight: 600" ] [ text (row.value) ]
         ]
 
 
@@ -230,23 +227,16 @@ viewMetricAlertHistory metId =
                 ]
 
 
-viewAlertRow : Dict String String -> Html Msg
+viewAlertRow : Database.AlertEvent -> Html Msg
 viewAlertRow row =
     tr
         []
-        [ td
-              [ style "color: #64748b; font-size: 12px" ]
-              [ text (Database.getField "fired_at" row) ]
+        [ td [ style "color: #64748b; font-size: 12px" ] [ text (row.firedAt) ]
         , td
               [ style "color: #ef4444; font-weight: 600" ]
-              [ text (Database.getField "metric_value" row) ]
+              [ text (row.metricValue) ]
         , td
               [ style "color: #a78bfa; font-family: monospace" ]
-              [ text
-                    (Database.getField "condition" row ++ " "
-                        ++ Database.getField "threshold" row)
-              ]
-        , td
-              [ style "color: #64748b" ]
-              [ text (Database.getField "notify_type" row) ]
+              [ text (row.condition ++ " " ++ row.threshold) ]
+        , td [ style "color: #64748b" ] [ text (row.notifyType) ]
         ]

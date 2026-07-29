@@ -235,7 +235,7 @@ viewAlertHistory =
             ]
 
 
-viewAlertHistoryContent : List (Dict String String) -> Html Msg
+viewAlertHistoryContent : List Database.AlertEvent -> Html Msg
 viewAlertHistoryContent history =
     if List.isEmpty history then
         div
@@ -270,26 +270,17 @@ viewAlertHistoryContent history =
             ]
 
 
-viewAlertHistoryRow : Dict String String -> Html Msg
+viewAlertHistoryRow : Database.AlertEvent -> Html Msg
 viewAlertHistoryRow row =
     tr
         []
-        [ td
-              [ style "color: #64748b; font-size: 12px" ]
-              [ text (Database.getField "fired_at" row) ]
-        , td
-              [ style "font-weight: 600" ]
-              [ text (Database.getField "metric_id" row) ]
+        [ td [ style "color: #64748b; font-size: 12px" ] [ text (row.firedAt) ]
+        , td [ style "font-weight: 600" ] [ text (row.metricId) ]
         , td
               [ style "color: #ef4444; font-weight: 600" ]
-              [ text (Database.getField "metric_value" row) ]
+              [ text (row.metricValue) ]
         , td
               [ style "color: #a78bfa; font-family: monospace" ]
-              [ text
-                    (Database.getField "condition" row ++ " "
-                        ++ Database.getField "threshold" row)
-              ]
-        , td
-              [ style "color: #64748b" ]
-              [ text (Database.getField "notify_type" row) ]
+              [ text (row.condition ++ " " ++ row.threshold) ]
+        , td [ style "color: #64748b" ] [ text (row.notifyType) ]
         ]

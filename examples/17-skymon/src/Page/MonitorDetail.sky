@@ -154,11 +154,8 @@ viewMonitorHistory : String -> Html Msg
 viewMonitorHistory monId =
     let
         history = Monitors.getMonitorHistory monId 50
-        responseTimes =
-            List.map
-                (\r -> parseIntOr0 (Database.getField "response_time" r))
-                history
-        statuses = List.map (\r -> Database.getField "status" r) history
+        responseTimes = List.map (\r -> r.responseTime) history
+        statuses = List.map (\r -> r.status) history
     in
         div
             [ class "card" ]
@@ -180,7 +177,7 @@ viewMonitorHistory monId =
             ]
 
 
-viewHistoryTable : List (Dict String String) -> Html Msg
+viewHistoryTable : List Database.MonitorSample -> Html Msg
 viewHistoryTable history =
     if List.isEmpty history then
         p
@@ -212,24 +209,23 @@ viewHistoryTable history =
             ]
 
 
-viewHistoryRow : Dict String String -> Html Msg
+viewHistoryRow : Database.MonitorSample -> Html Msg
 viewHistoryRow row =
     tr
         []
         [ td
               [ style "color: #64748b; font-size: 12px" ]
-              [ text (Database.getField "checked_at" row) ]
+              [ text (row.checkedAt) ]
         , td
               []
               [ span
-                    [ class
-                          ("status-dot status-" ++ Database.getField "status" row)
+                    [ class ("status-dot status-" ++ row.status)
                     , style "margin-right: 6px"
                     ]
                     []
-              , text (Database.getField "status" row)
+              , text (row.status)
               ]
-        , td [] [ text (Database.getField "response_time" row ++ "ms") ]
+        , td [] [ text (String.fromInt row.responseTime ++ "ms") ]
         ]
 
 

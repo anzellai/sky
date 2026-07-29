@@ -8,12 +8,30 @@ import Sky.Core.Result as Result
 import Sky.Core.Http as Http
 import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
-import Sky.Core.Json.Decode as Decode
-import Std.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db as RawDb
+import Std.Db.Store as Store
 import Std.Log exposing (println)
-import Lib.Database as Database
+import Lib.Database as Db exposing (Metric, MetricSample)
 import Lib.SafeQuery as SafeQuery
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+
+
+reportWrite : String -> Result Error a -> ()
+reportWrite label result =
+    case result of
+
+        Ok _ ->
+            ()
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[DB ERROR] Metrics." ++ label ++ ": "
+                            ++ Error.toString e)
+            in
+                ()
 
 
 createMetric : String -> String -> String -> String -> String
@@ -21,11 +39,20 @@ createMetric name sourceType configJson visibility =
     let
         metId =
             String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ sourceType))
+        metric =
+            { id = metId
+            , name = name
+            , sourceType = sourceType
+            , configJson = configJson
+            , lastValue = ""
+            , lastUpdated = ""
+            , visibility = visibility
+            , createdAt = ""
+            }
         _ =
-            Database.execOrLog
-                "Metrics.createMetric"
-                "INSERT OR REPLACE INTO metrics (id, name, source_type, config_json, visibility) VALUES (?, ?, ?, ?, ?)"
-                [ metId, name, sourceType, configJson, visibility ]
+            reportWrite
+                "createMetric"
+                (Task.run (Store.upsert Db.conn Db.metricStore metric))
     in
         metId
 
@@ -34,59 +61,58 @@ deleteMetric : String -> ()
 deleteMetric metId =
     let
         _ =
-            Database.execOrLog
-                "Metrics.deleteMetric/history"
-                "DELETE FROM metric_history WHERE metric_id = ?"
-                [ metId ]
+            reportWrite
+                "deleteMetric/history"
+                (Task.run
+                    (Store.deleteWhere
+                        Db.conn
+                        Db.metricHistoryStore
+                        (Store.eq "metricId" (SqlString metId))))
         _ =
-            Database.execOrLog
-                "Metrics.deleteMetric/alerts"
-                "DELETE FROM alerts WHERE metric_id = ?"
-                [ metId ]
+            reportWrite
+                "deleteMetric/alerts"
+                (Task.run
+                    (Store.deleteWhere
+                        Db.conn
+                        Db.alertStore
+                        (Store.eq "metricId" (SqlString metId))))
         _ =
-            Database.execOrLog
-                "Metrics.deleteMetric/row"
-                "DELETE FROM metrics WHERE id = ?"
-                [ metId ]
+            reportWrite
+                "deleteMetric/row"
+                (Task.run (Store.delete Db.conn Db.metricStore "id" metId))
     in
         ()
 
 
-getMetrics : List (Dict String String)
+getMetrics : List Metric
 getMetrics =
-    Database.queryOrLog
-        "Metrics.getMetrics"
-        "SELECT * FROM metrics ORDER BY name"
+    Result.withDefault
         []
+        (Task.run
+            (Store.query Db.metricStore |> Store.orderAsc "name"
+                |> Store.toList Db.conn))
 
 
-runMetric : Dict String String -> String
+runMetric : Metric -> String
 runMetric metric =
-    let
-        sourceType = Database.getField "source_type" metric
-    in
-        if sourceType == "sql" then
-            runSqlMetric metric
+    if metric.sourceType == "sql" then
+        runSqlMetric metric
 
-        else if sourceType == "http" then
-            runHttpMetric metric
+    else if metric.sourceType == "http" then
+        runHttpMetric metric
 
-        else if sourceType == "api" then
-            runApiMetric metric
+    else if metric.sourceType == "api" then
+        runApiMetric metric
 
-        else
-            "error: unknown source type"
-        -- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
-        -- Errors are surfaced as "error: <typed-cause>" AND logged so operators
-        -- see the structured IoError form in stderr.
+    else
+        "error: unknown source type"
 
 
-runSqlMetric : Dict String String -> String
+runSqlMetric : Metric -> String
 runSqlMetric metric =
     let
-        configJson = Database.getField "config_json" metric
-        dsn = extractJsonField "dsn" configJson
-        query = extractJsonField "query" configJson
+        dsn = extractJsonField "dsn" metric.configJson
+        query = extractJsonField "query" metric.configJson
     in
         if String.isEmpty dsn || String.isEmpty query then
             "error: missing dsn or query in config"
@@ -95,47 +121,40 @@ runSqlMetric metric =
             runSafeQuery dsn query
 
 
+-- runSafeQuery / runSafeQueryWithConn stay RAW BY DESIGN: they run an operator's
+-- own SQL against an EXTERNAL Postgres DSN (SafeQuery gates it to SELECT-only).
+-- Store models this app's tables, not arbitrary external queries.
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
-    case Task.run (Db.open "postgres" dsn) of
+    case Task.run (RawDb.open "postgres" dsn) of
 
         Err e ->
             let
-                typedErr = e
                 _ =
                     println
-                        ("[METRIC ERROR] runSafeQuery/open: "
-                            ++ Error.toString typedErr)
+                        ("[METRIC ERROR] runSafeQuery/open: " ++ Error.toString e)
             in
-                "error: " ++ Error.toString typedErr
+                "error: " ++ Error.toString e
 
         Ok extConn ->
             runSafeQueryWithConn extConn query
 
 
--- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
--- with Task.run at this sync call site.
 runSafeQueryWithConn extConn query =
     case SafeQuery.runReadOnly extConn query [] of
 
         Err e ->
             let
-                typedErr = e
                 _ =
                     println
-                        ("[METRIC ERROR] runSafeQuery: "
-                            ++ Error.toString typedErr)
+                        ("[METRIC ERROR] runSafeQuery: " ++ Error.toString e)
             in
-                "error: " ++ Error.toString typedErr
+                "error: " ++ Error.toString e
 
         Ok rows ->
             extractFirstValue rows
 
 
--- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
--- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
--- only worked while pass-2 dep HM masked Type errors via the
--- pass-1 fallback (round 6 fix made pass 2 authoritative).
 extractFirstValue : List (Dict String String) -> String
 extractFirstValue rows =
     case rows of
@@ -156,11 +175,10 @@ extractFirstValue rows =
             "0"
 
 
-runHttpMetric : Dict String String -> String
+runHttpMetric : Metric -> String
 runHttpMetric metric =
     let
-        configJson = Database.getField "config_json" metric
-        url = extractJsonField "url" configJson
+        url = extractJsonField "url" metric.configJson
     in
         if String.isEmpty url then
             "error: missing url"
@@ -173,21 +191,19 @@ runHttpMetric metric =
 
                 Err e ->
                     let
-                        typedErr = e
                         _ =
                             println
                                 ("[METRIC ERROR] runHttpMetric " ++ url ++ ": "
-                                    ++ Error.toString typedErr)
+                                    ++ Error.toString e)
                     in
-                        "error: " ++ Error.toString typedErr
+                        "error: " ++ Error.toString e
 
 
-runApiMetric : Dict String String -> String
+runApiMetric : Metric -> String
 runApiMetric metric =
     let
-        configJson = Database.getField "config_json" metric
-        url = extractJsonField "url" configJson
-        fieldPath = extractJsonField "field" configJson
+        url = extractJsonField "url" metric.configJson
+        fieldPath = extractJsonField "field" metric.configJson
     in
         if String.isEmpty url then
             "error: missing url"
@@ -204,38 +220,53 @@ runApiMetric metric =
 
                 Err e ->
                     let
-                        typedErr = e
                         _ =
                             println
                                 ("[METRIC ERROR] runApiMetric " ++ url ++ ": "
-                                    ++ Error.toString typedErr)
+                                    ++ Error.toString e)
                     in
-                        "error: " ++ Error.toString typedErr
+                        "error: " ++ Error.toString e
 
 
+-- recordMetricValue : update the metric's live value (touchOnUpdate bumps
+-- last_updated) + append a history sample.
 recordMetricValue : String -> String -> ()
 recordMetricValue metId value =
     let
         _ =
-            Database.execOrLog
-                "Metrics.recordMetricValue/update"
-                "UPDATE metrics SET last_value = ?, last_updated = datetime('now') WHERE id = ?"
-                [ value, metId ]
+            case Task.run (Store.findBy Db.conn Db.metricStore "id" metId) of
+
+                Ok (Just met) ->
+                    reportWrite
+                        "recordMetricValue/update"
+                        (Task.run
+                            (Store.update
+                                Db.conn
+                                Db.metricStore
+                                { met | lastValue = value }))
+
+                _ ->
+                    ()
+        sample =
+            { id = 0, metricId = metId, value = value, recordedAt = "" }
         _ =
-            Database.execOrLog
-                "Metrics.recordMetricValue/history"
-                "INSERT INTO metric_history (metric_id, value) VALUES (?, ?)"
-                [ metId, value ]
+            reportWrite
+                "recordMetricValue/history"
+                (Task.run (Store.insert Db.conn Db.metricHistoryStore sample))
     in
         ()
 
 
-getMetricHistory : String -> Int -> List (Dict String String)
+getMetricHistory : String -> Int -> List MetricSample
 getMetricHistory metId limit =
-    Database.queryOrLog
-        "Metrics.getMetricHistory"
-        "SELECT value, recorded_at FROM metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
-        [ metId, String.fromInt limit ]
+    Result.withDefault
+        []
+        (Task.run
+            (Store.query Db.metricHistoryStore
+                |> Store.where_ (Store.eq "metricId" (SqlString metId))
+                |> Store.orderDesc "recordedAt"
+                |> Store.limit limit
+                |> Store.toList Db.conn))
 
 
 extractJsonField : String -> String -> String

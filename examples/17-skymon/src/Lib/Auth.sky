@@ -8,9 +8,10 @@ import Sky.Core.Http as Http
 import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Process as Process
-import Std.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db.Store as Store
 import Std.Log exposing (println)
-import Lib.Database as Database
+import Lib.Database as Database exposing (Session)
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
@@ -60,19 +61,20 @@ exchangeCodeForToken code =
                 Err e
 
 
-getGitHubUser : String -> Result Error (Dict String String)
+-- getGitHubUser returns a small typed record (from the GitHub JSON), consumed
+-- by the sign-in handler — not a DB row.
+getGitHubUser : String -> Result Error { username : String
+, avatarUrl : String
+}
 getGitHubUser token =
     case Task.run
              (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
 
         Ok resp ->
-            let
-                login = extractJsonSimple "login" resp.body
-                avatar = extractJsonSimple "avatar_url" resp.body
-            in
-                Ok
-                    (Dict.fromList
-                        [ ( "username", login ), ( "avatar_url", avatar ) ])
+            Ok
+                { username = extractJsonSimple "login" resp.body
+                , avatarUrl = extractJsonSimple "avatar_url" resp.body
+                }
 
         Err e ->
             Err e
@@ -86,23 +88,39 @@ createSession username avatarUrl role =
                 0
                 32
                 (Crypto.sha256 (username ++ ":" ++ String.fromInt 0))
+        session =
+            { id = sessionId
+            , username = username
+            , avatarUrl = avatarUrl
+            , role = role
+            , createdAt = ""
+            }
         _ =
-            Database.execOrLog
-                "Auth.createSession"
-                "INSERT OR REPLACE INTO sessions (id, username, avatar_url, role) VALUES (?, ?, ?, ?)"
-                [ sessionId, username, avatarUrl, role ]
+            case Task.run
+                     (Store.upsert Database.conn Database.sessionStore session) of
+
+                Ok _ ->
+                    ()
+
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[AUTH ERROR] createSession: "
+                                    ++ Error.toString e)
+                    in
+                        ()
     in
         sessionId
 
 
--- getSession: typed result. DB failure → DbError; unknown id →
--- Unauthorised (caller should redirect to sign-in). The outer Result
--- separates "infra broken" from "session not valid".
-getSession : String -> Result Error (Dict String String)
+-- getSession: findBy the session id. Unknown id → Unauthorised (caller
+-- redirects to sign-in); the outer Result separates infra failure from
+-- "session not valid".
+getSession : String -> Result Error Session
 getSession sessionId =
-    case Database.query
-             "SELECT * FROM sessions WHERE id = ? LIMIT 1"
-             [ sessionId ] of
+    case Task.run
+             (Store.findBy Database.conn Database.sessionStore "id" sessionId) of
 
         Err e ->
             let
@@ -111,26 +129,37 @@ getSession sessionId =
             in
                 Err e
 
-        Ok rows ->
-            case rows of
+        Ok (Just session) ->
+            Ok session
 
-                row :: _ ->
-                    Ok row
-
-                [] ->
-                    Err
-                        (Error.permissionDenied
-                            |> Error.withMessage "Session not found or expired.")
+        Ok Nothing ->
+            Err
+                (Error.permissionDenied
+                    |> Error.withMessage "Session not found or expired.")
 
 
 deleteSession : String -> ()
 deleteSession sessionId =
     let
         _ =
-            Database.execOrLog
-                "Auth.deleteSession"
-                "DELETE FROM sessions WHERE id = ?"
-                [ sessionId ]
+            case Task.run
+                     (Store.delete
+                         Database.conn
+                         Database.sessionStore
+                         "id"
+                         sessionId) of
+
+                Ok _ ->
+                    ()
+
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[AUTH ERROR] deleteSession: "
+                                    ++ Error.toString e)
+                    in
+                        ()
     in
         ()
 

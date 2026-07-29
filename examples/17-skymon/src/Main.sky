@@ -64,8 +64,7 @@ main =
               , route "/auth" AuthPage
               ]
             , notFound = NotFoundPage
-            }
-        )
+            })
 
 
 view : Model -> Html Msg
@@ -298,7 +297,7 @@ runAllMetricCollections _ =
         collectMetrics rawMetrics
 
 
-collectMetrics : List (Dict String String) -> ()
+collectMetrics : List Database.Metric -> ()
 collectMetrics metrics =
     case metrics of
 
@@ -308,7 +307,7 @@ collectMetrics metrics =
         met :: rest ->
             let
                 value = Metrics.runMetric met
-                metId = Database.getField "id" met
+                metId = met.id
                 _ = Metrics.recordMetricValue metId value
             in
                 collectMetrics rest
@@ -437,16 +436,16 @@ loadMonitors _ =
     List.map rowToMonitor Monitors.getMonitors
 
 
-rowToMonitor : Dict String String -> Monitor
+rowToMonitor : Database.Monitor -> Monitor
 rowToMonitor row =
-    { id = Database.getField "id" row
-    , name = Database.getField "name" row
-    , url = Database.getField "url" row
-    , interval = Database.getInt "interval_secs" row
-    , status = parseStatus (Database.getField "status" row)
-    , responseTime = Database.getInt "response_time" row
-    , lastChecked = Database.getField "last_checked" row
-    , visibility = parseVisibility (Database.getField "visibility" row)
+    { id = row.id
+    , name = row.name
+    , url = row.url
+    , interval = row.intervalSecs
+    , status = parseStatus (row.status)
+    , responseTime = row.responseTime
+    , lastChecked = row.lastChecked
+    , visibility = parseVisibility (row.visibility)
     }
 
 
@@ -455,15 +454,15 @@ loadMetrics _ =
     List.map rowToMetric Metrics.getMetrics
 
 
-rowToMetric : Dict String String -> Metric
+rowToMetric : Database.Metric -> Metric
 rowToMetric row =
-    { id = Database.getField "id" row
-    , name = Database.getField "name" row
-    , sourceType = Database.getField "source_type" row
+    { id = row.id
+    , name = row.name
+    , sourceType = row.sourceType
     , config = Dict.empty
-    , lastValue = Database.getField "last_value" row
-    , lastUpdated = Database.getField "last_updated" row
-    , visibility = parseVisibility (Database.getField "visibility" row)
+    , lastValue = row.lastValue
+    , lastUpdated = row.lastUpdated
+    , visibility = parseVisibility (row.visibility)
     , history = []
     }
 
@@ -568,13 +567,13 @@ loadAlerts _ =
     List.map rowToAlert Alerts.getAlerts
 
 
-rowToAlert : Dict String String -> AlertRule
+rowToAlert : Database.Alert -> AlertRule
 rowToAlert row =
-    { id = Database.getField "id" row
-    , metricId = Database.getField "metric_id" row
-    , condition = Database.getField "condition" row
-    , threshold = Database.getField "threshold" row
-    , notifyType = Database.getField "notify_type" row
-    , notifyTarget = Database.getField "notify_target" row
-    , enabled = Database.getField "enabled" row == "1"
+    { id = row.id
+    , metricId = row.metricId
+    , condition = row.condition
+    , threshold = row.threshold
+    , notifyType = row.notifyType
+    , notifyTarget = row.notifyTarget
+    , enabled = row.enabled == 1
     }
