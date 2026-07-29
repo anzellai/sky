@@ -27,13 +27,16 @@ module Std.Db.Store exposing
     ( Store
     , fromCodec
     , primaryKey
+    , generated
     , create
     , migrate
     , insert
+    , update
+    , updateWhere
     , all
-    , select
     , findBy
     , delete
+    , deleteWhere
     , Table
     , toTable
     , Project
@@ -82,6 +85,7 @@ type Store a
 , codec : Codec a
 , pk : String
 , cols : List ( String, String )
+, generated : List String
 }
 
 
@@ -89,13 +93,27 @@ type Store a
 -- from the codec's record shape.
 fromCodec : String -> Codec a -> Store a
 fromCodec name codec =
-    Store { name = name, codec = codec, pk = "", cols = codecColumns codec }
+    Store
+        { name = name
+        , codec = codec
+        , pk = ""
+        , cols = codecColumns codec
+        , generated = []
+        }
 
 
--- | Mark the primary-key column (NOT NULL; used by `findBy`/`delete` defaults).
+-- | Mark the primary-key column (NOT NULL; used by `findBy`/`delete`/`update`).
 primaryKey : String -> Store a -> Store a
 primaryKey pk (Store s) =
     Store { s | pk = pk }
+
+
+-- | Mark columns the DATABASE fills — a `serial` PK, a `DEFAULT`/`defaultNow`
+-- timestamp — so `insert` and `update` OMIT them (the DB assigns/keeps them):
+-- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
+generated : List String -> Store a -> Store a
+generated names (Store s) =
+    Store { s | generated = names }
 
 
 -- | Create the table (dialect-correct DDL derived from the codec).
@@ -113,22 +131,52 @@ migrate conn (Store s) =
     dbAutoMigrate conn s.name s.cols s.pk
 
 
--- | Insert a record.
+-- | Insert a record. Columns marked `generated` (a `serial` PK, `defaultNow`) are
+-- OMITTED so the database assigns them.
 insert : Db -> Store a -> a -> Task Error Int
 insert conn (Store s) record =
-    dbExecObject conn s.name s.cols (Codec.toValue s.codec record)
+    dbExecObject
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        (Codec.toValue s.codec record)
+
+
+-- | Update the row identified by the record's PRIMARY KEY, setting every column
+-- to the record's value (the PK and `generated` columns are never written). Read
+-- a row, change fields, `update` it back. Returns rows affected.
+update : Db -> Store a -> a -> Task Error Int
+update conn (Store s) record =
+    dbUpdateByPk
+        conn
+        s.name
+        (colsExcluding (s.pk :: s.generated) s.cols)
+        s.pk
+        (kindOf s.pk s.cols)
+        (Codec.toValue s.codec record)
+
+
+-- | Update every row matching a `Cond` to the record's column values (PK +
+-- `generated` columns excluded). For compound / ownership conditions the PK alone
+-- can't express: `Store.updateWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ]) note`.
+updateWhere : Db -> Store a -> Cond -> a -> Task Error Int
+updateWhere conn (Store s) cond record =
+    let
+        ( whereSql, whereParams ) = renderCond cond
+    in
+        dbUpdateWhere
+            conn
+            s.name
+            (colsExcluding (s.pk :: s.generated) s.cols)
+            (Codec.toValue s.codec record)
+            whereSql
+            whereParams
 
 
 -- | Every row, decoded via the codec.
 all : Db -> Store a -> Task Error (List a)
 all conn store =
     selectTail conn store ""
-
-
--- | Rows matching a raw SQL tail (WHERE / ORDER BY / LIMIT), decoded.
-select : Db -> Store a -> String -> Task Error (List a)
-select conn store tail =
-    selectTail conn store tail
 
 
 selectTail : Db -> Store a -> String -> Task Error (List a)
@@ -157,13 +205,26 @@ findBy conn (Store s) col value =
         |> Task.map List.head
 
 
--- | Delete rows where `col = value`.
+-- | Delete rows where `col = value` (single column).
 delete : Db -> Store a -> String -> String -> Task Error Int
 delete conn (Store s) col value =
     dbExecRawParams
         conn
         ("DELETE FROM " ++ s.name ++ " WHERE " ++ col ++ " = ?")
         [ value ]
+
+
+-- | Delete every row matching a `Cond` — for compound conditions the single-column
+-- `delete` can't express: `Store.deleteWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ])`.
+deleteWhere : Db -> Store a -> Cond -> Task Error Int
+deleteWhere conn (Store s) cond =
+    let
+        ( whereSql, whereParams ) = renderCond cond
+    in
+        dbExecRawParams
+            conn
+            ("DELETE FROM " ++ s.name ++ " WHERE " ++ whereSql)
+            whereParams
 
 -- ── Project (schema-dump for file-based migrations) ─────────────────────────
 -- | A table's schema erased of its record type — name, primary key, and
@@ -574,6 +635,38 @@ pageTail limitN offsetN =
 emptyParams : List String
 emptyParams =
     []
+
+
+-- | Drop the named columns from a (col, kind) spec (insert/update omit-lists).
+colsExcluding : List String -> List ( String, String ) -> List ( String, String )
+colsExcluding excl cols =
+    List.filter (\( c, _ ) -> not (List.member c excl)) cols
+
+
+-- | The declared kind of a column (defaults to "text" when absent).
+kindOf : String -> List ( String, String ) -> String
+kindOf col cols =
+    case cols of
+
+        [] ->
+            "text"
+
+        ( c, k ) :: rest ->
+            if c == col then
+                k
+
+            else
+                kindOf col rest
+
+
+dbUpdateByPk : Db -> String -> List ( String, String ) -> String -> String -> Value -> Task Error Int
+dbUpdateByPk =
+    Ffi.kernel "Db_updateByPk"
+
+
+dbUpdateWhere : Db -> String -> List ( String, String ) -> Value -> String -> List SqlValue -> Task Error Int
+dbUpdateWhere =
+    Ffi.kernel "Db_updateWhere"
 
 
 decodeRows : Codec a -> List String -> Task Error (List a)

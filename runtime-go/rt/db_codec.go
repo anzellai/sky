@@ -354,6 +354,64 @@ func Db_dumpProject(tablesArg any) any {
 	}
 }
 
+// Db_updateByPk updates one row by primary key: SET every column in setColspec to
+// the record's value, WHERE pkCol = the record's pk value. Backs Store.update.
+func Db_updateByPk(connArg, tableArg, setColspecArg, pkColArg, pkKindArg, objArg any) any {
+	return func() any {
+		fields, ok := jsonObjFields(objArg)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.update: value is not a record"))
+		}
+		setCols, params := codecSetClause(setColspecArg, fields)
+		if len(setCols) == 0 {
+			return Ok[any, any](0)
+		}
+		pkCol := AsString(pkColArg)
+		pkBase, _ := codecSplitKind(AsString(pkKindArg))
+		params = append(params, rawToSqlArg(fields[pkCol], pkBase))
+		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
+			AsString(tableArg), strings.Join(setCols, ", "), pkCol)
+		return AnyTaskRun(Db_exec(connArg, sql, params))
+	}
+}
+
+// Db_updateWhere updates rows matching a pre-rendered WHERE clause: SET every
+// column in setColspec to the record's value, WHERE <whereSql> (whereParams are
+// SqlValues, bound by Db_exec's SqlValue path). Backs Store.updateWhere.
+func Db_updateWhere(connArg, tableArg, setColspecArg, objArg, whereSqlArg, whereParamsArg any) any {
+	return func() any {
+		fields, ok := jsonObjFields(objArg)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.updateWhere: value is not a record"))
+		}
+		setCols, params := codecSetClause(setColspecArg, fields)
+		if len(setCols) == 0 {
+			return Ok[any, any](0)
+		}
+		for _, p := range AsList(whereParamsArg) {
+			params = append(params, p)
+		}
+		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s",
+			AsString(tableArg), strings.Join(setCols, ", "), AsString(whereSqlArg))
+		return AnyTaskRun(Db_exec(connArg, sql, params))
+	}
+}
+
+// codecSetClause builds the `col = ?` fragments + bound values for a set-column
+// spec, pulling each value from the codec-encoded record fields.
+func codecSetClause(setColspecArg any, fields map[string]any) ([]string, []any) {
+	setCols := []string{}
+	params := []any{}
+	for _, cs := range AsList(setColspecArg) {
+		t := AsTuple2(cs)
+		name := AsString(t.V0)
+		base, _ := codecSplitKind(AsString(t.V1))
+		setCols = append(setCols, name+" = ?")
+		params = append(params, rawToSqlArg(fields[name], base))
+	}
+	return setCols, params
+}
+
 // Db_sqlOfValue converts a JSON Encode Value (produced by a codec's encoder) into
 // the matching scalar SqlValue — backs Std.Db.Store.sqlOf, so a query builder can
 // filter by a TYPED value (enum / Money / Time / a Codec.map wrapper) using the
