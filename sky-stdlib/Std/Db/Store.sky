@@ -42,6 +42,8 @@ module Std.Db.Store exposing
     , pushProject
     , Query
     , query
+    , Cond
+    , where_
     , eq
     , neq
     , gt
@@ -52,6 +54,9 @@ module Std.Db.Store exposing
     , isNull
     , notNull
     , inList
+    , and_
+    , or_
+    , not_
     , orderAsc
     , orderDesc
     , limit
@@ -59,6 +64,7 @@ module Std.Db.Store exposing
     , toList
     , toMaybe
     , count
+    , sqlOf
     , transaction
     )
 
@@ -224,21 +230,29 @@ pushTables conn tables =
                                (\more -> applied ++ more)
                                (pushTables conn rest))
 
--- ── Query builder (compose filters + ordering + paging, no raw SQL) ──────────
--- A `Query a` accumulates parameterised WHERE conditions + ORDER BY + LIMIT +
--- OFFSET over a `Store a`; a terminal (`toList` / `toMaybe` / `count`) runs it.
--- Every filter VALUE binds as a `SqlValue` param — injection-safe. Drop to
--- `Std.Db.query` only for joins / aggregates the builder doesn't model.
+-- ── Query builder (compose conditions + ordering + paging, no raw SQL) ───────
+-- A `Cond` is a composable boolean condition; `and_` / `or_` / `not_` nest them.
+-- A `Query a` carries the conditions (AND-combined across `where_` calls) + ORDER
+-- BY + LIMIT + OFFSET over a `Store a`; a terminal (`toList` / `toMaybe` /
+-- `count`) runs it. Every VALUE binds as a `SqlValue` param — injection-safe.
+-- Drop to `Std.Db.query` only for joins / aggregates the builder doesn't model.
+-- | A composable WHERE condition — build a leaf with `eq` / `gt` / `like` / … and
+-- combine with `and_` / `or_` / `not_`; apply to a query with `where_`. Opaque
+-- (build it with the combinators; don't pattern-match).
 type Cond
     = CondOp String String SqlValue
     | CondNull String Bool
     | CondIn String (List SqlValue)
+    | CondAnd (List Cond)
+    | CondOr (List Cond)
+    | CondNot Cond
 
 type OrderTerm
     = OrderTerm String String
 
--- | An in-progress query over a store. Build with the filter / order / paging
--- combinators below, then run a terminal (`toList` / `toMaybe` / `count`).
+-- | An in-progress query over a store. Add conditions with `where_`, ordering
+-- with `orderAsc` / `orderDesc`, paging with `limit` / `offset`, then run a
+-- terminal (`toList` / `toMaybe` / `count`).
 type Query a
     = Query { store : Store a
 , conds : List Cond
@@ -249,7 +263,7 @@ type Query a
 
 
 -- | Start a query over a store:
--- `Store.query products |> Store.eq "active" (SqlBool True) |> Store.toList conn`.
+-- `Store.query products |> Store.where_ (Store.eq "active" (SqlBool True)) |> Store.toList conn`.
 query : Store a -> Query a
 query store =
     Query
@@ -261,71 +275,95 @@ query store =
         }
 
 
-addCond : Cond -> Query a -> Query a
-addCond c (Query q) =
+-- | Add a condition. Multiple `where_` calls are AND-combined; use `and_` / `or_`
+-- / `not_` inside one call for grouped OR / negation:
+-- `q |> where_ (eq "a" x) |> where_ (or_ [ gt "b" y, eq "c" z ])`.
+where_ : Cond -> Query a -> Query a
+where_ c (Query q) =
     Query { q | conds = c :: q.conds }
 
 
--- | Filter `col = value` (AND-combined with the other filters).
-eq : String -> SqlValue -> Query a -> Query a
+-- ── Condition leaves (each returns a `Cond`) ─────────────────────────────────
+-- | `col = value`.
+eq : String -> SqlValue -> Cond
 eq col v =
-    addCond (CondOp col "=" v)
+    CondOp col "=" v
 
 
--- | Filter `col <> value`.
-neq : String -> SqlValue -> Query a -> Query a
+-- | `col <> value`.
+neq : String -> SqlValue -> Cond
 neq col v =
-    addCond (CondOp col "<>" v)
+    CondOp col "<>" v
 
 
--- | Filter `col > value`.
-gt : String -> SqlValue -> Query a -> Query a
+-- | `col > value`.
+gt : String -> SqlValue -> Cond
 gt col v =
-    addCond (CondOp col ">" v)
+    CondOp col ">" v
 
 
--- | Filter `col >= value`.
-gte : String -> SqlValue -> Query a -> Query a
+-- | `col >= value`.
+gte : String -> SqlValue -> Cond
 gte col v =
-    addCond (CondOp col ">=" v)
+    CondOp col ">=" v
 
 
--- | Filter `col < value`.
-lt : String -> SqlValue -> Query a -> Query a
+-- | `col < value`.
+lt : String -> SqlValue -> Cond
 lt col v =
-    addCond (CondOp col "<" v)
+    CondOp col "<" v
 
 
--- | Filter `col <= value`.
-lte : String -> SqlValue -> Query a -> Query a
+-- | `col <= value`.
+lte : String -> SqlValue -> Cond
 lte col v =
-    addCond (CondOp col "<=" v)
+    CondOp col "<=" v
 
 
--- | Filter `col LIKE pattern` (use `%` / `_` wildcards in the pattern).
-like : String -> String -> Query a -> Query a
+-- | `col LIKE pattern` (use `%` / `_` wildcards in the pattern).
+like : String -> String -> Cond
 like col pat =
-    addCond (CondOp col "LIKE" (Db.SqlString pat))
+    CondOp col "LIKE" (Db.SqlString pat)
 
 
--- | Filter `col IS NULL`.
-isNull : String -> Query a -> Query a
+-- | `col IS NULL`.
+isNull : String -> Cond
 isNull col =
-    addCond (CondNull col True)
+    CondNull col True
 
 
--- | Filter `col IS NOT NULL`.
-notNull : String -> Query a -> Query a
+-- | `col IS NOT NULL`.
+notNull : String -> Cond
 notNull col =
-    addCond (CondNull col False)
+    CondNull col False
 
 
--- | Filter `col IN (v1, v2, …)`. An empty list matches nothing.
-inList : String -> List SqlValue -> Query a -> Query a
+-- | `col IN (v1, v2, …)`. An empty list matches nothing.
+inList : String -> List SqlValue -> Cond
 inList col vs =
-    addCond (CondIn col vs)
+    CondIn col vs
 
 
+-- ── Condition combinators ────────────────────────────────────────────────────
+-- | All of the conditions (AND). An empty list is always true.
+and_ : List Cond -> Cond
+and_ conds =
+    CondAnd conds
+
+
+-- | Any of the conditions (OR). An empty list is always false.
+or_ : List Cond -> Cond
+or_ conds =
+    CondOr conds
+
+
+-- | Negate a condition (NOT).
+not_ : Cond -> Cond
+not_ cond =
+    CondNot cond
+
+
+-- ── Ordering + paging ────────────────────────────────────────────────────────
 -- | Append `ORDER BY col ASC` (chain for multi-column ordering).
 orderAsc : String -> Query a -> Query a
 orderAsc col (Query q) =
@@ -405,6 +443,20 @@ transaction conn f =
     Db.withTransaction conn f
 
 
+-- | Encode a TYPED value to a `SqlValue` via its codec, so a filter can compare
+-- against an enum / `Money` / `Time` / `Codec.map` wrapper using the SAME encoding
+-- the column stores — no manual `SqlString`/`SqlInt` wrapping, no drift:
+-- `where_ (Store.eq "status" (Store.sqlOf statusCodec Shipped))`.
+sqlOf : Codec a -> a -> SqlValue
+sqlOf codec value =
+    dbSqlOfValue (Codec.toValue codec value)
+
+
+dbSqlOfValue : Value -> SqlValue
+dbSqlOfValue =
+    Ffi.kernel "Db_sqlOfValue"
+
+
 buildWhere : List Cond -> ( String, List SqlValue )
 buildWhere conds =
     case conds of
@@ -414,16 +466,13 @@ buildWhere conds =
 
         _ ->
             let
-                parts = List.map condSql conds
+                ( sql, params ) = renderCond (CondAnd (List.reverse conds))
             in
-                ( " WHERE "
-                      ++ String.join " AND " (List.map (\( c, _ ) -> c) parts)
-                , List.concat (List.map (\( _, p ) -> p) parts)
-                )
+                ( " WHERE " ++ sql, params )
 
 
-condSql : Cond -> ( String, List SqlValue )
-condSql c =
+renderCond : Cond -> ( String, List SqlValue )
+renderCond c =
     case c of
 
         CondOp col op v ->
@@ -451,6 +500,35 @@ condSql c =
                           ++ ")"
                     , vs
                     )
+
+        CondAnd cs ->
+            renderGroup "1 = 1" " AND " cs
+
+        CondOr cs ->
+            renderGroup "1 = 0" " OR " cs
+
+        CondNot inner ->
+            let
+                ( s, p ) = renderCond inner
+            in
+                ( "NOT (" ++ s ++ ")", p )
+
+
+renderGroup : String -> String -> List Cond -> ( String, List SqlValue )
+renderGroup emptySql sep cs =
+    case cs of
+
+        [] ->
+            ( emptySql, [] )
+
+        _ ->
+            let
+                parts = List.map renderCond cs
+            in
+                ( "(" ++ String.join sep (List.map (\( s, _ ) -> s) parts)
+                      ++ ")"
+                , List.concat (List.map (\( _, p ) -> p) parts)
+                )
 
 
 orderTail : List OrderTerm -> String

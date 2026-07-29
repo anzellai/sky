@@ -353,3 +353,33 @@ func Db_dumpProject(tablesArg any) any {
 		return Ok[any, any](struct{}{})
 	}
 }
+
+// Db_sqlOfValue converts a JSON Encode Value (produced by a codec's encoder) into
+// the matching scalar SqlValue — backs Std.Db.Store.sqlOf, so a query builder can
+// filter by a TYPED value (enum / Money / Time / a Codec.map wrapper) using the
+// SAME encoding the column stores, with no hand-wrapping in SqlString/SqlInt/….
+// A JSON object/array (a blob column) becomes its JSON TEXT (SqlString).
+func Db_sqlOfValue(valueArg any) any {
+	jv, ok := valueArg.(JsonValue)
+	if !ok {
+		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{fmt.Sprintf("%v", valueArg)}}
+	}
+	switch r := jv.raw.(type) {
+	case string:
+		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{r}}
+	case int:
+		return SkyADT{Tag: 1, SkyName: "SqlInt", Fields: []any{r}}
+	case int64:
+		return SkyADT{Tag: 1, SkyName: "SqlInt", Fields: []any{int(r)}}
+	case float64:
+		return SkyADT{Tag: 2, SkyName: "SqlFloat", Fields: []any{r}}
+	case bool:
+		return SkyADT{Tag: 3, SkyName: "SqlBool", Fields: []any{r}}
+	case nil:
+		return SkyADT{Tag: 8, SkyName: "SqlNull", Fields: []any{
+			SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{""}},
+		}}
+	default:
+		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{AsString(JsonEnc_encode(0, jv))}}
+	}
+}
