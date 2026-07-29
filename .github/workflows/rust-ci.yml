@@ -1,11 +1,14 @@
 name: Rust CI
 
 # The primary CI gate for the Sky compiler. Guards the Rust compiler's
-# reproducibility + parity invariants via the full xtask gate suite — none of
-# which need the Haskell oracle at gate time (the corpus is oracle-clean offline;
-# the gates run the Rust checker/lowerer in-process). Cross-platform (ubuntu +
-# macos) because byte-stable codegen (repro) is a determinism invariant that must
-# hold on ≥2 platforms.
+# reproducibility + parity invariants via the full xtask gate suite.
+#
+# Structure: the gates are split across INDEPENDENT jobs that run CONCURRENTLY,
+# so the wall-clock is the slowest single job — not the sum of every gate (which
+# was ~90 min in one sequential job). Nothing is dropped: every gate that ran
+# before runs here, just fanned out. macOS keeps only the platform-determinism
+# subset (repro / coerce-floor / runtime behaviour) — the reason for a 2nd OS —
+# while ubuntu carries full coverage.
 #
 # Runs on every push/PR to main (no paths filter, so a required status check
 # never deadlocks on a docs-only PR) plus the in-flight rewrite branch.
@@ -21,187 +24,188 @@ concurrency:
   group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: rust
+
 jobs:
-  gates:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            runner: ubuntu-latest
-          - os: macos-latest
-            runner: macos-latest
-    defaults:
-      run:
-        working-directory: rust
+  # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
+  #    this crate is the bulk of the old 30-min test step; on its own runner) ──
+  test-ty:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-test-linux
+      - name: Tests — ty (corpus accept/reject/infer)
+        run: cargo test -p ty --locked
 
+  # ── Every other crate's tests + clippy + doctests ───────────────────────────
+  test-rest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-test-linux
+      - name: Clippy (report only)
+        run: cargo clippy --workspace --all-targets || true
+      - name: Tests — workspace except ty
+        run: cargo test --workspace --exclude ty --locked
+      - name: Doctests
+        run: cargo test --workspace --locked --doc
 
+  # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
+  parity-accept:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+      - run: cargo build --workspace --locked
+      - name: Gate — roundtrip (reprint == source, L8)
+        run: cargo run -q -p xtask -- roundtrip
+      - name: Gate — resolve (name-resolution parity)
+        run: cargo run -q -p xtask -- resolve
+      - name: Gate — infer (type accept-parity, M3)
+        run: cargo run -q -p xtask -- infer
+      - name: Gate — divergences (known Rust-vs-oracle ledger)
+        run: cargo run -q -p xtask -- divergences
+      - name: Gate — s8 (forbidden public-surface patterns)
+        run: cargo run -q -p xtask -- s8
+
+  # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
+  parity-reject:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+      - run: cargo build --workspace --locked
+      - name: Gate — fmt (sky fmt never drops a comment; idempotent)
+        run: cargo run -q -p xtask -- fmt
+      - name: Gate — reject (reject-parity)
+        run: cargo run -q -p xtask -- reject
+
+  # ── Byte-stable codegen across fresh processes (~15.5m) ─────────────────────
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+      - run: cargo build --workspace --locked
+      - name: Gate — repro (byte-stable Go across fresh processes, L4)
+        run: cargo run -q -p xtask -- repro
+
+  # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
+  codegen-build:
+    runs-on: ubuntu-latest
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
           cache: false
-
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          shared-key: sky-gates-linux
+      - run: cargo build --workspace --locked
+      - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
+        run: cargo run -q -p xtask -- coerce-floor
+      - name: Gate — runtime rt tests (go test)
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      - name: Gate — build-run (emit + go build every example; FFI skipped)
+        run: cargo run -q -p xtask -- build-run --all
+      - name: Gate — golden (runtime-correctness, CLI subset)
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
+        run: cargo run -q -p xtask -- build-run --shape live --run
+      - name: Gate — http runtime (Sky.Http.Server examples start + serve)
+        run: cargo run -q -p xtask -- build-run --shape http --run
+      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
+        run: cargo run -q -p xtask -- build-run --shape tui --run
 
-      # Neovim for the editor-parity LSP gate (drives the real nvim LSP client
-      # against `sky lsp`). A recent nvim (not distro-pinned) so vim.lsp.start is
-      # available on both runners.
+  # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
+  lsp-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
-
-      # ---- build once; every gate below reuses the compiled workspace ----
-      - name: Build workspace
-        run: cargo build --workspace --locked
-
-      - name: Clippy (report; does not fail the build on style warnings yet)
-        run: cargo clippy --workspace --all-targets || true
-
-      - name: Unit + integration tests
-        run: cargo test --workspace --locked
-
-      # ---- Rust-only parity gates (checker/parser, in-process) ----
-      - name: Gate — roundtrip (reprint == source, L8)
-        run: cargo run -q -p xtask -- roundtrip
-
-      # `sky fmt` comment-loss safety: format every sky-stdlib/ + examples/
-      # file (both comment-heavy) plus a comment-torture fixture, and assert the
-      # comment multiset (own-line AND trailing/inline) is byte-identical before
-      # and after, and that formatting is idempotent. roundtrip above locks the
-      # LOSSLESS reprint; this locks the OPINIONATED path + its safety net so a
-      # regression that drops a comment fails CI instead of reaching users.
-      - name: Gate — fmt (sky fmt never drops a comment; idempotent)
-        run: cargo run -q -p xtask -- fmt
-
-      - name: Gate — resolve (name-resolution parity)
-        run: cargo run -q -p xtask -- resolve
-
-      - name: Gate — infer (type accept-parity, M3)
-        run: cargo run -q -p xtask -- infer
-
-      - name: Gate — reject (reject-parity)
-        run: cargo run -q -p xtask -- reject
-
-      # known-divergences ledger: the authoritative list of INTENTIONAL
-      # Rust-vs-oracle differences (known-divergences.toml). reject above covers
-      # the rust-lenient direction; this covers rust-stricter (oracle ACCEPTS,
-      # Rust REJECTS) which falls between the accept- and reject-parity gates.
-      # Re-verifies each entry's fixture still rejects with the ledgered code
-      # in-process, and that fixtures ↔ ledger stay in sync. The paper trail
-      # that lets us retire the oracle at v1.
-      - name: Gate — divergences (known Rust-vs-oracle ledger)
-        run: cargo run -q -p xtask -- divergences
-
-      # CLAUDE.md §8 forbidden-pattern lint over sky-stdlib/ + examples/:
-      # no `Result String` / `Task String` (String-as-error), no `Std.IoError`,
-      # no `RemoteData`. Restores the enforcement the Haskell sky verify carried.
-      - name: Gate — s8 (forbidden public-surface patterns)
-        run: cargo run -q -p xtask -- s8
-
-      # Editor-parity: drives the REAL Neovim LSP client (17 tests: hover /
-      # completion / goto-def across every symbol class) against `sky lsp` —
-      # catches editor-level bugs the in-process JSON-RPC tests miss (doc 10
-      # non-negotiable floor).
+      - run: cargo build --workspace --locked
       - name: Gate — lsp (Neovim editor-parity, 17/17)
         run: cargo run -q -p xtask -- lsp
-
-      # Robustness + determinism fuzzer (in-process; no Go toolchain). Feeds the
-      # parse → resolve → check (→ lower) pipeline a large mutated input space and
-      # asserts it never panics (L7) and is byte-deterministic run-to-run (L4).
-      # Bounded (fixed seed + wall-clock budget) so it can never hang CI.
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz
 
-      # ---- runtime-coercion FLOOR-LOCK (pure-Rust; no Go toolchain) ----
-      # Re-emits each example's Go in-process and counts the tracked runtime
-      # NARROWING/erasure tokens (rt.Coerce / rt.As* / rt.Field / rt.SkyCall — the
-      # §8 irreducible floor: FFI return, wire decode, TEA dispatch, type-var
-      # erase). FAIL-ON-INCREASE vs the committed golden: a codegen change that
-      # emits MORE coercions than the locked floor fails here (silent widening).
-      # A DECREASE passes (floor tightened) + is reported to re-bless. No existing
-      # gate bounds this — repro proves the Go is byte-STABLE, build-run proves it
-      # BUILDS; neither counts coercions. This is the count lock.
-      #
-      # Cost: one in-process emit per example (no `go build`, no subprocess) —
-      # the emit is the cheap half of what repro/build-run already do; the count
-      # is O(bytes). Kept a separate fast gate for a clear, single-purpose signal.
-      - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
-        run: cargo run -q -p xtask -- coerce-floor
-
-      # ---- codegen determinism + emit (needs the Go toolchain) ----
-      # Runtime helpers (rt.Coerce / AsTuple / Dict_fromList / tuple dispatch /
-      # panic classification / …) — the ~150 `rt/*_test.go` that guard the
-      # behaviour the emitted Go depends on. Previously run in NO workflow, so a
-      # runtime regression was caught only by the ABI guard's symbol-existence
-      # check, never by behaviour. The `go` toolchain is already set up above.
-      - name: Gate — runtime rt tests (go test)
-        # The job's default working-directory is `rust`; runtime-go is a sibling.
-        # CGO_ENABLED=0 tests the pure-Go runtime helpers (rt.Coerce / AsTuple /
-        # Dict / panic classification / hub / jobs / telemetry) and selects the
-        # Sky.Webview STUB (webview.go is `cgo && darwin`) — so the gate avoids the
-        # macOS-CI cgo/WebKit ld64 linker assertion (an environment ceiling, the
-        # same class as the Sky.Webview example build). The webview cgo path is
-        # covered by the desktop-example builds, not these behaviour tests.
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
-
-      - name: Gate — repro (byte-stable Go across fresh processes, L4)
+  # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
+  # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
+  # 2nd platform. Full example builds / parity corpora are platform-agnostic and
+  # stay ubuntu-only above, so macOS carries just the determinism invariants.
+  macos-determinism:
+    runs-on: macos-latest
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-macos-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+      - run: cargo build --workspace --locked
+      - name: Gate — repro (byte-stable Go, 2nd platform)
         run: cargo run -q -p xtask -- repro
-
-      - name: Gate — build-run (emit + go build every example; FFI examples skipped)
-        run: cargo run -q -p xtask -- build-run --all
-
-      # Runtime-CORRECTNESS: build-run --all proves the corpus BUILDS; this proves
-      # the deterministic CLI subset COMPUTES THE RIGHT ANSWER. Each CLI example's
-      # normalised stdout is compared to its committed `golden/<name>.stdout` — an
-      # oracle-verified snapshot (blessed locally where the Haskell oracle exists;
-      # rust==oracle was proven at bless time). The gate reads ONLY committed
-      # goldens (no oracle binary on CI), so it catches "compiles but computes the
-      # wrong answer" without a Haskell toolchain. A new CLI example with no golden
-      # FAILS ("bless to lock its runtime output"). Re-bless locally with:
-      #   cargo run -p xtask -- build-run --shape cli --run --golden --bless
-      - name: Gate — golden (runtime-correctness, CLI subset; oracle-parity via committed snapshot)
-        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
-
-      # Server/terminal-shape RUNTIME correctness. golden (above) proves the CLI
-      # subset computes the right answer and build-run --all proves the server
-      # examples BUILD — but neither RUNS a server. These gates prove a compiled
-      # Sky.Live / Sky.Http.Server / Sky.Tui app actually STARTS, serves, and does
-      # not panic: the "builds but broken at runtime" class (SSE / dispatch /
-      # pub-sub / routing / fan-out regressions) that a build-only gate misses.
-      # Each app spawns under a watchdog with a memory store + banners off; the
-      # gate waits for the "listening" line, curls `/`, requires a non-empty body
-      # with zero panic strings, then ALWAYS kills the child. No browser needed
-      # (HTTP-level, deterministic). The deep wire behaviour (per-session fan-out,
-      # navigation mirror, cross-instance Redis broker) is covered by the go-test
-      # gate above (runtime-go/rt/*_test.go); these close the compiler→runtime
-      # end-to-end loop for server shapes.
-      #
-      # Ubuntu-only: unlike `build-run --all`, which SKIPS FFI examples, the
-      # `--shape … --run` path BUILDS every example of the shape — and a couple
-      # (13-skyshop's Stripe FFI surface, 38-composite-ui-multibackend's webview
-      # cgo link) hit environment build ceilings on the macOS runner that are
-      # not compiler/runtime bugs (they build + run clean on Linux and locally).
-      # The runtime correctness these gates verify is platform-agnostic, so
-      # running them on Linux — the canonical server deploy target, with a clean
-      # build env — is the right scope. macOS keeps full coverage via `go test
-      # ./rt` (the runtime behaviour incl. fan-out/mirror/broker), `build-run
-      # --all` (build), and every compiler gate above.
-      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo run -q -p xtask -- build-run --shape live --run
-
-      - name: Gate — http runtime (Sky.Http.Server examples start + serve, no panic)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo run -q -p xtask -- build-run --shape http --run
-
-      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo run -q -p xtask -- build-run --shape tui --run
+      - name: Gate — coerce-floor (2nd platform)
+        run: cargo run -q -p xtask -- coerce-floor
+      - name: Gate — runtime rt tests (go test, 2nd platform)
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
