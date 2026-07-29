@@ -71,12 +71,77 @@ landmarks anyway.
 | Sky.Live navigation | Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on `<a>`). ONE persistent SSE per session; a plain `<a href>` full-reload opens a fresh SSE each page and can freeze the tab. |
 | Auth | `Std.Auth` — bcrypt + HS256 JWT cookies. `Auth.login` / `Auth.register` return `Task Error Int` (the user id). Never `fmt`-print a secret. |
 | Password forms | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record arg. Never per-keystroke `onInput` on a password field. |
-| DB | `Std.Db` + SQLite for prototypes; PostgreSQL for multi-instance. Define tables with `Std.Db.Schema` (typed, dialect-safe DDL) — one definition compiles to correct SQLite AND Postgres `CREATE TABLE`, so dev-on-SQLite / deploy-on-Postgres never drifts (no `INTEGER`-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` surprises). |
+| DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
 | Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |
 | Logs | `Std.Log` structured logs; `/_sky/console` auto-mounts in dev. |
 | Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent-gated + anonymous by default, opt-in Sky.Live auto page-views (`analytics = { pageViews = True }`), SQLite store + Sky Console **Analytics** tab. |
+
+## Database
+
+**For any function's exact signature + docs, run `sky doc <Module>`** (e.g.
+`sky doc Std.Db.Store`, `sky doc Std.Codec`, `sky doc Std.Db.Schema`,
+`sky doc Std.Db`). That is always current with your compiler — prefer it over
+memorised signatures. This section covers *which layer to reach for*, not the API.
+
+**Pick the highest layer that fits** (they compose — mix freely):
+
+| Your need | Layer | Why |
+|---|---|---|
+| Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
+| Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
+| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). |
+| Joins, aggregates, transactions, custom SQL | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
+
+### Default — `Store` + `Codec`
+
+```elm
+import Std.Codec as Codec exposing (Codec)
+import Std.Db.Store as Store exposing (Store)
+
+type alias Product =
+    { id : String, name : String, priceMinor : Int, tags : List String }
+
+products : Store Product
+products =
+    Store.fromCodec "products"
+        (Codec.auto { id = "", name = "", priceMinor = 0, tags = [] })
+        |> Store.primaryKey "id"
+
+-- Store.insert conn products p          : Task Error Int
+-- Store.all    conn products            : Task Error (List Product)
+-- Store.select conn products "WHERE price_minor > 0 ORDER BY name"  -- raw tail, no bound params
+-- Store.findBy conn products "id" "p1"  : Task Error (Maybe Product) -- single col = value (bound)
+-- Store.delete conn products "id" "p1"  : Task Error Int
+-- For user-supplied filter VALUES (injection-safe binding) use findBy, or drop to
+-- Std.Db.query with a `?` + params list. select's tail is literal SQL — no params.
+```
+
+`Codec.auto blank` derives the codec from a **zero-value witness** record:
+scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
+enums → readable names. **Data-carrying ADTs** need an explicit codec — build one
+with `Codec.object`/`Codec.field`/`Codec.buildObject` (records) or
+`Codec.taggedUnion`/`Codec.var0..3` (ADTs). Run `sky doc Std.Codec` for those.
+
+### Schema migrations — committed files, no live DB needed
+
+```bash
+sky db init                    # scaffold db/migrations/ + db/schema.json
+sky db migrate --gen add_stock # diff types vs snapshot → a committed migration file
+sky db status                  # ✓ applied / ○ pending vs the live ledger
+sky db migrate                 # apply committed migrations (dialect-correct, once each)
+sky db seed                    # run the entry module's  seed : Db -> Task Error ()
+```
+
+Expose a `db : Store.Project` binding for `--gen`:
+`db = Store.project [ Store.toTable products, Store.toTable orders ]`, from
+`module Main exposing (main, db, seed)`. On deploy `sky build` embeds the
+migrations, so `SKY_DB_OP=migrate ./app` self-migrates with no source tree.
+
+**Connection** comes from config — `SKY_DB_PATH` (SQLite) or `DATABASE_URL`
+(Postgres), or `[database]` in `sky.toml`; `Db.connect ()` reads them. The handle
+is a **memoised top-level value** (`db = Task.run (Db.connect ())`) — never in Model.
 
 ## Effect boundary — Task everywhere
 
