@@ -116,16 +116,30 @@ products =
 **Compose reads with the query builder** — filters bind as `SqlValue` params
 (injection-safe), so you never touch a SQL string:
 
+Conditions are composable `Cond` values — leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/
+`like`/`isNull`/`notNull`/`inList`) combine with `and_`/`or_`/`not_`, applied with
+`where_` (multiple `where_` AND together). Values bind as `SqlValue` params
+(injection-safe) — `import Std.Db exposing (SqlValue(..))` for unqualified
+`SqlInt`/`SqlString`/`SqlBool`:
+
 ```elm
 Store.query products
-    |> Store.eq "active" (SqlBool True)      -- eq/neq/gt/gte/lt/lte/like/isNull/inList
-    |> Store.gt "priceMinor" (SqlInt 0)
-    |> Store.orderAsc "sortOrder"            -- orderAsc / orderDesc (chain for multi-col)
+    |> Store.where_ (Store.eq "active" (SqlBool True))
+    |> Store.where_                                 -- grouped OR, AND'd with the rest
+        (Store.or_ [ Store.gt "priceMinor" (SqlInt 5000)
+                   , Store.eq "category" (SqlString "sale") ])
+    |> Store.orderAsc "sortOrder" |> Store.orderDesc "createdAt"
     |> Store.limit 20 |> Store.offset 0
-    |> Store.toList conn                     -- terminal: toList / toMaybe / count
+    |> Store.toList conn                            -- terminal: toList / toMaybe / count
 
--- transactions stay in the Store namespace (alias over Db.withTransaction); Store
--- ops compose by taking the `tx` handle:
+-- filter by a TYPED value (enum / Money / Time / Codec.map) via its codec — no
+-- manual SqlString/SqlInt, no drift from how the column is stored:
+Store.query orders
+    |> Store.where_ (Store.eq "status" (Store.sqlOf statusCodec Shipped))
+    |> Store.toList conn
+
+-- transactions stay in the Store namespace (alias over Db.withTransaction);
+-- Store ops compose by taking the `tx` handle:
 Store.transaction conn (\tx ->
     Store.insert tx orders o
         |> Task.andThen (\_ -> Store.insert tx orderItems i))
