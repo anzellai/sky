@@ -616,29 +616,33 @@ fn exposing_set(
     tree: &syntax::ast::SourceFile,
 ) -> Option<std::collections::BTreeSet<String>> {
     let exposing = tree.module_header()?.exposing()?;
-    let text = exposing.syntax().text().to_string();
-    if text.contains("..") && !text.contains("(..)") {
-        // A bare `(..)` — whole-module export. (`Type(..)` contains "(.." but
-        // also names the type, so only a standalone `..` means export-all.)
-        return None;
-    }
-    // Guard the standalone-`..` case: split identifiers; if one of the raw
-    // tokens is exactly `..`, treat as export-all.
+    let raw = exposing.syntax().text().to_string();
+    // Peel a leading `exposing` keyword (if the node text includes it) + the
+    // outer parens, leaving the comma-separated export items.
+    let trimmed = raw.trim();
+    let trimmed = trimmed.strip_prefix("exposing").map(str::trim).unwrap_or(trimmed);
+    let inner = trimmed
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(trimmed);
+    // Split TOP-LEVEL items by comma. A whole-module export is a single `..`
+    // item; a `Type(..)` constructor export keeps its `..` INSIDE nested parens,
+    // so only a standalone top-level `..` means export-all. (The old code split
+    // on every non-alphanumeric char, so `ColType(..)`'s inner `..` was misread
+    // as export-all and the whole module's internals leaked into `sky doc`.)
     let mut names = std::collections::BTreeSet::new();
-    let mut all = false;
-    for tok in text.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.') {
-        let t = tok.trim();
-        if t == ".." {
-            all = true;
-        } else if !t.is_empty() && !t.contains('.') {
-            names.insert(t.to_string());
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item == ".." {
+            return None; // whole-module export → no filtering
+        }
+        // Keep the leading identifier, dropping any `(..)` / `(Ctor, …)` group.
+        let name = item.split('(').next().unwrap_or(item).trim();
+        if !name.is_empty() && !name.contains('.') {
+            names.insert(name.to_string());
         }
     }
-    if all {
-        None
-    } else {
-        Some(names)
-    }
+    Some(names)
 }
 
 /// Map a binding name → its leading `-- |` doc summary (the first line of the
