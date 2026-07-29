@@ -232,8 +232,13 @@ buildObject (ObjectCodec o) =
 -- | Derive a codec from a record type by reflection — no field-by-field
 -- pipeline. The argument is a zero-value witness (a `blank` record) that hands
 -- the runtime the type. Handles scalars, `Maybe` (↔ null), nested records,
--- lists, and nullary enums (stored as their ordinal int). Data-carrying ADTs
+-- lists, and nullary enums (stored as their readable name). Data-carrying ADTs
 -- are NOT derivable — give those an explicit `taggedUnion` codec.
+--
+-- Columns / JSON keys are **snake_case** (the DB convention): a record field
+-- `priceMinor` maps to column `price_minor` with no hand-written codec. For a
+-- custom per-column name (camelCase, an abbreviation, a legacy column) use an
+-- explicit `Codec.object` / `Codec.field "col" .field …` codec.
 --
 --     userCodec : Codec User
 --     userCodec = Codec.auto blankUser

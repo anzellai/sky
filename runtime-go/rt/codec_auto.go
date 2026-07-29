@@ -28,6 +28,34 @@ func skyTagName(f reflect.StructField) string {
 	return strings.ToLower(f.Name[:1]) + f.Name[1:]
 }
 
+// camelToSnake converts a camelCase identifier to snake_case
+// (priceMinor → price_minor). Single-word names are unchanged.
+func camelToSnake(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r - 'A' + 'a')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// skyColKey is the DB column / JSON key a record field maps to under `Codec.auto`
+// — snake_case by default (the DB convention), so `priceMinor` → `price_minor`
+// with no hand-written codec. `Codec.autoCamel` keeps the raw camelCase name.
+func skyColKey(f reflect.StructField, snake bool) string {
+	name := skyTagName(f)
+	if snake {
+		return camelToSnake(name)
+	}
+	return name
+}
+
 // skyTagType returns the declared Go type from a field's `sky:"name,type"` tag,
 // or "" if absent — this is the metadata enum fields need (their Go kind is a
 // bare int that reflection can't map to the enum registry without it).
@@ -119,7 +147,7 @@ func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		obj.keys = append(obj.keys, skyTagName(f))
+		obj.keys = append(obj.keys, skyColKey(f, true))
 		obj.vals = append(obj.vals, raw)
 	}
 	return obj, nil
@@ -237,7 +265,7 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any) (reflect.Value, error) {
 		if f.PkgPath != "" {
 			continue
 		}
-		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyTagName(f)])
+		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, true)])
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -322,7 +350,7 @@ func Codec_autoCols(witness any) any {
 		if isSkyMaybeType(f.Type) { // Maybe field → nullable column (marked with `?`)
 			kind += "?"
 		}
-		out = append(out, T2[any, any]{V0: skyTagName(f), V1: kind})
+		out = append(out, T2[any, any]{V0: skyColKey(f, true), V1: kind})
 	}
 	return out
 }
