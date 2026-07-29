@@ -4386,6 +4386,7 @@ impl<'a> Ctx<'a> {
         // (which is a *subset* record when only some fields are read/written).
         // Take the base's own lowered type as the block/`_u` type; the outer
         // `lower_expr` coerces the block to the caller's `expected` if needed.
+        let base_sky_ty = self.sky_ty_of(base);
         let b = self.lower_expr(base, &GoTy::Any);
         let uty = b.ty.clone();
         // A ROW-POLYMORPHIC base (`bump r = { r | age = … }`, base lowers to
@@ -4423,7 +4424,7 @@ impl<'a> Ctx<'a> {
         // value lowers with its Go field type as `expected` (a kernel `any`
         // return like `rt.Basics_not(...)` is then coerced to the field's `bool`,
         // not fed raw into a typed struct field — `go build` rejects the latter).
-        let field_tys: HashMap<String, Ty> = match &uty {
+        let mut field_tys: HashMap<String, Ty> = match &uty {
             GoTy::Named(n, _) => self
                 .record_fields
                 .get(n)
@@ -4431,6 +4432,22 @@ impl<'a> Ctx<'a> {
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
+        // Fallback: an anonymous record wrapped in a custom type
+        // (`type Query a = Query { … }`) is never a top-level Record decl, so it is
+        // absent from `record_fields` → its field types are unknown → a typed-slice
+        // field would take a raw `any` (from `x :: xs` / `xs ++ ys`) with NO
+        // coercion, and `go build` rejects assigning `any` to a `[]T` field (a
+        // check≢build hole). Read the declared field types straight from the base's
+        // inferred Sky record type so the update coerces each field exactly like a
+        // record literal does.
+        if field_tys.is_empty() {
+            if let Some(Ty::Record(fs, _)) = base_sky_ty {
+                field_tys = fs
+                    .iter()
+                    .map(|(n, t)| (capitalize(n.as_str()), t.clone()))
+                    .collect();
+            }
+        }
         let mut stmts = vec![GoStmt::Short("_u".into(), b)];
         let uref = GoExpr::new(GoExprKind::Ident("_u".into()), uty.clone());
         for (n, v) in fields {

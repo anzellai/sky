@@ -263,13 +263,7 @@ query store =
 
 addCond : Cond -> Query a -> Query a
 addCond c (Query q) =
-    Query
-        { store = q.store
-        , conds = c :: q.conds
-        , orders = q.orders
-        , limitN = q.limitN
-        , offsetN = q.offsetN
-        }
+    Query { q | conds = c :: q.conds }
 
 
 -- | Filter `col = value` (AND-combined with the other filters).
@@ -335,25 +329,13 @@ inList col vs =
 -- | Append `ORDER BY col ASC` (chain for multi-column ordering).
 orderAsc : String -> Query a -> Query a
 orderAsc col (Query q) =
-    Query
-        { store = q.store
-        , conds = q.conds
-        , orders = OrderTerm col "ASC" :: q.orders
-        , limitN = q.limitN
-        , offsetN = q.offsetN
-        }
+    Query { q | orders = OrderTerm col "ASC" :: q.orders }
 
 
 -- | Append `ORDER BY col DESC`.
 orderDesc : String -> Query a -> Query a
 orderDesc col (Query q) =
-    Query
-        { store = q.store
-        , conds = q.conds
-        , orders = OrderTerm col "DESC" :: q.orders
-        , limitN = q.limitN
-        , offsetN = q.offsetN
-        }
+    Query { q | orders = OrderTerm col "DESC" :: q.orders }
 
 
 -- | `LIMIT n`.
