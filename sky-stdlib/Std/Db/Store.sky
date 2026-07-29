@@ -160,8 +160,9 @@ update conn (Store s) record =
 -- `generated` columns excluded). For compound / ownership conditions the PK alone
 -- can't express: `Store.updateWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ]) note`.
 updateWhere : Db -> Store a -> Cond -> a -> Task Error Int
-updateWhere conn (Store s) cond record =
+updateWhere conn (Store s) rawCond record =
     let
+        cond = resolveCond s.cols rawCond
         ( whereSql, whereParams ) = renderCond cond
     in
         guardCols
@@ -220,8 +221,9 @@ delete conn (Store s) col value =
 -- | Delete every row matching a `Cond` — for compound conditions the single-column
 -- `delete` can't express: `Store.deleteWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ])`.
 deleteWhere : Db -> Store a -> Cond -> Task Error Int
-deleteWhere conn (Store s) cond =
+deleteWhere conn (Store s) rawCond =
     let
+        cond = resolveCond s.cols rawCond
         ( whereSql, whereParams ) = renderCond cond
     in
         guardCols
@@ -462,16 +464,17 @@ toList conn (Query q) =
 
         Store s ->
             let
-                ( whereTail, params ) = buildWhere q.conds
+                conds = List.map (resolveCond s.cols) q.conds
+                orders = List.map (resolveOrder s.cols) q.orders
+                ( whereTail, params ) = buildWhere conds
                 sql =
-                    "SELECT * FROM " ++ s.name ++ whereTail
-                        ++ orderTail q.orders
+                    "SELECT * FROM " ++ s.name ++ whereTail ++ orderTail orders
                         ++ pageTail q.limitN q.offsetN
             in
                 guardCols
                     s.cols
-                    (List.concatMap condCols q.conds
-                        ++ List.map (\(OrderTerm c _) -> c) q.orders)
+                    (List.concatMap condCols conds
+                        ++ List.map (\(OrderTerm c _) -> c) orders)
                     (dbQueryObjects conn sql params s.cols
                         |> Task.andThen (decodeRows s.codec))
 
@@ -489,11 +492,12 @@ count conn (Query q) =
 
         Store s ->
             let
-                ( whereTail, params ) = buildWhere q.conds
+                conds = List.map (resolveCond s.cols) q.conds
+                ( whereTail, params ) = buildWhere conds
             in
                 guardCols
                     s.cols
-                    (List.concatMap condCols q.conds)
+                    (List.concatMap condCols conds)
                     (Db.query
                         conn
                         ("SELECT COUNT(*) AS n FROM " ++ s.name ++ whereTail)
@@ -567,6 +571,68 @@ condCols c =
 
         CondNot inner ->
             condCols inner
+
+
+-- | camelCase → snake_case. Delegates to the SAME runtime routine that derives
+-- `Codec.auto` columns, so a filter written with the RECORD FIELD name
+-- (`"priceMinor"`) resolves to exactly its snake column (`"price_minor"`).
+snakeName : String -> String
+snakeName =
+    Ffi.kernel "Db_snakeName"
+
+
+isKnownCol : List ( String, String ) -> String -> Bool
+isKnownCol known col =
+    List.any (\( c, _ ) -> c == col) known
+
+
+-- | Resolve a name to a store column: use it verbatim when it IS a column,
+-- else fall back to its snake_case form (so `"priceMinor"` finds `"price_minor"`),
+-- else return it unchanged so the guard reports it as unknown.
+resolveCol : List ( String, String ) -> String -> String
+resolveCol known col =
+    if isKnownCol known col then
+        col
+
+    else
+        let
+            snake = snakeName col
+        in
+            if isKnownCol known snake then
+                snake
+
+            else
+                col
+
+
+-- | Rewrite every column name in a condition tree via `resolveCol`.
+resolveCond : List ( String, String ) -> Cond -> Cond
+resolveCond known c =
+    case c of
+
+        CondOp col op v ->
+            CondOp (resolveCol known col) op v
+
+        CondNull col wantNull ->
+            CondNull (resolveCol known col) wantNull
+
+        CondIn col vs ->
+            CondIn (resolveCol known col) vs
+
+        CondAnd cs ->
+            CondAnd (List.map (resolveCond known) cs)
+
+        CondOr cs ->
+            CondOr (List.map (resolveCond known) cs)
+
+        CondNot inner ->
+            CondNot (resolveCond known inner)
+
+
+-- | Rewrite an order term's column name via `resolveCol`.
+resolveOrder : List ( String, String ) -> OrderTerm -> OrderTerm
+resolveOrder known (OrderTerm col dir) =
+    OrderTerm (resolveCol known col) dir
 
 
 -- | Fail-fast guard: run `task` only if every used column exists in the store,

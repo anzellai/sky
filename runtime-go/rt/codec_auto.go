@@ -45,6 +45,11 @@ func camelToSnake(s string) string {
 	return b.String()
 }
 
+// Db_snakeName is the Std.Db.Store kernel behind `Store.snakeName` — it exposes
+// the exact `camelToSnake` used for column derivation so the query builder can
+// resolve a record FIELD name (`priceMinor`) to its snake column (`price_minor`).
+func Db_snakeName(s any) any { return camelToSnake(AsString(s)) }
+
 // skyColKey is the DB column / JSON key a record field maps to under `Codec.auto`
 // — snake_case by default (the DB convention), so `priceMinor` → `price_minor`
 // with no hand-written codec. `Codec.autoCamel` keeps the raw camelCase name.
