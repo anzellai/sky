@@ -116,3 +116,46 @@ func TestCodecAutoSnakeVsCamel(t *testing.T) {
 		t.Errorf("autoCamel cols = %v, want itemName/priceMinor", camelCols)
 	}
 }
+
+// awItem exercises Codec.autoWith's per-field override (a Bool stored as 0/1).
+type awItem struct {
+	Id     string `sky:"id,string"`
+	Active bool   `sky:"active,bool"`
+}
+
+func TestCodecAutoWithOverride(t *testing.T) {
+	// enc override: Bool -> int (0/1), like `intBool`.
+	enc := func(v any) any {
+		if b, _ := v.(bool); b {
+			return JsonValue{raw: 1}
+		}
+		return JsonValue{raw: 0}
+	}
+	encs := []any{T2[any, any]{V0: "active", V1: enc}}
+	got, _ := Codec_autoEncOverrides(true, encs, awItem{Id: "i1", Active: true}).(JsonValue)
+	obj, ok := got.raw.(jsonOrderedObject)
+	if !ok {
+		t.Fatalf("enc: not an object: %#v", got.raw)
+	}
+	activeVal := any(nil)
+	for i, k := range obj.keys {
+		if k == "active" {
+			activeVal = obj.vals[i]
+		}
+	}
+	if activeVal != 1 {
+		t.Errorf("active override should encode as int 1, got %#v", activeVal)
+	}
+
+	// dec override: int -> Bool.
+	dec := JsonDecoder{run: func(raw any) any { return Ok[any, any](AsIntOrZero(raw) != 0) }}
+	decs := []any{T2[any, any]{V0: "active", V1: dec}}
+	d, _ := Codec_autoDecoderOverrides(true, decs, awItem{}).(JsonDecoder)
+	res, ok := d.run(map[string]any{"id": "i1", "active": int64(1)}).(SkyResult[any, any])
+	if !ok || res.Tag != 0 {
+		t.Fatalf("dec: not Ok: %#v", res)
+	}
+	if out, _ := res.OkValue.(awItem); !out.Active {
+		t.Errorf("active override should decode int 1 -> true, got %+v", res.OkValue)
+	}
+}

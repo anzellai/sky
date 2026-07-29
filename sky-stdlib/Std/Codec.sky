@@ -47,6 +47,7 @@ module Std.Codec exposing
     , buildObject
     , auto
     , autoCamel
+    , autoWith
     , Variant
     , taggedUnion
     , var0
@@ -245,7 +246,7 @@ buildObject (ObjectCodec o) =
 --     userCodec = Codec.auto blankUser
 auto : a -> Codec a
 auto =
-    autoWith True
+    autoBase True
 
 
 -- | Like `auto`, but keeps camelCase column / JSON-key names (`priceMinor` stays
@@ -253,11 +254,11 @@ auto =
 -- default; per-column control still uses an explicit `Codec.field`.
 autoCamel : a -> Codec a
 autoCamel =
-    autoWith False
+    autoBase False
 
 
-autoWith : Bool -> a -> Codec a
-autoWith snake witness =
+autoBase : Bool -> a -> Codec a
+autoBase snake witness =
     Codec
         { enc = \r -> autoEncK snake r
         , dec = autoDecoderK snake witness
@@ -268,9 +269,113 @@ autoWith snake witness =
         }
 
 
+-- | Like `auto`, but OVERRIDE the codec for named columns — auto-derive everything
+-- from the witness EXCEPT the listed fields, which use the given codec. The escape
+-- hatch for a single field whose auto-derivation is wrong (a `Bool` stored as 0/1,
+-- an enum with a custom wire format) without hand-writing the whole record codec:
+--
+--     intBool = Codec.map (\i -> i /= 0) (\b -> if b then 1 else 0) Codec.int
+--     productCodec = Codec.autoWith [ ( "active", intBool ) ] productBlank
+--
+-- The overrides share one type (`Codec b`); mixed-type overrides need an explicit
+-- `Codec.object`. Column names are snake_case (as `auto`).
+autoWith : List ( String, Codec b ) -> a -> Codec a
+autoWith overrides witness =
+    let
+        encs = List.map (\( col, Codec c ) -> ( col, c.enc )) overrides
+        decs = List.map (\( col, Codec c ) -> ( col, c.dec )) overrides
+        shps = List.map (\( col, Codec c ) -> ( col, c.shp )) overrides
+    in
+        Codec
+            { enc = \r -> autoEncOverridesK True encs r
+            , dec = autoDecoderOverridesK True decs witness
+            , shp = SRecord
+                  (List.map
+                      (\( n, k ) -> ( n, kindToColType k ))
+                      (autoColsWith True shps witness))
+            }
+
+
+-- | Auto columns with each override column's kind replaced from its codec's shape.
+autoColsWith : Bool -> List ( String, Shape ) -> a -> List ( String, String )
+autoColsWith snake shps witness =
+    List.map
+        (\( col, kind ) ->
+            case lookupShape col shps of
+
+                Just shp ->
+                    ( col, shapeKind shp )
+
+                Nothing ->
+                    ( col, kind ))
+        (autoColsK snake witness)
+
+
+lookupShape : String -> List ( String, Shape ) -> Maybe Shape
+lookupShape col shps =
+    case shps of
+
+        [] ->
+            Nothing
+
+        ( c, s ) :: rest ->
+            if c == col then
+                Just s
+
+            else
+                lookupShape col rest
+
+
+shapeKind : Shape -> String
+shapeKind shp =
+    case shp of
+
+        SScalar ct ->
+            colTypeKind ct
+
+        SRecord _ ->
+            "blob"
+
+        SBlob ->
+            "blob"
+
+
+colTypeKind : ColType -> String
+colTypeKind ct =
+    case ct of
+
+        CText ->
+            "text"
+
+        CInt ->
+            "int"
+
+        CReal ->
+            "real"
+
+        CBool ->
+            "bool"
+
+        CBlob ->
+            "blob"
+
+        CNull inner ->
+            colTypeKind inner ++ "?"
+
+
 autoEncK : Bool -> a -> Value
 autoEncK =
     Ffi.kernel "Codec_autoEnc"
+
+
+autoEncOverridesK : Bool -> List ( String, b -> Value ) -> a -> Value
+autoEncOverridesK =
+    Ffi.kernel "Codec_autoEncOverrides"
+
+
+autoDecoderOverridesK : Bool -> List ( String, Decoder b ) -> a -> Decoder a
+autoDecoderOverridesK =
+    Ffi.kernel "Codec_autoDecoderOverrides"
 
 
 autoDecoderK : Bool -> a -> Decoder a

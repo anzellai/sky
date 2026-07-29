@@ -140,6 +140,116 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 	}
 }
 
+// codecOverrideMap turns a Sky `List (String, x)` into a col→x map (used for the
+// per-field enc-closure / dec-JsonDecoder override lists that `Codec.autoWith`
+// passes down).
+func codecOverrideMap(arg any) map[string]any {
+	m := map[string]any{}
+	for _, e := range AsList(arg) {
+		t := AsTuple2(e)
+		m[AsString(t.V0)] = t.V1
+	}
+	return m
+}
+
+func codecDerefStruct(v any) reflect.Value {
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Interface || rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return reflect.Value{}
+		}
+		rv = rv.Elem()
+	}
+	return rv
+}
+
+// Codec_autoEncOverrides is `Codec.autoWith`'s encoder: like Codec_autoEnc, but a
+// top-level field whose column is in `encs` is encoded by CALLING that field's
+// override enc-closure (`b -> Value`) instead of the reflection default.
+func Codec_autoEncOverrides(snakeArg, encsArg, record any) any {
+	snake := AsBool(snakeArg)
+	ov := codecOverrideMap(encsArg)
+	rv := codecDerefStruct(record)
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return Codec_autoEnc(snakeArg, record)
+	}
+	t := rv.Type()
+	obj := jsonOrderedObject{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		col := skyColKey(f, snake)
+		var raw any
+		if enc, ok := ov[col]; ok {
+			if jv, isJV := SkyCall(enc, rv.Field(i).Interface()).(JsonValue); isJV {
+				raw = jv.raw
+			}
+		} else {
+			r, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f), snake)
+			if err != nil {
+				return JsonValue{raw: nil}
+			}
+			raw = r
+		}
+		obj.keys = append(obj.keys, col)
+		obj.vals = append(obj.vals, raw)
+	}
+	return JsonValue{raw: obj}
+}
+
+// Codec_autoDecoderOverrides is `Codec.autoWith`'s decoder: like Codec_autoDecoder,
+// but a top-level field whose column is in `decs` is decoded by RUNNING that
+// field's override `JsonDecoder` on the column's JSON value.
+func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
+	snake := AsBool(snakeArg)
+	ov := codecOverrideMap(decsArg)
+	wt := reflect.TypeOf(witness)
+	for wt != nil && wt.Kind() == reflect.Ptr {
+		wt = wt.Elem()
+	}
+	return JsonDecoder{run: func(raw any) any {
+		m, ok := raw.(map[string]any)
+		if !ok || wt == nil || wt.Kind() != reflect.Struct {
+			return Err[any, any](ErrDecode("Codec.autoWith: expected object"))
+		}
+		out := reflect.New(wt).Elem()
+		for i := 0; i < wt.NumField(); i++ {
+			f := wt.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			col := skyColKey(f, snake)
+			if dec, ok := ov[col]; ok {
+				jd, isJD := dec.(JsonDecoder)
+				if !isJD {
+					return Err[any, any](ErrDecode("Codec.autoWith: override for " + col + " is not a decoder"))
+				}
+				res := jd.run(m[col])
+				r, isRes := res.(SkyResult[any, any])
+				if !isRes || r.Tag != 0 {
+					return res // propagate the override's Err verbatim
+				}
+				fvv := reflect.ValueOf(r.OkValue)
+				switch {
+				case fvv.IsValid() && fvv.Type().AssignableTo(f.Type):
+					out.Field(i).Set(fvv)
+				case fvv.IsValid() && fvv.Type().ConvertibleTo(f.Type):
+					out.Field(i).Set(fvv.Convert(f.Type))
+				}
+			} else {
+				fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, snake)], snake)
+				if err != nil {
+					return Err[any, any](ErrDecode(err.Error()))
+				}
+				out.Field(i).Set(fv)
+			}
+		}
+		return Ok[any, any](out.Interface())
+	}}
+}
+
 func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 	t := rv.Type()
 	obj := jsonOrderedObject{}

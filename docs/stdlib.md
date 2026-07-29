@@ -740,8 +740,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
   (scalars → columns, `Maybe` → nullable, list/nested/ADT → JSON blob, nullary enum
   → readable name); **snake_case** columns/keys by default (`Codec.autoCamel` keeps
-  camelCase). `toJson` / `fromJson` / `fromJsonSafe`; explicit `object`/`field`/
-  `taggedUnion`/`enum` for custom shapes. Pure Sky.
+  camelCase). **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
+  fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
+  format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
+  / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
+  Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
   `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
   `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), `all`/`findBy` + the

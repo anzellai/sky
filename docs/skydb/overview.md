@@ -66,7 +66,7 @@ users =
 scalars → typed columns, `Maybe` → nullable, list / nested-record / data-ADT →
 JSON TEXT blob, nullary enum → readable name. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
-keeps camelCase; a custom mapping uses `Codec.object`/`Codec.field "col" .field`.
+keeps `Codec.autoWith [ ("active", intBool) ] blank` overrides one field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest; camelCase; a custom mapping uses `Codec.object`/`Codec.field "col" .field`.
 
 ### Schema / DDL builders
 
