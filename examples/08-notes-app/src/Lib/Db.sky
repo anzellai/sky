@@ -1,26 +1,29 @@
-module Lib.Db exposing (conn, exec, query, getField)
+module Lib.Db exposing
+    ( conn
+    , User
+    , Session
+    , Note
+    , SessionUser
+    , userStore
+    , sessionStore
+    , noteStore
+    , sessionUserCodec
+    )
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Maybe as Maybe
-import Sky.Core.Dict as Dict
 import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
+import Std.Codec as Codec exposing (Codec)
 import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
 
 
--- Db.* now returns Task Error a per the effect-boundary doctrine.
--- This Lib layer is consumed from inside HTTP handlers + update
--- branches that need a synchronous Result for ergonomic case-pattern
--- matching. We bridge through Task.run inside each wrapper so the
--- rest of the app keeps its existing Result contracts unchanged.
---
--- For Sky.Live update branches with long-running queries, factor the
--- Task into a top-level helper and dispatch via Cmd.perform — see
--- 18-job-queue/src/Main.sky for the canonical async pattern.
+-- One memoised connection (CAF) shared by every Store op. Db.connect reads
+-- SKY_DB_PATH (default skynotes.db).
 conn =
-    case Task.run (Db.open "sqlite" "skynotes.db") of
+    case Task.run (Db.connect ()) of
 
         Ok c ->
             c
@@ -29,29 +32,91 @@ conn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skynotes.db: " ++ Error.toString e)
+                        ("[FATAL] Cannot open the database: " ++ Error.toString e)
             in
                 System.exit 1
 
+-- ── Typed rows ──────────────────────────────────────────────────────
+type alias User =
+    { id : Int
+    , email : String
+    , passwordHash : String
+    , verified : Int
+    , verificationToken : String
+    , createdAt : String
+    }
 
--- exec : Result Error () — typed-error DB write. Callers in `update`
--- MUST pattern-match and decide what to do.
-exec queryStr args =
-    case Task.run (Db.exec conn queryStr args) of
+type alias Session =
+    { id : Int
+    , userId : Int
+    , token : String
+    , createdAt : String
+    }
 
-        Ok _ ->
-            Ok ()
-
-        Err e ->
-            Err e
-
-
--- query : Result Error (List Row). Same contract as exec.
-query queryStr args =
-    Task.run (Db.query conn queryStr args)
+type alias Note =
+    { id : Int
+    , userId : Int
+    , title : String
+    , content : String
+    , createdAt : String
+    , updatedAt : String
+    }
 
 
--- Missing columns are a Sky-side schema mismatch, not a runtime error.
--- Empty string lets the view degrade predictably for display-only reads.
-getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+-- ── Stores (one Codec.auto each drives DDL + reads + writes) ─────────
+userStore : Store User
+userStore =
+    Store.fromCodec
+        "users"
+        (Codec.auto
+            { id = 0
+            , email = ""
+            , passwordHash = ""
+            , verified = 0
+            , verificationToken = ""
+            , createdAt = ""
+            })
+        |> Store.serial "id"
+        |> Store.unique "email"
+        |> Store.defaultInt "verified" 0
+        |> Store.defaultNow "createdAt"
+
+
+sessionStore : Store Session
+sessionStore =
+    Store.fromCodec
+        "sessions"
+        (Codec.auto { id = 0, userId = 0, token = "", createdAt = "" })
+        |> Store.serial "id"
+        |> Store.unique "token"
+        |> Store.defaultNow "createdAt"
+
+
+noteStore : Store Note
+noteStore =
+    Store.fromCodec
+        "notes"
+        (Codec.auto
+            { id = 0
+            , userId = 0
+            , title = ""
+            , content = ""
+            , createdAt = ""
+            , updatedAt = ""
+            })
+        |> Store.serial "id"
+        |> Store.defaultText "content" ""
+        |> Store.defaultNow "createdAt"
+        |> Store.touchOnUpdate "updatedAt"
+
+-- ── JOIN projection (users ⋈ sessions), decoded by Store.selectRaw ──
+type alias SessionUser =
+    { id : Int
+    , email : String
+    , createdAt : String
+    }
+
+
+sessionUserCodec : Codec SessionUser
+sessionUserCodec =
+    Codec.auto { id = 0, email = "", createdAt = "" }

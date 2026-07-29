@@ -880,10 +880,10 @@ verifyResultPage isSuccess message =
 -- ============================================================
 noteCard note =
     let
-        noteTitle = getField "title" note
-        noteId = getField "id" note
-        date = getField "created_at" note
-        content = getField "content" note
+        noteTitle = note.title
+        noteId = String.fromInt note.id
+        date = note.createdAt
+        content = note.content
         preview =
             if String.length content > 120 then
                 String.left 120 content ++ "..."
@@ -958,11 +958,11 @@ notesListPage email notes =
 
 noteViewPage email note =
     let
-        noteTitle = getField "title" note
-        content = getField "content" note
-        date = getField "created_at" note
-        updated = getField "updated_at" note
-        noteId = getField "id" note
+        noteTitle = note.title
+        content = note.content
+        date = note.createdAt
+        updated = note.updatedAt
+        noteId = String.fromInt note.id
         dateDisplay =
             if updated == "" then
                 "Created " ++ date

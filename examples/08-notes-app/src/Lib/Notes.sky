@@ -3,50 +3,102 @@ module Lib.Notes exposing (createNote, updateNote, deleteNote, getNotes, getNote
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
-import Lib.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db.Store as Store
+import Lib.Db as Db exposing (Note)
 
 
--- createNote : Result Error (). Caller decides whether to show the
--- user a toast, redirect, or retry.
-createNote : String -> String -> String -> Result Error ()
+-- createNote : Result Error () — DB stamps id/created_at/updated_at.
+createNote : Int -> String -> String -> Result Error ()
 createNote userId title content =
-    Db.exec
-        "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
-        [ userId, title, content ]
+    let
+        newNote =
+            { id = 0
+            , userId = userId
+            , title = title
+            , content = content
+            , createdAt = ""
+            , updatedAt = ""
+            }
+    in
+        case Task.run (Store.insert Db.conn Db.noteStore newNote) of
+
+            Ok _ ->
+                Ok ()
+
+            Err e ->
+                Err e
 
 
-updateNote : String -> String -> String -> String -> Result Error ()
+-- updateNote : ownership-scoped update. Store.updateWhere sets the record's
+-- columns WHERE id = ? AND user_id = ? (so one user can't edit another's
+-- note); touchOnUpdate bumps updated_at with no raw SQL.
+updateNote : String -> Int -> String -> String -> Result Error ()
 updateNote noteId userId title content =
-    Db.exec
-        "UPDATE notes SET title = ?, content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
-        [ title, content, noteId, userId ]
-
-
-deleteNote : String -> String -> Result Error ()
-deleteNote noteId userId =
-    Db.exec "DELETE FROM notes WHERE id = ? AND user_id = ?" [ noteId, userId ]
-
-
--- getNotes : Result Error (List Row). DB errors bubble; the caller
--- can render a "failed to load notes" page rather than showing empty.
-getNotes : String -> Result Error (List (Dict String String))
-getNotes userId =
-    Db.query
-        "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
-        [ userId ]
-
-
--- getNote : Result Error (Maybe Row). Outer for DB failure, inner for
--- not-found (a normal state, not an error).
-getNote : String -> String -> Result Error (Maybe (Dict String String))
-getNote noteId userId =
-    case Db.query
-             "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"
-             [ noteId, userId ] of
+    case Task.run (getNoteTask noteId userId) of
 
         Err e ->
             Err e
 
-        Ok noteRows ->
-            Ok (List.head noteRows)
+        Ok Nothing ->
+            Ok ()
+
+        Ok (Just note) ->
+            let
+                changed = { note | title = title, content = content }
+                cond =
+                    Store.and_
+                        [ Store.eq "id" (SqlInt note.id)
+                        , Store.eq "userId" (SqlInt userId)
+                        ]
+            in
+                case Task.run
+                         (Store.updateWhere Db.conn Db.noteStore cond changed) of
+
+                    Ok _ ->
+                        Ok ()
+
+                    Err e ->
+                        Err e
+
+
+deleteNote : String -> Int -> Result Error ()
+deleteNote noteId userId =
+    let
+        cond =
+            Store.and_
+                [ Store.eq "id" (SqlString noteId)
+                , Store.eq "userId" (SqlInt userId)
+                ]
+    in
+        case Task.run (Store.deleteWhere Db.conn Db.noteStore cond) of
+
+            Ok _ ->
+                Ok ()
+
+            Err e ->
+                Err e
+
+
+-- getNotes : Result Error (List Note) — this user's notes, newest edit first.
+getNotes : Int -> Result Error (List Note)
+getNotes userId =
+    Task.run
+        (Store.query Db.noteStore
+            |> Store.where_ (Store.eq "userId" (SqlInt userId))
+            |> Store.orderDesc "updatedAt"
+            |> Store.toList Db.conn)
+
+
+getNote : String -> Int -> Result Error (Maybe Note)
+getNote noteId userId =
+    Task.run (getNoteTask noteId userId)
+
+
+getNoteTask : String -> Int -> Task Error (Maybe Note)
+getNoteTask noteId userId =
+    Store.query Db.noteStore |> Store.where_ (Store.eq "id" (SqlString noteId))
+        |> Store.where_ (Store.eq "userId" (SqlInt userId))
+        |> Store.toMaybe Db.conn

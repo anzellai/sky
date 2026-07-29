@@ -14,11 +14,14 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Std.Auth as Auth
-import Lib.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db.Store as Store
+import Lib.Db as Db exposing (User, SessionUser)
 
 
 hashPassword : String -> String
@@ -37,15 +40,13 @@ verifyPassword password storedHash =
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
--- Auth.verifyPassword returns Result Error Bool — collapse with
--- withDefault False (auth-deny on internal error, not auth-grant).
 generateToken _ =
     Result.withDefault "" (Uuid.newString ())
 
 
--- createUser : Result Error String (verification token). DB unique
--- constraint violations surface as InvalidInput so the form renders
--- the message inline.
+-- createUser : Result Error String (verification token). The UNIQUE email
+-- constraint (Store.unique "email") turns a duplicate into a driver error,
+-- which we present as InvalidInput so the form renders it inline.
 createUser : String -> String -> Result Error String
 createUser email password =
     let
@@ -59,12 +60,16 @@ createUser email password =
         _ = println ("  http://localhost:8000/auth/verify?token=" ++ token)
         _ = println "=========================================="
         _ = println ""
-        result =
-            Db.exec
-                "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
-                [ email, passHash, token ]
+        newUser =
+            { id = 0
+            , email = email
+            , passwordHash = passHash
+            , verified = 0
+            , verificationToken = token
+            , createdAt = ""
+            }
     in
-        case result of
+        case Task.run (Store.insert Db.conn Db.userStore newUser) of
 
             Ok _ ->
                 Ok token
@@ -75,63 +80,61 @@ createUser email password =
                         "That email is already registered, or a server error occurred.")
 
 
-checkUserCredentials password user =
-    let
-        storedHash = Db.getField "password_hash" user
-        verified = Db.getField "verified" user
-    in
-        if verifyPassword password storedHash then
-            if verified == "1" then
-                Ok user
-
-            else
-                Err
-                    (Error.permissionDenied
-                        |> Error.withMessage
-                               "Email not verified yet. Please check the server console for your verification link.")
+-- Returns Result Error () — the field-accessing check stays SEPARATE from
+-- the `Ok user` (returning the record here would let subset-record inference
+-- narrow the Ok to just the accessed fields).
+checkCredentials : String -> User -> Result Error ()
+checkCredentials password user =
+    if verifyPassword password user.passwordHash then
+        if user.verified == 1 then
+            Ok ()
 
         else
             Err
                 (Error.permissionDenied
-                    |> Error.withMessage "Invalid email or password.")
+                    |> Error.withMessage
+                           "Email not verified yet. Please check the server console for your verification link.")
+
+    else
+        Err
+            (Error.permissionDenied
+                |> Error.withMessage "Invalid email or password.")
 
 
--- authenticateUser : Result Error User. DB errors surface upstream so
--- callers can show "service unavailable" rather than "bad password".
--- Wrong email / wrong password both PermissionDenied.
-authenticateUser : String -> String -> Result Error (Dict String String)
+-- authenticateUser : Result Error User. Wrong email / wrong password both
+-- PermissionDenied; DB errors surface upstream.
+authenticateUser : String -> String -> Result Error User
 authenticateUser email password =
-    case Db.query
-             "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
-             [ email ] of
+    case Task.run (Store.findBy Db.conn Db.userStore "email" email) of
 
         Err e ->
             Err e
 
-        Ok userRows ->
-            case List.head userRows of
+        Ok Nothing ->
+            Err
+                (Error.permissionDenied
+                    |> Error.withMessage "Invalid email or password.")
 
-                Nothing ->
-                    Err
-                        (Error.permissionDenied
-                            |> Error.withMessage "Invalid email or password.")
+        Ok (Just user) ->
+            case checkCredentials password user of
 
-                Just user ->
-                    checkUserCredentials password user
+                Ok _ ->
+                    Ok user
+
+                Err e ->
+                    Err e
 
 
--- createSession : Result Error String. Propagates the underlying IO
--- error so handlers can distinguish infra failure from auth failure.
-createSession : String -> Result Error String
+-- createSession : Result Error String — generates a token, inserts the row,
+-- returns the token for the cookie.
+createSession : Int -> Result Error String
 createSession userId =
     let
         token = generateToken ()
-        result =
-            Db.exec
-                "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
-                [ userId, token ]
+        newSession =
+            { id = 0, userId = userId, token = token, createdAt = "" }
     in
-        case result of
+        case Task.run (Store.insert Db.conn Db.sessionStore newSession) of
 
             Ok _ ->
                 Ok token
@@ -140,32 +143,51 @@ createSession userId =
                 Err e
 
 
--- getSessionUser : Result Error (Maybe User). Outer Result is for
--- DB failures; inner Maybe is "found / not found" which is normal.
-getSessionUser : String -> Result Error (Maybe (Dict String String))
+-- getSessionUser : Result Error (Maybe SessionUser). A JOIN (users ⋈
+-- sessions) — a single-table Store can't express it, so `Store.selectRaw`
+-- runs the SQL and decodes each row into the typed `SessionUser` projection.
+getSessionUser : String -> Result Error (Maybe SessionUser)
 getSessionUser sessionToken =
-    case Db.query
-             "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
-             [ sessionToken ] of
+    case Task.run
+             (Store.selectRaw
+                 Db.conn
+                 Db.sessionUserCodec
+                 "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON u.id = s.user_id WHERE s.token = ? LIMIT 1"
+                 [ SqlString sessionToken ]) of
 
         Err e ->
             Err e
 
-        Ok userRows ->
-            Ok (List.head userRows)
+        Ok rows ->
+            Ok (List.head rows)
 
 
--- verifyEmail : Result Error String (success message). DB failures
--- bubble to the caller so they can render a distinct UI from the
--- happy path.
+-- verifyEmail : Result Error String — flip verified=1 for the row matching the
+-- verification token (only while still unverified), via a typed read-write.
 verifyEmail : String -> Result Error String
 verifyEmail token =
-    case Db.exec
-             "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
-             [ token ] of
-
-        Ok _ ->
-            Ok "Your email has been verified! You can now sign in."
+    case Task.run (findByToken token) of
 
         Err e ->
             Err e
+
+        Ok Nothing ->
+            Ok "Your email has been verified! You can now sign in."
+
+        Ok (Just user) ->
+            case Task.run
+                     (Store.update Db.conn Db.userStore { user | verified = 1 }) of
+
+                Err e ->
+                    Err e
+
+                Ok _ ->
+                    Ok "Your email has been verified! You can now sign in."
+
+
+findByToken : String -> Task Error (Maybe User)
+findByToken token =
+    Store.query Db.userStore
+        |> Store.where_ (Store.eq "verificationToken" (SqlString token))
+        |> Store.where_ (Store.eq "verified" (SqlInt 0))
+        |> Store.toMaybe Db.conn
