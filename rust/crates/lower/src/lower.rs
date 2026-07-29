@@ -2642,10 +2642,50 @@ impl<'a> Ctx<'a> {
             }
             _ => (String::new(), String::new()),
         };
+        // `Ok`/`Just` wrap their argument, so the payload type param is the
+        // argument's type. When the EXPECTED payload is an anonymous struct — a
+        // record row narrowed by field-access inference at this site (e.g. a
+        // function that reads only some fields of a record param but returns the
+        // whole record) — while the argument lowered to the full named record,
+        // the expected type is the narrowed one. Trust the argument's fuller
+        // named type so we emit `rt.Ok[E, User_R](v)`, not
+        // `rt.Ok[E, struct{…subset…}](v)` (which fails `go build`).
+        let payload_from_arg = |expected: &GoTy| -> GoTy {
+            match (expected, lowered_args.first().map(|a| &a.ty)) {
+                (GoTy::Struct(_), Some(GoTy::Named(n, targs))) => {
+                    GoTy::Named(n.clone(), targs.clone())
+                }
+                _ => expected.clone(),
+            }
+        };
+        let ok_actual = match actual {
+            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => {
+                GoTy::Named(n.clone(), vec![ts[0].clone(), payload_from_arg(&ts[1])])
+            }
+            _ => actual.clone(),
+        };
+        let ok_ea = match &ok_actual {
+            GoTy::Named(n, ts) if n == "rt.SkyResult" && ts.len() == 2 => {
+                format!("[{}, {}]", render_goty(&ts[0]), render_goty(&ts[1]))
+            }
+            _ => res_ea.clone(),
+        };
+        let just_actual = match actual {
+            GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
+                GoTy::Named(n.clone(), vec![payload_from_arg(&ts[0])])
+            }
+            _ => actual.clone(),
+        };
+        let just_a = match &just_actual {
+            GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
+                format!("[{}]", render_goty(&ts[0]))
+            }
+            _ => maybe_a.clone(),
+        };
         let expr = match cname.as_str() {
-            "Ok" => call_rt(&format!("rt.Ok{res_ea}"), lowered_args, actual.clone()),
+            "Ok" => call_rt(&format!("rt.Ok{ok_ea}"), lowered_args, ok_actual),
             "Err" => call_rt(&format!("rt.Err{res_ea}"), lowered_args, actual.clone()),
-            "Just" => call_rt(&format!("rt.Just{maybe_a}"), lowered_args, actual.clone()),
+            "Just" => call_rt(&format!("rt.Just{just_a}"), lowered_args, just_actual),
             "Nothing" => {
                 let a = match actual {
                     GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
