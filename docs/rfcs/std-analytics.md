@@ -83,6 +83,10 @@ analytics is a **separate typed channel**.
 - Auto-context (device, route, session, timestamp) with **zero re-threading**.
 - **Default-safe privacy**: anonymous by default, explicit identify,
   consent-gated, IP-anonymized (see §11 — this is a hard requirement).
+  *(Shipped deviation, v0.19.1: consent defaults to `Granted` for DX — an app
+  that enables analytics captures fully; privacy-conscious apps downgrade to
+  `Anonymous`/`Denied` via `setConsent` behind a consent banner. IP anonymization
+  + the opt-in identity model are unchanged.)*
 - Pluggable sinks (local + external providers/warehouses) via one ADT.
 - A live/verify console view + the common aggregates.
 - Progressive disclosure: useful with zero config; every layer optional.

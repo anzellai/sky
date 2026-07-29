@@ -76,7 +76,7 @@ landmarks anyway.
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |
 | Logs | `Std.Log` structured logs; `/_sky/console` auto-mounts in dev. |
-| Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent-gated + anonymous by default, opt-in Sky.Live auto page-views (`analytics = { pageViews = True }`), SQLite store + Sky Console **Analytics** tab. |
+| Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent **`Granted` by default** (privacy apps downgrade via a banner + `setConsent`), opt-in Sky.Live auto page-views (`Live.withAnalytics { pageViews = True }` + `Live.withAnalyticsIdentify` to attribute the signed-in user), SQLite store + Sky Console **Analytics** tab. |
 
 ## Database
 

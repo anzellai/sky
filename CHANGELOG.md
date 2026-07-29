@@ -44,6 +44,58 @@ SQLite *and* PostgreSQL (verified end-to-end on both).
 
 Walkthrough: [`docs/tooling/cli.md`](docs/tooling/cli.md#database).
 
+### Added — codec-driven persistence (`Std.Codec` + `Std.Db.Store`)
+
+Write **one `Codec` per type**, reused for JSON *and* dialect-safe DB
+(schema + read + write) — no hand-written row mappers, no `SqlValue` lists.
+The recommended default for record-shaped tables. See
+[`docs/skydb/overview.md`](docs/skydb/overview.md).
+
+- **`Std.Codec`** — `Codec.auto blank` reflection-derives a codec from a
+  zero-value witness (scalars → columns, `Maybe` → nullable, list/nested/ADT →
+  JSON blob, nullary enum → readable name). Columns/JSON keys are **snake_case
+  by default** (`priceMinor` → `price_minor`); `Codec.autoCamel` keeps camelCase;
+  **`Codec.autoWith [ ("col", codec) ] blank`** overrides specific fields while
+  auto-deriving the rest (a `Bool` stored 0/1, a custom enum format) with no
+  full hand-written codec. `toJson` / `fromJson` / `fromJsonSafe`.
+- **`Std.Db.Store`** — codec-driven CRUD. Schema builders pipe onto the store
+  (each takes the record field *or* snake column; a typo fails fast): `serial`
+  (auto-increment PK), `unique`, `defaultNow` / `defaultText` / `defaultInt`,
+  **`touchOnUpdate`** (a timestamp DB-stamped on insert *and* auto-bumped to
+  `now()` on every update — no raw SQL), **`defaultWith`** (app-side computed
+  default, e.g. a UUID PK), `generated`.
+- Writes: `insert`, **`insertMany`** (one multi-row INSERT for bulk/time-series),
+  `update` (by PK), `updateWhere` (by `Cond`), **`upsert`** (`INSERT … ON
+  CONFLICT DO UPDATE`), `delete`, `deleteWhere`.
+- Reads: `all` / `findBy` + a composable, injection-safe query builder
+  (`where_` / `and_` / `or_` / `not_` / `eq`…`inList` / `orderAsc` / `limit` /
+  `toList` / `toMaybe` / `count`), `sqlOf` (filter by a typed value via its
+  codec), and **`selectRaw codec sql params`** — run any SQL (JOIN / `GROUP BY` /
+  aggregate) and decode each row into a typed projection record (the sqlx split;
+  deliberately not an ORM).
+
+### Added — `Std.Analytics` product analytics
+
+Typed product analytics for Sky apps — open payload builder with typed prop
+values (`Money` lossless, `Pii` a distinct redactable type), pluggable sinks
+(stderr / JSONL / custom POST), a SQLite store, and a Sky Console **Analytics**
+tab. See [`examples/52-blog-analytics`](examples/52-blog-analytics).
+
+- Consent defaults to **`Granted`** — enabling analytics captures fully and
+  `identify` attaches the user, which is what most apps want. Privacy-conscious
+  apps show a consent banner and downgrade with `setConsent Anonymous` / `Denied`.
+  Consent + identity are session-scoped.
+- **Sky.Live auto page-views** — `Live.withAnalytics { pageViews = True }`; add
+  **`Live.withAnalyticsIdentify (\model -> Maybe String)`** to attribute an
+  already-authenticated session from the first render.
+
+### Fixed
+
+- **Codegen (subset-record).** A function that read only some fields of a record
+  parameter *and* returned the whole record via `Ok`/`Just` narrowed the
+  constructor's type-arg to an anonymous subset struct, failing `go build`. `Ok`/
+  `Just` now take the payload type from the argument's own type.
+
 ### Added — `sky upgrade` prints release notes
 
 After a successful upgrade, Sky prints the notes for every version between the
