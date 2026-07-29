@@ -129,7 +129,9 @@ Conditions are composable `Cond` values — leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`
 `like`/`isNull`/`notNull`/`inList`) combine with `and_`/`or_`/`not_`, applied with
 `where_` (multiple `where_` AND together). Values bind as `SqlValue` params
 (injection-safe) — `import Std.Db exposing (SqlValue(..))` for unqualified
-`SqlInt`/`SqlString`/`SqlBool`:
+`SqlInt`/`SqlString`/`SqlBool`. Column names accept EITHER the record field
+(`"priceMinor"`) OR the snake column (`"price_minor"`) — the builder resolves
+it — and a typo fails fast with the actual column list before touching the DB:
 
 ```elm
 Store.query products
