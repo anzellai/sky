@@ -1439,6 +1439,39 @@ cd examples/01-hello-world && sky build src/Main.sky
 If step 5 or 6 fails, fix root cause then re-run from step 1. Never
 tag with a known runtime failure.
 
+### Release notes — MUST be set up before every release (non-negotiable)
+
+`sky upgrade` prints a release's GitHub Release **body** verbatim (for every
+version between the user's current binary and the new one), and flags a
+`Breaking`/`Migration` heading with a ⚠ banner. **`CHANGELOG.md` is the single
+source of truth**; the GitHub Release body is a copy of the matching section. A
+release published with an empty or auto-generated ("Full Changelog: …") body
+means every upgrading user sees NOTHING — so the notes step is a hard release
+gate, not an afterthought.
+
+Before tagging `vX.Y.Z` (this runs whether a human or an AI/Claude Code drives
+the release):
+
+1. **Ensure `CHANGELOG.md` has a section for the version.** If it doesn't yet,
+   **build it from the actual changes** — `git log <last-tag>..HEAD` (commit
+   subjects/bodies), the PRs merged, and the session context. Group under
+   `### Added` / `### Changed` / `### Fixed` / `### Removed`, and put anything
+   that changes existing behaviour under a heading containing the word
+   **"Breaking"** or **"Migration"** (that word triggers the ⚠ upgrade banner),
+   with concrete, copy-pasteable migration steps. Set the section header to the
+   EXACT version: `## vX.Y.Z — <title> (YYYY-MM-DD)`. Keep the file additive —
+   never rewrite released history.
+2. **Verify extraction**: `scripts/release-notes.sh vX.Y.Z` prints the section
+   (exits non-zero if the section is missing — do not release on a non-zero).
+3. **Publish the Release body from the CHANGELOG**, never a bare tag:
+   `gh release create vX.Y.Z --notes-file <(scripts/release-notes.sh vX.Y.Z) …`
+   (or `--notes-file -` piped). CI release automation MUST do the same — a tag
+   push that skips this ships empty upgrade notes.
+
+This gates every `sky` compiler release (the `sky upgrade` self-updater is what
+consumes the notes). See `CHANGELOG.md`'s top blockquote for the heading
+convention and `scripts/release-notes.sh` for the extractor.
+
 ## Environment variables
 
 Configuration precedence: **process env > `.env` > `sky.toml`**.
