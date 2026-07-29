@@ -248,11 +248,19 @@ When you define your schema with `Std.Db.Store` + `Std.Codec` and expose a
 types — **no database connection required**:
 
 ```bash
+sky db init                      # scaffold db/migrations/ + db/schema.json (once)
 sky db migrate --gen init        # first migration: CREATE TABLE for every store
 # …add a field to a record, then:
 sky db migrate --gen add_stock   # → addColumn (required cols get a safe backfill DEFAULT)
+sky db status                    # ✓ applied / ○ pending per committed file vs the ledger
 sky db migrate                   # apply the committed db/migrations/*.json to the live DB
+sky db seed                      # run the entry module's seed : Db -> Task Error ()
 ```
+
+`sky db status` compares the committed files against the live `_sky_migrations`
+ledger and **exits non-zero while anything is pending** — a ready-made "is this
+DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
+module exposes (`module Main exposing (main, db, seed)`), against the live DB.
 
 How it works — gen builds a temporary DB-free entry (`main =
 Store.dumpSchema db`), captures the type-derived schema, and diffs it against

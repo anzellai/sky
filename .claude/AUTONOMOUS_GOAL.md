@@ -78,6 +78,43 @@ A working, verified `Std.Codec` + `Std.Db.Table` stack:
 - **S6 ✅** — auto-migration architecture (`docs/v0.19/auto-migration-architecture.md`,
   grilled; v1 manual `Db.migrate`). Commit b8d5b744.
 
+- **S7 ✅ (file-based migration IMPLEMENTATION — beyond S6's v1-manual scope).**
+  The user pivoted: since stores are `Db.table`-style pure values, generate +
+  commit migration FILES (git-reviewed, no live DB for diff), apply them
+  non-interactively. Shipped + verified on SQLite AND Postgres:
+  - **Op renderer + apply engine** — `runtime-go/rt/db_migrate_ops.go`
+    (`renderMigOp` dialect SQL for createTable/addColumn/dropColumn/renameColumn/
+    addIndex/dropIndex/raw; identifier-validated) + `Std.Db.Migrate.migrateOps`
+    (checksummed `_sky_migrations` ledger, at-most-once). Unit-tested both
+    dialects incl. injection rejection.
+  - **DB-free schema-dump** — `Store.project` / `Store.toTable` / `dumpSchema`
+    (`Db_dumpProject` prints schema JSON between markers; pure via lazy CAFs) +
+    nullability carried through (`?` kind suffix + `ColType.CNull`).
+  - **`sky db migrate --gen [name]`** (`crates/sky/src/db_migrate.rs` +
+    `cmd_db_gen`) — builds the dump entry, diffs vs `db/schema.json`, writes
+    `db/migrations/<ts>_<name>.json` + snapshot. New required col → `addColumn
+    NOT NULL DEFAULT <zero>` (safe backfill); Maybe → nullable; drop/retype →
+    **quarantined** in a `destructive` array (never auto-applied).
+  - **Interactive gen (TTY)** — dropped col → (r)ename [→ one `renameColumn`,
+    data preserved] / (d)rop / (s)kip; required col → custom backfill default.
+    Non-TTY keeps the safe quarantine defaults (CI-deterministic). Pure rewrite
+    core unit-tested (6 db_migrate tests).
+  - **`sky db migrate`** (`cmd_db_apply`) — concatenates committed files, applies
+    via the ledger, dialect-correct, idempotent (2nd run = 0). Verified: SQLite
+    INTEGER/TEXT vs Postgres bigint/text from the SAME files; quarantined drop is
+    a no-op (column preserved). Commits 2a7cb6ab, 0fcd6787, ef1bb18b, a515dc3e.
+  - **Operational verbs (Phase 4c, commit 9af5b2ec):** `sky db init` (scaffold),
+    `sky db status` (committed files vs the live `_sky_migrations` ledger; ✓/○ per
+    file; exits non-zero while pending — deploy gate), `sky db seed` (runs the
+    entry module's exposed `seed : Db -> Task Error ()`). Marker-based temp entry
+    for status (queries the ledger `name` column; tolerates fresh DB); shared
+    `build_temp_db_entry` helper. Verified e2e SQLite: init → gen → status(pending,
+    exit 1) → migrate → status(up to date, exit 0) → seed.
+  - Docs: `docs/tooling/cli.md` file-based migration section (all verbs).
+  - **Remaining (optional):** `sky db push` (rebrand `Store.migrate` live-additive),
+    `sky run --db-migrate --db-seed` one-shot flags, binary-embedded migrations for
+    deploy (so a built app can self-migrate without the source tree).
+
 **ALL STEPS DONE.** The codec-derivation stack is complete: one `Codec` (or
 `Codec.auto blank`) → JSON + dialect-safe DB, readable enums, verified SQLite +
 Postgres. Migration automation designed (v1 manual). Remaining future work is
