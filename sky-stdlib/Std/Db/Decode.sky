@@ -162,16 +162,19 @@ map2 =
     Ffi.kernel "DbDec_map2"
 
 
+-- | Combine three column decoders with a 3-arg constructor.
 map3 : (a -> b -> c -> d) -> Decoder a -> Decoder b -> Decoder c -> Decoder d
 map3 =
     Ffi.kernel "DbDec_map3"
 
 
+-- | Combine four column decoders with a 4-arg constructor.
 map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
 map4 =
     Ffi.kernel "DbDec_map4"
 
 
+-- | Combine five column decoders with a 5-arg constructor.
 map5 : (a -> b -> c -> d -> e -> f) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e -> Decoder f
 map5 =
     Ffi.kernel "DbDec_map5"

@@ -170,21 +170,27 @@ serial n =
 
 
 -- ── Modifiers (pipe-friendly) ─────────────────────────────────────────────
+-- | Mark this column the table's PRIMARY KEY: `text "id" |> primaryKey`.
 primaryKey : Column -> Column
 primaryKey c =
     { c | isPk = True }
 
 
+-- | Mark this column NOT NULL: `text "email" |> notNull`.
 notNull : Column -> Column
 notNull c =
     { c | isNotNull = True }
 
 
+-- | Add a UNIQUE constraint on this column: `text "slug" |> notNull |> unique`.
 unique : Column -> Column
 unique c =
     { c | isUnique = True }
 
 
+-- | Auto-increment this integer key (AUTOINCREMENT on SQLite / SERIAL on
+-- Postgres): `int "id" |> primaryKey |> autoIncrement`. Prefer `serial` for a
+-- plain auto PK.
 autoIncrement : Column -> Column
 autoIncrement c =
     { c | isAutoInc = True }
@@ -227,17 +233,23 @@ references tbl col c =
 
 
 -- ── Table builders ────────────────────────────────────────────────────────
+-- | Define a table from a name and its columns: `table "users" [ id "id", ... ]`.
+-- Attach indexes with `withIndex` / `withUniqueIndex`.
 table : String -> List Column -> Table
 table n cols =
     { name = n, columns = cols, indexes = [] }
 
 
+-- | Add a (non-unique) index over one or more columns:
+-- `table "orders" [...] |> withIndex "idx_orders_user" [ "user_id" ]`.
 withIndex : String -> List String -> Table -> Table
 withIndex nm cols t =
     { t | indexes = t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = False } ]
     }
 
 
+-- | Add a UNIQUE index over one or more columns: `... |> withUniqueIndex
+-- "idx_users_email" [ "email" ]`.
 withUniqueIndex : String -> List String -> Table -> Table
 withUniqueIndex nm cols t =
     { t | indexes = t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = True } ]

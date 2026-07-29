@@ -158,6 +158,8 @@ type Project
     = Project (List Table)
 
 
+-- | Build a `Project` from a list of erased tables (via `toTable`). Expose the
+-- result as `db : Store.Project` from your entry module for `sky db migrate --gen`.
 project : List Table -> Project
 project tables =
     Project tables

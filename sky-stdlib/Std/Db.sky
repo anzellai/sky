@@ -79,6 +79,7 @@ connect =
     Ffi.kernel "Db_connect"
 
 
+-- | Close the connection pool (rarely needed — the pool is a memoised handle).
 close : Db -> Task Error ()
 close =
     Ffi.kernel "Db_close"
@@ -304,16 +305,19 @@ getField =
     Ffi.kernel "Db_getField"
 
 
+-- | Read a TEXT column from a row by name, defaulting to "" when absent.
 getString : String -> row -> String
 getString =
     Ffi.kernel "Db_getString"
 
 
+-- | Read an INTEGER column from a row by name, defaulting to 0 when absent/unparseable (display-only lenient reader).
 getInt : String -> row -> Int
 getInt =
     Ffi.kernel "Db_getInt"
 
 
+-- | Read a BOOLEAN/0-1 column from a row by name, defaulting to False when absent.
 getBool : String -> row -> Bool
 getBool =
     Ffi.kernel "Db_getBool"
@@ -367,6 +371,7 @@ type SqlValue
 -- variant: `Just v` → `SqlT v`, `Nothing` → `SqlNull (SqlT
 -- defaultWitness)`. Lets sky-sqlgen and hand-written code emit
 -- nullable columns without inline `case-of` boilerplate.
+-- | `Just s` -> `SqlString s`; `Nothing` -> SQL NULL. For nullable TEXT columns.
 fromMaybeString : Maybe String -> SqlValue
 fromMaybeString m =
     case m of
@@ -380,6 +385,7 @@ fromMaybeString m =
             SqlNull (SqlString "")
 
 
+-- | `Just n` -> `SqlInt n`; `Nothing` -> SQL NULL. For nullable INTEGER columns.
 fromMaybeInt : Maybe Int -> SqlValue
 fromMaybeInt m =
     case m of
@@ -391,6 +397,7 @@ fromMaybeInt m =
             SqlNull (SqlInt 0)
 
 
+-- | `Just x` -> `SqlFloat x`; `Nothing` -> SQL NULL. For nullable REAL columns.
 fromMaybeFloat : Maybe Float -> SqlValue
 fromMaybeFloat m =
     case m of
@@ -402,6 +409,7 @@ fromMaybeFloat m =
             SqlNull (SqlFloat 0.0)
 
 
+-- | `Just b` -> `SqlBool b`; `Nothing` -> SQL NULL. For nullable BOOLEAN columns.
 fromMaybeBool : Maybe Bool -> SqlValue
 fromMaybeBool m =
     case m of
@@ -413,6 +421,7 @@ fromMaybeBool m =
             SqlNull (SqlBool False)
 
 
+-- | `Just b` -> `SqlBytes b`; `Nothing` -> SQL NULL. For nullable BLOB columns.
 fromMaybeBytes : Maybe String -> SqlValue
 fromMaybeBytes m =
     case m of
@@ -424,6 +433,7 @@ fromMaybeBytes m =
             SqlNull (SqlBytes "")
 
 
+-- | `Just d` -> `SqlDecimal d`; `Nothing` -> SQL NULL. For nullable decimal columns.
 fromMaybeDecimal : Maybe Decimal -> SqlValue
 fromMaybeDecimal m =
     case m of
@@ -435,6 +445,7 @@ fromMaybeDecimal m =
             SqlNull (SqlDecimal Decimal.zero)
 
 
+-- | `Just t` -> `SqlTime t`; `Nothing` -> SQL NULL. For nullable timestamp columns.
 fromMaybeTime : Maybe Int -> SqlValue
 fromMaybeTime m =
     case m of
@@ -446,6 +457,7 @@ fromMaybeTime m =
             SqlNull (SqlTime 0)
 
 
+-- | `Just m` -> `SqlMoney m`; `Nothing` -> SQL NULL. For nullable money columns.
 fromMaybeMoney : Maybe Money -> SqlValue
 fromMaybeMoney m =
     case m of

@@ -87,11 +87,15 @@ type Codec a
 
 
 -- ── Introspection / run ──────────────────────────────────────────────────────
+-- | The codec's structural shape — how the DB backend derives columns (record
+-- fields -> columns; nested/list/ADT -> a JSON blob column).
 shape : Codec a -> Shape
 shape (Codec c) =
     c.shp
 
 
+-- | The codec's encoder as a plain function `a -> Value` (a JSON `Value`, the DB
+-- backend's write side). Use `toJson` for a JSON string.
 toValue : Codec a -> a -> Value
 toValue (Codec c) =
     c.enc
@@ -124,21 +128,26 @@ fromJsonSafe maxChars (Codec c) s =
 
 
 -- ── Primitives ───────────────────────────────────────────────────────────────
+-- | Codec for a `String` — JSON string; TEXT column.
 string : Codec String
 string =
     Codec { enc = E.string, dec = D.string, shp = SScalar CText }
 
 
+-- | Codec for an `Int` — JSON number; INTEGER/BIGINT column.
 int : Codec Int
 int =
     Codec { enc = E.int, dec = D.int, shp = SScalar CInt }
 
 
+-- | Codec for a `Float` — JSON number; REAL column.
 float : Codec Float
 float =
     Codec { enc = E.float, dec = D.float, shp = SScalar CReal }
 
 
+-- | Codec for a `Bool` — JSON boolean; BOOLEAN on Postgres / 0-1 INTEGER on
+-- SQLite (a `SqlBool` param binds to either).
 bool : Codec Bool
 bool =
     Codec { enc = E.bool, dec = D.bool, shp = SScalar CBool }
@@ -170,6 +179,8 @@ maybe (Codec c) =
         }
 
 
+-- | Codec for a `List a` given a codec for `a` — JSON array; stored as a JSON
+-- TEXT blob column on the DB side.
 list : Codec a -> Codec (List a)
 list (Codec c) =
     Codec { enc = E.list c.enc, dec = D.list c.dec, shp = SBlob }
