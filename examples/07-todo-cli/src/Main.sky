@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- 07-todo-cli: A TODO app with SQLite persistence using Std.Db.
+-- 07-todo-cli: A TODO app with SQLite persistence using Std.Db.Store.
 --
 -- Usage:
 --   ./app add "Buy groceries"     Add a new todo
@@ -10,23 +10,41 @@ module Main exposing (main)
 --   ./app remove 1                Delete todo #1
 --   ./app clear                   Remove all completed todos
 --
--- This example demonstrates the canonical CLI error-propagation
--- pattern under Sky's effect-boundary doctrine: every Db.* op returns
--- `Task Error a`, the entire main loop is a single Task chain, and
--- failures propagate via `Task.onError` to the top-level reporter
--- which prints to stderr and `System.exit 1`s. No silent `let _ = …`
--- discard pattern — every effect either runs to completion via the
--- chain or surfaces its error through the reporter.
+-- This example demonstrates the codec-driven persistence layer
+-- (Std.Codec + Std.Db.Store): ONE `Codec Todo` drives the schema,
+-- the writes, and the reads — no hand-written SQL, no stringly-typed
+-- `Db.getField` row access. The table is a typed `Store Todo`; every
+-- op returns `Task Error a` and failures propagate to the top-level
+-- reporter which prints to stderr and `System.exit 1`s.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
 import Sky.Core.Task as Task
-import Std.Db as Db
-import Std.Db.Schema as Schema exposing (text, int)
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store exposing (Store)
 import Sky.Core.Error as Error exposing (Error)
 import System
 import Std.Log exposing (println)
+
+-- A todo row. `id` is a DB-assigned auto-increment key (Store.serial),
+-- `done` is 0/1 (SQLite has no native bool for this legacy shape).
+type alias Todo =
+    { id : Int
+    , title : String
+    , done : Int
+    }
+
+
+-- ONE codec derives everything. `Codec.auto` reflects the record's
+-- fields into snake_case columns (id, title, done); `Store.serial "id"`
+-- marks the integer PK auto-increment so `insert` omits it.
+todos : Store Todo
+todos =
+    Store.fromCodec "todos" (Codec.auto { id = 0, title = "", done = 0 })
+        |> Store.serial "id"
 
 
 -- Top-level pipeline:
@@ -34,17 +52,8 @@ import Std.Log exposing (println)
 --   2. Hand the conn to runApp which runs the user's chosen command.
 --   3. Anything that fails along the way lands in reportError, which
 --      writes a human-readable message and exits non-zero.
---
--- We force the chain with Task.run at the entry point — runtime's
--- main-auto-run only fires for top-level `main : Task` exports, but
--- the codegen for that path is fragile under the current effect-
--- boundary migration; explicit Task.run is the reliable form for
--- CLI entry points.
 main =
     let
-        -- System.args is Task Error (List String) after the
-        -- v1.0 Task-everywhere migration. Force at the
-        -- read site for ergonomic let-binding access.
         pipeline =
             Db.connect () |> Task.andThen runApp |> Task.onError reportError
         _ = Task.run pipeline
@@ -54,7 +63,7 @@ main =
 
 runApp : Db -> Task Error ()
 runApp conn =
-    initDb conn
+    Store.create conn todos
         |> Task.andThen
                (\_ ->
                    let
@@ -79,24 +88,9 @@ reportError e =
         System.exit 1
 
 
-todosTable : Schema.Table
-todosTable =
-    Schema.table
-        "todos"
-        [ Schema.serial "id"
-        , text "title" |> Schema.notNull
-        , int "done" |> Schema.defaultInt 0
-        ]
-
-
-initDb : Db -> Task Error ()
-initDb conn =
-    Schema.createTable conn todosTable
-
-
 addTodo : Db -> String -> Task Error ()
 addTodo conn todoTitle =
-    Db.exec conn "INSERT INTO todos (title) VALUES (?)" [ todoTitle ]
+    Store.insert conn todos { id = 0, title = todoTitle, done = 0 }
         |> Task.map
                (\_ ->
                    let
@@ -108,7 +102,7 @@ addTodo conn todoTitle =
 
 listTodos : Db -> Task Error ()
 listTodos conn =
-    Db.query conn "SELECT id, title, done FROM todos ORDER BY id" []
+    Store.query todos |> Store.orderAsc "id" |> Store.toList conn
         |> Task.map
                (\rows ->
                    if List.isEmpty rows then
@@ -122,11 +116,6 @@ listTodos conn =
                    else
                        let
                            _ = println "Your TODOs:"
-                           -- v0.10.0: List.map over a Task discards
-                           -- the resulting list of thunks unforced.
-                           -- Fold the prints into a single String so a
-                           -- single `println` call fires the side
-                           -- effect.
                            lines = List.map formatTodo rows
                            _ = println (String.join "\n" lines)
                            _ = println ""
@@ -134,46 +123,58 @@ listTodos conn =
                            ())
 
 
-formatTodo row =
+formatTodo : Todo -> String
+formatTodo todo =
     let
-        todoId = Db.getField "id" row
-        todoName = Db.getField "title" row
-        todoDone = Db.getField "done" row
         status =
-            if todoDone == "1" then
+            if todo.done == 1 then
                 "[x]"
 
             else
                 "[ ]"
     in
-        "  " ++ todoId ++ ". " ++ status ++ " " ++ todoName
+        "  " ++ String.fromInt todo.id ++ ". " ++ status ++ " " ++ todo.title
+
+
+-- Read-modify-write: fetch the row by id, flip `done`, write it back
+-- through the codec. `Store.update` keys on the PK and never touches
+-- the auto-increment column.
+setDone : Db -> String -> Int -> String -> Task Error ()
+setDone conn idStr doneVal okMsg =
+    Store.findBy conn todos "id" idStr
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Just todo ->
+                           Store.update conn todos { todo | done = doneVal }
+                               |> Task.map
+                                      (\_ ->
+                                          let
+                                              _ = println okMsg
+                                          in
+                                              ())
+
+                       Nothing ->
+                           let
+                               _ = println ("No todo with id " ++ idStr)
+                           in
+                               Task.succeed ())
 
 
 markDone : Db -> String -> Task Error ()
 markDone conn idStr =
-    Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
-        |> Task.map
-               (\_ ->
-                   let
-                       _ = println ("Marked as done: " ++ idStr)
-                   in
-                       ())
+    setDone conn idStr 1 ("Marked as done: " ++ idStr)
 
 
 markUndone : Db -> String -> Task Error ()
 markUndone conn idStr =
-    Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
-        |> Task.map
-               (\_ ->
-                   let
-                       _ = println ("Marked as not done: " ++ idStr)
-                   in
-                       ())
+    setDone conn idStr 0 ("Marked as not done: " ++ idStr)
 
 
 removeTodo : Db -> String -> Task Error ()
 removeTodo conn idStr =
-    Db.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
+    Store.delete conn todos "id" idStr
         |> Task.map
                (\_ ->
                    let
@@ -184,7 +185,7 @@ removeTodo conn idStr =
 
 clearDone : Db -> Task Error ()
 clearDone conn =
-    Db.exec conn "DELETE FROM todos WHERE done = 1" []
+    Store.deleteWhere conn todos (Store.eq "done" (SqlInt 1))
         |> Task.map
                (\_ ->
                    let
