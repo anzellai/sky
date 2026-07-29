@@ -72,7 +72,7 @@ module Std.Db.Store exposing
     )
 
 import Sky.Ffi as Ffi
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -164,13 +164,16 @@ updateWhere conn (Store s) cond record =
     let
         ( whereSql, whereParams ) = renderCond cond
     in
-        dbUpdateWhere
-            conn
-            s.name
-            (colsExcluding (s.pk :: s.generated) s.cols)
-            (Codec.toValue s.codec record)
-            whereSql
-            whereParams
+        guardCols
+            s.cols
+            (condCols cond)
+            (dbUpdateWhere
+                conn
+                s.name
+                (colsExcluding (s.pk :: s.generated) s.cols)
+                (Codec.toValue s.codec record)
+                whereSql
+                whereParams)
 
 
 -- | Every row, decoded via the codec.
@@ -221,10 +224,13 @@ deleteWhere conn (Store s) cond =
     let
         ( whereSql, whereParams ) = renderCond cond
     in
-        dbExecRawParams
-            conn
-            ("DELETE FROM " ++ s.name ++ " WHERE " ++ whereSql)
-            whereParams
+        guardCols
+            s.cols
+            (condCols cond)
+            (dbExecRawParams
+                conn
+                ("DELETE FROM " ++ s.name ++ " WHERE " ++ whereSql)
+                whereParams)
 
 -- ── Project (schema-dump for file-based migrations) ─────────────────────────
 -- | A table's schema erased of its record type — name, primary key, and
@@ -462,8 +468,12 @@ toList conn (Query q) =
                         ++ orderTail q.orders
                         ++ pageTail q.limitN q.offsetN
             in
-                dbQueryObjects conn sql params s.cols
-                    |> Task.andThen (decodeRows s.codec)
+                guardCols
+                    s.cols
+                    (List.concatMap condCols q.conds
+                        ++ List.map (\(OrderTerm c _) -> c) q.orders)
+                    (dbQueryObjects conn sql params s.cols
+                        |> Task.andThen (decodeRows s.codec))
 
 
 -- | Run the query with `LIMIT 1`, returning the first matching row or `Nothing`.
@@ -481,19 +491,22 @@ count conn (Query q) =
             let
                 ( whereTail, params ) = buildWhere q.conds
             in
-                Db.query
-                    conn
-                    ("SELECT COUNT(*) AS n FROM " ++ s.name ++ whereTail)
-                    params
-                    |> Task.map
-                           (\rows ->
-                               case rows of
+                guardCols
+                    s.cols
+                    (List.concatMap condCols q.conds)
+                    (Db.query
+                        conn
+                        ("SELECT COUNT(*) AS n FROM " ++ s.name ++ whereTail)
+                        params
+                        |> Task.map
+                               (\rows ->
+                                   case rows of
 
-                                   row :: _ ->
-                                       Db.getInt "n" row
+                                       row :: _ ->
+                                           Db.getInt "n" row
 
-                                   [] ->
-                                       0)
+                                       [] ->
+                                           0))
 
 
 -- | Run a callback inside a DB transaction — Store operations compose by taking
@@ -530,6 +543,63 @@ buildWhere conds =
                 ( sql, params ) = renderCond (CondAnd (List.reverse conds))
             in
                 ( " WHERE " ++ sql, params )
+
+
+-- | Every column name referenced by a condition tree (for validation).
+condCols : Cond -> List String
+condCols c =
+    case c of
+
+        CondOp col _ _ ->
+            [ col ]
+
+        CondNull col _ ->
+            [ col ]
+
+        CondIn col _ ->
+            [ col ]
+
+        CondAnd cs ->
+            List.concatMap condCols cs
+
+        CondOr cs ->
+            List.concatMap condCols cs
+
+        CondNot inner ->
+            condCols inner
+
+
+-- | Fail-fast guard: run `task` only if every used column exists in the store,
+-- else `Task.fail` with the actual column list — a typo (`"activ"`) or a
+-- field-name-instead-of-column (`"priceMinor"` vs `"price_minor"`) is caught with
+-- a clear error before it reaches the database as a raw SQL failure.
+guardCols : List ( String, String ) -> List String -> Task Error x -> Task Error x
+guardCols known used task =
+    case firstUnknownCol known used of
+
+        Nothing ->
+            task
+
+        Just bad ->
+            Task.fail
+                (Error.invalidInput
+                    ("Store: unknown column \"" ++ bad ++ "\" — columns are "
+                        ++ String.join ", " (List.map (\( c, _ ) -> c) known)))
+
+
+firstUnknownCol : List ( String, String ) -> List String -> Maybe String
+firstUnknownCol known used =
+    case used of
+
+        [] ->
+            Nothing
+
+        col :: rest ->
+            if List.any (\( c, _ ) -> c == col) known then
+                firstUnknownCol known rest
+
+            else
+                Just col
 
 
 renderCond : Cond -> ( String, List SqlValue )
