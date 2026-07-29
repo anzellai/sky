@@ -13,6 +13,8 @@ import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Time as Time
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
 import State exposing (..)
 import Lib.Db as Db
 import Lib.Schema as Schema
@@ -80,8 +82,7 @@ main =
               , route "/roadmap" RoadmapPage
               ]
             , notFound = NotFoundPage
-            }
-        )
+            })
 
 
 -- ======================================================
@@ -214,10 +215,14 @@ update msg model =
 -- vote/comment flow.
 logActivity event targetId userId =
     let
-        result =
-            Db.exec
-                "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
-                [ event ++ "-" ++ targetId, event, targetId, userId ]
+        row =
+            { id = event ++ "-" ++ targetId
+            , event = event
+            , data = targetId
+            , userId = userId
+            , createdAt = ""
+            }
+        result = Task.run (Store.insert Db.conn Db.activityStore row)
     in
         case result of
 
@@ -306,10 +311,10 @@ handleSetSearch query model =
 -- DB timeout). We bubble the error to model.notification so the user
 -- sees "we couldn't record your vote" rather than appearing to vote
 -- silently and finding it gone on next refresh.
-handleToggleVoteAuth : String -> Dict String String -> Model -> ( Model, Cmd Msg )
+handleToggleVoteAuth : String -> Db.User -> Model -> ( Model, Cmd Msg )
 handleToggleVoteAuth ideaId user model =
     let
-        userId = Db.getField "id" user
+        userId = user.id
     in
         case Ideas.toggleVote ideaId userId of
 
@@ -368,10 +373,10 @@ handleViewIdea ideaId model =
 -- visible state — bubble its IoError to the notification banner so they
 -- know retry is needed. The follow-up reads (getComments / getIdea) use
 -- Result.withDefault because their failure mode is stale data, not lost data.
-doSubmitComment : Dict String String -> Model -> ( Model, Cmd Msg )
+doSubmitComment : Db.User -> Model -> ( Model, Cmd Msg )
 doSubmitComment user model =
     let
-        userId = Db.getField "id" user
+        userId = user.id
     in
         case Comments.createComment model.selectedIdeaId userId model.newComment of
 
@@ -446,10 +451,10 @@ handleBackToBoard model =
 -- doCreateIdea: critical write — surface any failure to the user so
 -- they don't believe their idea was accepted. Stays on SubmitPage to
 -- preserve their typed text on retry.
-doCreateIdea : Dict String String -> Model -> ( Model, Cmd Msg )
+doCreateIdea : Db.User -> Model -> ( Model, Cmd Msg )
 doCreateIdea user model =
     let
-        userId = Db.getField "id" user
+        userId = user.id
     in
         case Ideas.createIdea
                  model.submitTitle

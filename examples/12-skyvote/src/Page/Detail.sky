@@ -38,11 +38,11 @@ viewNotFound model =
 
 viewIdeaDetail model idea =
     let
-        ideaId = Db.getField "id" idea
-        voteCount = Db.getField "vote_count" idea
-        commentCount = Db.getField "comment_count" idea
-        status = Db.getField "status" idea
-        category = Db.getField "category" idea
+        ideaId = idea.id
+        voteCount = idea.voteCount
+        commentCount = idea.commentCount
+        status = idea.status
+        category = idea.category
     in
         div
             [ class "mt-32" ]
@@ -58,21 +58,21 @@ viewIdeaDetail model idea =
                               [ viewCategoryBadge category, statusBadge status ]
                         , h1
                               [ class "detail-title" ]
-                              [ text (Db.getField "title" idea) ]
+                              [ text (idea.title) ]
                         , div
                               [ class "idea-meta" ]
                               [ span
                                     []
                                     [ text
                                           ("by "
-                                              ++ Db.getField "author_name" idea)
+                                              ++ idea.authorName)
                                     ]
-                              , span [] [ text (Db.getField "created_at" idea) ]
+                              , span [] [ text (idea.createdAt) ]
                               ]
                         ]
                   , div
                         [ class "detail-body" ]
-                        [ p [] [ text (Db.getField "description" idea) ] ]
+                        [ p [] [ text (idea.description) ] ]
                   , div
                         [ class "detail-actions" ]
                         [ button
@@ -136,12 +136,12 @@ viewComment comment =
               [ class "comment-header" ]
               [ span
                     [ class "comment-author" ]
-                    [ text (Db.getField "author_name" comment) ]
+                    [ text (comment.authorName) ]
               , span
                     [ class "comment-date" ]
-                    [ text (Db.getField "created_at" comment) ]
+                    [ text (comment.createdAt) ]
               ]
-        , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
+        , div [ class "comment-body" ] [ text (comment.content) ]
         ]
 
 

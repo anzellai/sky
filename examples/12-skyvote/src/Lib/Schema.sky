@@ -1,17 +1,16 @@
 module Lib.Schema exposing (initDb)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db as Db
+import Std.Db.Store as Store
 import Std.Log exposing (println)
-import Lib.Db as Db
+import Lib.Db as Db2
 import Sky.Core.Error as Error exposing (Error)
 
 
--- Schema migrations are CREATE TABLE IF NOT EXISTS — idempotent and
--- expected to succeed. We log the error if one ever fires (so devs
--- spot it during dev) but don't propagate, since later queries will
--- surface it via their typed Result returns.
-runMigration label sql =
-    case Db.exec sql [] of
+runInit label result =
+    case result of
 
         Ok _ ->
             ()
@@ -25,60 +24,30 @@ runMigration label sql =
                 ()
 
 
+-- Schema is derived from the codecs — one `Store.create` per store emits the
+-- dialect-correct DDL (TEXT PK, UNIQUE, DEFAULTs, touchOnUpdate timestamps).
+-- The votes table's COMPOUND uniqueness (idea_id, user_id) is a compound UNIQUE
+-- INDEX — a single-table Store models single-column UNIQUE, so a compound index
+-- is a one-line raw DDL (the standard "indexes are separate DDL" split).
 initDb =
     let
+        _ = runInit "users" (Task.run (Store.create Db2.conn Db2.userStore))
+        _ = runInit "ideas" (Task.run (Store.create Db2.conn Db2.ideaStore))
+        _ = runInit "votes" (Task.run (Store.create Db2.conn Db2.voteStore))
         _ =
-            runMigration
-                "users"
-                """CREATE TABLE IF NOT EXISTS users (
-                    id TEXT PRIMARY KEY,
-                    username TEXT NOT NULL UNIQUE,
-                    email TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
-        _ =
-            runMigration
-                "ideas"
-                """CREATE TABLE IF NOT EXISTS ideas (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    description TEXT NOT NULL DEFAULT '',
-                    author_id TEXT NOT NULL,
-                    category TEXT NOT NULL DEFAULT 'feature',
-                    status TEXT NOT NULL DEFAULT 'open',
-                    created_at TEXT DEFAULT (datetime('now')),
-                    updated_at TEXT DEFAULT (datetime('now'))
-                )"""
-        _ =
-            runMigration
-                "votes"
-                """CREATE TABLE IF NOT EXISTS votes (
-                    id TEXT PRIMARY KEY,
-                    idea_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    UNIQUE(idea_id, user_id)
-                )"""
-        _ =
-            runMigration
+            runInit
                 "comments"
-                """CREATE TABLE IF NOT EXISTS comments (
-                    id TEXT PRIMARY KEY,
-                    idea_id TEXT NOT NULL,
-                    author_id TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+                (Task.run (Store.create Db2.conn Db2.commentStore))
         _ =
-            runMigration
-                "activity_log"
-                """CREATE TABLE IF NOT EXISTS activity_log (
-                    id TEXT PRIMARY KEY,
-                    event TEXT NOT NULL,
-                    data TEXT NOT NULL DEFAULT '',
-                    user_id TEXT NOT NULL DEFAULT '',
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            runInit
+                "activity"
+                (Task.run (Store.create Db2.conn Db2.activityStore))
+        _ =
+            runInit
+                "votes_unique"
+                (Task.run
+                    (Db.execRaw
+                        Db2.conn
+                        "CREATE UNIQUE INDEX IF NOT EXISTS votes_idea_user ON votes(idea_id, user_id)"))
     in
         ()

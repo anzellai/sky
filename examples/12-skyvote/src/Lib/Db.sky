@@ -1,24 +1,34 @@
-module Lib.Db exposing (exec, query, getField)
+module Lib.Db exposing
+    ( conn
+    , User
+    , Idea
+    , Vote
+    , Comment
+    , ActivityLog
+    , IdeaRow
+    , CommentRow
+    , userStore
+    , ideaStore
+    , voteStore
+    , commentStore
+    , activityStore
+    , ideaRowCodec
+    , commentRowCodec
+    )
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Maybe as Maybe
-import Sky.Core.Dict as Dict
-import Sky.Core.Task as Task
-import Std.Db as Db
-import Std.Log exposing (println)
 import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
+import Std.Log exposing (println)
 import Sky.Core.Error as Error exposing (Error)
 
 
--- Db.* now returns Task Error a per the effect-boundary doctrine.
--- This Lib layer is consumed from inside `update` branches that need
--- a synchronous Result for ergonomic case-pattern matching. We bridge
--- through Task.run inside each wrapper — same eager-evaluation
--- semantic the example had pre-migration. For long-running batched
--- writes or background reads, factor into a top-level `Task Error a`
--- and dispatch via Cmd.perform — see 18-job-queue/src/Main.sky.
-dbConn =
-    case Task.run (Db.open "sqlite" "skyvote.db") of
+-- One memoised connection shared by every Store op (reads SKY_DB_PATH).
+conn =
+    case Task.run (Db.connect ()) of
 
         Ok c ->
             c
@@ -27,36 +37,169 @@ dbConn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skyvote.db: " ++ Error.toString e)
+                        ("[FATAL] Cannot open the database: " ++ Error.toString e)
             in
                 System.exit 1
 
+-- ── Write rows (one per table) ──────────────────────────────────────
+type alias User =
+    { id : String
+    , username : String
+    , email : String
+    , passwordHash : String
+    , createdAt : String
+    }
 
--- exec : returns Result Error () — DB write at the typed boundary.
--- Callers in `update` MUST pattern-match and decide what to do (log,
--- bubble to notification, retry).
-exec queryStr args =
-    case Task.run (Db.exec dbConn queryStr args) of
+type alias Idea =
+    { id : String
+    , title : String
+    , description : String
+    , authorId : String
+    , category : String
+    , status : String
+    , createdAt : String
+    , updatedAt : String
+    }
 
-        Ok _ ->
-            Ok ()
+type alias Vote =
+    { id : String
+    , ideaId : String
+    , userId : String
+    , createdAt : String
+    }
 
-        Err e ->
-            Err e
+type alias Comment =
+    { id : String
+    , ideaId : String
+    , authorId : String
+    , content : String
+    , createdAt : String
+    }
+
+type alias ActivityLog =
+    { id : String
+    , event : String
+    , data : String
+    , userId : String
+    , createdAt : String
+    }
+
+-- ── Read projections (JOIN + aggregate results, decoded by selectRaw) ─
+-- Counts arrive from COUNT(*) and decode as text — kept String so the
+-- display code stays unchanged.
+type alias IdeaRow =
+    { id : String
+    , title : String
+    , description : String
+    , category : String
+    , status : String
+    , authorId : String
+    , createdAt : String
+    , authorName : String
+    , voteCount : String
+    , commentCount : String
+    }
+
+type alias CommentRow =
+    { id : String
+    , content : String
+    , createdAt : String
+    , authorName : String
+    }
 
 
-query queryStr args =
-    Task.run (Db.query dbConn queryStr args)
+-- ── Stores (Codec.auto drives DDL + reads + writes) ─────────────────
+userStore : Store User
+userStore =
+    Store.fromCodec
+        "users"
+        (Codec.auto
+            { id = ""
+            , username = ""
+            , email = ""
+            , passwordHash = ""
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.unique "username"
+        |> Store.unique "email"
+        |> Store.defaultNow "createdAt"
 
 
--- Missing columns in a row dict are a Sky-side schema mismatch, not a
--- runtime error worth bubbling. Empty string lets the view degrade
--- predictably for display-only reads.
---
--- NOTE: row values are stored as `any` at runtime (a row can hold
--- strings from TEXT columns, ints from COUNT(*), etc.) so we keep the
--- signature loose. Callers who know the column's type should use
--- `String.fromInt (String.toInt (getField ...))` or explicit
--- assertion to coerce, rather than relying on the annotation.
-getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+ideaStore : Store Idea
+ideaStore =
+    Store.fromCodec
+        "ideas"
+        (Codec.auto
+            { id = ""
+            , title = ""
+            , description = ""
+            , authorId = ""
+            , category = ""
+            , status = ""
+            , createdAt = ""
+            , updatedAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultText "description" ""
+        |> Store.defaultText "category" "feature"
+        |> Store.defaultText "status" "open"
+        |> Store.defaultNow "createdAt"
+        |> Store.touchOnUpdate "updatedAt"
+
+
+voteStore : Store Vote
+voteStore =
+    Store.fromCodec
+        "votes"
+        (Codec.auto { id = "", ideaId = "", userId = "", createdAt = "" })
+        |> Store.primaryKey "id"
+        |> Store.defaultNow "createdAt"
+
+
+commentStore : Store Comment
+commentStore =
+    Store.fromCodec
+        "comments"
+        (Codec.auto
+            { id = ""
+            , ideaId = ""
+            , authorId = ""
+            , content = ""
+            , createdAt = ""
+            })
+        |> Store.primaryKey "id"
+        |> Store.defaultNow "createdAt"
+
+
+activityStore : Store ActivityLog
+activityStore =
+    Store.fromCodec
+        "activity_log"
+        (Codec.auto
+            { id = "", event = "", data = "", userId = "", createdAt = "" })
+        |> Store.primaryKey "id"
+        |> Store.defaultText "data" ""
+        |> Store.defaultText "userId" ""
+        |> Store.defaultNow "createdAt"
+
+
+ideaRowCodec : Codec IdeaRow
+ideaRowCodec =
+    Codec.auto
+        { id = ""
+        , title = ""
+        , description = ""
+        , category = ""
+        , status = ""
+        , authorId = ""
+        , createdAt = ""
+        , authorName = ""
+        , voteCount = ""
+        , commentCount = ""
+        }
+
+
+commentRowCodec : Codec CommentRow
+commentRowCodec =
+    Codec.auto { id = "", content = "", createdAt = "", authorName = "" }

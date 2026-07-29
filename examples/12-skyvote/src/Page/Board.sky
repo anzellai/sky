@@ -17,7 +17,7 @@ getUserId model =
     case model.currentUser of
 
         Just user ->
-            Db.getField "id" user
+            user.id
 
         Nothing ->
             ""

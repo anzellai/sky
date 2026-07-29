@@ -69,14 +69,14 @@ roadmapColumn title subtitle items =
 
 roadmapItem idea =
     let
-        ideaId = Db.getField "id" idea
-        voteCount = Db.getField "vote_count" idea
+        ideaId = idea.id
+        voteCount = idea.voteCount
     in
         div
             [ class "roadmap-item" ]
             [ button
                   [ onClick (ViewIdea ideaId), class "roadmap-item-title" ]
-                  [ text (Db.getField "title" idea) ]
+                  [ text (idea.title) ]
             , div
                   [ class "roadmap-item-votes" ]
                   [ text (voteCount ++ " votes") ]

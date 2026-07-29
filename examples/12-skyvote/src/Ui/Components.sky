@@ -71,12 +71,12 @@ emptyState message =
 -- ======================================================
 ideaCard idea userId =
     let
-        ideaId = Db.getField "id" idea
-        voteCount = Db.getField "vote_count" idea
-        commentCount = Db.getField "comment_count" idea
-        category = Db.getField "category" idea
-        status = Db.getField "status" idea
-        authorName = Db.getField "author_name" idea
+        ideaId = idea.id
+        voteCount = idea.voteCount
+        commentCount = idea.commentCount
+        category = idea.category
+        status = idea.status
+        authorName = idea.authorName
         isVoted =
             if userId == "" then
                 False
@@ -102,11 +102,11 @@ ideaCard idea userId =
                               [ onClick (ViewIdea ideaId)
                               , class "idea-title-btn"
                               ]
-                              [ text (Db.getField "title" idea) ]
+                              [ text (idea.title) ]
                         ]
                   , p
                         [ class "idea-desc" ]
-                        [ text (Db.getField "description" idea) ]
+                        [ text (idea.description) ]
                   , div
                         [ class "idea-meta" ]
                         [ categoryBadge category

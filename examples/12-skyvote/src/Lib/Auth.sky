@@ -7,8 +7,11 @@ import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
+import Sky.Core.Task as Task
 import Std.Auth as Auth
-import Lib.Db as Db
+import Std.Db exposing (SqlValue(..))
+import Std.Db.Store as Store
+import Lib.Db as Db exposing (User)
 import Sky.Core.Error as Error exposing (Error)
 
 
@@ -28,20 +31,22 @@ verifyPassword password storedHash =
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
--- Auth.verifyPassword returns Result Error Bool — collapse with
--- withDefault False (auth-deny on internal error, not auth-grant).
--- createUser : returns Result Error UserId. Surfaces unique-key /
--- DB failures as ValidationError so the form can show them inline,
--- and other DbError variants for unexpected infra issues.
+-- createUser : Result Error UserId. The UNIQUE username/email constraints turn
+-- a duplicate into a driver error, surfaced as InvalidInput for the form.
 createUser : String -> String -> String -> Result Error String
 createUser username email password =
     let
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
+        user =
+            { id = id
+            , username = username
+            , email = email
+            , passwordHash = passHash
+            , createdAt = ""
+            }
     in
-        case Db.exec
-                 "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
-                 [ id, username, email, passHash ] of
+        case Task.run (Store.insert Db.conn Db.userStore user) of
 
             Ok _ ->
                 let
@@ -56,69 +61,48 @@ createUser username email password =
                 Err (Error.invalidInput "Username or email already taken.")
 
 
--- authenticateUser : Result Error User. DbError surfaces upstream so
--- callers can show "DB unavailable" rather than misleading "bad password".
--- Wrong password / unknown email both return Unauthorised — same UI text,
--- avoids leaking which one was wrong (security best practice).
-authenticateUser : String -> String -> Result Error (Dict String String)
+-- authenticateUser : Result Error User. Wrong password / unknown email both
+-- Unauthorised (same UI text — no user-enumeration leak). The password check is
+-- SEPARATE from `Ok user` so subset-record inference doesn't narrow the Ok.
+authenticateUser : String -> String -> Result Error User
 authenticateUser email password =
-    case Db.query
-             "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
-             [ email ] of
+    case Task.run (Store.findBy Db.conn Db.userStore "email" email) of
 
         Err e ->
             Err e
 
-        Ok userRows ->
-            case List.head userRows of
+        Ok Nothing ->
+            let
+                _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
+            in
+                Err
+                    (Error.permissionDenied
+                        |> Error.withMessage "Invalid email or password.")
 
-                Nothing ->
-                    let
-                        _ =
-                            println
-                                ("[AUTH] Sign-in failed (not found): " ++ email)
-                    in
-                        Err
-                            (Error.permissionDenied
-                                |> Error.withMessage
-                                       "Invalid email or password.")
+        Ok (Just user) ->
+            if passwordOk password user then
+                let
+                    _ = println ("[AUTH] Sign-in success: " ++ email)
+                in
+                    Ok user
 
-                Just user ->
-                    let
-                        storedHash = Db.getField "password_hash" user
-                    in
-                        if verifyPassword password storedHash then
-                            let
-                                _ =
-                                    println
-                                        ("[AUTH] Sign-in success: " ++ email)
-                            in
-                                Ok user
-
-                        else
-                            let
-                                _ =
-                                    println
-                                        ("[AUTH] Sign-in failed (bad password): "
-                                            ++ email)
-                            in
-                                Err
-                                    (Error.permissionDenied
-                                        |> Error.withMessage
-                                               "Invalid email or password.")
+            else
+                let
+                    _ =
+                        println
+                            ("[AUTH] Sign-in failed (bad password): " ++ email)
+                in
+                    Err
+                        (Error.permissionDenied
+                            |> Error.withMessage "Invalid email or password.")
 
 
--- getUserById : Result Error (Maybe User). The outer Result is for
--- DB failures; the inner Maybe is "found / not found" which is normal
--- and not an error.
-getUserById : String -> Result Error (Maybe (Dict String String))
+passwordOk : String -> User -> Bool
+passwordOk password user =
+    verifyPassword password user.passwordHash
+
+
+-- getUserById : Result Error (Maybe User).
+getUserById : String -> Result Error (Maybe User)
 getUserById userId =
-    case Db.query
-             "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
-             [ userId ] of
-
-        Err e ->
-            Err e
-
-        Ok userRows ->
-            Ok (List.head userRows)
+    Task.run (Store.findBy Db.conn Db.userStore "id" userId)

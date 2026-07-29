@@ -23,7 +23,7 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 handleSignInSuccess user model =
     let
         ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
-        _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
+        _ = println ("[AUTH] Sign-in: " ++ user.email)
     in
         ( { model | currentUser = Just user
           , ideas = ideas
