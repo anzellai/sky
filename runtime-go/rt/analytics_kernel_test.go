@@ -136,6 +136,28 @@ func TestAnalyticsTrackEvent_DerivesTypedProps(t *testing.T) {
 // TestAnalyticsConsentGate — the default-safe posture: anonymous by default
 // (anon id, no user_id), identify records but does NOT attach identity until
 // consent is Granted, and a Denied consent drops capture entirely.
+// The auto-page-view identity resolver (analytics = { identify = … }): a
+// `Just id` stamps the session user id; nil / Nothing leave it anonymous.
+func TestAnalyticsApplyIdentity(t *testing.T) {
+	run := func(sid string, resolver any) string {
+		sess := &liveSession{sid: sid}
+		setGoroutineLiveSession(sess)
+		defer clearGoroutineLiveSession()
+		analyticsApplyIdentity(resolver, map[string]any{"currentUser": "x"})
+		_, _, uid := currentAnalyticsState().snapshot()
+		return uid
+	}
+	if got := run("id-just", func(any) any { return SkyMaybe[any]{Tag: 0, JustValue: "u42"} }); got != "u42" {
+		t.Errorf("Just resolver: want u42, got %q", got)
+	}
+	if got := run("id-nothing", func(any) any { return SkyMaybe[any]{Tag: 1} }); got != "" {
+		t.Errorf("Nothing resolver: want empty, got %q", got)
+	}
+	if got := run("id-nil", nil); got != "" {
+		t.Errorf("nil resolver: want empty, got %q", got)
+	}
+}
+
 func TestAnalyticsConsentGate(t *testing.T) {
 	sess := &liveSession{sid: "gate-test"}
 	setGoroutineLiveSession(sess)
@@ -146,30 +168,38 @@ func TestAnalyticsConsentGate(t *testing.T) {
 	analyticsSink = &buf
 	defer func() { analyticsSink = old }()
 
-	analyticsEmit("e1_default_anon", map[string]any{})   // Anonymous default
-	anyTaskInvoke(Analytics_identify("user-9", nil))     // records, must not attach
-	analyticsEmit("e2_after_identify", map[string]any{}) // still anonymous
-	anyTaskInvoke(Analytics_setConsent(1))               // Granted (tag 1)
-	analyticsEmit("e3_granted", map[string]any{})        // now attaches user_id
+	// Default posture is Granted (v0.19.1): capture is on, and `identify`
+	// attaches the user id immediately.
+	analyticsEmit("e1_default", map[string]any{})        // Granted default, no identify yet → anon only
+	anyTaskInvoke(Analytics_identify("user-9", nil))     // attaches immediately under Granted
+	analyticsEmit("e2_after_identify", map[string]any{}) // now carries user_id
+	anyTaskInvoke(Analytics_setConsent(0))               // Anonymous (tag 0) — drop identity
+	analyticsEmit("e3_anonymous", map[string]any{})      // anonymous: no user_id
 	anyTaskInvoke(Analytics_setConsent(2))               // Denied (tag 2)
 	analyticsEmit("e4_denied_dropped", map[string]any{}) // dropped
 
 	out := buf.String()
-	if !strings.Contains(out, "e1_default_anon") || !strings.Contains(out, "anonymous_id") {
-		t.Errorf("default event missing / no anon id: %s", out)
-	}
-	// Identity must NOT appear before consent is Granted.
-	if idx := strings.Index(out, "e2_after_identify"); idx >= 0 {
+	lineHasUserID := func(event string) bool {
+		idx := strings.Index(out, event)
+		if idx < 0 {
+			return false
+		}
 		line := out[idx:]
 		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
 			line = line[:nl]
 		}
-		if strings.Contains(line, "user_id") {
-			t.Errorf("user_id LEAKED before consent: %s", line)
-		}
+		return strings.Contains(line, `"user_id":"user-9"`)
 	}
-	if !strings.Contains(out, `"event":"e3_granted"`) || !strings.Contains(out, `"user_id":"user-9"`) {
-		t.Errorf("user_id not attached after Granted: %s", out)
+	if !strings.Contains(out, "e1_default") || !strings.Contains(out, "anonymous_id") {
+		t.Errorf("default event missing / no anon id: %s", out)
+	}
+	// Granted-by-default: identity attaches immediately after identify.
+	if !lineHasUserID("e2_after_identify") {
+		t.Errorf("user_id not attached under Granted default: %s", out)
+	}
+	// Explicit Anonymous consent drops identity from subsequent events.
+	if lineHasUserID("e3_anonymous") {
+		t.Errorf("user_id LEAKED under Anonymous consent: %s", out)
 	}
 	if strings.Contains(out, "e4_denied_dropped") {
 		t.Errorf("event captured after Denied — consent gate breached: %s", out)

@@ -1472,15 +1472,29 @@ Analytics.track
 Analytics.trackEvent (Purchased { orderId = id, total = cart })
 ```
 
-**Default-safe identity + consent.** Anonymous by default — events carry a
-random anonymous id and NO identity until you `setConsent Granted`;
-`identify user.id traits` attaches the user only under `Granted`; `Denied`
-drops all capture. Consent is session-scoped, so one Sky.Live user's
-identity never bleeds into another's.
+**Identity + consent.** Consent defaults to **`Granted`** (v0.19.1) — enabling
+analytics captures fully and `identify user.id traits` attaches the user. This
+is the DX-friendly default; a privacy-conscious app shows a consent banner and
+downgrades with `setConsent Anonymous` (random anon id, no identity) or
+`setConsent Denied` (drops all capture). Consent + identity are session-scoped,
+so one Sky.Live user's identity never bleeds into another's.
 
 **Auto page-views (opt-in).** Add `analytics = { pageViews = True }` to the
 `Live.app` cfg — every full page load is captured (consent-gated), with
-anonymised device + IP context.
+anonymised device + IP context. Add an **`identify` resolver** to attribute an
+already-authenticated session (including the first render, before any Msg runs)
+without a manual `identify` call:
+
+```elm
+Live.withAnalytics
+    { pageViews = True
+    , identify = \model -> Maybe.map .id model.currentUser  -- model -> Maybe String
+    }
+```
+
+The runtime resolves it against the model on each page-view; `Just id` stamps the
+session user id, `Nothing` leaves it anonymous. The config field is the app's
+explicit opt-in for attributing the identity it already holds.
 
 **Sinks + store.** `configure [ StderrSink, FileSink "events.jsonl",
 Custom (\line -> Http.post collector line) ]` fans every event to your

@@ -183,21 +183,29 @@ trackEvent : a -> Task Error ()
 trackEvent =
     Ffi.kernel "Analytics_trackEvent"
 
--- | Consent posture for the current session. The DEFAULT is `Anonymous`, and
--- the module ships default-safe: until you `setConsent Granted`, events are
--- captured with a random anonymous id and NO identity — `identify` records the
--- user but does not attach or send it. `Denied` drops all capture.
+-- | Consent posture for the current session. The DEFAULT is `Granted` (v0.19.1)
+-- — enabling analytics captures fully, `identify` attaches the user, and events
+-- export. This is the DX-friendly default: an app that turns analytics on gets
+-- what it expects. Privacy-conscious apps show a consent banner and downgrade:
+-- `setConsent Anonymous` captures with a random anon id and NO identity (`identify`
+-- records the id but does not attach/send it); `setConsent Denied` drops all
+-- capture. Call `setConsent` early (e.g. before any capture) to gate on consent.
 type Consent
     = Anonymous
     | Granted
     | Denied
 
 
--- | Attach a user id (+ typed traits) to the CURRENT session — the ONLY way
--- identity enters analytics; it is never automatic. The user id is attached to
--- subsequent events, and the traits are sent as an `identify` profile, ONLY
--- once consent is `Granted`. Before that, `identify` just records the id
--- locally, so calling it early (e.g. right after sign-in) is safe.
+-- | Attach a user id (+ typed traits) to the CURRENT session. The user id is
+-- attached to subsequent events and the traits are sent as an `identify` profile
+-- when consent is `Granted` (the default). Under `Anonymous` consent it just
+-- records the id locally without attaching it. Call it right after sign-in.
+--
+-- For Sky.Live auto page-views, prefer the `identify` RESOLVER on the analytics
+-- config so even the first render of an authenticated session is attributed —
+-- see `Std.Live` `withAnalytics`:
+--
+--     Live.withAnalytics { pageViews = True, identify = \model -> Maybe.map .id model.currentUser }
 --
 --     Analytics.identify user.id [ Analytics.pii "email" (Analytics.piiEmail user.email) ]
 identify : String -> List EventProp -> Task Error ()
@@ -206,8 +214,8 @@ identify =
 
 
 -- | Set the current session's consent posture (see `Consent`). Wire it to your
--- consent banner: `setConsent Granted` on accept, `setConsent Denied` on
--- reject. The default until you call this is `Anonymous`.
+-- consent banner: `setConsent Anonymous`/`Denied` to restrict (the default is
+-- `Granted`), `setConsent Granted` on accept.
 setConsent : Consent -> Task Error ()
 setConsent =
     Ffi.kernel "Analytics_setConsent"

@@ -176,6 +176,35 @@ func analyticsPageViewsFromCfg(cfg any) bool {
 	return b
 }
 
+// analyticsIdentifyFromCfg reads the optional `identify : model -> Maybe String`
+// resolver off `analytics = { pageViews = True, identify = … }`. Absent → nil.
+func analyticsIdentifyFromCfg(cfg any) any {
+	a := Field(cfg, "Analytics")
+	if a == nil {
+		return nil
+	}
+	return Field(a, "Identify")
+}
+
+// analyticsApplyIdentity calls the app's `identify` resolver with the current
+// model and, when it returns `Just id`, stamps the session's analytics user id —
+// so an already-authenticated session's auto page-views (including the very first
+// render, before any Msg runs) carry the user without a manual `identify` call.
+// The config field IS the app's explicit opt-in for attributing the identity it
+// already holds.
+func analyticsApplyIdentity(resolver, model any) {
+	if resolver == nil {
+		return
+	}
+	tag, payload := anyMaybeView(SkyCall(resolver, model))
+	if tag != 0 { // Nothing / not a Maybe → leave anonymous
+		return
+	}
+	if uid := fmt.Sprintf("%v", unwrapAny(payload)); uid != "" {
+		currentAnalyticsState().setUserID(uid)
+	}
+}
+
 // analyticsSetContext records device + anonymised-IP context on the current
 // session, attached to every subsequent event. IP is truncated BEFORE storage
 // (GDPR-style: a full IP is personal data) — the raw address never lands in an
@@ -235,18 +264,22 @@ func analyticsTrackPageView(path, referrer string) {
 type analyticsConsent int
 
 const (
-	// consentAnonymous is the DEFAULT: capture anonymously (anon id only, no
-	// identity, no export). Identity is recorded by `identify` but not attached.
+	// consentAnonymous: capture anonymously (anon id only, no identity, no
+	// export). Identity is recorded by `identify` but not attached. Opt IN to
+	// this posture with `setConsent Anonymous` when you show a consent banner.
 	consentAnonymous analyticsConsent = iota
-	// consentGranted: attach identity (user_id + the identify profile).
+	// consentGranted is the DEFAULT (v0.19.1): attach identity (user_id + the
+	// identify profile) + export. The DX-friendly default — an app that turns
+	// analytics on gets full capture; privacy-conscious apps show a consent
+	// banner and downgrade to `Anonymous`/`Denied` until the user opts in.
 	consentGranted
 	// consentDenied: do not capture at all.
 	consentDenied
 )
 
 // analyticsSessionState is per-session (Sky.Live) or per-process (CLI). Default
-// posture is anonymous: a random anon id, no identity, until the app calls
-// `identify` and `setConsent Granted`.
+// posture is `Granted` — an app that enables analytics captures fully; call
+// `setConsent Anonymous`/`Denied` (e.g. behind a consent banner) to restrict.
 type analyticsSessionState struct {
 	mu      sync.Mutex
 	consent analyticsConsent
@@ -256,7 +289,7 @@ type analyticsSessionState struct {
 }
 
 func newAnalyticsState() *analyticsSessionState {
-	return &analyticsSessionState{consent: consentAnonymous, anonID: analyticsNewAnonID()}
+	return &analyticsSessionState{consent: consentGranted, anonID: analyticsNewAnonID()}
 }
 
 // restoreAnalyticsState rebuilds a session's analytics state from persisted

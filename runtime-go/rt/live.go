@@ -2828,7 +2828,14 @@ type liveApp struct {
 	// consent-gated `page_view` event on every full page render (initial mount,
 	// sky-nav fetch, popstate) — see analytics_kernel.go.
 	analyticsPageViews bool
-	api                []apiRoute    // REST-style custom handlers alongside Live pages
+	// analyticsIdentify — optional `identify : model -> Maybe String` resolver
+	// from the `analytics = { pageViews = True, identify = … }` cfg field. When
+	// set, handleInitial resolves it against the current model before each auto
+	// page-view and stamps the session's analytics user id — so an authenticated
+	// session's page-views (incl. the first render) carry the user with no manual
+	// `identify` call. nil → no auto-identity (byte-identical to before).
+	analyticsIdentify any
+	api               []apiRoute    // REST-style custom handlers alongside Live pages
 	staticDir          string        // Serves files from this directory under /static/…
 	staticURL          string        // URL mount prefix (default "/static")
 	store              SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
@@ -3458,6 +3465,7 @@ func liveAppRun(cfg any) any {
 		consoleAuth:        Field(cfg, "ConsoleAuth"),
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
+		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
 		locker:             newSessionLocker(),
 		msgTags:            make(map[string]int),
 		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -3995,6 +4003,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// consent-gated + session-scoped. Referer gives the previous page.
 	if app.analyticsPageViews {
 		analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
+		// Attribute an already-authenticated session BEFORE the page-view, so even
+		// the first render carries the user (the returning-visitor case a manual
+		// `identify` in an update handler can't reach).
+		analyticsApplyIdentity(app.analyticsIdentify, model)
 		analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
 	}
 	// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
