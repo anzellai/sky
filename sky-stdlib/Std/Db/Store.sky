@@ -40,14 +40,36 @@ module Std.Db.Store exposing
     , project
     , dumpSchema
     , pushProject
+    , Query
+    , query
+    , eq
+    , neq
+    , gt
+    , gte
+    , lt
+    , lte
+    , like
+    , isNull
+    , notNull
+    , inList
+    , orderAsc
+    , orderDesc
+    , limit
+    , offset
+    , toList
+    , toMaybe
+    , count
+    , transaction
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Task as Task
 import Sky.Core.List as List
+import Sky.Core.String as String
 import Sky.Core.Json.Encode exposing (Value)
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
+import Std.Db as Db exposing (SqlValue)
 
 type Store a
     = Store { name : String
@@ -201,6 +223,291 @@ pushTables conn tables =
                            Task.map
                                (\more -> applied ++ more)
                                (pushTables conn rest))
+
+-- ── Query builder (compose filters + ordering + paging, no raw SQL) ──────────
+-- A `Query a` accumulates parameterised WHERE conditions + ORDER BY + LIMIT +
+-- OFFSET over a `Store a`; a terminal (`toList` / `toMaybe` / `count`) runs it.
+-- Every filter VALUE binds as a `SqlValue` param — injection-safe. Drop to
+-- `Std.Db.query` only for joins / aggregates the builder doesn't model.
+type Cond
+    = CondOp String String SqlValue
+    | CondNull String Bool
+    | CondIn String (List SqlValue)
+
+type OrderTerm
+    = OrderTerm String String
+
+-- | An in-progress query over a store. Build with the filter / order / paging
+-- combinators below, then run a terminal (`toList` / `toMaybe` / `count`).
+type Query a
+    = Query { store : Store a
+, conds : List Cond
+, orders : List OrderTerm
+, limitN : Maybe Int
+, offsetN : Maybe Int
+}
+
+
+-- | Start a query over a store:
+-- `Store.query products |> Store.eq "active" (SqlBool True) |> Store.toList conn`.
+query : Store a -> Query a
+query store =
+    Query
+        { store = store
+        , conds = []
+        , orders = []
+        , limitN = Nothing
+        , offsetN = Nothing
+        }
+
+
+addCond : Cond -> Query a -> Query a
+addCond c (Query q) =
+    Query
+        { store = q.store
+        , conds = c :: q.conds
+        , orders = q.orders
+        , limitN = q.limitN
+        , offsetN = q.offsetN
+        }
+
+
+-- | Filter `col = value` (AND-combined with the other filters).
+eq : String -> SqlValue -> Query a -> Query a
+eq col v =
+    addCond (CondOp col "=" v)
+
+
+-- | Filter `col <> value`.
+neq : String -> SqlValue -> Query a -> Query a
+neq col v =
+    addCond (CondOp col "<>" v)
+
+
+-- | Filter `col > value`.
+gt : String -> SqlValue -> Query a -> Query a
+gt col v =
+    addCond (CondOp col ">" v)
+
+
+-- | Filter `col >= value`.
+gte : String -> SqlValue -> Query a -> Query a
+gte col v =
+    addCond (CondOp col ">=" v)
+
+
+-- | Filter `col < value`.
+lt : String -> SqlValue -> Query a -> Query a
+lt col v =
+    addCond (CondOp col "<" v)
+
+
+-- | Filter `col <= value`.
+lte : String -> SqlValue -> Query a -> Query a
+lte col v =
+    addCond (CondOp col "<=" v)
+
+
+-- | Filter `col LIKE pattern` (use `%` / `_` wildcards in the pattern).
+like : String -> String -> Query a -> Query a
+like col pat =
+    addCond (CondOp col "LIKE" (Db.SqlString pat))
+
+
+-- | Filter `col IS NULL`.
+isNull : String -> Query a -> Query a
+isNull col =
+    addCond (CondNull col True)
+
+
+-- | Filter `col IS NOT NULL`.
+notNull : String -> Query a -> Query a
+notNull col =
+    addCond (CondNull col False)
+
+
+-- | Filter `col IN (v1, v2, …)`. An empty list matches nothing.
+inList : String -> List SqlValue -> Query a -> Query a
+inList col vs =
+    addCond (CondIn col vs)
+
+
+-- | Append `ORDER BY col ASC` (chain for multi-column ordering).
+orderAsc : String -> Query a -> Query a
+orderAsc col (Query q) =
+    Query
+        { store = q.store
+        , conds = q.conds
+        , orders = OrderTerm col "ASC" :: q.orders
+        , limitN = q.limitN
+        , offsetN = q.offsetN
+        }
+
+
+-- | Append `ORDER BY col DESC`.
+orderDesc : String -> Query a -> Query a
+orderDesc col (Query q) =
+    Query
+        { store = q.store
+        , conds = q.conds
+        , orders = OrderTerm col "DESC" :: q.orders
+        , limitN = q.limitN
+        , offsetN = q.offsetN
+        }
+
+
+-- | `LIMIT n`.
+limit : Int -> Query a -> Query a
+limit n (Query q) =
+    Query { q | limitN = Just n }
+
+
+-- | `OFFSET n` (pair with `limit` for paging).
+offset : Int -> Query a -> Query a
+offset n (Query q) =
+    Query { q | offsetN = Just n }
+
+
+-- | Run the query, decoding every matching row via the store's codec.
+toList : Db -> Query a -> Task Error (List a)
+toList conn (Query q) =
+    case q.store of
+
+        Store s ->
+            let
+                ( whereTail, params ) = buildWhere q.conds
+                sql =
+                    "SELECT * FROM " ++ s.name ++ whereTail
+                        ++ orderTail q.orders
+                        ++ pageTail q.limitN q.offsetN
+            in
+                dbQueryObjects conn sql params s.cols
+                    |> Task.andThen (decodeRows s.codec)
+
+
+-- | Run the query with `LIMIT 1`, returning the first matching row or `Nothing`.
+toMaybe : Db -> Query a -> Task Error (Maybe a)
+toMaybe conn q =
+    toList conn (limit 1 q) |> Task.map List.head
+
+
+-- | Count matching rows via `SELECT COUNT(*)` (filters apply; order/paging ignored).
+count : Db -> Query a -> Task Error Int
+count conn (Query q) =
+    case q.store of
+
+        Store s ->
+            let
+                ( whereTail, params ) = buildWhere q.conds
+            in
+                Db.query
+                    conn
+                    ("SELECT COUNT(*) AS n FROM " ++ s.name ++ whereTail)
+                    params
+                    |> Task.map
+                           (\rows ->
+                               case rows of
+
+                                   row :: _ ->
+                                       Db.getInt "n" row
+
+                                   [] ->
+                                       0)
+
+
+-- | Run a callback inside a DB transaction — Store operations compose by taking
+-- the `tx` handle. Alias over `Db.withTransaction`, so read / write / transact
+-- all stay in the `Store.*` namespace.
+transaction : Db -> (Db -> Task Error a) -> Task Error a
+transaction conn f =
+    Db.withTransaction conn f
+
+
+buildWhere : List Cond -> ( String, List SqlValue )
+buildWhere conds =
+    case conds of
+
+        [] ->
+            ( "", [] )
+
+        _ ->
+            let
+                parts = List.map condSql conds
+            in
+                ( " WHERE "
+                      ++ String.join " AND " (List.map (\( c, _ ) -> c) parts)
+                , List.concat (List.map (\( _, p ) -> p) parts)
+                )
+
+
+condSql : Cond -> ( String, List SqlValue )
+condSql c =
+    case c of
+
+        CondOp col op v ->
+            ( col ++ " " ++ op ++ " ?", [ v ] )
+
+        CondNull col wantNull ->
+            ( col
+                  ++ (if wantNull then
+                         " IS NULL"
+
+                     else
+                         " IS NOT NULL")
+            , []
+            )
+
+        CondIn col vs ->
+            case vs of
+
+                [] ->
+                    ( "1 = 0", [] )
+
+                _ ->
+                    ( col ++ " IN ("
+                          ++ String.join ", " (List.map (\_ -> "?") vs)
+                          ++ ")"
+                    , vs
+                    )
+
+
+orderTail : List OrderTerm -> String
+orderTail orders =
+    case orders of
+
+        [] ->
+            ""
+
+        _ ->
+            " ORDER BY "
+                ++ String.join
+                       ", "
+                       (List.map
+                           (\(OrderTerm col dir) -> col ++ " " ++ dir)
+                           orders)
+
+
+pageTail : Maybe Int -> Maybe Int -> String
+pageTail limitN offsetN =
+    let
+        lim =
+            case limitN of
+
+                Just n ->
+                    " LIMIT " ++ String.fromInt n
+
+                Nothing ->
+                    ""
+        off =
+            case offsetN of
+
+                Just n ->
+                    " OFFSET " ++ String.fromInt n
+
+                Nothing ->
+                    ""
+    in
+        lim ++ off
 
 
 -- ── Internal ─────────────────────────────────────────────────────────────────
