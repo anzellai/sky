@@ -109,9 +109,18 @@ products =
         (Codec.auto { id = "", name = "", priceMinor = 0, tags = [] })
         |> Store.primaryKey "id"
 
--- write:  Store.insert conn products p  ·  Store.delete conn products "id" "p1"
--- read a whole table:  Store.all conn products  ·  one row:  Store.findBy conn products "id" "p1"
+-- write:  Store.insert conn products p  ·  Store.update conn products p (by PK)
+--         Store.delete conn products "id" "p1"  ·  Store.deleteWhere conn products cond
+--         Store.updateWhere conn products cond p  (compound / ownership WHERE)
+-- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
 ```
+
+`Codec.auto` columns (and JSON keys) are **snake_case** by default — `priceMinor`
+→ `price_minor`, the DB convention — so a plain `Codec.auto blank` works against a
+standard schema; use an explicit `Codec.field "col" .field` codec only for a custom
+name. Mark DB-filled columns so `insert`/`update` omit them:
+`Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`
+(a `serial` PK + `defaultNow` — the DB assigns/keeps them).
 
 **Compose reads with the query builder** — filters bind as `SqlValue` params
 (injection-safe), so you never touch a SQL string:
