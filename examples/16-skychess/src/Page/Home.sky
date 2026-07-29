@@ -84,9 +84,9 @@ viewStats model =
                 ]
 
 
-countByResult : String -> List (Dict String String) -> Int
+countByResult : String -> List Games.Game -> Int
 countByResult result games =
-    List.length (List.filter (\g -> Games.getField "result" g == result) games)
+    List.length (List.filter (\g -> g.result == result) games)
 
 
 statCard val label =
@@ -111,11 +111,11 @@ viewGameList model =
 
 viewGameRow game =
     let
-        gameId = Games.getField "id" game
-        status = Games.getField "status" game
-        result = Games.getField "result" game
-        moves = Games.getField "move_count" game
-        date = Games.getField "created_at" game
+        gameId = game.id
+        status = game.status
+        result = game.result
+        moves = String.fromInt game.moveCount
+        date = game.createdAt
         displayStatus = formatResult result status
     in
         div

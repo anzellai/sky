@@ -73,8 +73,7 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" HomePage, route "/game" GamePage ]
             , notFound = NotFoundPage
-            }
-        )
+            })
 
 
 view : Model -> Html Msg
@@ -237,7 +236,7 @@ handleLoadGame gameId model =
             case gameInfo of
 
                 Just g ->
-                    Games.getField "player_name" g
+                    g.playerName
 
                 Nothing ->
                     model.playerName
@@ -255,15 +254,11 @@ handleLoadGame gameId model =
             case gameInfo of
 
                 Just g ->
-                    let
-                        s = Games.getField "status" g
-                        r = Games.getField "result" g
-                    in
-                        if s == "finished" then
-                            r
+                    if g.status == "finished" then
+                        g.result
 
-                        else
-                            "playing"
+                    else
+                        "playing"
 
                 Nothing ->
                     "playing"
@@ -287,7 +282,7 @@ handleLoadGame gameId model =
         )
 
 
-replayMoves : List (Dict String String) -> Dict Int Piece -> ( Dict Int Piece, List String )
+replayMoves : List Games.Move -> Dict Int Piece -> ( Dict Int Piece, List String )
 replayMoves moves board =
     replayMovesLoop moves board []
 
@@ -300,41 +295,10 @@ replayMovesLoop moves board history =
 
         move :: rest ->
             let
-                fromStr = Games.getField "from_square" move
-                toStr = Games.getField "to_square" move
-                algebraic = Games.getField "algebraic" move
+                newBoard =
+                    Board.movePiece move.fromSquare move.toSquare board
             in
-                case String.toInt fromStr of
-
-                    Just from ->
-                        case String.toInt toStr of
-
-                            Just to ->
-                                let
-                                    newBoard = Board.movePiece from to board
-                                in
-                                    replayMovesLoop
-                                        rest
-                                        newBoard
-                                        (history ++ [ algebraic ])
-
-                            Nothing ->
-                                let
-                                    _ =
-                                        println
-                                            ("[REPLAY ERROR] bad to_square: "
-                                                ++ toStr)
-                                in
-                                    replayMovesLoop rest board history
-
-                    Nothing ->
-                        let
-                            _ =
-                                println
-                                    ("[REPLAY ERROR] bad from_square: "
-                                        ++ fromStr)
-                        in
-                            replayMovesLoop rest board history
+                replayMovesLoop rest newBoard (history ++ [ move.algebraic ])
 
 
 startGameWithName : String -> Model -> ( Model, Cmd Msg )
