@@ -23,6 +23,16 @@ mod bundled;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Hidden worker: refresh the update-check cache, then exit. Spawned detached
+    // by `maybe_notify_update`; never user-invoked (absent from help).
+    if args.first().map(String::as_str) == Some("__update-check") {
+        run_update_check_refresh();
+        return ExitCode::SUCCESS;
+    }
+    // Best-effort "newer version available" nudge — cached, non-blocking, TTY-only.
+    maybe_notify_update(args.first().map(String::as_str));
+
     match args.first().map(String::as_str) {
         Some("--version") | Some("-V") | Some("version") => {
             println!("{}", version_string());
@@ -209,6 +219,8 @@ fn latest_release_tag() -> Result<String, String> {
     let out = std::process::Command::new("curl")
         .args([
             "-fsSL",
+            "--max-time",
+            "10",
             "-H",
             "Accept: application/vnd.github+json",
             "https://api.github.com/repos/anzellai/sky/releases/latest",
@@ -346,6 +358,174 @@ fn body_has_breaking(body: &str) -> bool {
         let lower = t.trim_start_matches('#').to_lowercase();
         lower.contains("breaking") || lower.contains("migrat")
     })
+}
+
+// ---- background update check (nudge, cached) -----------------------------
+
+/// Refresh + nudge intervals. The cache is refreshed at most once per
+/// `CHECK_INTERVAL`, and the "upgrade available" line prints at most once per
+/// `NUDGE_INTERVAL`, so neither the GitHub API nor the user is hammered.
+const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
+const NUDGE_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+/// Persisted update-check state (`~/.cache/sky/update-check.json`).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct UpdateCache {
+    #[serde(default)]
+    last_check: u64,
+    #[serde(default)]
+    last_nudge: u64,
+    #[serde(default)]
+    latest: Option<String>,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `~/.cache/sky/update-check.json` (XDG on Linux, `%LOCALAPPDATA%\sky` on
+/// Windows). `None` when no home/cache dir is discoverable — the check simply
+/// no-ops then.
+fn update_cache_path() -> Option<PathBuf> {
+    let base = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+    };
+    base.map(|b| b.join("sky").join("update-check.json"))
+}
+
+fn read_update_cache() -> Option<UpdateCache> {
+    let s = std::fs::read_to_string(update_cache_path()?).ok()?;
+    serde_json::from_str(&s).ok()
+}
+
+fn write_update_cache(c: &UpdateCache) {
+    let Some(path) = update_cache_path() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(s) = serde_json::to_string(c) {
+        let _ = std::fs::write(path, s);
+    }
+}
+
+/// Pure: is a newer version known, and have we held off nudging long enough?
+fn should_nudge(
+    current: (u32, u32, u32),
+    latest: (u32, u32, u32),
+    last_nudge: u64,
+    now: u64,
+) -> bool {
+    latest > current && now.saturating_sub(last_nudge) >= NUDGE_INTERVAL_SECS
+}
+
+/// Pure: the nudge line to print (or `None`), given the current version, the
+/// cache, and the clock. Factored out so the visible message is unit-testable
+/// without a TTY / network.
+fn nudge_line(
+    current: (u32, u32, u32),
+    current_display: &str,
+    cache: &UpdateCache,
+    now: u64,
+) -> Option<String> {
+    let latest_str = cache.latest.as_ref()?;
+    let latest = parse_semver(latest_str)?;
+    if !should_nudge(current, latest, cache.last_nudge, now) {
+        return None;
+    }
+    Some(format!(
+        "\n  A new sky release is available: {current_display} \u{2192} {latest_str}\n  \
+         Run `sky upgrade` to update (`sky upgrade --notes` to see what's new).\n"
+    ))
+}
+
+/// Pure: is the cached check old enough to refresh?
+fn cache_is_stale(last_check: u64, now: u64) -> bool {
+    now.saturating_sub(last_check) >= CHECK_INTERVAL_SECS
+}
+
+/// Best-effort "a newer sky is available" nudge. Never blocks (the network
+/// refresh runs in a detached child; the nudge prints from the cached result of a
+/// prior refresh) and never perturbs machine-readable output — it prints to
+/// stderr, only when stderr is a TTY, only for a released build, and never for
+/// commands whose I/O must stay clean (`lsp`, `fmt`, `--version`, `upgrade`).
+/// `SKY_NO_UPDATE_CHECK` disables it entirely.
+fn maybe_notify_update(cmd: Option<&str>) {
+    if std::env::var_os("SKY_NO_UPDATE_CHECK").is_some() {
+        return;
+    }
+    if !std::io::stderr().is_terminal() {
+        return;
+    }
+    match cmd {
+        // Skip: stdio-protocol / machine output / self-referential / no-op.
+        Some("lsp") | Some("fmt") | Some("upgrade") | Some("--version") | Some("-V")
+        | Some("version") | Some("--help") | Some("-h") | Some("help")
+        | Some("__update-check") | None => return,
+        _ => {}
+    }
+    let ver = version_string();
+    if ver == "sky dev" || ver.contains("dev") {
+        return; // a dev build has no meaningful published version to compare
+    }
+    let Some(current) = parse_semver(ver.trim_start_matches("sky v")) else {
+        return;
+    };
+
+    let cache = read_update_cache();
+    let now = unix_now();
+
+    // Nudge from the cached latest (rate-limited).
+    if let Some(c) = cache.as_ref() {
+        if let Some(msg) = nudge_line(current, ver.trim_start_matches("sky "), c, now) {
+            eprint!("{msg}");
+            let mut updated = c.clone();
+            updated.last_nudge = now;
+            write_update_cache(&updated);
+        }
+    }
+
+    // Refresh the cache in the background when stale. Optimistically bump
+    // `last_check` first so concurrent invocations don't all spawn a worker.
+    let last_check = cache.as_ref().map(|c| c.last_check).unwrap_or(0);
+    if cache_is_stale(last_check, now) {
+        let mut c = cache.clone().unwrap_or_default();
+        c.last_check = now;
+        write_update_cache(&c);
+        spawn_background_update_check();
+    }
+}
+
+/// Fire-and-forget: re-invoke this binary's hidden `__update-check` worker,
+/// detached, stdio to null, so the network fetch runs without blocking or
+/// touching the terminal.
+fn spawn_background_update_check() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = Command::new(exe)
+            .arg("__update-check")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+}
+
+/// The hidden `__update-check` worker: fetch the latest tag, write the cache,
+/// exit. All best-effort; `last_check` is bumped even on failure so a persistent
+/// network problem doesn't respawn a worker on every invocation.
+fn run_update_check_refresh() {
+    let mut c = read_update_cache().unwrap_or_default();
+    c.last_check = unix_now();
+    if let Ok(tag) = latest_release_tag() {
+        c.latest = Some(tag.trim_start_matches('v').to_string());
+    }
+    write_update_cache(&c);
 }
 
 /// Download the release tarball for `artifact` @ `tag`, extract the binary, and
@@ -1695,7 +1875,7 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
 /// (`Std.Db.Migrate.migrateOps`), at most once each, dialect-correct for the live
 /// connection. Non-interactive + idempotent: only the active `ops` of each file
 /// apply; the quarantined `destructive` array is ignored by the runtime.
-fn cmd_db_apply(args: &[String]) -> ExitCode {
+fn cmd_db_apply(_args: &[String]) -> ExitCode {
     let file = Path::new("src/Main.sky");
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
@@ -3916,6 +4096,48 @@ mod tests {
         // ordering the notes range relies on: a newer tag compares greater
         assert!(parse_semver("v0.19.10") > parse_semver("v0.19.9"));
         assert!(parse_semver("v0.20.0") > parse_semver("v0.19.99"));
+    }
+
+    #[test]
+    fn should_nudge_only_when_newer_and_rate_limit_elapsed() {
+        let day = NUDGE_INTERVAL_SECS;
+        // newer + never nudged → yes
+        assert!(should_nudge((0, 18, 10), (0, 19, 0), 0, day + 1));
+        // newer but nudged recently → no
+        assert!(!should_nudge((0, 18, 10), (0, 19, 0), day, day + 100));
+        // newer + last nudge a full interval ago → yes
+        assert!(should_nudge((0, 18, 10), (0, 19, 0), 0, day));
+        // same version → no
+        assert!(!should_nudge((0, 19, 0), (0, 19, 0), 0, 10 * day));
+        // current is newer than "latest" (dev ahead of release) → no
+        assert!(!should_nudge((0, 20, 0), (0, 19, 0), 0, 10 * day));
+    }
+
+    #[test]
+    fn nudge_line_shows_versions_when_newer() {
+        let day = NUDGE_INTERVAL_SECS;
+        let cache = UpdateCache { last_check: 0, last_nudge: 0, latest: Some("0.19.0".into()) };
+        let msg = nudge_line((0, 18, 10), "v0.18.10", &cache, day).expect("should nudge");
+        assert!(msg.contains("v0.18.10") && msg.contains("0.19.0"));
+        assert!(msg.contains("sky upgrade"));
+        // already current → no line
+        assert!(nudge_line((0, 19, 0), "v0.19.0", &cache, day).is_none());
+        // newer but nudged recently → no line
+        let recent = UpdateCache { last_nudge: day, ..cache.clone() };
+        assert!(nudge_line((0, 18, 10), "v0.18.10", &recent, day + 1).is_none());
+        // no cached latest → no line
+        let empty = UpdateCache::default();
+        assert!(nudge_line((0, 18, 10), "v0.18.10", &empty, day).is_none());
+    }
+
+    #[test]
+    fn cache_is_stale_after_interval() {
+        assert!(cache_is_stale(0, CHECK_INTERVAL_SECS));
+        assert!(cache_is_stale(0, CHECK_INTERVAL_SECS + 1));
+        assert!(!cache_is_stale(100, 100));
+        assert!(!cache_is_stale(100, 100 + CHECK_INTERVAL_SECS - 1));
+        // clock skew (now < last_check) must not underflow → not stale
+        assert!(!cache_is_stale(1_000_000, 0));
     }
 
     #[test]

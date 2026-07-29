@@ -466,6 +466,16 @@ Notes come from the GitHub Release body (mirrored from
 [`CHANGELOG.md`](../../CHANGELOG.md)); the fetch is best-effort and never fails
 the upgrade.
 
+**Automatic update nudge.** When you run a `sky` command interactively and a newer
+release exists, `sky` prints a one-line "a new release is available — run `sky
+upgrade`" note to stderr. The check is **cached** (`~/.cache/sky/update-check.json`,
+`%LOCALAPPDATA%\sky` on Windows) and refreshed at most once a day in a **detached
+background process**, so it never slows a command or blocks on the network. The
+nudge itself prints at most once a day. It stays out of your way entirely when
+output isn't interactive: it's suppressed unless stderr is a TTY (so scripts / CI
+/ pipes never see it), for dev builds, and for `lsp` / `fmt` / `--version`. Set
+`SKY_NO_UPDATE_CHECK=1` to disable it completely.
+
 ### `sky upgrade-claude`
 
 Refreshes the cwd's `CLAUDE.md` from the template embedded in the
