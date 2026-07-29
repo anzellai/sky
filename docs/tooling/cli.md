@@ -285,6 +285,23 @@ sky run --db-migrate --db-seed src/Main.sky   # apply committed migrations, seed
 sky run --db-push src/Main.sky                # dev: sync schema, serve
 ```
 
+### Deploying — self-migrating binaries
+
+When a project has `db/migrations/`, `sky build` **embeds the migrations into the
+binary**. A deployed binary then self-migrates with **no source tree and no `sky`
+toolchain on the host**:
+
+```bash
+SKY_DB_OP=migrate ./app   # apply the embedded migrations, print a summary, exit
+SKY_DB_OP=status  ./app   # report applied / pending, exit
+./app                     # (unset) boot + serve — no migration on boot
+```
+
+Run `SKY_DB_OP=migrate ./app` once as a deploy step (a single owner), then start
+your replicas normally — booting without `SKY_DB_OP` never migrates, so scaling
+out is safe. The connection comes from the app's usual config (`DATABASE_URL` /
+`<PREFIX>_DB_PATH`).
+
 How it works — gen builds a temporary DB-free entry (`main =
 Store.dumpSchema db`), captures the type-derived schema, and diffs it against
 the committed snapshot `db/schema.json`:

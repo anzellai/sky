@@ -34,6 +34,13 @@ SQLite *and* PostgreSQL (verified end-to-end on both).
 - `sky db migrate` — apply the committed files through the checksummed ledger, at
   most once each, dialect-correct for the connection.
 - `sky db seed` — run your entry module's `seed : Db -> Task Error ()`.
+- `sky db push` — the no-migration-files dev loop: sync the live DB to your types
+  (create missing tables, add new columns). `sky run` gains `--db-push` /
+  `--db-migrate` / `--db-seed` flags to run those steps before serving.
+- **Self-migrating binaries.** `sky build` embeds `db/migrations/` into the app,
+  so a deployed `SKY_DB_OP=migrate ./app` applies them with no source tree and no
+  `sky` toolchain on the host. Run it once as a deploy step; replicas booting
+  without `SKY_DB_OP` never migrate (safe to scale out).
 
 Walkthrough: [`docs/tooling/cli.md`](docs/tooling/cli.md#database).
 
