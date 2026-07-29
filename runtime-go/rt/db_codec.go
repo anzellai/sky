@@ -18,13 +18,20 @@ import (
 )
 
 // codecSplitKind splits a colspec kind into (baseKind, nullable). A trailing `?`
-// marks a nullable column (a Maybe field); its absence means NOT NULL.
+// marks a nullable column (a Maybe field); its absence means NOT NULL. A trailing
+// `!` marks an auto-increment PK (see codecColIsAutoInc) and is stripped here so
+// every read/write path sees the plain base kind.
 func codecSplitKind(kind string) (string, bool) {
+	kind = strings.TrimSuffix(kind, "!")
 	if strings.HasSuffix(kind, "?") {
 		return kind[:len(kind)-1], true
 	}
 	return kind, false
 }
+
+// codecColIsAutoInc reports whether a colspec kind carries the `!` auto-increment
+// marker that `Store.serial` stamps on the PK column.
+func codecColIsAutoInc(kind string) bool { return strings.HasSuffix(kind, "!") }
 
 func codecColKindToSchema(kind string) string {
 	kind, _ = codecSplitKind(kind)
@@ -47,14 +54,16 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 	for _, cs := range AsList(colspecArg) {
 		t := AsTuple2(cs)
 		name := AsString(t.V0)
-		_, nullable := codecSplitKind(AsString(t.V1))
+		rawKind := AsString(t.V1)
+		_, nullable := codecSplitKind(rawKind)
+		autoInc := codecColIsAutoInc(rawKind) && name == pk
 		cols = append(cols, map[string]any{
-			"Name": name, "Kind": codecColKindToSchema(AsString(t.V1)),
+			"Name": name, "Kind": codecColKindToSchema(rawKind),
 			// A required (non-Maybe) column is NOT NULL on a FRESH table; the PK
 			// always is. (ALTER ADD on an existing table stays nullable — see
 			// Db_autoMigrate — since existing rows can't satisfy NOT NULL.)
 			"IsPk": name == pk, "IsNotNull": !nullable || name == pk, "IsUnique": false,
-			"IsAutoInc": false, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
+			"IsAutoInc": autoInc, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
 		})
 	}
 	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}

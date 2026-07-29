@@ -27,6 +27,7 @@ module Std.Db.Store exposing
     ( Store
     , fromCodec
     , primaryKey
+    , serial
     , generated
     , create
     , migrate
@@ -106,6 +107,27 @@ fromCodec name codec =
 primaryKey : String -> Store a -> Store a
 primaryKey pk (Store s) =
     Store { s | pk = pk }
+
+
+-- | Mark an INTEGER primary key as auto-increment (SQLite `INTEGER PRIMARY KEY
+-- AUTOINCREMENT` / Postgres `BIGSERIAL`) — the database assigns it, so `insert`
+-- OMITS the column and the DB fills the next id. Use this for the common
+-- `id : Int` serial-PK table: `Store.fromCodec "todos" codec |> Store.serial "id"`.
+-- (For a String/UUID PK you generate yourself, use `primaryKey` instead.)
+serial : String -> Store a -> Store a
+serial name (Store s) =
+    Store
+        { s | pk = name
+        , generated = name :: s.generated
+        , cols = List.map
+              (\( c, k ) ->
+                  if c == name then
+                      ( c, k ++ "!" )
+
+                  else
+                      ( c, k ))
+              s.cols
+        }
 
 
 -- | Mark columns the DATABASE fills — a `serial` PK, a `DEFAULT`/`defaultNow`
