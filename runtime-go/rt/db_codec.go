@@ -17,11 +17,23 @@ import (
 	"strings"
 )
 
+// codecKindBase returns the base-kind portion of a colspec kind, before any
+// `|`-delimited flag suffix (`unique`, `default`) that Store.unique / Store.default*
+// append. Read/write paths only care about the base type + nullability.
+func codecKindBase(kind string) string {
+	if i := strings.IndexByte(kind, '|'); i >= 0 {
+		return kind[:i]
+	}
+	return kind
+}
+
 // codecSplitKind splits a colspec kind into (baseKind, nullable). A trailing `?`
 // marks a nullable column (a Maybe field); its absence means NOT NULL. A trailing
-// `!` marks an auto-increment PK (see codecColIsAutoInc) and is stripped here so
-// every read/write path sees the plain base kind.
+// `!` marks an auto-increment PK (see codecColIsAutoInc); any `|flag` suffix marks
+// a UNIQUE / DEFAULT (see codecColExtras). All markers are stripped here so every
+// read/write path sees the plain base kind.
 func codecSplitKind(kind string) (string, bool) {
+	kind = codecKindBase(kind)
 	kind = strings.TrimSuffix(kind, "!")
 	if strings.HasSuffix(kind, "?") {
 		return kind[:len(kind)-1], true
@@ -31,7 +43,36 @@ func codecSplitKind(kind string) (string, bool) {
 
 // codecColIsAutoInc reports whether a colspec kind carries the `!` auto-increment
 // marker that `Store.serial` stamps on the PK column.
-func codecColIsAutoInc(kind string) bool { return strings.HasSuffix(kind, "!") }
+func codecColIsAutoInc(kind string) bool {
+	return strings.HasSuffix(codecKindBase(kind), "!")
+}
+
+// codecColExtras parses the `|`-delimited flag suffix Store.unique / Store.default*
+// append onto a colspec kind, returning (unique, defaultKind, defaultVal) where
+// defaultKind ∈ {none,now,text,int,bool} matches schemaDefault.
+func codecColExtras(kind string) (bool, string, string) {
+	unique := false
+	defKind, defVal := "none", ""
+	i := strings.IndexByte(kind, '|')
+	if i < 0 {
+		return unique, defKind, defVal
+	}
+	for _, f := range strings.Split(kind[i+1:], "|") {
+		switch {
+		case f == "u":
+			unique = true
+		case f == "dnow":
+			defKind = "now"
+		case strings.HasPrefix(f, "dtext="):
+			defKind, defVal = "text", f[len("dtext="):]
+		case strings.HasPrefix(f, "dint="):
+			defKind, defVal = "int", f[len("dint="):]
+		case strings.HasPrefix(f, "dbool="):
+			defKind, defVal = "bool", f[len("dbool="):]
+		}
+	}
+	return unique, defKind, defVal
+}
 
 func codecColKindToSchema(kind string) string {
 	kind, _ = codecSplitKind(kind)
@@ -57,13 +98,14 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 		rawKind := AsString(t.V1)
 		_, nullable := codecSplitKind(rawKind)
 		autoInc := codecColIsAutoInc(rawKind) && name == pk
+		unique, defKind, defVal := codecColExtras(rawKind)
 		cols = append(cols, map[string]any{
 			"Name": name, "Kind": codecColKindToSchema(rawKind),
 			// A required (non-Maybe) column is NOT NULL on a FRESH table; the PK
 			// always is. (ALTER ADD on an existing table stays nullable — see
 			// Db_autoMigrate — since existing rows can't satisfy NOT NULL.)
-			"IsPk": name == pk, "IsNotNull": !nullable || name == pk, "IsUnique": false,
-			"IsAutoInc": autoInc, "DefaultKind": "none", "DefaultVal": "", "ForeignKey": "",
+			"IsPk": name == pk, "IsNotNull": !nullable || name == pk, "IsUnique": unique,
+			"IsAutoInc": autoInc, "DefaultKind": defKind, "DefaultVal": defVal, "ForeignKey": "",
 		})
 	}
 	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}

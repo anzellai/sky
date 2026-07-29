@@ -28,6 +28,10 @@ module Std.Db.Store exposing
     , fromCodec
     , primaryKey
     , serial
+    , unique
+    , defaultNow
+    , defaultText
+    , defaultInt
     , generated
     , create
     , migrate
@@ -104,9 +108,10 @@ fromCodec name codec =
 
 
 -- | Mark the primary-key column (NOT NULL; used by `findBy`/`delete`/`update`).
+-- Accepts the record FIELD name or the snake column name (resolved either way).
 primaryKey : String -> Store a -> Store a
 primaryKey pk (Store s) =
-    Store { s | pk = pk }
+    Store { s | pk = resolveCol s.cols pk }
 
 
 -- | Mark an INTEGER primary key as auto-increment (SQLite `INTEGER PRIMARY KEY
@@ -116,16 +121,79 @@ primaryKey pk (Store s) =
 -- (For a String/UUID PK you generate yourself, use `primaryKey` instead.)
 serial : String -> Store a -> Store a
 serial name (Store s) =
-    Store
-        { s | pk = name
-        , generated = name :: s.generated
-        , cols = List.map
-              (\( c, k ) ->
-                  if c == name then
-                      ( c, k ++ "!" )
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | pk = col
+            , generated = col :: s.generated
+            , cols = List.map
+                  (\( c, k ) ->
+                      if c == col then
+                          ( c, k ++ "!" )
 
-                  else
-                      ( c, k ))
+                      else
+                          ( c, k ))
+                  s.cols
+            }
+
+
+-- | Append a `|`-delimited flag onto a column's colspec kind (see the runtime's
+-- codecColExtras). The flag drives the CREATE-TABLE constraint/default; the base
+-- kind (hence every read/write path) is unaffected.
+addColFlag : String -> String -> List ( String, String ) -> List ( String, String )
+addColFlag col flag cols =
+    List.map
+        (\( c, k ) ->
+            if c == col then
+                ( c, k ++ "|" ++ flag )
+
+            else
+                ( c, k ))
+        cols
+
+
+-- | Mark a column `UNIQUE` in the generated DDL (e.g. a login email):
+-- `Store.fromCodec "users" codec |> Store.primaryKey "id" |> Store.unique "email"`.
+-- A duplicate insert surfaces as a `Task.fail` from the driver.
+unique : String -> Store a -> Store a
+unique name (Store s) =
+    Store { s | cols = addColFlag (resolveCol s.cols name) "u" s.cols }
+
+
+-- | Give a column a `DEFAULT` of the current timestamp (`now()` on Postgres,
+-- `datetime('now')` on SQLite) AND mark it `generated`, so `insert`/`update` OMIT
+-- it and the database stamps it: `Store.defaultNow "created_at"`.
+defaultNow : String -> Store a -> Store a
+defaultNow name (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | cols = addColFlag col "dnow" s.cols
+            , generated = col :: s.generated
+            }
+
+
+-- | Give a column a `DEFAULT` text value in the generated DDL:
+-- `Store.defaultText "content" ""`. (Does NOT mark the column generated — the
+-- record's value is still written on insert; the DEFAULT only applies when the
+-- column is omitted, e.g. via `Store.generated`.)
+defaultText : String -> String -> Store a -> Store a
+defaultText name val (Store s) =
+    Store
+        { s | cols = addColFlag (resolveCol s.cols name) ("dtext=" ++ val) s.cols
+        }
+
+
+-- | Give a column a `DEFAULT` integer value in the generated DDL:
+-- `Store.defaultInt "verified" 0`.
+defaultInt : String -> Int -> Store a -> Store a
+defaultInt name val (Store s) =
+    Store
+        { s | cols = addColFlag
+              (resolveCol s.cols name)
+              ("dint=" ++ String.fromInt val)
               s.cols
         }
 
@@ -135,7 +203,7 @@ serial name (Store s) =
 -- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
 generated : List String -> Store a -> Store a
 generated names (Store s) =
-    Store { s | generated = names }
+    Store { s | generated = List.map (resolveCol s.cols) names }
 
 
 -- | Create the table (dialect-correct DDL derived from the codec).
