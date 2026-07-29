@@ -33,6 +33,7 @@ module Std.Db.Store exposing
     , touchOnUpdate
     , defaultText
     , defaultInt
+    , defaultWith
     , generated
     , create
     , migrate
@@ -41,6 +42,7 @@ module Std.Db.Store exposing
     , updateWhere
     , all
     , findBy
+    , selectRaw
     , delete
     , deleteWhere
     , Table
@@ -92,6 +94,7 @@ type Store a
 , pk : String
 , cols : List ( String, String )
 , generated : List String
+, computed : List ( String, () -> SqlValue )
 }
 
 
@@ -105,6 +108,7 @@ fromCodec name codec =
         , pk = ""
         , cols = codecColumns codec
         , generated = []
+        , computed = []
         }
 
 
@@ -215,6 +219,24 @@ defaultInt name val (Store s) =
         }
 
 
+-- | Give a column an APP-SIDE computed default: a `() -> SqlValue` the runtime
+-- calls at INSERT time (the DB can't run Sky, so this complements the SQL-side
+-- `default*`). The prime use is a UUID/String primary key you don't want to pass
+-- on every insert — `Store.defaultWith "id" (\_ -> SqlString (newId ()))` (use the
+-- unit-arg `Task.run` idiom inside for effectful generators like `Uuid.v4`). The
+-- column is marked `generated`, so `insert` ignores the record's value and writes
+-- the computed one instead.
+defaultWith : String -> (() -> SqlValue) -> Store a -> Store a
+defaultWith name gen (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | computed = ( col, gen ) :: s.computed
+            , generated = col :: s.generated
+            }
+
+
 -- | Mark columns the DATABASE fills — a `serial` PK, a `DEFAULT`/`defaultNow`
 -- timestamp — so `insert` and `update` OMIT them (the DB assigns/keeps them):
 -- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
@@ -242,11 +264,12 @@ migrate conn (Store s) =
 -- OMITTED so the database assigns them.
 insert : Db -> Store a -> a -> Task Error Int
 insert conn (Store s) record =
-    dbExecObject
+    dbExecObjectWith
         conn
         s.name
         (colsExcluding s.generated s.cols)
         (Codec.toValue s.codec record)
+        (List.map (\( col, gen ) -> ( col, gen () )) s.computed)
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -314,6 +337,23 @@ findBy conn (Store s) col value =
         s.cols
         |> Task.andThen (decodeRows s.codec)
         |> Task.map List.head
+
+
+-- | Run ANY SQL and decode each row into a typed projection record via a codec —
+-- the escape hatch for JOINs and aggregates (GROUP BY / COUNT / SUM), which a
+-- single-table Store can't model. You own the SQL; the codec owns the mapping (the
+-- sqlx split), so joins/aggregates come back as records, not `Dict String String`.
+-- The codec's columns must match the SELECT's output columns (alias to snake_case):
+--
+--     type alias Tally = { ideaId : String, votes : Int }
+--     tallyCodec = Codec.auto { ideaId = "", votes = 0 }
+--     Store.selectRaw conn tallyCodec
+--         "SELECT idea_id, COUNT(*) AS votes FROM votes GROUP BY idea_id"
+--         []
+selectRaw : Db -> Codec row -> String -> List SqlValue -> Task Error (List row)
+selectRaw conn codec sql params =
+    dbQueryObjects conn sql params (codecColumns codec)
+        |> Task.andThen (decodeRows codec)
 
 
 -- | Delete rows where `col = value` (single column).
@@ -991,6 +1031,11 @@ dbAutoMigrate =
 dbExecObject : Db -> String -> List ( String, String ) -> Value -> Task Error Int
 dbExecObject =
     Ffi.kernel "Db_execObject"
+
+
+dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> Task Error Int
+dbExecObjectWith =
+    Ffi.kernel "Db_execObjectWith"
 
 
 dbQueryObjects : Db -> String -> List p -> List ( String, String ) -> Task Error (List String)

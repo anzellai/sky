@@ -302,6 +302,43 @@ func Db_execObject(connArg, tableArg, colspecArg, objArg any) any {
 	}
 }
 
+// Db_execObjectWith is Db_execObject plus a list of app-computed (column,
+// SqlValue) pairs (Store.defaultWith) appended to the INSERT — the SqlValue
+// params bind through Db_exec's SqlValue path, so a UUID PK generated in Sky
+// lands in the row without the record carrying it.
+func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any {
+	return func() any {
+		fields, ok := jsonObjFields(objArg)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.insert: value is not a record"))
+		}
+		cols := []string{}
+		params := []any{}
+		for _, cs := range AsList(colspecArg) {
+			t := AsTuple2(cs)
+			name := AsString(t.V0)
+			base, _ := codecSplitKind(AsString(t.V1))
+			cols = append(cols, name)
+			params = append(params, rawToSqlArg(fields[name], base))
+		}
+		for _, ex := range AsList(extraArg) {
+			t := AsTuple2(ex)
+			cols = append(cols, AsString(t.V0))
+			params = append(params, t.V1) // a Sky SqlValue ADT — Db_exec binds it
+		}
+		if len(cols) == 0 {
+			return Ok[any, any](0)
+		}
+		ph := make([]string, len(cols))
+		for i := range ph {
+			ph[i] = "?"
+		}
+		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "))
+		return AnyTaskRun(Db_exec(connArg, sql, params))
+	}
+}
+
 // rowValToJsonRaw converts a DB row value to a JSON raw value per column kind.
 func rowValToJsonRaw(raw any, present bool, kind string) any {
 	if !present || raw == nil {
