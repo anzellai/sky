@@ -731,6 +731,27 @@ These are big enough to deserve their own pages:
 - **[Std.Auth overview](skyauth/overview.md)** — bcrypt, JWT, register / login
 - **[Std.Log](#stdlog)** — see below
 
+### `Std.Codec` + `Std.Db.Store` — codec-driven persistence (v0.19)
+
+The **recommended default** for record-shaped tables: write ONE `Codec` per type
+(`Std.Codec`) and `Std.Db.Store` drives the schema, reads, and writes — no
+hand-written SQL, no row mappers. The same codec also serves JSON.
+
+- **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
+  (scalars → columns, `Maybe` → nullable, list/nested/ADT → JSON blob, nullary enum
+  → readable name); **snake_case** columns/keys by default (`Codec.autoCamel` keeps
+  camelCase). `toJson` / `fromJson` / `fromJsonSafe`; explicit `object`/`field`/
+  `taggedUnion`/`enum` for custom shapes. Pure Sky.
+- **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
+  `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
+  `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), `all`/`findBy` + the
+  composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`) +
+  **`selectRaw codec sql params`** for typed JOIN/aggregate reads. Deliberately a
+  single-table mapper, not an ORM.
+
+Full walkthrough: **[Std.Db overview → Std.Db.Store](skydb/overview.md#stddbstore--stdcodec--codec-driven-persistence-recommended-default)**.
+Exact signatures: `sky doc Std.Db.Store` · `sky doc Std.Codec`.
+
 ### `Std.Db.Decode` — typed DB row decoders (v0.15.45)
 
 Mirror of `Sky.Core.Json.Decode`'s combinator shape but targets SQL

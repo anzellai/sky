@@ -109,18 +109,32 @@ products =
         (Codec.auto { id = "", name = "", priceMinor = 0, tags = [] })
         |> Store.primaryKey "id"
 
--- write:  Store.insert conn products p  ·  Store.update conn products p (by PK)
+-- write:  Store.insert conn products p  ·  Store.insertMany conn products [p1, p2]
+--         Store.update conn products p (by PK)  ·  Store.upsert conn products p
 --         Store.delete conn products "id" "p1"  ·  Store.deleteWhere conn products cond
 --         Store.updateWhere conn products cond p  (compound / ownership WHERE)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
+--         Store.selectRaw conn projCodec "<any JOIN / GROUP BY SQL>" params
 ```
 
 `Codec.auto` columns (and JSON keys) are **snake_case** by default — `priceMinor`
 → `price_minor`, the DB convention — so a plain `Codec.auto blank` works against a
-standard schema; use an explicit `Codec.field "col" .field` codec only for a custom
-name. Mark DB-filled columns so `insert`/`update` omit them:
-`Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`
-(a `serial` PK + `defaultNow` — the DB assigns/keeps them).
+standard schema (`Codec.autoCamel` keeps camelCase); use an explicit
+`Codec.field "col" .field` codec only for a custom name.
+
+**Schema/DDL builders** pipe onto the store (each accepts the record field OR the
+snake column): `serial "id"` (auto-increment PK) · `unique "email"` ·
+`defaultNow "created_at"` · `defaultText/defaultInt "col" v` ·
+`touchOnUpdate "updated_at"` (DB-stamped on insert AND auto-bumped to `now()` on
+every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g. a
+UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so
+the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
+`Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
+
+**JOINs / aggregates** → `Store.selectRaw codec "<SQL>" params`: you write the SQL
+(joins, `GROUP BY`, `COUNT`), a codec decodes each row into a typed projection
+record. Store stays a single-table mapper — deliberately not an ORM. Exact
+signatures: `sky doc Std.Db.Store` / `sky doc Std.Codec`.
 
 **Compose reads with the query builder** — filters bind as `SqlValue` params
 (injection-safe), so you never touch a SQL string:

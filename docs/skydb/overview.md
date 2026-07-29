@@ -34,6 +34,106 @@ main =
         |> Task.run
 ```
 
+## `Std.Db.Store` + `Std.Codec` — codec-driven persistence (recommended default)
+
+For record-shaped tables, write **one `Codec`** per type (with `Std.Codec`) and
+let `Std.Db.Store` drive the schema, the reads, and the writes — no hand-written
+SQL, no row mappers, no `SqlValue` lists. The same codec also serves JSON.
+
+```elm
+import Std.Codec as Codec exposing (Codec)
+import Std.Db.Store as Store exposing (Store)
+import Std.Db as Db exposing (SqlValue(..))
+
+type alias User =
+    { id : String, email : String, verified : Int, createdAt : String }
+
+users : Store User
+users =
+    Store.fromCodec "users" (Codec.auto { id = "", email = "", verified = 0, createdAt = "" })
+        |> Store.primaryKey "id"        -- or Store.serial "id" for an auto-increment Int PK
+        |> Store.unique "email"
+        |> Store.defaultInt "verified" 0
+        |> Store.defaultNow "createdAt"
+
+-- Store.create conn users            : Task Error ()      (dialect-correct DDL)
+-- Store.insert conn users user       : Task Error Int
+-- Store.all    conn users            : Task Error (List User)
+-- Store.findBy conn users "id" "u1"  : Task Error (Maybe User)
+```
+
+**`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
+scalars → typed columns, `Maybe` → nullable, list / nested-record / data-ADT →
+JSON TEXT blob, nullary enum → readable name. Columns + JSON keys are
+**snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
+keeps camelCase; a custom mapping uses `Codec.object`/`Codec.field "col" .field`.
+
+### Schema / DDL builders
+
+Pipe these onto the store — each accepts the record **field** name *or* the snake
+column (a typo fails fast with the column list):
+
+| Builder | Effect |
+|---|---|
+| `Store.primaryKey "id"` | mark the PK (String/UUID key you provide) |
+| `Store.serial "id"` | auto-increment PK (`INTEGER … AUTOINCREMENT` / `BIGSERIAL`) |
+| `Store.unique "email"` | `UNIQUE` constraint |
+| `Store.defaultNow "created_at"` | `DEFAULT now()`/`datetime('now')`, DB-stamped on insert |
+| `Store.touchOnUpdate "updated_at"` | stamped on insert **and auto-bumped to `now()` on every `update`** — no raw SQL |
+| `Store.defaultText/defaultInt "col" v` | literal column `DEFAULT` |
+| `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
+| `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
+
+### Writes
+
+`insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`
+(by PK) · `updateWhere` (by `Cond`) · **`upsert`** (`INSERT … ON CONFLICT(pk) DO
+UPDATE` — idempotent config rows; needs a non-generated PK) · `delete` ·
+`deleteWhere`.
+
+### Reads — query builder
+
+Composable, injection-safe `Cond` values; you never touch a SQL string:
+
+```elm
+Store.query users
+    |> Store.where_ (Store.eq "verified" (SqlInt 1))
+    |> Store.where_ (Store.or_ [ Store.like "email" "%@work.io", Store.gt "createdAt" (SqlString cutoff) ])
+    |> Store.orderDesc "createdAt"
+    |> Store.limit 20
+    |> Store.toList conn        -- terminals: toList / toMaybe / count
+```
+
+Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col" v`)
+combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
+nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
+(enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
+single-row shortcuts: `all` / `findBy`.
+
+### JOINs and aggregates → `Store.selectRaw`
+
+A single-table Store can't express a JOIN or `GROUP BY` — so `selectRaw` runs
+**any** SQL and decodes each row into a typed **projection** record via a codec
+(the sqlx split: you own the SQL, the codec owns the mapping — no ORM, no
+relations, no N+1):
+
+```elm
+type alias Tally = { ideaId : String, votes : Int }
+
+Store.selectRaw conn (Codec.auto { ideaId = "", votes = 0 })
+    "SELECT idea_id, COUNT(*) AS votes FROM votes GROUP BY idea_id"
+    []                                             -- : Task Error (List Tally)
+```
+
+Raw `Std.Db` (`query`/`exec`/`withTransaction`) remains the escape hatch for
+anything else. `Store.transaction conn (\tx -> …)` groups Store ops atomically.
+`Store.toTable` + `Store.project` build a `db : Store.Project` for
+`sky db migrate --gen` (see [Schema migrations](#schema-migrations)). Import
+`Std.Db.Store` and `Std.Db` **qualified** — `query`/`migrate` overlap.
+
+**Exact signatures are the source of truth in `sky doc`:**
+`sky doc Std.Db.Store` · `sky doc Std.Codec`.
+
 ## Typed schema — `Std.Db.Schema` (dialect-safe DDL)
 
 Hand-written `CREATE TABLE` is the one place the "two backends, one API"
