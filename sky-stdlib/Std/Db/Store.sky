@@ -30,6 +30,7 @@ module Std.Db.Store exposing
     , serial
     , unique
     , defaultNow
+    , touchOnUpdate
     , defaultText
     , defaultInt
     , generated
@@ -175,6 +176,22 @@ defaultNow name (Store s) =
             }
 
 
+-- | Mark a timestamp column that the DB stamps on INSERT (`defaultNow`) AND that
+-- `Store.update`/`updateWhere` auto-bump to the current time on EVERY update — the
+-- classic `updated_at`: `Store.touchOnUpdate "updated_at"`. No read-modify-write and
+-- no raw SQL: `Store.update` sets it to `now()` for you (a SQL DEFAULT alone only
+-- fires on INSERT).
+touchOnUpdate : String -> Store a -> Store a
+touchOnUpdate name (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | cols = addColFlag col "dnow" (addColFlag col "touch" s.cols)
+            , generated = col :: s.generated
+            }
+
+
 -- | Give a column a `DEFAULT` text value in the generated DDL:
 -- `Store.defaultText "content" ""`. (Does NOT mark the column generated — the
 -- record's value is still written on insert; the DEFAULT only applies when the
@@ -240,7 +257,7 @@ update conn (Store s) record =
     dbUpdateByPk
         conn
         s.name
-        (colsExcluding (s.pk :: s.generated) s.cols)
+        (setColspecOf s.pk s.generated s.cols)
         s.pk
         (kindOf s.pk s.cols)
         (Codec.toValue s.codec record)
@@ -261,7 +278,7 @@ updateWhere conn (Store s) rawCond record =
             (dbUpdateWhere
                 conn
                 s.name
-                (colsExcluding (s.pk :: s.generated) s.cols)
+                (setColspecOf s.pk s.generated s.cols)
                 (Codec.toValue s.codec record)
                 whereSql
                 whereParams)
@@ -867,6 +884,21 @@ emptyParams =
 colsExcluding : List String -> List ( String, String ) -> List ( String, String )
 colsExcluding excl cols =
     List.filter (\( c, _ ) -> not (List.member c excl)) cols
+
+
+-- | Columns carrying the `touch` flag (Store.touchOnUpdate) — set to `now()` on
+-- every UPDATE by the runtime's codecSetClause.
+touchColsOf : List ( String, String ) -> List ( String, String )
+touchColsOf cols =
+    List.filter (\( _, k ) -> String.contains "touch" k) cols
+
+
+-- | The SET column-spec for an update: every writable column (PK + `generated`
+-- excluded) PLUS the `touch` columns re-added (they live in `generated` so INSERT
+-- omits them, but UPDATE bumps them to `now()`).
+setColspecOf : String -> List String -> List ( String, String ) -> List ( String, String )
+setColspecOf pk gen cols =
+    colsExcluding (pk :: gen) cols ++ touchColsOf cols
 
 
 -- | The declared kind of a column (defaults to "text" when absent).

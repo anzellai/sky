@@ -47,6 +47,11 @@ func codecColIsAutoInc(kind string) bool {
 	return strings.HasSuffix(codecKindBase(kind), "!")
 }
 
+// codecColIsTouch reports whether a colspec kind carries the `touch` flag that
+// `Store.touchOnUpdate` stamps — such a column is set to the current timestamp on
+// every UPDATE (an `updated_at`), not bound from the record value.
+func codecColIsTouch(kind string) bool { return strings.Contains(kind, "touch") }
+
 // codecColExtras parses the `|`-delimited flag suffix Store.unique / Store.default*
 // append onto a colspec kind, returning (unique, defaultKind, defaultVal) where
 // defaultKind ∈ {none,now,text,int,bool} matches schemaDefault.
@@ -413,7 +418,7 @@ func Db_updateByPk(connArg, tableArg, setColspecArg, pkColArg, pkKindArg, objArg
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.update: value is not a record"))
 		}
-		setCols, params := codecSetClause(setColspecArg, fields)
+		setCols, params := codecSetClause(dbDriverOf(connArg), setColspecArg, fields)
 		if len(setCols) == 0 {
 			return Ok[any, any](0)
 		}
@@ -435,7 +440,7 @@ func Db_updateWhere(connArg, tableArg, setColspecArg, objArg, whereSqlArg, where
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.updateWhere: value is not a record"))
 		}
-		setCols, params := codecSetClause(setColspecArg, fields)
+		setCols, params := codecSetClause(dbDriverOf(connArg), setColspecArg, fields)
 		if len(setCols) == 0 {
 			return Ok[any, any](0)
 		}
@@ -448,15 +453,31 @@ func Db_updateWhere(connArg, tableArg, setColspecArg, objArg, whereSqlArg, where
 	}
 }
 
-// codecSetClause builds the `col = ?` fragments + bound values for a set-column
-// spec, pulling each value from the codec-encoded record fields.
-func codecSetClause(setColspecArg any, fields map[string]any) ([]string, []any) {
+// dbDriverOf returns the driver ("pgx" / "sqlite") for a Db conn arg, or "" if the
+// arg isn't a *SkyDb.
+func dbDriverOf(connArg any) string {
+	if d, ok := connArg.(*SkyDb); ok {
+		return d.driver
+	}
+	return ""
+}
+
+// codecSetClause builds the SET fragments + bound values for a set-column spec,
+// pulling each value from the codec-encoded record fields. A `touch`-flagged
+// column (Store.touchOnUpdate) is set to the current timestamp via a SQL
+// expression (no bound param), so `updated_at` bumps on every UPDATE.
+func codecSetClause(driver string, setColspecArg any, fields map[string]any) ([]string, []any) {
 	setCols := []string{}
 	params := []any{}
 	for _, cs := range AsList(setColspecArg) {
 		t := AsTuple2(cs)
 		name := AsString(t.V0)
-		base, _ := codecSplitKind(AsString(t.V1))
+		rawKind := AsString(t.V1)
+		if codecColIsTouch(rawKind) {
+			setCols = append(setCols, name+" = "+schemaDefault(driver, "now", ""))
+			continue
+		}
+		base, _ := codecSplitKind(rawKind)
 		setCols = append(setCols, name+" = ?")
 		params = append(params, rawToSqlArg(fields[name], base))
 	}
