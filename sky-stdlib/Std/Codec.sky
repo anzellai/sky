@@ -46,6 +46,7 @@ module Std.Codec exposing
     , field
     , buildObject
     , auto
+    , autoCamel
     , Variant
     , taggedUnion
     , var0
@@ -243,27 +244,42 @@ buildObject (ObjectCodec o) =
 --     userCodec : Codec User
 --     userCodec = Codec.auto blankUser
 auto : a -> Codec a
-auto witness =
+auto =
+    autoWith True
+
+
+-- | Like `auto`, but keeps camelCase column / JSON-key names (`priceMinor` stays
+-- `priceMinor`) — for a camelCase schema or API. `auto` (snake_case) is the
+-- default; per-column control still uses an explicit `Codec.field`.
+autoCamel : a -> Codec a
+autoCamel =
+    autoWith False
+
+
+autoWith : Bool -> a -> Codec a
+autoWith snake witness =
     Codec
-        { enc = autoEnc
-        , dec = autoDecoder witness
+        { enc = \r -> autoEncK snake r
+        , dec = autoDecoderK snake witness
         , shp = SRecord
-              (List.map (\( n, k ) -> ( n, kindToColType k )) (autoCols witness))
+              (List.map
+                  (\( n, k ) -> ( n, kindToColType k ))
+                  (autoColsK snake witness))
         }
 
 
-autoEnc : a -> Value
-autoEnc =
+autoEncK : Bool -> a -> Value
+autoEncK =
     Ffi.kernel "Codec_autoEnc"
 
 
-autoDecoder : a -> Decoder a
-autoDecoder =
+autoDecoderK : Bool -> a -> Decoder a
+autoDecoderK =
     Ffi.kernel "Codec_autoDecoder"
 
 
-autoCols : a -> List ( String, String )
-autoCols =
+autoColsK : Bool -> a -> List ( String, String )
+autoColsK =
     Ffi.kernel "Codec_autoCols"
 
 

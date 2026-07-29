@@ -91,7 +91,7 @@ func isRecordType(t reflect.Type) bool {
 
 // ── Encode: value → JSON raw ─────────────────────────────────────────────────
 
-func codecAutoEncodeVal(rv reflect.Value) (any, error) {
+func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 	switch rv.Kind() {
 	case reflect.String:
 		return rv.String(), nil
@@ -106,7 +106,7 @@ func codecAutoEncodeVal(rv reflect.Value) (any, error) {
 	case reflect.Slice, reflect.Array:
 		out := make([]any, rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			e, err := codecAutoEncodeVal(rv.Index(i))
+			e, err := codecAutoEncodeVal(rv.Index(i), snake)
 			if err != nil {
 				return nil, err
 			}
@@ -119,23 +119,23 @@ func codecAutoEncodeVal(rv reflect.Value) (any, error) {
 			if rv.FieldByName("Tag").Int() != 0 { // Nothing
 				return nil, nil
 			}
-			return codecAutoEncodeVal(rv.FieldByName("JustValue"))
+			return codecAutoEncodeVal(rv.FieldByName("JustValue"), snake)
 		}
 		if isSkyAdtType(t) {
 			return nil, fmt.Errorf("Codec.auto: cannot derive data-carrying ADT %q — use an explicit taggedUnion codec", t.Name())
 		}
-		return codecAutoEncodeStruct(rv)
+		return codecAutoEncodeStruct(rv, snake)
 	case reflect.Interface:
 		if rv.IsNil() {
 			return nil, nil
 		}
-		return codecAutoEncodeVal(rv.Elem())
+		return codecAutoEncodeVal(rv.Elem(), snake)
 	default:
 		return nil, fmt.Errorf("Codec.auto: cannot encode kind %s", rv.Kind())
 	}
 }
 
-func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
+func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 	t := rv.Type()
 	obj := jsonOrderedObject{}
 	for i := 0; i < t.NumField(); i++ {
@@ -143,11 +143,11 @@ func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
 		if f.PkgPath != "" { // unexported
 			continue
 		}
-		raw, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f))
+		raw, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f), snake)
 		if err != nil {
 			return nil, err
 		}
-		obj.keys = append(obj.keys, skyColKey(f, true))
+		obj.keys = append(obj.keys, skyColKey(f, snake))
 		obj.vals = append(obj.vals, raw)
 	}
 	return obj, nil
@@ -156,7 +156,7 @@ func codecAutoEncodeStruct(rv reflect.Value) (any, error) {
 // codecAutoEncodeTyped encodes a value using its declared Sky type (from the
 // field tag): a registered enum → its readable name; Maybe[T]/[]T unwrap the
 // inner type; everything else falls back to value-based encoding.
-func codecAutoEncodeTyped(rv reflect.Value, declaredType string) (any, error) {
+func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (any, error) {
 	if declaredType != "" {
 		if isRegisteredEnum(declaredType) {
 			switch rv.Kind() {
@@ -170,12 +170,12 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string) (any, error) {
 			if rv.FieldByName("Tag").Int() != 0 {
 				return nil, nil
 			}
-			return codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"))
+			return codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake)
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
 			out := make([]any, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				e, err := codecAutoEncodeTyped(rv.Index(i), elem)
+				e, err := codecAutoEncodeTyped(rv.Index(i), elem, snake)
 				if err != nil {
 					return nil, err
 				}
@@ -184,12 +184,12 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string) (any, error) {
 			return out, nil
 		}
 	}
-	return codecAutoEncodeVal(rv)
+	return codecAutoEncodeVal(rv, snake)
 }
 
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
-func Codec_autoEnc(record any) any {
-	raw, err := codecAutoEncodeVal(reflect.ValueOf(record))
+func Codec_autoEnc(snakeArg, record any) any {
+	raw, err := codecAutoEncodeVal(reflect.ValueOf(record), AsBool(snakeArg))
 	if err != nil {
 		// Encoding can't return a Result; surface as a JSON string error marker
 		// is worse than a clear panic-free empty — but auto validates via cols,
@@ -201,7 +201,7 @@ func Codec_autoEnc(record any) any {
 
 // ── Decode: JSON raw → value ─────────────────────────────────────────────────
 
-func codecAutoDecodeVal(rt reflect.Type, raw any) (reflect.Value, error) {
+func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
 	switch rt.Kind() {
 	case reflect.String:
 		return reflect.ValueOf(codecRawStr(raw)).Convert(rt), nil
@@ -223,7 +223,7 @@ func codecAutoDecodeVal(rt reflect.Type, raw any) (reflect.Value, error) {
 		}
 		out := reflect.MakeSlice(rt, len(items), len(items))
 		for i, it := range items {
-			ev, err := codecAutoDecodeVal(rt.Elem(), it)
+			ev, err := codecAutoDecodeVal(rt.Elem(), it, snake)
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -238,7 +238,7 @@ func codecAutoDecodeVal(rt reflect.Type, raw any) (reflect.Value, error) {
 				return out, nil
 			}
 			out.FieldByName("Tag").SetInt(0) // Just
-			inner, err := codecAutoDecodeVal(out.FieldByName("JustValue").Type(), raw)
+			inner, err := codecAutoDecodeVal(out.FieldByName("JustValue").Type(), raw, snake)
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -248,13 +248,13 @@ func codecAutoDecodeVal(rt reflect.Type, raw any) (reflect.Value, error) {
 		if isSkyAdtType(rt) {
 			return reflect.Value{}, fmt.Errorf("Codec.auto: cannot derive data-carrying ADT %q", rt.Name())
 		}
-		return codecAutoDecodeStruct(rt, raw)
+		return codecAutoDecodeStruct(rt, raw, snake)
 	default:
 		return reflect.Value{}, fmt.Errorf("Codec.auto: cannot decode kind %s", rt.Kind())
 	}
 }
 
-func codecAutoDecodeStruct(rt reflect.Type, raw any) (reflect.Value, error) {
+func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
 	m, ok := raw.(map[string]any)
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for %s", rt.Name())
@@ -265,7 +265,7 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any) (reflect.Value, error) {
 		if f.PkgPath != "" {
 			continue
 		}
-		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, true)])
+		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, snake)], snake)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -276,7 +276,7 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any) (reflect.Value, error) {
 
 // codecAutoDecodeTyped decodes using the declared Sky type (from the field tag):
 // a registered enum decodes its name back to the ordinal; Maybe[T]/[]T unwrap.
-func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any) (reflect.Value, error) {
+func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake bool) (reflect.Value, error) {
 	if declaredType != "" {
 		if isRegisteredEnum(declaredType) {
 			switch gt.Kind() {
@@ -293,7 +293,7 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any) (reflec
 				return out, nil
 			}
 			out.FieldByName("Tag").SetInt(0)
-			iv, err := codecAutoDecodeTyped(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw)
+			iv, err := codecAutoDecodeTyped(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw, snake)
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -307,7 +307,7 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any) (reflec
 			}
 			out := reflect.MakeSlice(gt, len(items), len(items))
 			for i, it := range items {
-				ev, err := codecAutoDecodeTyped(gt.Elem(), elem, it)
+				ev, err := codecAutoDecodeTyped(gt.Elem(), elem, it, snake)
 				if err != nil {
 					return reflect.Value{}, err
 				}
@@ -316,15 +316,15 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any) (reflec
 			return out, nil
 		}
 	}
-	return codecAutoDecodeVal(gt, raw)
+	return codecAutoDecodeVal(gt, raw, snake)
 }
 
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
 // witness's type.
-func Codec_autoDecoder(witness any) any {
+func Codec_autoDecoder(snakeArg, witness any) any {
 	wt := reflect.TypeOf(witness)
 	return JsonDecoder{run: func(raw any) any {
-		v, err := codecAutoDecodeVal(wt, raw)
+		v, err := codecAutoDecodeVal(wt, raw, AsBool(snakeArg))
 		if err != nil {
 			return Err[any, any](ErrDecode(err.Error()))
 		}
@@ -335,7 +335,8 @@ func Codec_autoDecoder(witness any) any {
 // Codec_autoCols : a -> List (String, String). The (name, kind) columns for the
 // DB shape, derived from the record's fields. Returns an empty list if the
 // witness is not a record.
-func Codec_autoCols(witness any) any {
+func Codec_autoCols(snakeArg, witness any) any {
+	snake := AsBool(snakeArg)
 	wt := reflect.TypeOf(witness)
 	if wt == nil || !isRecordType(wt) {
 		return []any{}
@@ -350,7 +351,7 @@ func Codec_autoCols(witness any) any {
 		if isSkyMaybeType(f.Type) { // Maybe field → nullable column (marked with `?`)
 			kind += "?"
 		}
-		out = append(out, T2[any, any]{V0: skyColKey(f, true), V1: kind})
+		out = append(out, T2[any, any]{V0: skyColKey(f, snake), V1: kind})
 	}
 	return out
 }
