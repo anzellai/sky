@@ -39,6 +39,7 @@ module Std.Db.Store exposing
     , migrate
     , insert
     , insertMany
+    , upsert
     , update
     , updateWhere
     , all
@@ -284,6 +285,20 @@ insertMany conn (Store s) records =
         s.name
         (colsExcluding s.generated s.cols)
         (List.map (Codec.toValue s.codec) records)
+
+
+-- | Insert the record, or UPDATE it in place if its primary key already exists
+-- (`INSERT ... ON CONFLICT(pk) DO UPDATE`). The idempotent write for config rows
+-- keyed by a natural/app id — `Store.upsert conn monitors monitor`. Requires a
+-- non-generated PK (a String/UUID key you provide, not `serial`).
+upsert : Db -> Store a -> a -> Task Error Int
+upsert conn (Store s) record =
+    dbUpsertObject
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        s.pk
+        (Codec.toValue s.codec record)
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -1050,6 +1065,11 @@ dbExecObject =
 dbExecObjectMany : Db -> String -> List ( String, String ) -> List Value -> Task Error Int
 dbExecObjectMany =
     Ffi.kernel "Db_execObjectMany"
+
+
+dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> Task Error Int
+dbUpsertObject =
+    Ffi.kernel "Db_upsertObject"
 
 
 dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> Task Error Int

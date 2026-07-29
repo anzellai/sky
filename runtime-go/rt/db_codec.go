@@ -339,6 +339,46 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any 
 	}
 }
 
+// Db_upsertObject inserts a record, or updates it in place on a primary-key
+// conflict — `Store.upsert`. Uses `INSERT ... ON CONFLICT(pk) DO UPDATE SET
+// col = excluded.col` (SQLite ≥ 3.24 / Postgres), updating every non-PK column
+// to the incoming value. If the PK is the only column, DO NOTHING.
+func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg any) any {
+	return func() any {
+		fields, ok := jsonObjFields(objArg)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.upsert: value is not a record"))
+		}
+		pk := AsString(pkArg)
+		cols := []string{}
+		params := []any{}
+		setParts := []string{}
+		for _, cs := range AsList(colspecArg) {
+			t := AsTuple2(cs)
+			name := AsString(t.V0)
+			base, _ := codecSplitKind(AsString(t.V1))
+			cols = append(cols, name)
+			params = append(params, rawToSqlArg(fields[name], base))
+			if name != pk {
+				setParts = append(setParts, name+" = excluded."+name)
+			}
+		}
+		ph := make([]string, len(cols))
+		for i := range ph {
+			ph[i] = "?"
+		}
+		var conflict string
+		if len(setParts) == 0 {
+			conflict = fmt.Sprintf("ON CONFLICT(%s) DO NOTHING", pk)
+		} else {
+			conflict = fmt.Sprintf("ON CONFLICT(%s) DO UPDATE SET %s", pk, strings.Join(setParts, ", "))
+		}
+		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) %s",
+			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "), conflict)
+		return AnyTaskRun(Db_exec(connArg, sql, params))
+	}
+}
+
 // Db_execObjectMany bulk-inserts many records in ONE multi-row INSERT (for
 // time-series / batch writes) — `Store.insertMany`. All rows share the colspec;
 // each row's values bind positionally. Empty list is a no-op.
