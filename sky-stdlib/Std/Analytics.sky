@@ -201,11 +201,11 @@ type Consent
 -- when consent is `Granted` (the default). Under `Anonymous` consent it just
 -- records the id locally without attaching it. Call it right after sign-in.
 --
--- For Sky.Live auto page-views, prefer the `identify` RESOLVER on the analytics
--- config so even the first render of an authenticated session is attributed —
--- see `Std.Live` `withAnalytics`:
+-- For Sky.Live auto page-views, prefer the `Live.withAnalyticsIdentify` resolver
+-- so even the first render of an authenticated session is attributed:
 --
---     Live.withAnalytics { pageViews = True, identify = \model -> Maybe.map .id model.currentUser }
+--     |> Live.withAnalytics { pageViews = True }
+--     |> Live.withAnalyticsIdentify (\model -> Maybe.map .id model.currentUser)
 --
 --     Analytics.identify user.id [ Analytics.pii "email" (Analytics.piiEmail user.email) ]
 identify : String -> List EventProp -> Task Error ()

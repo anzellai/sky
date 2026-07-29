@@ -107,6 +107,13 @@ func Live_withTtl(ttl, cfg any) any { return liveCfgSet(cfg, "Ttl", ttl) }
 // the record is stored verbatim and read via Field(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }
 
+// Live_withAnalyticsIdentify — `identify : model -> Maybe String`, consulted on
+// each auto page-view to attribute an already-authenticated session (invariant 4:
+// the closure is stored verbatim and read via Field(cfg,"AnalyticsIdentify")).
+func Live_withAnalyticsIdentify(f, cfg any) any {
+	return liveCfgSet(cfg, "AnalyticsIdentify", f)
+}
+
 // Live_withStatus — `status : { reconnecting : String, offline : String }`
 // connection-banner string overrides (invariant 4).
 func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", status) }

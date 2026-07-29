@@ -176,14 +176,10 @@ func analyticsPageViewsFromCfg(cfg any) bool {
 	return b
 }
 
-// analyticsIdentifyFromCfg reads the optional `identify : model -> Maybe String`
-// resolver off `analytics = { pageViews = True, identify = … }`. Absent → nil.
+// analyticsIdentifyFromCfg reads the optional `model -> Maybe String` resolver
+// set by `Live.withAnalyticsIdentify`. Absent → nil.
 func analyticsIdentifyFromCfg(cfg any) any {
-	a := Field(cfg, "Analytics")
-	if a == nil {
-		return nil
-	}
-	return Field(a, "Identify")
+	return Field(cfg, "AnalyticsIdentify")
 }
 
 // analyticsApplyIdentity calls the app's `identify` resolver with the current

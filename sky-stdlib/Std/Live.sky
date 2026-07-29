@@ -36,13 +36,13 @@ module Std.Live exposing
     , withStorePath
     , withTtl
     , withAnalytics
+    , withAnalyticsIdentify
     , withStatus
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Std.Html exposing (Html)
-
 
 -- | The built Sky.Live app configuration. Opaque — produced by `config`,
 -- refined by the `withX` builders, consumed by `app`. Phantom `model` /
@@ -63,15 +63,13 @@ type AppConfig model msg
 --                 }
 --                 |> Live.withHead headFor
 --             )
-config :
-    { init : a -> ( model, Cmd msg )
-    , update : msg -> model -> ( model, Cmd msg )
-    , view : model -> Html msg
-    , subscriptions : model -> Sub msg
-    , routes : List Route
-    , notFound : page
-    }
-    -> AppConfig model msg
+config : { init : a -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Html msg
+, subscriptions : model -> Sub msg
+, routes : List Route
+, notFound : page
+} -> AppConfig model msg
 config =
     Ffi.kernel "Live_config"
 
@@ -175,8 +173,22 @@ withAnalytics =
     Ffi.kernel "Live_withAnalytics"
 
 
+-- | Attribute auto page-views to an already-authenticated session: a resolver
+-- run against the current model on each page-view (incl. the first render), so a
+-- returning signed-in user is captured without a manual `Analytics.identify`.
+-- `Just id` stamps the session user id; `Nothing` leaves it anonymous.
+--
+--     |> Live.withAnalytics { pageViews = True }
+--     |> Live.withAnalyticsIdentify (\model -> Maybe.map .userId model.session)
+withAnalyticsIdentify : (model -> Maybe String) -> AppConfig model msg -> AppConfig model msg
+withAnalyticsIdentify =
+    Ffi.kernel "Live_withAnalyticsIdentify"
+
+
 -- | Override the connection-status banner strings —
 -- `withStatus { reconnecting = "…", offline = "…" }`.
-withStatus : { reconnecting : String, offline : String } -> AppConfig model msg -> AppConfig model msg
+withStatus : { reconnecting : String
+, offline : String
+} -> AppConfig model msg -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"

@@ -1483,18 +1483,16 @@ so one Sky.Live user's identity never bleeds into another's.
 `Live.app` cfg — every full page load is captured (consent-gated), with
 anonymised device + IP context. Add an **`identify` resolver** to attribute an
 already-authenticated session (including the first render, before any Msg runs)
-without a manual `identify` call:
+without a manual `identify` call — add the `withAnalyticsIdentify` builder:
 
 ```elm
-Live.withAnalytics
-    { pageViews = True
-    , identify = \model -> Maybe.map .id model.currentUser  -- model -> Maybe String
-    }
+|> Live.withAnalytics { pageViews = True }
+|> Live.withAnalyticsIdentify (\model -> Maybe.map .id model.currentUser)  -- model -> Maybe String
 ```
 
 The runtime resolves it against the model on each page-view; `Just id` stamps the
-session user id, `Nothing` leaves it anonymous. The config field is the app's
-explicit opt-in for attributing the identity it already holds.
+session user id, `Nothing` leaves it anonymous. It's the app's explicit opt-in for
+attributing the identity it already holds.
 
 **Sinks + store.** `configure [ StderrSink, FileSink "events.jsonl",
 Custom (\line -> Http.post collector line) ]` fans every event to your
