@@ -110,10 +110,24 @@ A working, verified `Std.Codec` + `Std.Db.Table` stack:
     for status (queries the ledger `name` column; tolerates fresh DB); shared
     `build_temp_db_entry` helper. Verified e2e SQLite: init → gen → status(pending,
     exit 1) → migrate → status(up to date, exit 0) → seed.
-  - Docs: `docs/tooling/cli.md` file-based migration section (all verbs).
-  - **Remaining (optional):** `sky db push` (rebrand `Store.migrate` live-additive),
-    `sky run --db-migrate --db-seed` one-shot flags, binary-embedded migrations for
-    deploy (so a built app can self-migrate without the source tree).
+  - **Polish (Phase 4d–4e, commits da44018d + 5cf898a9):**
+    - `sky db push` — no-migration-files dev sync (`Store.pushProject` — create
+      missing tables + add nullable columns for every store; additive/idempotent).
+    - `sky run --db-push / --db-migrate / --db-seed` — run those steps before
+      serving (re-invokes this binary's `sky db <op>`; a failed step aborts).
+    - **Self-migrating binaries** — `sky build` embeds `db/migrations/` via a
+      generated `embedded_migrations.go`; `SKY_DB_OP=migrate ./app` self-migrates
+      with no source tree / no toolchain (runtime `db_embedded.go` →
+      `MaybeApplyEmbeddedMigrationsAndExit`). Explicit + one-shot (safe for
+      replicas). Verified: deploy-dir copy self-migrates; normal boot doesn't;
+      non-migration example byte-unaffected; coerce-floor PASS; sweep 29/0.
+  - **`sky upgrade` release notes** (commit 1f8b5e93) — prints GitHub release
+    notes for every version between the old + new binary; `--notes` previews;
+    banner on Breaking/Migration headings. `CHANGELOG.md` is the notes source (a
+    version's section → the GitHub Release body). parse_semver/body_has_breaking
+    unit-tested.
+  - Docs: `docs/tooling/cli.md` (all db verbs + deploy), `CHANGELOG.md`.
+  - **ALL FILE-BASED-MIGRATION + RELEASE-NOTES WORK COMPLETE.**
 
 **ALL STEPS DONE.** The codec-derivation stack is complete: one `Codec` (or
 `Codec.auto blank`) → JSON + dialect-safe DB, readable enums, verified SQLite +
