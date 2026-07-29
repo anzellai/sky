@@ -1618,6 +1618,230 @@ report applied =
     }
 }
 
+/// `sky db init` — scaffold the file-based migration layout (`db/migrations/` +
+/// an empty snapshot) so `sky db migrate --gen` has somewhere to write and
+/// `sky db migrate` routes to the file-based applier. Idempotent.
+fn cmd_db_init() -> ExitCode {
+    let db_dir = Path::new("db");
+    let migrations = db_dir.join("migrations");
+    if let Err(e) = std::fs::create_dir_all(&migrations) {
+        eprintln!("sky db init: cannot create db/migrations: {e}");
+        return ExitCode::FAILURE;
+    }
+    let snapshot = db_dir.join("schema.json");
+    if !snapshot.exists() {
+        if let Err(e) = std::fs::write(&snapshot, "{\"tables\":[]}\n") {
+            eprintln!("sky db init: cannot write db/schema.json: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    println!(
+        "sky db init: ready.\n  db/migrations/   committed migration files\n  db/schema.json   type-derived snapshot (do not hand-edit)\n\nNext: define `db : Store.Project` in your entry module, then\n  sky db migrate --gen init"
+    );
+    ExitCode::SUCCESS
+}
+
+/// Shared temp-entry helper: write `code` as `src/<module>.sky`, build it, and on
+/// success return the built binary path (caller runs it). Removes the temp source
+/// whether or not the build succeeds. `None` → build failed (message already
+/// printed with `label`).
+fn build_temp_db_entry(
+    label: &str,
+    module: &str,
+    filename: &str,
+    code: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let file = Path::new("src/Main.sky");
+    let (repo_root, project_dir) = resolve(file)?;
+    if is_compiler_repo_root(&project_dir) {
+        eprintln!("{label}: refusing to run from the Sky compiler repo root");
+        return None;
+    }
+    let src = project_dir.join("src").join(filename);
+    if let Err(e) = std::fs::write(&src, code) {
+        eprintln!("{label}: cannot write temp entry: {e}");
+        return None;
+    }
+    let opts = BuildOptions {
+        repo_root,
+        example_dir: project_dir.clone(),
+        out_dir_name: "sky-out".into(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: Some(module.to_string()),
+        progress: false,
+    };
+    let report = build_example(&opts);
+    let _ = std::fs::remove_file(&src);
+    if !(report.emitted && report.go_build_ok) {
+        eprintln!("{label}: build failed\n{}\n{}", report.note, report.go_build_stderr);
+        return None;
+    }
+    let bin = project_dir
+        .join("sky-out")
+        .join(project::configured_bin_name(&project_dir));
+    Some((bin, project_dir))
+}
+
+/// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
+/// each applied (present in the live `_sky_migrations` ledger) or pending, and
+/// flag any pending file that carries quarantined destructive ops. Exits non-zero
+/// when anything is pending — usable as a "is this DB up to date?" deploy gate.
+fn cmd_db_status(_args: &[String]) -> ExitCode {
+    // Temp entry prints the ledger's applied ids between markers (empty on a
+    // fresh DB with no ledger table yet).
+    let code = r#"module SkyDbStatus exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Std.Db as Db
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen queryApplied
+        |> Task.andThen printApplied
+
+
+queryApplied : Db -> Task Error (List String)
+queryApplied conn =
+    Db.query conn "SELECT name FROM _sky_migrations ORDER BY name" []
+        |> Task.map (List.map (\row -> Maybe.withDefault "" (Dict.get "name" row)))
+        |> Task.onError (\_ -> Task.succeed [])
+
+
+printApplied : List String -> Task Error ()
+printApplied ids =
+    let
+        _ =
+            println "SKY_APPLIED_BEGIN"
+
+        _ =
+            println (String.join "\n" ids)
+
+        _ =
+            println "SKY_APPLIED_END"
+    in
+    Task.succeed ()
+"#;
+    let Some((bin, project_dir)) =
+        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
+    else {
+        return ExitCode::FAILURE;
+    };
+    let output = Command::new(&bin).current_dir(&project_dir).output();
+    let stdout = match output {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(e) => {
+            eprintln!("sky db status: run failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let applied: std::collections::HashSet<String> =
+        extract_between(&stdout, "SKY_APPLIED_BEGIN", "SKY_APPLIED_END")
+            .unwrap_or("")
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+    // List committed migration files (sorted = chronological).
+    let migrations_dir = project_dir.join("db").join("migrations");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .collect();
+    files.sort();
+
+    println!("migrations (db/migrations) — {} applied:", applied.len());
+    let mut pending = 0;
+    for p in &files {
+        let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let has_destructive = std::fs::read_to_string(p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("destructive").cloned())
+            .map(|d| d.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+            .unwrap_or(false);
+        let quarantine = if has_destructive {
+            "  ⚠ has quarantined destructive ops"
+        } else {
+            ""
+        };
+        if applied.contains(&id) {
+            println!("  ✓ {id}  applied{quarantine}");
+        } else {
+            pending += 1;
+            println!("  ○ {id}  PENDING{quarantine}");
+        }
+    }
+    if pending == 0 {
+        println!("\nup to date.");
+        ExitCode::SUCCESS
+    } else {
+        println!("\n{pending} pending — run `sky db migrate`.");
+        ExitCode::from(1)
+    }
+}
+
+/// `sky db seed` — run the entry module's `seed : Db -> Task Error ()` against the
+/// live DB (after `sky db migrate`). The project opts in by defining + exposing
+/// `seed`; absence is a clear build error.
+fn cmd_db_seed(_args: &[String]) -> ExitCode {
+    let file = Path::new("src/Main.sky");
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+    let code = format!(
+        r#"module SkyDbSeed exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db as Db
+import {entry_module} exposing (seed)
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen seed
+        |> Task.andThen done
+
+
+done : () -> Task Error ()
+done _ =
+    let
+        _ =
+            println "sky db seed: done"
+    in
+    Task.succeed ()
+"#
+    );
+    let Some((bin, project_dir)) =
+        build_temp_db_entry("sky db seed", "SkyDbSeed", "_skydbseed.sky", &code)
+    else {
+        eprintln!(
+            "sky db seed: your entry module must define + expose `seed : Db -> Task Error ()`."
+        );
+        return ExitCode::FAILURE;
+    };
+    match Command::new(&bin).current_dir(&project_dir).status() {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("sky db seed: run failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `sky db status` / `sky db migrate` — build the project, then run it once with
 /// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
 /// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
@@ -1629,18 +1853,29 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("migrate") && args.iter().any(|a| a == "--gen") {
         return cmd_db_gen(&args[1..]);
     }
+    // `sky db init` — scaffold the file-based migration layout.
+    if args.first().map(String::as_str) == Some("init") {
+        return cmd_db_init();
+    }
+    let file_based = Path::new("db").join("migrations").is_dir();
     // `sky db migrate` in a file-based project (db/migrations/ present) → apply the
     // committed migration files.
-    if args.first().map(String::as_str) == Some("migrate")
-        && Path::new("db").join("migrations").is_dir()
-    {
+    if args.first().map(String::as_str) == Some("migrate") && file_based {
         return cmd_db_apply(&args[1..]);
+    }
+    // `sky db status` in a file-based project → compare committed files vs the ledger.
+    if args.first().map(String::as_str) == Some("status") && file_based {
+        return cmd_db_status(&args[1..]);
+    }
+    // `sky db seed` — run the entry module's `seed : Db -> Task Error ()`.
+    if args.first().map(String::as_str) == Some("seed") {
+        return cmd_db_seed(&args[1..]);
     }
     let op = match args.first().map(String::as_str) {
         Some("status") => "status",
         Some("migrate") => "migrate",
         _ => {
-            eprintln!("usage: sky db <status|migrate [--gen [name]]> [file.sky]");
+            eprintln!("usage: sky db <status|migrate [--gen [name]]|seed|init> [file.sky]");
             return ExitCode::from(2);
         }
     };
