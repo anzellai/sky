@@ -75,10 +75,56 @@ fn main() -> ExitCode {
 /// who explicitly want the latest published binary.
 fn cmd_upgrade(args: &[String]) -> ExitCode {
     let force = args.iter().any(|a| a == "--force");
+    // `--notes` previews the release notes for (current, latest] WITHOUT upgrading.
+    let notes_only = args.iter().any(|a| a == "--notes");
     let ver = version_string();
     let is_dev = ver == "sky dev" || ver.contains("dev");
+    let current_tuple = parse_semver(ver.trim_start_matches("sky v"));
 
     println!("sky upgrade — current version: {ver}");
+
+    // `sky upgrade --notes` — just show what changed, don't touch the binary.
+    if notes_only {
+        let tag = match latest_release_tag() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("sky upgrade --notes: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let Some(to) = parse_semver(&tag) else {
+            eprintln!("sky upgrade --notes: could not parse latest tag `{tag}`");
+            return ExitCode::FAILURE;
+        };
+        match fetch_releases() {
+            Ok(rels) => {
+                if current_tuple == Some(to) {
+                    println!("Already on the latest release ({tag}). Recent notes:");
+                    print_release_notes(&rels, None, to);
+                } else {
+                    print_release_notes(&rels, current_tuple, to);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("sky upgrade --notes: {e}");
+                ExitCode::FAILURE
+            }
+        }
+    } else {
+        cmd_upgrade_install(args, force, ver, is_dev, current_tuple)
+    }
+}
+
+/// The install path of `sky upgrade` (factored out so `--notes` can short-circuit
+/// above without the download machinery).
+fn cmd_upgrade_install(
+    _args: &[String],
+    force: bool,
+    ver: String,
+    is_dev: bool,
+    current_tuple: Option<(u32, u32, u32)>,
+) -> ExitCode {
 
     let Some(artifact) = platform_artifact() else {
         eprintln!(
@@ -116,7 +162,7 @@ fn cmd_upgrade(args: &[String]) -> ExitCode {
     // forced dev upgrade always proceeds so `--force` is never a silent no-op).
     let latest = format!("sky v{}", tag.trim_start_matches('v'));
     if !is_dev && ver == latest {
-        println!("Already up to date ({ver}).");
+        println!("Already up to date ({ver}). Run `sky upgrade --notes` to review recent release notes.");
         return ExitCode::SUCCESS;
     }
 
@@ -124,6 +170,11 @@ fn cmd_upgrade(args: &[String]) -> ExitCode {
     match download_and_replace_binary(&tag, artifact) {
         Ok(dest) => {
             println!("Upgraded to {tag} — {}", dest.display());
+            // Print the notes for every version between the old binary and the new
+            // one (best-effort — never fail the upgrade if the notes fetch fails).
+            if let (Ok(rels), Some(to)) = (fetch_releases(), parse_semver(&tag)) {
+                print_release_notes(&rels, current_tuple, to);
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -186,6 +237,115 @@ fn json_string_field(json: &str, key: &str) -> Option<String> {
     let after_q1 = &after[q1 + 1..];
     let q2 = after_q1.find('"')?;
     Some(after_q1[..q2].to_string())
+}
+
+/// A GitHub release, for printing notes on upgrade. `body` is the release's
+/// markdown notes.
+#[derive(serde::Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+}
+
+/// Parse a `vMAJOR.MINOR.PATCH` (or bare `MAJOR.MINOR.PATCH`) tag into a
+/// comparable tuple. Extra suffixes (`-rc1`) are ignored on the patch.
+fn parse_semver(tag: &str) -> Option<(u32, u32, u32)> {
+    let t = tag.trim().trim_start_matches('v');
+    let mut it = t.split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    let patch_field = it.next().unwrap_or("0");
+    // strip any `-rc1` / `+meta` suffix from the patch
+    let patch = patch_field
+        .split(|c: char| c == '-' || c == '+')
+        .next()
+        .unwrap_or("0")
+        .parse()
+        .ok()?;
+    Some((major, minor, patch))
+}
+
+/// Fetch every published `anzellai/sky` release (for notes). Best-effort — a
+/// failure returns `Err` and callers just skip printing notes.
+fn fetch_releases() -> Result<Vec<GhRelease>, String> {
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "https://api.github.com/repos/anzellai/sky/releases?per_page=100",
+        ])
+        .output()
+        .map_err(|e| format!("could not run curl ({e})"))?;
+    if !out.status.success() {
+        return Err("could not reach the GitHub releases API".into());
+    }
+    serde_json::from_slice::<Vec<GhRelease>>(&out.stdout)
+        .map_err(|e| format!("could not parse releases: {e}"))
+}
+
+/// Print the notes for every release in `(from, to]` (ascending), so a
+/// multi-version jump surfaces every intervening changelog. `from = None` (a dev
+/// build with no known version) prints only the target `to`'s notes. Flags any
+/// release whose notes carry a Breaking / Migration heading.
+fn print_release_notes(releases: &[GhRelease], from: Option<(u32, u32, u32)>, to: (u32, u32, u32)) {
+    let mut in_range: Vec<&GhRelease> = releases
+        .iter()
+        .filter(|r| !r.draft)
+        .filter_map(|r| parse_semver(&r.tag_name).map(|v| (v, r)))
+        .filter(|(v, _)| {
+            *v <= to
+                && match from {
+                    Some(f) => *v > f,
+                    // dev / unknown current: only show the exact target
+                    None => *v == to,
+                }
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect();
+    in_range.sort_by_key(|r| parse_semver(&r.tag_name).unwrap_or((0, 0, 0)));
+    if in_range.is_empty() {
+        return;
+    }
+    let n = in_range.len();
+    println!(
+        "\n══════════ release notes ({} release{}) ══════════",
+        n,
+        if n == 1 { "" } else { "s" }
+    );
+    for r in in_range {
+        println!("\n### {}{}", r.tag_name, if r.prerelease { "  (pre-release)" } else { "" });
+        if body_has_breaking(&r.body) {
+            println!("⚠  contains BREAKING changes / a migration section — read before deploying.");
+        }
+        let body = r.body.trim();
+        if body.is_empty() {
+            println!("(no notes)");
+        } else {
+            println!("{body}");
+        }
+    }
+    println!("\n════════════════════════════════════════════════");
+}
+
+/// True when the notes contain a markdown heading whose text mentions a breaking
+/// change or a migration.
+fn body_has_breaking(body: &str) -> bool {
+    body.lines().any(|l| {
+        let t = l.trim_start();
+        if !t.starts_with('#') {
+            return false;
+        }
+        let lower = t.trim_start_matches('#').to_lowercase();
+        lower.contains("breaking") || lower.contains("migrat")
+    })
 }
 
 /// Download the release tarball for `artifact` @ `tag`, extract the binary, and
@@ -3648,6 +3808,30 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_semver_handles_v_prefix_and_suffixes() {
+        assert_eq!(parse_semver("v0.19.7"), Some((0, 19, 7)));
+        assert_eq!(parse_semver("0.19.7"), Some((0, 19, 7)));
+        assert_eq!(parse_semver("v1.0"), Some((1, 0, 0)));
+        assert_eq!(parse_semver("v0.20.0-rc1"), Some((0, 20, 0)));
+        assert_eq!(parse_semver("dev"), None);
+        assert_eq!(parse_semver("sky dev"), None);
+        // ordering the notes range relies on: a newer tag compares greater
+        assert!(parse_semver("v0.19.10") > parse_semver("v0.19.9"));
+        assert!(parse_semver("v0.20.0") > parse_semver("v0.19.99"));
+    }
+
+    #[test]
+    fn body_has_breaking_detects_migration_headings_only() {
+        assert!(body_has_breaking("# Notes\n## ⚠ Breaking changes\n- x"));
+        assert!(body_has_breaking("### Migration\nrun sky db migrate"));
+        assert!(body_has_breaking("## MIGRATING from v0.18"));
+        // a body that only mentions the words in prose (not a heading) does not trip
+        assert!(!body_has_breaking("This release has no breaking changes."));
+        assert!(!body_has_breaking("**Full Changelog**: https://…"));
+        assert!(!body_has_breaking(""));
+    }
 
     #[test]
     fn wants_help_detects_help_flags_only() {

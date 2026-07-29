@@ -412,7 +412,19 @@ untouched** — bump a pin explicitly with `sky add pkg@<newversion>`.
 
 ### `sky upgrade`
 
-Self-upgrades the `sky` binary from the latest GitHub release.
+Self-upgrades the `sky` binary from the latest GitHub release. After a successful
+upgrade it **prints the release notes** for every version between your old and new
+binary, flagging any release with breaking changes or a migration section.
+
+```bash
+sky upgrade           # upgrade, then print the notes for each version jumped
+sky upgrade --notes   # preview the notes for (current, latest] WITHOUT upgrading
+sky upgrade --force    # install the latest release even from a dev build
+```
+
+Notes come from the GitHub Release body (mirrored from
+[`CHANGELOG.md`](../../CHANGELOG.md)); the fetch is best-effort and never fails
+the upgrade.
 
 ### `sky upgrade-claude`
 

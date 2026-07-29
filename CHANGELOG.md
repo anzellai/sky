@@ -2,6 +2,47 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+> **Release-notes source.** When a version is tagged, its section here is copied
+> into the GitHub Release body, and `sky upgrade` prints those notes for every
+> version between the user's current binary and the one they upgrade to
+> (`sky upgrade --notes` previews without upgrading). To make a release surface a
+> **⚠ breaking-change / migration banner** on upgrade, give the relevant
+> subsection a heading containing the word **"Breaking"** or **"Migration"**
+> (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
+> and copy-pasteable — this is the text a user sees the moment they upgrade.
+
+## v0.19.x — file-based DB migrations + release notes on upgrade (unreleased)
+
+### Added — file-based database migrations (`sky db`)
+
+Define your schema with `Std.Db.Store` + `Std.Codec` and expose
+`db : Store.Project`; Sky generates and applies committed migration files —
+**no live database needed to diff**. One committed file is dialect-correct on
+SQLite *and* PostgreSQL (verified end-to-end on both).
+
+- `sky db init` — scaffold `db/migrations/` + `db/schema.json`.
+- `sky db migrate --gen [name]` — diff the type-derived schema against the
+  committed snapshot and write a migration file. New required columns get a safe
+  `NOT NULL DEFAULT <zero>` backfill; `Maybe` fields become nullable;
+  dropped/retyped columns are **quarantined** (never silently applied). On a TTY,
+  gen asks whether a dropped column was renamed (rewritten to one `renameColumn`,
+  data preserved), dropped for good, or skipped, and lets you set a custom
+  backfill default.
+- `sky db status` — ✓ applied / ○ pending per committed file vs the live
+  `_sky_migrations` ledger; **exits non-zero while anything is pending** (a
+  ready-made deploy gate).
+- `sky db migrate` — apply the committed files through the checksummed ledger, at
+  most once each, dialect-correct for the connection.
+- `sky db seed` — run your entry module's `seed : Db -> Task Error ()`.
+
+Walkthrough: [`docs/tooling/cli.md`](docs/tooling/cli.md#database).
+
+### Added — `sky upgrade` prints release notes
+
+After a successful upgrade, Sky prints the notes for every version between the
+old and new binary, flagging any release that carries a breaking-change /
+migration section. `sky upgrade --notes` previews the notes without upgrading.
+
 ## v0.17.0 — typed-emit soundness floor (2026-06-28)
 
 Release plan: [`docs/v0.17/release-plan.md`](docs/v0.17/release-plan.md).
