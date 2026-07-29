@@ -339,6 +339,41 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any 
 	}
 }
 
+// Db_execObjectMany bulk-inserts many records in ONE multi-row INSERT (for
+// time-series / batch writes) — `Store.insertMany`. All rows share the colspec;
+// each row's values bind positionally. Empty list is a no-op.
+func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg any) any {
+	return func() any {
+		objs := AsList(objsArg)
+		if len(objs) == 0 {
+			return Ok[any, any](0)
+		}
+		colspec := AsList(colspecArg)
+		cols := make([]string, len(colspec))
+		for i, cs := range colspec {
+			cols[i] = AsString(AsTuple2(cs).V0)
+		}
+		onePh := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(cols)), ", ") + ")"
+		rowPh := make([]string, 0, len(objs))
+		params := []any{}
+		for _, obj := range objs {
+			fields, ok := jsonObjFields(obj)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("Store.insertMany: a value is not a record"))
+			}
+			rowPh = append(rowPh, onePh)
+			for _, cs := range colspec {
+				t := AsTuple2(cs)
+				base, _ := codecSplitKind(AsString(t.V1))
+				params = append(params, rawToSqlArg(fields[AsString(t.V0)], base))
+			}
+		}
+		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
+			AsString(tableArg), strings.Join(cols, ", "), strings.Join(rowPh, ", "))
+		return AnyTaskRun(Db_exec(connArg, sql, params))
+	}
+}
+
 // rowValToJsonRaw converts a DB row value to a JSON raw value per column kind.
 func rowValToJsonRaw(raw any, present bool, kind string) any {
 	if !present || raw == nil {

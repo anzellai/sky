@@ -38,6 +38,7 @@ module Std.Db.Store exposing
     , create
     , migrate
     , insert
+    , insertMany
     , update
     , updateWhere
     , all
@@ -270,6 +271,19 @@ insert conn (Store s) record =
         (colsExcluding s.generated s.cols)
         (Codec.toValue s.codec record)
         (List.map (\( col, gen ) -> ( col, gen () )) s.computed)
+
+
+-- | Bulk-insert many records in ONE multi-row INSERT — for time-series / batch
+-- writes where a per-row `insert` would be N round-trips. Columns marked
+-- `generated` are omitted (the DB fills them). `defaultWith` computed columns are
+-- NOT applied here — provide those values in the records. Returns rows affected.
+insertMany : Db -> Store a -> List a -> Task Error Int
+insertMany conn (Store s) records =
+    dbExecObjectMany
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        (List.map (Codec.toValue s.codec) records)
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -1031,6 +1045,11 @@ dbAutoMigrate =
 dbExecObject : Db -> String -> List ( String, String ) -> Value -> Task Error Int
 dbExecObject =
     Ffi.kernel "Db_execObject"
+
+
+dbExecObjectMany : Db -> String -> List ( String, String ) -> List Value -> Task Error Int
+dbExecObjectMany =
+    Ffi.kernel "Db_execObjectMany"
 
 
 dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> Task Error Int
