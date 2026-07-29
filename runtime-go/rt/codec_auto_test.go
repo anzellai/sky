@@ -29,7 +29,7 @@ func TestCodecAutoRoundTrip(t *testing.T) {
 	}
 
 	// encode → JSON string
-	encoded := Codec_autoEnc(u)
+	encoded := Codec_autoEnc(true, u)
 	jv, ok := encoded.(JsonValue)
 	if !ok {
 		t.Fatalf("autoEnc did not return a JsonValue: %T", encoded)
@@ -40,7 +40,7 @@ func TestCodecAutoRoundTrip(t *testing.T) {
 	}
 
 	// decode via the reflection decoder
-	dec := Codec_autoDecoder(acUser{}).(JsonDecoder)
+	dec := Codec_autoDecoder(true, acUser{}).(JsonDecoder)
 	var raw any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -67,10 +67,10 @@ func TestCodecAutoRoundTrip(t *testing.T) {
 
 func TestCodecAutoNothingAndEmpty(t *testing.T) {
 	u := acUser{Id: "u2", Nick: Nothing[string](), Tags: []string{}}
-	encoded := Codec_autoEnc(u).(JsonValue)
+	encoded := Codec_autoEnc(true, u).(JsonValue)
 	b, _ := json.Marshal(encoded.raw)
 
-	dec := Codec_autoDecoder(acUser{}).(JsonDecoder)
+	dec := Codec_autoDecoder(true, acUser{}).(JsonDecoder)
 	var raw any
 	json.Unmarshal(b, &raw)
 	back := dec.run(raw).(SkyResult[any, any]).OkValue.(acUser)
@@ -84,7 +84,7 @@ func TestCodecAutoNothingAndEmpty(t *testing.T) {
 }
 
 func TestCodecAutoCols(t *testing.T) {
-	cols := AsList(Codec_autoCols(acUser{}))
+	cols := AsList(Codec_autoCols(true, acUser{}))
 	want := map[string]string{
 		"id": "text", "age": "int", "active": "bool",
 		"nick": "text?", "address": "blob", "tags": "blob", // nick is Maybe → nullable
@@ -99,5 +99,20 @@ func TestCodecAutoCols(t *testing.T) {
 		if want[name] != kind {
 			t.Errorf("col %q kind = %q, want %q", name, kind, want[name])
 		}
+	}
+}
+
+func TestCodecAutoSnakeVsCamel(t *testing.T) {
+	type multiWord struct {
+		ItemName   string `sky:"itemName,string"`
+		PriceMinor int    `sky:"priceMinor,int"`
+	}
+	snakeCols := AsList(Codec_autoCols(true, multiWord{}))
+	camelCols := AsList(Codec_autoCols(false, multiWord{}))
+	if AsString(AsTuple2(snakeCols[0]).V0) != "item_name" || AsString(AsTuple2(snakeCols[1]).V0) != "price_minor" {
+		t.Errorf("auto(snake) cols = %v, want item_name/price_minor", snakeCols)
+	}
+	if AsString(AsTuple2(camelCols[0]).V0) != "itemName" || AsString(AsTuple2(camelCols[1]).V0) != "priceMinor" {
+		t.Errorf("autoCamel cols = %v, want itemName/priceMinor", camelCols)
 	}
 }
