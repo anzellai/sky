@@ -109,14 +109,32 @@ products =
         (Codec.auto { id = "", name = "", priceMinor = 0, tags = [] })
         |> Store.primaryKey "id"
 
--- Store.insert conn products p          : Task Error Int
--- Store.all    conn products            : Task Error (List Product)
--- Store.select conn products "WHERE price_minor > 0 ORDER BY name"  -- raw tail, no bound params
--- Store.findBy conn products "id" "p1"  : Task Error (Maybe Product) -- single col = value (bound)
--- Store.delete conn products "id" "p1"  : Task Error Int
--- For user-supplied filter VALUES (injection-safe binding) use findBy, or drop to
--- Std.Db.query with a `?` + params list. select's tail is literal SQL — no params.
+-- write:  Store.insert conn products p  ·  Store.delete conn products "id" "p1"
+-- read a whole table:  Store.all conn products  ·  one row:  Store.findBy conn products "id" "p1"
 ```
+
+**Compose reads with the query builder** — filters bind as `SqlValue` params
+(injection-safe), so you never touch a SQL string:
+
+```elm
+Store.query products
+    |> Store.eq "active" (SqlBool True)      -- eq/neq/gt/gte/lt/lte/like/isNull/inList
+    |> Store.gt "priceMinor" (SqlInt 0)
+    |> Store.orderAsc "sortOrder"            -- orderAsc / orderDesc (chain for multi-col)
+    |> Store.limit 20 |> Store.offset 0
+    |> Store.toList conn                     -- terminal: toList / toMaybe / count
+
+-- transactions stay in the Store namespace (alias over Db.withTransaction); Store
+-- ops compose by taking the `tx` handle:
+Store.transaction conn (\tx ->
+    Store.insert tx orders o
+        |> Task.andThen (\_ -> Store.insert tx orderItems i))
+```
+
+Only drop to raw **`Std.Db`** (`query` / `exec` / `withTransaction` + `SqlValue`)
+for joins / aggregates / CTEs the builder doesn't model. **Import both qualified**
+(`import Std.Db.Store as Store` + `import Std.Db as Db`) — never `exposing (..)` on
+both, since `query`/`migrate` overlap; qualified is the intended usage.
 
 `Codec.auto blank` derives the codec from a **zero-value witness** record:
 scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
