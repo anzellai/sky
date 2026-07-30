@@ -82,7 +82,7 @@ column (a typo fails fast with the column list):
 | `Store.unique "email"` | `UNIQUE` constraint |
 | `Store.defaultNow "created_at"` | `DEFAULT now()`/`datetime('now')`, DB-stamped on insert |
 | `Store.touchOnUpdate "updated_at"` | stamped on insert **and auto-bumped to `now()` on every `update`** — no raw SQL |
-| `Store.defaultText/defaultInt "col" v` | literal column `DEFAULT` |
+| `Store.defaultText/defaultInt/defaultBool "col" v` | literal column `DEFAULT` (`defaultBool` → `TRUE`/`FALSE` on Postgres, `1`/`0` on SQLite) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
 | `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
 
@@ -193,6 +193,29 @@ on both. `createTable` is idempotent (`CREATE TABLE / INDEX IF NOT EXISTS`);
 `Schema` only builds the tables — you still write `Db.exec` / `Db.query` for
 data. It removes the one dialect-specific string from your app; the parameter
 layer (below) already handles the rest.
+
+**Reaching the migration tooling — `Schema.toProject`.** `sky db push` and
+`sky db migrate --gen` read a `db : Store.Project` from your entry module. A
+`Schema.Table`-based app bridges into that with one line — no rewrite into
+codec stores:
+
+```elm
+-- Data.sky
+allTables : List Schema.Table
+allTables = [ products, users, orders, ... ]
+
+-- Main.sky (or re-export from Data)
+db : Store.Project
+db = Schema.toProject allTables
+```
+
+Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
+carry through, so `sky db push` creates/updates the columns and `migrate --gen`
+diffs them. Secondary **INDEXES do not** cross the bridge (the `Store.Project`
+schema-dump models tables + columns only) — keep creating them via
+`createSchema`/`createTable` (which render `withIndex`) at app boot, or as raw
+`CREATE INDEX IF NOT EXISTS`. Ints widen to `BIGINT` under the codec pipeline
+(safe; no millis overflow).
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does

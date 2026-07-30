@@ -63,7 +63,14 @@ The recommended default for record-shaped tables. See
   (auto-increment PK), `unique`, `defaultNow` / `defaultText` / `defaultInt`,
   **`touchOnUpdate`** (a timestamp DB-stamped on insert *and* auto-bumped to
   `now()` on every update — no raw SQL), **`defaultWith`** (app-side computed
-  default, e.g. a UUID PK), `generated`.
+  default, e.g. a UUID PK), **`defaultBool`** (`TRUE`/`FALSE` on Postgres,
+  `1`/`0` on SQLite), `generated`.
+- **`Std.Db.Schema.toProject`** — bridge explicit `Schema.Table` definitions into
+  a `Store.Project` so a `Schema.Table`-based app reaches the migration tooling
+  (`sky db push` / `sky db migrate --gen`) with one line —
+  `db = Schema.toProject allTables` — no rewrite into codec stores. Table
+  name / PK / `UNIQUE` / `NOT NULL` / `DEFAULT` / autoincrement carry through;
+  secondary indexes stay on `createSchema` (which renders `withIndex`).
 - Writes: `insert`, **`insertMany`** (one multi-row INSERT for bulk/time-series),
   `update` (by PK), `updateWhere` (by `Cond`), **`upsert`** (`INSERT … ON
   CONFLICT DO UPDATE`), `delete`, `deleteWhere`.

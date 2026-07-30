@@ -91,7 +91,7 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 |---|---|---|
 | Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
-| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). |
+| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
 | Joins, aggregates, transactions, custom SQL | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
 
 ### Default — `Store` + `Codec`
@@ -124,7 +124,7 @@ standard schema (`Codec.autoCamel` keeps camelCase); use an explicit
 
 **Schema/DDL builders** pipe onto the store (each accepts the record field OR the
 snake column): `serial "id"` (auto-increment PK) · `unique "email"` ·
-`defaultNow "created_at"` · `defaultText/defaultInt "col" v` ·
+`defaultNow "created_at"` · `defaultText/defaultInt/defaultBool "col" v` ·
 `touchOnUpdate "updated_at"` (DB-stamped on insert AND auto-bumped to `now()` on
 every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g. a
 UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so

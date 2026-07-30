@@ -54,11 +54,14 @@ module Std.Db.Schema exposing
     , references
     , createTable
     , createSchema
+    , toProject
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db.Store as Store
 
 -- | A column definition. Build with the typed constructors + pipe the
 -- modifiers; don't construct the record by hand.
@@ -268,3 +271,122 @@ createTable =
 createSchema : Db -> List Table -> Task Error ()
 createSchema =
     Ffi.kernel "Schema_createSchema"
+
+
+-- ── Bridge to the migration tooling ────────────────────────────────────────
+-- | Bridge these explicit `Schema.Table` definitions into a `Store.Project`, so
+-- the migration tooling (`sky db push`, `sky db migrate --gen`) can read them.
+-- Expose the result as `db : Store.Project` from your entry module:
+--
+-- ```elm
+-- db : Store.Project
+-- db = Schema.toProject allTables
+-- ```
+--
+-- Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
+-- carry through. INDEXES do NOT — the `Store.Project` schema-dump models tables +
+-- columns only; keep creating indexes via `createSchema`/`createTable` (which
+-- render `withIndex`) at app boot, or as raw `CREATE INDEX IF NOT EXISTS`. Ints
+-- widen to BIGINT under the codec pipeline (safe; no millis overflow).
+toProject : List Table -> Store.Project
+toProject tables =
+    Store.project (List.map toStoreTable tables)
+
+
+toStoreTable : Table -> Store.Table
+toStoreTable t =
+    { name = t.name, pk = pkOf t.columns, cols = List.map storeColOf t.columns }
+
+
+pkOf : List Column -> String
+pkOf cols =
+    case List.find .isPk cols of
+
+        Just c ->
+            c.name
+
+        Nothing ->
+            ""
+
+
+storeColOf : Column -> ( String, String )
+storeColOf c =
+    ( c.name, storeKindBase c ++ storeKindFlags c )
+
+
+storeKindBase : Column -> String
+storeKindBase c =
+    let
+        base =
+            case c.kind of
+
+                "text" ->
+                    "text"
+
+                "int" ->
+                    "int"
+
+                "bigint" ->
+                    "int"
+
+                "bool" ->
+                    "bool"
+
+                "real" ->
+                    "real"
+
+                "timestamp" ->
+                    "int"
+
+                "json" ->
+                    "blob"
+
+                "blob" ->
+                    "blob"
+
+                _ ->
+                    "text"
+        nullable =
+            if c.isNotNull || c.isPk then
+                ""
+
+            else
+                "?"
+        autoInc =
+            if c.isAutoInc then
+                "!"
+
+            else
+                ""
+    in
+        base ++ nullable ++ autoInc
+
+
+storeKindFlags : Column -> String
+storeKindFlags c =
+    let
+        uniq =
+            if c.isUnique then
+                "|u"
+
+            else
+                ""
+        def =
+            case c.defaultKind of
+
+                "text" ->
+                    "|dtext=" ++ c.defaultVal
+
+                "int" ->
+                    "|dint=" ++ c.defaultVal
+
+                "bool" ->
+                    "|dbool=" ++ c.defaultVal
+
+                "now" ->
+                    "|dnow"
+
+                _ ->
+                    ""
+    in
+        uniq ++ def

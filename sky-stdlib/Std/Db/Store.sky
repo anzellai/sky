@@ -33,6 +33,7 @@ module Std.Db.Store exposing
     , touchOnUpdate
     , defaultText
     , defaultInt
+    , defaultBool
     , defaultWith
     , generated
     , create
@@ -217,6 +218,23 @@ defaultInt name val (Store s) =
         { s | cols = addColFlag
               (resolveCol s.cols name)
               ("dint=" ++ String.fromInt val)
+              s.cols
+        }
+
+
+-- | Give a column a `DEFAULT` boolean value in the generated DDL (`TRUE`/`FALSE`
+-- on Postgres, `1`/`0` on SQLite): `Store.defaultBool "active" True`.
+defaultBool : String -> Bool -> Store a -> Store a
+defaultBool name val (Store s) =
+    Store
+        { s | cols = addColFlag
+              (resolveCol s.cols name)
+              ("dbool="
+                  ++ (if val then
+                         "true"
+
+                     else
+                         "false"))
               s.cols
         }
 
