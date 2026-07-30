@@ -21,7 +21,7 @@
 15-http-server	13
 16-skychess	652
 17-skymon	757
-18-job-queue	56
+18-job-queue	141
 19-skyforum	347
 20-cli-counter	3
 21-tui-stopwatch	9
@@ -30,7 +30,7 @@
 24-tui-kitchen-sink	276
 25-sky-console	287
 26-ui-showcase	633
-27-multi-session-chat	73
+27-multi-session-chat	170
 28-streaming-chat	56
 29-webview-threejs-spike	19
 30-sse-server-demo	7
@@ -39,7 +39,7 @@
 33-websocket-echo	8
 34-multi-tier-console	26
 35-composite-generics	175
-36-composite-server	163
+36-composite-server	243
 37-composite-live-shop	616
 38-composite-ui-multibackend	465
 40-generic-adt-field	5
@@ -54,7 +54,7 @@
 49-xmodule-adt	2
 50-open-row-closure	7
 51-kernel-variadic-arity	1
-52-blog-analytics	294
+52-blog-analytics	382
 53-record-update-map	19
 54-record-fieldset-collision	3
 55-store-partial-update	93

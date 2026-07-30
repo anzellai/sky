@@ -34,8 +34,9 @@ import Std.Html.Events exposing (onSubmit)
 import Std.Live exposing (app, route, config)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Db as Db
-import Std.Db.Schema as Schema
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Codec as Codec
+import Std.Db.Store as Store exposing (Store)
 
 -- ─── Model ───────────────────────────────────────────────────────
 type Page
@@ -44,6 +45,17 @@ type Page
 
 type alias ChatMessage =
     { author : String
+    , text : String
+    , at : String
+    }
+
+-- The persisted row shape: `ChatMessage` plus the DB-only columns (`id`,
+-- the auto-increment ordering key, and `room`, the partition column). The
+-- store is defined over this record; the view keeps the leaner ChatMessage.
+type alias StoredMessage =
+    { id : Int
+    , room : String
+    , author : String
     , text : String
     , at : String
     }
@@ -87,21 +99,21 @@ dbConn =
                 System.exit 1
 
 
-messagesTable : Schema.Table
-messagesTable =
-    Schema.table
+-- ONE codec drives schema + writes + reads. Codec.auto reflects StoredMessage
+-- into snake_case columns; `Store.serial "id"` marks the auto-increment PK so
+-- `insert` omits it and the DB assigns it. No hand-written CREATE TABLE, no
+-- Dict-based row-mapper.
+messages : Store StoredMessage
+messages =
+    Store.fromCodec
         "messages"
-        [ Schema.serial "id"
-        , Schema.text "room" |> Schema.notNull
-        , Schema.text "author" |> Schema.notNull
-        , Schema.text "text" |> Schema.notNull
-        , Schema.text "at" |> Schema.notNull
-        ]
+        (Codec.auto { id = 0, room = "", author = "", text = "", at = "" })
+        |> Store.serial "id"
 
 
 initSchema =
     let
-        _ = Task.run (Schema.createTable dbConn messagesTable)
+        _ = Task.run (Store.create dbConn messages)
     in
         ()
 
@@ -111,39 +123,34 @@ loadRoomHistory room =
     let
         result =
             Task.run
-                (Db.query
-                    dbConn
-                    "SELECT author, text, at FROM messages WHERE room = ? ORDER BY id ASC LIMIT 200"
-                    [ room ])
+                (Store.query messages
+                    |> Store.where_ (Store.eq "room" (SqlString room))
+                    |> Store.orderAsc "id"
+                    |> Store.limit 200
+                    |> Store.toList dbConn)
     in
         case result of
 
             Ok rows ->
-                List.map rowToMessage rows
+                List.map
+                    (\r -> { author = r.author, text = r.text, at = r.at })
+                    rows
 
             Err _ ->
                 []
 
 
-rowToMessage : Dict String String -> ChatMessage
-rowToMessage row =
-    { author = Db.getString "author" row
-    , text = Db.getString "text" row
-    , at = Db.getString "at" row
-    }
-
-
 persistMessage : String -> ChatMessage -> Task Error Int
 persistMessage room msg =
-    Db.insertRow
+    Store.insert
         dbConn
-        "messages"
-        (Dict.fromList
-            [ ( "room", room )
-            , ( "author", msg.author )
-            , ( "text", msg.text )
-            , ( "at", msg.at )
-            ])
+        messages
+        { id = 0
+        , room = room
+        , author = msg.author
+        , text = msg.text
+        , at = msg.at
+        }
 
 
 -- ─── Topic naming ────────────────────────────────────────────────

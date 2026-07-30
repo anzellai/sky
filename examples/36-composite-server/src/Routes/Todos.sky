@@ -1,9 +1,19 @@
-module Routes.Todos exposing (handleList, handleCreate, handleDelete, todoCreateDecoder, encodeTodo)
+module Routes.Todos exposing
+    ( handleList
+    , handleCreate
+    , handleDelete
+    , todoCreateDecoder
+    , encodeTodo
+    , todosStore
+    )
 
 -- Authenticated CRUD over the `todos` table.  Exercises:
 --   * Sky.Http.Server.param (URL captures)
 --   * Sky.Http.Server.header (Authorization)
---   * Std.Db.{query, insertRow, deleteById, findOneByField}
+--   * Std.Codec + Std.Db.Store — ONE codec drives reads + writes over a
+--     typed `Store Todo`; no hand-written SQL, no Dict row-mapper. (The
+--     table itself is created by the versioned `Migrations.all` at boot,
+--     which stays the schema source of truth — so no `Store.create` here.)
 --   * Std.PubSub.publish (fired on every new todo — Task-shaped pub
 --     from inside a Sky.Http.Server handler, NOT a Sky.Live update
 --     return)
@@ -11,8 +21,6 @@ module Routes.Todos exposing (handleList, handleCreate, handleDelete, todoCreate
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
-import Sky.Core.List as List
-import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
@@ -22,11 +30,26 @@ import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Crypto as Crypto
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
-import Std.Db as Db
+import Std.Codec as Codec
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store exposing (Store)
 import Std.Log as Log
 import Std.PubSub as PubSub
 import Auth
 import State exposing (Config, Todo, TodoCreate, AuthClaims)
+
+
+-- ONE codec derives the column mapping (Codec.auto → snake_case:
+-- id, user_id, text, done, created_at) and drives every read + write. The
+-- `id` is an app-generated token (Crypto.randomToken), so it's a plain
+-- `primaryKey`, not `serial`. The DDL is owned by Migrations.all.
+todosStore : Store Todo
+todosStore =
+    Store.fromCodec
+        "todos"
+        (Codec.auto
+            { id = "", userId = 0, text = "", done = False, createdAt = 0 })
+        |> Store.primaryKey "id"
 
 
 todoCreateDecoder : JsonDec.Decoder TodoCreate
@@ -45,36 +68,19 @@ encodeTodo todo =
         ]
 
 
-rowToTodo : Dict String String -> Todo
-rowToTodo row =
-    { id = Maybe.withDefault "" (Dict.get "id" row)
-    , userId =
-        Maybe.withDefault
-            0
-            (String.toInt (Maybe.withDefault "0" (Dict.get "user_id" row)))
-    , text = Maybe.withDefault "" (Dict.get "text" row)
-    , done = (Maybe.withDefault "0" (Dict.get "done" row)) == "1"
-    , createdAt =
-        Maybe.withDefault
-            0
-            (String.toInt (Maybe.withDefault "0" (Dict.get "created_at" row)))
-    }
-
-
 handleList : Config -> Db -> Request -> Task Error Response
 handleList cfg db req =
     withAuth
         cfg
         req
         (\claims ->
-            Db.query
-                db
-                "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
-                [ String.fromInt claims.userId ]
+            Store.query todosStore
+                |> Store.where_ (Store.eq "user_id" (SqlInt claims.userId))
+                |> Store.orderDesc "created_at"
+                |> Store.toList db
                 |> Task.andThen
-                       (\rows ->
+                       (\todos ->
                            let
-                               todos = List.map rowToTodo rows
                                body =
                                    JsonEnc.encode
                                        0
@@ -107,29 +113,17 @@ insertTodo db claims payload =
                        |> Task.andThen
                               (\nowMs ->
                                   let
-                                      fields =
-                                          Dict.empty |> Dict.insert "id" todoId
-                                              |> Dict.insert
-                                                     "user_id"
-                                                     (String.fromInt
-                                                         claims.userId)
-                                              |> Dict.insert "text" payload.text
-                                              |> Dict.insert "done" "0"
-                                              |> Dict.insert
-                                                     "created_at"
-                                                     (String.fromInt nowMs)
+                                      todo =
+                                          { id = todoId
+                                          , userId = claims.userId
+                                          , text = payload.text
+                                          , done = False
+                                          , createdAt = nowMs
+                                          }
                                   in
-                                      Db.insertRow db "todos" fields
+                                      Store.insert db todosStore todo
                                           |> Task.andThen
-                                                 (\_ ->
-                                                     publishTodoCreated
-                                                         { id = todoId
-                                                         , userId =
-                                                             claims.userId
-                                                         , text = payload.text
-                                                         , done = False
-                                                         , createdAt = nowMs
-                                                         })))
+                                                 (\_ -> publishTodoCreated todo)))
 
 
 -- Task-shaped publish.  Returns the subscriber count, but the route
@@ -170,31 +164,25 @@ handleDelete cfg db req =
 
 deleteIfOwned : Db -> AuthClaims -> String -> Task Error Response
 deleteIfOwned db claims todoId =
-    Db.findOneByField db "todos" "id" todoId
+    Store.findBy db todosStore "id" todoId
         |> Task.andThen
-               (\maybeRow ->
-                   case maybeRow of
+               (\maybeTodo ->
+                   case maybeTodo of
 
                        Nothing ->
                            Task.succeed (errorJson 404 "todo not found")
 
-                       Just row ->
-                           let
-                               ownerStr =
-                                   Maybe.withDefault
-                                       "0"
-                                       (Dict.get "user_id" row)
-                           in
-                               if ownerStr /= String.fromInt claims.userId then
-                                   Task.succeed (errorJson 403 "not your todo")
+                       Just todo ->
+                           if todo.userId /= claims.userId then
+                               Task.succeed (errorJson 403 "not your todo")
 
-                               else
-                                   Db.deleteById db "todos" todoId
-                                       |> Task.andThen
-                                              (\_ ->
-                                                  Task.succeed
-                                                      (Server.json
-                                                          "{\"deleted\":true}")))
+                           else
+                               Store.delete db todosStore "id" todoId
+                                   |> Task.andThen
+                                          (\_ ->
+                                              Task.succeed
+                                                  (Server.json
+                                                      "{\"deleted\":true}")))
 
 
 -- ─── Helpers ───────────────────────────────────────────────────────

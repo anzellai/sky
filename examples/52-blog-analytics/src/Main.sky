@@ -15,7 +15,8 @@ import Std.Live exposing (app, route, config, withAnalytics)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Db as Db
-import Std.Db.Schema as Schema exposing (text)
+import Std.Codec as Codec
+import Std.Db.Store as Store exposing (Store)
 import Std.Auth as Auth
 import Std.Analytics as Analytics
 import Std.Money as Money
@@ -80,23 +81,20 @@ dbConn =
                 System.exit 1
 
 
--- The schema as a typed value — `Schema.createTable` emits the dialect-correct
--- DDL for whichever backend the connection uses (SQLite in dev, Postgres in
--- prod), so this ONE definition is right on both. No hand-written CREATE TABLE.
-postsTable : Schema.Table
-postsTable =
-    Schema.table
-        "posts"
-        [ Schema.id "slug"
-        , text "title" |> Schema.notNull
-        , text "body" |> Schema.notNull
-        ]
+-- ONE codec drives everything: schema (dialect-correct DDL), reads, and
+-- writes. `Codec.auto` reflects the Post record's fields into snake_case
+-- columns (slug, title, body); `Store.primaryKey "slug"` marks the natural
+-- TEXT key. No hand-written CREATE TABLE, no row-mapper.
+postsStore : Store Post
+postsStore =
+    Store.fromCodec "posts" (Codec.auto { slug = "", title = "", body = "" })
+        |> Store.primaryKey "slug"
 
 
 ensureSchema : ()
 ensureSchema =
     let
-        _ = Task.run (Schema.createTable dbConn postsTable)
+        _ = Task.run (Store.create dbConn postsStore)
         _ =
             Task.run
                 (seed
@@ -113,24 +111,23 @@ ensureSchema =
         ()
 
 
+-- Idempotent seed: `Store.upsert` INSERTs the post, or overwrites it in place
+-- when the `slug` PK already exists — the codec drives both sides. The seed
+-- content is constant, so re-running leaves identical data (same effect the
+-- old `INSERT OR IGNORE` had on a populated table).
 seed : String -> String -> String -> Task Error Int
 seed slug title body =
-    Db.exec
-        dbConn
-        "INSERT OR IGNORE INTO posts (slug, title, body) VALUES (?, ?, ?)"
-        [ slug, title, body ]
+    Store.upsert dbConn postsStore { slug = slug, title = title, body = body }
 
 
 loadPosts : List Post
 loadPosts =
     case Task.run
-             (Db.query
-                 dbConn
-                 "SELECT slug, title, body FROM posts ORDER BY slug"
-                 []) of
+             (Store.query postsStore |> Store.orderAsc "slug"
+                 |> Store.toList dbConn) of
 
         Ok rows ->
-            List.map rowToPost rows
+            rows
 
         Err _ ->
             []
@@ -138,25 +135,13 @@ loadPosts =
 
 loadPost : String -> Maybe Post
 loadPost slug =
-    case Task.run
-             (Db.query
-                 dbConn
-                 "SELECT slug, title, body FROM posts WHERE slug = ?"
-                 [ slug ]) of
+    case Task.run (Store.findBy dbConn postsStore "slug" slug) of
 
-        Ok rows ->
-            List.head (List.map rowToPost rows)
+        Ok maybePost ->
+            maybePost
 
         Err _ ->
             Nothing
-
-
-rowToPost : Dict String String -> Post
-rowToPost row =
-    { slug = Db.getString "slug" row
-    , title = Db.getString "title" row
-    , body = Db.getString "body" row
-    }
 
 
 -- ─── Admin auth (bcrypt) ───────────────────────────────────────────

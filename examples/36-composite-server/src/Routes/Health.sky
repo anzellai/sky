@@ -21,11 +21,13 @@ import Sky.Core.Json.Encode as JsonEnc
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 import Sky.Http.Server.Stream as Stream
-import Std.Db as Db
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store
 import Std.Cache as Cache
 import Std.Csv as Csv
 import Std.Log as Log
 import Auth
+import Routes.Todos exposing (todosStore)
 import State exposing (Config, Todo, AuthClaims)
 
 
@@ -108,12 +110,12 @@ handleExport cfg db req =
 
 streamCsv : Db -> AuthClaims -> Task Error Response
 streamCsv db claims =
-    Db.query
-        db
-        "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
-        [ String.fromInt claims.userId ]
+    Store.query todosStore
+        |> Store.where_ (Store.eq "user_id" (SqlInt claims.userId))
+        |> Store.orderDesc "created_at"
+        |> Store.toList db
         |> Task.andThen
-               (\rows ->
+               (\todos ->
                    let
                        header =
                            Csv.encode
@@ -128,7 +130,9 @@ streamCsv db claims =
                                }
                        body =
                            Csv.encode
-                               { header = [], rows = List.map rowToCells rows }
+                               { header = []
+                               , rows = List.map todoToCells todos
+                               }
                    in
                        Stream.stream
                            "text/csv; charset=utf-8"
@@ -139,13 +143,19 @@ streamCsv db claims =
                                    |> Task.andThen (\_ -> Stream.finish writer)))
 
 
-rowToCells : Dict String String -> List String
-rowToCells row =
-    [ Maybe.withDefault "" (Dict.get "id" row)
-    , Maybe.withDefault "" (Dict.get "user_id" row)
-    , Maybe.withDefault "" (Dict.get "text" row)
-    , Maybe.withDefault "0" (Dict.get "done" row)
-    , Maybe.withDefault "0" (Dict.get "created_at" row)
+-- Typed row → CSV cells. `done` renders as the DB's 0/1 form so the export
+-- byte-matches the pre-Store output.
+todoToCells : Todo -> List String
+todoToCells todo =
+    [ todo.id
+    , String.fromInt todo.userId
+    , todo.text
+    , if todo.done then
+          "1"
+
+      else
+          "0"
+    , String.fromInt todo.createdAt
     ]
 
 
