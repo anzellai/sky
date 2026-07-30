@@ -1022,7 +1022,13 @@ NOT to do without explicit user ask:
 `~/Library/Caches/go-build`; over-threshold triggers `go clean -cache`
 automatically. So after any compiler rebuild or example sweep the
 cache caps at ~5 GB before the next operation can re-bloat it. Periodic
-manual hygiene is no longer required for normal workflows. The recipe
+manual hygiene is no longer required for normal workflows.
+**The `xtask build-run` gate also self-guards** (added 2026-07-30):
+its `preflight_disk_guard` caps the go-build cache at 5 GB *before*
+the corpus sweep and ABORTS with a clear message if under 10 GB free —
+so `cargo run -p xtask -- build-run --all` can't fill the disk mid-run
+(the failure mode that hit ENOSPC 2026-07-30 and wedged the local
+Docker/Postgres). The recipe
 in `## Disk hygiene` above is still the right escape hatch when you
 need to reclaim aggressively (e.g., before spawning many agents).
 Worktree dir cleanup after EVERY agent cherry-pick remains manual.

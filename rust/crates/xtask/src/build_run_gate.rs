@@ -138,7 +138,64 @@ struct Row {
     oracle_stdout: Option<String>,
 }
 
+/// `du -sk <dir>` → size in KiB.
+fn du_kb(dir: &str) -> Option<u64> {
+    let out = Command::new("du").args(["-sk", dir]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Available space (KiB) on the filesystem holding the current dir. `df -k .`'s
+/// Available column is field index 3 on both macOS and Linux.
+fn df_avail_kb() -> Option<u64> {
+    let out = Command::new("df").args(["-k", "."]).output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    s.lines().last()?.split_whitespace().nth(3)?.parse().ok()
+}
+
+/// Preflight disk-hygiene guard (CLAUDE.md §6). The whole-corpus sweep runs 50+
+/// `go build`s that pile into the go-build cache; on a near-full disk that hits
+/// ENOSPC mid-sweep — corrupting half-written artifacts AND wedging any Docker /
+/// Postgres backed by the same volume. So: cap the cache first, then refuse to
+/// start if free space is low, with a clear message instead of a cryptic
+/// "no space left on device" halfway through.
+fn preflight_disk_guard() -> Result<(), String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut cache = format!("{home}/Library/Caches/go-build");
+    if !Path::new(&cache).is_dir() {
+        let xdg = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| format!("{home}/.cache"));
+        cache = format!("{xdg}/go-build");
+    }
+    if Path::new(&cache).is_dir() {
+        if let Some(kb) = du_kb(&cache) {
+            if kb > 5 * 1024 * 1024 {
+                eprintln!(
+                    "[build-run] go-build cache is {} GB — running 'go clean -cache'",
+                    kb / 1024 / 1024
+                );
+                let _ = Command::new("go").args(["clean", "-cache"]).status();
+            }
+        }
+    }
+    if let Some(free_kb) = df_avail_kb() {
+        if free_kb < 10 * 1024 * 1024 {
+            return Err(format!(
+                "only {} GB free — refusing the corpus sweep (it fills the go-build cache and would risk ENOSPC mid-run). Reclaim space (`go clean -cache`, `df -h /`) and retry.",
+                free_kb / 1024 / 1024
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn run(args: &[String], root: &Path) -> i32 {
+    if let Err(msg) = preflight_disk_guard() {
+        eprintln!("BUILD-RUN GATE: ABORTED — {msg}");
+        return 1;
+    }
     let only: Option<Vec<String>> = args
         .iter()
         .find_map(|a| a.strip_prefix("--only="))
