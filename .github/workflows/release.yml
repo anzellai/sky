@@ -122,6 +122,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # Checkout is required so the CHANGELOG + release-notes extractor are on
+      # disk — `sky upgrade` prints the Release body verbatim, so it MUST be the
+      # curated CHANGELOG section, never GitHub's auto-generated commit list.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -138,10 +143,18 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
+      - name: Extract release notes from CHANGELOG
+        run: |
+          # Hard gate: fails the release if the tag has no matching CHANGELOG
+          # section, so a tag can never ship empty upgrade notes.
+          scripts/release-notes.sh "${GITHUB_REF_NAME}" > NOTES.md
+          echo "----- release body for ${GITHUB_REF_NAME} -----"
+          cat NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: NOTES.md
           files: release/*
 
   # ────────────────────────────────────────────────────────────────
