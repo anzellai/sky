@@ -11,7 +11,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.19.x — file-based DB migrations + release notes on upgrade (unreleased)
+## v0.19.0 — codec-driven persistence, file-based DB migrations + Std.Analytics (2026-07-30)
+
+### Breaking — TEA app config is now a typed builder
+
+`Live.app` / `Tui.app` / `Tui.program` / `Cli.program` no longer take a row-open
+**record literal**. The six required fields go inside `config { … }` (which
+produces an opaque, hover-able `AppConfig`), and optional fields
+(`head` / `guard` / `consoleAuth` / `analytics` / `status` / …) attach with
+`withX` builders in a pipe. `Webview.app` keeps its closed record (no optional
+fields).
+
+- **Why:** the row-open record was untyped — it hovered as `?` and drifted from
+  the docs. The builder makes the config a real checkable type and unifies the
+  kernel-module docs onto one source (`sky doc`, LSP hover, and the type-checker
+  now all read the module's `.sky` file). New optional attributes like
+  `withAnalyticsIdentify` are only reachable through it.
+- **Migration (mechanical):**
+  ```elm
+  -- before
+  main = Live.app { init = init, update = update, view = view
+                  , subscriptions = subscriptions, routes = [...], notFound = Home
+                  , head = headFor, analytics = { pageViews = True } }
+  -- after
+  main = Live.app
+      (Live.config { init = init, update = update, view = view
+                   , subscriptions = subscriptions, routes = [...], notFound = Home }
+          |> Live.withHead headFor
+          |> Live.withAnalytics { pageViews = True })
+  ```
+  Full field→builder table for every app shape:
+  [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
 
 ### Added — file-based database migrations (`sky db`)
 
