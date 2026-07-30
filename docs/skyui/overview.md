@@ -17,7 +17,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, config, route)
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -58,7 +58,7 @@ view model =
 
 subscriptions _ = Sub.none
 
-main = app { init = init, update = update, view = view, subscriptions = subscriptions, routes = [], notFound = () }
+main = app (config { init = init, update = update, view = view, subscriptions = subscriptions, routes = [], notFound = () })
 ```
 
 That's the whole picture: every visual element is an `Element msg`, every styling/layout decision is an `Attribute msg`, and the layout function `Ui.layout` produces the value Sky.Live's `view` field expects.

@@ -59,9 +59,11 @@ subscriptions _ = Sub.none
 
 main =
     Tui.app
-        { init = init, update = update, view = view
-        , subscriptions = subscriptions
-        }
+        (Tui.config
+            { init = init, update = update, view = view
+            , subscriptions = subscriptions
+            }
+        )
         |> Task.run
 ```
 
@@ -104,27 +106,30 @@ sessions don't end up with a corrupted readline.
 
 ## Logical-pixel canvas
 
-`Tui.app` accepts optional `canvasWidth` / `canvasHeight` fields. The
-runtime computes `pxPerCell` from the live terminal size and scales
-every `Ui.padding 8`, `Ui.spacing 4`, `Ui.px N` to character cells.
-Default 1280×720 matches a typical web canvas — Std.Ui apps written
-for the browser look right in the terminal without re-tuning. Tweak
-via `canvasWidth = 800` for denser layout.
+Attach a logical-pixel canvas via the `Tui.withCanvasWidth` /
+`Tui.withCanvasHeight` builders. The runtime computes `pxPerCell`
+from the live terminal size and scales every `Ui.padding 8`,
+`Ui.spacing 4`, `Ui.px N` to character cells. Default 1280×720
+matches a typical web canvas — Std.Ui apps written for the browser
+look right in the terminal without re-tuning. Tweak via
+`Tui.withCanvasWidth 800` for denser layout.
 
 ```elm
 main =
     Tui.app
-        { init = init, update = update, view = view
-        , subscriptions = subscriptions
-        , canvasWidth = 1024
-        , canvasHeight = 768
-        }
+        (Tui.config
+            { init = init, update = update, view = view
+            , subscriptions = subscriptions
+            }
+            |> Tui.withCanvasWidth 1024
+            |> Tui.withCanvasHeight 768
+        )
         |> Task.run
 ```
 
 ## Auth guard middleware
 
-`Tui.app`'s optional `guard` field has the same shape as
+The `Tui.withGuard` builder attaches a guard with the same shape as
 `Live.app`'s — `Msg -> Model -> Result Error ()`. Returning
 `Err reason` skips the update and (if your model has
 `notification` / `notificationType` fields) writes the rejection

@@ -13,7 +13,7 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, config, route)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Html as Html
@@ -64,13 +64,15 @@ subscriptions _ =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" HomePage ]
-        , notFound = HomePage
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            }
+        )
 ```
 
 ## How it works
@@ -212,18 +214,20 @@ The drop is a correctness loss in transit (the client misses that specific frame
 
 ### Localising the banner
 
-Override the banner strings via the `status` field on `Live.app`. No type signature change is needed — `Live.app`'s record is open via the kernel's `appExt` extension.
+Override the banner strings via the `Live.withStatus` builder on the app config.
 
 ```elm
 main =
     Live.app
-        { init = init, update = update, view = view, subscriptions = subscriptions
-        , routes = [ Live.route "/" HomePage ], notFound = HomePage
-        , status =
-            { reconnecting = "Reconnexion…"
-            , offline = "Connexion perdue — actualisez la page"
+        (Live.config
+            { init = init, update = update, view = view, subscriptions = subscriptions
+            , routes = [ Live.route "/" HomePage ], notFound = HomePage
             }
-        }
+            |> Live.withStatus
+                { reconnecting = "Reconnexion…"
+                , offline = "Connexion perdue — actualisez la page"
+                }
+        )
 ```
 
 Either field is optional — partial overrides fall back to the English defaults. Strings are JSON-encoded into the JS template (newlines, quotes, non-ASCII, emoji round-trip safely) and rendered via DOM `textContent`, never `innerHTML`, so user-supplied content can't break out of the banner context.

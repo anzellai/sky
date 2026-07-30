@@ -1206,8 +1206,8 @@ See [Sky.Live overview](skylive/overview.md) for the full TEA flow.
 
 #### `Std.Live.Head` — per-page `<head>` injection (v0.15.58+)
 
-Optional `head : Model -> List (Html msg)` field on `Live.app`'s
-cfg record. Runtime renders the list and splices it into `<head>`
+Optional per-page `<head>` injection — attach via `Live.withHead`
+(a `Model -> List (Html msg)`). Runtime renders the list and splices it into `<head>`
 on every full GET, after the runtime's required baseline meta
 tags and before the inline `<style>` reset. Absent field → empty
 insert (byte-identical to pre-v0.15.58 output).
@@ -1486,8 +1486,8 @@ downgrades with `setConsent Anonymous` (random anon id, no identity) or
 `setConsent Denied` (drops all capture). Consent + identity are session-scoped,
 so one Sky.Live user's identity never bleeds into another's.
 
-**Auto page-views (opt-in).** Add `analytics = { pageViews = True }` to the
-`Live.app` cfg — every full page load is captured (consent-gated), with
+**Auto page-views (opt-in).** Attach `|> Live.withAnalytics { pageViews = True }`
+to the `Live.app` config — every full page load is captured (consent-gated), with
 anonymised device + IP context. Add an **`identify` resolver** to attribute an
 already-authenticated session (including the first render, before any Msg runs)
 without a manual `identify` call — add the `withAnalyticsIdentify` builder:

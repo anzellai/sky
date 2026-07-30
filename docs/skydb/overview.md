@@ -7,25 +7,35 @@
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
-**One database API, two backends.** `Std.Db` is a thin, parameter-safe wrapper over `database/sql` that works identically against SQLite and PostgreSQL. Pick the driver in `sky.toml`; never touch it again in your code.
+**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs, aggregates, or SQL the Store can't express (the [escape hatch](#dropping-to-raw-sql) shown later).
 
 ```elm
 module Main exposing (main)
 
+import Std.Codec as Codec
 import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
 import Sky.Core.Task as Task
 import Std.Log exposing (println)
+
+
+type alias Todo =
+    { id : Int, text : String, done : Bool }
+
+
+todos : Store Todo
+todos =
+    Store.fromCodec "todos" (Codec.auto { id = 0, text = "", done = False })
+        |> Store.serial "id"            -- auto-increment Int PK
 
 
 main =
     Db.connect ()                       -- reads `[database]` from sky.toml
         |> Task.andThen
-            (\db ->
-                Db.exec db
-                    "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, text TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)"
-                    []
-                    |> Task.andThen (\_ -> Db.exec db "INSERT INTO todos (text) VALUES (?)" [ "Write the doc" ])
-                    |> Task.andThen (\_ -> Db.query db "SELECT id, text, done FROM todos" [])
+            (\conn ->
+                Store.create conn todos
+                    |> Task.andThen (\_ -> Store.insert conn todos { id = 0, text = "Write the doc", done = False })
+                    |> Task.andThen (\_ -> Store.all conn todos)
                     |> Task.andThen
                         (\rows ->
                             println ("Got " ++ String.fromInt (List.length rows) ++ " todos")
@@ -432,17 +442,17 @@ These return bare values — see [default-supplied helpers stay bare](../../CLAU
 
 ## Walkthrough — CRUD with transactions
 
-A canonical flow: create the table, insert rows in a transaction (atomic), query back, and decode into a typed record.
+A canonical flow: create the table, insert rows in a transaction (atomic), and query back — with `Std.Db.Store` driving the schema, the writes, and the reads from one codec.
 
 ```elm
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.Result as Result
+import Std.Codec as Codec
 import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
 import Std.Log exposing (println)
-import Sky.Core.Error as Error exposing (Error)
 
 
 type alias Todo =
@@ -452,11 +462,58 @@ type alias Todo =
     }
 
 
+todos : Store Todo
+todos =
+    Store.fromCodec "todos" (Codec.auto { id = 0, text = "", done = False })
+        |> Store.serial "id"
+
+
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\conn ->
+                Store.create conn todos
+                    |> Task.andThen
+                        (\_ ->
+                            -- All three inserts atomic. If any fails, none commit.
+                            Store.transaction conn
+                                (\tx ->
+                                    Store.insert tx todos { id = 0, text = "Write the doc", done = False }
+                                        |> Task.andThen (\_ -> Store.insert tx todos { id = 0, text = "Ship the release", done = False })
+                                        |> Task.andThen (\_ -> Store.insert tx todos { id = 0, text = "Take a break", done = False })
+                                )
+                        )
+                    |> Task.andThen (\_ -> Store.all conn todos)
+                    |> Task.andThen
+                        (\todoList ->
+                            println
+                                ("Loaded "
+                                    ++ String.fromInt (List.length todoList)
+                                    ++ " todos"
+                                )
+                        )
+            )
+        |> Task.run
+```
+
+Partial-column updates without rewriting the whole record: `Store.setFields` /
+`Store.updateFields` PATCH only the named columns, and `Store.adjust` runs an
+atomic `SET col = col + delta` (counters, stock levels) — see
+[the Store writes list](#writes) above.
+
+### Dropping to raw SQL
+
+When you need SQL the Store can't express — a JOIN, a `GROUP BY`, a hand-tuned
+query — drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
+hand-written row decoder. The row shape from the runtime is `Dict String String`
+— every column lands stringified, and the typed accessors (`Db.getInt` /
+`Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.
+
+```elm
+import Sky.Core.Error as Error exposing (Error)
+
+
 -- Decode one row into a Todo (or fail loudly).
--- Row shape from the runtime is `Dict String String` — every
--- column lands stringified, and the typed accessors
--- (`Db.getInt` / `Db.getString` / `Db.getBool`) parse on read
--- with a default-supplied fallback.
 decodeTodo : Dict String String -> Result Error Todo
 decodeTodo row =
     Ok
@@ -467,43 +524,29 @@ decodeTodo row =
         )
 
 
-main =
-    Db.connect ()
+loadTodos : Db -> Task Error (List Todo)
+loadTodos db =
+    Db.execRaw db
+        """CREATE TABLE IF NOT EXISTS todos (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            text  TEXT    NOT NULL,
+            done  INTEGER NOT NULL DEFAULT 0
+        )"""
         |> Task.andThen
-            (\db ->
-                Db.execRaw db
-                    """CREATE TABLE IF NOT EXISTS todos (
-                        id    INTEGER PRIMARY KEY AUTOINCREMENT,
-                        text  TEXT    NOT NULL,
-                        done  INTEGER NOT NULL DEFAULT 0
-                    )"""
-                    |> Task.andThen
-                        (\_ ->
-                            -- All three inserts atomic. If any fails, none commit.
-                            Db.withTransaction db
-                                (\tx ->
-                                    Db.exec tx "INSERT INTO todos (text) VALUES (?)" [ "Write the doc" ]
-                                        |> Task.andThen (\_ -> Db.exec tx "INSERT INTO todos (text) VALUES (?)" [ "Ship the release" ])
-                                        |> Task.andThen (\_ -> Db.exec tx "INSERT INTO todos (text) VALUES (?)" [ "Take a break" ])
-                                )
-                        )
-                    |> Task.andThen
-                        (\_ ->
-                            Db.queryDecode db
-                                "SELECT id, text, done FROM todos ORDER BY id"
-                                []
-                                decodeTodo
-                        )
-                    |> Task.andThen
-                        (\todos ->
-                            println
-                                ("Loaded "
-                                    ++ String.fromInt (List.length todos)
-                                    ++ " todos"
-                                )
-                        )
+            (\_ ->
+                Db.withTransaction db
+                    (\tx ->
+                        Db.exec tx "INSERT INTO todos (text) VALUES (?)" [ "Write the doc" ]
+                            |> Task.andThen (\_ -> Db.exec tx "INSERT INTO todos (text) VALUES (?)" [ "Ship the release" ])
+                    )
             )
-        |> Task.run
+        |> Task.andThen
+            (\_ ->
+                Db.queryDecode db
+                    "SELECT id, text, done FROM todos ORDER BY id"
+                    []
+                    decodeTodo
+            )
 ```
 
 ## Configuration — `[database]` section
@@ -606,7 +649,7 @@ update msg model =
         LoadTodos ->
             ( { model | loading = True }
             , Cmd.perform
-                (Db.queryDecode model.db "SELECT * FROM todos" [] decodeTodo)
+                (Store.all model.db todos)
                 TodosLoaded
             )
 

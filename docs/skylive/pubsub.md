@@ -183,32 +183,33 @@ Errors with `Unavailable` when no `Live.app` is registered in this
 process.
 
 ```elm
+import Sky.Http.Server as Server
 import Std.PubSub as PubSub
 
 -- A GitHub webhook lands as a raw api handler — no update tuple
 -- in scope, but we want every dashboard tab watching this repo's
 -- deploys to learn instantly.
-handleGithubWebhook : Dict String any -> Response
+handleGithubWebhook : Server.Request -> Task Error Server.Response
 handleGithubWebhook req =
-    case decodeWebhook req of
+    case decodeWebhook req.body of
         Err _ ->
-            plain 400 "bad webhook payload"
+            Task.succeed (Server.text "bad webhook payload" |> Server.withStatus 400)
 
         Ok ev ->
-            let
-                -- 1) durable write first (matches the same pattern
-                --    described below for Cmd.publish — the topic is
-                --    a notification, the DB row is the source of
-                --    truth).
-                _ = Store.recordWebhook ev
-                -- 2) push the notification — Task.run forces the
-                --    Task at the handler boundary.
-                _ = Task.run
-                        (PubSub.publish
+            -- 1) durable write first (matches the same pattern
+            --    described below for Cmd.publish — the topic is a
+            --    notification, the DB row is the source of truth).
+            Store.recordWebhook ev
+                -- 2) push the notification, then respond. Returning a
+                --    Task lets the framework run it at the handler
+                --    boundary — no Task.run inside.
+                |> Task.andThen
+                    (\_ ->
+                        PubSub.publish
                             ("deploy:status:" ++ ev.appSlug)
-                            (encodeDeployEvent ev))
-            in
-                plain 200 "ok"
+                            (encodeDeployEvent ev)
+                    )
+                |> Task.andThen (\_ -> Task.succeed (Server.text "ok"))
 ```
 
 Origin is the empty string on the broker side — server-side publishes
