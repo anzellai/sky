@@ -623,5 +623,4 @@ main =
             , subscriptions = subscriptions
             , routes = []
             , notFound = ()
-            }
-        )
+            })

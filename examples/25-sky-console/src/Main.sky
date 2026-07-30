@@ -69,5 +69,4 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" () ]
             , notFound = ()
-            }
-        )
+            })

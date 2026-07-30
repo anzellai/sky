@@ -57,12 +57,13 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            , routes = [ route "/" DashboardPage
-              , route "/status" StatusPage
-              , route "/settings" SettingsPage
-              , route "/alerts" AlertsPage
-              , route "/auth" AuthPage
-              ]
+            , routes =
+                [ route "/" DashboardPage
+                , route "/status" StatusPage
+                , route "/settings" SettingsPage
+                , route "/alerts" AlertsPage
+                , route "/auth" AuthPage
+                ]
             , notFound = NotFoundPage
             })
 
@@ -146,7 +147,8 @@ update msg model =
             )
 
         InputMonitorVis v ->
-            ( { model | configInput = Dict.insert "monitor_visibility" v model.configInput
+            ( { model | configInput =
+                  Dict.insert "monitor_visibility" v model.configInput
               }
             , Cmd.none
             )
@@ -182,7 +184,8 @@ update msg model =
             )
 
         InputMetricVis v ->
-            ( { model | configInput = Dict.insert "metric_visibility" v model.configInput
+            ( { model | configInput =
+                  Dict.insert "metric_visibility" v model.configInput
               }
             , Cmd.none
             )
@@ -206,13 +209,15 @@ update msg model =
             )
 
         InputAlertNotifyType v ->
-            ( { model | configInput = Dict.insert "alert_notify_type" v model.configInput
+            ( { model | configInput =
+                  Dict.insert "alert_notify_type" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertTarget v ->
-            ( { model | configInput = Dict.insert "alert_notify_target" v model.configInput
+            ( { model | configInput =
+                  Dict.insert "alert_notify_target" v model.configInput
               }
             , Cmd.none
             )
@@ -256,7 +261,8 @@ handleAuth model =
             )
 
         else if username == "admin" && password == "admin123" then
-            ( { model | session = Just { username = "admin", avatarUrl = "", role = Admin }
+            ( { model | session =
+                  Just { username = "admin", avatarUrl = "", role = Admin }
               , configInput = Dict.empty
               , notification = ""
               , errorMessage = ""
@@ -265,7 +271,8 @@ handleAuth model =
             )
 
         else
-            ( { model | session = Just { username = username, avatarUrl = "", role = User }
+            ( { model | session =
+                  Just { username = username, avatarUrl = "", role = User }
               , configInput = Dict.empty
               , notification = ""
               , errorMessage = ""

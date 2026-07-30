@@ -33,14 +33,15 @@ update msg model =
                         )
 
         ToggleHabit habitId day ->
-            ( { model | habits = List.map
-                    (\h ->
-                        if h.id == habitId then
-                            toggleHabit day h
+            ( { model | habits =
+                  List.map
+                      (\h ->
+                          if h.id == habitId then
+                              toggleHabit day h
 
-                        else
-                            h)
-                    model.habits
+                          else
+                              h)
+                      model.habits
               }
             , Cmd.none
             )

@@ -120,5 +120,4 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" HomePage ]
             , notFound = HomePage
-            }
-        )
+            })

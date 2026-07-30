@@ -162,22 +162,24 @@ bool =
 maybe : Codec a -> Codec (Maybe a)
 maybe (Codec c) =
     Codec
-        { enc = \m ->
-              case m of
+        { enc =
+            \m ->
+                case m of
 
-                  Just x ->
-                      c.enc x
+                    Just x ->
+                        c.enc x
 
-                  Nothing ->
-                      E.null
+                    Nothing ->
+                        E.null
         , dec = D.oneOf [ D.map Just c.dec, D.succeed Nothing ]
-        , shp = case c.shp of
+        , shp =
+            case c.shp of
 
-              SScalar t ->
-                  SScalar (CNull t)
+                SScalar t ->
+                    SScalar (CNull t)
 
-              _ ->
-                  SBlob
+                _ ->
+                    SBlob
         }
 
 
@@ -214,7 +216,8 @@ object ctor =
 field : String -> (a -> f) -> Codec f -> ObjectCodec a (f -> b) -> ObjectCodec a b
 field name getter (Codec fc) (ObjectCodec o) =
     ObjectCodec
-        { encFields = \rec -> o.encFields rec ++ [ ( name, fc.enc (getter rec) ) ]
+        { encFields =
+            \rec -> o.encFields rec ++ [ ( name, fc.enc (getter rec) ) ]
         , decValue = codecAndMap (D.field name fc.dec) o.decValue
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
         }
@@ -262,10 +265,11 @@ autoBase snake witness =
     Codec
         { enc = \r -> autoEncK snake r
         , dec = autoDecoderK snake witness
-        , shp = SRecord
-              (List.map
-                  (\( n, k ) -> ( n, kindToColType k ))
-                  (autoColsK snake witness))
+        , shp =
+            SRecord
+                (List.map
+                    (\( n, k ) -> ( n, kindToColType k ))
+                    (autoColsK snake witness))
         }
 
 
@@ -289,10 +293,11 @@ autoWith overrides witness =
         Codec
             { enc = \r -> autoEncOverridesK True encs r
             , dec = autoDecoderOverridesK True decs witness
-            , shp = SRecord
-                  (List.map
-                      (\( n, k ) -> ( n, kindToColType k ))
-                      (autoColsWith True shps witness))
+            , shp =
+                SRecord
+                    (List.map
+                        (\( n, k ) -> ( n, kindToColType k ))
+                        (autoColsWith True shps witness))
             }
 
 
@@ -461,12 +466,14 @@ var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
 taggedUnion : (v -> ( String, List Value )) -> List (Variant v) -> Codec v
 taggedUnion toTagged variants =
     Codec
-        { enc = \v ->
-              let
-                  ( tag, args ) = toTagged v
-              in
-                  E.list identity (E.string tag :: args)
-        , dec = D.andThen (\tag -> pickVariant tag variants) (D.index 0 D.string)
+        { enc =
+            \v ->
+                let
+                    ( tag, args ) = toTagged v
+                in
+                    E.list identity (E.string tag :: args)
+        , dec =
+            D.andThen (\tag -> pickVariant tag variants) (D.index 0 D.string)
         , shp = SBlob
         }
 

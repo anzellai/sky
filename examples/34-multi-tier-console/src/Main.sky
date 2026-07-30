@@ -333,11 +333,11 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            , routes = [ route "/" HostPage
-              , route "/billing" BillingPage
-              , route "/jobs" JobsPage
-              , route "/auth" AuthPage
-              ]
+            , routes =
+                [ route "/" HostPage
+                , route "/billing" BillingPage
+                , route "/jobs" JobsPage
+                , route "/auth" AuthPage
+                ]
             , notFound = HostPage
-            }
-        )
+            })

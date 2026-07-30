@@ -48,14 +48,16 @@ encodeTodo todo =
 rowToTodo : Dict String String -> Todo
 rowToTodo row =
     { id = Maybe.withDefault "" (Dict.get "id" row)
-    , userId = Maybe.withDefault
-          0
-          (String.toInt (Maybe.withDefault "0" (Dict.get "user_id" row)))
+    , userId =
+        Maybe.withDefault
+            0
+            (String.toInt (Maybe.withDefault "0" (Dict.get "user_id" row)))
     , text = Maybe.withDefault "" (Dict.get "text" row)
     , done = (Maybe.withDefault "0" (Dict.get "done" row)) == "1"
-    , createdAt = Maybe.withDefault
-          0
-          (String.toInt (Maybe.withDefault "0" (Dict.get "created_at" row)))
+    , createdAt =
+        Maybe.withDefault
+            0
+            (String.toInt (Maybe.withDefault "0" (Dict.get "created_at" row)))
     }
 
 
@@ -122,7 +124,8 @@ insertTodo db claims payload =
                                                  (\_ ->
                                                      publishTodoCreated
                                                          { id = todoId
-                                                         , userId = claims.userId
+                                                         , userId =
+                                                             claims.userId
                                                          , text = payload.text
                                                          , done = False
                                                          , createdAt = nowMs
@@ -229,7 +232,10 @@ withAuth cfg req kont =
 errorJson : Int -> String -> Response
 errorJson status message =
     { status = status
-    , body = JsonEnc.encode 0 (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
+    , body =
+        JsonEnc.encode
+            0
+            (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
     , headers = Dict.empty
     , contentType = "application/json"
     }

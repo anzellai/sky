@@ -16,7 +16,8 @@ all =
 usersTable : Db.Migration
 usersTable =
     { name = "0001_users"
-    , sql = """
+    , sql =
+        """
         CREATE TABLE users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
@@ -30,7 +31,8 @@ usersTable =
 todosTable : Db.Migration
 todosTable =
     { name = "0002_todos"
-    , sql = """
+    , sql =
+        """
         CREATE TABLE todos (
             id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,

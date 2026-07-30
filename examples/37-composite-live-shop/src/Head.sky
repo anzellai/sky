@@ -35,7 +35,8 @@ pageMeta model =
 
         HomePage ->
             { title = "Sky Bazaar — carefully made things"
-            , description = "A tiny demo storefront exercising Sky.Live, Std.Ui, and pub/sub."
+            , description =
+                "A tiny demo storefront exercising Sky.Live, Std.Ui, and pub/sub."
             , canonical = "https://shop.example/"
             }
 

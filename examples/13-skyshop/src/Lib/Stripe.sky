@@ -475,33 +475,40 @@ verifyStripeSession cartId sessionId =
                         Ok
                             { status = status
                             , paymentStatus = paymentStatus
-                            , customerName = if custName != "" then
-                                  custName
+                            , customerName =
+                                if custName != "" then
+                                    custName
 
-                              else
-                                  shippingName
+                                else
+                                    shippingName
                             , customerEmail = custEmail
                             , customerPhone = custPhone
-                            , shippingLine1 = rd
-                                  ""
-                                  (shippingAddrR
-                                      |> Result.andThen Stripe.addressLine1)
-                            , shippingLine2 = rd
-                                  ""
-                                  (shippingAddrR
-                                      |> Result.andThen Stripe.addressLine2)
-                            , shippingCity = rd
-                                  ""
-                                  (shippingAddrR
-                                      |> Result.andThen Stripe.addressCity)
-                            , shippingCountry = rd
-                                  ""
-                                  (shippingAddrR
-                                      |> Result.andThen Stripe.addressCountry)
-                            , shippingPostalCode = rd
-                                  ""
-                                  (shippingAddrR
-                                      |> Result.andThen Stripe.addressPostalCode)
+                            , shippingLine1 =
+                                rd
+                                    ""
+                                    (shippingAddrR
+                                        |> Result.andThen Stripe.addressLine1)
+                            , shippingLine2 =
+                                rd
+                                    ""
+                                    (shippingAddrR
+                                        |> Result.andThen Stripe.addressLine2)
+                            , shippingCity =
+                                rd
+                                    ""
+                                    (shippingAddrR
+                                        |> Result.andThen Stripe.addressCity)
+                            , shippingCountry =
+                                rd
+                                    ""
+                                    (shippingAddrR
+                                        |> Result.andThen Stripe.addressCountry)
+                            , shippingPostalCode =
+                                rd
+                                    ""
+                                    (shippingAddrR
+                                        |> Result.andThen
+                                               Stripe.addressPostalCode)
                             }
 
                 else

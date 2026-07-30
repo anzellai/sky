@@ -61,7 +61,8 @@ formatPriceFromRow row =
     in
         if discount > 0 then
             { original = currencySymbol currency ++ formatAmount amount
-            , discounted = currencySymbol currency ++ formatAmount effectivePrice
+            , discounted =
+                currencySymbol currency ++ formatAmount effectivePrice
             , hasDiscount = True
             }
 

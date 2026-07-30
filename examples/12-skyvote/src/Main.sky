@@ -74,13 +74,14 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            , routes = [ route "/" BoardPage
-              , route "/submit" SubmitPage
-              , route "/auth/signin" SignInPage
-              , route "/auth/signup" SignUpPage
-              , route "/about" AboutPage
-              , route "/roadmap" RoadmapPage
-              ]
+            , routes =
+                [ route "/" BoardPage
+                , route "/submit" SubmitPage
+                , route "/auth/signin" SignInPage
+                , route "/auth/signup" SignUpPage
+                , route "/about" AboutPage
+                , route "/roadmap" RoadmapPage
+                ]
             , notFound = NotFoundPage
             })
 
@@ -328,7 +329,8 @@ handleToggleVoteAuth ideaId user model =
                 let
                     _ = println ("[VOTE ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification = "Could not record your vote: " ++ Error.toString e
+                    ( { model | notification =
+                          "Could not record your vote: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -384,7 +386,8 @@ doSubmitComment user model =
                 let
                     _ = println ("[COMMENT ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification = "Could not post comment: " ++ Error.toString e
+                    ( { model | notification =
+                          "Could not post comment: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -466,7 +469,8 @@ doCreateIdea user model =
                 let
                     _ = println ("[IDEA ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification = "Could not submit idea: " ++ Error.toString e
+                    ( { model | notification =
+                          "Could not submit idea: " ++ Error.toString e
                       }
                     , Cmd.none
                     )

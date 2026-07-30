@@ -52,11 +52,12 @@ init _req =
 view : Model -> any
 view model =
     Ui.layoutWith
-        { wrapperAttrs = [ Background.color (Ui.rgb 250 248 244)
-          , Font.family "system-ui, -apple-system, sans-serif"
-          , Font.size 14
-          , Font.color (Ui.rgb 30 30 36)
-          ]
+        { wrapperAttrs =
+            [ Background.color (Ui.rgb 250 248 244)
+            , Font.family "system-ui, -apple-system, sans-serif"
+            , Font.size 14
+            , Font.color (Ui.rgb 30 30 36)
+            ]
         , rootAttrs = []
         }
         (Ui.column
@@ -102,13 +103,13 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            , routes = [ route "/" HomePage
-              , route "/cart" CartPage
-              , route "/analytics" AnalyticsPage
-              , route "/sign-in" SignInPage
-              , route "/products/:slug" ProductPage
-              ]
+            , routes =
+                [ route "/" HomePage
+                , route "/cart" CartPage
+                , route "/analytics" AnalyticsPage
+                , route "/sign-in" SignInPage
+                , route "/products/:slug" ProductPage
+                ]
             , notFound = HomePage
             }
-            |> withHead Head.headFor
-        )
+            |> withHead Head.headFor)

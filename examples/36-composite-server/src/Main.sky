@@ -54,9 +54,10 @@ entry _ =
 
 readConfig : Config
 readConfig =
-    { port = Maybe.withDefault
-          8000
-          (String.toInt (System.getenvOr "SKY_COMPOSITE_PORT" "8000"))
+    { port =
+        Maybe.withDefault
+            8000
+            (String.toInt (System.getenvOr "SKY_COMPOSITE_PORT" "8000"))
     , dbPath = System.getenvOr "SKY_COMPOSITE_DB" "./composite-server.db"
     , jwtSecret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" ""
     , tokenTtlSeconds = 86400

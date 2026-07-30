@@ -56,17 +56,10 @@ viewIdeaDetail model idea =
                         [ div
                               [ class "flex-row-gap-8" ]
                               [ viewCategoryBadge category, statusBadge status ]
-                        , h1
-                              [ class "detail-title" ]
-                              [ text (idea.title) ]
+                        , h1 [ class "detail-title" ] [ text (idea.title) ]
                         , div
                               [ class "idea-meta" ]
-                              [ span
-                                    []
-                                    [ text
-                                          ("by "
-                                              ++ idea.authorName)
-                                    ]
+                              [ span [] [ text ("by " ++ idea.authorName) ]
                               , span [] [ text (idea.createdAt) ]
                               ]
                         ]
@@ -134,12 +127,8 @@ viewComment comment =
         [ class "comment" ]
         [ div
               [ class "comment-header" ]
-              [ span
-                    [ class "comment-author" ]
-                    [ text (comment.authorName) ]
-              , span
-                    [ class "comment-date" ]
-                    [ text (comment.createdAt) ]
+              [ span [ class "comment-author" ] [ text (comment.authorName) ]
+              , span [ class "comment-date" ] [ text (comment.createdAt) ]
               ]
         , div [ class "comment-body" ] [ text (comment.content) ]
         ]

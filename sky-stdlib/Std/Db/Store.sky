@@ -135,14 +135,15 @@ serial name (Store s) =
         Store
             { s | pk = col
             , generated = col :: s.generated
-            , cols = List.map
-                  (\( c, k ) ->
-                      if c == col then
-                          ( c, k ++ "!" )
+            , cols =
+                List.map
+                    (\( c, k ) ->
+                        if c == col then
+                            ( c, k ++ "!" )
 
-                      else
-                          ( c, k ))
-                  s.cols
+                        else
+                            ( c, k ))
+                    s.cols
             }
 
 
@@ -215,10 +216,11 @@ defaultText name val (Store s) =
 defaultInt : String -> Int -> Store a -> Store a
 defaultInt name val (Store s) =
     Store
-        { s | cols = addColFlag
-              (resolveCol s.cols name)
-              ("dint=" ++ String.fromInt val)
-              s.cols
+        { s | cols =
+            addColFlag
+                (resolveCol s.cols name)
+                ("dint=" ++ String.fromInt val)
+                s.cols
         }
 
 
@@ -227,15 +229,16 @@ defaultInt name val (Store s) =
 defaultBool : String -> Bool -> Store a -> Store a
 defaultBool name val (Store s) =
     Store
-        { s | cols = addColFlag
-              (resolveCol s.cols name)
-              ("dbool="
-                  ++ (if val then
-                         "true"
+        { s | cols =
+            addColFlag
+                (resolveCol s.cols name)
+                ("dbool="
+                    ++ (if val then
+                           "true"
 
-                     else
-                         "false"))
-              s.cols
+                       else
+                           "false"))
+                s.cols
         }
 
 

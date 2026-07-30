@@ -520,9 +520,10 @@ animatedFadeIn =
               , iterations = Animation.once
               , fillMode = Animation.forwards
               , respectReducedMotion = True
-              , keyframes = [ ( 0, [ Transform.opacity 0.0, Transform.translateY 8 ] )
-                , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
-                ]
+              , keyframes =
+                  [ ( 0, [ Transform.opacity 0.0, Transform.translateY 8 ] )
+                  , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
+                  ]
               }
         , testId "animated-fade-in"
         ]
@@ -547,9 +548,10 @@ animatedSpinner =
               , iterations = Animation.infinite
               , fillMode = Animation.none
               , respectReducedMotion = False
-              , keyframes = [ ( 0, [ Transform.rotate 0.0 ] )
-                , ( 100, [ Transform.rotate 360.0 ] )
-                ]
+              , keyframes =
+                  [ ( 0, [ Transform.rotate 0.0 ] )
+                  , ( 100, [ Transform.rotate 360.0 ] )
+                  ]
               }
         , testId "animated-spinner"
         ]

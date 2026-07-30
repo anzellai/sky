@@ -83,8 +83,7 @@ main =
             , subscriptions = \_ -> Sub.none
             , routes = [ route "/" MainPage ]
             , notFound = MainPage
-            }
-        )
+            })
 
 
 -- ======================================================

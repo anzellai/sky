@@ -149,5 +149,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , window = { title = "Sky.Webview spike - three.js", size = ( 1024, 720 ) }
+        , window =
+            { title = "Sky.Webview spike - three.js", size = ( 1024, 720 ) }
         }

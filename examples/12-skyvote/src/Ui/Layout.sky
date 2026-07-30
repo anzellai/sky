@@ -107,9 +107,7 @@ viewAuthNav model =
                       , class "btn btn-primary btn-sm"
                       ]
                       [ text "Submit Idea" ]
-                , span
-                      [ class "nav-link" ]
-                      [ text (user.username) ]
+                , span [ class "nav-link" ] [ text (user.username) ]
                 , button
                       [ onClick DoSignOut, class "btn btn-ghost btn-sm" ]
                       [ text "Sign out" ]

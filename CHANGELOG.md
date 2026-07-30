@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.2 — formatter: multi-line record field values (unreleased)
+
+### Fixed
+
+- **`sky fmt` — multi-line record field values now break onto their own line,
+  aligned.** A record field whose value spanned multiple lines (a list, nested
+  record, or `case`) was left inline after `field = `, with its continuation
+  `,`/`]` indented to a fixed depth that aligned with nothing — e.g.
+  `routes = [ route "/" Home` followed by `,` items two columns in. The
+  formatter now breaks a multi-line (or over-wide) value onto the next line,
+  indented one step, so `[`/`,`/`]` (and `{`/`,`/`}`) line up:
+  ```elm
+  , routes =
+      [ route "/" Home
+      , route "/about" AboutPage
+      ]
+  ```
+  Single-line values that fit stay inline. Idempotent + comment-preserving
+  across the corpus (fmt gate); reformatted the stdlib + examples to match.
+
 ## v0.19.1 — record field-set collision codegen fix (2026-07-30)
 
 ### Fixed

@@ -52,15 +52,18 @@ seedHabits : Int -> List Habit
 seedHabits today =
     [ { id = 1
       , name = "Walk 5k steps"
-      , history = seedHistory today [ True, True, False, True, True, False, True ]
+      , history =
+          seedHistory today [ True, True, False, True, True, False, True ]
       }
     , { id = 2
       , name = "Read 20 minutes"
-      , history = seedHistory today [ True, False, True, True, True, True, False ]
+      , history =
+          seedHistory today [ True, False, True, True, True, True, False ]
       }
     , { id = 3
       , name = "No screens after 10pm"
-      , history = seedHistory today [ False, True, False, True, False, True, True ]
+      , history =
+          seedHistory today [ False, True, False, True, False, True, True ]
       }
     ]
 

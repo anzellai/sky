@@ -18,9 +18,13 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Log exposing (println)
 
-
 type alias Line =
-    { orderId : String, productId : String, name : String, qty : Int, total : Int }
+    { orderId : String
+    , productId : String
+    , name : String
+    , qty : Int
+    , total : Int
+    }
 
 
 sample : List Line
@@ -36,7 +40,7 @@ overCaf =
     let
         stamped = List.map (\r -> { r | orderId = "o" }) sample
     in
-    List.length (List.map (\r -> r.productId ++ r.name) stamped)
+        List.length (List.map (\r -> r.productId ++ r.name) stamped)
 
 
 -- 2. update over a PARAMETER source (the surviving darraghstudio variant)
@@ -45,7 +49,7 @@ overParam lines =
     let
         stamped = List.map (\r -> { r | orderId = "o" }) lines
     in
-    List.length (List.map (\r -> r.name ++ r.productId) stamped)
+        List.length (List.map (\r -> r.name ++ r.productId) stamped)
 
 
 -- 3. map-of-map-of-map: a middle update over an ERASED ([]any) map result,
@@ -56,7 +60,7 @@ overMapChain lines =
         s1 = List.map (\r -> { r | orderId = "a" }) lines
         s2 = List.map (\r -> { r | name = r.name ++ "!" }) s1
     in
-    List.length (List.map (\r -> r.productId ++ String.fromInt r.qty) s2)
+        List.length (List.map (\r -> r.productId ++ String.fromInt r.qty) s2)
 
 
 -- 4. foldl accumulator record-update, then read the accumulator's fields
@@ -64,16 +68,20 @@ foldAcc : List Line -> Int
 foldAcc lines =
     let
         acc =
-            List.foldl (\r a -> { a | total = a.total + r.qty }) { total = 0 } lines
+            List.foldl
+                (\r a -> { a | total = a.total + r.qty })
+                { total = 0 }
+                lines
     in
-    acc.total
+        acc.total
 
 
 main =
     println
-        ("caf=" ++ String.fromInt overCaf
-            ++ " param=" ++ String.fromInt (overParam sample)
-            ++ " chain=" ++ String.fromInt (overMapChain sample)
-            ++ " fold=" ++ String.fromInt (foldAcc sample)
-            ++ " ok"
-        )
+        ("caf=" ++ String.fromInt overCaf ++ " param="
+            ++ String.fromInt (overParam sample)
+            ++ " chain="
+            ++ String.fromInt (overMapChain sample)
+            ++ " fold="
+            ++ String.fromInt (foldAcc sample)
+            ++ " ok")

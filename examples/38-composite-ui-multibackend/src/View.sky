@@ -172,10 +172,11 @@ addHabitForm model =
               [ Ui.width Ui.fill, Ui.paddingXY 10 8 ]
               { onChange = UpdateDraft
               , text = model.draft
-              , placeholder = Just
-                    (Input.placeholder
-                        []
-                        (Ui.text "New habit (e.g. drink water)"))
+              , placeholder =
+                  Just
+                      (Input.placeholder
+                          []
+                          (Ui.text "New habit (e.g. drink water)"))
               , label = Input.labelHidden "New habit"
               }
         , Ui.button

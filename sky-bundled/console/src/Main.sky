@@ -256,16 +256,18 @@ init _req =
             , parentUrl = parent
             , hubDbPath = hubDbPath
             , store = chosenStore
-            , overview = if isStandalone then
-                  mockOverview
+            , overview =
+                if isStandalone then
+                    mockOverview
 
-              else
-                  emptyOverview
-            , logs = if isStandalone then
-                  mockLogs
+                else
+                    emptyOverview
+            , logs =
+                if isStandalone then
+                    mockLogs
 
-              else
-                  []
+                else
+                    []
             , metrics = []
             , traces = []
             , errors = []
@@ -764,5 +766,4 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" () ]
             , notFound = ()
-            }
-        )
+            })

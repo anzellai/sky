@@ -89,8 +89,7 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" CounterPage, route "/about" AboutPage ]
             , notFound = CounterPage
-            }
-        )
+            })
 
 
 -- ======================================================

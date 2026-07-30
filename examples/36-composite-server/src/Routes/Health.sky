@@ -117,12 +117,13 @@ streamCsv db claims =
                    let
                        header =
                            Csv.encode
-                               { header = [ "id"
-                                 , "user_id"
-                                 , "text"
-                                 , "done"
-                                 , "created_at"
-                                 ]
+                               { header =
+                                   [ "id"
+                                   , "user_id"
+                                   , "text"
+                                   , "done"
+                                   , "created_at"
+                                   ]
                                , rows = []
                                }
                        body =
@@ -153,7 +154,10 @@ rowToCells row =
 errorJson : Int -> String -> Response
 errorJson status message =
     { status = status
-    , body = JsonEnc.encode 0 (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
+    , body =
+        JsonEnc.encode
+            0
+            (JsonEnc.object [ ( "error", JsonEnc.string message ) ])
     , headers = Dict.empty
     , contentType = "application/json"
     }

@@ -76,14 +76,16 @@ handleSignUpSuccess userId model =
                     println
                         ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e)
             in
-                ( { model | authError = "Account created but auto-login failed. Please sign in."
+                ( { model | authError =
+                      "Account created but auto-login failed. Please sign in."
                   , page = SignInPage
                   }
                 , Cmd.none
                 )
 
         Ok Nothing ->
-            ( { model | authError = "Account created but auto-login failed. Please sign in."
+            ( { model | authError =
+                  "Account created but auto-login failed. Please sign in."
               , page = SignInPage
               }
             , Cmd.none

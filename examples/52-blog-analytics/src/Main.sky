@@ -567,10 +567,11 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            , routes = [ route "/" Home
-              , route "/post/:slug" PostPage
-              , route "/admin" AdminPage
-              ]
+            , routes =
+                [ route "/" Home
+                , route "/post/:slug" PostPage
+                , route "/admin" AdminPage
+                ]
             , notFound = Home
             }
             |> withAnalytics { pageViews = True })

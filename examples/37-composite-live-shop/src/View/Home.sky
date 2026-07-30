@@ -73,10 +73,12 @@ controlBar model =
               [ Ui.width (Ui.px 240) ]
               { onChange = FilterChanged
               , text = model.filter
-              , placeholder = Just (Input.placeholder [] (Ui.text "Search products…"))
-              , label = Input.labelAbove
-                    [ Font.size 12, Font.color Common.muted ]
-                    (Ui.text "Filter")
+              , placeholder =
+                  Just (Input.placeholder [] (Ui.text "Search products…"))
+              , label =
+                  Input.labelAbove
+                      [ Font.size 12, Font.color Common.muted ]
+                      (Ui.text "Filter")
               }
         , Input.slider
               [ Ui.width (Ui.px 200) ]
@@ -85,32 +87,36 @@ controlBar model =
               , min = "0"
               , max = "150"
               , step = "5"
-              , label = Input.labelAbove
-                    [ Font.size 12, Font.color Common.muted ]
-                    (Ui.text
-                        ("Max price · $"
-                            ++ ToString.fromInt (model.maxPrice // 100)))
+              , label =
+                  Input.labelAbove
+                      [ Font.size 12, Font.color Common.muted ]
+                      (Ui.text
+                          ("Max price · $"
+                              ++ ToString.fromInt (model.maxPrice // 100)))
               }
         , Input.radioRow
               []
               { onChange = ChangeSort
               , selected = sortToString model.sort
-              , options = [ Input.option "name" (Ui.text "Name")
-                , Input.option "price-asc" (Ui.text "$ ↑")
-                , Input.option "price-desc" (Ui.text "$ ↓")
-                ]
-              , label = Input.labelAbove
-                    [ Font.size 12, Font.color Common.muted ]
-                    (Ui.text "Sort by")
+              , options =
+                  [ Input.option "name" (Ui.text "Name")
+                  , Input.option "price-asc" (Ui.text "$ ↑")
+                  , Input.option "price-desc" (Ui.text "$ ↓")
+                  ]
+              , label =
+                  Input.labelAbove
+                      [ Font.size 12, Font.color Common.muted ]
+                      (Ui.text "Sort by")
               }
         , Input.checkbox
               []
               { onChange = ToggleNotify
               , icon = checkmarkIcon
               , checked = model.notifyOnRestock
-              , label = Input.labelLeft
-                    [ Font.size 12 ]
-                    (Ui.text "Notify me when stock returns")
+              , label =
+                  Input.labelLeft
+                      [ Font.size 12 ]
+                      (Ui.text "Notify me when stock returns")
               }
         ]
 

@@ -728,7 +728,22 @@ impl Printer {
             let drained = self.drain_before(col, line);
             let name = name_node.text().to_string();
             let s = match value {
-                Some(v) => format!("{name} = {}", self.fmt_expr(elem_col, v)),
+                Some(v) => {
+                    // Format the value one step in from the field, then decide
+                    // placement: a value that stays single-line AND fits on the
+                    // `name = …` line stays inline; a multi-line value (a list /
+                    // nested record / case) — or one that would overflow inline —
+                    // breaks onto its own line at `value_col`, so its `[`/`,`/`]`
+                    // (or `{`/`,`/`}`) align under one another instead of drifting.
+                    let value_col = col + STEP;
+                    let rendered = self.fmt_expr(value_col, v);
+                    let inline_col = elem_col + width(&name) + 3; // "name = "
+                    if !rendered.contains('\n') && inline_col + width(&rendered) <= MAX {
+                        format!("{name} = {rendered}")
+                    } else {
+                        format!("{name} =\n{}{rendered}", indent(value_col))
+                    }
+                }
                 None => name,
             };
             pairs.push((drained, s));
@@ -766,7 +781,22 @@ impl Printer {
             let drained = self.drain_before(col, line);
             let name = name_node.text().to_string();
             let s = match value {
-                Some(v) => format!("{name} = {}", self.fmt_expr(elem_col, v)),
+                Some(v) => {
+                    // Format the value one step in from the field, then decide
+                    // placement: a value that stays single-line AND fits on the
+                    // `name = …` line stays inline; a multi-line value (a list /
+                    // nested record / case) — or one that would overflow inline —
+                    // breaks onto its own line at `value_col`, so its `[`/`,`/`]`
+                    // (or `{`/`,`/`}`) align under one another instead of drifting.
+                    let value_col = col + STEP;
+                    let rendered = self.fmt_expr(value_col, v);
+                    let inline_col = elem_col + width(&name) + 3; // "name = "
+                    if !rendered.contains('\n') && inline_col + width(&rendered) <= MAX {
+                        format!("{name} = {rendered}")
+                    } else {
+                        format!("{name} =\n{}{rendered}", indent(value_col))
+                    }
+                }
                 None => name,
             };
             pairs.push((drained, s));
