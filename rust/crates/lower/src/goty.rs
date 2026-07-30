@@ -60,8 +60,13 @@ pub struct TypeEnv {
     /// no such name. Only collisions differ from the flat map — a name declared
     /// in one module resolves identically either way.
     pub nominal_by_module: HashMap<(String, String), Nominal>,
-    /// sorted field-name list → the record alias's Go `_R` type name.
-    pub record_fieldsets: HashMap<Vec<String>, String>,
+    /// sorted field-name list → the record aliases' Go `_R` type names. Usually
+    /// one, but two aliases can share a field-NAME set while differing in field
+    /// TYPES (a user's `EnvForm {key,value:String}` vs `Std.Analytics.EventProp
+    /// {key,value:PropValue}`); both are kept so the structural resolver can pick
+    /// the one whose field TYPES actually match (see `select_record_candidate`),
+    /// instead of the first-registered arbitrarily winning.
+    pub record_fieldsets: HashMap<Vec<String>, Vec<String>>,
     /// `_R` Go name → the alias's DISTINCT non-`"any"` type-param vars, in
     /// first-appearance order across the field types. Empty for a
     /// non-parametric record alias. Used to (a) instantiate `Cfg_R[Msg]` at a
@@ -144,28 +149,35 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
             let mut names: Vec<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
             names.sort();
-            if let Some(go_name) = env.record_fieldsets.get(&names) {
-                // A parametric alias resolved STRUCTURALLY (a record literal /
-                // unannotated value whose inferred closed record matches the
-                // alias's field set): the Go type is generic, so a bare
-                // `Cfg_R` (no type args) would not compile. Recover each type
-                // arg by matching the alias's field templates against this
-                // record's concrete field types. On full recovery emit the
-                // instantiation `Cfg_R[Msg]`; if any arg can't be recovered,
-                // fall through to the anonymous-struct form (safe — never a
-                // dangling generic reference).
-                match instantiate_structural(go_name, fields, env, cur_mod, params) {
-                    Some(gt) => return gt,
-                    None => {
-                        if env
-                            .record_params
-                            .get(go_name)
-                            .map(|p| p.is_empty())
-                            .unwrap_or(true)
-                        {
-                            return GoTy::Named(go_name.clone(), vec![]);
+            if let Some(candidates) = env.record_fieldsets.get(&names) {
+                // Among aliases sharing this field-NAME set, pick the one whose
+                // field TYPES match this record (a user `EnvForm {…value:String}`
+                // must not resolve to `Std.Analytics.EventProp {…value:PropValue}`).
+                if let Some(go_name) =
+                    select_record_candidate(candidates, fields, env, cur_mod, params)
+                {
+                    // A parametric alias resolved STRUCTURALLY (a record literal /
+                    // unannotated value whose inferred closed record matches the
+                    // alias's field set): the Go type is generic, so a bare
+                    // `Cfg_R` (no type args) would not compile. Recover each type
+                    // arg by matching the alias's field templates against this
+                    // record's concrete field types. On full recovery emit the
+                    // instantiation `Cfg_R[Msg]`; if any arg can't be recovered,
+                    // fall through to the anonymous-struct form (safe — never a
+                    // dangling generic reference).
+                    match instantiate_structural(go_name, fields, env, cur_mod, params) {
+                        Some(gt) => return gt,
+                        None => {
+                            if env
+                                .record_params
+                                .get(go_name)
+                                .map(|p| p.is_empty())
+                                .unwrap_or(true)
+                            {
+                                return GoTy::Named(go_name.clone(), vec![]);
+                            }
+                            // parametric but unrecoverable → fall through to anon struct
                         }
-                        // parametric but unrecoverable → fall through to anon struct
                     }
                 }
             }
@@ -229,6 +241,48 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
 /// the alias's field templates) the concrete Sky type this record binds it to,
 /// then lower that to Go. Returns `None` if the alias has no params (caller
 /// handles the non-generic case) or if any param stays unbound.
+/// Among the record aliases that share a field-NAME set, choose the one whose
+/// declared field TYPES are compatible with the concrete record `fields`. Two
+/// aliases with the same field names but different field types (e.g. a user's
+/// `EnvForm {key, value : String}` and `Std.Analytics.EventProp {key, value :
+/// PropValue}`, which is pulled in transitively by `Std.Live`) would otherwise
+/// collide, and the first-registered would win — mis-typing the other's params
+/// and emitting a `go build` failure (`sky check` passes but the Go doesn't).
+///
+/// A `Ty::Var` template slot is a WILDCARD (parametric alias — the concrete arg
+/// is recovered afterwards by `instantiate_structural`), so this never regresses
+/// the `Cfg msg` structural path. When there is a single candidate (the common
+/// case) or none matches, returns the first — preserving prior behaviour exactly.
+fn select_record_candidate<'a>(
+    candidates: &'a [String],
+    fields: &[(Name, Ty)],
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> Option<&'a String> {
+    if candidates.len() <= 1 {
+        return candidates.first();
+    }
+    let concrete: HashMap<&str, &Ty> = fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    let compatible = |go_name: &str| -> bool {
+        let Some(templates) = env.record_templates.get(go_name) else {
+            return false;
+        };
+        templates.iter().all(|(fname, tmpl)| match concrete.get(fname.as_str()) {
+            None => false,
+            // parametric slot → wildcard (resolved later by instantiate_structural)
+            Some(_) if matches!(tmpl, Ty::Var(_)) => true,
+            Some(ct) => {
+                go_ty(tmpl, env, cur_mod, params) == go_ty(ct, env, cur_mod, params)
+            }
+        })
+    };
+    candidates
+        .iter()
+        .find(|c| compatible(c))
+        .or_else(|| candidates.first())
+}
+
 fn instantiate_structural(
     go_name: &str,
     rec_fields: &[(Name, Ty)],

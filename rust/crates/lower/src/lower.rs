@@ -244,7 +244,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let (nominal, nominal_by_module, type_decls) = collect_types(db);
 
     // record field-set → `_R` alias index (structural → nominal resolution).
-    let mut record_fieldsets: HashMap<Vec<String>, String> = HashMap::new();
+    let mut record_fieldsets: HashMap<Vec<String>, Vec<String>> = HashMap::new();
     // `_R` go-name → ordered type-param vars + field templates (for
     // instantiating a parametric alias resolved via the structural path).
     let mut record_params: HashMap<String, Vec<Name>> = HashMap::new();
@@ -253,9 +253,13 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         if let TypeDeclKind::Record(fields) = &d.kind {
             let mut names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
             names.sort();
-            record_fieldsets
-                .entry(names)
-                .or_insert_with(|| d.go_name.clone());
+            // Keep EVERY alias sharing this field-name set (not just the first) so
+            // the structural resolver can disambiguate by field TYPE. Two records
+            // with identical field names but different field types collide here.
+            let cands = record_fieldsets.entry(names).or_default();
+            if !cands.contains(&d.go_name) {
+                cands.push(d.go_name.clone());
+            }
             record_params.insert(d.go_name.clone(), record_type_params(fields));
             record_templates.insert(d.go_name.clone(), fields.clone());
         }
@@ -297,6 +301,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             names.sort();
             record_fieldsets
                 .get(&names)
+                .and_then(|cands| cands.first())
                 .map(|go| (names.clone(), go.clone()))
         })
     };

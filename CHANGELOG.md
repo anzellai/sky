@@ -11,6 +11,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.1 — record field-set collision codegen fix (2026-07-30)
+
+### Fixed
+
+- **Codegen — record field-set collision (`sky check` passed, `go build`
+  failed).** Two record aliases that share a field-**name** set but differ in
+  field **types** — e.g. a user's `EnvForm {key, value : String}` and the new
+  `Std.Analytics.EventProp {key, value : PropValue}`, which `Std.Live` pulls in
+  transitively — collided in the structural-record resolver. It keyed records by
+  field name only, so the first-registered alias arbitrarily won and the other's
+  function parameters were emitted with the WRONG Go struct (`form.value` typed as
+  `PropValue` instead of `string`), producing a `go build` failure that
+  `sky check` never caught. The resolver now keeps every candidate per
+  field-name set and selects the one whose field **types** match; parametric
+  aliases (`Cfg msg`) are unaffected (their type-var slots stay wildcards, with
+  the concrete arg recovered as before). This surfaced in v0.19.0 because
+  `Std.Analytics.EventProp` was new — any Sky.Live app with a `{key, value}`-ish
+  record could hit it. Regression: `examples/54-record-fieldset-collision`.
+- Docs carried over from the v0.19.0 line: the README quick-start sample + a sharp
+  v0.18→v0.19 `Live.app` breaking-change callout, and the raw-`api`-handler change
+  (`Dict String any -> Response` → `Request -> Task Error Response`, now in
+  `routes`) documented in the migration guide.
+
 ## v0.19.0 — codec-driven persistence, file-based DB migrations + Std.Analytics (2026-07-30)
 
 ### Breaking — TEA app config is now a typed builder

@@ -1,0 +1,51 @@
+module Main exposing (main)
+
+-- Regression: two record aliases that share a field-NAME set but differ in field
+-- TYPES must resolve to DISTINCT Go structs. `EnvForm {key, value : String}` and
+-- `Std.Analytics.EventProp {key, value : PropValue}` (pulled in by importing
+-- Std.Analytics) collide by name; before the fix the structural resolver keyed
+-- `record_fieldsets` by field NAME only and the first-registered alias won, so
+-- `handleSaveEnvVar`'s `form : EnvForm` param was mis-emitted as the EventProp
+-- struct → `form.value` typed as PropValue → `go build` failed (`sky check`
+-- passed). See lower/goty.rs `select_record_candidate`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Analytics as Analytics
+
+type alias EnvForm =
+    { key : String
+    , value : String
+    }
+
+type Command
+    = SaveEnvVar Int EnvForm
+
+
+setEnv : Int -> String -> String -> String
+setEnv appId k v =
+    String.fromInt appId ++ ":" ++ k ++ "=" ++ v
+
+
+-- separate top-level helper whose `form` param is typed EnvForm; `form.value`
+-- must stay a String (not Analytics.PropValue).
+handleSaveEnvVar : Int -> EnvForm -> String
+handleSaveEnvVar appId form =
+    setEnv appId (String.trim form.key) form.value
+
+
+run : Command -> String
+run cmd =
+    case cmd of
+
+        SaveEnvVar appId form ->
+            handleSaveEnvVar appId form
+
+
+main : Task Error ()
+main =
+    let
+        _ = Analytics.event "boot" [ Analytics.string "k" "v" ]
+    in
+        println (run (SaveEnvVar 7 { key = "API_KEY", value = "secret" }))
