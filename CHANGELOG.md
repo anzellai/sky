@@ -42,6 +42,14 @@ fields).
   ```
   Full field→builder table for every app shape:
   [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
+- **Raw `api` endpoints changed shape too.** The old separate `api` cfg field is
+  gone; `api "METHOD /path" handler` now returns a `Route` and lives in the
+  `routes` list next to `route`. The handler signature is
+  **`Request -> Task Error Response`** — `Request` is a typed record
+  (`.method` / `.path` / `.headers` / `.params` / `.query` / `.cookies` / …), and
+  the return is `Task Error Response` (wrap a plain `Response` in `Task.succeed`).
+  Pre-v0.19 `Dict String any -> Response` handlers must migrate to the record +
+  Task shape.
 
 ### Added — file-based database migrations (`sky db`)
 

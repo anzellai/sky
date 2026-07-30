@@ -1189,13 +1189,17 @@ import Sky.Live as Live
 
 main =
     Live.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ Live.route "/" HomePage ]
-        , notFound = HomePage
-        }
+        (Live.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ Live.route "/" HomePage ]
+            , notFound = HomePage
+            }
+        )
+    -- v0.19: the app config is a typed builder — optional fields attach with
+    -- `|> Live.withHead …` / `withGuard` / `withAnalytics` / `withStatic` / … .
 ```
 
 See [Sky.Live overview](skylive/overview.md) for the full TEA flow.

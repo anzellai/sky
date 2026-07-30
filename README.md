@@ -93,7 +93,7 @@ A counter web app — type-checked, server-driven, no JavaScript.
 module Main exposing (main)
 
 import Std.Cmd as Cmd
-import Std.Live exposing (app, route)
+import Std.Live exposing (app, config, route)
 import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Ui.Font as Font
@@ -130,13 +130,15 @@ view model =
 
 main =
     app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = \_ -> Sub.none
-        , routes = [ route "/" () ]
-        , notFound = ()
-        }
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            , routes = [ route "/" () ]
+            , notFound = ()
+            }
+        )
 ```
 
 ```bash
@@ -176,12 +178,25 @@ same TEA-style `init / update / view / subscriptions`.
 | CLI tool (no UI loop)                   | **Sky.Cli**       | `main = Task.run ...`           | `brew install`       |
 | Native desktop app                      | **Sky.Webview**   | `Webview.app { … }`             | `.app` / `.exe`      |
 
-> **v0.19 breaking change.** The TEA app config is now a typed builder:
-> `Live.app (Live.config { …required… } |> Live.withHead … )` replaces the old
-> row-open record literal `Live.app { …, head = … }`. Same for `Tui.app` /
-> `Tui.program` / `Cli.program`; `Webview.app` is unchanged. It gives the app
-> entry a precise, hover-able type and unifies its docs onto the module's `.sky`
-> source. Mechanical migration guide: [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
+> ### ⚠ Upgrading from v0.18 → v0.19? `Live.app` is a breaking change
+>
+> The TEA app config is now a **typed builder**, not a row-open record literal:
+>
+> ```elm
+> -- v0.18 (old)                          -- v0.19 (new)
+> Live.app { init = …, update = …,        Live.app
+>            view = …, subscriptions = …,      (Live.config { init = …, update = …
+>            routes = [...], notFound = …,                    , view = …, subscriptions = …
+>            head = headFor }                                 , routes = [...], notFound = … }
+>                                                  |> Live.withHead headFor)
+> ```
+>
+> The six required fields go in `Live.config { … }`; optional fields
+> (`head` / `guard` / `analytics` / …) attach with `|> withX`. Same for
+> `Tui.app` / `Tui.program` / `Cli.program`; `Webview.app` is unchanged. Raw
+> `api` endpoints are now `Request -> Task Error Response` (record request, Task
+> return) and live in the `routes` list. Full mechanical guide:
+> [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
 
 Every backend shares `Std.Ui` for layout, `Std.Auth` for sessions,
 `Std.Db` for persistence, `Std.Log` / `Std.Trace` for

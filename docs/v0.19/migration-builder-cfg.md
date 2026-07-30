@@ -111,3 +111,28 @@ entry points get precise `AppConfig model msg -> Task Error ()` signatures, and
 every binding is an `Ffi.kernel` alias declared in the module's `.sky` file — so
 `sky doc`, LSP hover, and the type-checker all read that one source. See
 `docs/v0.19/kernel-metadata-unification.md`.
+
+## Raw `api` endpoints (also breaking)
+
+The old cfg had a separate `api` field. In v0.19 there is no `api` field — an
+`api "METHOD /path" handler` is a `Route`, so it goes in the **`routes`** list
+next to `route`. The handler signature also changed:
+
+```elm
+-- v0.18 (old)
+handleWebhook : Dict String any -> Response
+handleWebhook req = ...
+
+-- v0.19 (new): a typed record Request + a Task return
+handleWebhook : Server.Request -> Task Error Server.Response
+handleWebhook req =
+    -- req.method / req.path / req.headers / req.params / req.query / req.cookies / req.body
+    Task.succeed (Server.text "ok")     -- wrap a plain Response in Task.succeed
+```
+
+- **Request** is now a record: `{ method, path, body, headers, params, query,
+  cookies, remoteAddr }` — read `req.path` (not `Dict.get "path" req`).
+- **Return** is `Task Error Response` — a handler that previously returned a
+  plain `Response` wraps it in `Task.succeed`; a fallible handler can
+  `Task.fail (Error.…)` and let the framework map it to a 4xx/5xx.
+- Register in `routes`: `Live.config { …, routes = [ route "/" Home, api "POST /webhooks/x" handleWebhook ], notFound = Home }`.
