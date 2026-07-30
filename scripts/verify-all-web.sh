@@ -93,7 +93,13 @@ fi
 if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
     echo ""
     echo "--- ui-showcase regression gates ---"
-    if bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1 | tail -15; then
+    # NOTE: run the gate, capture its exit, THEN tail its output. Piping the gate
+    # straight into `tail` in the `if` condition tests tail's exit status (always
+    # 0), not the gate's — which silently swallowed real snapshot failures.
+    ui_out=$(bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
+    ui_rc=$?
+    echo "$ui_out" | tail -15
+    if [ "$ui_rc" -eq 0 ]; then
         echo "✓ ui-showcase"
     else
         echo "✗ ui-showcase"
