@@ -881,8 +881,13 @@ type storableSession struct {
 	// with HasAnalytics=false → state recreated fresh on first use, no migration.
 	HasAnalytics     bool
 	AnalyticsConsent int
-	AnalyticsAnonID  string
-	AnalyticsUserID  string
+	// AnalyticsConsentExplicit: the consent above was set by the app (setConsent),
+	// not just the framework default. On restore, a non-explicit consent follows
+	// the CURRENT default so a default change reaches persisted sessions (see
+	// restoreAnalyticsState). Pre-flag blobs decode false → adopt the default.
+	AnalyticsConsentExplicit bool
+	AnalyticsAnonID          string
+	AnalyticsUserID          string
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
@@ -914,6 +919,7 @@ func encodeSession(s *liveSession) ([]byte, error) {
 		c, anon, user := s.analytics.snapshot()
 		blob.HasAnalytics = true
 		blob.AnalyticsConsent = int(c)
+		blob.AnalyticsConsentExplicit = s.analytics.consentExplicit()
 		blob.AnalyticsAnonID = anon
 		blob.AnalyticsUserID = user
 	}
@@ -1020,7 +1026,7 @@ func decodeSession(blob []byte) (*liveSession, error) {
 	// v0.19 — rehydrate analytics identity so an identified user survives a
 	// restart / replica reshuffle on a DB-backed store.
 	if st.HasAnalytics {
-		sess.analytics = restoreAnalyticsState(st.AnalyticsConsent, st.AnalyticsAnonID, st.AnalyticsUserID)
+		sess.analytics = restoreAnalyticsState(st.AnalyticsConsent, st.AnalyticsConsentExplicit, st.AnalyticsAnonID, st.AnalyticsUserID)
 	}
 	return sess, nil
 }

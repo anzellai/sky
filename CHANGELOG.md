@@ -91,7 +91,12 @@ tab. See [`examples/52-blog-analytics`](examples/52-blog-analytics).
 - Consent defaults to **`Granted`** — enabling analytics captures fully and
   `identify` attaches the user, which is what most apps want. Privacy-conscious
   apps show a consent banner and downgrade with `setConsent Anonymous` / `Denied`.
-  Consent + identity are session-scoped.
+  Consent + identity are session-scoped. Only an **explicit** `setConsent` is
+  persisted as a choice — a session that merely rode the framework default
+  follows the *current* default on restore, so the `Granted` default reaches
+  sessions already stored in a DB-backed store (they don't stay stuck on a
+  previous default), while an app's explicit `Anonymous`/`Denied` is respected
+  verbatim across restart / replica reshuffle.
 - **Sky.Live auto page-views** — `Live.withAnalytics { pageViews = True }`; add
   **`Live.withAnalyticsIdentify (\model -> Maybe String)`** to attribute an
   already-authenticated session from the first render.

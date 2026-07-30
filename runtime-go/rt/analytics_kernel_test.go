@@ -324,3 +324,37 @@ func TestAnalyticsTrackEvent_NullaryVariant(t *testing.T) {
 		t.Errorf("nullary variant should have empty props: %s", out)
 	}
 }
+
+// TestRestoreAnalyticsConsentDefaultMigration: a session persisted with a
+// non-explicit consent (rode the framework default) adopts the CURRENT default
+// (Granted) on restore, so a default change reaches already-persisted sessions
+// and a stale default is never mistaken for a user's choice. An EXPLICIT posture
+// (setConsent, e.g. behind a consent banner) is restored verbatim.
+func TestRestoreAnalyticsConsentDefaultMigration(t *testing.T) {
+	// Persisted Anonymous(0) but NOT explicit → current default (Granted).
+	if got := restoreAnalyticsState(int(consentAnonymous), false, "anon1", "u1").consent; got != consentGranted {
+		t.Fatalf("non-explicit Anonymous should restore as Granted, got %v", got)
+	}
+	// Explicit Anonymous → respected.
+	if got := restoreAnalyticsState(int(consentAnonymous), true, "anon2", "u2").consent; got != consentAnonymous {
+		t.Fatalf("explicit Anonymous should restore as Anonymous, got %v", got)
+	}
+	// Explicit Denied → respected.
+	if got := restoreAnalyticsState(int(consentDenied), true, "anon3", "").consent; got != consentDenied {
+		t.Fatalf("explicit Denied should restore as Denied, got %v", got)
+	}
+	// Identity + anon id always carried through regardless of consent origin.
+	st := restoreAnalyticsState(int(consentAnonymous), false, "anonX", "userX")
+	if st.userID != "userX" || st.anonID != "anonX" {
+		t.Fatalf("identity/anon id not preserved: %q / %q", st.userID, st.anonID)
+	}
+	// setConsent flips the explicit bit (so it persists + restores verbatim).
+	fresh := newAnalyticsState()
+	if fresh.consentExplicit() {
+		t.Fatal("fresh state should not be explicit")
+	}
+	fresh.setConsent(consentAnonymous)
+	if !fresh.consentExplicit() {
+		t.Fatal("setConsent should mark consent explicit")
+	}
+}

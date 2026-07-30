@@ -277,11 +277,12 @@ const (
 // posture is `Granted` — an app that enables analytics captures fully; call
 // `setConsent Anonymous`/`Denied` (e.g. behind a consent banner) to restrict.
 type analyticsSessionState struct {
-	mu      sync.Mutex
-	consent analyticsConsent
-	anonID  string
-	userID  string
-	context map[string]any // device / anonymised IP, attached to every event
+	mu       sync.Mutex
+	consent  analyticsConsent
+	explicit bool // true once the app calls setConsent — see restoreAnalyticsState
+	anonID   string
+	userID   string
+	context  map[string]any // device / anonymised IP, attached to every event
 }
 
 func newAnalyticsState() *analyticsSessionState {
@@ -292,14 +293,27 @@ func newAnalyticsState() *analyticsSessionState {
 // values (consent posture + anon/user id), so a DB-backed session store keeps an
 // identified user across a restart / replica reshuffle — matching the auth
 // `identity` round-trip. A blank anonID (pre-v0.19 blob) mints a fresh one.
-func restoreAnalyticsState(consent int, anonID, userID string) *analyticsSessionState {
+//
+// Consent is only honoured from the store when it was set EXPLICITLY (the app
+// called `setConsent`, e.g. behind a consent banner). A session that merely rode
+// the framework default follows the CURRENT default (Granted) on restore, so a
+// default change reaches already-persisted sessions and a stale default is never
+// mistaken for a user's choice. Pre-`explicit`-flag blobs decode with
+// explicit=false → they pick up the current default too (the intended migration
+// for sessions persisted under the old Anonymous default).
+func restoreAnalyticsState(consent int, explicit bool, anonID, userID string) *analyticsSessionState {
 	if anonID == "" {
 		anonID = analyticsNewAnonID()
 	}
+	c := consentGranted
+	if explicit {
+		c = analyticsConsent(consent)
+	}
 	return &analyticsSessionState{
-		consent: analyticsConsent(consent),
-		anonID:  anonID,
-		userID:  userID,
+		consent:  c,
+		explicit: explicit,
+		anonID:   anonID,
+		userID:   userID,
 	}
 }
 
@@ -312,7 +326,14 @@ func (s *analyticsSessionState) snapshot() (analyticsConsent, string, string) {
 func (s *analyticsSessionState) setConsent(c analyticsConsent) {
 	s.mu.Lock()
 	s.consent = c
+	s.explicit = true // an app-set posture is honoured verbatim on restore
 	s.mu.Unlock()
+}
+
+func (s *analyticsSessionState) consentExplicit() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.explicit
 }
 
 func (s *analyticsSessionState) setUserID(u string) {
