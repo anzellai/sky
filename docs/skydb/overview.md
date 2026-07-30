@@ -89,9 +89,23 @@ column (a typo fails fast with the column list):
 ### Writes
 
 `insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`
-(by PK) · `updateWhere` (by `Cond`) · **`upsert`** (`INSERT … ON CONFLICT(pk) DO
-UPDATE` — idempotent config rows; needs a non-generated PK) · `delete` ·
-`deleteWhere`.
+(by PK, whole record) · `updateWhere` (by `Cond`, whole record) · **`setFields`**
+(PATCH by PK — `SET` only the named columns) · **`updateFields`** (PATCH by
+`Cond`) · **`adjust`** (atomic `SET col = col + delta` for counters/stock) ·
+**`upsert`** (`INSERT … ON CONFLICT(pk) DO UPDATE` — idempotent config rows;
+needs a non-generated PK) · `delete` · `deleteWhere`.
+
+Partial-column PATCH — the way to set one or two columns without rewriting the
+whole record (or naming a column that isn't in the codec's read shape):
+
+```elm
+-- mark an order shipped, touching only two columns
+Store.setFields conn orders (SqlString orderId)
+    [ ( "status", SqlString "shipped" ), ( "tracking", SqlString code ) ]
+
+-- atomic stock decrement (value depends on the current value — no read first)
+Store.adjust conn products (Store.eq "id" (SqlString pid)) [ ( "stock", -qty ) ]
+```
 
 ### Reads — query builder
 

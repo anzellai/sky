@@ -11,7 +11,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.19.2 — formatter: multi-line record field values (unreleased)
+## v0.19.2 — Store partial-column update + formatter fix (unreleased)
+
+### Added — `Std.Db.Store` partial-column update
+
+Closes the one basic single-table op Store couldn't do: a **partial-column
+`UPDATE`** (`SET` a subset of columns and leave the rest untouched). `update` /
+`updateWhere` are codec-driven and rewrite the WHOLE record — so patching one
+column meant either dropping to raw SQL or a racy read-modify-write, and you
+couldn't even name a column absent from the codec's read shape.
+
+- **`Store.setFields conn store pkValue [ ( "col", SqlValue ) … ]`** — PATCH by
+  primary key. `Store.updateFields conn store cond [ … ]` — PATCH by `Cond`.
+  Only the named columns are written; column names accept the record field or
+  the snake column; values bind as `SqlValue` params (injection-safe).
+- **`Store.adjust conn store cond [ ( "col", delta ) … ]`** — atomic relative
+  change (`SET col = col + delta`), the one write whose value depends on the
+  column's CURRENT value (counters / stock / balances) without reading first.
+- See `examples/55-store-partial-update`.
 
 ### Fixed
 

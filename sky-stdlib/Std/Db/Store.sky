@@ -43,6 +43,9 @@ module Std.Db.Store exposing
     , upsert
     , update
     , updateWhere
+    , updateFields
+    , setFields
+    , adjust
     , all
     , findBy
     , selectRaw
@@ -355,6 +358,84 @@ updateWhere conn (Store s) rawCond record =
                 (Codec.toValue s.codec record)
                 whereSql
                 whereParams)
+
+
+-- | PARTIAL-column update by `Cond`: `SET` only the named columns and leave the
+-- rest untouched — unlike `update`/`updateWhere`, which rewrite the WHOLE record
+-- from the codec. This is the PATCH primitive: set one or two columns without a
+-- read-modify-write, and without needing them present in the codec's read shape.
+-- Column names accept the record FIELD or the snake column; values bind as
+-- `SqlValue` params (injection-safe). Example — mark an order shipped:
+-- `Store.updateFields conn orders (eq "id" (SqlString oid))
+--     [ ( "status", SqlString "shipped" ), ( "tracking", SqlString t ) ]`.
+updateFields : Db -> Store a -> Cond -> List ( String, SqlValue ) -> Task Error Int
+updateFields conn (Store s) rawCond rawSets =
+    if List.isEmpty rawSets then
+        Task.succeed 0
+
+    else
+        let
+            cond = resolveCond s.cols rawCond
+            ( whereSql, whereParams ) = renderCond cond
+            sets =
+                List.map (\( f, v ) -> ( resolveCol s.cols f, v )) rawSets
+            setSql =
+                String.join ", " (List.map (\( c, _ ) -> c ++ " = ?") sets)
+            setParams = List.map (\( _, v ) -> v) sets
+            sql =
+                "UPDATE " ++ s.name ++ " SET " ++ setSql ++ " WHERE "
+                    ++ whereSql
+        in
+            guardCols
+                s.cols
+                (List.map (\( c, _ ) -> c) sets ++ condCols cond)
+                (Db.exec conn sql (setParams ++ whereParams))
+
+
+-- | PARTIAL-column update by primary key — the everyday PATCH-by-id:
+-- `Store.setFields conn users (SqlString uid) [ ( "verified", SqlBool True ) ]`.
+setFields : Db -> Store a -> SqlValue -> List ( String, SqlValue ) -> Task Error Int
+setFields conn store pkValue sets =
+    let
+        pkCol =
+            case store of
+
+                Store s ->
+                    s.pk
+    in
+        updateFields conn store (eq pkCol pkValue) sets
+
+
+-- | Atomic relative adjustment of integer columns — `SET col = col + delta` per
+-- entry, by `Cond`. The one write a value-based update can't express (the value
+-- depends on the column's CURRENT value): a race-free counter/stock/balance
+-- change without reading first. Negative deltas subtract:
+-- `Store.adjust conn products (eq "id" (SqlString pid)) [ ( "stock", -qty ) ]`.
+-- (For a clamped decrement like `max 0 (stock - qty)`, that's app logic — stay
+-- with raw `Db.exec` inside a `Store.transaction`.)
+adjust : Db -> Store a -> Cond -> List ( String, Int ) -> Task Error Int
+adjust conn (Store s) rawCond deltas =
+    if List.isEmpty deltas then
+        Task.succeed 0
+
+    else
+        let
+            cond = resolveCond s.cols rawCond
+            ( whereSql, whereParams ) = renderCond cond
+            sets = List.map (\( f, d ) -> ( resolveCol s.cols f, d )) deltas
+            setSql =
+                String.join
+                    ", "
+                    (List.map (\( c, _ ) -> c ++ " = " ++ c ++ " + ?") sets)
+            setParams = List.map (\( _, d ) -> Db.SqlInt d) sets
+            sql =
+                "UPDATE " ++ s.name ++ " SET " ++ setSql ++ " WHERE "
+                    ++ whereSql
+        in
+            guardCols
+                s.cols
+                (List.map (\( c, _ ) -> c) sets ++ condCols cond)
+                (Db.exec conn sql (setParams ++ whereParams))
 
 
 -- | Every row, decoded via the codec.
