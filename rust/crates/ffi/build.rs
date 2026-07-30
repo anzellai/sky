@@ -57,6 +57,20 @@ fn main() {
     // dropped by `skip_dir` so the embed carries just `src/` + `sky.toml`.
     stage(&repo.join("sky-bundled"), &dest.join("sky-bundled"));
 
+    // Force `src/assets.rs` to recompile whenever the staged bytes change. It
+    // embeds via `include_dir!`, whose file dependencies rustc does NOT track
+    // (unlike `include_str!`), so a re-staged tree would otherwise keep the OLD
+    // embed until `cargo clean -p ffi`. A content fingerprint emitted as a
+    // `rustc-env` is part of `assets.rs`'s compile command — a changed value
+    // recompiles the crate (the standard build-script pattern, e.g. a baked git
+    // hash), closing the stale-embed gap without the file-`include!` ordering
+    // pitfall (cargo's freshness check runs before the build script regenerates
+    // an OUT_DIR file, so an `include!`d fingerprint misses the first rebuild).
+    println!(
+        "cargo:rustc-env=SKY_EMBED_FINGERPRINT={}",
+        fingerprint(&dest)
+    );
+
     // Re-stage when any source tree changes (new files included).
     rerun(&repo.join("sky-stdlib"));
     rerun(&repo.join("runtime-go"));
@@ -65,6 +79,40 @@ fn main() {
     rerun(&repo.join("sky-bundled"));
     // And when this script itself changes.
     rerun(&manifest.join("build.rs"));
+}
+
+/// Content hash (path + bytes, sorted) of the whole staged tree. Any edit to an
+/// embedded stdlib/runtime/template file changes this, which — via the
+/// `include!`d `embed-fingerprint.rs` — forces `src/assets.rs` to recompile and
+/// re-run its `include_dir!`, so the embed can never go stale after a re-stage.
+fn fingerprint(dir: &Path) -> u64 {
+    use std::hash::Hasher;
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files(dir, &mut files);
+    files.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for f in &files {
+        let rel = f.strip_prefix(dir).unwrap_or(f);
+        h.write(rel.to_string_lossy().as_bytes());
+        if let Ok(bytes) = std::fs::read(f) {
+            h.write_usize(bytes.len());
+            h.write(&bytes);
+        }
+    }
+    h.finish()
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_files(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
 }
 
 fn env(k: &str) -> String {

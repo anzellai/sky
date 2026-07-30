@@ -18,6 +18,16 @@ use include_dir::{include_dir, Dir};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// Content fingerprint of the embedded tree, emitted by `build.rs` as a
+/// `rustc-env`. Referencing `env!("SKY_EMBED_FINGERPRINT")` bakes the value into
+/// this crate's compile command, so a changed fingerprint (any edit to an
+/// embedded stdlib/runtime/template file) forces recompilation — and thus a fresh
+/// `include_dir!` below — instead of leaving a re-staged tree embedded stale until
+/// `cargo clean -p ffi` (`include_dir!` does not register its files as cargo deps).
+pub fn embed_fingerprint() -> &'static str {
+    env!("SKY_EMBED_FINGERPRINT")
+}
+
 /// The staged asset trees, embedded at compile time. Root entries are
 /// `sky-stdlib/`, `runtime-go/`, `tools/`, `templates/` (see `build.rs`).
 static EMBEDDED: Dir<'static> = include_dir!("$OUT_DIR/embedded-assets");
