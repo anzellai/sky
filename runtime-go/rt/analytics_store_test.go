@@ -181,3 +181,32 @@ func TestAnalyticsStorePathResolution(t *testing.T) {
 		t.Errorf("no path configured should fall back to the default: %q", got)
 	}
 }
+
+// TestAnalyticsOpenStore verifies the openStore kernel hands back a working
+// Std.Db handle over the analytics events table (the read/query/update side of
+// Std.Db.Store analytics), and that a row tracked through the normal path is
+// visible via that handle.
+func TestAnalyticsOpenStore(t *testing.T) {
+	defer resetAnalyticsStore()
+	resetAnalyticsStore()
+	t.Setenv("SKY_ANALYTICS_DB_PATH", t.TempDir()+"/analytics.db")
+	analyticsStoreInsert(map[string]any{
+		"event": "purchase", "ts": int64(1), "anonymous_id": "a1", "user_id": "u1",
+	})
+	res := Analytics_openStore(nil).(func() any)()
+	tag, payload, _ := anyResultView(res)
+	if tag != 0 {
+		t.Fatalf("openStore returned Err: %v", payload)
+	}
+	db, ok := payload.(*SkyDb)
+	if !ok || db.conn == nil {
+		t.Fatalf("openStore did not return a *SkyDb with a conn: %T", payload)
+	}
+	var n int
+	if err := db.conn.QueryRow(`SELECT count(*) FROM analytics_events WHERE event='purchase'`).Scan(&n); err != nil {
+		t.Fatalf("query via openStore handle failed: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 purchase event via the Store handle, got %d", n)
+	}
+}

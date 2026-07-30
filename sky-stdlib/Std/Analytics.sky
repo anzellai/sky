@@ -54,11 +54,18 @@ module Std.Analytics exposing
     , uniqueUsers
     , eventCounts
     , recentEvents
+    , AnalyticsEvent
+    , eventsStore
+    , openStore
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
 import Std.Money exposing (Money)
+import Std.Db exposing (Db)
+import Std.Codec as Codec
+import Std.Db.Store as Store exposing (Store)
 
 -- | A typed property value. New scalar kinds (e.g. `Time`) are added as
 -- variants; the pipeline renders each per its type — `Money`, in
@@ -286,3 +293,63 @@ eventCounts =
 recentEvents : Int -> Task Error (List String)
 recentEvents =
     Ffi.kernel "Analytics_recentEvents"
+
+-- ── Query the events on Std.Db.Store ────────────────────────────────────────
+-- | One stored analytics event row. The stdlib-decided ENVELOPE (typed columns
+-- you query directly) plus the OPEN metadata bag: `props` is JSON — whatever keys
+-- your `event`/`trackEvent` put there — and `context` is JSON device / anonymised
+-- IP. Extract JSON props with `Store.selectRaw` + `json_extract` (SQLite) / `->>`
+-- (Postgres); the envelope columns need no JSON.
+type alias AnalyticsEvent =
+    { id : Int
+    , ts : Int
+    , anonymousId : String
+    , userId : String
+    , event : String
+    , props : String
+    , context : String
+    }
+
+
+-- | A `Std.Db.Store` over the analytics events table — so apps, admins and dev
+-- tools can query / aggregate / patch analytics with the SAME typed, "if it
+-- compiles it works" API as any other table, instead of bespoke query kernels.
+-- Pair with `openStore` for the connection:
+--
+-- ```elm
+-- Analytics.openStore ()
+--     |> Task.andThen
+--         (\conn ->
+--             Store.query Analytics.eventsStore
+--                 |> Store.where_ (Store.eq "event" (Db.SqlString "purchase"))
+--                 |> Store.orderDesc "ts"
+--                 |> Store.limit 100
+--                 |> Store.toList conn
+--         )
+-- ```
+--
+-- Aggregates + JSON props go through `Store.selectRaw` (typed projection):
+-- `Store.selectRaw conn tally "SELECT event, COUNT(*) c FROM analytics_events GROUP BY event" []`.
+eventsStore : Store AnalyticsEvent
+eventsStore =
+    Store.fromCodec
+        "analytics_events"
+        (Codec.auto
+            { id = 0
+            , ts = 0
+            , anonymousId = ""
+            , userId = ""
+            , event = ""
+            , props = ""
+            , context = ""
+            })
+        |> Store.serial "id"
+
+
+-- | Open a `Std.Db` connection to the analytics store (the console DB, or the
+-- `[analytics] dbPath` / `SKY_CONSOLE_DB_PATH` override) for use with
+-- `eventsStore`. The consent-gated WRITE path (`track`) stays in the runtime;
+-- this is the read / query / update / aggregate side.
+openStore : () -> Task Error Db
+openStore =
+    Ffi.kernel "Analytics_openStore"

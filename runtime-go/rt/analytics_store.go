@@ -281,6 +281,23 @@ func Analytics_erase(idArg any) any {
 // inherits the same SKY_*_DB_PATH env, so it reads the app's events). Each is a
 // no-op-safe read: no store → an empty/zero result, never an error.
 
+// Analytics_openStore : () -> Task Error Db
+// Hands back a Std.Db handle over the analytics events store (the console DB or
+// the [analytics] dbPath), so apps/admins can query, aggregate (Store.selectRaw)
+// and patch analytics events with Std.Db.Store — the same typed, "if it compiles
+// it works" path as any other table. The consent-gated WRITE (track) stays in the
+// runtime; this is the read / query / update / aggregate side.
+func Analytics_openStore(_ any) any {
+	return func() any {
+		db := analyticsStore()
+		if db == nil {
+			return Err[any, any](ErrIo("analytics store is not configured — set [analytics] dbPath (or SKY_CONSOLE_DB_PATH), or run under the dev console"))
+		}
+		driver, _ := analyticsBackend(analyticsStorePath())
+		return Ok[any, any](&SkyDb{conn: db, driver: driver, name: "analytics"})
+	}
+}
+
 // Analytics_totalEvents : Task Error Int
 func Analytics_totalEvents(_ any) any {
 	return func() any {

@@ -11,7 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.19.2 — Store partial-column update + formatter fix (unreleased)
+## v0.19.2 — Store partial-column update + analytics on Store + formatter fix (unreleased)
+
+### Added — query analytics on `Std.Db.Store`
+
+`Std.Analytics` events are now queryable, aggregatable and patchable with the
+same typed `Std.Db.Store` API as any other table — so building custom insights
+(and our own internal tooling) gets the "if it compiles it works" guarantee
+instead of bespoke query kernels.
+
+- **`Analytics.eventsStore : Store AnalyticsEvent`** — a Store over the
+  `analytics_events` table. `AnalyticsEvent` is the stdlib envelope (typed
+  columns: `id` / `ts` / `event` / `userId` / `anonymousId`) plus the open
+  metadata bag (`props` JSON — any keys your `event`/`trackEvent` emit — and
+  device `context` JSON).
+- **`Analytics.openStore : () -> Task Error Db`** — a connection to the analytics
+  store (the console DB or the `[analytics] dbPath` override), for use with
+  `eventsStore`. Query the envelope columns directly; reach for
+  `Store.selectRaw` + `json_extract`/`->>` for the JSON props — same on SQLite and
+  Postgres. The consent-gated WRITE (`track`) stays in the runtime; this is the
+  read / query / update / aggregate side.
 
 ### Added — `Std.Db.Store` partial-column update
 
