@@ -71,8 +71,22 @@ fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("missing env var {k}"))
 }
 
+/// Emit `cargo:rerun-if-changed` for `p` AND, when it's a directory, every file
+/// beneath it — recursively. A directory-only watch does NOT fire when a file's
+/// CONTENT changes in place (Cargo compares the directory's own mtime, which an
+/// in-place edit leaves untouched), so an edit to e.g. `runtime-go/rt/live.go`
+/// would not re-stage the embedded runtime and the change would silently miss
+/// the next `sky` binary. Watching each file closes that gap; over-watching a
+/// staged-but-filtered file only costs a redundant re-stage, never a stale embed.
 fn rerun(p: &Path) {
     println!("cargo:rerun-if-changed={}", p.display());
+    if p.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(p) {
+            for e in entries.flatten() {
+                rerun(&e.path());
+            }
+        }
+    }
 }
 
 /// Recursively copy `src` → `dst`, applying the shared non-embeddable filter
