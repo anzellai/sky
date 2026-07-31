@@ -76,7 +76,7 @@ landmarks anyway.
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |
 | Logs | `Std.Log` structured logs; `/_sky/console` auto-mounts in dev. |
-| Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent **`Granted` by default** (privacy apps downgrade via a banner + `setConsent`), opt-in Sky.Live auto page-views (`Live.withAnalytics { pageViews = True }` + `Live.withAnalyticsIdentify` to attribute the signed-in user), SQLite store + Sky Console **Analytics** tab. |
+| Product analytics | `Std.Analytics` — typed events (`Money`/`Pii` props), consent **`Granted` by default** (privacy apps downgrade via a banner + `setConsent`), opt-in Sky.Live auto page-views (`Live.withAnalytics { pageViews = True }` + `Live.withAnalyticsIdentify (\model -> Maybe String)` to attribute the signed-in user — `Just id` identifies, `Nothing`/`Just ""` un-identifies so a signed-out session reverts to anonymous), SQLite/Postgres store + Sky Console **Analytics** tab. Query/aggregate stored events with the typed `Std.Db.Store` API — `Analytics.eventsStore : Store AnalyticsEvent` + `Analytics.openStore : () -> Task Error Db` (`recentEvents` returns `List AnalyticsEvent` typed rows, not `List String`). |
 
 ## Database
 
@@ -113,6 +113,9 @@ products =
 --         Store.update conn products p (by PK)  ·  Store.upsert conn products p
 --         Store.delete conn products "id" "p1"  ·  Store.deleteWhere conn products cond
 --         Store.updateWhere conn products cond p  (compound / ownership WHERE)
+-- patch:  Store.setFields conn products pk [("stock", SqlInt 5)]  (by PK — only named cols)
+--         Store.updateFields conn products cond [("status", SqlString "sold")]  (by Cond)
+--         Store.adjust conn products cond [("stock", -qty)]  (atomic SET col = col + delta)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
 --         Store.selectRaw conn projCodec "<any JOIN / GROUP BY SQL>" params
 ```

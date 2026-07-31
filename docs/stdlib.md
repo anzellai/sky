@@ -747,7 +747,9 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
   `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
-  `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), `all`/`findBy` + the
+  `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), **`setFields`/`updateFields`**
+  (partial-column PATCH — `SET` only the named columns, by PK or `Cond`) + **`adjust`**
+  (atomic `SET col = col + delta` for counters/stock/balances), `all`/`findBy` + the
   composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`) +
   **`selectRaw codec sql params`** for typed JOIN/aggregate reads. Deliberately a
   single-table mapper, not an ORM.
@@ -1497,19 +1499,46 @@ without a manual `identify` call — add the `withAnalyticsIdentify` builder:
 |> Live.withAnalyticsIdentify (\model -> Maybe.map .id model.currentUser)  -- model -> Maybe String
 ```
 
-The runtime resolves it against the model on each page-view; `Just id` stamps the
-session user id, `Nothing` leaves it anonymous. It's the app's explicit opt-in for
-attributing the identity it already holds.
+The runtime resolves it against the model on each page-view and it is the session's
+identity authority — symmetric by design: `Just id` stamps the session user id, and
+`Nothing` / `Just ""` **clears** it, reverting the session to anonymous (the cleared
+state persists on the next render). So when a session signs out
+(`model.session` → `Nothing` → resolver returns `Nothing`), subsequent auto
+page-views are anonymous again rather than continuing to attribute to the
+signed-out user. It's the app's explicit opt-in for attributing the identity it
+already holds.
 
 **Sinks + store.** `configure [ StderrSink, FileSink "events.jsonl",
 Custom (\line -> Http.post collector line) ]` fans every event to your
-destinations. A SQLite store persists events — it reuses the console DB by
+destinations. A SQLite/Postgres store persists events — it reuses the console DB by
 default, or a `[analytics] dbPath` override in `sky.toml`. `erase id`
 (right-to-erasure) + `totalEvents` / `uniqueUsers` / `eventCounts` /
 `recentEvents` back an admin view; the Sky Console's **Analytics** tab
-renders totals, per-event counts, the recent stream, and revenue grouped
+renders totals, per-event counts, the recent stream (a `page_view` shows its
+`props.path`, e.g. `page_view  /shop/necklaces`), and revenue grouped
 by currency. Full API + per-binding docs: `sky doc Std.Analytics`. Worked
 example: `examples/52-blog-analytics`.
+
+**Query on Store (v0.19.2).** The read / query / aggregate / patch side of the
+analytics store is plain `Std.Db.Store` — only the consent-gated WRITE (`track`)
+stays in the runtime. Query the stored events with the same typed Store API as any
+other table:
+
+- **`Analytics.eventsStore : Store AnalyticsEvent`** — a Store over the
+  `analytics_events` table. `AnalyticsEvent` is the envelope record with typed
+  columns `id` / `ts` / `event` / `userId` / `anonymousId` plus the open metadata
+  bag `props` (event props JSON) and device `context` (JSON).
+- **`Analytics.openStore : () -> Task Error Db`** — a connection to the analytics
+  store (the console DB, or the `[analytics] dbPath` override), for use with
+  `eventsStore`. Query the envelope columns directly; reach for `Store.selectRaw`
+  + `json_extract` / `->>` for the JSON `props` — same on SQLite and Postgres.
+- The built-in aggregates `totalEvents` / `uniqueUsers` / `eventCounts` /
+  `recentEvents` are now plain `Std.Db.Store` queries over `eventsStore` (Sky, not
+  Go kernels). **Breaking (v0.19.2):** `recentEvents` now returns
+  **`List AnalyticsEvent`** (typed rows — read `.event` / `.ts` / `.userId`)
+  instead of `List String` (JSON-object strings). Rendering code reads fields off
+  the record now — e.g. `e.event ++ " · " ++ String.fromInt e.ts` — rather than
+  treating each item as a JSON string.
 
 ---
 
