@@ -115,8 +115,14 @@ withConsoleAuth =
     Ffi.kernel "Live_withConsoleAuth"
 
 
--- | Hook fired on in-app navigation — `onNavigate path` yields a `msg`.
-withOnNavigate : (String -> msg) -> AppConfig model msg -> AppConfig model msg
+-- | Hook fired on in-app navigation (initial mount, `sky-nav` fetch,
+-- popstate) AFTER the route is applied — the runtime passes the new
+-- `Page` value and dispatches the resulting `msg` through `update`.
+-- Ignore the page (`\_ -> ResetBanner`) to run one effect on every
+-- navigation, or pattern-match it (`\page -> case page of …`) to react
+-- per-destination. The argument is the model's page type, so a bare
+-- `\_ ->` leaves it fully polymorphic.
+withOnNavigate : (page -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnNavigate =
     Ffi.kernel "Live_withOnNavigate"
 
