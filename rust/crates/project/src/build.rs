@@ -753,6 +753,27 @@ fn spawn_pipe_reader(
 /// the runtime's `skyGetenv`/env read (`store` → `LIVE_STORE`, read by
 /// `chooseStore`; `static` → `LIVE_STATIC_DIR`; etc.). A full TOML parse isn't
 /// warranted for these flat keys; unknown shapes are ignored.
+/// Extract a scalar `sky.toml` value: drop an inline `# comment` after the value
+/// and strip a surrounding pair of double quotes. A `#` INSIDE a quoted string is
+/// preserved (`"a#b"` → `a#b`). Without this, a `store = "postgres"   # note`
+/// line seeded `LIVE_STORE=postgres"   # note` — which never matches
+/// `case "postgres"` in the runtime and silently fell back (e.g. sessions to the
+/// in-memory store on a raw-binary deploy).
+fn parse_toml_scalar(raw: &str) -> String {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return rest[..end].to_string();
+        }
+    }
+    // Unquoted: an inline comment ends the value; then trim + strip stray quotes.
+    let body = match s.find('#') {
+        Some(i) => &s[..i],
+        None => s,
+    };
+    body.trim().trim_matches('"').to_string()
+}
+
 fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -764,19 +785,18 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line
-                .trim_matches(['[', ']'])
-                .trim()
-                .trim_matches('"')
-                .to_string();
-            continue;
+        // Section header — tolerate a trailing inline comment after `]`.
+        if line.starts_with('[') {
+            if let Some(end) = line.find(']') {
+                section = line[1..end].trim().trim_matches('"').to_string();
+                continue;
+            }
         }
         let Some((k, v)) = line.split_once('=') else {
             continue;
         };
         let key = k.trim();
-        let val = v.trim().trim_matches('"').to_string();
+        let val = parse_toml_scalar(v);
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
             ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
@@ -1424,6 +1444,43 @@ mod sky_toml_tests {
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scalar_values_strip_inline_comments_and_quotes() {
+        // Regression: a `store = "postgres"  # note` line used to seed
+        // LIVE_STORE=`postgres"       # note`, which never matched `case
+        // "postgres"` in the runtime → silent fallback (in-memory session store)
+        // on a raw-binary deploy. Values must drop the inline comment + quotes;
+        // a `#` INSIDE a quoted value is preserved.
+        let dir = std::env::temp_dir().join(format!("skytoml-comment-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "[live]   # section trailing comment\n\
+             store        = \"postgres\"       # sessions in the shared Postgres\n\
+             ttl          = 2592000          # 30 days\n\
+             static       = public            # bare unquoted value + comment\n\
+             storePath    = \"data/a#b.db\"    # a # inside quotes is preserved\n\
+             [auth]\n\
+             tokenTtl     = \"720h\"           # 30 days\n\
+             driver       = jwt\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        let has = |suffix: &str, value: &str| {
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == suffix && v == value)
+        };
+        assert!(has("LIVE_STORE", "postgres"), "{:?}", cfg.extra_defaults);
+        assert!(has("LIVE_TTL", "2592000"));
+        assert!(has("LIVE_STATIC_DIR", "public"));
+        assert!(has("LIVE_STORE_PATH", "data/a#b.db")); // '#' inside quotes kept
+        assert!(has("AUTH_TOKEN_TTL", "720h"));
+        assert!(has("AUTH_DRIVER", "jwt"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

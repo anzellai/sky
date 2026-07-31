@@ -31,6 +31,20 @@ without `--yes`, and scope to the app's **declared** tables — for a total wipe
 (sessions/analytics/unrelated tables) use the database's own `DROP SCHEMA`. New
 stdlib surface: `Store.resetProject`/`dropProject`/`resetTable`/`dropTable`.
 
+### Fixed — `sky.toml` `[live]`/`[auth]` values with inline comments
+
+A `[live]`/`[auth]`/`[log]`/`[database]` value carrying a trailing `# comment`
+(e.g. `store = "postgres"   # sessions in the shared Postgres`) was baked into the
+emitted `init()` as `SetSkyDefault("LIVE_STORE", "postgres\"   # …")` — the value
+kept the closing quote **and** the comment, so it never matched `case "postgres"`
+in the runtime and the setting silently fell back (e.g. sessions to the in-memory
+store) on a **raw-binary deploy** (running the compiled `sky-out/app` directly,
+not via `sky run`). The scalar parser now drops the inline comment and strips the
+surrounding quotes (a `#` *inside* a quoted value is preserved), and section
+headers tolerate a trailing comment. (`read_sky_toml_config` /
+`parse_toml_scalar` in `crates/project/src/build.rs`; regression
+`scalar_values_strip_inline_comments_and_quotes`.)
+
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
 ### ⚠ Breaking
