@@ -215,6 +215,11 @@ init _req =
     let
         parent = System.getenvOr "SKY_PARENT_URL" ""
         hubDbPath = System.getenvOr "SKY_CONSOLE_HUB_DB" ""
+        -- Set by the runtime's embedded mount path (console.go), right
+        -- where mountConsoleAuthRoutes wires the __Host-sky_console
+        -- cookie + the /_sky/console/_logout route. Empty in standalone
+        -- hub / aggregator mode (no login cookie → no sign-out).
+        logoutUrl = System.getenvOr "SKY_CONSOLE_LOGOUT_URL" ""
         -- v0.16.18 #558-PR4: URL-encode the filter state on the
         -- WRITE side (View.urlSync emits data-sky-query). The
         -- READ side (parse req.query → seed Model) trips Sky HM's
@@ -294,6 +299,7 @@ init _req =
             -- v0.16.18 #558-PR3: empty = no filter.
             , globalQuery = initialQuery
             , analytics = emptyAnalytics
+            , logoutUrl = logoutUrl
             }
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the

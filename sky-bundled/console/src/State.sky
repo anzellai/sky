@@ -378,7 +378,13 @@ type alias Model =
     , nowMs : Int
     , globalQuery : String
     , analytics : Analytics
+    , logoutUrl : String
     }
+    -- Non-empty ONLY in embedded mode, where the runtime mounts a
+    -- __Host-sky_console cookie + a /_sky/console/_logout route and
+    -- injects SKY_CONSOLE_LOGOUT_URL. Standalone hub / aggregator
+    -- consoles have no login cookie, so the value stays "" and the
+    -- header renders no "Sign out" link.
     -- v0.16.18 #558-PR1: global time-range filter applied across
     -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
     -- Cmd.perform Time.unixMillis GotNowMs — the view path uses

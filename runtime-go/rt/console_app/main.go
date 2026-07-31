@@ -268,12 +268,13 @@ type State_Model_R struct {
 	NowMs           int                                      `sky:"nowMs,int"`
 	GlobalQuery     string                                   `sky:"globalQuery,string"`
 	Analytics       State_Analytics_R                        `sky:"analytics,State_Analytics_R"`
+	LogoutUrl       string                                   `sky:"logoutUrl,string"`
 }
 
 func init() { rt.RegisterGobType(State_Model_R{}) }
 
-func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[Std_Live_Console_Identity_R], p15 string, p16 State_Range, p17 int, p18 string, p19 State_Analytics_R) State_Model_R {
-	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, LogFilter: p10, TraceQuery: p11, SelectedService: p12, ServiceStats: p13, Identity: p14, TenantPrefix: p15, Range: p16, NowMs: p17, GlobalQuery: p18, Analytics: p19}
+func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[Std_Live_Console_Identity_R], p15 string, p16 State_Range, p17 int, p18 string, p19 State_Analytics_R, p20 string) State_Model_R {
+	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, LogFilter: p10, TraceQuery: p11, SelectedService: p12, ServiceStats: p13, Identity: p14, TenantPrefix: p15, Range: p16, NowMs: p17, GlobalQuery: p18, Analytics: p19, LogoutUrl: p20}
 }
 
 type State_Msg = rt.SkyADT
@@ -4697,7 +4698,27 @@ func View_header(v_0 State_Model_R) Std_Ui_Element {
 		Left   int
 		Right  int
 		Top    int
-	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold()}, Std_Ui_text("Sky Console")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(View_headerMeta(v_0.Overview)))})
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(16), Std_Ui_Font_bold()}, Std_Ui_text("Sky Console")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(View_headerMeta(v_0.Overview))), func() Std_Ui_Element {
+		if v_0.LogoutUrl == "" {
+			return Std_Ui_none()
+		} else {
+			return Std_Ui_link([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(12), Std_Ui_pointer()}, struct {
+				Label Std_Ui_Element
+				Url   string
+			}{Url: v_0.LogoutUrl, Label: Std_Ui_text("Sign out")})
+		}
+	}()})
+}
+
+func Std_Ui_link(v_0 []Std_Ui_Attribute, v_1 struct {
+	Label Std_Ui_Element
+	Url   string
+}) Std_Ui_Element {
+	return func() Std_Ui_Element {
+		nodeAttrs_2 := /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrAttribute("href", v_1.Url)), any(v_0)))
+		_ = nodeAttrs_2
+		return Std_Ui_Element_TaggedNode("a", Std_Ui_Description_NoDescription(), nodeAttrs_2, []Std_Ui_Element{v_1.Label})
+	}()
 }
 
 func View_headerMeta(v_0 State_Overview_R) string {
@@ -6888,45 +6909,47 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 		_ = parent_1
 		hubDbPath_2 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_HUB_DB"), any("")))
 		_ = hubDbPath_2
-		initialRange_3 := State_Range_Last24h
-		_ = initialRange_3
-		initialQuery_4 := ""
-		_ = initialQuery_4
-		initialService_5 := ""
-		_ = initialService_5
-		chosenStore_6 := func() State_Store_R {
+		logoutUrl_3 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_LOGOUT_URL"), any("")))
+		_ = logoutUrl_3
+		initialRange_4 := State_Range_Last24h
+		_ = initialRange_4
+		initialQuery_5 := ""
+		_ = initialQuery_5
+		initialService_6 := ""
+		_ = initialService_6
+		chosenStore_7 := func() State_Store_R {
 			if hubDbPath_2 != "" {
 				return HubStore_hubStore(hubDbPath_2)
 			} else {
 				return Main_httpStore(parent_1)
 			}
 		}()
-		_ = chosenStore_6
-		isStandalone_7 := ((parent_1 == "") && (hubDbPath_2 == ""))
-		_ = isStandalone_7
-		startModel_8 := State_Model_R{Tab: State_Tab_OverviewTab, ParentUrl: parent_1, HubDbPath: hubDbPath_2, Store: chosenStore_6, Overview: func() State_Overview_R {
-			if isStandalone_7 {
+		_ = chosenStore_7
+		isStandalone_8 := ((parent_1 == "") && (hubDbPath_2 == ""))
+		_ = isStandalone_8
+		startModel_9 := State_Model_R{Tab: State_Tab_OverviewTab, ParentUrl: parent_1, HubDbPath: hubDbPath_2, Store: chosenStore_7, Overview: func() State_Overview_R {
+			if isStandalone_8 {
 				return State_mockOverview()
 			} else {
 				return State_emptyOverview()
 			}
 		}(), Logs: func() []State_LogEntry_R {
-			if isStandalone_7 {
+			if isStandalone_8 {
 				return State_mockLogs()
 			} else {
 				return []State_LogEntry_R{}
 			}
-		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: initialService_5, ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: initialRange_3, NowMs: 0, GlobalQuery: initialQuery_4, Analytics: State_emptyAnalytics()}
-		_ = startModel_8
-		identityCmd_9 := func() any {
+		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: initialService_6, ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: initialRange_4, NowMs: 0, GlobalQuery: initialQuery_5, Analytics: State_emptyAnalytics(), LogoutUrl: logoutUrl_3}
+		_ = startModel_9
+		identityCmd_10 := func() any {
 			if hubDbPath_2 != "" {
 				return rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Std_Live_Console_Identity_R](rt.Hub_currentIdentity(any(hubDbPath_2)))), any(func(_p0 any) State_Msg { return State_Msg_GotIdentity(_p0) }))
 			} else {
 				return rt.Cmd_none()
 			}
 		}()
-		_ = identityCmd_9
-		return rt.T2[State_Model_R, any]{V0: startModel_8, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_8, startModel_8.Tab, startModel_8.LogFilter), identityCmd_9, rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p1 any) State_Msg { return State_Msg_GotNowMs(_p1) }))}))}
+		_ = identityCmd_10
+		return rt.T2[State_Model_R, any]{V0: startModel_9, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_9, startModel_9.Tab, startModel_9.LogFilter), identityCmd_10, rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p1 any) State_Msg { return State_Msg_GotNowMs(_p1) }))}))}
 	}()
 }
 

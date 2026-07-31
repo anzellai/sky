@@ -306,6 +306,12 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// active). Mount BEFORE the inline catch-all so the more-specific
 	// pattern wins in Go's ServeMux longest-prefix-match.
 	mountConsoleAuthRoutes(mux)
+	// Signal the in-process console app that a logout route + login
+	// cookie exist here (embedded mode). The bundled console reads this
+	// at init and renders a "Sign out" link ONLY when it's set — a
+	// standalone hub / aggregator console (which has no login cookie)
+	// never sees it, so it shows no sign-out.
+	os.Setenv("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout")
 
 	// v0.16.1 PR10-F — mount the inline console via the canonical
 	// Sky.Live sub-app primitive. The bundled console's Sky-source

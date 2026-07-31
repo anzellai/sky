@@ -867,6 +867,14 @@ func mountConsoleAuthRoutes(mux *http.ServeMux) {
 		st := loadConsoleAuthState()
 		handleConsoleLogin(w, r, st)
 	})
+	// Sign out: clear the __Host-sky_console cookie, then bounce to the console
+	// landing — which re-renders the login form now that the cookie is gone.
+	// Accepts GET (a "Sign out" link) or POST; clearing an auth cookie is
+	// idempotent and safe, and a CSRF-triggered logout is at worst a re-login.
+	safeMount(mux, "/_sky/console/_logout", func(w http.ResponseWriter, r *http.Request) {
+		clearConsoleV2Cookie(w)
+		http.Redirect(w, r, "/_sky/console/", http.StatusSeeOther)
+	})
 }
 
 // ──── Result/Maybe helpers (Sky → Go) ────────────────────────────

@@ -132,6 +132,20 @@ header model =
               , Font.family "ui-monospace, Menlo, monospace"
               ]
               (Ui.text (headerMeta model.overview))
+
+        -- "Sign out" ONLY in embedded mode (logoutUrl injected by the
+        -- runtime's mountConsoleAuthRoutes path). Standalone hub /
+        -- aggregator consoles have no login cookie to clear, so they
+        -- render nothing here. Plain <a> (no sky-nav) → full navigation
+        -- to the runtime logout route, which clears the
+        -- __Host-sky_console cookie and bounces to the login form.
+        , if model.logoutUrl == "" then
+            Ui.none
+
+          else
+            Ui.link
+                [ Font.color textSecondary, Font.size 12, Ui.pointer ]
+                { url = model.logoutUrl, label = Ui.text "Sign out" }
         ]
 
 
