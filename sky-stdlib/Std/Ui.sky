@@ -969,7 +969,16 @@ button attrs cfg =
 
                 Nothing ->
                     [ AttrAttribute "disabled" "true" ]
-        allAttrs = clickAttr ++ pointer :: attrs
+        -- Default `type="button"` so a `Ui.button` placed inside a
+        -- `Ui.form` does NOT implicitly submit it (an HTML `<button>`
+        -- defaults to `type="submit"`). Without this, an in-form action
+        -- button — e.g. a "Cancel" that dispatches its own `onPress`
+        -- Msg — ALSO triggers the form's `onSubmit`, firing two Msgs
+        -- (or the wrong one). Prepended so a caller who genuinely wants
+        -- a submit button can still override with
+        -- `Ui.htmlAttribute "type" "submit"` (later attrs win at render).
+        allAttrs =
+            AttrAttribute "type" "button" :: clickAttr ++ pointer :: attrs
     in
         TaggedNode "button" NoDescription allAttrs [ cfg.label ]
 
