@@ -62,6 +62,8 @@ module Std.Analytics exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
 import Std.Money exposing (Money)
 import Std.Db exposing (Db)
 import Std.Codec as Codec
@@ -266,33 +268,63 @@ erase =
 -- Common aggregates over the local store — enough for an admin view or the
 -- console's "verify + counts". Deep questions (funnels at scale, retention,
 -- cohorts) are an export concern: send events to a warehouse and query there.
--- Each returns an empty / zero result when no store is configured.
+-- These are plain `Std.Db.Store` queries over `eventsStore` (v0.19.2) — so a
+-- schema change is caught at compile time, and you can build your own beyond
+-- these with `eventsStore` + `openStore`. Each falls back to an empty / zero
+-- result when no analytics store is configured.
 -- | Total number of captured events in the store.
 totalEvents : () -> Task Error Int
-totalEvents =
-    Ffi.kernel "Analytics_totalEvents"
+totalEvents _ =
+    (openStore ()
+        |> Task.andThen (\conn -> Store.count conn (Store.query eventsStore)))
+        |> Task.onError (\_ -> Task.succeed 0)
 
 
 -- | Count of DISTINCT identified users (events captured after `identify` under
 -- `Granted` consent).
 uniqueUsers : () -> Task Error Int
-uniqueUsers =
-    Ffi.kernel "Analytics_uniqueUsers"
+uniqueUsers _ =
+    (openStore ()
+        |> Task.andThen
+               (\conn ->
+                   Store.selectRaw
+                       conn
+                       (Codec.auto { n = 0 })
+                       "SELECT COUNT(DISTINCT user_id) AS n FROM analytics_events WHERE user_id <> ''"
+                       [])
+        |> Task.map
+               (\rows -> Maybe.withDefault 0 (List.head (List.map .n rows))))
+        |> Task.onError (\_ -> Task.succeed 0)
 
 
 -- | Count per event name, most frequent first — e.g. `[ ("page_view", 128),
 -- ("product_viewed", 42), ... ]`.
 eventCounts : () -> Task Error (List ( String, Int ))
-eventCounts =
-    Ffi.kernel "Analytics_eventCounts"
+eventCounts _ =
+    (openStore ()
+        |> Task.andThen
+               (\conn ->
+                   Store.selectRaw
+                       conn
+                       (Codec.auto { event = "", n = 0 })
+                       "SELECT event, COUNT(*) AS n FROM analytics_events GROUP BY event ORDER BY n DESC"
+                       [])
+        |> Task.map (List.map (\r -> ( r.event, r.n ))))
+        |> Task.onError (\_ -> Task.succeed [])
 
 
--- | The last N events, each a JSON object string (ts, event, and any of
--- anonymous_id / user_id / props / context). Decode with `Sky.Core.Json.Decode`
--- or render as-is; the newest event is first.
-recentEvents : Int -> Task Error (List String)
-recentEvents =
-    Ffi.kernel "Analytics_recentEvents"
+-- | The last `n` events as TYPED `AnalyticsEvent` rows (v0.19.2 — previously
+-- JSON-object strings), newest first. Read `.event` / `.ts` / `.userId` directly;
+-- `.props` / `.context` remain JSON text (decode with `Sky.Core.Json.Decode`).
+recentEvents : Int -> Task Error (List AnalyticsEvent)
+recentEvents n =
+    (openStore ()
+        |> Task.andThen
+               (\conn ->
+                   Store.query eventsStore |> Store.orderDesc "id"
+                       |> Store.limit n
+                       |> Store.toList conn))
+        |> Task.onError (\_ -> Task.succeed [])
 
 -- ── Query the events on Std.Db.Store ────────────────────────────────────────
 -- | One stored analytics event row. The stdlib-decided ENVELOPE (typed columns

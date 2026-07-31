@@ -2,73 +2,9 @@ package rt
 
 import (
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 )
-
-func analyticsOkInt(t *testing.T, task any) int {
-	t.Helper()
-	res := any(anyTaskInvoke(task))
-	sr, ok := res.(SkyResult[any, any])
-	if !ok || sr.Tag != 0 {
-		t.Fatalf("task failed: %v", res)
-	}
-	return AsInt(sr.OkValue)
-}
-
-func analyticsOkList(t *testing.T, task any) []any {
-	t.Helper()
-	res := any(anyTaskInvoke(task))
-	sr, ok := res.(SkyResult[any, any])
-	if !ok || sr.Tag != 0 {
-		t.Fatalf("task failed: %v", res)
-	}
-	l, _ := sr.OkValue.([]any)
-	return l
-}
-
-// TestAnalyticsQueries — the aggregate helpers over the store.
-func TestAnalyticsQueries(t *testing.T) {
-	defer resetAnalyticsStore()
-	resetAnalyticsStore()
-	path := filepath.Join(t.TempDir(), "q.db")
-	t.Setenv("SKY_ANALYTICS_DB_PATH", path)
-	_ = analyticsStore()
-
-	analyticsStoreInsert(map[string]any{"ts": int64(1), "event": "page_view", "anonymous_id": "a1", "user_id": "u1"})
-	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "page_view", "anonymous_id": "a1", "user_id": "u1"})
-	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "page_view", "anonymous_id": "a2"})
-	analyticsStoreInsert(map[string]any{"ts": int64(4), "event": "signup", "anonymous_id": "a2", "user_id": "u2", "props": map[string]any{"plan": "pro"}})
-
-	if n := analyticsOkInt(t, Analytics_totalEvents(nil)); n != 4 {
-		t.Errorf("totalEvents = %d, want 4", n)
-	}
-	if n := analyticsOkInt(t, Analytics_uniqueUsers(nil)); n != 2 {
-		t.Errorf("uniqueUsers = %d, want 2 (u1,u2)", n)
-	}
-
-	counts := analyticsOkList(t, Analytics_eventCounts(nil))
-	if len(counts) != 2 {
-		t.Fatalf("eventCounts len = %d, want 2", len(counts))
-	}
-	top, _ := counts[0].(SkyTuple2)
-	if top.V0 != "page_view" || AsInt(top.V1) != 3 {
-		t.Errorf("top count = (%v, %v), want (page_view, 3)", top.V0, top.V1)
-	}
-
-	recent := analyticsOkList(t, Analytics_recentEvents(int64(10)))
-	if len(recent) != 4 {
-		t.Fatalf("recentEvents len = %d, want 4", len(recent))
-	}
-	newest, _ := recent[0].(string)
-	if !strings.Contains(newest, `"event":"signup"`) {
-		t.Errorf("newest should be signup: %s", newest)
-	}
-	if !strings.Contains(newest, `"plan":"pro"`) {
-		t.Errorf("props not embedded as JSON object: %s", newest)
-	}
-}
 
 func resetAnalyticsStore() {
 	if analyticsStoreDB != nil {

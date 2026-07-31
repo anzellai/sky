@@ -31,6 +31,12 @@ instead of bespoke query kernels.
   `Store.selectRaw` + `json_extract`/`->>` for the JSON props — same on SQLite and
   Postgres. The consent-gated WRITE (`track`) stays in the runtime; this is the
   read / query / update / aggregate side.
+- The built-in aggregates **`totalEvents` / `uniqueUsers` / `eventCounts` /
+  `recentEvents` are now plain `Std.Db.Store` queries over `eventsStore`** (Sky,
+  not Go kernels) — so a schema change is caught at compile time and they're a
+  worked example of the Store API. **Breaking:** `recentEvents` now returns
+  **`List AnalyticsEvent`** (typed rows — read `.event`/`.ts`/`.userId`) instead
+  of `List String` (JSON-object strings); `.props`/`.context` stay JSON text.
 
 ### Added — `Std.Db.Store` partial-column update
 

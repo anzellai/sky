@@ -51,7 +51,7 @@ type alias Model =
     , adminError : String
     , total : Int
     , counts : List ( String, Int )
-    , recent : List String
+    , recent : List Analytics.AnalyticsEvent
     }
 
 type alias Creds =
@@ -190,7 +190,7 @@ loadTotal =
             0
 
 
-loadRecent : List String
+loadRecent : List Analytics.AnalyticsEvent
 loadRecent =
     case Task.run (Analytics.recentEvents 8) of
 
@@ -485,7 +485,12 @@ dashboardView model =
               , Font.family Font.monospace
               , Ui.scrollbarX
               ]
-              (List.map (\line -> Ui.el [] (Ui.text line)) model.recent)
+              (List.map
+                  (\e ->
+                      Ui.el
+                          []
+                          (Ui.text (e.event ++ "  ·  " ++ String.fromInt e.ts)))
+                  model.recent)
         ]
 
 
