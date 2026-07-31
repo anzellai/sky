@@ -1338,7 +1338,7 @@ func Log_debugWith(msg any, attrs any) any {
 	capturedMsg, capturedAttrs := msg, attrs
 	return func() any {
 		logEmit(logLevelDebug, "debug",
-			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -1347,7 +1347,7 @@ func Log_infoWith(msg any, attrs any) any {
 	capturedMsg, capturedAttrs := msg, attrs
 	return func() any {
 		logEmit(logLevelInfo, "info",
-			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -1356,28 +1356,61 @@ func Log_warnWith(msg any, attrs any) any {
 	capturedMsg, capturedAttrs := msg, attrs
 	return func() any {
 		logEmit(logLevelWarn, "warn",
-			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
 		return Ok[any, any](struct{}{})
 	}
 }
 
-// renderLogMsgWithAttrs flattens (msg, [k1,v1,k2,v2,...]) into a
-// single text string the existing logEmit pipeline can ship. The
-// JSON driver path (logEmit branch on SKY_LOG_FORMAT=json) sees the
-// same string today; structured-fields-as-JSON-object is a v0.11+
-// improvement.
-func renderLogMsgWithAttrs(msg any, attrs any) string {
-	out := fmt.Sprintf("%v", msg)
-	if xs, ok := attrs.([]any); ok && len(xs) > 0 {
-		var sb strings.Builder
-		sb.WriteString(out)
-		for _, a := range xs {
-			sb.WriteString(" ")
-			sb.WriteString(fmt.Sprintf("%v", a))
-		}
-		return sb.String()
+// logAttrsToMap turns a Sky structured-log `attrs` argument into the
+// `map[string]any` field bag `logEmit` renders (as a JSON object under
+// SKY_LOG_FORMAT=json, or as ` k=v` suffixes in plain text). It accepts
+// BOTH shapes Sky code produces:
+//
+//   - the `*With` list form `[ "k1", v1, "k2", v2, … ]` — paired into a
+//     map. A homogeneous list (all strings) lowers to Go `[]string`, a
+//     mixed list to `[]any`; reflection handles either, so attrs are no
+//     longer silently dropped when the assertion `attrs.([]any)` fails
+//     (the pre-fix bug — every structured field vanished for the common
+//     all-string case).
+//   - the `Log.with` `Dict String any` form — already a Go map.
+//
+// A trailing odd key (no value) maps to "". Returns nil for empty/unknown
+// shapes so logEmit emits just the message.
+func logAttrsToMap(attrs any) map[string]any {
+	if attrs == nil {
+		return nil
 	}
-	return out
+	if m, ok := attrs.(map[string]any); ok {
+		return m
+	}
+	rv := reflect.ValueOf(attrs)
+	switch rv.Kind() {
+	case reflect.Map:
+		if rv.Len() == 0 {
+			return nil
+		}
+		m := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			m[fmt.Sprintf("%v", iter.Key().Interface())] = iter.Value().Interface()
+		}
+		return m
+	case reflect.Slice, reflect.Array:
+		n := rv.Len()
+		if n == 0 {
+			return nil
+		}
+		m := make(map[string]any, (n+1)/2)
+		for i := 0; i+1 < n; i += 2 {
+			m[fmt.Sprintf("%v", rv.Index(i).Interface())] = rv.Index(i + 1).Interface()
+		}
+		if n%2 == 1 {
+			m[fmt.Sprintf("%v", rv.Index(n-1).Interface())] = ""
+		}
+		return m
+	default:
+		return nil
+	}
 }
 
 // Log.with : String -> Dict String any -> Task Error ()
@@ -1387,7 +1420,7 @@ func renderLogMsgWithAttrs(msg any, attrs any) string {
 func Log_with(msg any, ctx any) any {
 	capturedMsg, capturedCtx := msg, ctx
 	return func() any {
-		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedCtx))
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -1396,7 +1429,7 @@ func Log_with(msg any, ctx any) any {
 func Log_errorWith(msg any, ctx any) any {
 	capturedMsg, capturedCtx := msg, ctx
 	return func() any {
-		logEmit(logLevelError, "error", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedCtx))
 		return Ok[any, any](struct{}{})
 	}
 }
