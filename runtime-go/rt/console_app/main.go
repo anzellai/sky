@@ -61,8 +61,8 @@ func init() {
 }
 
 type Sky_Core_Error_ErrorInfo_R struct {
-	Message string
-	Details rt.SkyMaybe[Sky_Core_Error_ErrorDetails]
+	Message string                                   `sky:"message,string"`
+	Details rt.SkyMaybe[Sky_Core_Error_ErrorDetails] `sky:"details,rt.SkyMaybe[Sky_Core_Error_ErrorDetails]"`
 }
 
 func init() { rt.RegisterGobType(Sky_Core_Error_ErrorInfo_R{}) }
@@ -87,9 +87,13 @@ const (
 	Sky_Core_Error_ErrorKind_Unexpected
 )
 
+func init() {
+	rt.RegisterEnum("Sky_Core_Error_ErrorKind", []string{"Io", "Network", "Ffi", "Decode", "Timeout", "NotFound", "PermissionDenied", "InvalidInput", "Conflict", "Unavailable", "Unexpected"})
+}
+
 type Sky_Core_Error_PanicInfo_R struct {
-	Message string
-	Stack   []string
+	Message string   `sky:"message,string"`
+	Stack   []string `sky:"stack,[]string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Core_Error_PanicInfo_R{}) }
@@ -99,8 +103,8 @@ func Sky_Core_Error_PanicInfo(p0 string, p1 []string) Sky_Core_Error_PanicInfo_R
 }
 
 type Sky_Core_Error_TypeInfo_R struct {
-	Expected string
-	Actual   string
+	Expected string `sky:"expected,string"`
+	Actual   string `sky:"actual,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Core_Error_TypeInfo_R{}) }
@@ -110,9 +114,9 @@ func Sky_Core_Error_TypeInfo(p0 string, p1 string) Sky_Core_Error_TypeInfo_R {
 }
 
 type Sky_Core_Http_HttpResponse_R struct {
-	Status  int
-	Body    string
-	Headers map[string]string
+	Status  int               `sky:"status,int"`
+	Body    string            `sky:"body,string"`
+	Headers map[string]string `sky:"headers,map[string]string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
@@ -122,23 +126,24 @@ func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Cor
 }
 
 type State_AnalyticsEvent_R struct {
-	Ts     int
-	Event  string
-	UserId string
+	Ts     int    `sky:"ts,int"`
+	Event  string `sky:"event,string"`
+	UserId string `sky:"userId,string"`
+	Path   string `sky:"path,string"`
 }
 
 func init() { rt.RegisterGobType(State_AnalyticsEvent_R{}) }
 
-func State_AnalyticsEvent(p0 int, p1 string, p2 string) State_AnalyticsEvent_R {
-	return State_AnalyticsEvent_R{Ts: p0, Event: p1, UserId: p2}
+func State_AnalyticsEvent(p0 int, p1 string, p2 string, p3 string) State_AnalyticsEvent_R {
+	return State_AnalyticsEvent_R{Ts: p0, Event: p1, UserId: p2, Path: p3}
 }
 
 type State_Analytics_R struct {
-	Total       int
-	UniqueUsers int
-	Counts      []State_EventCount_R
-	Recent      []State_AnalyticsEvent_R
-	Revenue     []State_CurrencyTotal_R
+	Total       int                      `sky:"total,int"`
+	UniqueUsers int                      `sky:"uniqueUsers,int"`
+	Counts      []State_EventCount_R     `sky:"counts,[]State_EventCount_R"`
+	Recent      []State_AnalyticsEvent_R `sky:"recent,[]State_AnalyticsEvent_R"`
+	Revenue     []State_CurrencyTotal_R  `sky:"revenue,[]State_CurrencyTotal_R"`
 }
 
 func init() { rt.RegisterGobType(State_Analytics_R{}) }
@@ -148,9 +153,9 @@ func State_Analytics(p0 int, p1 int, p2 []State_EventCount_R, p3 []State_Analyti
 }
 
 type State_CurrencyTotal_R struct {
-	Currency string
-	Amount   string
-	Count    int
+	Currency string `sky:"currency,string"`
+	Amount   string `sky:"amount,string"`
+	Count    int    `sky:"count,int"`
 }
 
 func init() { rt.RegisterGobType(State_CurrencyTotal_R{}) }
@@ -160,8 +165,8 @@ func State_CurrencyTotal(p0 string, p1 string, p2 int) State_CurrencyTotal_R {
 }
 
 type State_ErrorRow_R struct {
-	Count   int
-	Message string
+	Count   int    `sky:"count,int"`
+	Message string `sky:"message,string"`
 }
 
 func init() { rt.RegisterGobType(State_ErrorRow_R{}) }
@@ -171,8 +176,8 @@ func State_ErrorRow(p0 int, p1 string) State_ErrorRow_R {
 }
 
 type State_EventCount_R struct {
-	Event string
-	Count int
+	Event string `sky:"event,string"`
+	Count int    `sky:"count,int"`
 }
 
 func init() { rt.RegisterGobType(State_EventCount_R{}) }
@@ -182,9 +187,9 @@ func State_EventCount(p0 string, p1 int) State_EventCount_R {
 }
 
 type State_Identity_R struct {
-	Subject string
-	Email   string
-	Claims  map[string]string
+	Subject string            `sky:"subject,string"`
+	Email   string            `sky:"email,string"`
+	Claims  map[string]string `sky:"claims,map[string]string"`
 }
 
 func init() { rt.RegisterGobType(State_Identity_R{}) }
@@ -194,16 +199,16 @@ func State_Identity(p0 string, p1 string, p2 map[string]string) State_Identity_R
 }
 
 type State_LogEntry_R struct {
-	Time      string
-	Level     string
-	Message   string
-	Subapp    string
-	ReqId     string
-	SessionId string
-	UserLabel string
-	Route     string
-	Status    float64
-	LatencyMs float64
+	Time      string  `sky:"time,string"`
+	Level     string  `sky:"level,string"`
+	Message   string  `sky:"message,string"`
+	Subapp    string  `sky:"subapp,string"`
+	ReqId     string  `sky:"reqId,string"`
+	SessionId string  `sky:"sessionId,string"`
+	UserLabel string  `sky:"userLabel,string"`
+	Route     string  `sky:"route,string"`
+	Status    float64 `sky:"status,float64"`
+	LatencyMs float64 `sky:"latencyMs,float64"`
 }
 
 func init() { rt.RegisterGobType(State_LogEntry_R{}) }
@@ -213,12 +218,12 @@ func State_LogEntry(p0 string, p1 string, p2 string, p3 string, p4 string, p5 st
 }
 
 type State_LogFilter_R struct {
-	Query     string
-	Session   string
-	ShowDebug bool
-	ShowInfo  bool
-	ShowWarn  bool
-	ShowError bool
+	Query     string `sky:"query,string"`
+	Session   string `sky:"session,string"`
+	ShowDebug bool   `sky:"showDebug,bool"`
+	ShowInfo  bool   `sky:"showInfo,bool"`
+	ShowWarn  bool   `sky:"showWarn,bool"`
+	ShowError bool   `sky:"showError,bool"`
 }
 
 func init() { rt.RegisterGobType(State_LogFilter_R{}) }
@@ -228,12 +233,12 @@ func State_LogFilter(p0 string, p1 string, p2 bool, p3 bool, p4 bool, p5 bool) S
 }
 
 type State_MetricRow_R struct {
-	Name   string
-	Typ    string
-	Labels string
-	Value  float64
-	Sum    float64
-	Count  float64
+	Name   string  `sky:"name,string"`
+	Typ    string  `sky:"typ,string"`
+	Labels string  `sky:"labels,string"`
+	Value  float64 `sky:"value,float64"`
+	Sum    float64 `sky:"sum,float64"`
+	Count  float64 `sky:"count,float64"`
 }
 
 func init() { rt.RegisterGobType(State_MetricRow_R{}) }
@@ -243,26 +248,26 @@ func State_MetricRow(p0 string, p1 string, p2 string, p3 float64, p4 float64, p5
 }
 
 type State_Model_R struct {
-	Tab             State_Tab
-	ParentUrl       string
-	HubDbPath       string
-	Store           State_Store_R
-	Overview        State_Overview_R
-	Logs            []State_LogEntry_R
-	Metrics         []State_MetricRow_R
-	Traces          []State_TraceRow_R
-	Errors          []State_ErrorRow_R
-	LastError       string
-	LogFilter       State_LogFilter_R
-	TraceQuery      string
-	SelectedService string
-	ServiceStats    []State_ServiceStat_R
-	Identity        rt.SkyMaybe[Std_Live_Console_Identity_R]
-	TenantPrefix    string
-	Range           State_Range
-	NowMs           int
-	GlobalQuery     string
-	Analytics       State_Analytics_R
+	Tab             State_Tab                                `sky:"tab,State_Tab"`
+	ParentUrl       string                                   `sky:"parentUrl,string"`
+	HubDbPath       string                                   `sky:"hubDbPath,string"`
+	Store           State_Store_R                            `sky:"store,State_Store_R"`
+	Overview        State_Overview_R                         `sky:"overview,State_Overview_R"`
+	Logs            []State_LogEntry_R                       `sky:"logs,[]State_LogEntry_R"`
+	Metrics         []State_MetricRow_R                      `sky:"metrics,[]State_MetricRow_R"`
+	Traces          []State_TraceRow_R                       `sky:"traces,[]State_TraceRow_R"`
+	Errors          []State_ErrorRow_R                       `sky:"errors,[]State_ErrorRow_R"`
+	LastError       string                                   `sky:"lastError,string"`
+	LogFilter       State_LogFilter_R                        `sky:"logFilter,State_LogFilter_R"`
+	TraceQuery      string                                   `sky:"traceQuery,string"`
+	SelectedService string                                   `sky:"selectedService,string"`
+	ServiceStats    []State_ServiceStat_R                    `sky:"serviceStats,[]State_ServiceStat_R"`
+	Identity        rt.SkyMaybe[Std_Live_Console_Identity_R] `sky:"identity,rt.SkyMaybe[Std_Live_Console_Identity_R]"`
+	TenantPrefix    string                                   `sky:"tenantPrefix,string"`
+	Range           State_Range                              `sky:"range,State_Range"`
+	NowMs           int                                      `sky:"nowMs,int"`
+	GlobalQuery     string                                   `sky:"globalQuery,string"`
+	Analytics       State_Analytics_R                        `sky:"analytics,State_Analytics_R"`
 }
 
 func init() { rt.RegisterGobType(State_Model_R{}) }
@@ -395,15 +400,15 @@ func init() {
 }
 
 type State_Overview_R struct {
-	SkyVersion      string
-	Commit          string
-	BuiltAt         string
-	UptimeSeconds   int
-	RequestsTotal   int
-	ErrorRate5xx    float64
-	BufferLogUsed   int
-	BufferTraceUsed int
-	ProductionMode  bool
+	SkyVersion      string  `sky:"skyVersion,string"`
+	Commit          string  `sky:"commit,string"`
+	BuiltAt         string  `sky:"builtAt,string"`
+	UptimeSeconds   int     `sky:"uptimeSeconds,int"`
+	RequestsTotal   int     `sky:"requestsTotal,int"`
+	ErrorRate5xx    float64 `sky:"errorRate5xx,float64"`
+	BufferLogUsed   int     `sky:"bufferLogUsed,int"`
+	BufferTraceUsed int     `sky:"bufferTraceUsed,int"`
+	ProductionMode  bool    `sky:"productionMode,bool"`
 }
 
 func init() { rt.RegisterGobType(State_Overview_R{}) }
@@ -422,14 +427,18 @@ const (
 	State_Range_RangeAll
 )
 
+func init() {
+	rt.RegisterEnum("State_Range", []string{"Last15m", "Last1h", "Last24h", "Last7d", "RangeAll"})
+}
+
 type State_ServiceStat_R struct {
-	Name       string
-	Status     string
-	ReqsPerSec float64
-	P95Ms      float64
-	ErrorRate  float64
-	SparkRps   []float64
-	SparkP95   []float64
+	Name       string    `sky:"name,string"`
+	Status     string    `sky:"status,string"`
+	ReqsPerSec float64   `sky:"reqsPerSec,float64"`
+	P95Ms      float64   `sky:"p95Ms,float64"`
+	ErrorRate  float64   `sky:"errorRate,float64"`
+	SparkRps   []float64 `sky:"sparkRps,[]float64"`
+	SparkP95   []float64 `sky:"sparkP95,[]float64"`
 }
 
 func init() { rt.RegisterGobType(State_ServiceStat_R{}) }
@@ -439,18 +448,18 @@ func State_ServiceStat(p0 string, p1 string, p2 float64, p3 float64, p4 float64,
 }
 
 type State_Store_R struct {
-	ReadOverview        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]
-	ReadLogs            func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]
-	ReadMetrics         func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]
-	ReadTraces          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]
-	ReadErrors          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]
-	ListServices        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]
-	ReadServiceStats    func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]
-	ReadFilteredLogs    func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]
-	ReadFilteredMetrics func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]
-	ReadFilteredTraces  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]
-	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]
-	ReadAnalytics       func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]
+	ReadOverview        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]                    `sky:"readOverview,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]"`
+	ReadLogs            func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]         `sky:"readLogs,func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
+	ReadMetrics         func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                 `sky:"readMetrics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
+	ReadTraces          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                  `sky:"readTraces,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
+	ReadErrors          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                  `sky:"readErrors,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
+	ListServices        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                            `sky:"listServices,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
+	ReadServiceStats    func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]               `sky:"readServiceStats,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]"`
+	ReadFilteredLogs    func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] `sky:"readFilteredLogs,func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
+	ReadFilteredMetrics func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                   `sky:"readFilteredMetrics,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
+	ReadFilteredTraces  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                    `sky:"readFilteredTraces,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
+	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                    `sky:"readFilteredErrors,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
+	ReadAnalytics       func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]                   `sky:"readAnalytics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]"`
 }
 
 func init() { rt.RegisterGobType(State_Store_R{}) }
@@ -470,15 +479,19 @@ const (
 	State_Tab_AnalyticsTab
 )
 
+func init() {
+	rt.RegisterEnum("State_Tab", []string{"OverviewTab", "MetricsTab", "LogsTab", "TracesTab", "ErrorsTab", "AnalyticsTab"})
+}
+
 type State_TraceRow_R struct {
-	TraceId    string
-	SpanId     string
-	ParentId   string
-	Name       string
-	Kind       string
-	StartTime  string
-	DurationMs float64
-	Status     string
+	TraceId    string  `sky:"traceId,string"`
+	SpanId     string  `sky:"spanId,string"`
+	ParentId   string  `sky:"parentId,string"`
+	Name       string  `sky:"name,string"`
+	Kind       string  `sky:"kind,string"`
+	StartTime  string  `sky:"startTime,string"`
+	DurationMs float64 `sky:"durationMs,float64"`
+	Status     string  `sky:"status,string"`
 }
 
 func init() { rt.RegisterGobType(State_TraceRow_R{}) }
@@ -569,9 +582,9 @@ func init() {
 }
 
 type Std_Live_Console_Identity_R struct {
-	Subject string
-	Email   string
-	Claims  map[string]string
+	Subject string            `sky:"subject,string"`
+	Email   string            `sky:"email,string"`
+	Claims  map[string]string `sky:"claims,map[string]string"`
 }
 
 func init() { rt.RegisterGobType(Std_Live_Console_Identity_R{}) }
@@ -825,12 +838,12 @@ func init() {
 }
 
 type Std_Ui_Chart_Cfg_R struct {
-	Width     int
-	Height    int
-	Color     Std_Ui_Color
-	Title     rt.SkyMaybe[string]
-	YRange    rt.SkyMaybe[rt.T2[float64, float64]]
-	GridLines bool
+	Width     int                                  `sky:"width,int"`
+	Height    int                                  `sky:"height,int"`
+	Color     Std_Ui_Color                         `sky:"color,Std_Ui_Color"`
+	Title     rt.SkyMaybe[string]                  `sky:"title,rt.SkyMaybe[string]"`
+	YRange    rt.SkyMaybe[rt.T2[float64, float64]] `sky:"yRange,rt.SkyMaybe[rt.T2[float64, float64]]"`
+	GridLines bool                                 `sky:"gridLines,bool"`
 }
 
 func init() { rt.RegisterGobType(Std_Ui_Chart_Cfg_R{}) }
@@ -840,9 +853,9 @@ func Std_Ui_Chart_Cfg(p0 int, p1 int, p2 Std_Ui_Color, p3 rt.SkyMaybe[string], p
 }
 
 type Std_Ui_Chart_Series_R struct {
-	Points []rt.T2[float64, float64]
-	Label  rt.SkyMaybe[string]
-	Color  rt.SkyMaybe[Std_Ui_Color]
+	Points []rt.T2[float64, float64] `sky:"points,[]rt.T2[float64, float64]"`
+	Label  rt.SkyMaybe[string]       `sky:"label,rt.SkyMaybe[string]"`
+	Color  rt.SkyMaybe[Std_Ui_Color] `sky:"color,rt.SkyMaybe[Std_Ui_Color]"`
 }
 
 func init() { rt.RegisterGobType(Std_Ui_Chart_Series_R{}) }
@@ -973,6 +986,8 @@ const (
 	Std_Ui_HAlign_AlignRight
 )
 
+func init() { rt.RegisterEnum("Std_Ui_HAlign", []string{"AlignLeft", "CenterX", "AlignRight"}) }
+
 type Std_Ui_LayoutContext = int
 
 const (
@@ -982,6 +997,10 @@ const (
 	Std_Ui_LayoutContext_AsParagraph
 	Std_Ui_LayoutContext_AsTextColumn
 )
+
+func init() {
+	rt.RegisterEnum("Std_Ui_LayoutContext", []string{"AsRow", "AsColumn", "AsEl", "AsParagraph", "AsTextColumn"})
+}
 
 type Std_Ui_Length = rt.SkyADT
 
@@ -1041,6 +1060,10 @@ const (
 	Std_Ui_Location_Behind
 )
 
+func init() {
+	rt.RegisterEnum("Std_Ui_Location", []string{"Above", "Below", "OnRight", "OnLeft", "InFront", "Behind"})
+}
+
 type Std_Ui_PseudoClass = int
 
 const (
@@ -1051,6 +1074,10 @@ const (
 	Std_Ui_PseudoClass_Disabled
 )
 
+func init() {
+	rt.RegisterEnum("Std_Ui_PseudoClass", []string{"Hover", "Focus", "FocusVisible", "Active", "Disabled"})
+}
+
 type Std_Ui_VAlign = int
 
 const (
@@ -1058,6 +1085,8 @@ const (
 	Std_Ui_VAlign_CenterY
 	Std_Ui_VAlign_AlignBottom
 )
+
+func init() { rt.RegisterEnum("Std_Ui_VAlign", []string{"AlignTop", "CenterY", "AlignBottom"}) }
 
 // SKY-ORIGIN: entry
 
@@ -1377,7 +1406,13 @@ func AnalyticsTab_recentRowView(v_0 State_AnalyticsEvent_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AnalyticsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(13), Std_Ui_Font_color(AnalyticsTab_textSecondary()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Event)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(who_1))})
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AnalyticsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(8)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(AnalyticsTab_textSecondary()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Event)), func() Std_Ui_Element {
+			if v_0.Path == "" {
+				return Std_Ui_none()
+			} else {
+				return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Path))
+			}
+		}()}), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(who_1))})
 	}()
 }
 
@@ -1431,10 +1466,24 @@ func AnalyticsTab_textSecondary() Std_Ui_Color {
 	return AnalyticsTab_textSecondary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(197, 203, 212) })
 }
 
+func Std_Ui_spacing(v_0 int) Std_Ui_Attribute {
+	return Std_Ui_Attribute_AttrSpacing(v_0)
+}
+
 var Std_Ui_fill__caf rt.LazyCaf[Std_Ui_Length]
 
 func Std_Ui_fill() Std_Ui_Length {
 	return Std_Ui_fill__caf.Get(func() Std_Ui_Length { return Std_Ui_Length_Fill(1) })
+}
+
+func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_rowMarker()), any(v_0)), v_1)
+}
+
+var Std_Ui_rowMarker__caf rt.LazyCaf[Std_Ui_Attribute]
+
+func Std_Ui_rowMarker() Std_Ui_Attribute {
+	return Std_Ui_rowMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__row", "true") })
 }
 
 var AnalyticsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
@@ -1464,22 +1513,8 @@ func Std_Ui_borderWidthEach(v_0 int, v_1 int, v_2 int, v_3 int) Std_Ui_Attribute
 	return Std_Ui_Attribute_AttrBorderWidthEach(v_0, v_1, v_2, v_3)
 }
 
-func Std_Ui_spacing(v_0 int) Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrSpacing(v_0)
-}
-
 func Std_Ui_paddingXY(v_0 int, v_1 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrPadding(v_1, v_0, v_1, v_0)
-}
-
-func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_rowMarker()), any(v_0)), v_1)
-}
-
-var Std_Ui_rowMarker__caf rt.LazyCaf[Std_Ui_Attribute]
-
-func Std_Ui_rowMarker() Std_Ui_Attribute {
-	return Std_Ui_rowMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__row", "true") })
 }
 
 func Sky_Core_List_map_(v_0 any, v_1 any) []any {
@@ -6965,9 +7000,9 @@ var Main_analyticsEventDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsEventDecoder() any {
 	return Main_analyticsEventDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string) State_AnalyticsEvent_R {
-			return State_AnalyticsEvent(_p0, _p1, _p2)
-		})))))
+		return rt.JsonDecP_optional(any("path"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string, _p3 string) State_AnalyticsEvent_R {
+			return State_AnalyticsEvent(_p0, _p1, _p2, _p3)
+		}))))))
 	})
 }
 

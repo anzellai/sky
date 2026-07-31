@@ -171,6 +171,7 @@ analyticsEventDecoder =
     Decode.succeed AnalyticsEvent |> Pipeline.optional "ts" Decode.int 0
         |> Pipeline.optional "event" Decode.string ""
         |> Pipeline.optional "userId" Decode.string ""
+        |> Pipeline.optional "path" Decode.string ""
 
 
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────

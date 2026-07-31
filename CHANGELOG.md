@@ -37,6 +37,12 @@ instead of bespoke query kernels.
   worked example of the Store API. **Breaking:** `recentEvents` now returns
   **`List AnalyticsEvent`** (typed rows — read `.event`/`.ts`/`.userId`) instead
   of `List String` (JSON-object strings); `.props`/`.context` stay JSON text.
+- **Console recent-event stream shows the page path.** A `page_view` row in the
+  Sky Console's Analytics tab now renders the `props.path` next to the event name
+  (`page_view  /shop/necklaces`) instead of a bare, un-actionable `page_view`.
+  The path is lifted from the props JSON in Go (dialect-agnostic — same on SQLite
+  and Postgres); any event tagged with a `path` prop shows it. (`analyticsRecentEvents`
+  in `runtime-go/rt/console_analytics.go`; regression `TestAnalyticsRecentEventsPath`.)
 
 ### Added — `Std.Db.Store` partial-column update
 

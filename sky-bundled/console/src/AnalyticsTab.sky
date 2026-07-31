@@ -228,13 +228,25 @@ recentRowView e =
             , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
             , Border.color borderSoft
             ]
-            [ Ui.el
-                  [ Ui.width Ui.fill
-                  , Font.size 13
-                  , Font.color textSecondary
-                  , Font.family mono
+            [ Ui.row
+                  [ Ui.width Ui.fill, Ui.spacing 8 ]
+                  [ Ui.el
+                        [ Font.size 13
+                        , Font.color textSecondary
+                        , Font.family mono
+                        ]
+                        (Ui.text e.event)
+                  , if e.path == "" then
+                        Ui.none
+
+                    else
+                        Ui.el
+                            [ Font.size 12
+                            , Font.color textMuted
+                            , Font.family mono
+                            ]
+                            (Ui.text e.path)
                   ]
-                  (Ui.text e.event)
             , Ui.el
                   [ Font.size 12, Font.color textMuted, Font.family mono ]
                   (Ui.text who)

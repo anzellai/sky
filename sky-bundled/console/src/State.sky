@@ -124,6 +124,7 @@ type alias AnalyticsEvent =
     { ts : Int
     , event : String
     , userId : String
+    , path : String
     }
 
 -- One currency's summed revenue. Money props are stored losslessly as

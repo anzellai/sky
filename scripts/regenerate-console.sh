@@ -76,7 +76,15 @@ else
     say "building local sky binary via cargo build (this can take ~2 min on cold cache)..."
     ( cd rust && cargo build --release --locked -p sky ) >&2
     mkdir -p ./sky-out
-    cp rust/target/release/sky ./sky-out/sky
+    # Honour CARGO_TARGET_DIR — cargo puts the binary under $CARGO_TARGET_DIR
+    # when set (a common dev setup), not the default rust/target. Fall back to
+    # rust/target otherwise.
+    CARGO_BIN="${CARGO_TARGET_DIR:-$ROOT/rust/target}/release/sky"
+    if [ ! -x "$CARGO_BIN" ]; then
+        warn "built sky binary not found at $CARGO_BIN (CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-unset})"
+        exit 1
+    fi
+    cp "$CARGO_BIN" ./sky-out/sky
 fi
 
 SKY="$ROOT/sky-out/sky"

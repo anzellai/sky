@@ -38,6 +38,10 @@ type consoleAnalyticsEvent struct {
 	TS     int64  `json:"ts"`
 	Event  string `json:"event"`
 	UserID string `json:"userId"`
+	// Path is the `props.path` value (present on `page_view` and any event the
+	// app tags with a path) — surfaced so the recent stream shows WHICH page was
+	// viewed, not a bare "page_view". Empty for events without a path prop.
+	Path string `json:"path,omitempty"`
 }
 
 // consoleCurrencyTotal is one currency's summed revenue. Money props are
@@ -100,25 +104,46 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
-	if rows, err := db.Query(
-		`SELECT ts, event, user_id FROM analytics_events ORDER BY id DESC LIMIT 50`,
-	); err == nil {
-		for rows.Next() {
-			var e consoleAnalyticsEvent
-			var uid sql.NullString
-			if err := rows.Scan(&e.TS, &e.Event, &uid); err == nil {
-				if uid.Valid {
-					e.UserID = uid.String
-				}
-				out.Recent = append(out.Recent, e)
-			}
-		}
-		rows.Close()
-	}
-
+	out.Recent = analyticsRecentEvents(db)
 	out.Revenue = analyticsRevenueByCurrency(db)
 
 	writeJSON(w, out)
+}
+
+// analyticsRecentEvents returns the most recent events (newest first, capped),
+// with the `path` prop lifted out of the props JSON so the console's recent
+// stream shows WHICH page a `page_view` hit (a bare "page_view" isn't
+// actionable). The props JSON is parsed in Go rather than via json_extract /
+// `->>` so it's identical on SQLite and Postgres.
+func analyticsRecentEvents(db *sql.DB) []consoleAnalyticsEvent {
+	out := []consoleAnalyticsEvent{}
+	rows, err := db.Query(
+		`SELECT ts, event, user_id, props FROM analytics_events ORDER BY id DESC LIMIT 50`,
+	)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e consoleAnalyticsEvent
+		var uid, props sql.NullString
+		if err := rows.Scan(&e.TS, &e.Event, &uid, &props); err != nil {
+			continue
+		}
+		if uid.Valid {
+			e.UserID = uid.String
+		}
+		if props.Valid && props.String != "" {
+			var m map[string]any
+			if json.Unmarshal([]byte(props.String), &m) == nil {
+				if p, ok := m["path"].(string); ok {
+					e.Path = p
+				}
+			}
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // analyticsRevenueByCurrency scans every event's props for Money-shaped
