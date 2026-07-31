@@ -57,6 +57,19 @@ couldn't even name a column absent from the codec's read shape.
 
 ### Fixed
 
+- **`Std.Analytics` — signing out now un-attributes the session.** With
+  `Live.withAnalyticsIdentify`, the identify resolver is the session's identity
+  authority: `Just id` identifies, but `Nothing` was a no-op that left the
+  *previous* user id stamped on the session — so after sign-out
+  (`model.session` → `Nothing` → resolver returns `Nothing`) every subsequent
+  auto page-view (and the persisted session blob) kept attributing events to the
+  signed-out user. The resolver is now symmetric: `Nothing` / `Just ""`
+  **clears** the user id, reverting the session to anonymous, and the cleared
+  state persists on the next render. Signed-in and explicit-`identify`-only apps
+  are unaffected. (`runtime-go/rt/analytics_kernel.go`
+  `analyticsApplyIdentity`; regression
+  `TestAnalyticsApplyIdentityClearsOnSignOut`.)
+
 - **`sky fmt` — multi-line record field values now break onto their own line,
   aligned.** A record field whose value spanned multiple lines (a list, nested
   record, or `case`) was left inline after `field = `, with its continuation

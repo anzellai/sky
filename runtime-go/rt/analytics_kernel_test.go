@@ -158,6 +158,40 @@ func TestAnalyticsApplyIdentity(t *testing.T) {
 	}
 }
 
+// TestAnalyticsApplyIdentityClearsOnSignOut is the sign-out regression: a session
+// that was identified (resolver returned Just id on earlier renders) must revert
+// to anonymous once the resolver returns Nothing — otherwise a signed-OUT session
+// keeps attributing events to the previous user (and handleInitial persists that
+// stale id to the session store). The resolver is the identity authority; Nothing
+// un-identifies. The fresh-session cases in TestAnalyticsApplyIdentity can't catch
+// this because their user id starts empty.
+func TestAnalyticsApplyIdentityClearsOnSignOut(t *testing.T) {
+	sess := &liveSession{sid: "signout"}
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
+	signedIn := func(any) any { return SkyMaybe[any]{Tag: 0, JustValue: "u42"} }
+	signedOut := func(any) any { return SkyMaybe[any]{Tag: 1} }
+	model := map[string]any{"currentUser": "x"}
+
+	// Signed in → identified across renders.
+	analyticsApplyIdentity(signedIn, model)
+	if _, _, uid := currentAnalyticsState().snapshot(); uid != "u42" {
+		t.Fatalf("after sign-in: want u42, got %q", uid)
+	}
+	// Sign out → the resolver now returns Nothing; the user id MUST clear.
+	analyticsApplyIdentity(signedOut, model)
+	if _, _, uid := currentAnalyticsState().snapshot(); uid != "" {
+		t.Fatalf("after sign-out: user id not cleared, still attributing to %q", uid)
+	}
+	// An empty `Just ""` (e.g. a not-yet-loaded id) also un-identifies.
+	analyticsApplyIdentity(signedIn, model) // re-identify
+	analyticsApplyIdentity(func(any) any { return SkyMaybe[any]{Tag: 0, JustValue: ""} }, model)
+	if _, _, uid := currentAnalyticsState().snapshot(); uid != "" {
+		t.Fatalf("Just \"\": want cleared, got %q", uid)
+	}
+}
+
 func TestAnalyticsConsentGate(t *testing.T) {
 	sess := &liveSession{sid: "gate-test"}
 	setGoroutineLiveSession(sess)

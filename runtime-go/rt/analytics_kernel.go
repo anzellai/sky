@@ -183,22 +183,28 @@ func analyticsIdentifyFromCfg(cfg any) any {
 }
 
 // analyticsApplyIdentity calls the app's `identify` resolver with the current
-// model and, when it returns `Just id`, stamps the session's analytics user id —
-// so an already-authenticated session's auto page-views (including the very first
+// model and stamps the session's analytics user id from the result — so an
+// already-authenticated session's auto page-views (including the very first
 // render, before any Msg runs) carry the user without a manual `identify` call.
 // The config field IS the app's explicit opt-in for attributing the identity it
-// already holds.
+// already holds, and — because the resolver is the session's identity AUTHORITY —
+// it is symmetric: `Just id` identifies, `Nothing` / `Just ""` UN-identifies.
+//
+// Clearing on Nothing is load-bearing: without it a signed-OUT session (model
+// session gone → resolver returns Nothing) kept the previous user's id stamped on
+// the state — and since handleInitial persists the snapshot to the session store
+// right after this call, the store carried that stale user_id forward, so every
+// post-logout event was still attributed to the signed-out user. Runs on every
+// full render, so it stays idempotent for a stable signed-in/out session.
 func analyticsApplyIdentity(resolver, model any) {
 	if resolver == nil {
 		return
 	}
-	tag, payload := anyMaybeView(SkyCall(resolver, model))
-	if tag != 0 { // Nothing / not a Maybe → leave anonymous
-		return
+	uid := ""
+	if tag, payload := anyMaybeView(SkyCall(resolver, model)); tag == 0 { // Just id
+		uid = fmt.Sprintf("%v", unwrapAny(payload))
 	}
-	if uid := fmt.Sprintf("%v", unwrapAny(payload)); uid != "" {
-		currentAnalyticsState().setUserID(uid)
-	}
+	currentAnalyticsState().setUserID(uid)
 }
 
 // analyticsSetContext records device + anonymised-IP context on the current
