@@ -133,8 +133,14 @@ real n =
     newColumn n "real"
 
 
--- | Boolean, stored as INTEGER 0/1 on BOTH backends — so a value reads back the
--- same shape whether you developed on SQLite or deployed on Postgres.
+-- | Boolean — rendered as **BOOLEAN on Postgres** and **INTEGER 0/1 on SQLite**
+-- by the dialect-safe renderer (a table created by Sky gets the right column
+-- type per backend). A `SqlBool` param (a native Go bool) binds cleanly to both,
+-- and the codec / `Decode.bool` reads either representation back, so a value
+-- round-trips the same shape whether you develop on SQLite or deploy on Postgres.
+-- (Legacy note: a table whose bool column was hand-created as INTEGER on Postgres
+-- pre-dates this mapping — `ALTER … TYPE boolean USING (col <> 0)` migrates it,
+-- since Sky's additive migrations never retype an existing column.)
 bool : String -> Column
 bool n =
     newColumn n "bool"
