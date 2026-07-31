@@ -525,6 +525,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             kernel_alias.insert(*d, raw);
         }
     }
+    // ---- freeze-unsafe effect reachability (memoised-CAF stale-read lint) ----
+    let def_effect = compute_def_effect(&defs, &kernel_alias);
     // ---- kernel-alias arity override for VARIADIC runtime symbols ----
     // A bare kernel alias (`request = Ffi.kernel "Http_request"`) carries its
     // arity entirely in the declared signature — the body has no value params.
@@ -612,6 +614,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             sealed_unions: &sealed_unions,
             def_param_tys: &def_param_tys,
             def_result_tys: &def_result_tys,
+            def_effect: &def_effect,
             body: &e.body,
             types: &e.types,
             local_names: HashMap::new(),
@@ -837,6 +840,166 @@ fn is_fresh_value_kernel(module: &str, func: &str) -> bool {
 fn fresh_value_symbol_parts(sym: &str) -> Option<(String, String)> {
     let (m, f) = sym.split_once('_')?;
     is_fresh_value_kernel(m, f).then(|| (m.to_string(), f.to_string()))
+}
+
+/// Freeze-unsafe effect kinds a memoised CAF can force. Both go stale/frozen
+/// when cached: `Fresh` = clock/entropy (Uuid / Random / Time / Crypto),
+/// `StoreRead` = a mutable-DB read whose result changes as rows are written.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EffectKind {
+    Fresh,
+    StoreRead,
+}
+
+/// A DB READ kernel. Freezing its result in a memoised CAF makes the value go
+/// STALE after later writes (the production incident: a product created after
+/// the first render never appeared — the read was cached forever). Deliberately
+/// EXCLUDED:
+///   * `Db.connect` / `Db.open` — HANDLE kernels; memoising a pool handle is the
+///     blessed "one shared connection" contract.
+///   * `Db.exec` / `Db.execRaw` — WRITES / DDL, not reads. A memoised write CAF
+///     runs ONCE, which is exactly what a boot-time `initDb`/schema-create wants
+///     — flagging it would be a false positive (skyvote's `initDb`, darragh's
+///     `ensureSchema`). The stale-value footgun is specifically about READS.
+fn is_store_read_kernel(module: &str, func: &str) -> bool {
+    let m = module.rsplit('.').next().unwrap_or(module);
+    m == "Db"
+        && matches!(
+            func,
+            "query"
+                | "queryObjects"
+                | "queryDecode"
+                | "getById"
+                | "getByIdDecode"
+                | "findOneByField"
+                | "findManyByField"
+                | "findByConditions"
+                | "unsafeFindWhere"
+        )
+}
+
+/// Classify a kernel `(module, func)` into a freeze-unsafe `EffectKind`.
+fn kernel_effect(module: &str, func: &str) -> Option<EffectKind> {
+    if is_fresh_value_kernel(module, func) {
+        Some(EffectKind::Fresh)
+    } else if is_store_read_kernel(module, func) {
+        Some(EffectKind::StoreRead)
+    } else {
+        None
+    }
+}
+
+/// Classify a kernel-alias symbol (`"Time_now"`, `"Db_query"`).
+fn effect_symbol_parts(sym: &str) -> Option<EffectKind> {
+    let (m, f) = sym.split_once('_')?;
+    kernel_effect(m, f)
+}
+
+/// A memoised CAF whose frozen RESULT is a long-lived resource HANDLE (a DB
+/// pool / connection / client / cache) is the blessed "one shared handle"
+/// contract — never the stale-read footgun. `db = Task.run (Db.connect ())`
+/// (result type `Db`) MUST NOT warn.
+fn is_handle_result(ty: &Ty) -> bool {
+    let name = match ty {
+        Ty::App(n, _) => n.as_str(),
+        _ => return false,
+    };
+    let base = name.rsplit('.').next().unwrap_or(name);
+    matches!(
+        base,
+        "Db" | "Pool" | "Conn" | "Connection" | "Client" | "Cache"
+    )
+}
+
+/// Merge two effect candidates. Either suffices to fire the lint; StoreRead is
+/// preferred deterministically so the message names the DB read when both a
+/// read and a fresh-value effect are reachable.
+fn merge_effect(a: Option<EffectKind>, b: Option<EffectKind>) -> Option<EffectKind> {
+    match (a, b) {
+        (Some(EffectKind::StoreRead), _) | (_, Some(EffectKind::StoreRead)) => {
+            Some(EffectKind::StoreRead)
+        }
+        (Some(EffectKind::Fresh), _) | (_, Some(EffectKind::Fresh)) => Some(EffectKind::Fresh),
+        _ => None,
+    }
+}
+
+/// Whole-program pre-pass: per def, the freeze-unsafe effect kernel (fresh-value
+/// clock/entropy OR mutable-store read) syntactically REACHABLE from its body —
+/// transitively through called defs AND into lambda bodies (the expr arena holds
+/// every sub-expression, so a single `.iter()` sees inside lambdas). This is how
+/// the memoised-CAF lint catches a LAUNDERED effect the existing direct-kernel
+/// scan misses: `listActive = withConnList (\c -> Store.query …)` (read hidden
+/// in the lambda arg) and `errRef = … (Data.nowMs ())` (clock hidden one hop
+/// through the user wrapper `nowMs`). Over-approximates "forced when evaluated";
+/// the lint gates on a DATA (non-handle, non-function) result type, so a lambda
+/// merely CONSUMED to produce that data is exactly the intended frozen reading.
+fn compute_def_effect(
+    defs: &BTreeMap<DefId, DefEntry>,
+    kernel_alias: &HashMap<DefId, String>,
+) -> HashMap<DefId, EffectKind> {
+    // Per-def direct kernel effect + outgoing def references (call-graph edges,
+    // including references that appear inside lambda bodies).
+    let mut direct: HashMap<DefId, Option<EffectKind>> = HashMap::new();
+    let mut edges: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    for (d, e) in defs {
+        let mut eff: Option<EffectKind> = None;
+        let mut es: Vec<DefId> = Vec::new();
+        let note_def = |d2: &DefId, eff: &mut Option<EffectKind>, es: &mut Vec<DefId>| {
+            if let Some(sym) = kernel_alias.get(d2) {
+                *eff = merge_effect(*eff, effect_symbol_parts(sym));
+            }
+            es.push(*d2);
+        };
+        for (_id, expr) in e.body.exprs.iter() {
+            match expr {
+                Expr::Var(Res::Kernel { module, func }) => {
+                    eff = merge_effect(eff, kernel_effect(module.as_str(), func.as_str()));
+                }
+                Expr::Var(Res::Def(d2)) => note_def(d2, &mut eff, &mut es),
+                Expr::Binop { res, .. } => match res {
+                    Res::Kernel { module, func } => {
+                        eff = merge_effect(eff, kernel_effect(module.as_str(), func.as_str()));
+                    }
+                    Res::Def(d2) => note_def(d2, &mut eff, &mut es),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        direct.insert(*d, eff);
+        edges.insert(*d, es);
+    }
+
+    // Fixpoint: effect[d] = merge(direct[d], effect[d'] over edges d → d').
+    let mut effect: HashMap<DefId, EffectKind> = HashMap::new();
+    for (d, e) in &direct {
+        if let Some(k) = e {
+            effect.insert(*d, *k);
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (d, es) in &edges {
+            let mut cur = effect
+                .get(d)
+                .copied()
+                .or_else(|| direct.get(d).copied().flatten());
+            for d2 in es {
+                if let Some(k2) = effect.get(d2).copied() {
+                    cur = merge_effect(cur, Some(k2));
+                }
+            }
+            if let Some(k) = cur {
+                if effect.get(d) != Some(&k) {
+                    effect.insert(*d, k);
+                    changed = true;
+                }
+            }
+        }
+    }
+    effect
 }
 
 const RESERVED: &[&str] = &[
@@ -1526,6 +1689,10 @@ struct Ctx<'a> {
     sealed_unions: &'a HashSet<String>,
     def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
     def_result_tys: &'a HashMap<DefId, Ty>,
+    /// Whole-program: the freeze-unsafe effect (fresh-value / mutable-store read)
+    /// reachable from each def's body. The memoised-CAF lint uses it to catch a
+    /// LAUNDERED effect the direct-kernel scan misses.
+    def_effect: &'a HashMap<DefId, EffectKind>,
     body: &'a Body,
     types: &'a BodyTypes,
     local_names: HashMap<LocalId, String>,
@@ -1826,6 +1993,38 @@ impl<'a> Ctx<'a> {
                              use, make it a function: `{name} () = …` and call `{name} ()`. \
                              Ignore this if one shared value is intended."
                         ));
+                    } else if let Some(kind) = self.def_effect.get(&self.cur_def).copied() {
+                        // Laundered effect: the fresh-value / DB read is hidden
+                        // behind a helper (`listActive = withConnList (\c ->
+                        // Store.query …)`, `errRef = … (nowMs ())`), so the
+                        // direct-kernel scan above (no lambda descent, only a
+                        // DIRECT `Ffi.kernel` alias) misses it. Suppress the
+                        // blessed memoised-HANDLE contract (`db = Task.run
+                        // (Db.connect ())` → result type `Db`) and a function-
+                        // typed result (a returned lambda isn't forced at memo
+                        // time — the effect only fires when the caller runs it).
+                        let ret = self.def_result_tys.get(&self.cur_def);
+                        // A `()` result has no frozen VALUE to go stale (a
+                        // run-once side-effecting CAF), so never flag it.
+                        let is_data = ret.is_none_or(|t| {
+                            !is_handle_result(t)
+                                && !matches!(t, Ty::Fun(_, _))
+                                && !matches!(t, Ty::Unit)
+                        });
+                        if is_data {
+                            let what = match kind {
+                                EffectKind::Fresh => "a clock/entropy read",
+                                EffectKind::StoreRead => "a database read",
+                            };
+                            self.warnings.push(format!(
+                                "top-level `{name}` is memoised to a SINGLE value (evaluated \
+                                 once, then cached) but forcing it performs {what} through a \
+                                 helper — so the result is frozen for the whole process and \
+                                 won't reflect later writes. For a fresh read per use make it a \
+                                 function: `{name} () = …` and call `{name} ()`. Ignore this if \
+                                 one shared snapshot is intended."
+                            ));
+                        }
                     }
                 }
             }
@@ -5945,6 +6144,70 @@ mod qualified_type_tests {
             sky_ty_to_go(&wrap_args[0], &env),
             GoTy::Named("A_Msg".to_string(), vec![])
         );
+    }
+}
+
+#[cfg(test)]
+mod memoised_effect_lint_tests {
+    //! Unit coverage for the memoised-CAF stale-read lint's decision core (the
+    //! classifiers where correctness + false-positive risk live). The end-to-end
+    //! firing is exercised by the CLI fixtures / example sweep; here we pin the
+    //! kernel/type classification so a future edit can't silently start warning
+    //! on the blessed handle pattern or stop warning on a DB read.
+    use super::*;
+
+    #[test]
+    fn store_read_kernels_classify_but_connect_does_not() {
+        // Reads that go stale when frozen.
+        assert!(is_store_read_kernel("Db", "query"));
+        assert!(is_store_read_kernel("Db", "queryObjects"));
+        assert!(is_store_read_kernel("Db", "getById"));
+        assert!(is_store_read_kernel("Db", "findManyByField"));
+        assert!(is_store_read_kernel("Std.Db", "getById")); // fully-qualified alias
+        // The blessed memoised-HANDLE kernels must NOT be reads.
+        assert!(!is_store_read_kernel("Db", "connect"));
+        assert!(!is_store_read_kernel("Db", "open"));
+        assert!(!is_store_read_kernel("Db", "close"));
+        // WRITES / DDL are run-once-intended, NOT stale reads (boot initDb).
+        assert!(!is_store_read_kernel("Db", "exec"));
+        assert!(!is_store_read_kernel("Db", "execRaw"));
+        // Env / unrelated kernels are not store reads.
+        assert!(!is_store_read_kernel("System", "getenv"));
+    }
+
+    #[test]
+    fn kernel_effect_covers_fresh_and_read_not_env() {
+        assert_eq!(kernel_effect("Time", "now"), Some(EffectKind::Fresh));
+        assert_eq!(kernel_effect("Uuid", "v4"), Some(EffectKind::Fresh));
+        assert_eq!(kernel_effect("Db", "query"), Some(EffectKind::StoreRead));
+        // System.getenv is a read-once-intended pattern (apiKey) — never flagged.
+        assert_eq!(kernel_effect("System", "getenv"), None);
+        assert_eq!(kernel_effect("Db", "connect"), None);
+        // Writes are run-once-intended, not stale reads.
+        assert_eq!(kernel_effect("Db", "exec"), None);
+    }
+
+    #[test]
+    fn handle_result_suppresses_only_resource_types() {
+        // `db : Result Error Db` peels to the Db payload elsewhere; the handle
+        // check itself recognises the resource nominals.
+        assert!(is_handle_result(&Ty::app("Db", vec![])));
+        assert!(is_handle_result(&Ty::app("Pool", vec![])));
+        assert!(is_handle_result(&Ty::app("Client", vec![])));
+        assert!(is_handle_result(&Ty::app("Std.Db.Db", vec![]))); // qualified
+        // Data results are candidates (NOT suppressed).
+        assert!(!is_handle_result(&Ty::app("List", vec![Ty::app("Product", vec![])])));
+        assert!(!is_handle_result(&Ty::app("String", vec![])));
+        assert!(!is_handle_result(&Ty::Unit));
+    }
+
+    #[test]
+    fn merge_prefers_store_read_then_fresh() {
+        use EffectKind::*;
+        assert_eq!(merge_effect(Some(Fresh), Some(StoreRead)), Some(StoreRead));
+        assert_eq!(merge_effect(Some(StoreRead), Some(Fresh)), Some(StoreRead));
+        assert_eq!(merge_effect(Some(Fresh), None), Some(Fresh));
+        assert_eq!(merge_effect(None, None), None);
     }
 }
 
