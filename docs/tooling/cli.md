@@ -274,6 +274,47 @@ table and adds any new (nullable) columns. Additive + idempotent; never drops or
 retypes. Use `sky db migrate --gen` once your schema stabilises and you want
 reviewable, committed history for production.
 
+### `sky db reset [table]` · `sky db drop [table]` — destructive resets
+
+```bash
+sky db reset            # empty EVERY declared table (keep schema + the ledger)
+sky db reset users      # empty just the `users` table
+sky db drop             # drop EVERY declared table + `_sky_migrations`
+sky db drop users       # drop just the `users` table (ledger untouched)
+```
+
+Both operate on the tables your entry module declares via `db : Store.Project`
+(each `Table` carries its `name` / `cols` / `pk`) — **not** on other tables that
+happen to share the database.
+
+- **`sky db reset`** EMPTIES the data and resets autoincrement counters, but
+  KEEPS the schema and the `_sky_migrations` ledger. On Postgres it runs one
+  `TRUNCATE … RESTART IDENTITY CASCADE`; on SQLite it `DELETE`s each table and
+  clears `sqlite_sequence` (foreign-key enforcement is toggled off for the
+  operation). The fast "wipe my dev data, keep the tables" loop.
+- **`sky db drop`** removes the tables. Dropping ALL declared tables also drops
+  `_sky_migrations`, returning the database to a fresh "never ran migrate/push"
+  state; a single-table drop (`sky db drop users`) leaves the ledger alone.
+  Uses `DROP TABLE IF EXISTS … CASCADE` (Postgres) / `DROP TABLE IF EXISTS …`
+  with FK enforcement off (SQLite).
+
+Both are **destructive**, so both prompt before doing anything:
+
+```
+This will reset 3 table(s) in sqlite — type 'yes' to continue:
+```
+
+- `--yes` / `-y` skips the prompt (scripts, CI, container entrypoints).
+- On a **non-TTY** without `--yes`, the command refuses rather than guess.
+- In **production** (`ENV` / `SKY_ENV` in `{production, prod, staging}`) it
+  refuses unless `--yes` is passed explicitly.
+
+**Scope note.** `reset` / `drop` only touch the tables your `Store.Project`
+declares. For a TOTAL wipe of a shared database (every table + extensions +
+sequences, including ones Sky doesn't know about), use your database's own
+tooling — e.g. `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` on Postgres,
+or delete the SQLite file.
+
 ### Running migrations as part of `sky run`
 
 `sky run` takes `--db-push`, `--db-migrate`, and `--db-seed` flags that run those

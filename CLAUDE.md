@@ -1395,6 +1395,8 @@ sky db status                      # applied / pending per committed file vs the
 sky db migrate                     # apply committed migrations (or, no db/migrations/, the app's Db.migrate)
 sky db seed                        # run the entry module's seed : Db -> Task Error ()
 sky db push                        # dev: sync the live DB to the types, no migration files
+sky db reset [table]               # empty data from the declared tables (all, or one) — keeps schema + ledger, resets autoinc; prompts (or --yes)
+sky db drop [table]                # drop the declared tables (all, or one) + the ledger on drop-all — fresh "never migrated" state; prompts (or --yes)
 sky run src/Main.sky --db-migrate --db-seed   # migrate + seed, then serve (container entrypoint)
 sky doc Module                     # terminal docs
 sky doc --serve [--port 8080]      # browsable HTTP doc server (auto-opens browser)

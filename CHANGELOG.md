@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Added — `sky db reset` + `sky db drop`
+
+Two destructive dev-DB verbs, both accepting an optional `[table]` (default: all of
+the project's declared `db : Store.Project` tables) and a `--yes`/`-y` to skip the
+confirmation prompt:
+
+- **`sky db reset [table]`** — empties data (keeps the schema + `_sky_migrations`
+  ledger, resets autoincrement). Postgres `TRUNCATE … RESTART IDENTITY CASCADE`;
+  SQLite `DELETE` + `sqlite_sequence` reset (FK-safe).
+- **`sky db drop [table]`** — drops the declared tables **plus `_sky_migrations`**
+  (a fresh "never ran migrate/push" state); a single `drop <table>` leaves the
+  ledger. Postgres `DROP … CASCADE`; SQLite `DROP` (FK-safe).
+
+Both prompt for confirmation on a TTY, refuse on a non-TTY (and in production)
+without `--yes`, and scope to the app's **declared** tables — for a total wipe
+(sessions/analytics/unrelated tables) use the database's own `DROP SCHEMA`. New
+stdlib surface: `Store.resetProject`/`dropProject`/`resetTable`/`dropTable`.
+
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
 ### ⚠ Breaking

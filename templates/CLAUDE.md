@@ -192,6 +192,8 @@ sky db migrate --gen add_stock # diff types vs snapshot → a committed migratio
 sky db status                  # ✓ applied / ○ pending vs the live ledger
 sky db migrate                 # apply committed migrations (dialect-correct, once each)
 sky db seed                    # run the entry module's  seed : Db -> Task Error ()
+sky db reset [table]           # empty data (all declared tables, or one); keeps schema + ledger — prompts / --yes
+sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
 
 Expose a `db : Store.Project` binding for `--gen`:

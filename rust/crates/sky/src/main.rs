@@ -2272,6 +2272,317 @@ report applied =
     }
 }
 
+/// Whether the DB destructive verb is `reset` (empty data, keep schema) or `drop`
+/// (remove tables + the ledger).
+#[derive(Clone, Copy, PartialEq)]
+enum DbDestructive {
+    Reset,
+    Drop,
+}
+
+impl DbDestructive {
+    fn verb(self) -> &'static str {
+        match self {
+            DbDestructive::Reset => "reset",
+            DbDestructive::Drop => "drop",
+        }
+    }
+}
+
+/// Read the DB driver from `sky.toml` for the confirmation prompt. Mirrors
+/// `read_sky_toml_config`'s `[database]` handling: `driver` (default `sqlite`);
+/// a `postgres://`/`postgresql://` DSN in `path`/`url` also implies postgres.
+fn db_driver_label() -> String {
+    let text = match std::fs::read_to_string("sky.toml") {
+        Ok(t) => t,
+        Err(_) => return "sqlite".to_string(),
+    };
+    let mut section = String::new();
+    let mut driver: Option<String> = None;
+    let mut dsn_is_pg = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line.trim_matches(['[', ']']).trim().trim_matches('"').to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let (key, val) = (k.trim(), v.trim().trim_matches('"').to_string());
+        if section == "database" {
+            match key {
+                "driver" => driver = Some(val),
+                "path" | "url" => {
+                    if val.starts_with("postgres://") || val.starts_with("postgresql://") {
+                        dsn_is_pg = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let d = driver.unwrap_or_else(|| if dsn_is_pg { "postgres".into() } else { "sqlite".into() });
+    match d.to_lowercase().as_str() {
+        "postgres" | "postgresql" | "pgx" | "pg" => "postgres".to_string(),
+        _ => "sqlite".to_string(),
+    }
+}
+
+/// True when the runtime environment reads as production — refuse a destructive
+/// DB op there unless `--yes` is explicit. Reuses the runtime's gate wording:
+/// `ENV` then `SKY_ENV`; production when in {production, prod, staging}.
+fn is_production_env() -> bool {
+    let raw = std::env::var("ENV")
+        .ok()
+        .or_else(|| std::env::var("SKY_ENV").ok())
+        .unwrap_or_default();
+    matches!(raw.to_lowercase().as_str(), "production" | "prod" | "staging")
+}
+
+/// `sky db reset [table]` / `sky db drop [table]` — destructive data/schema
+/// wipes over the project's declared `db : Store.Project`. `reset` EMPTIES the
+/// tables (keeps schema + `_sky_migrations`, resets autoincrement); `drop`
+/// removes the tables (drop-all also removes `_sky_migrations` for a fresh
+/// "never migrated" state). A positional `table` scopes to that one table.
+///
+/// The confirmation prompt + `--yes` parsing + production guard live here, BEFORE
+/// building/running the generated Sky entry (which imports the project's `db` for
+/// the all-tables case, or calls the single-table verb directly).
+fn cmd_db_reset_drop(args: &[String], op: DbDestructive) -> ExitCode {
+    let verb = op.verb();
+    // Split flags from the optional positional table name.
+    let mut assume_yes = false;
+    let mut table: Option<String> = None;
+    for a in args {
+        match a.as_str() {
+            "--yes" | "-y" => assume_yes = true,
+            s if s.starts_with('-') => {
+                eprintln!("sky db {verb}: unknown flag `{s}`");
+                return ExitCode::from(2);
+            }
+            s => {
+                if table.is_some() {
+                    eprintln!("sky db {verb}: too many arguments (expected at most one table name)");
+                    return ExitCode::from(2);
+                }
+                if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || s.is_empty() {
+                    eprintln!("sky db {verb}: invalid table name `{s}` (only [A-Za-z0-9_])");
+                    return ExitCode::from(2);
+                }
+                table = Some(s.to_string());
+            }
+        }
+    }
+
+    let driver = db_driver_label();
+
+    // Determine the table count for the prompt. Single-table → 1. All-tables →
+    // build the entry once and run it in info mode to read the project's count.
+    let entry_module = entry_module_name(Path::new("src/Main.sky")).unwrap_or_else(|| "Main".into());
+    let single = table.is_some();
+    let code = gen_db_reset_drop_entry(op, &entry_module, table.as_deref());
+    let module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" };
+    let filename = if op == DbDestructive::Reset { "_skydbreset.sky" } else { "_skydbdrop.sky" };
+    let label = format!("sky db {verb}");
+    let Some((bin, project_dir)) = build_temp_db_entry(&label, module, filename, &code) else {
+        eprintln!(
+            "sky db {verb}: your entry module must expose `db : Store.Project`{}.",
+            if single { " (or pass a table name)" } else { "" }
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let count: usize = if single {
+        1
+    } else {
+        match run_db_entry_count(&bin, &project_dir) {
+            Some(n) => n,
+            None => {
+                eprintln!("sky db {verb}: could not determine the project's table count");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+
+    if count == 0 {
+        println!("sky db {verb}: no tables to {verb}.");
+        return ExitCode::SUCCESS;
+    }
+
+    // Production guard + confirmation.
+    if !assume_yes {
+        if is_production_env() {
+            eprintln!(
+                "sky db {verb}: refusing to run in production (ENV/SKY_ENV) without --yes."
+            );
+            return ExitCode::FAILURE;
+        }
+        if !std::io::stdin().is_terminal() {
+            eprintln!(
+                "sky db {verb}: not a TTY — pass --yes to confirm this destructive operation."
+            );
+            return ExitCode::FAILURE;
+        }
+        let scope = match &table {
+            Some(t) => format!("table \"{t}\""),
+            None => format!("{count} table(s)"),
+        };
+        print!("This will {verb} {scope} in {driver} — type 'yes' to continue: ");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_err() || answer.trim() != "yes" {
+            println!("sky db {verb}: aborted.");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // Apply.
+    match Command::new(&bin)
+        .current_dir(&project_dir)
+        .env("SKY_DB_MODE", "apply")
+        .status()
+    {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("sky db {verb}: run failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Run the already-built entry in info mode and parse `__SKY_DB_COUNT__ <n>`.
+fn run_db_entry_count(bin: &Path, project_dir: &Path) -> Option<usize> {
+    let out = Command::new(bin)
+        .current_dir(project_dir)
+        .env("SKY_DB_MODE", "info")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if let Some(rest) = line.trim().strip_prefix("__SKY_DB_COUNT__ ") {
+            if let Ok(n) = rest.trim().parse::<usize>() {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// Generate the temp Sky entry for `sky db reset` / `sky db drop`. In `info` mode
+/// it prints `__SKY_DB_COUNT__ <n>` (no DB connection); in `apply` mode
+/// (SKY_DB_MODE=apply) it connects and runs the reset/drop, reporting the applied
+/// statement count. The single-table variant needs no project `db` binding.
+fn gen_db_reset_drop_entry(op: DbDestructive, entry_module: &str, table: Option<&str>) -> String {
+    let verb = op.verb();
+    match table {
+        Some(name) => {
+            // Single table — no `db` import needed.
+            let call = match op {
+                DbDestructive::Reset => format!("Store.resetTable conn \"{name}\""),
+                DbDestructive::Drop => format!("Store.dropTable conn \"{name}\""),
+            };
+            format!(
+                r#"module {module} exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.System as System
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    if System.getenvOr "SKY_DB_MODE" "info" == "apply" then
+        Db.connect ()
+            |> Task.andThen (\conn -> {call})
+            |> Task.andThen report
+    else
+        info
+
+
+info : Task Error ()
+info =
+    let
+        _ =
+            println "__SKY_DB_COUNT__ 1"
+    in
+    Task.succeed ()
+
+
+report : List String -> Task Error ()
+report applied =
+    let
+        _ =
+            println ("sky db {verb}: applied " ++ String.fromInt (List.length applied) ++ " statement(s)")
+    in
+    Task.succeed ()
+"#,
+                module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" },
+            )
+        }
+        None => {
+            // All declared tables — import the project's `db : Store.Project`.
+            let call = match op {
+                DbDestructive::Reset => "Store.resetProject conn db",
+                DbDestructive::Drop => "Store.dropProject conn db",
+            };
+            format!(
+                r#"module {module} exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.System as System
+import Std.Db as Db
+import Std.Db.Store as Store
+import {entry_module} exposing (db)
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    if System.getenvOr "SKY_DB_MODE" "info" == "apply" then
+        Db.connect ()
+            |> Task.andThen (\conn -> {call})
+            |> Task.andThen report
+    else
+        info
+
+
+info : Task Error ()
+info =
+    let
+        _ =
+            println ("__SKY_DB_COUNT__ " ++ String.fromInt (Store.projectTableCount db))
+    in
+    Task.succeed ()
+
+
+report : List String -> Task Error ()
+report applied =
+    let
+        _ =
+            println ("sky db {verb}: applied " ++ String.fromInt (List.length applied) ++ " statement(s)")
+    in
+    Task.succeed ()
+"#,
+                module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" },
+            )
+        }
+    }
+}
+
 /// `sky db status` / `sky db migrate` — build the project, then run it once with
 /// `SKY_DB_OP` set so the runtime's `Db.migrate` reports/applies migrations and
 /// exits before serving. Mirrors `app/Main.hs`'s `Db` handler (which sets the
@@ -2305,12 +2616,20 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("push") {
         return cmd_db_push(&args[1..]);
     }
+    // `sky db reset [table]` — empty data from the declared tables (keep schema).
+    if args.first().map(String::as_str) == Some("reset") {
+        return cmd_db_reset_drop(&args[1..], DbDestructive::Reset);
+    }
+    // `sky db drop [table]` — drop the declared tables (+ the ledger for drop-all).
+    if args.first().map(String::as_str) == Some("drop") {
+        return cmd_db_reset_drop(&args[1..], DbDestructive::Drop);
+    }
     let op = match args.first().map(String::as_str) {
         Some("status") => "status",
         Some("migrate") => "migrate",
         _ => {
             eprintln!(
-                "usage: sky db <status|migrate [--gen [name]]|push|seed|init> [file.sky]"
+                "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]"
             );
             return ExitCode::from(2);
         }

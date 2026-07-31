@@ -57,6 +57,11 @@ module Std.Db.Store exposing
     , project
     , dumpSchema
     , pushProject
+    , projectTableCount
+    , resetProject
+    , dropProject
+    , resetTable
+    , dropTable
     , Query
     , query
     , Cond
@@ -540,6 +545,13 @@ project tables =
     Project tables
 
 
+-- | How many tables the project declares — the count `sky db reset` / `sky db
+-- drop` echo in their confirmation prompt.
+projectTableCount : Project -> Int
+projectTableCount (Project tables) =
+    List.length tables
+
+
 -- | Print the project's schema as JSON (between SKY_SCHEMA_* markers) and exit —
 -- the pure, DB-free schema-dump that `sky db migrate --gen` captures to diff
 -- against `db/schema.json`. Make this a project's `main` in the gen entry.
@@ -576,6 +588,43 @@ pushTables conn tables =
                            Task.map
                                (\more -> applied ++ more)
                                (pushTables conn rest))
+
+
+-- | EMPTY the data from every table the project declares — keeps the schema and
+-- the `_sky_migrations` ledger, resets autoincrement counters. The `sky db reset`
+-- path. Returns the SQL executed.
+resetProject : Db -> Project -> Task Error (List String)
+resetProject conn (Project tables) =
+    dbResetTables conn (List.map .name tables)
+
+
+-- | DROP every table the project declares PLUS `_sky_migrations` — a fresh
+-- "never ran migrate/push" state. The `sky db drop` path. Returns the SQL executed.
+dropProject : Db -> Project -> Task Error (List String)
+dropProject conn (Project tables) =
+    dbDropTables conn (List.map .name tables ++ [ "_sky_migrations" ])
+
+
+-- | EMPTY the data from a single named table (schema + ledger untouched).
+resetTable : Db -> String -> Task Error (List String)
+resetTable conn name =
+    dbResetTables conn [ name ]
+
+
+-- | DROP a single named table. Does NOT touch `_sky_migrations`.
+dropTable : Db -> String -> Task Error (List String)
+dropTable conn name =
+    dbDropTables conn [ name ]
+
+
+dbResetTables : Db -> List String -> Task Error (List String)
+dbResetTables =
+    Ffi.kernel "Db_resetTables"
+
+
+dbDropTables : Db -> List String -> Task Error (List String)
+dbDropTables =
+    Ffi.kernel "Db_dropTables"
 
 -- ── Query builder (compose conditions + ordering + paging, no raw SQL) ───────
 -- A `Cond` is a composable boolean condition; `and_` / `or_` / `not_` nest them.
