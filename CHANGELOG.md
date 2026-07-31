@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.19.3 — onNavigate crash fix, console Sign out, `sky db reset`/`drop` (2026-07-31)
 
 ### Added — `sky db reset` + `sky db drop`
 
@@ -44,6 +44,31 @@ surrounding quotes (a `#` *inside* a quoted value is preserved), and section
 headers tolerate a trailing comment. (`read_sky_toml_config` /
 `parse_toml_scalar` in `crates/project/src/build.rs`; regression
 `scalar_values_strip_inline_comments_and_quotes`.)
+
+### Fixed — `Std.Live.withOnNavigate` crashed every page at runtime
+
+`withOnNavigate` was typed `(String -> msg)`, but the runtime hands the callback
+the **`Page` value** (it dispatches `model.Page` after each route change). A user
+callback therefore lowered to `func(string)`, and the runtime's `reflect.Call`
+passed it a `Page` — panicking with `reflect: Call using <Page>_V as type
+string` on **every** page load (`onNavigate` fires on the initial mount too, so
+every GET 500'd). `sky check` and `go build` both passed; the failure was
+reflect-dynamic and only surfaced at runtime. The signature is now
+`(page -> msg)` — a `\_ -> Msg` callback stays fully polymorphic, and
+`\page -> case page of …` pins to your `Page` union. Regression:
+`ty` test `withonnavigate_page_callback`.
+
+If you wrote `withOnNavigate (\path -> …)` expecting a URL string, the value is
+the destination `Page`, not the path — read the URL from the model instead.
+
+### Added — console "Sign out" (embedded mode only)
+
+The embedded Sky Console (mounted inside a user app) now shows a **Sign out**
+link that clears the `__Host-sky_console` login cookie via a new
+`/_sky/console/_logout` route. It appears **only** in embedded mode — a
+standalone `sky console-serve` hub / aggregator has no login cookie, so it
+renders no sign-out (driven by `SKY_CONSOLE_LOGOUT_URL`, which the embedded
+mount injects and the hub does not).
 
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
