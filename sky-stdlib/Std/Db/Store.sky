@@ -1063,12 +1063,18 @@ orderTail orders =
             ""
 
         _ ->
+            -- `orderAsc`/`orderDesc` PREPEND (`::`) each term, so `orders` is in
+            -- reverse call-order. Reverse it here so the FIRST `orderAsc` call is
+            -- the PRIMARY sort key and later calls are tie-breakers — i.e.
+            -- `q |> orderAsc "sort_order" |> orderAsc "id"` renders
+            -- `ORDER BY sort_order ASC, id ASC`, not `ORDER BY id ASC, …`.
+            -- (A single order clause is unaffected — reverse of a 1-list is itself.)
             " ORDER BY "
                 ++ String.join
                        ", "
                        (List.map
                            (\(OrderTerm col dir) -> col ++ " " ++ dir)
-                           orders)
+                           (List.reverse orders))
 
 
 pageTail : Maybe Int -> Maybe Int -> String
