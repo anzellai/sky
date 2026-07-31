@@ -11,7 +11,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.19.2 — Store partial-column update + analytics on Store + formatter fix (unreleased)
+## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
+
+### ⚠ Breaking
+
+- **`Analytics.recentEvents` now returns `List AnalyticsEvent`, not `List String`.**
+  The built-in analytics aggregates moved onto `Std.Db.Store` (see below), so
+  `recentEvents` hands back typed rows instead of JSON-object strings. If you
+  render it, read fields off the record instead of treating each item as a string:
+
+  ```elm
+  -- before (each item was a JSON string):
+  List.map (\s -> Ui.text s) (Analytics.recentEvents 20)
+
+  -- after (typed AnalyticsEvent rows — read .event / .ts / .userId):
+  List.map (\e -> Ui.text (e.event ++ " · " ++ String.fromInt e.ts)) rows
+  ```
+
+  `.props` / `.context` remain JSON text on the record. No other analytics API
+  changed shape.
 
 ### Added — query analytics on `Std.Db.Store`
 
