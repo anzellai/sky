@@ -11,6 +11,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.7 — Sky.Live: SSE drop-resync + cross-restart session persistence (2026-08-01)
+
+The final two fixes in the Sky.Live resilience pass — the two hardest silent-
+failure modes, each designed test-first and adversarially grilled before landing.
+Pure-runtime + codegen; rebuild with this version to pick them up.
+
+### Fixed — a dropped SSE frame no longer silently diverges the page
+
+Under backpressure (a slow tab, or a burst of ticker/pub-sub frames), the server
+could drop a frame from an over-full per-connection buffer. If the next patch's
+targets happened to still exist in the now-stale DOM, it applied over the wrong
+base with nothing detecting it — the page silently diverged from the server until
+the next detectable miss. The server already knows about every such drop, so it
+now flags the affected connection and ships an inline full-body resync on the
+same stream (fresh sequence number, so it supersedes any stale buffered frame).
+A healthy connection never triggers one; verified race-free.
+
+### Fixed — a session with an `any`-typed field could vanish on restart
+
+Sky.Live persists a session's Model with `gob`. A concrete type that only ever
+lived in an `any`-typed Model field (nil at init, set later by a Msg) was
+invisible to the boot-time registration, and gob's type registry is per-process —
+so after a restart the new process couldn't decode it, and the session was
+silently dropped and lost. The compiler now emits a whole-binary registration of
+every record and ADT type at boot, so every process (including the one that
+restarts and decodes) can round-trip any `any`-field value. Deterministic
+(byte-stable) output — no effect on any program that wasn't hitting this.
+
 ## v0.19.6 — Sky.Live session-persistence fidelity + view-determinism check (2026-08-01)
 
 Two more runtime fixes from the resilience pass (the parts of the deep follow-up
