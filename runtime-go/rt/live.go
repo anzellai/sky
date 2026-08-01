@@ -3425,18 +3425,76 @@ func splitPath(p string) []string {
 
 // If a route page is a function (ADT constructor expecting URL params),
 // apply the captured params via sky_call; otherwise pass through.
-func fillRoutePage(page any, params []string) any {
+func fillRoutePage(page any, params []string) (result any) {
 	if len(params) == 0 || !isFunc(page) {
 		return page
 	}
+	// L7: route params are captured as strings, but a Page ctor may take a typed
+	// param (`AppDetailPage Int`). Coerce each string to the ctor's expected
+	// param type so a typed route no longer panics deep in reflect ("using
+	// string as type int"). A final recover keeps ANY residual mismatch from
+	// crashing the request — it degrades to the raw page ctor, which the
+	// request-level recover renders as an error rather than a hard crash.
+	defer func() {
+		if r := recover(); r != nil {
+			logEmit(logLevelWarn, "warn",
+				"Sky.Live route page fill failed; check the route's Page constructor param types",
+				map[string]any{"panic": fmt.Sprintf("%v", r), "params": strings.Join(params, ",")})
+			result = page
+		}
+	}()
 	curr := page
 	for _, p := range params {
 		if !isFunc(curr) {
 			break
 		}
-		curr = sky_call(curr, p)
+		arg, err := coerceRouteParam(curr, p)
+		if err != nil {
+			// The pattern matched but this value can't be the ctor's typed param
+			// (e.g. /product/abc for `ProductPage Int`). Stop filling and warn;
+			// the caller falls back rather than the request crashing.
+			logEmit(logLevelWarn, "warn",
+				"Sky.Live route param does not match the page constructor's type; ignoring",
+				map[string]any{"param": p, "error": err.Error()})
+			break
+		}
+		curr = sky_call(curr, arg)
 	}
 	return curr
+}
+
+// coerceRouteParam converts a captured route-param string to the FIRST
+// parameter type of the Page constructor `fn`. String / interface pass through;
+// int / float / bool are parsed. Returns an error for an unconvertible value.
+func coerceRouteParam(fn any, p string) (any, error) {
+	ft := reflect.TypeOf(fn)
+	if ft == nil || ft.Kind() != reflect.Func || ft.NumIn() == 0 {
+		return p, nil
+	}
+	switch ft.In(0).Kind() {
+	case reflect.String, reflect.Interface:
+		return p, nil
+	case reflect.Int, reflect.Int64, reflect.Int32:
+		n, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("expected an integer, got %q", p)
+		}
+		return int(n), nil
+	case reflect.Float64, reflect.Float32:
+		f, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil {
+			return nil, fmt.Errorf("expected a number, got %q", p)
+		}
+		return f, nil
+	case reflect.Bool:
+		b, err := strconv.ParseBool(strings.TrimSpace(p))
+		if err != nil {
+			return nil, fmt.Errorf("expected a bool, got %q", p)
+		}
+		return b, nil
+	default:
+		return p, nil // let sky_call try; the recover in fillRoutePage backstops it
+	}
 }
 
 // Live.app — reads a record-shaped config and starts the HTTP server.
