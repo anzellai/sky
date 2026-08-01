@@ -3519,6 +3519,16 @@ func liveAppRun(cfg any) any {
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
 	app.store = chooseStore(storeKind, storePath, ttl)
 	app.sessionTTL = ttl
+	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
+	// the backing DB is unreachable — instead of returning 200 while the store
+	// is down (the "readyz lies by default" class: RegisterReadinessProbe had
+	// zero callers, so an operator's health check stayed green through a store
+	// outage). Main app only — sub-apps (the inline console) don't own the
+	// readiness surface; the parent does (same app.basePath == "" gate the
+	// observability-endpoint mount uses).
+	if app.basePath == "" {
+		RegisterReadinessProbe("session-store", app.store.Ping)
+	}
 	// Cycle 3 P46: cache the store-bound broker on the app for
 	// hot-path Subscribe/Publish call sites (the broker is shared
 	// app-wide; the store owns the binding so v0.16+ cross-process

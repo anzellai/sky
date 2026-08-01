@@ -7,6 +7,8 @@ package rt
 // survives.
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,11 +192,33 @@ func TestChooseStore_Redis(t *testing.T) {
 	}
 	_ = s.Close()
 
-	// Unreachable Redis: should fall back to memory rather than
-	// crash the server at startup.
+	// Make the connect retry fast for the test (default is ~7.5s of real
+	// backoff before the fallback/fatal decision).
+	oldAttempts, oldSleep := storeConnectAttempts, storeSleep
+	storeConnectAttempts, storeSleep = 2, func(time.Duration) {}
+	defer func() { storeConnectAttempts, storeSleep = oldAttempts, oldSleep }()
+
+	// DEV (ENV unset): an unreachable explicit store falls back to memory with a
+	// loud warning rather than crashing — so a DB-less `sky run` still works.
 	fallback := chooseStore("redis", "127.0.0.1:1", 1*time.Minute)
 	if _, ok := fallback.(*memoryStore); !ok {
-		t.Fatalf("chooseStore(redis, <unreachable>) = %T, want *memoryStore fallback", fallback)
+		t.Fatalf("dev: chooseStore(redis, <unreachable>) = %T, want *memoryStore fallback", fallback)
 	}
 	_ = fallback.Close()
+
+	// PRODUCTION: an unreachable explicit store must FAIL LOUD (refuse to
+	// start), NOT silently become an in-memory store that loses every session
+	// on restart. Override storeFatalf to capture the fatal instead of exiting.
+	t.Setenv("ENV", "production")
+	var fatalMsg string
+	oldFatalf := storeFatalf
+	storeFatalf = func(format string, args ...any) { fatalMsg = fmt.Sprintf(format, args...) }
+	defer func() { storeFatalf = oldFatalf }()
+	_ = chooseStore("redis", "127.0.0.1:1", 1*time.Minute)
+	if fatalMsg == "" {
+		t.Fatal("prod: unreachable explicit redis store should fail loud, but no fatal fired")
+	}
+	if !strings.Contains(fatalMsg, "unreachable") || !strings.Contains(fatalMsg, "SKY_LIVE_STORE=memory") {
+		t.Fatalf("prod fatal message should name the failure + the opt-out; got: %q", fatalMsg)
+	}
 }

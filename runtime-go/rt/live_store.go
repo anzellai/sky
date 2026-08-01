@@ -266,6 +266,13 @@ type SessionStore interface {
 	// default: in-process *topicRegistry. Future cross-process
 	// backends override.
 	Broker() Broker
+	// Ping reports store health for /_sky/readyz. Durable backends ping
+	// the underlying DB/client (a dead backend → readyz 503 so the
+	// orchestrator stops routing to a broken replica); the in-memory
+	// store is always healthy and returns nil. Wired in chooseStore via
+	// RegisterReadinessProbe — the fix for the "readyz lies while the
+	// store is down / silently fell back to memory" class.
+	Ping() error
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -296,6 +303,9 @@ func newMemoryStore(ttl time.Duration) *memoryStore {
 }
 
 func (s *memoryStore) Broker() Broker { return s.broker }
+
+// Ping — the in-memory store is always healthy.
+func (s *memoryStore) Ping() error { return nil }
 
 func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 	s.mu.RLock()
@@ -392,6 +402,13 @@ type sqliteStore struct {
 }
 
 func (s *sqliteStore) Broker() Broker { return s.broker }
+
+// Ping — health-check the sqlite handle for /_sky/readyz.
+func (s *sqliteStore) Ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.db.PingContext(ctx)
+}
 
 func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 	db, err := sql.Open("sqlite", path)
@@ -571,6 +588,13 @@ type postgresStore struct {
 
 func (s *postgresStore) Broker() Broker { return s.broker }
 
+// Ping — health-check the postgres pool for /_sky/readyz.
+func (s *postgresStore) Ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.db.PingContext(ctx)
+}
+
 func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error) {
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
@@ -710,6 +734,13 @@ type redisStore struct {
 }
 
 func (s *redisStore) Broker() Broker { return s.broker }
+
+// Ping — health-check the redis client for /_sky/readyz.
+func (s *redisStore) Ping() error {
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	defer cancel()
+	return s.client.Ping(ctx).Err()
+}
 
 // redisKey: namespace session ids under a fixed prefix so the Redis
 // instance can be shared with other workloads.
@@ -1037,6 +1068,81 @@ func decodeSession(blob []byte) (*liveSession, error) {
 // fallbacks DATABASE_URL / REDIS_URL are NOT prefixed (they're not
 // in Sky's namespace) — they're consulted only when the
 // Sky-prefixed override is unset.
+// ── Durable-store connect resilience (fix: silent memory fallback) ──────────
+//
+// A store the user EXPLICITLY configured (postgres/sqlite/redis) that fails to
+// connect at boot must NOT silently degrade to an in-memory store — that turns
+// a transient boot race or a misconfig into "sessions randomly die on every
+// restart", which is invisible (the app looks healthy; healthz/readyz stay
+// green). Instead:
+//   1. retry with bounded backoff, to ride out the common systemd/container
+//      boot race (`After=postgresql` waits for the unit to START, not to
+//      ACCEPT connections);
+//   2. if still unreachable, FAIL LOUD in production (refuse to start so the
+//      orchestrator restarts + the operator sees it) — never a silent memory
+//      fallback. In dev (ENV unset/dev/local) fall back to memory with a loud
+//      warning so `sky run` works without a DB.
+// `store=memory` (or unset) is unaffected — memory IS the contract there, and
+// `SKY_LIVE_STORE=memory` is the explicit opt-in for memory-in-prod.
+var (
+	storeConnectAttempts = 5                       // rides a typical DB warmup
+	storeConnectBaseWait = 500 * time.Millisecond  // 0.5,1,2,4 → ~7.5s total
+	storeConnectMaxWait  = 4 * time.Second
+	// storeFatalf is the fail-loud action; overridable in tests so the
+	// production path can be asserted without exiting the test process.
+	storeFatalf = log.Fatalf
+	// storeSleep is the retry backoff sleep; overridable in tests.
+	storeSleep = time.Sleep
+)
+
+// connectStoreWithRetry calls mk up to storeConnectAttempts times with
+// exponential backoff, returning the first success or the last error.
+func connectStoreWithRetry(kind string, mk func() (SessionStore, error)) (SessionStore, error) {
+	wait := storeConnectBaseWait
+	var last error
+	for attempt := 1; attempt <= storeConnectAttempts; attempt++ {
+		store, err := mk()
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("[sky.live] %s store connected on attempt %d/%d", kind, attempt, storeConnectAttempts)
+			}
+			return store, nil
+		}
+		last = err
+		if attempt < storeConnectAttempts {
+			log.Printf("[sky.live] %s store connect attempt %d/%d failed (%v); retrying in %s",
+				kind, attempt, storeConnectAttempts, err, wait)
+			storeSleep(wait)
+			if wait *= 2; wait > storeConnectMaxWait {
+				wait = storeConnectMaxWait
+			}
+		}
+	}
+	return nil, last
+}
+
+// failDurableStore handles an explicitly-configured durable store that stayed
+// unreachable after retries. Production → FATAL (refuse to start). Dev → loud
+// WARN + memory fallback so a DB-less `sky run` still works.
+func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
+	if productionFromEnv() {
+		storeFatalf("[sky.live] FATAL: session store %q is configured but unreachable "+
+			"after %d attempts (%v). Refusing to start with a silent in-memory fallback in "+
+			"production — sessions would be lost on every restart. Fix the connection (check the "+
+			"connection string and that the database accepts connections), or set "+
+			"SKY_LIVE_STORE=memory to opt in to the in-memory store deliberately.",
+			kind, storeConnectAttempts, err)
+		// storeFatalf is log.Fatalf in prod (never returns); a test override may
+		// return, so fall through to a memory store to keep a valid value.
+	}
+	log.Printf("┌─ [sky.live] WARNING ────────────────────────────────────────")
+	log.Printf("│ session store %q unreachable (%v)", kind, err)
+	log.Printf("│ DEV fallback → in-memory sessions: lost on restart, single-instance only.")
+	log.Printf("│ In PRODUCTION (ENV set) this is a HARD failure — the app refuses to start.")
+	log.Printf("└─────────────────────────────────────────────────────────────")
+	return newMemoryStore(ttl)
+}
+
 func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 	if kind == "" {
 		kind = skyGetenv("LIVE_STORE")
@@ -1052,10 +1158,15 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if path == "" {
 			path = "sky_sessions.db"
 		}
-		store, err := newSQLiteStore(path, ttl)
+		store, err := connectStoreWithRetry("sqlite", func() (SessionStore, error) {
+			s, e := newSQLiteStore(path, ttl)
+			if e != nil {
+				return nil, e
+			}
+			return s, nil
+		})
 		if err != nil {
-			log.Printf("[sky.live] sqlite store unavailable (%v); falling back to memory", err)
-			return newMemoryStore(ttl)
+			return failDurableStore("sqlite", err, ttl)
 		}
 		log.Printf("[sky.live] session store: sqlite @ %s (ttl=%s)", path, ttl)
 		return store
@@ -1064,13 +1175,20 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 			path = os.Getenv("DATABASE_URL")
 		}
 		if path == "" {
-			log.Printf("[sky.live] postgres store requested but no connection string; falling back to memory")
-			return newMemoryStore(ttl)
+			// An explicit postgres store with no connection string is a config
+			// error, not a connect failure — fail loud in prod, not silent RAM.
+			return failDurableStore("postgres",
+				fmt.Errorf("no connection string (set DATABASE_URL or [live] storePath)"), ttl)
 		}
-		store, err := newPostgresStore(path, ttl)
+		store, err := connectStoreWithRetry("postgres", func() (SessionStore, error) {
+			s, e := newPostgresStore(path, ttl)
+			if e != nil {
+				return nil, e
+			}
+			return s, nil
+		})
 		if err != nil {
-			log.Printf("[sky.live] postgres store unavailable (%v); falling back to memory", err)
-			return newMemoryStore(ttl)
+			return failDurableStore("postgres", err, ttl)
 		}
 		log.Printf("[sky.live] session store: postgres (ttl=%s)", ttl)
 		return store
@@ -1081,10 +1199,15 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if path == "" {
 			path = "localhost:6379"
 		}
-		store, err := newRedisStore(path, ttl)
+		store, err := connectStoreWithRetry("redis", func() (SessionStore, error) {
+			s, e := newRedisStore(path, ttl)
+			if e != nil {
+				return nil, e
+			}
+			return s, nil
+		})
 		if err != nil {
-			log.Printf("[sky.live] redis store unavailable (%v); falling back to memory", err)
-			return newMemoryStore(ttl)
+			return failDurableStore("redis", err, ttl)
 		}
 		log.Printf("[sky.live] session store: redis @ %s (ttl=%s)", path, ttl)
 		return store
