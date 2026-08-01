@@ -385,6 +385,18 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	}
 	storeKind := stringField(cfg, "Store")
 	storePath := stringField(cfg, "StorePath")
+	// L9: a sub-app (the inline console) must NOT inherit the HOST's LIVE_STORE
+	// env. Pre-fix, an empty sub-app store fell through chooseStore to
+	// skyGetenv("LIVE_STORE"), so the console opened a SECOND pool against the
+	// host's DB — sqlite WAL-writer contention (the "page transitions hang"
+	// class), or a redundant postgres pool — and, with the fail-loud store
+	// policy, a sub-app store-connect failure could now crash the whole host.
+	// Sub-app sessions are ephemeral (the console is an observability UI), so
+	// default to an in-process memory store unless the sub-app EXPLICITLY set a
+	// store in its own cfg.
+	if storeKind == "" {
+		storeKind = "memory"
+	}
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
 	app.store = chooseStore(storeKind, storePath, ttl)
 	app.sessionTTL = ttl
