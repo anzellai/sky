@@ -11,6 +11,35 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.6 — Sky.Live session-persistence fidelity + view-determinism check (2026-08-01)
+
+Two more runtime fixes from the resilience pass (the parts of the deep follow-up
+that were sound to ship; two larger items — an SSE drop-resync and compiler-
+emitted gob registration — remain designed for a dedicated change). Pure-runtime.
+
+### Fixed — a session could look persisted but silently wasn't (gob registration)
+
+The type-registration used to persist a session's Model marked a type as
+"registered" *before* the registration call that can fail (recovering the
+panic). A failed registration was then remembered as done, so it was never
+retried, every later save of that session failed, and the session silently
+dropped to an in-memory-only fallback — lost on the next restart. Registration
+now caches the success flag only when it actually succeeds. The per-session
+"couldn't persist, using memory" fallback also increments a
+`sky_live_session_encode_fail_total{store}` metric, so a "looks-persisted-but-
+isn't" session in a durable deploy is now visible instead of a buried log line.
+
+### Added — opt-in `view()` determinism check
+
+`view(model)` must be a pure function of the model — handler IDs and the SSE diff
+both depend on the same model rendering to the same tree. A `view` that reads
+`Time.now` / `Random` / `Uuid.v4`, or iterates a raw Go map instead of
+`Dict.toList`, drifts the tree between renders (stale clicks, dropped patches).
+Set `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to have the runtime render `view`
+a second time and warn if the tree shape differs. Opt-in (never on in production,
+off by default) because the second render doubles the side effects of an impure
+view — move nondeterminism into `update`/`Cmd` and keep `view` pure.
+
 ## v0.19.5 — Sky.Live resilience, part 2: CSRF/route/sub-app/panic hardening (2026-08-01)
 
 Five more runtime fixes for hidden Sky.Live production-failure modes (the second
