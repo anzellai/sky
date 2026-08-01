@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -251,7 +252,18 @@ func Db_connect(path any) any {
 			return Err[any, any](ErrIo("db connect: " + err.Error()))
 		}
 		if err := conn.Ping(); err != nil {
-			return Err[any, any](ErrIo("db ping: " + err.Error()))
+			// Do NOT freeze the memoised `db` handle to Err on a transient
+			// failure. `database/sql` is a self-healing lazy pool that (re)dials
+			// on demand; the eager Ping failing here used to return Err, which
+			// the compiler's LazyCaf then cached for the WHOLE process life →
+			// every query returned that Err → broken pages until a manual
+			// restart. That is a permanent outage from a transient boot race
+			// (systemd `After=postgresql` waits for the unit to START, not to
+			// ACCEPT connections). Instead: keep the live pool and warn — the
+			// next query after the database comes up connects transparently, and
+			// /_sky/readyz reports the outage window via the probe below.
+			Log_warn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
+				"is live and will (re)connect on demand once the database is available", driver, err))
 		}
 		// v0.17.10 — SQLite concurrency defaults. Without these, any
 		// Sky.Live app whose update() loop runs multiple Cmd.perform
@@ -309,6 +321,15 @@ func Db_connect(path any) any {
 		}
 		db := &SkyDb{conn: conn, name: p, driver: driver}
 		dbRegistry[p] = db
+		// Wire the app DB into /_sky/readyz so the endpoint reports 503 during
+		// any window the database is unreachable (including the boot self-heal
+		// window above) instead of lying with 200. One probe per unique DB path
+		// — the registry dedup above guarantees single registration.
+		RegisterReadinessProbe("db", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			return conn.PingContext(ctx)
+		})
 		return Ok[any, any](db)
 	}
 }
