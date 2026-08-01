@@ -1,0 +1,197 @@
+module StoreCrudConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Std.Db.Store CRUD + query builder, ADVERSARIAL
+inputs, against an in-process sqlite DB. Complements StoreConformanceTest (which
+covers multi-column ORDER BY). Every case asserts a documented semantic. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+
+type alias Item =
+    { id : String
+    , name : String
+    , qty : Int
+    , note : Maybe String
+    }
+
+
+itemCodec : Codec Item
+itemCodec =
+    Codec.auto { id = "", name = "", qty = 0, note = Nothing }
+
+
+items : Store Item
+items =
+    Store.fromCodec "conf_items" itemCodec |> Store.primaryKey "id"
+
+
+setup : () -> Result Error Db
+setup _ =
+    case Task.run (Db.open "sqlite" "/tmp/sky-store-crud-conformance.db") of
+        Err e ->
+            Err e
+
+        Ok db ->
+            let
+                _ = Task.run (Db.exec db "DROP TABLE IF EXISTS conf_items" [])
+                _ =
+                    Task.run
+                        (Db.exec db "CREATE TABLE conf_items (id TEXT PRIMARY KEY, name TEXT, qty INTEGER, note TEXT)" [])
+                _ = Task.run (Store.insert db items { id = "i1", name = "Alpha", qty = 3, note = Just "hi" })
+                _ = Task.run (Store.insert db items { id = "i2", name = "Beta", qty = 7, note = Nothing })
+                _ = Task.run (Store.insert db items { id = "i3", name = "Gamma", qty = 5, note = Just "yo" })
+            in
+                Ok db
+
+
+runList : Db -> Store.Query Item -> List String
+runList db q =
+    List.map (\i -> i.id) (Result.withDefault [] (Task.run (Store.toList db q)))
+
+
+runCount : Db -> Store.Query Item -> Int
+runCount db q =
+    Result.withDefault (-1) (Task.run (Store.count db q))
+
+
+tests : List Test
+tests =
+    case setup () of
+        Err e ->
+            [ Test.test "setup" (\_ -> Test.fail ("DB setup failed: " ++ errorToString e)) ]
+
+        Ok db ->
+            [ Test.test
+                  "insert + findBy round-trips the exact record (incl. Just note)"
+                  (\_ ->
+                      Test.equal
+                          (Just { id = "i1", name = "Alpha", qty = 3, note = Just "hi" })
+                          (Result.withDefault Nothing (Task.run (Store.findBy db items "id" "i1"))))
+            , Test.test
+                  "Nothing (NULL) round-trips as Nothing, not empty string"
+                  (\_ ->
+                      Test.equal
+                          (Just { id = "i2", name = "Beta", qty = 7, note = Nothing })
+                          (Result.withDefault Nothing (Task.run (Store.findBy db items "id" "i2"))))
+            , Test.test
+                  "all returns every row; count agrees"
+                  (\_ ->
+                      Test.equal 3 (List.length (Result.withDefault [] (Task.run (Store.all db items)))))
+            , Test.test
+                  "where_ eq filters"
+                  (\_ ->
+                      Test.equal
+                          [ "i2" ]
+                          (runList db (Store.query items |> Store.where_ (Store.eq "name" (Db.SqlString "Beta")))))
+            , Test.test
+                  "and_ combines: qty > 3 AND note is not null"
+                  (\_ ->
+                      Test.equal
+                          [ "i3" ]
+                          (runList db
+                              (Store.query items
+                                  |> Store.where_
+                                      (Store.and_
+                                          [ Store.gt "qty" (Db.SqlInt 3)
+                                          , Store.notNull "note"
+                                          ])
+                                  |> Store.orderAsc "id")))
+            , Test.test
+                  "or_ combines: qty < 4 OR name = Beta"
+                  (\_ ->
+                      Test.equal
+                          [ "i1", "i2" ]
+                          (runList db
+                              (Store.query items
+                                  |> Store.where_
+                                      (Store.or_
+                                          [ Store.lt "qty" (Db.SqlInt 4)
+                                          , Store.eq "name" (Db.SqlString "Beta")
+                                          ])
+                                  |> Store.orderAsc "id")))
+            , Test.test
+                  "isNull selects the NULL note row only"
+                  (\_ ->
+                      Test.equal
+                          [ "i2" ]
+                          (runList db (Store.query items |> Store.where_ (Store.isNull "note"))))
+            , Test.test
+                  "inList membership"
+                  (\_ ->
+                      Test.equal
+                          [ "i1", "i3" ]
+                          (runList db
+                              (Store.query items
+                                  |> Store.where_ (Store.inList "id" [ Db.SqlString "i1", Db.SqlString "i3" ])
+                                  |> Store.orderAsc "id")))
+            , Test.test
+                  "limit + offset pages the ORDER BY result"
+                  (\_ ->
+                      Test.equal
+                          [ "i2" ]
+                          (runList db
+                              (Store.query items
+                                  |> Store.orderAsc "id"
+                                  |> Store.limit 1
+                                  |> Store.offset 1)))
+            , Test.test
+                  "count with where_ counts matches, not all"
+                  (\_ ->
+                      Test.equal
+                          2
+                          (runCount db (Store.query items |> Store.where_ (Store.gt "qty" (Db.SqlInt 3)))))
+            , Test.test
+                  "adjust atomically increments a counter column"
+                  (\_ ->
+                      let
+                          _ =
+                              Task.run
+                                  (Store.adjust db
+                                      items
+                                      (Store.eq "id" (Db.SqlString "i1"))
+                                      [ ( "qty", 10 ) ])
+                          after =
+                              case Result.withDefault Nothing (Task.run (Store.findBy db items "id" "i1")) of
+                                  Just it ->
+                                      it.qty
+
+                                  Nothing ->
+                                      -1
+                      in
+                          -- 3 + 10 = 13
+                          Test.equal 13 after)
+            , Test.test
+                  "setFields patches only the named column (leaves others intact)"
+                  (\_ ->
+                      let
+                          _ =
+                              Task.run
+                                  (Store.setFields db
+                                      items
+                                      (Db.SqlString "i3")
+                                      [ ( "name", Db.SqlString "Gamma2" ) ])
+                          after = Result.withDefault Nothing (Task.run (Store.findBy db items "id" "i3"))
+                      in
+                          -- name changed, qty (5) + note (Just "yo") untouched
+                          Test.equal
+                              (Just { id = "i3", name = "Gamma2", qty = 5, note = Just "yo" })
+                              after)
+            , Test.test
+                  "deleteWhere removes matches; count reflects it"
+                  (\_ ->
+                      let
+                          _ = Task.run (Store.deleteWhere db items (Store.eq "id" (Db.SqlString "i2")))
+                      in
+                          Test.equal 2 (List.length (Result.withDefault [] (Task.run (Store.all db items)))))
+            ]
+
+
+main =
+    Test.runMain tests

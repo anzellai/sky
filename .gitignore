@@ -136,3 +136,4 @@ examples/*/sky-out-rust/
 # (out of band; never in the build path). Not committed: rebuilding is from a
 # clean slate, and version drift can't produce a committed-surface clash.
 sky-ffi/
+tests/conformance/sky-out*

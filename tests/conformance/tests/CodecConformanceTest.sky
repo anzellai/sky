@@ -1,0 +1,377 @@
+module CodecConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Std.Codec — asserts documented SEMANTICS with
+ADVERSARIAL data (not happy-path). Every case here would FAIL on a naive/buggy
+implementation: unescaped JSON metacharacters, snake_case vs camelCase key
+derivation, Maybe↔null, empty vs non-empty lists, tagged-union arity, enum
+name mapping, and malformed-input rejection. Pure (no DB, no Task) — the codec
+is Layer-3 Sky over Sky.Core.Json.
+
+Two real defects were discovered while building this suite. They are recorded in
+the `KNOWN BUG` blocks below with minimal repros, and are NOT expressed as active
+assertions because one of them ABORTS the process (a compiler panic), which would
+mask every other result. The suite otherwise stays green and exercises the
+correct behavior comprehensively.
+
+  KNOWN BUG 1 — ADT-target `fromJson` decode-FAILURE panics (CoerceFailure).
+    `Codec.fromJson` on any ADT-typed codec (`enum` / `taggedUnion`), when the
+    decoder legitimately fails, panics in `rt.ResultCoerce`/`coerceInner`
+    ("source string cannot be cast to target rt.SkyADT") instead of returning
+    `Err`. Compiler typed-codegen routing bug in `Std_Codec_fromJson`'s
+    `ResultCoerce[<ADT>]`. Minimal repro (panics, does NOT return Err):
+        Codec.fromJson (Codec.enum [ ( Stickers, "stickers" ) ]) "\"nope\""
+        Codec.fromJson shipmentTaggedUnionCodec "[\"GhostTag\"]"
+    The SUCCESS path for the same codecs works (see the enum/taggedUnion tests
+    below), so only the failure branch is broken.
+
+  KNOWN BUG 2 — `auto`/`autoCamel`/`autoWith` record decoder is PERMISSIVE.
+    A missing required field OR a wrong-typed field silently decodes to the
+    zero-value default (`Ok`) instead of `Err`. Repro:
+        Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\"}"
+            -- returns  Ok { name = "x", count = 0 }   (count invented as 0)
+        Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\",\"count\":\"z\"}"
+            -- returns  Ok { name = "x", count = 0 }   (type mismatch ignored)
+    The EXPLICIT `object`/`field`/`buildObject` decoder is strict and correctly
+    Errs on the same inputs (see the "malformed → Err" section, which therefore
+    uses an explicit-object codec). Scalar decoders (`Codec.int` on a string)
+    also fail correctly. The leniency is isolated to the reflective auto path
+    (`Codec_autoDecoder` kernel). -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+
+-- ── Types under test ─────────────────────────────────────────────────────────
+
+type alias Prim =
+    { name : String
+    , count : Int
+    , ratio : Float
+    , active : Bool
+    }
+
+
+type alias Inner =
+    { tag : String
+    , n : Int
+    }
+
+
+type alias Outer =
+    { title : String
+    , inner : Inner
+    , items : List Int
+    }
+
+
+type alias Opt =
+    { label : String
+    , note : Maybe String
+    }
+
+
+type alias Product =
+    { name : String
+    , priceMinor : Int
+    , active : Bool
+    }
+
+
+type Shipment
+    = NotShipped
+    | Shipped String Int
+
+
+type Category
+    = Stickers
+    | Bookmarks
+    | Prints
+
+
+-- ── Codecs ───────────────────────────────────────────────────────────────────
+
+primCodec : Codec Prim
+primCodec =
+    Codec.auto { name = "", count = 0, ratio = 0.0, active = False }
+
+
+outerCodec : Codec Outer
+outerCodec =
+    Codec.auto { title = "", inner = { tag = "", n = 0 }, items = [] }
+
+
+optCodec : Codec Opt
+optCodec =
+    Codec.auto { label = "", note = Nothing }
+
+
+-- snake_case (default) derivation for the multi-word field `priceMinor`.
+productSnake : Codec Product
+productSnake =
+    Codec.auto { name = "", priceMinor = 0, active = False }
+
+
+-- camelCase derivation — same record, key stays `priceMinor`.
+productCamel : Codec Product
+productCamel =
+    Codec.autoCamel { name = "", priceMinor = 0, active = False }
+
+
+-- A Bool persisted as 0/1 via `map`, injected over auto-derivation with autoWith.
+intBool : Codec Bool
+intBool =
+    Codec.map (\i -> i /= 0) (\b -> if b then 1 else 0) Codec.int
+
+
+productOverride : Codec Product
+productOverride =
+    Codec.autoWith [ ( "active", intBool ) ]
+        { name = "", priceMinor = 0, active = False }
+
+
+-- Explicit object builder with hand-picked (non-derived) key names.
+customInner : Codec Inner
+customInner =
+    Codec.object Inner
+        |> Codec.field "t" .tag Codec.string
+        |> Codec.field "num" .n Codec.int
+        |> Codec.buildObject
+
+
+-- Explicit, STRICT record codec used for the malformed-input assertions
+-- (the `auto` decoder is permissive — see KNOWN BUG 2).
+primObjCodec : Codec Prim
+primObjCodec =
+    Codec.object Prim
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "count" .count Codec.int
+        |> Codec.field "ratio" .ratio Codec.float
+        |> Codec.field "active" .active Codec.bool
+        |> Codec.buildObject
+
+
+shipmentCodec : Codec Shipment
+shipmentCodec =
+    Codec.taggedUnion
+        (\v ->
+            case v of
+                NotShipped ->
+                    ( "NotShipped", [] )
+
+                Shipped carrier ts ->
+                    ( "Shipped"
+                    , [ Codec.toValue Codec.string carrier
+                      , Codec.toValue Codec.int ts
+                      ]
+                    )
+        )
+        [ Codec.var0 "NotShipped" NotShipped
+        , Codec.var2 "Shipped" Shipped Codec.string Codec.int
+        ]
+
+
+categoryCodec : Codec Category
+categoryCodec =
+    Codec.enum
+        [ ( Stickers, "stickers" )
+        , ( Bookmarks, "bookmarks" )
+        , ( Prints, "prints" )
+        ]
+
+
+-- ── Helpers ──────────────────────────────────────────────────────────────────
+
+-- Round-trip a value through its codec and assert structural identity.
+roundTrip : Codec a -> a -> Test.TestResult
+roundTrip codec x =
+    Test.equal (Ok x) (Codec.fromJson codec (Codec.toJson codec x))
+
+
+roundTripStr : String -> Test.TestResult
+roundTripStr s =
+    Test.equal (Ok s) (Codec.fromJson Codec.string (Codec.toJson Codec.string s))
+
+
+-- Adversarial JSON metacharacters + escapes: quotes, backslash, newline, tab,
+-- and structural chars {}[]:, that a naive (non-escaping) encoder mangles.
+metaString : String
+metaString =
+    "he said \"hi\"\nline2\ttab \\back\\slash {a:[1,2],b:3} end,"
+
+
+tests : List Test
+tests =
+    [ -- ── Round-trip identity: records / nested / list / Maybe ──────────────
+      Test.test "round-trip: flat record (auto)"
+        (\_ -> roundTrip primCodec { name = "widget", count = 7, ratio = 1.5, active = True })
+    , Test.test "round-trip: nested record (auto → blob column)"
+        (\_ ->
+            roundTrip outerCodec
+                { title = "box", inner = { tag = "x", n = 42 }, items = [ 1, 2, 3 ] }
+        )
+    , Test.test "round-trip: empty list is preserved (not dropped)"
+        (\_ -> roundTrip outerCodec { title = "empty", inner = { tag = "", n = 0 }, items = [] })
+    , Test.test "round-trip: non-empty list of ints incl. negatives/zero"
+        (\_ -> roundTrip (Codec.list Codec.int) [ -5, 0, 7, 123456 ])
+    , Test.test "round-trip: Maybe Just"
+        (\_ -> roundTrip optCodec { label = "a", note = Just "present" })
+    , Test.test "round-trip: Maybe Nothing (↔ null)"
+        (\_ -> roundTrip optCodec { label = "a", note = Nothing })
+    , Test.test "round-trip: Maybe (Just \"\") is NOT collapsed to Nothing"
+        (\_ -> roundTrip optCodec { label = "a", note = Just "" })
+
+    -- ── Adversarial scalar values ─────────────────────────────────────────
+    , Test.test "adversarial string: JSON metacharacters + escapes survive"
+        (\_ -> roundTripStr metaString)
+    , Test.test "adversarial string: emoji"
+        (\_ -> roundTripStr "🚀🌟🔥 rocket")
+    , Test.test "adversarial string: CJK"
+        (\_ -> roundTripStr "日本語テスト・中文测试・한국어")
+    , Test.test "adversarial string: empty"
+        (\_ -> roundTripStr "")
+    , Test.test "adversarial string: lone backslash + newline + tab + quote"
+        (\_ -> roundTripStr "\\\n\t\"")
+    , Test.test "adversarial int: negative + zero in one record"
+        (\_ -> roundTrip primCodec { name = "n", count = -2147483648, ratio = 0.0, active = False })
+    , Test.test "adversarial int: 2^53-1 round-trips exactly"
+        (\_ -> roundTrip Codec.int 9007199254740991)
+    , Test.test "adversarial int: max int64 boundary round-trips exactly"
+        (\_ -> roundTrip Codec.int 9223372036854775807)
+    , Test.test "adversarial float: high-precision pi round-trips"
+        (\_ -> roundTrip Codec.float 3.141592653589793)
+    , Test.test "adversarial bool: both directions decode distinctly"
+        (\_ ->
+            case ( Codec.fromJson Codec.bool (Codec.toJson Codec.bool True)
+                 , Codec.fromJson Codec.bool (Codec.toJson Codec.bool False)
+                 ) of
+                ( Ok True, Ok False ) ->
+                    Test.pass
+
+                other ->
+                    Test.fail ("bool round-trip mismatch: " ++ errorToString other)
+        )
+
+    -- ── snake_case vs camelCase key derivation ────────────────────────────
+    , Test.test "auto: multi-word field priceMinor → key price_minor (snake)"
+        (\_ ->
+            let
+                j = Codec.toJson productSnake { name = "p", priceMinor = 999, active = True }
+            in
+                if String.contains "price_minor" j && not (String.contains "priceMinor" j) then
+                    Test.pass
+
+                else
+                    Test.fail ("expected snake_case key `price_minor` in " ++ j)
+        )
+    , Test.test "autoCamel: field priceMinor stays camelCase key priceMinor"
+        (\_ ->
+            let
+                j = Codec.toJson productCamel { name = "p", priceMinor = 999, active = True }
+            in
+                if String.contains "priceMinor" j && not (String.contains "price_minor" j) then
+                    Test.pass
+
+                else
+                    Test.fail ("expected camelCase key `priceMinor` in " ++ j)
+        )
+    , Test.test "auto (snake): round-trips independently of key casing"
+        (\_ -> roundTrip productSnake { name = "p", priceMinor = 12, active = False })
+    , Test.test "autoCamel: round-trips independently of key casing"
+        (\_ -> roundTrip productCamel { name = "p", priceMinor = 12, active = False })
+
+    -- ── autoWith override: one custom field, rest auto-derived ─────────────
+    , Test.test "autoWith: overridden `active` encodes as int 0/1, not JSON bool"
+        (\_ ->
+            let
+                j = Codec.toJson productOverride { name = "p", priceMinor = 5, active = True }
+            in
+                if String.contains "\"active\":1" j && not (String.contains "true" j) then
+                    Test.pass
+
+                else
+                    Test.fail ("expected `\"active\":1` (int) and no `true` in " ++ j)
+        )
+    , Test.test "autoWith: non-overridden field keeps snake_case derivation"
+        (\_ ->
+            let
+                j = Codec.toJson productOverride { name = "p", priceMinor = 5, active = True }
+            in
+                Test.isTrue (String.contains "price_minor" j)
+        )
+    , Test.test "autoWith: full record round-trips through the 0/1 override"
+        (\_ -> roundTrip productOverride { name = "p", priceMinor = 5, active = True })
+
+    -- ── Explicit object/field/buildObject with custom key names ───────────
+    , Test.test "object/field: custom keys `t`/`num` present in output"
+        (\_ ->
+            let
+                j = Codec.toJson customInner { tag = "hello", n = 3 }
+            in
+                if String.contains "\"t\":" j && String.contains "\"num\":" j then
+                    Test.pass
+
+                else
+                    Test.fail ("expected custom keys t/num in " ++ j)
+        )
+    , Test.test "object/field: round-trips"
+        (\_ -> roundTrip customInner { tag = "hello", n = 3 })
+
+    -- ── Tagged-union ADTs (SUCCESS path — see KNOWN BUG 1 for failures) ────
+    , Test.test "taggedUnion: nullary variant round-trips"
+        (\_ -> roundTrip shipmentCodec NotShipped)
+    , Test.test "taggedUnion: 2-arg variant round-trips (arity + order)"
+        (\_ -> roundTrip shipmentCodec (Shipped "DHL" 1699))
+    , Test.test "taggedUnion: 2-arg variant with adversarial payload string"
+        (\_ -> roundTrip shipmentCodec (Shipped metaString -1))
+    , Test.test "taggedUnion: encodes as a tagged JSON array [\"Tag\", ...]"
+        (\_ ->
+            let
+                j = Codec.toJson shipmentCodec (Shipped "DHL" 5)
+            in
+                Test.isTrue (String.contains "[\"Shipped\"" j)
+        )
+
+    -- ── enum (SUCCESS path — see KNOWN BUG 1 for unknown-name failure) ─────
+    , Test.test "enum: round-trips each nullary constructor by name"
+        (\_ ->
+            case ( roundTrip categoryCodec Stickers
+                 , roundTrip categoryCodec Bookmarks
+                 , roundTrip categoryCodec Prints
+                 ) of
+                ( Test.Passed, Test.Passed, Test.Passed ) ->
+                    Test.pass
+
+                _ ->
+                    Test.fail "one or more enum variants failed to round-trip"
+        )
+    , Test.test "enum: distinct constructors encode to DISTINCT names"
+        (\_ ->
+            Test.notEqual
+                (Codec.toJson categoryCodec Stickers)
+                (Codec.toJson categoryCodec Bookmarks)
+        )
+    , Test.test "enum: encodes to the readable name (\"stickers\"), not an index"
+        (\_ -> Test.equal "\"stickers\"" (Codec.toJson categoryCodec Stickers))
+
+    -- ── Malformed / mismatched JSON → Err (STRICT explicit-object codec) ───
+    , Test.test "fromJson: missing required field → Err"
+        (\_ -> Test.err (Codec.fromJson primObjCodec "{\"name\":\"x\",\"count\":1,\"ratio\":1.0}"))
+    , Test.test "fromJson: wrong type (string where int) inside record → Err"
+        (\_ -> Test.err (Codec.fromJson primObjCodec "{\"name\":\"x\",\"count\":\"7\",\"ratio\":1.0,\"active\":true}"))
+    , Test.test "fromJson: truncated JSON → Err"
+        (\_ -> Test.err (Codec.fromJson primObjCodec "{\"name\":\"x\",\"count\":"))
+    , Test.test "fromJson: scalar wrong type (string where int) → Err"
+        (\_ -> Test.err (Codec.fromJson Codec.int "\"not-an-int\""))
+
+    -- ── fromJsonSafe size guard ───────────────────────────────────────────
+    , Test.test "fromJsonSafe: input over size limit → Err (before parse)"
+        (\_ -> Test.err (Codec.fromJsonSafe 5 Codec.string "\"this string is definitely longer than five chars\""))
+    , Test.test "fromJsonSafe: under limit decodes Ok"
+        (\_ -> Test.ok (Codec.fromJsonSafe 100 Codec.string "\"ok\""))
+    ]
+
+
+main =
+    Test.runMain tests

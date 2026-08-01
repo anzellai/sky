@@ -1,0 +1,187 @@
+module JsonConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Sky.Core.Json.Encode / Decode / Decode.Pipeline.
+Every case asserts a SPECIFIC documented behavior with ADVERSARIAL inputs —
+the input that breaks a naive implementation, not the happy path. JSON is pure
+(no Task / DB), so the suite is a flat list evaluated directly. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Json.Decode.Pipeline as Pipeline
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Fixtures ──────────────────────────────────────────────────────
+
+{-| An adversarial string that breaks any encoder that doesn't escape:
+    a double-quote, a backslash, a newline, a tab, a raw control char
+    (U+0001 via \x01), an emoji (multi-byte), and CJK. If encoding is
+    correct this survives a full encode -> decode round-trip byte-for-byte. -}
+nasty : String
+nasty =
+    "q:\" b:\\ n:\n t:\t c:\x01 e:🎉 j:日本語"
+
+
+{-| A nested object with mixed value types + an inner object + an array —
+    the shape a flat/naive encoder mangles. -}
+payload : String
+payload =
+    Encode.encode 0
+        (Encode.object
+            [ ( "name", Encode.string "Ada" )
+            , ( "age", Encode.int 36 )
+            , ( "tags", Encode.list Encode.string [ "x", "y" ] )
+            , ( "addr", Encode.object [ ( "city", Encode.string "London" ) ] )
+            ]
+        )
+
+
+type alias Person =
+    { name : String, nick : String }
+
+
+makePerson : String -> String -> Person
+makePerson n k =
+    { name = n, nick = k }
+
+
+personDec : Decoder Person
+personDec =
+    Decode.succeed makePerson
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.optional "nick" Decode.string "anon"
+
+
+-- oneOf that classifies the JSON shape it saw.
+shapeDec : Decoder String
+shapeDec =
+    Decode.oneOf
+        [ Decode.map (\_ -> "int") Decode.int
+        , Decode.map (\_ -> "str") Decode.string
+        ]
+
+
+tests : List Test
+tests =
+    -- ─── encode -> decode round-trip identity ──────────────────────
+    [ Test.test "round-trip: nested object field" (\_ ->
+        Test.equal (Ok "Ada")
+            (Decode.decodeString (Decode.field "name" Decode.string) payload))
+    , Test.test "round-trip: int field survives serialisation" (\_ ->
+        Test.equal (Ok 36)
+            (Decode.decodeString (Decode.field "age" Decode.int) payload))
+    , Test.test "round-trip: array field decodes as list" (\_ ->
+        Test.equal [ "x", "y" ]
+            (Result.withDefault []
+                (Decode.decodeString
+                    (Decode.field "tags" (Decode.list Decode.string))
+                    payload)))
+    , Test.test "round-trip: nested object via `at`" (\_ ->
+        Test.equal (Ok "London")
+            (Decode.decodeString (Decode.at [ "addr", "city" ] Decode.string) payload))
+
+    -- ─── String ESCAPING (critical) ────────────────────────────────
+    , Test.test "escaping: adversarial string round-trips byte-for-byte" (\_ ->
+        -- Quote, backslash, newline, tab, control char, emoji, CJK all
+        -- survive encode -> decode. A broken escaper corrupts or truncates.
+        Test.equal nasty
+            (Result.withDefault ""
+                (Decode.decodeString Decode.string
+                    (Encode.encode 0 (Encode.string nasty)))))
+    , Test.test "escaping: encoded form contains NO raw newline" (\_ ->
+        -- The newline in `nasty` must be escaped to a two-char \n sequence,
+        -- never emitted as a literal 0x0A (which would be invalid JSON).
+        Test.isFalse
+            (String.contains "\n" (Encode.encode 0 (Encode.string nasty))))
+    , Test.test "escaping: encoded quote-containing string is valid JSON" (\_ ->
+        -- A string that is just a bare quote must produce parseable JSON.
+        Test.equal (Ok "\"")
+            (Decode.decodeString Decode.string
+                (Encode.encode 0 (Encode.string "\""))))
+
+    -- ─── malformed input -> Err ────────────────────────────────────
+    , Test.test "malformed: truncated object" (\_ ->
+        Test.err (Decode.decodeString Decode.string "{\"a\":"))
+    , Test.test "malformed: trailing comma in array" (\_ ->
+        Test.err (Decode.decodeString (Decode.list Decode.int) "[1,2,]"))
+    , Test.test "malformed: unquoted object key" (\_ ->
+        Test.err (Decode.decodeString (Decode.field "a" Decode.int) "{a:1}"))
+    , Test.test "malformed: mismatched bracket" (\_ ->
+        Test.err (Decode.decodeString (Decode.list Decode.int) "[1,2}"))
+
+    -- ─── type-mismatch decode -> Err ───────────────────────────────
+    , Test.test "type-mismatch: int decoder on string value" (\_ ->
+        Test.err (Decode.decodeString (Decode.field "n" Decode.int) "{\"n\":\"hello\"}"))
+    , Test.test "type-mismatch: field absent" (\_ ->
+        Test.err (Decode.decodeString (Decode.field "missing" Decode.int) "{}"))
+
+    -- ─── index ─────────────────────────────────────────────────────
+    , Test.test "index: valid position" (\_ ->
+        Test.equal (Ok "b")
+            (Decode.decodeString (Decode.index 1 Decode.string) "[\"a\",\"b\",\"c\"]"))
+    , Test.test "index: out-of-range -> Err" (\_ ->
+        Test.err (Decode.decodeString (Decode.index 5 Decode.string) "[\"a\",\"b\"]"))
+
+    -- ─── oneOf ─────────────────────────────────────────────────────
+    , Test.test "oneOf: first succeeding decoder wins" (\_ ->
+        Test.equal (Ok "int") (Decode.decodeString shapeDec "42"))
+    , Test.test "oneOf: falls through to later decoder" (\_ ->
+        Test.equal (Ok "str") (Decode.decodeString shapeDec "\"hi\""))
+    , Test.test "oneOf: all fail -> Err" (\_ ->
+        Test.err
+            (Decode.decodeString
+                (Decode.oneOf [ Decode.map (\_ -> 0) Decode.int, Decode.map (\_ -> 0) Decode.bool ])
+                "\"hello\""))
+
+    -- ─── numbers ───────────────────────────────────────────────────
+    , Test.test "int: rejects fractional number (Elm semantics)" (\_ ->
+        -- Documented: int on 3.5 rejects rather than truncating.
+        Test.err (Decode.decodeString Decode.int "3.5"))
+    , Test.test "int: accepts integral-valued float (3.0)" (\_ ->
+        -- JSON has no int/float split, so 3.0 must decode as Int 3.
+        Test.equal (Ok 3) (Decode.decodeString Decode.int "3.0"))
+    , Test.test "float: accepts an integer literal" (\_ ->
+        Test.equal (Ok 3.0) (Decode.decodeString Decode.float "3"))
+    , Test.test "int: negative" (\_ ->
+        Test.equal (Ok (-7)) (Decode.decodeString Decode.int "-7"))
+    , Test.test "int: large value round-trips exactly" (\_ ->
+        Test.equal (Ok 1000000000000)
+            (Decode.decodeString Decode.int
+                (Encode.encode 0 (Encode.int 1000000000000))))
+
+    -- ─── Pipeline: optional vs required ────────────────────────────
+    , Test.test "pipeline: optional field absent -> default" (\_ ->
+        Test.equal (Ok { name = "Ada", nick = "anon" })
+            (Decode.decodeString personDec "{\"name\":\"Ada\"}"))
+    , Test.test "pipeline: optional field present -> value" (\_ ->
+        Test.equal (Ok { name = "Ada", nick = "A" })
+            (Decode.decodeString personDec "{\"name\":\"Ada\",\"nick\":\"A\"}"))
+    , Test.test "pipeline: required field absent -> Err" (\_ ->
+        Test.err (Decode.decodeString personDec "{\"nick\":\"x\"}"))
+
+    -- ─── null handling ─────────────────────────────────────────────
+    , Test.test "null: encodes to the literal `null`" (\_ ->
+        Test.equal "null" (Encode.encode 0 Encode.null))
+    , Test.test "null: string decoder on null -> Err" (\_ ->
+        Test.err (Decode.decodeString Decode.string "null"))
+
+    -- ─── empty containers ──────────────────────────────────────────
+    , Test.test "empty object round-trips (field lookup -> Err)" (\_ ->
+        Test.err
+            (Decode.decodeString (Decode.field "any" Decode.string)
+                (Encode.encode 0 (Encode.object []))))
+    , Test.test "empty array round-trips to []" (\_ ->
+        Test.equal [ 0 ]
+            (List.append [ 0 ]
+                (Result.withDefault [ 99 ]
+                    (Decode.decodeString (Decode.list Decode.int)
+                        (Encode.encode 0 (Encode.list Encode.int []))))))
+    ]
+
+
+main =
+    Test.runMain tests
