@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.19.3 — onNavigate crash fix, console Sign out, `sky db reset`/`drop` (2026-07-31)
+## v0.19.3 — onNavigate crash fix, cross-module `case` fix, conformance suite, `sky db reset`/`drop` (2026-08-01)
 
 ### Added — `sky db reset` + `sky db drop`
 
@@ -139,6 +139,20 @@ of a second. `isEmpty`/`length` are kernel aliases too.
 `String_toIntT` both trim — trimming silently depended on the codegen path.
 `String.toInt` now trims, consistently.
 
+### Fixed — cross-module same-named ADT crashed `case` at runtime
+
+Two modules that each declared a same-named ADT with the same variant names
+(`type Prim = Leaf String | Node Int` in both) miscompiled every `case` on one
+module's value: the pattern lowerer resolved the bare constructor name through a
+last-writer-wins map, so `case alphaValue of Leaf s -> …` emitted its variant
+type-assertions against the *other* module's variant struct. The value never
+matched, so the exhaustiveness-checked `case` fell through to a runtime
+`panic` (and, through the reflective `Codec.taggedUnion` decode path, an
+`interface conversion` panic). Constructor *construction* already resolved the
+correct module; only the pattern side didn't. Now every `case` arm asserts
+against its own module's variant struct. Byte-identical output for any program
+that wasn't hitting the collision.
+
 ### Added — stdlib behavioral conformance suite (`tests/conformance/`)
 
 A `sky test` suite layer (`scripts/conformance.sh`, wired into CI + the release
@@ -147,7 +161,8 @@ behavioral layer the corpus gates + differential oracle don't cover (they prove
 "builds" + "matches oracle", not "behaves correctly at runtime"). It already
 caught several compiles-clean-behaves-wrong bugs (Store multi-column order,
 memoised-CAF stale reads, `Log` dropped attrs, `fromJson`-ADT panic, list
-stack-safety) — each is now a permanent assertion.
+stack-safety, cross-module same-named ADT `case`) — each is now a permanent
+assertion.
 
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
