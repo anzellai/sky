@@ -895,11 +895,49 @@ fn effect_symbol_parts(sym: &str) -> Option<EffectKind> {
     kernel_effect(m, f)
 }
 
-/// A memoised CAF whose frozen RESULT is a long-lived resource HANDLE (a DB
-/// pool / connection / client / cache) is the blessed "one shared handle"
-/// contract — never the stale-read footgun. `db = Task.run (Db.connect ())`
-/// (result type `Db`) MUST NOT warn.
-fn is_handle_result(ty: &Ty) -> bool {
+/// True when a memoised CAF's frozen RESULT is ordinary DATA that can go STALE
+/// after later writes (a `List`, record, scalar, ADT, tuple, …) — the ONLY case
+/// the stale-read lint should fire on. False for results whose "freezing" is the
+/// intended contract or that hold nothing stale-able:
+///   * `Fun` — a returned lambda is forced by the CALLER, not at memo time.
+///   * `Unit` and `Result _ () / Maybe _ () / Task _ ()` — completion SIGNALS
+///     (a run-once boot action / migration), no value to go stale.
+///   * resource HANDLES (`Db` / `Pool` / `Conn` / `Connection` / `Client` /
+///     `Cache`) and table/config DESCRIPTORS (`Store`) — memoising one shared
+///     handle/config is the blessed contract. Crucially, any effectful lambda
+///     such a value CARRIES (e.g. `Store.defaultWith (\_ -> nowMs ())`, a
+///     per-insert default the runtime calls LATER) is STORED, not forced now —
+///     so the reachable clock/DB kernel is not a memo-time read.
+/// `Result`/`Maybe`/`Task` are TRANSPARENT: stale-ability follows their payload
+/// (`Result Error (List Post)` is stale data; `Result Error ()` is not).
+fn is_stale_data_result(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unit | Ty::Fun(_, _) => false,
+        Ty::App(n, args) => {
+            if is_config_or_handle_result(ty) {
+                return false;
+            }
+            let base = n.as_str().rsplit('.').next().unwrap_or(n.as_str());
+            match base {
+                // Transparent wrappers: the payload (last type arg) decides.
+                "Result" | "Maybe" | "Task" => args.last().is_some_and(is_stale_data_result),
+                _ => true,
+            }
+        }
+        // Var / Record / Tuple / Error → treat as data (may be stale).
+        _ => true,
+    }
+}
+
+/// A long-lived config/handle DESCRIPTOR result — a resource handle (`Db` /
+/// `Pool` / `Conn` / `Connection` / `Client` / `Cache`) or a table/config value
+/// (`Store`). Its carried lambdas (a `Store.defaultWith (\_ -> nowMs ())`
+/// per-insert default) are STORED for later, NOT forced at memo time, so its
+/// effect must not propagate to a caller. NARROWER than `is_stale_data_result`'s
+/// suppression set: it deliberately does NOT include `Unit` / `Result _ ()` /
+/// functions, which are legitimate propagation CONDUITS in a read chain
+/// (`loadPosts → Store.toList → Db_queryObjects`) and must stay transparent.
+fn is_config_or_handle_result(ty: &Ty) -> bool {
     let name = match ty {
         Ty::App(n, _) => n.as_str(),
         _ => return false,
@@ -907,7 +945,7 @@ fn is_handle_result(ty: &Ty) -> bool {
     let base = name.rsplit('.').next().unwrap_or(name);
     matches!(
         base,
-        "Db" | "Pool" | "Conn" | "Connection" | "Client" | "Cache"
+        "Db" | "Pool" | "Conn" | "Connection" | "Client" | "Cache" | "Store"
     )
 }
 
@@ -2003,14 +2041,16 @@ impl<'a> Ctx<'a> {
                         // (Db.connect ())` → result type `Db`) and a function-
                         // typed result (a returned lambda isn't forced at memo
                         // time — the effect only fires when the caller runs it).
-                        let ret = self.def_result_tys.get(&self.cur_def);
-                        // A `()` result has no frozen VALUE to go stale (a
-                        // run-once side-effecting CAF), so never flag it.
-                        let is_data = ret.is_none_or(|t| {
-                            !is_handle_result(t)
-                                && !matches!(t, Ty::Fun(_, _))
-                                && !matches!(t, Ty::Unit)
-                        });
+                        // Fire only when the frozen RESULT is stale-able data.
+                        // A handle/`Store`/config, a `Result _ ()` completion
+                        // signal, a `Unit`, or a function result is never a
+                        // stale-read footgun (its effectful lambdas, if any, are
+                        // stored deferred config, not forced at memo time).
+                        // Unknown result type → suppress (conservative).
+                        let is_data = self
+                            .def_result_tys
+                            .get(&self.cur_def)
+                            .is_some_and(is_stale_data_result);
                         if is_data {
                             let what = match kind {
                                 EffectKind::Fresh => "a clock/entropy read",
@@ -6188,17 +6228,45 @@ mod memoised_effect_lint_tests {
     }
 
     #[test]
-    fn handle_result_suppresses_only_resource_types() {
-        // `db : Result Error Db` peels to the Db payload elsewhere; the handle
-        // check itself recognises the resource nominals.
-        assert!(is_handle_result(&Ty::app("Db", vec![])));
-        assert!(is_handle_result(&Ty::app("Pool", vec![])));
-        assert!(is_handle_result(&Ty::app("Client", vec![])));
-        assert!(is_handle_result(&Ty::app("Std.Db.Db", vec![]))); // qualified
-        // Data results are candidates (NOT suppressed).
-        assert!(!is_handle_result(&Ty::app("List", vec![Ty::app("Product", vec![])])));
-        assert!(!is_handle_result(&Ty::app("String", vec![])));
-        assert!(!is_handle_result(&Ty::Unit));
+    fn stale_data_result_gates_correctly() {
+        // Stale-able DATA → fire-eligible.
+        assert!(is_stale_data_result(&Ty::app(
+            "List",
+            vec![Ty::app("Product", vec![])]
+        )));
+        assert!(is_stale_data_result(&Ty::app("String", vec![])));
+        assert!(is_stale_data_result(&Ty::app("Int", vec![])));
+        // Result/Task wrapping DATA is transparent → still fire-eligible.
+        assert!(is_stale_data_result(&Ty::app(
+            "Result",
+            vec![Ty::app("Error", vec![]), Ty::app("List", vec![Ty::app("Post", vec![])])]
+        )));
+
+        // Handles / config descriptors → suppressed.
+        assert!(!is_stale_data_result(&Ty::app("Db", vec![])));
+        assert!(!is_stale_data_result(&Ty::app("Pool", vec![])));
+        assert!(!is_stale_data_result(&Ty::app("Std.Db.Db", vec![]))); // qualified
+        // FP1: `products : Store Product` — a table/config descriptor.
+        assert!(!is_stale_data_result(&Ty::app(
+            "Store",
+            vec![Ty::app("Product", vec![])]
+        )));
+        // FP2: `ensureMigrations : Result Error ()` — a completion signal.
+        assert!(!is_stale_data_result(&Ty::app(
+            "Result",
+            vec![Ty::app("Error", vec![]), Ty::Unit]
+        )));
+        // `db : Result Error Db` — Result wrapping a handle → suppressed.
+        assert!(!is_stale_data_result(&Ty::app(
+            "Result",
+            vec![Ty::app("Error", vec![]), Ty::app("Db", vec![])]
+        )));
+        // Unit + function results → suppressed.
+        assert!(!is_stale_data_result(&Ty::Unit));
+        assert!(!is_stale_data_result(&Ty::Fun(
+            Box::new(Ty::Unit),
+            Box::new(Ty::app("Int", vec![]))
+        )));
     }
 
     #[test]
