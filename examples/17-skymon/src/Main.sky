@@ -299,7 +299,7 @@ handleTick model =
 runAllMetricCollections : () -> ()
 runAllMetricCollections _ =
     let
-        rawMetrics = Metrics.getMetrics
+        rawMetrics = Metrics.getMetrics ()
     in
         collectMetrics rawMetrics
 
@@ -323,8 +323,8 @@ collectMetrics metrics =
 runAlertChecks : () -> ()
 runAlertChecks _ =
     let
-        rawAlerts = Alerts.getAlerts
-        rawMetrics = Metrics.getMetrics
+        rawAlerts = Alerts.getAlerts ()
+        rawMetrics = Metrics.getMetrics ()
         _ = Alerts.checkAlerts rawAlerts rawMetrics
     in
         ()
@@ -440,7 +440,7 @@ handleDeleteMetric metId model =
 
 loadMonitors : () -> List Monitor
 loadMonitors _ =
-    List.map rowToMonitor Monitors.getMonitors
+    List.map rowToMonitor (Monitors.getMonitors ())
 
 
 rowToMonitor : Database.Monitor -> Monitor
@@ -458,7 +458,7 @@ rowToMonitor row =
 
 loadMetrics : () -> List Metric
 loadMetrics _ =
-    List.map rowToMetric Metrics.getMetrics
+    List.map rowToMetric (Metrics.getMetrics ())
 
 
 rowToMetric : Database.Metric -> Metric
@@ -571,7 +571,7 @@ resolveMetricId nameOrId metrics =
 
 loadAlerts : () -> List AlertRule
 loadAlerts _ =
-    List.map rowToAlert Alerts.getAlerts
+    List.map rowToAlert (Alerts.getAlerts ())
 
 
 rowToAlert : Database.Alert -> AlertRule

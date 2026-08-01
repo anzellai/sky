@@ -41,7 +41,7 @@ import View exposing (view, viewElement)
 init : a -> ( Model, Cmd Msg )
 init _ =
     let
-        today = todayIndex
+        today = todayIndex ()
     in
         ( { habits = seedHabits today
           , draft = ""
@@ -58,21 +58,23 @@ subscriptions _ =
     Sub.none
 
 
--- Read `Time.now ()` once at module load (Task.run synchronously
--- forces it) so `init` doesn't need to thread Cmd.perform for the
--- initial day index. `todayIndex` is `unix-millis / 86_400_000`,
--- i.e. a whole-day count since the Unix epoch.
-todayIndex : Int
-todayIndex =
+-- Read the clock FRESH per call. `todayIndex ()` is a function, not a
+-- memoised CAF: a zero-arg top-level binding is evaluated once and
+-- cached for the whole process, which would freeze the clock at
+-- process start (a session started on a later day would show the
+-- process-start day). `todayIndex ()` is `unix-millis / 86_400_000`,
+-- i.e. a whole-day count since the Unix epoch, computed at call time.
+todayIndex : () -> Int
+todayIndex _ =
     let
-        nowMs = currentMillis
+        nowMs = currentMillis ()
         millisPerDay = 86400000
     in
         nowMs // millisPerDay
 
 
-currentMillis : Int
-currentMillis =
+currentMillis : () -> Int
+currentMillis _ =
     Result.withDefault 0 (Task.run (Time.unixMillis ()))
 
 

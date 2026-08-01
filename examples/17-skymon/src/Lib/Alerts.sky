@@ -70,8 +70,8 @@ deleteAlert alertId =
         ()
 
 
-getAlerts : List Alert
-getAlerts =
+getAlerts : () -> List Alert
+getAlerts _ =
     Result.withDefault
         []
         (Task.run

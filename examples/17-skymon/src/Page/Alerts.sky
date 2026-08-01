@@ -23,7 +23,7 @@ viewAlerts model =
             [ h2 [ class "section-title" ] [ text "Alert Rules" ]
             , viewAddAlertForm model
             , viewAlertList model
-            , viewAlertHistory
+            , viewAlertHistory ()
             ])
 
 
@@ -223,8 +223,8 @@ truncate maxLen s =
         s
 
 
-viewAlertHistory : Html Msg
-viewAlertHistory =
+viewAlertHistory : () -> Html Msg
+viewAlertHistory _ =
     let
         history = Alerts.getAlertHistory 50
     in

@@ -75,8 +75,8 @@ deleteMonitor monId =
         ()
 
 
-getMonitors : List Monitor
-getMonitors =
+getMonitors : () -> List Monitor
+getMonitors _ =
     Result.withDefault
         []
         (Task.run

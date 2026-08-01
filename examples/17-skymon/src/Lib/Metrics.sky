@@ -84,8 +84,8 @@ deleteMetric metId =
         ()
 
 
-getMetrics : List Metric
-getMetrics =
+getMetrics : () -> List Metric
+getMetrics _ =
     Result.withDefault
         []
         (Task.run

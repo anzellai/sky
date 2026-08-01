@@ -120,8 +120,8 @@ seed slug title body =
     Store.upsert dbConn postsStore { slug = slug, title = title, body = body }
 
 
-loadPosts : List Post
-loadPosts =
+loadPosts : () -> List Post
+loadPosts _ =
     case Task.run
              (Store.query postsStore |> Store.orderAsc "slug"
                  |> Store.toList dbConn) of
@@ -168,8 +168,8 @@ checkAdmin pw =
 
 
 -- ─── Analytics dashboard (query the store) ─────────────────────────
-loadCounts : List ( String, Int )
-loadCounts =
+loadCounts : () -> List ( String, Int )
+loadCounts _ =
     case Task.run (Analytics.eventCounts ()) of
 
         Ok c ->
@@ -179,8 +179,8 @@ loadCounts =
             []
 
 
-loadTotal : Int
-loadTotal =
+loadTotal : () -> Int
+loadTotal _ =
     case Task.run (Analytics.totalEvents ()) of
 
         Ok n ->
@@ -190,8 +190,8 @@ loadTotal =
             0
 
 
-loadRecent : List Analytics.AnalyticsEvent
-loadRecent =
+loadRecent : () -> List Analytics.AnalyticsEvent
+loadRecent _ =
     case Task.run (Analytics.recentEvents 8) of
 
         Ok r ->
@@ -203,7 +203,10 @@ loadRecent =
 
 withDashboard : Model -> Model
 withDashboard model =
-    { model | total = loadTotal, counts = loadCounts, recent = loadRecent }
+    { model | total = loadTotal ()
+    , counts = loadCounts ()
+    , recent = loadRecent ()
+    }
 
 
 -- ─── TEA ───────────────────────────────────────────────────────────
@@ -326,7 +329,7 @@ pageBody model =
     case model.page of
 
         Home ->
-            homeView
+            homeView ()
 
         PostPage slug ->
             postView slug
@@ -335,9 +338,11 @@ pageBody model =
             adminView model
 
 
-homeView : Element Msg
-homeView =
-    Ui.column [ Ui.spacing 24, Ui.width Ui.fill ] (List.map postCard loadPosts)
+homeView : () -> Element Msg
+homeView _ =
+    Ui.column
+        [ Ui.spacing 24, Ui.width Ui.fill ]
+        (List.map postCard (loadPosts ()))
 
 
 postCard : Post -> Element Msg
