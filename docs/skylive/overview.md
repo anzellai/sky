@@ -133,6 +133,41 @@ storePath = "./data.db"
 ttl = 1800
 ```
 
+## Production resilience (v0.19.4+)
+
+Sky.Live is built to **fail loud or self-heal, never silently degrade**. These
+behaviors are automatic — no app-code changes.
+
+- **Explicit stores fail loud.** With `store = "postgres"` (or `sqlite`/`redis`)
+  in production (`ENV` set), if the store can't be reached at boot the app
+  retries briefly (to ride out a database-not-ready race), then **refuses to
+  start** — instead of silently falling back to an in-memory store that loses
+  every session on restart. In dev it falls back to memory with a loud warning.
+  Set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions deliberately.
+- **`/_sky/readyz` reflects the store + DB.** Returns `503` when the session store
+  or the app database is unreachable (not `200` while broken), so an orchestrator
+  stops routing to a broken replica.
+- **Self-healing DB handle.** A transient database blip at boot no longer freezes
+  `db = Task.run (Db.connect ())` to an error for the process lifetime — the pool
+  reconnects on the next query.
+- **Self-healing view desync.** After a deploy changes your `view` (or an SSE
+  frame is dropped under backpressure), the client automatically re-syncs to the
+  current server view instead of stranding with a "reconnecting" banner. A
+  crashing handler surfaces a structured error + user notification, not a silent
+  dead button.
+- **Sliding `sky_sid` cookie.** Re-issued on each page load so an actively-used
+  session isn't logged out at the original fixed cookie window.
+- **Durable `any`-field sessions.** A concrete value stored in an `any`-typed
+  Model field round-trips across a restart (whole-binary gob registration), so
+  the session isn't silently dropped to memory + lost.
+- **`SKY_LIVE_VIEW_DETERMINISM_CHECK=1`** (dev only, off by default) — renders
+  `view(model)` twice and warns if the trees differ, catching a non-deterministic
+  view (`Time.now` / `Random` inside `view`, or iterating a raw Go map instead of
+  `Dict.toList`) that would drift handler IDs. Opt-in because the second render
+  doubles the side effects of an impure view.
+
+See `docs/skylive/production-resilience.md` for the full engineering detail.
+
 ## Session lifecycle — when `init` runs
 
 Sky.Live's mental model is **"the browser tab re-attaches to a long-running

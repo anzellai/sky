@@ -352,6 +352,7 @@ cookieName = "sky_sid"   # secret comes from SKY_AUTH_TOKEN_SECRET (>=32 bytes),
 - **Money is `Std.Money`**, never `Float`.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
 - **Production gate**: with `ENV=production`, set `SKY_AUTH_TOKEN_SECRET` (>=32 bytes) and `SKY_CONSOLE_AUTH`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica.
+- **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete
 and current. This file is not.

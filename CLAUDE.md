@@ -1517,10 +1517,12 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 | `SKY_LIVE_QUEUE_MAX` | — | 50 |
 | `SKY_LIVE_HELLO_TIMEOUT_MS` | — | 8000 |
 | `SKY_LIVE_HEARTBEAT_TTL_MS` | — | 35000 |
-| `SKY_LIVE_SSE_BUFFER` | — | 16 (clamped to [1, 1024]; drops surfaced as `sky_live_sse_drops_total{session}`) |
+| `SKY_LIVE_SSE_BUFFER` | — | 16 (clamped to [1, 1024]; drops surfaced as `sky_live_sse_drops_total{session}` AND, since v0.19.7 #9, trigger an inline full-body resync on the affected connection so a dropped frame self-corrects instead of silently diverging the DOM) |
 | `SKY_LIVE_BASE_PATH` | — | (set by `MountSubApp`) |
 | `SKY_LIVE_BROKER_URL` | — | Redis URL for the cross-instance pub/sub broker when sessions are NOT on Redis (e.g. Postgres sessions + Redis broker). Unset → the store's broker (in-process unless store=redis). |
 | `SKY_LIVE_BROKER` | — | `inprocess` forces the in-process broker even on a Redis store (single-instance escape hatch). |
+| `SKY_LIVE_VIEW_DETERMINISM_CHECK` | — | `1`/`on`/`true` (dev only, off by default) renders `view(model)` twice + warns if the trees differ — catches a non-deterministic view (`Time.now`/`Random` in `view`, or raw-map iteration vs `Dict.toList`) that would drift handler IDs. Opt-in: the 2nd render doubles an impure view's side effects. (v0.19.6+) |
+| `SKY_LIVE_STORE=memory` | — | The explicit opt-in for in-memory sessions in production — an explicit `store=postgres/sqlite/redis` that can't connect now FAILS LOUD in prod (v0.19.4+) rather than silently degrading to memory. |
 
 ### Logging (`[log]` section)
 
