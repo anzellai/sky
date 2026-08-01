@@ -124,7 +124,32 @@ L2/L3/L4 shipped with the L2 regression; full runtime `go test ./rt/` green.
 - **L4 DB-store memCache-hit `Get` touches `lastSeen`** (live_store.go:454/601/759)
   to match memoryStore semantics.
 
-### Tier 3 — tracked follow-ups (file now, fix in the next patch; no-deferral)
+### ✅ Tier 3 — 5 of 7 DONE (feat/skylive-resilience-tier3)
+Shipped with red-on-bug regressions: **L5** persistent+sliding CSRF cookie ·
+**L6** multi-replica in-process-broker heads-up · **L7** typed route params
+coerced (no reflect panic) · **L8** dispatch panic → structured Error+errId+user
+notification · **L9** sub-app no longer inherits the host's durable store.
+
+**Remaining (2) — deep, dedicated follow-up (A1 already mitigates both):**
+- **#9 seq-gap.** Needs the client to send its `__skyLastAppliedSeq` (it currently
+  sends only its request counter `__skyClientSeq`) AND per-connection
+  last-delivered-seq tracking on the server so a "client behind → full-body
+  resync" check doesn't over-trigger full renders on the hot path (an in-flight
+  SSE frame would look like a gap). A naive `clientSeq < serverSeq → full-body`
+  is correct but a performance regression on chatty apps. Design + benchmark
+  before landing. Impact today: bounded — A1 soft-resyncs on the next detectable
+  miss.
+- **L10 model-fidelity + content-derived handler IDs + view-determinism lint.**
+  (a) register-on-encode so an `any`-typed Model field that was nil at init but
+  later holds a concrete value doesn't fail `encodeSession` → silent memory-only;
+  (b) **content-derived (hashed) handler IDs** replacing position-based
+  `<sky-id>.<event>` so a view-code change doesn't invalidate open clients' IDs
+  at all — a core dispatch-identity redesign (touches assignSkyIDs + the diff +
+  the handler map), benchmark + broad regression required; (c) a compiler
+  `view()`-determinism lint (Rust-side). Impact today: bounded — A1 self-heals
+  the drift these would prevent.
+
+### Tier 3 — original catalogue (for reference)
 - **L5 CSRF** persistent cookie + `HMAC(key,sid)` token + recovery signal.
 - **L6 multi-replica broker**: non-redis store on >1 replica → in-process broker
   silently drops cross-replica fan-out; require `SKY_LIVE_BROKER_URL` or warn.
