@@ -36,6 +36,18 @@ Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\",\"count\":
 The explicit `object`/`field`/`buildObject` decoder is strict + correct on the
 same inputs — leniency is isolated to the reflective `Codec_autoDecoder` kernel.
 
+**Shared root of C1 + C2 (analysis):** the reflective decoders are LENIENT.
+`Codec_autoDecoder` (runtime-go/rt/codec_auto.go:439) returns `Err` when
+`codecAutoDecodeVal` errors — so C2's leniency lives INSIDE `codecAutoDecodeVal`
+(it must reject a missing required field / a type mismatch instead of filling the
+zero value). C1 is the enum/taggedUnion reflective decoder returning
+`Ok "<rawstring>"` on an unknown tag; that non-ADT `Ok` value then hits
+`rt.ResultCoerce[Error, <ADT>]` (rt.go:329, the `fromJson`-result wrap), which
+calls `coerceInner[<ADT>]("nope")` and PANICS (rt.go:655). Making the enum decoder
+`Err` on an unknown name fixes both the leniency AND the panic (the `Err` path of
+ResultCoerce is sound). Fix = strictness in the reflective decoders; add a
+belt-and-suspenders in `coerceInner` to never panic from a decode path.
+
 ### C3 — cross-module reflective-codec type collision
 
 Two modules that each define a same-named type (e.g. both a `Prim`) trigger a
