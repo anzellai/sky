@@ -9,23 +9,52 @@ suite stays green rather than aborting on a panic.
 
 ## Open
 
-### L2 — `String.toInt` does not trim whitespace (inconsistent with `toFloat`/`toIntT`)
-
-The any-typed `String_toInt` (rt.go:3433) does `Atoi(Sprintf(...))` with no
-`TrimSpace`, so `String.toInt "  42  " == Nothing` — but `String.toFloat` trims
-(`"  2.5  " == Just 2.5`) and the typed companion `String_toIntT` (rt.go:3520)
-trims. So trimming silently depends on the codegen path chosen. Fix: make
-`String_toInt` consistent (trim, matching `toFloat`/`toIntT` — the additive,
-least-surprising choice).
-
-### C3 — cross-module reflective-codec type collision
-
-Two modules that each define a same-named type (e.g. both a `Prim`) trigger a
-reflect collision in the auto-codec kernel when compiled together:
-`reflect: Call using <Mod>_Prim_R as type func(interface{}) interface{}`. Worth a
-closer look (same family as the record-fieldset name-collision class).
+_None — every finding below is fixed + verified._
 
 ## Fixed (test now asserts the fix)
+
+- **L2 — `String.toInt` did not trim surrounding whitespace** — the any-typed
+  `String_toInt` (`runtime-go/rt/rt.go`) did `Atoi(Sprintf(...))` with no
+  `TrimSpace`, so `String.toInt "  42  " == Nothing` — but `String.toFloat` trims
+  (`"  2.5  " == Just 2.5`) and the typed companion `String_toIntT` trims. So
+  trimming silently depended on which codegen path was chosen. **Fix:**
+  `String_toInt` now `TrimSpace`s the input before `Atoi`, matching
+  `toFloat`/`toIntT` (the additive, least-surprising choice). Guarded by
+  `StringConformanceTest` (`"  42  " → Just 42`) and the Go regression
+  `runtime-go/rt/string_toint_test.go`.
+- **C3 — cross-module same-named-type collision in `case` pattern emission**
+  [SEVERE] — two modules that each declare a same-named ADT with the same
+  variant names (`type Prim = Leaf String | Node Int` in both `Alpha` and
+  `Beta`) miscompiled every `case` on one module's value: the pattern lowerer
+  resolved the bare constructor name (`Leaf`) through a **last-writer-wins**
+  `ctor_owner` map, so a `case alphaVal of Alpha.Leaf …` emitted its variant
+  type-assertions against `Beta_Prim_Leaf_V` (Beta interned last). The Alpha
+  value never matched the Beta variant struct, so the exhaustiveness-checked
+  case fell through to `panic(rt.Unreachable("case"))`; through the reflective
+  codec `taggedUnion` decode path the same collision surfaced as
+  `interface conversion: main.Alpha_Prim_Leaf_V is not main.Beta_Prim_Leaf_V`.
+  (The finding's original `reflect: Call using <Mod>_Prim_R as func(interface{})
+  interface{}` symptom was the pre-C1/C2 manifestation; the underlying cause is
+  this pattern-resolution collision, NOT the auto-codec kernel — `Codec.auto`
+  /`autoWith`/`enum`/`taggedUnion` all just drive user `case`s / constructors.)
+  **Root cause:** the pattern-lowering paths (`pattern_nominal`,
+  `sealed_adt_union`, `ctor_pattern`, `pattern_nominal_ty` in
+  `rust/crates/lower/src/lower.rs`) keyed off the bare constructor NAME even
+  though the resolved `Pattern::Ctor { ctor: Some(CtorRef) }` already carries
+  `type_` — the module-correct owning-union `DefId`. Constructor *construction*
+  already honoured it (`pinned_union_go` at the ctor-call site); only the
+  pattern side didn't. **Fix (2026-08-01):** new `ctor_union_owner` helper
+  resolves the owning-union Go name from `CtorRef.type_` via `pinned_union_go`
+  first (falling back to the subject's pinned nominal, then the bare-name map
+  for unresolved/builtin ctors), and every pattern path routes through it. So a
+  `case` arm now asserts against its own module's `_R`/`_V` structs. Guarded by
+  the Rust regression `crates/project/tests/xmodule_same_variant.rs` (drives the
+  real emit pipeline; asserts each module's `case` pins its OWN variant struct,
+  red-on-bug) — plus the corpus `49-xmodule-adt` build-run gate. Verified e2e
+  across every reflective codec path (auto / autoCamel / autoWith / enum /
+  taggedUnion / nested-record-field / list / maybe / `Store.selectRaw`
+  projection) with same-named types across two modules.
+
 
 - **L1 — every consing `Sky.Core.List` op was O(n²) in TIME** [SEVERE] — Sky
   lists are Go `[]any` slices, so `rt.List_cons` is an O(n) immutable prepend

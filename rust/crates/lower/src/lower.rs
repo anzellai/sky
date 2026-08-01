@@ -3118,6 +3118,54 @@ impl<'a> Ctx<'a> {
         Some(format!("{}_{}", module_prefix(&mname), loc.name.as_str()))
     }
 
+    /// Owning-union Go name + kind for a ctor PATTERN. Prefers the pattern's
+    /// resolved `CtorRef.type_` DefId (module-correct) via `pinned_union_go` —
+    /// this is what closes the cross-module same-named-ctor collision (finding
+    /// C3): `case alphaVal of Alpha.Leaf s -> …` where a sibling module also
+    /// declares `type Prim = Leaf … | …` used to assert against
+    /// `Beta_Prim_Leaf_V` because the bare-name `ctor_owner` map is
+    /// last-writer-wins. The resolved ctor knows its own union, so honour it.
+    /// Falls back to the subject's pinned nominal, then the bare-name map
+    /// (unresolved ctor / no `CtorRef` — the pre-existing behaviour).
+    fn ctor_union_owner(
+        &self,
+        ctor_ty: Option<DefId>,
+        cname: &str,
+        subj_ty: &GoTy,
+    ) -> Option<(String, NominalKind)> {
+        if let Some(t) = ctor_ty {
+            if let Some(go) = self.pinned_union_go(t) {
+                // Kind is authoritative from the union-scoped map (go is
+                // module-correct); the bare map is a same-kind safety net.
+                let kind = self
+                    .ctor_in_union
+                    .get(&(go.clone(), cname.to_string()))
+                    .map(|(k, _)| *k)
+                    .or_else(|| self.ctor_owner.get(cname).map(|(_, k)| *k))
+                    .unwrap_or(NominalKind::Adt);
+                return Some((go, kind));
+            }
+        }
+        match subj_ty {
+            GoTy::Named(gt, _) => self
+                .ctor_in_union
+                .get(&(gt.clone(), cname.to_string()))
+                .map(|(k, _)| (gt.clone(), *k))
+                .or_else(|| self.ctor_owner.get(cname).cloned()),
+            _ => self.ctor_owner.get(cname).cloned(),
+        }
+    }
+
+    /// Declaration-order tag for `cname` in a resolved union `go` (falls back to
+    /// the bare-name `ctor_tag` map when the union-scoped entry is absent).
+    fn union_ctor_tag(&self, go: &str, cname: &str) -> usize {
+        self.ctor_in_union
+            .get(&(go.to_string(), cname.to_string()))
+            .map(|(_, t)| *t)
+            .or_else(|| self.ctor_tag.get(cname).copied())
+            .unwrap_or(0)
+    }
+
     // ---- call / operator / control-flow lowering -----------------------
 
     /// If `d` names a record-alias auto-constructor (`type alias Piece = { … }`
@@ -5142,13 +5190,16 @@ impl<'a> Ctx<'a> {
     /// route through `rt.SkyResult` / `rt.SkyMaybe` / `bool`, not a bare nominal.
     fn pattern_nominal(&self, branches: &[CaseBranch]) -> Option<GoTy> {
         for br in branches {
-            if let Pattern::Ctor { name, .. } = &self.body.pats[br.pat] {
+            if let Pattern::Ctor { ctor, name, .. } = &self.body.pats[br.pat] {
                 let cname = name.as_str();
                 if matches!(cname, "Ok" | "Err" | "Just" | "Nothing" | "True" | "False") {
                     continue;
                 }
-                if let Some((go_type, _kind)) = self.ctor_owner.get(cname) {
-                    return Some(GoTy::Named(go_type.clone(), vec![]));
+                // Prefer the resolved ctor's own union (module-correct) over the
+                // last-writer bare-name map — C3 cross-module collision fix.
+                let ctor_ty = ctor.as_ref().map(|c| c.type_);
+                if let Some((go_type, _kind)) = self.ctor_union_owner(ctor_ty, cname, &GoTy::Any) {
+                    return Some(GoTy::Named(go_type, vec![]));
                 }
             }
         }
@@ -5195,10 +5246,11 @@ impl<'a> Ctx<'a> {
         //   `if _vN, _okN := _subj.(Union_Ctor_V); _okN { <typed .V{i} binds>; body }`
         // Typed dispatch — the variant struct binds once, field reads are direct
         // typed `_vN.V{i}` (no `rt.Coerce` on the payload).
-        if let Pattern::Ctor { name, args, .. } = &self.body.pats[br.pat] {
+        if let Pattern::Ctor { ctor, name, args } = &self.body.pats[br.pat] {
             let cname = name.as_str();
+            let ctor_ty = ctor.as_ref().map(|c| c.type_);
             if !is_builtin_ctor(cname) {
-                if let Some(union) = self.sealed_adt_union(cname, subj_ty) {
+                if let Some(union) = self.sealed_adt_union(ctor_ty, cname, subj_ty) {
                     let args = args.clone();
                     let vstruct_ty = GoTy::Named(format!("{union}_{cname}_V"), vec![]);
                     let binder_name = format!("_v{}", self.local_counter);
@@ -5331,7 +5383,7 @@ impl<'a> Ctx<'a> {
             Pattern::Ctor { ctor, name, args } => self.ctor_pattern(
                 subj,
                 subj_ty,
-                ctor.as_ref().map(|c| c.def),
+                ctor.as_ref().map(|c| c.type_),
                 name.as_str(),
                 args,
             ),
@@ -5505,11 +5557,10 @@ impl<'a> Ctx<'a> {
         &mut self,
         subj: &GoExpr,
         _subj_ty: &GoTy,
-        cdef: Option<DefId>,
+        ctor_ty: Option<DefId>,
         cname: &str,
         args: &[PatId],
     ) -> (Option<GoExpr>, Vec<GoStmt>) {
-        let _ = cdef;
         let args = args.to_vec();
         // Payload types from the container's Go type (rt.SkyResult[E,A] etc.).
         let (a_ty, e_ty) = match _subj_ty {
@@ -5550,18 +5601,14 @@ impl<'a> Ctx<'a> {
                 vec![],
             ),
             _ => {
-                // Disambiguate the owning union by the subject's nominal type
-                // when known (`_subj_ty = Named(gt,_)`) — the bare-name
-                // `ctor_owner` map collides for a ctor name shared across two
-                // unions (`AlignLeft`). Fall back to the bare lookup otherwise.
-                let owner: Option<(String, NominalKind)> = match _subj_ty {
-                    GoTy::Named(gt, _) => self
-                        .ctor_in_union
-                        .get(&(gt.clone(), cname.to_string()))
-                        .map(|(k, _)| (gt.clone(), *k))
-                        .or_else(|| self.ctor_owner.get(cname).cloned()),
-                    _ => self.ctor_owner.get(cname).cloned(),
-                };
+                // Disambiguate the owning union: prefer the resolved ctor's own
+                // union (module-correct — closes the cross-module same-named-ctor
+                // collision C3), then the subject's pinned nominal, then the
+                // bare-name `ctor_owner` map (which collides for a ctor name
+                // shared across two unions — `AlignLeft`, or `Leaf` in two
+                // modules' `type Prim`).
+                let owner: Option<(String, NominalKind)> =
+                    self.ctor_union_owner(ctor_ty, cname, _subj_ty);
                 if let Some((go, NominalKind::Iota)) = &owner {
                     let cond = GoExpr::new(
                         GoExprKind::Binary(
@@ -5583,15 +5630,7 @@ impl<'a> Ctx<'a> {
                 // only evaluated when the tag matched.
                 if let Some((go, NominalKind::Adt)) = &owner {
                     if self.sealed_unions.contains(go) {
-                        let tag = match _subj_ty {
-                            GoTy::Named(gt, _) => self
-                                .ctor_in_union
-                                .get(&(gt.clone(), cname.to_string()))
-                                .map(|(_, t)| *t)
-                                .or_else(|| self.ctor_tag.get(cname).copied())
-                                .unwrap_or(0),
-                            _ => self.ctor_tag.get(cname).copied().unwrap_or(0),
-                        };
+                        let tag = self.union_ctor_tag(go, cname);
                         let tag_cond = call_rt(
                             "rt.EnumTagIs",
                             vec![subj.clone(), int_lit(tag as i64)],
@@ -5607,16 +5646,20 @@ impl<'a> Ctx<'a> {
                         return (and_opt(Some(tag_cond), subcond), binds);
                     }
                 }
-                // sealed ADT: match by declaration-order tag; bind Fields[i].
-                // Prefer the union-scoped tag when the subject pins the union.
-                let tag = match _subj_ty {
-                    GoTy::Named(gt, _) => self
-                        .ctor_in_union
-                        .get(&(gt.clone(), cname.to_string()))
-                        .map(|(_, t)| *t)
-                        .or_else(|| self.ctor_tag.get(cname).copied())
-                        .unwrap_or(0),
-                    _ => self.ctor_tag.get(cname).copied().unwrap_or(0),
+                // Non-sealed ADT bag: match by declaration-order tag; bind
+                // Fields[i]. Prefer the resolved-union tag, then the
+                // subject-pinned tag, then the bare-name map.
+                let tag = match &owner {
+                    Some((go, _)) => self.union_ctor_tag(go, cname),
+                    None => match _subj_ty {
+                        GoTy::Named(gt, _) => self
+                            .ctor_in_union
+                            .get(&(gt.clone(), cname.to_string()))
+                            .map(|(_, t)| *t)
+                            .or_else(|| self.ctor_tag.get(cname).copied())
+                            .unwrap_or(0),
+                        _ => self.ctor_tag.get(cname).copied().unwrap_or(0),
+                    },
                 };
                 let mut cond = Some(tag_eq(subj, tag));
                 let mut binds = Vec::new();
@@ -5677,16 +5720,13 @@ impl<'a> Ctx<'a> {
     /// nominal, as elsewhere) and return its Go name IFF it is a sealed-interface
     /// ADT union — else `None`. Used to route a ctor pattern to typed variant
     /// dispatch instead of the `rt.SkyADT` bag.
-    fn sealed_adt_union(&self, cname: &str, subj_ty: &GoTy) -> Option<String> {
-        let owner = match subj_ty {
-            GoTy::Named(gt, _) => self
-                .ctor_in_union
-                .get(&(gt.clone(), cname.to_string()))
-                .map(|(k, _)| (gt.clone(), *k))
-                .or_else(|| self.ctor_owner.get(cname).cloned()),
-            _ => self.ctor_owner.get(cname).cloned(),
-        };
-        match owner {
+    fn sealed_adt_union(
+        &self,
+        ctor_ty: Option<DefId>,
+        cname: &str,
+        subj_ty: &GoTy,
+    ) -> Option<String> {
+        match self.ctor_union_owner(ctor_ty, cname, subj_ty) {
             Some((go, NominalKind::Adt)) if self.sealed_unions.contains(&go) => Some(go),
             _ => None,
         }
@@ -5728,17 +5768,18 @@ impl<'a> Ctx<'a> {
     /// before the recursive `pattern_test` reads `.Tag` / `.V{i}` off it.
     fn pattern_nominal_ty(&self, p: &Pattern) -> Option<GoTy> {
         match p {
-            Pattern::Ctor { name, .. } => match name.as_str() {
+            Pattern::Ctor { ctor, name, .. } => match name.as_str() {
                 "Ok" | "Err" => Some(GoTy::Named(
                     "rt.SkyResult".into(),
                     vec![GoTy::Any, GoTy::Any],
                 )),
                 "Just" | "Nothing" => Some(GoTy::Named("rt.SkyMaybe".into(), vec![GoTy::Any])),
                 "True" | "False" => Some(GoTy::Bare(Prim::Bool)),
+                // Prefer the resolved ctor's own union (module-correct — C3)
+                // over the last-writer bare-name map.
                 other => self
-                    .ctor_owner
-                    .get(other)
-                    .map(|(go, _)| GoTy::Named(go.clone(), Vec::new())),
+                    .ctor_union_owner(ctor.as_ref().map(|c| c.type_), other, &GoTy::Any)
+                    .map(|(go, _)| GoTy::Named(go, Vec::new())),
             },
             Pattern::Tuple(pats) => {
                 let elems = pats
