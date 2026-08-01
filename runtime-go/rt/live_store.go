@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"sky-app/rt/telemetry"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,24 @@ func GobRegisterTypeGraph(root reflect.Type) {
 	walkGobType(root, seen)
 }
 
+// tryGobRegisterVal registers v's type with gob, recovering from gob.Register's
+// panic (a conflicting name→type, or an unnamed type). Returns true ONLY if
+// registration succeeded. Callers must set their `gobRegistered[t]` dedup flag
+// on true only — otherwise a panicked (failed) registration gets cached as
+// "done", so the type is never actually registered, every later encodeSession
+// that names it fails, and the session silently drops to memory-only. Must be
+// called under gobRegMu (gob.Register mutates a process-global registry and is
+// not concurrent-safe).
+func tryGobRegisterVal(v any) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+		}
+	}()
+	gob.Register(v)
+	return true
+}
+
 func walkGobType(t reflect.Type, seen map[reflect.Type]bool) {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -77,15 +96,15 @@ func walkGobType(t reflect.Type, seen map[reflect.Type]bool) {
 	seen[t] = true
 
 	if isSkyWrapperType(t) && !gobRegistered[t] {
-		gobRegistered[t] = true
-		defer func() { recover() }()
-		gob.Register(reflect.Zero(t).Interface())
+		if tryGobRegisterVal(reflect.Zero(t).Interface()) {
+			gobRegistered[t] = true
+		}
 	}
 
 	if t.PkgPath() != "" && t.Kind() == reflect.Struct && !gobRegistered[t] {
-		gobRegistered[t] = true
-		defer func() { recover() }()
-		gob.Register(reflect.Zero(t).Interface())
+		if tryGobRegisterVal(reflect.Zero(t).Interface()) {
+			gobRegistered[t] = true
+		}
 	}
 
 	switch t.Kind() {
@@ -151,9 +170,9 @@ func walkGobSeen(v reflect.Value, seenTypes map[reflect.Type]bool, depth int) {
 		}
 		seenTypes[t] = true
 		if t.PkgPath() != "" && !gobRegistered[t] {
-			gobRegistered[t] = true
-			defer func() { recover() }()
-			gob.Register(reflect.New(t).Elem().Interface())
+			if tryGobRegisterVal(reflect.New(t).Elem().Interface()) {
+				gobRegistered[t] = true
+			}
 		}
 		for i := 0; i < v.NumField(); i++ {
 			walkGobSeen(v.Field(i), seenTypes, depth+1)
@@ -507,6 +526,7 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 	if err != nil {
 		// Log ONCE per session (not every event) — the alternative is
 		// spamming logs for every onInput keystroke.
+		telemetry.Default().Inc("sky_live_session_encode_fail_total", map[string]string{"store": "sqlite"})
 		logOnce("sqlite-encode-"+sid, func() {
 			log.Printf("[sky.live] sqlite: session %s not persistable (%v); using in-memory fallback", sid, err)
 		})
@@ -654,6 +674,7 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
+		telemetry.Default().Inc("sky_live_session_encode_fail_total", map[string]string{"store": "postgres"})
 		logOnce("pg-encode-"+sid, func() {
 			log.Printf("[sky.live] postgres: session %s not persistable (%v); using in-memory fallback", sid, err)
 		})
@@ -829,6 +850,7 @@ func (s *redisStore) Set(sid string, sess *liveSession) {
 	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
+		telemetry.Default().Inc("sky_live_session_encode_fail_total", map[string]string{"store": "redis"})
 		logOnce("redis-encode-"+sid, func() {
 			log.Printf("[sky.live] redis: session %s not persistable (%v); using in-memory fallback", sid, err)
 		})
@@ -1081,18 +1103,19 @@ func decodeSession(blob []byte) (*liveSession, error) {
 // a transient boot race or a misconfig into "sessions randomly die on every
 // restart", which is invisible (the app looks healthy; healthz/readyz stay
 // green). Instead:
-//   1. retry with bounded backoff, to ride out the common systemd/container
-//      boot race (`After=postgresql` waits for the unit to START, not to
-//      ACCEPT connections);
-//   2. if still unreachable, FAIL LOUD in production (refuse to start so the
-//      orchestrator restarts + the operator sees it) — never a silent memory
-//      fallback. In dev (ENV unset/dev/local) fall back to memory with a loud
-//      warning so `sky run` works without a DB.
+//  1. retry with bounded backoff, to ride out the common systemd/container
+//     boot race (`After=postgresql` waits for the unit to START, not to
+//     ACCEPT connections);
+//  2. if still unreachable, FAIL LOUD in production (refuse to start so the
+//     orchestrator restarts + the operator sees it) — never a silent memory
+//     fallback. In dev (ENV unset/dev/local) fall back to memory with a loud
+//     warning so `sky run` works without a DB.
+//
 // `store=memory` (or unset) is unaffected — memory IS the contract there, and
 // `SKY_LIVE_STORE=memory` is the explicit opt-in for memory-in-prod.
 var (
-	storeConnectAttempts = 5                       // rides a typical DB warmup
-	storeConnectBaseWait = 500 * time.Millisecond  // 0.5,1,2,4 → ~7.5s total
+	storeConnectAttempts = 5                      // rides a typical DB warmup
+	storeConnectBaseWait = 500 * time.Millisecond // 0.5,1,2,4 → ~7.5s total
 	storeConnectMaxWait  = 4 * time.Second
 	// storeFatalf is the fail-loud action; overridable in tests so the
 	// production path can be asserted without exiting the test process.
