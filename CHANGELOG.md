@@ -123,6 +123,16 @@ Two reflective-codec bugs the new conformance suite surfaced:
   `object`/`field`/`buildObject` decoder. A `Maybe` field absent/null still
   decodes to `Nothing`.
 
+### Fixed — `Sky.Core.List` ops were O(n²) in time (now O(n))
+
+Every list-BUILDING op (`map`/`filter`/`reverse`/`append`/`concat`/`range`/`zip`/
+`indexedMap`/`take`/`drop`) was a pure-Sky CPS loop that cons'd per element, and
+immutable prepend on the `[]any` list is O(n) — so each op was **O(n²) in time**
+(200k elements ≈ 7.5 min). The v0.17 CPS rewrites fixed constant *stack* but not
+*time*. These ops are now O(n) runtime kernels (Go `append`-loops, same `[]any`
+representation, constant stack) — a 1,000,000-element fold now runs in a fraction
+of a second. `isEmpty`/`length` are kernel aliases too.
+
 ### Fixed — `String.toInt` now trims surrounding whitespace
 
 `String.toInt "  42  "` returned `Nothing` while `String.toFloat` and the typed
