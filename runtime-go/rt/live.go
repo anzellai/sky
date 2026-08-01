@@ -4730,11 +4730,39 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	prevComputedOnEntry := sess.lastComputedBody
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr,
-				"[sky.live] dispatch panic recovered, dropping event: %v\n%s\n",
-				r, debug.Stack())
+			// L8: a recovered dispatch panic used to write ONLY to stderr — an
+			// operator would never grep it, and a DETERMINISTIC panic for a
+			// given Msg turned that control into a permanently silent no-op
+			// ("dead button"). Emit a structured Error log (visible in Std.Log +
+			// the console + metrics) with a correlation errId, and surface a
+			// user-visible notification so the click isn't silently swallowed.
+			errId := newErrId()
+			rawMsg := fmt.Sprintf("%v", r)
+			kind, hint := classifyPanic(rawMsg)
+			logEmit(logLevelError, "error",
+				"Sky.Live dispatch panic: "+kind+" (ref "+errId+") — "+hint,
+				map[string]any{
+					"errId":      errId,
+					"panicKind":  kind,
+					"panicMsg":   rawMsg,
+					"hint":       hint,
+					"stackFrame": compressStack(debug.Stack(), 8),
+				})
+			// The update() that panicked never assigned a new model (Sky models
+			// are immutable), so sess.model is the valid pre-dispatch value — a
+			// pure RecordUpdate to set the notification is safe. Guard with a
+			// nested recover so a struct model without a Notification field can
+			// never turn this recovery into a crash. Surfaces on the next render
+			// (this dispatch is dropped).
+			func() {
+				defer func() { _ = recover() }()
+				sess.model = RecordUpdate(sess.model, map[string]any{
+					"Notification":     "Something went wrong (ref " + errId + ")",
+					"NotificationType": "error",
+				})
+			}()
 			body = ""
-			dispatchErr = fmt.Errorf("dispatch panic: %v", r)
+			dispatchErr = fmt.Errorf("dispatch panic (ref %s): %v", errId, r)
 			// Roll back the view invariants. The current dispatch has
 			// failed; the prior valid prevTree / lastComputedBody must
 			// remain the source of truth for the next dispatch's
