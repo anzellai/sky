@@ -5006,7 +5006,95 @@ func (app *liveApp) safeViewCall(model any) (VNode, bool) {
 		}()
 		vn = HtmlToVNode(sky_call(app.view, model))
 	}()
+	// L10c: view(model) MUST be deterministic — the same model must produce the
+	// same tree, because handler IDs (assignSkyIDs) and the SSE diff both key off
+	// tree structure. A view that reads Time.now/Random/Uuid.v4, or iterates a
+	// raw Go map (instead of Dict.toList, which sorts), reshapes the tree across
+	// renders → handler drift + diff churn. In dev, render once more and warn if
+	// the shape differs. Dev-only, env-gated, logOnce.
+	if !panicked && viewDeterminismCheckEnabled() {
+		func() {
+			defer func() { recover() }() // a 2nd-render panic must not break serving
+			vn2 := HtmlToVNode(sky_call(app.view, model))
+			var a, b strings.Builder
+			vnodeShapeSig(vn, &a)
+			vnodeShapeSig(vn2, &b)
+			if a.String() != b.String() {
+				logOnce("view-nondeterministic", func() {
+					logEmit(logLevelWarn, "warn",
+						"Sky.Live view(model) is NON-DETERMINISTIC — the same model produced "+
+							"different trees. Handler IDs and SSE diffs will drift (stale clicks, "+
+							"lost patches). Likely cause: Time.now / Random / Uuid.v4 called inside "+
+							"view, or iterating a raw Go map instead of Dict.toList. Move nondeterminism "+
+							"into update (Cmd) and keep view a pure function of the model.",
+						nil)
+				})
+			}
+		}()
+	}
 	return vn, panicked
+}
+
+// viewDeterminismCheckEnabled — the L10c check is OPT-IN (default OFF), enabled
+// with SKY_LIVE_VIEW_DETERMINISM_CHECK=1/on/true, and never in production. It's
+// opt-in rather than default-on-in-dev because it renders view(model) a SECOND
+// time to compare — which doubles the side effects of any IMPURE view (the exact
+// thing it detects). A developer debugging drift turns it on deliberately; it
+// must never perturb normal dev/test runs.
+func viewDeterminismCheckEnabled() bool {
+	if productionFromEnv() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(skyGetenv("LIVE_VIEW_DETERMINISM_CHECK"))) {
+	case "1", "on", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// vnodeShapeSig writes a deterministic structural signature of a VNode tree:
+// kind, tag, text, sorted attr key=value pairs, and event NAMES (handler
+// presence, NOT the closure values — those are per-render pointers and would
+// false-positive), recursively. SkyID is intentionally excluded (not yet
+// assigned at view-call time).
+func vnodeShapeSig(vn VNode, b *strings.Builder) {
+	b.WriteString(vn.Kind)
+	b.WriteByte('|')
+	b.WriteString(vn.Tag)
+	b.WriteByte('|')
+	b.WriteString(vn.Text)
+	b.WriteByte('|')
+	if len(vn.Attrs) > 0 {
+		keys := make([]string, 0, len(vn.Attrs))
+		for k := range vn.Attrs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(k)
+			b.WriteByte('=')
+			b.WriteString(vn.Attrs[k])
+			b.WriteByte(',')
+		}
+	}
+	b.WriteByte('|')
+	if len(vn.Events) > 0 {
+		evk := make([]string, 0, len(vn.Events))
+		for k := range vn.Events {
+			evk = append(evk, k)
+		}
+		sort.Strings(evk)
+		for _, k := range evk {
+			b.WriteString(k)
+			b.WriteByte(',')
+		}
+	}
+	b.WriteByte('{')
+	for i := range vn.Children {
+		vnodeShapeSig(vn.Children[i], b)
+	}
+	b.WriteByte('}')
 }
 
 // renderViewPanicFallback produces a self-contained VNode that
