@@ -68,6 +68,29 @@ func GobRegisterTypeGraph(root reflect.Type) {
 	walkGobType(root, seen)
 }
 
+// RegisterSkyGobTypes registers a whole-binary list of Sky-minted zero-values
+// (every record-alias struct + ADT constructor struct) with gob, so a session
+// that stores one of these in an `any`-typed Model field both ENCODES and, after
+// a process restart, DECODES. The compiler emits this into main.go's boot so
+// EVERY process has the registration independent of the init value's reachable
+// type graph — an `any` field that is nil at init hides its future concrete type
+// from the boot walk (its static type is interface{}), and gob's name→type
+// registry is process-local, so the decoding process must have registered the
+// type itself. Idempotent + nil-safe; walks each value's full type graph under
+// the shared gob mutex, and (via tryGobRegisterVal) never caches a failed
+// registration.
+func RegisterSkyGobTypes(vals []any) {
+	gobRegMu.Lock()
+	defer gobRegMu.Unlock()
+	seen := map[reflect.Type]bool{}
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		walkGobType(reflect.TypeOf(v), seen)
+	}
+}
+
 // tryGobRegisterVal registers v's type with gob, recovering from gob.Register's
 // panic (a conflicting name→type, or an unnamed type). Returns true ONLY if
 // registration succeeded. Callers must set their `gobRegistered[t]` dedup flag

@@ -66,6 +66,44 @@ pub fn emit_program(items: &[GoItem], console_needed: bool) -> String {
         emit_item(&mut w, it);
         w.nl();
     }
+    // L10a: whole-binary gob-type registration. A session's Model is persisted
+    // via gob; a concrete type that only ever lives in an `any`-typed Model field
+    // (nil at init) is invisible to the boot-time walk of the init VALUE, and
+    // gob's name→type registry is process-local — so after a restart the new
+    // process never registered it and decode fails, silently dropping the session
+    // to memory. Listing every non-generic record struct + ADT variant struct
+    // here gives EVERY process (encoder and, after a restart, decoder) that
+    // registration at boot. Generic structs (`Foo_R[T]`) are skipped — they can't
+    // be zero-valued without type args, and their concrete instantiations are
+    // reachable from the Model's static type (covered by the boot walk). Sorted +
+    // deduped for byte-stable (repro-safe) output. See rt.RegisterSkyGobTypes.
+    let mut gob_types: Vec<String> = Vec::new();
+    for it in items {
+        if let GoItem::Type(name, def) = it {
+            if name.contains('[') {
+                continue; // generic — can't zero-value
+            }
+            match def {
+                GoTypeDef::Struct(_) => gob_types.push(name.clone()),
+                GoTypeDef::SealedIface(variants) => {
+                    for (ctor, _tag, _fields) in variants {
+                        gob_types.push(format!("{name}_{ctor}_V"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    gob_types.sort();
+    gob_types.dedup();
+    if !gob_types.is_empty() {
+        let list: Vec<String> = gob_types.iter().map(|n| format!("{n}{{}}")).collect();
+        w.line(&format!(
+            "func init() {{ rt.RegisterSkyGobTypes([]any{{{}}}) }}",
+            list.join(", ")
+        ));
+        w.nl();
+    }
     w.buf
 }
 
