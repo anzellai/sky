@@ -1,149 +1,57 @@
-# Autonomous goal — Codec derivation stack (v0.19.x)
+# Autonomous mandate — compiler + stdlib e2e test coverage (v0.19.x)
 
-**Set:** 2026-07-28. **Branch:** `feat/std-analytics`. **Mode:** autonomous +
-grilling. (Supersedes the completed kernel-metadata-unification + Std.Analytics
-+ Std.Db.Schema/Table mandates — all DONE on this branch, ship together in
-v0.19.x.)
+Set: 2026-08-01. Branch: feat/std-analytics.
+(Supersedes the completed codec-derivation + kernel-metadata mandates.)
 
-## Verbatim user goal (the authority on "done")
+## User's goal (verbatim — the authority on "done")
 
-> turn this into a concrete build sequence... and start autonomously. grill each
-> step + implement correctly for our concerns. for migrations, for now manually?
-> but we do need a way to automate this -- will need a grilled design
-> architecture to ensure correctness
+> "we need to have test suites, or extensive single example testing all of
+> these, not just regressed items, but most particular compiler issues that
+> could go wrong. do you have any good idea how we can test everything
+> compiler + stdlib e2e?"
+>
+> "ok keep going, grill + deep analysis for the fix/implementation, and fully
+> tested + verified"
+>
+> "in autonomous mode"
 
-"this" = `docs/v0.19/codec-derivation-plan.md` (design + production grill).
+## What this means (the standard to hit)
 
-## Definition of done
+Close the "compiles-clean-behaves-wrong" gap that let 8 real bugs ship this
+session (all passed `sky check` + `go build` + corpus gates + oracle, yet were
+runtime-behavioral bugs). Build **comprehensive compiler + stdlib e2e testing**
+so this class is caught going forward:
 
-A working, verified `Std.Codec` + `Std.Db.Table` stack:
-1. `Std.Codec` — one bidirectional codec per type drives JSON encode + decode
-   (round-trip fuzz gate).
-2. DB `Table` reads/writes/creates from a codec (dialect-safe SQLite + Postgres).
-3. `Codec.auto` derives the codec from the record type (compiler: field tags +
-   ADT registry) so enums/ADTs need no hand-mapping.
-4. Every production concern from the grill (plan §4/§5) implemented OR documented
-   + escape-hatched — esp. mass-assignment safety, untrusted-decode limits,
-   Money/Decimal-as-string, int64-JSON policy, recursive types, composite keys,
-   transaction-safe writes, public-API wire boundary.
-5. Auto-migration: grilled architecture doc; v1 uses manual `Db.migrate`; derived
-   schema can *generate* migration DDL.
+- **Layer 1 — stdlib conformance suite** (Sky source, `sky test`, asserted with
+  ADVERSARIAL inputs, not happy-path). One suite per module; start with the
+  modules that bit us (`Std.Db.Store`, `Std.Codec`, `Std.Log`, `Std.Ui`) and
+  grow to broad coverage.
+- **Layer 2 — property / round-trip tests** (codec/JSON/base64 round-trip
+  identity, Store write-read identity, orderBy stable total order, etc.).
+- **Layer 3 — kitchen-sink behavioral e2e** (assert behavior, not just 200).
+- Wire into CI / the release gate.
 
-## Build sequence (each step: grill → implement → verify → checkpoint)
+Plus: finish + verify the **compiler lint** (memoized-effect CAF warning) and
+confirm all 9 findings are sound + correct + verified.
 
-- **S1 — `Std.Codec` core + JSON (pure Sky).** `Codec a` = `{ enc, dec, shape }`
-  on `Sky.Core.Json.Encode/Decode`. Combinators: primitives, maybe, list, dict,
-  tuple, object/field/optionalField/buildObject, custom/variantN/buildCustom,
-  enum, map, lazy (recursion). `toJson`/`fromJson`. Gate: round-trip fuzz over
-  records + ADTs + recursive + Money.
-- **S2 — DB interpreter on `Codec`.** `Table.fromCodec` derives columns (from
-  `shape`), read (decode rows), write (encode). Scalar fields→columns; nested/
-  ADT/tuple/list→JSON-in-TEXT; Maybe→nullable. Composite PK, tx-safe writes,
-  identifier quoting. Reconcile with shipped reflection `Std.Db.Table`.
-- **S3 — Compiler: field tags + ADT registry (P0).** Emit `sky:"…"` field tags
-  (name + kind incl. money/decimal/int64) + `rt.RegisterAdt`. Gate: reflection
-  resolves every field's Sky type + every ADT's constructors over the corpus.
-- **S4 — `Codec.auto` (runtime derive).** Reflection + registry builds a `Codec`
-  once per type, cached. Underivable-type errors; recursive detection.
-- **S5 — Production hardening.** Mass-assignment (`pick`/`omit`/input types),
-  redaction, untrusted-decode limits (depth/size), naming strategy, wire docs.
-- **S6 — Auto-migration architecture (grilled).** Introspect current schema →
-  derive target → emit checksummed `Db.migrate` ops. v1 manual.
+## The hard discipline (INVIOLABLE — CLAUDE.md §0)
 
-## Progress
+- Each conformance test must be MEANINGFUL: provably FAIL on the buggy behavior
+  (demonstrate the red state), not just pass on the fixed stdlib.
+- I cannot declare "done" — only an independent adversarial Judge agent with
+  fresh context, given this verbatim goal, may return "100% achieved". Any
+  "but/except/mostly/for the scope of" in a PASS → NOT done.
+- Full sweep + gates at milestone boundaries; narrow gates per change.
+- Only stop on a genuine implementation blocker needing user decision.
 
-- **S1 ✅** — `Std.Codec` core + JSON (records, primitives, Maybe, list, map).
-  Round-trip verified. Commit 17c417f8.
-- **S1b ✅** — ADT codecs (`taggedUnion`/`varN` + `enum`). Round-trip verified
-  (enum, 0/2/3-arg variants). Commit 91f58fdc. Found + documented a compiler
-  codegen bug (multi-arg function values; worked around with 1-arg matcher).
-- **S2 ✅** — `Std.Db.Store` codec-driven DB (create/insert/all/select/findBy/
-  delete). One codec → schema + read + write; scalars→columns, ADT/nested→JSON
-  blob, Maybe→nullable. Verified e2e on SQLite AND Postgres (identical output;
-  dialect-correct DDL). Runtime bridge: `runtime-go/rt/db_codec.go`.
-- **S3 ✅** — compiler emits `sky:"name,type"` field tags on record structs
-  (`crates/codegen/src/lib.rs`). Metadata-only; all gates green (roundtrip,
-  divergences, build-run, coerce-floor re-blessed, sweep 29/0). Commit dd0a139a.
-- **S4 ✅** — `Codec.auto` (reflection derive). `runtime-go/rt/codec_auto.go` +
-  `Std.Codec.auto`. `Codec.auto blankUser` derives a codec for scalars/Maybe/
-  nested-records/lists/nullary-enum-as-ordinal; data ADTs error (need explicit
-  taggedUnion). Verified e2e: JSON round-trip + Store on SQLite AND Postgres
-  (nested address blob, Maybe, lists all round-trip).
-- **S5 ✅** — hardening. S5a: readable enum names in `Codec.auto` (codegen
-  `rt.RegisterEnum` + runtime registry + tag-typed walkers; enums store names,
-  incl. in Maybe/lists). S5b: `Codec.fromJsonSafe` (untrusted-decode size guard)
-  + documented mass-assignment (input-record pattern), naming, and public-wire
-  boundary rules. Commits a7416b9a, e279f64d. (Non-code items are enforced
-  patterns per plan §5.)
-- **S6 ✅** — auto-migration architecture (`docs/v0.19/auto-migration-architecture.md`,
-  grilled; v1 manual `Db.migrate`). Commit b8d5b744.
+## Findings tracked (this session)
 
-- **S7 ✅ (file-based migration IMPLEMENTATION — beyond S6's v1-manual scope).**
-  The user pivoted: since stores are `Db.table`-style pure values, generate +
-  commit migration FILES (git-reviewed, no live DB for diff), apply them
-  non-interactively. Shipped + verified on SQLite AND Postgres:
-  - **Op renderer + apply engine** — `runtime-go/rt/db_migrate_ops.go`
-    (`renderMigOp` dialect SQL for createTable/addColumn/dropColumn/renameColumn/
-    addIndex/dropIndex/raw; identifier-validated) + `Std.Db.Migrate.migrateOps`
-    (checksummed `_sky_migrations` ledger, at-most-once). Unit-tested both
-    dialects incl. injection rejection.
-  - **DB-free schema-dump** — `Store.project` / `Store.toTable` / `dumpSchema`
-    (`Db_dumpProject` prints schema JSON between markers; pure via lazy CAFs) +
-    nullability carried through (`?` kind suffix + `ColType.CNull`).
-  - **`sky db migrate --gen [name]`** (`crates/sky/src/db_migrate.rs` +
-    `cmd_db_gen`) — builds the dump entry, diffs vs `db/schema.json`, writes
-    `db/migrations/<ts>_<name>.json` + snapshot. New required col → `addColumn
-    NOT NULL DEFAULT <zero>` (safe backfill); Maybe → nullable; drop/retype →
-    **quarantined** in a `destructive` array (never auto-applied).
-  - **Interactive gen (TTY)** — dropped col → (r)ename [→ one `renameColumn`,
-    data preserved] / (d)rop / (s)kip; required col → custom backfill default.
-    Non-TTY keeps the safe quarantine defaults (CI-deterministic). Pure rewrite
-    core unit-tested (6 db_migrate tests).
-  - **`sky db migrate`** (`cmd_db_apply`) — concatenates committed files, applies
-    via the ledger, dialect-correct, idempotent (2nd run = 0). Verified: SQLite
-    INTEGER/TEXT vs Postgres bigint/text from the SAME files; quarantined drop is
-    a no-op (column preserved). Commits 2a7cb6ab, 0fcd6787, ef1bb18b, a515dc3e.
-  - **Operational verbs (Phase 4c, commit 9af5b2ec):** `sky db init` (scaffold),
-    `sky db status` (committed files vs the live `_sky_migrations` ledger; ✓/○ per
-    file; exits non-zero while pending — deploy gate), `sky db seed` (runs the
-    entry module's exposed `seed : Db -> Task Error ()`). Marker-based temp entry
-    for status (queries the ledger `name` column; tolerates fresh DB); shared
-    `build_temp_db_entry` helper. Verified e2e SQLite: init → gen → status(pending,
-    exit 1) → migrate → status(up to date, exit 0) → seed.
-  - **Polish (Phase 4d–4e, commits da44018d + 5cf898a9):**
-    - `sky db push` — no-migration-files dev sync (`Store.pushProject` — create
-      missing tables + add nullable columns for every store; additive/idempotent).
-    - `sky run --db-push / --db-migrate / --db-seed` — run those steps before
-      serving (re-invokes this binary's `sky db <op>`; a failed step aborts).
-    - **Self-migrating binaries** — `sky build` embeds `db/migrations/` via a
-      generated `embedded_migrations.go`; `SKY_DB_OP=migrate ./app` self-migrates
-      with no source tree / no toolchain (runtime `db_embedded.go` →
-      `MaybeApplyEmbeddedMigrationsAndExit`). Explicit + one-shot (safe for
-      replicas). Verified: deploy-dir copy self-migrates; normal boot doesn't;
-      non-migration example byte-unaffected; coerce-floor PASS; sweep 29/0.
-  - **`sky upgrade` release notes** (commit 1f8b5e93) — prints GitHub release
-    notes for every version between the old + new binary; `--notes` previews;
-    banner on Breaking/Migration headings. `CHANGELOG.md` is the notes source (a
-    version's section → the GitHub Release body). parse_semver/body_has_breaking
-    unit-tested.
-  - Docs: `docs/tooling/cli.md` (all db verbs + deploy), `CHANGELOG.md`.
-  - **ALL FILE-BASED-MIGRATION + RELEASE-NOTES WORK COMPLETE.**
-
-**ALL STEPS DONE.** The codec-derivation stack is complete: one `Codec` (or
-`Codec.auto blank`) → JSON + dialect-safe DB, readable enums, verified SQLite +
-Postgres. Migration automation designed (v1 manual). Remaining future work is
-the auto-migration IMPLEMENTATION (S6 designed it) + optional `Codec.pick`/`omit`
-+ the multi-arg-function-value codegen bug (plan §"Known compiler issue").
-
-Vision realized: `Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id"`
-— one line each for the codec + the table; JSON + DB from the type.
-
-## Rules
-
-- Grill each step against plan §4 before implementing.
-- Verify each step (build + targeted test) before the next; full sweep at
-  milestones only.
-- Checkpoint (local commit) per step; push at milestones.
-- No step ships with a known correctness hole from §5 unless explicitly
-  escape-hatched + documented.
-- Not compile-safe / not derivable → clear runtime error, never silent garbage.
+1. CAF memoized DB read (listActive) — app fixed; compiler lint in progress
+2. withOnNavigate sig — fixed + ty regression
+3. Ui.button type=button — fixed
+4. sky.toml inline comments — fixed + regression
+5. Store multi-col ORDER BY reversed — fixed + manual verify
+6. errRef frozen clock — fixed
+7. withConn* swallow + db boot-race — fixed
+8. Log structured attrs dropped — fixed + Go regression
+9. compiler memoized-effect lint — fork in progress
