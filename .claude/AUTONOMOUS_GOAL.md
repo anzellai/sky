@@ -14,6 +14,24 @@ Set: 2026-08-01. Branch: feat/std-analytics.
 > tested + verified"
 >
 > "in autonomous mode"
+>
+> "must fix L1, C2 -- lenient vs strict, i prefer strict"
+>
+> "ok fully autonomous mode on, after fully tested + verified, usual e2e flow
+> tag release, redeployments"
+
+## End state (the mandate now runs all the way to a shipped release)
+
+1. Finish + FULLY test/verify: conformance suite + all fixes (incl. L1 O(n) list
+   ops, C2 strict decoder — both user-mandated).
+2. Fresh-context adversarial JUDGE must return 100% before "done".
+3. Usual e2e release flow (CLAUDE.md release checklist, incl. new step 3b
+   conformance): rebuild, smoke, cargo test --workspace + xtask gates,
+   conformance, clean-build examples, verify-all-web, verify-cli, from-scratch.
+4. Tag the release (v0.19.3 — CHANGELOG already staged) + gh release from the
+   CHANGELOG section (release-notes.sh). User has explicitly authorised the tag.
+5. Redeployments: SkyDeploy bump SKY_VERSION + deploy (per §5 + memory), and the
+   downstream apps (darraghstudio already on the fixed compiler; re-verify).
 
 ## What this means (the standard to hit)
 
