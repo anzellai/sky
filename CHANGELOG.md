@@ -11,6 +11,64 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.4 — Sky.Live production resilience: self-healing desync + fail-loud stores (2026-08-01)
+
+A set of runtime fixes for a class of Sky.Live bugs that passed `sky check` +
+`go build` + tests, looked healthy in production, then stranded or silently
+degraded real users in ways that were very hard to debug. All pure-runtime — your
+app picks them up by rebuilding with this version. No app-code or schema change.
+
+### Fixed — a live client now always recovers from a view desync (no more "refresh to fix it")
+
+After a deploy changed your `view` (or an SSE connection dropped and the DOM went
+stale), a click could hit a handler ID the server's current render no longer had.
+The server returned a bare `404 "handler not found"` the client couldn't recover
+from — it showed a "reconnecting/disconnected" banner and only a **manual page
+refresh** brought it back. This was the most common cause of the "idle for a while,
+then it's disconnected, refresh fixes it" reports.
+
+Now the server re-renders the current view and returns it with a typed
+`X-Sky-Status: desync` signal; the client applies it, refreshing the DOM and its
+handler IDs so the next click works — **self-heals in one round-trip, no manual
+refresh**. Session-loss is a separate `X-Sky-Status: session-lost` signal that
+reloads deterministically (no more sniffing the response body).
+
+### Fixed — an explicitly-configured session store now fails loud instead of silently becoming in-memory
+
+`[live] store = "postgres"` (or `sqlite`/`redis`) that couldn't connect at boot
+used to silently fall back to an **in-memory** store — sessions then vanished on
+every restart ("sessions randomly die"), while every health signal stayed green.
+Now the runtime retries with backoff (to ride out the database-not-ready boot
+race), then, if still unreachable, **fails loud in production** (refuses to start
+so your orchestrator restarts it and you see the cause). Dev keeps a loud-warning
+memory fallback so a DB-less `sky run` still works. Set `SKY_LIVE_STORE=memory`
+to opt in to in-memory sessions deliberately.
+
+### Fixed — `/_sky/readyz` no longer lies
+
+The readiness endpoint returned `200` even when the session store / DB was
+unreachable, so orchestrators kept routing to a broken replica. It now pings the
+session store and the app DB, returning `503` when either is down.
+
+### Fixed — a transient database blip at boot no longer bricks the app until a restart
+
+`db = Task.run (Db.connect ())` is evaluated once and cached. A first-connect
+failure (a boot race, a momentary blip) used to freeze that handle to an error
+for the whole process lifetime — every query failed until a manual restart. The
+connection is now a self-healing pool: a boot-time failure logs a warning and the
+next query reconnects transparently once the database is available.
+
+### Fixed — session-lifecycle edges (idle logouts / stale-connection 404s)
+
+- The `sky_sid` cookie now **slides**: it's re-issued with a fresh lifetime on
+  each page load, tracking the server-side TTL, so an actively-used session past
+  the original cookie window is no longer silently logged out mid-use.
+- An open SSE connection now **keeps its session alive** (and tears the
+  connection down when the session is evicted) — a connected-but-idle tab is no
+  longer evicted under a live connection.
+- Reads slide the TTL on Postgres/SQLite/Redis stores too (previously only
+  writes did), matching the in-memory store.
+
 ## v0.19.3 — onNavigate crash fix, cross-module `case` fix, conformance suite, `sky db reset`/`drop` (2026-08-01)
 
 ### Added — `sky db reset` + `sky db drop`
