@@ -149,7 +149,20 @@ grilled (3 fresh-context agents). Outcomes:
   impure view's side effects. Chosen over a compiler lint (catches raw-map-FFI
   nondeterminism a lint can't see).
 
-**Remaining (2) — grilled designs READY; implement as dedicated, tested changes:**
+**✅ BOTH remaining items now SHIPPED (feat/skylive-9-drop-resync → v0.19.7),
+test-first + grilled + gated:**
+- **#9 drop-keyed inline SSE resync** — DONE. sseConn.outOfSync (atomic) + cap-1
+  resync chan; egress drop flags one conn, 5 ingress sites flag all; handleSSE
+  resync case ships renderResyncFrame's full body direct to `w`. 7-test suite incl.
+  a `-race` concurrency test; full rt package passes with `-race`.
+- **L10a-codegen** — DONE. runtime `RegisterSkyGobTypes([]any)` + codegen emits
+  the whole-binary type list (non-generic record + ADT structs, sorted). REPRO
+  53/53 byte-stable, build-run 55/55, golden 24/24, coerce-floor 9250 unchanged.
+
+Tier 3 is now COMPLETE: L5-L10 + #9 all resolved (L10b correctly rejected as
+unsound). The Sky.Live silent-degrade/strand class is closed.
+
+**Superseded "remaining (2)" text:**
 - **#9 seq-gap — drop-keyed inline resync.** Grill correction: the drop source is
   **server-side SSE buffer overflow** (5 `recordSseDrop` sites: 4 ingress-full +
   1 egress-full in `fanOutFrame`), NOT network loss, and the server already
