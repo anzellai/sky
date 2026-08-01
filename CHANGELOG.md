@@ -106,6 +106,39 @@ writes/clock ticks. The compiler now warns and suggests the `name () = …`
 function form, while suppressing the blessed memoised-handle contract
 (`db = Task.run (Db.connect())`).
 
+### Fixed — `Codec.fromJson` on an ADT panicked; `Codec.auto` decoder was lenient
+
+Two reflective-codec bugs the new conformance suite surfaced:
+- **`Codec.fromJson` on a `Codec.enum`/`taggedUnion` PANICKED** (process abort,
+  `CoerceFailure`) on a decode failure instead of returning `Err` — a runtime
+  crash from well-typed code. `JsonDec_fail` returned a bare string rather than a
+  proper `Error` ADT, which the `ResultCoerce[Error, a]` wrap on `fromJson`'s
+  result couldn't narrow; now returns `ErrDecode`, plus a defensive guard in
+  `coerceInner` so no decode path can crash the runtime.
+- **`Codec.auto`/`autoCamel`/`autoWith` decoded permissively** — a missing
+  required field or a wrong-typed field silently became the zero-value default
+  (`Ok`, silent data corruption). Now STRICT: errors on an absent required
+  (non-`Maybe`) field, a type mismatch, a fractional number where an `Int` is
+  expected, and an unknown enum value — matching the explicit
+  `object`/`field`/`buildObject` decoder. A `Maybe` field absent/null still
+  decodes to `Nothing`.
+
+### Fixed — `String.toInt` now trims surrounding whitespace
+
+`String.toInt "  42  "` returned `Nothing` while `String.toFloat` and the typed
+`String_toIntT` both trim — trimming silently depended on the codegen path.
+`String.toInt` now trims, consistently.
+
+### Added — stdlib behavioral conformance suite (`tests/conformance/`)
+
+A `sky test` suite layer (`scripts/conformance.sh`, wired into CI + the release
+gate) that asserts documented stdlib semantics with ADVERSARIAL inputs — the
+behavioral layer the corpus gates + differential oracle don't cover (they prove
+"builds" + "matches oracle", not "behaves correctly at runtime"). It already
+caught several compiles-clean-behaves-wrong bugs (Store multi-column order,
+memoised-CAF stale reads, `Log` dropped attrs, `fromJson`-ADT panic, list
+stack-safety) — each is now a permanent assertion.
+
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
 ### ⚠ Breaking
