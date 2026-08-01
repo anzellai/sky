@@ -1,0 +1,7 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+main =
+    println "conformance: run suites via `sky test tests/<Name>Test.sky`"
