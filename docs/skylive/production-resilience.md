@@ -1,9 +1,17 @@
 # Sky.Live production-resilience — hidden silent-failure class (2026-08-01)
 
-> **Status: IN PROGRESS.** Root cause confirmed from a real production app;
-> fundamental fixes under adversarial design. This tracks a class of Sky.Live
-> bugs that pass `sky check` + `go build` + tests, look healthy in prod, then
-> strand or silently degrade real users in ways that are very hard to debug.
+> **Status: Tier 1 + Tier 2 SHIPPED + verified live (2026-08-01).** Branch
+> `feat/skylive-resilience` (pushed). All milestone gates green (runtime
+> `go test ./rt/`, example-sweep 29/0, verify-cli 13/0, verify-all-web PASS).
+> darraghstudio redeployed on the resilience runtime; the A1 fix is verified
+> LIVE — a drifted-handler POST returns `200 + X-Sky-Status: desync` (soft
+> resync) instead of the bare stranding `404 "handler not found"`.
+> Tier 3 (L5-L10, seq-gap) remains tracked below. Not yet merged to main /
+> tagged (awaiting user decision).
+>
+> Tracks a class of Sky.Live bugs that pass `sky check` + `go build` + tests,
+> look healthy in prod, then strand or silently degrade real users in ways
+> that are very hard to debug.
 
 ## The meta-problem
 
