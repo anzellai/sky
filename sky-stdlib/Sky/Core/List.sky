@@ -1,20 +1,25 @@
--- | Sky.Core.List — list combinators (subset).
+-- | Sky.Core.List — list combinators.
 --
--- v0.13 Layer 3 / Phase B3: Sky source for the non-HOF
--- combinators.  HOFs (`map`, `filter`, `foldl`, `foldr`,
--- `concatMap`, `filterMap`, `indexedMap`, `find`, `any`, `all`,
--- `sortBy`) stay kernel-anchored for now because Sky lambdas
--- always lower to `func(any) any` and cross-module HOF param
--- positions need typed lambda lowering to round-trip cleanly
--- through `splitInferredSigWithReg`'s rendering (Limitation #18 /
--- Gap 4 territory).  Migrating them surfaces "cannot infer T2"
--- at call sites because the recursive body uses fn's any-typed
--- return.
+-- Sky lists are Go `[]any` slices (see `runtime-go/rt`), so `::`-cons
+-- (`rt.List_cons`) is an O(n) immutable prepend — it copies the whole
+-- accumulator on every step. That means a pure-Sky CPS/accumulator loop
+-- that conses per element (the v0.17 rewrite shape) is O(n) in stack but
+-- O(n²) in TIME (conformance finding L1). So every list-BUILDING op is an
+-- `Ffi.kernel "List_<name>"` alias backed by an O(n) Go loop that grows the
+-- result slice with `append` in forward order (NO per-element cons). This
+-- keeps the `[]any` representation (so all FFI / interop / `rt.AsListT`
+-- typed-widening is unchanged), stays constant Go stack (a plain loop), and
+-- drops the ops to O(n). The runtime bodies live in `runtime-go/rt/rt.go`
+-- (`List_*` helpers). Explicit HM signatures are load-bearing on every
+-- kernel alias — `Ffi.kernel` has no body for HM to walk, so the signature
+-- is the sole type source (same shape as `Sky.Core.Dict`'s HOF kernels,
+-- e.g. `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w`).
 --
--- This phase ships the non-HOF surface: nullable accessors
--- (head, tail), arithmetic predicates (isEmpty, member, length),
--- non-HOF traversals (reverse, take, drop, append, concat, range,
--- zip), and cons.
+-- The SCALAR-accumulating ops (`foldl` / `length` / `member` / `any` /
+-- `all` / `find` / `isEmpty`) stay pure Sky: they are already O(n) — the
+-- accumulator is a scalar, not a growing list — and are auto-TCO'd by
+-- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so they run in
+-- constant Go stack. `head` / `tail` / `cons` are O(1) pure Sky.
 module Sky.Core.List exposing
     ( isEmpty
     , length
@@ -40,59 +45,87 @@ module Sky.Core.List exposing
     , indexedMap
     )
 
-
--- | `map fn list` — apply fn to each element.
---
--- v0.17 step-8 (Limitation #8 starter): CPS / accumulator rewrite.
--- Forwards `mapHelp` accumulates `fn x :: acc` (reversed) tail-
--- recursively, then `reverseHelp` flips the result. Both helpers
--- are tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to
--- a `for { ... continue }` loop, so a 1M-element input runs in
--- constant Go stack instead of the old O(N) non-TCO recursion.
-map fn list =
-    mapHelp fn list []
+import Sky.Ffi as Ffi
 
 
-mapHelp fn list acc =
-    case list of
-
-        [] ->
-            reverseHelp acc []
-
-        x :: rest ->
-            mapHelp fn rest (fn x :: acc)
+-- ─── List-building ops (O(n) Go kernels) ───────────────────────────
+-- | `map fn list` — apply `fn` to each element.
+map : (a -> b) -> List a -> List b
+map =
+    Ffi.kernel "List_map"
 
 
--- | `filter pred list` — keep only elements satisfying pred.
---
--- v0.17 step-1 (Limitation #8): CPS / accumulator rewrite.
--- Forwards `filterHelp` accumulates `x :: acc` (reversed) for
--- elements satisfying pred, then `reverseHelp` flips the result.
--- Both helpers are tail-recursive and auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
--- 1M-element input runs in constant Go stack instead of the old
--- O(N) non-TCO recursion.
-filter pred list =
-    filterHelp pred list []
+-- | `filter pred list` — keep only elements satisfying `pred`.
+filter : (a -> Bool) -> List a -> List a
+filter =
+    Ffi.kernel "List_filter"
 
 
-filterHelp pred list acc =
-    case list of
-
-        [] ->
-            reverseHelp acc []
-
-        x :: rest ->
-            filterHelp
-                pred
-                rest
-                (if pred x then
-                    x :: acc
-
-                else
-                    acc)
+-- | `foldr fn acc list` — right fold: `fn a0 (fn a1 (… (fn aN acc)))`.
+foldr : (a -> b -> b) -> b -> List a -> b
+foldr =
+    Ffi.kernel "List_foldr"
 
 
+-- | `concatMap fn list` — map each element to a list and flatten
+-- (left-to-right).
+concatMap : (a -> List b) -> List a -> List b
+concatMap =
+    Ffi.kernel "List_concatMap"
+
+
+-- | `indexedMap fn list` — apply `fn` to each zero-based `(index, element)`
+-- pair.
+indexedMap : (Int -> a -> b) -> List a -> List b
+indexedMap =
+    Ffi.kernel "List_indexedMap"
+
+
+-- | `reverse list` — the list in reverse order.
+reverse : List a -> List a
+reverse =
+    Ffi.kernel "List_reverse"
+
+
+-- | `take n list` — first `n` elements (or fewer when `list` is shorter).
+-- `take 0` and `take <negative>` return `[]`.
+take : Int -> List a -> List a
+take =
+    Ffi.kernel "List_take"
+
+
+-- | `drop n list` — `list` without its first `n` elements. `drop 0` and
+-- `drop <negative>` return `list`; `drop n` for `n >= length` returns `[]`.
+drop : Int -> List a -> List a
+drop =
+    Ffi.kernel "List_drop"
+
+
+-- | `append xs ys` — concatenate two lists.
+append : List a -> List a -> List a
+append =
+    Ffi.kernel "List_append"
+
+
+-- | `concat lists` — flatten a list of lists.
+concat : List (List a) -> List a
+concat =
+    Ffi.kernel "List_concat"
+
+
+-- | `range lo hi` — `[lo, lo + 1, …, hi]` (inclusive). `lo > hi` gives `[]`.
+range : Int -> Int -> List Int
+range =
+    Ffi.kernel "List_range"
+
+
+-- | `zip xs ys` — pair-wise zip, truncated to the shorter list's length.
+zip : List a -> List b -> List ( a, b )
+zip =
+    Ffi.kernel "List_zip"
+
+
+-- ─── Scalar-accumulating / O(1) ops (pure Sky, auto-TCO'd) ──────────
 any pred list =
     case list of
 
@@ -145,106 +178,6 @@ foldl fn acc list =
             foldl fn (fn x acc) rest
 
 
--- CPS rewrite (v0.17 step-2 of the Limitation #8 close).  The
--- legacy `foldr fn x (foldr fn acc rest)` shape recursed in the
--- non-tail position, so the emitted Go ran in O(N) stack — a
--- 1M-element input blew Go's `maxstacksize` (default 1 GiB).
---
--- The rewrite delegates to the already-tail-recursive `foldl`
--- over the pre-reversed list.  Note: this is a DELEGATING
--- binding — the public `foldr` itself contains no `for { }` loop
--- because the auto-TCO loop lives in `foldl`'s emitted Go body.
--- The `\x a -> fn x a` lambda is structurally identical to `fn`
--- but pinned at the application site so the typed lowerer sees a
--- fresh callback shape per instantiation.
-foldr fn acc list =
-    foldl (\x a -> fn x a) acc (reverseHelp list [])
-
-
--- | `concatMap fn list` — map each element to a list and flatten.
---
--- v0.17 step-12 (Limitation #8): CPS / accumulator rewrite.
--- Pre-v0.17 shape was `append (fn x) (concatMap fn rest)` — the
--- `append (fn x) (...)` runs AFTER the recursive call returns, so
--- the emitted Go ran in O(N) stack; a 1M-element input blew Go's
--- `maxstacksize`.  Post-rewrite, `concatMapHelp fn list acc` walks
--- the input tail-recursively, prepending each `fn x` chunk in
--- REVERSE order onto `acc` via `reverseHelp (fn x) acc`, then the
--- outer `reverseHelp acc []` flips the final accumulator once at
--- the base for the left-to-right output.  The helper is
--- tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to a
--- `for { ... continue }` loop.
---
--- The natural delegation `concatMap fn list = concat (map fn list)`
--- triggers HM cross-module over-unification on the polymorphic
--- `map` instances (round-9 investigation), so we use the direct
--- accumulator pattern instead.
-concatMap fn list =
-    reverseHelp (concatMapHelp fn list []) []
-
-
--- | `concatMapHelp fn list acc` — tail-recursive worker for
--- `concatMap`.  Iter 28 dropped the explicit signature after the
--- adversarial verification at 9f8a22da caught a regression in
--- `Std.Ui.Chart.lineOne` (`sky-out/.sky-stdlib/Std/Ui/Chart.sky:390`)
--- where the explicit `(a -> List b) -> List a -> List b -> List b`
--- shape over-constrained HM cross-module unification on
--- `List.concatMap (lineOne cfg xR yR) seriesList`.  The inferred
--- shape (HM walking the body) is sound + lets the polymorphic call
--- sites unify cleanly.  Constant-stack contract is unaffected —
--- the body is still tail-recursive and auto-TCO'd.
-concatMapHelp fn list acc =
-    case list of
-
-        [] ->
-            acc
-
-        x :: rest ->
-            concatMapHelp fn rest (reverseHelp (fn x) acc)
-
-
--- | `indexedMap fn list` — apply `fn` to each (index, element) pair.
---
--- v0.17 step-13 (Limitation #8): CPS / accumulator rewrite.
--- The legacy `fn i x :: indexedMapHelp fn (i + 1) rest` shape recursed in the
--- non-tail position (the cons happens AFTER the recursive call returns),
--- so the emitted Go ran in O(N) stack — a 1M-element input blew Go's
--- `maxstacksize` (default 1 GiB). The rewrite delegates to
--- `indexedMapHelp fn i list acc` which conses `fn i x :: acc` onto the
--- accumulator in REVERSE order, then `reverseHelp acc []` flips the
--- accumulator once at the base for the final left-to-right output.
--- `indexedMapHelp` is tail-recursive and auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
--- 1M-element input runs in constant Go stack.
---
--- PUBLIC SHAPE PRESERVED: `indexedMapHelp`'s symbol name is preserved
--- (it appears in console_app/main.go via the bundled-console
--- generated code at lines referencing `Sky_Core_List_indexedMapHelp`).
--- Only the BODY changes — from non-tail-cons to
--- accumulator-then-reverse — so cross-module callers continue to
--- resolve the same symbol with no surface-level disruption.
-indexedMap fn list =
-    indexedMapHelp fn 0 list []
-
-
--- | `indexedMapHelp fn i list acc` — tail-recursive worker for
--- `indexedMap`. Conses `fn i x :: acc` for each element in reverse
--- order then `reverseHelp` flips the accumulator once at the base
--- for the final left-to-right output. The EXPLICIT signature is
--- load-bearing — without it the HM solver could infer `acc : List any`
--- and the typed-lowerer would fall back to `rt.AsList[any]`, defeating
--- both the Coerce-retreat AND the constant-stack contract.
-indexedMapHelp : (Int -> a -> b) -> Int -> List a -> List b -> List b
-indexedMapHelp fn i list acc =
-    case list of
-
-        [] ->
-            reverseHelp acc []
-
-        x :: rest ->
-            indexedMapHelp fn (i + 1) rest (fn i x :: acc)
-
-
 isEmpty list =
     case list of
 
@@ -255,16 +188,9 @@ isEmpty list =
             False
 
 
--- | `length list` — number of elements in the list.
---
--- v0.17 step-9 (Limitation #8): CPS / accumulator rewrite.
--- Delegates to `lengthHelp` which carries the running count in
--- tail position.  Pre-v0.17 shape was `1 + length rest` — the
--- `1 +` runs AFTER the recursive call returns, so the emitted
--- Go ran in O(N) stack; a 1M-element input blew Go's
--- `maxstacksize`.  Post-rewrite, the count argument is the
--- accumulator and the recursion is auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop.
+-- | `length list` — number of elements. `lengthHelp` carries the running
+-- count in tail position so the emitted Go is a `for { ... continue }` loop
+-- (constant Go stack).
 length list =
     lengthHelp list 0
 
@@ -304,150 +230,6 @@ cons x list =
     x :: list
 
 
-reverse list =
-    reverseHelp list []
-
-
-reverseHelp : List a -> List a -> List a
-reverseHelp list acc =
-    case list of
-
-        [] ->
-            acc
-
-        x :: rest ->
-            reverseHelp rest (x :: acc)
-
-
--- | `take n list` — first n elements of `list` (or fewer when `list`
--- is shorter than n).
---
--- v0.17 step-4 (Limitation #8): CPS / accumulator rewrite.
--- `takeHelp n list acc` walks the input tail-recursively, prepending
--- each kept element onto `acc` (reverse order) until either n drops
--- to zero or the input is exhausted; both bases then reverse `acc`
--- via `reverseHelp` for the final left-to-right output.  The
--- helper is tail-recursive and auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
--- 1M-element input runs in constant Go stack instead of the old
--- O(N) non-TCO `x :: take (n - 1) rest` shape.
---
--- Edge cases: `take 0` and `take <negative>` return `[]` via the
--- `n <= 0` base; `take n []` returns `[]` via the empty-list base.
-take n list =
-    takeHelp n list []
-
-
-takeHelp n list acc =
-    if n <= 0 then
-        reverseHelp acc []
-
-    else
-        case list of
-
-            [] ->
-                reverseHelp acc []
-
-            x :: rest ->
-                takeHelp (n - 1) rest (x :: acc)
-
-
-drop n list =
-    if n <= 0 then
-        list
-
-    else
-        case list of
-
-            [] ->
-                []
-
-            _ :: rest ->
-                drop (n - 1) rest
-
-
--- | `append xs ys` — concatenate two lists.
---
--- v0.17 step-5 (Limitation #8): CPS / accumulator rewrite.
--- The legacy `x :: append rest ys` shape recurses in the
--- non-tail position (the cons happens after the recursive
--- call returns), so a 1M-element input blew Go's
--- `maxstacksize`.  The rewrite first reverses `xs` onto an
--- empty accumulator via `reverseHelp` (already tail-recursive,
--- already auto-TCO'd), then `appendHelp` walks the reversed
--- prefix cons'ing each element onto `ys`.  Both phases are
--- tail-recursive so `Sky.Build.TailCallOpt` lowers each to a
--- `for { ... continue }` loop.
---
--- Output order is preserved: `reverseHelp [a, b, c] []` gives
--- `[c, b, a]`, then cons'ing those onto `ys = [d, e]`
--- in turn yields `[a, b, c, d, e]` — the head ends up at the
--- front of the result.
-append xs ys =
-    appendHelp (reverseHelp xs []) ys
-
-
--- | `appendHelp revXs ys` — cons each element of `revXs` onto
--- `ys`.  Tail-recursive so the emitted Go is a
--- `for { ... continue }` loop.  Private helper for `append`.
---
--- INVARIANT: `revXs` is the REVERSED prefix; cons'ing each
--- head onto `ys` in turn reconstructs the original
--- left-to-right order.
-appendHelp revXs ys =
-    case revXs of
-
-        [] ->
-            ys
-
-        x :: rest ->
-            appendHelp rest (x :: ys)
-
-
--- | `concat lists` — flatten a list of lists.
---
--- v0.17 step-3 (Limitation #8): CPS / accumulator rewrite.
--- `concatHelp lists acc` walks the outer list tail-recursively,
--- using `appendReverseOnto xs acc` to cons each inner list's
--- elements onto `acc` in REVERSE order.  When the outer list is
--- exhausted, `reverseHelp acc []` flips the accumulator once for
--- the final left-to-right result.  Both `concatHelp` and
--- `appendReverseOnto` are tail-recursive and auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so a
--- 1M-element input runs in constant Go stack instead of the old
--- O(N) non-TCO recursion (the legacy `append xs (concat rest)`
--- shape recursed in the non-tail position).
---
--- NOTE: `concatHelp` uses ONLY the private `appendReverseOnto`,
--- NOT the public `append` — so `concat` is fully independent of
--- whatever step-5 does to `append`'s rewrite.
-concat lists =
-    concatHelp lists []
-
-
-concatHelp lists acc =
-    case lists of
-
-        [] ->
-            reverseHelp acc []
-
-        xs :: rest ->
-            concatHelp rest (appendReverseOnto xs acc)
-
-
--- | `appendReverseOnto xs acc` — cons each element of `xs` onto
--- `acc` in reverse order.  Tail-recursive so the emitted Go is a
--- `for { ... continue }` loop.  Private helper for `concat`.
-appendReverseOnto xs acc =
-    case xs of
-
-        [] ->
-            acc
-
-        x :: rest ->
-            appendReverseOnto rest (x :: acc)
-
-
 member x list =
     case list of
 
@@ -460,84 +242,3 @@ member x list =
 
             else
                 member x rest
-
-
--- | `range lo hi` — produce `[lo, lo + 1, ..., hi]` (inclusive).
---
--- v0.17 step-10 (Limitation #8): CPS / accumulator rewrite.
--- The legacy `lo :: range (lo + 1) hi` shape recurses in the
--- non-tail position (the cons happens AFTER the recursive call
--- returns), so a 1M-element range blew Go's `maxstacksize`.
--- The rewrite delegates to `rangeHelp lo hi acc` which conses
--- each value onto `acc` in REVERSE order (largest first), then
--- `reverseHelp acc []` flips the accumulator once at the base
--- for the final ascending left-to-right output.  `rangeHelp` is
--- tail-recursive and auto-TCO'd by `Sky.Build.TailCallOpt` to a
--- `for { ... continue }` loop, so a 1M-element range runs in
--- constant Go stack.
---
--- Mirrors the existing `append`@310 + `concat`@348 CPS shape
--- (build-reversed-onto-acc + reverseHelp-flip-at-end).
-range lo hi =
-    rangeHelp lo hi []
-
-
--- | `rangeHelp lo hi acc` — tail-recursive worker for `range`.
--- Cons each value `lo..hi` onto `acc` in reverse order, then
--- `reverseHelp` flips the accumulator once at the base for the
--- final left-to-right output.  Private helper for `range`.
-rangeHelp : Int -> Int -> List Int -> List Int
-rangeHelp lo hi acc =
-    if lo > hi then
-        reverseHelp acc []
-
-    else
-        rangeHelp (lo + 1) hi (lo :: acc)
-
-
--- | `zip xs ys` — pair-wise zip of two lists.  Truncates to the
--- shorter list's length.
---
--- v0.17 step-11 (Limitation #8): CPS / accumulator rewrite.
--- The legacy `( x, y ) :: zip xRest yRest` shape recurses in the
--- non-tail position (the cons happens AFTER the recursive call
--- returns), so a 1M-element zip blew Go's `maxstacksize`.  The
--- rewrite delegates to `zipHelp xs ys acc` which conses each
--- `( x, y )` pair onto `acc` in REVERSE order, then
--- `reverseHelp acc []` flips the accumulator once at the base for
--- the final left-to-right output.  `zipHelp` is tail-recursive
--- and auto-TCO'd by `Sky.Build.TailCallOpt` to a
--- `for { ... continue }` loop, so a 1M-element zip runs in
--- constant Go stack.
---
--- Mirrors the existing `append`@310 + `concat`@348 +
--- `range`@420 CPS shape (build-reversed-onto-acc +
--- reverseHelp-flip-at-end).
---
--- The EXPLICIT signature on `zipHelp` is load-bearing: the
--- tuple-typed accumulator (`List (a, b)`) would otherwise be
--- inferred as `List any` by the HM solver — tuples in CPS
--- accumulator position have not been exercised by the prior
--- 8 ops in this umbrella, so without the annotation the
--- typed-lowerer falls back to `rt.AsList[any]` and the cons
--- payload re-narrows at runtime, pushing the rt.Coerce ratchet
--- UP and defeating the constant-stack contract.
-zip xs ys =
-    zipHelp xs ys []
-
-
-zipHelp : List a -> List b -> List ( a, b ) -> List ( a, b )
-zipHelp xs ys acc =
-    case xs of
-
-        [] ->
-            reverseHelp acc []
-
-        x :: xRest ->
-            case ys of
-
-                [] ->
-                    reverseHelp acc []
-
-                y :: yRest ->
-                    zipHelp xRest yRest (( x, y ) :: acc)

@@ -9,35 +9,6 @@ suite stays green rather than aborting on a panic.
 
 ## Open
 
-### L1 — every consing `Sky.Core.List` op is O(n²) in TIME  [SEVERE / ARCHITECTURAL — needs user decision]
-
-Sky lists are Go `[]any` slices, and `rt.List_cons` (runtime-go/rt/rt.go:1881-1893)
-rebuilds the ENTIRE accumulator on every prepend (`make([]any, 0, len(xs)+1)` +
-copy of all `xs`). So prepend is O(n), not the O(1) a cons-list gives — and every
-CPS/accumulator op (`range`/`map`/`filter`/`reverse`/`append`/`concat`/`zip`/
-`indexedMap`) is **O(n²) in time**. The v0.17 CPS rewrites fixed constant *stack*
-but not *time*; the docs' headline "1M-element input runs in constant Go stack"
-is misleading — 1M elements would take hours. Measured (`List.range 1 n`, ~4× per
-doubling → quadratic): 5k=291ms, 10k=1.2s, 20k=4.7s, 40k=18s; 200k ≈ 7.5 min.
-(The List conformance suite caps its stack test at 20k for this reason.)
-
-**USER DECISION (2026-08-01): must fix L1.**
-
-**Chosen approach — O(n) runtime kernels, KEEP the `[]any` representation.** The
-hot ops (`map`/`filter`/`foldl`/`foldr`/`reverse`/`append`/`concat`/`range`/`zip`/
-`indexedMap`) are all Sky-source CPS/accumulator loops that `::`-cons per element;
-`List_cons` (immutable prepend to `[]any`) is O(n), so each op is O(n²). Reimplement
-each as an `Ffi.kernel` backed by an O(n) Go loop that builds the result with
-`append` in forward order (no per-element cons) — this keeps lists as `[]any` (so
-ALL FFI/interop/`rt.AsListT` typed-widening is unchanged), stays constant Go stack
-(a plain loop), and drops the ops to O(n). A cons-cell rep was rejected: O(1) cons
-but O(n) index + a whole-surface interop rewrite. Correctness bar: EXACT semantic
-parity (foldl/foldr direction, zip truncation, range bounds, indexedMap indices,
-empty/singleton edges) — the List conformance suite + example sweep are the gate,
-and the large-list test can then go to 200k+/1M and run in well under a second
-(prove O(n) with a doubling benchmark). Golden fixtures re-blessed where a map/etc.
-call site's emitted Go changes.
-
 ### L2 — `String.toInt` does not trim whitespace (inconsistent with `toFloat`/`toIntT`)
 
 The any-typed `String_toInt` (rt.go:3433) does `Atoi(Sprintf(...))` with no
@@ -56,6 +27,29 @@ closer look (same family as the record-fieldset name-collision class).
 
 ## Fixed (test now asserts the fix)
 
+- **L1 — every consing `Sky.Core.List` op was O(n²) in TIME** [SEVERE] — Sky
+  lists are Go `[]any` slices, so `rt.List_cons` is an O(n) immutable prepend
+  (`make([]any, 0, len+1)` + copy). The v0.17 pure-Sky CPS/accumulator loops
+  `::`-cons per element, so every list-BUILDING op (`map`/`filter`/`reverse`/
+  `append`/`concat`/`concatMap`/`range`/`zip`/`indexedMap`/`take`/`drop`/`foldr`)
+  was **O(n²) in time** (constant stack, but `List.range 1 40000` took ~18s).
+  **Fix (2026-08-01):** each building op is now an `Ffi.kernel "List_<name>"`
+  alias (same as `Sky.Core.Dict`'s HOF kernels) backed by an O(n) Go loop that
+  grows the result with `append` in forward order — NO per-element cons. This
+  KEEPS the `[]any` representation (all FFI/interop/`rt.AsListT` widening
+  unchanged), stays constant Go stack (a plain loop), and drops the ops to O(n).
+  The `[]any` runtime kernels already existed (`rt.List_mapAny`/`List_filterAny`/
+  `List_range`/…, `runtime-go/rt/rt.go`); wiring them via the `.sky` bodies was
+  the change, plus three latent edge-case bugs fixed so the newly-reachable
+  kernels match the Sky-source semantics they replace: `List_range` (hi<lo →
+  panicked on a negative `make` cap; now `[]`), `List_take`/`List_drop` (n<0 →
+  panicked on a negative slice bound; now clamp to 0). The SCALAR ops (`foldl`/
+  `length`/`member`/`any`/`all`/`find`/`isEmpty`) stay pure Sky — already O(n)
+  and auto-TCO'd. Doubling benchmark (full pipeline, wall-clock) proves LINEAR
+  scaling: 100k=0.16s, 200k=0.29s, 400k=0.57s, 800k=1.14s, 1.6M=2.26s (each
+  doubling ~2×, not the old ~4×). Guarded by `ListConformanceTest` (its SCALE
+  sweep now runs at 1_000_000 and completes in well under a second) and the Go
+  regression `runtime-go/rt/list_edge_parity_test.go` (range/take/drop edges).
 - **C1 — `Codec.fromJson` on an ADT (enum / taggedUnion) PANICKED on decode
   failure** [SEVERE] — a decode FAILURE against a `Codec.enum` / `Codec.taggedUnion`
   codec panicked with `CoerceFailure` in `rt.ResultCoerce` / `coerceInner`

@@ -17,29 +17,29 @@ emptyInts =
     []
 
 
--- | A large list to exercise the constant-stack (CPS/TCO) contract and value
--- correctness of the recursive list ops at scale.
+-- | A large list to exercise the O(n) TIME + constant-stack contract and value
+-- correctness of the list-building ops at scale.
 --
--- SIZE CAP — READ THIS. The intended sweep size for this section is 200_000
--- (per the "1M-element input runs in constant Go stack" claim in the stdlib
--- docs). It is capped at 20_000 here because the runtime has a PERFORMANCE
--- DEFECT that makes 200_000 take ~7.5 MINUTES for `List.range` alone:
+-- L1 FIXED (2026-08-01). Sky.Core.List's building ops (`range`/`map`/`filter`/
+-- `reverse`/`append`/`concat`/`concatMap`/`range`/`zip`/`indexedMap`/`take`/
+-- `drop`/`foldr`) are now `Ffi.kernel "List_<name>"` aliases backed by O(n) Go
+-- loops that grow the result with `append` in forward order — NOT the old
+-- pure-Sky CPS loops that `::`-cons per element (each cons is an O(n) immutable
+-- prepend on a `[]any`, so those loops were O(n^2) IN TIME). The `[]any`
+-- representation is unchanged, so all FFI/interop/`rt.AsListT` widening still
+-- works; the ops are now O(n) time AND constant Go stack.
 --
---   `rt.List_cons` (runtime-go/rt/rt.go:1881-1893) rebuilds the ENTIRE
---   accumulator slice on every cons — `make([]any, 0, len+1)` + copy — so a
---   prepend is O(n), not O(1). Every CPS/accumulator op in Sky.Core.List
---   (range/map/filter/reverse/append/concat/zip/indexedMap) builds its result
---   via repeated `x :: acc`, which makes each op O(n^2) IN TIME even though it
---   is O(1) in STACK. Measured `List.range` timings (clean quadratic — each
---   doubling of n ~4x the time): 5k=291ms, 10k=1.2s, 20k=4.7s, 40k=18s.
+-- This is why the sweep runs at 1_000_000 and completes in WELL under a second.
+-- Doubling micro-benchmark of a full pipeline (range→map→filter→reverse→
+-- indexedMap→zip→concatMap→take→drop→append→concat→foldr→foldl), wall-clock:
 --
--- The CPS rewrites did fix stack growth, but the underlying `[]any`
--- (slice) list representation makes cons O(n), so the ops are quadratic. This
--- is a real, reportable stdlib/runtime bug (see the task report). 20_000 still
--- proves constant-stack + correctness while keeping the suite runnable (~20s).
+--   n=100k 0.16s | 200k 0.29s | 400k 0.57s | 800k 1.14s | 1.6M 2.26s
+--
+-- Each doubling of n ~2x the time (LINEAR), not the old ~4x (quadratic) — proof
+-- the ops are O(n). (Pre-fix, `List.range 1 40000` alone took ~18s.)
 big : List Int
 big =
-    List.range 1 20000
+    List.range 1 1000000
 
 
 tests : List Test
@@ -134,17 +134,32 @@ tests =
     , Test.test "tail returns everything but the head"
         (\_ -> Test.equal (Just [ 2, 3 ]) (List.tail [ 1, 2, 3 ]))
 
-    -- STACK SAFETY + large-list correctness (20k elements; see `big` note)
-    , Test.test "STACK: length of 20k list (constant-stack, non-consing traversal)"
-        (\_ -> Test.equal 20000 (List.length big))
-    , Test.test "STACK: foldl sum over 20k list = 20000*20001/2"
-        (\_ -> Test.equal 200010000 (List.foldl (\x acc -> x + acc) 0 big))
-    , Test.test "STACK: map + foldl over 20k list (value correctness)"
-        (\_ -> Test.equal 200030000 (List.foldl (\x acc -> x + acc) 0 (List.map (\n -> n + 1) big)))
-    , Test.test "STACK: filter over 20k list keeps the 10k evens"
-        (\_ -> Test.equal 10000 (List.length (List.filter (\n -> modBy 2 n == 0) big)))
-    , Test.test "STACK: reverse of 20k list has the max at its head"
-        (\_ -> Test.equal (Just 20000) (List.head (List.reverse big)))
+    -- SCALE: O(n) TIME + constant-stack + large-list correctness (1_000_000
+    -- elements; see `big` note — completes in well under a second post-L1-fix)
+    , Test.test "SCALE: length of 1M list (constant-stack traversal)"
+        (\_ -> Test.equal 1000000 (List.length big))
+    , Test.test "SCALE: foldl sum over 1M list = 1000000*1000001/2"
+        (\_ -> Test.equal 500000500000 (List.foldl (\x acc -> x + acc) 0 big))
+    , Test.test "SCALE: map + foldl over 1M list (value correctness)"
+        (\_ -> Test.equal 500001500000 (List.foldl (\x acc -> x + acc) 0 (List.map (\n -> n + 1) big)))
+    , Test.test "SCALE: filter over 1M list keeps the 500k evens"
+        (\_ -> Test.equal 500000 (List.length (List.filter (\n -> modBy 2 n == 0) big)))
+    , Test.test "SCALE: reverse of 1M list has the max at its head"
+        (\_ -> Test.equal (Just 1000000) (List.head (List.reverse big)))
+    , Test.test "SCALE: indexedMap over 1M list threads the last index"
+        (\_ -> Test.equal (Just 1999999) (List.head (List.reverse (List.indexedMap (\i x -> i + x) big))))
+    , Test.test "SCALE: append two 1M lists yields 2M elements"
+        (\_ -> Test.equal 2000000 (List.length (List.append big big)))
+    , Test.test "SCALE: concat of two 1M lists yields 2M elements"
+        (\_ -> Test.equal 2000000 (List.length (List.concat [ big, big ])))
+    , Test.test "SCALE: zip of 1M list with itself yields 1M pairs"
+        (\_ -> Test.equal 1000000 (List.length (List.zip big big)))
+    , Test.test "SCALE: take 500k then drop 250k from 1M list"
+        (\_ -> Test.equal 250000 (List.length (List.drop 250000 (List.take 500000 big))))
+    , Test.test "SCALE: concatMap doubling a take-500k prefix yields 1M"
+        (\_ -> Test.equal 1000000 (List.length (List.concatMap (\n -> [ n, n ]) (List.take 500000 big))))
+    , Test.test "SCALE: foldr sum over 1M list = 1000000*1000001/2"
+        (\_ -> Test.equal 500000500000 (List.foldr (\x acc -> x + acc) 0 big))
     ]
 
 

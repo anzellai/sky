@@ -3042,6 +3042,11 @@ func List_reverse(list any) any {
 func List_take(n any, list any) any {
 	count := AsInt(n)
 	items := AsList(list)
+	// Parity with the Sky-source `take` (n <= 0 -> []): clamp a negative
+	// count to 0 so `items[:count]` never slices with a negative bound.
+	if count < 0 {
+		count = 0
+	}
 	if count > len(items) {
 		count = len(items)
 	}
@@ -3051,6 +3056,12 @@ func List_take(n any, list any) any {
 func List_drop(n any, list any) any {
 	count := AsInt(n)
 	items := AsList(list)
+	// Parity with the Sky-source `drop` (n <= 0 -> whole list): clamp a
+	// negative count to 0 so `items[count:]` never slices with a negative
+	// bound.
+	if count < 0 {
+		count = 0
+	}
 	if count > len(items) {
 		count = len(items)
 	}
@@ -3413,6 +3424,11 @@ func List_appendT[A any](a, b []A) []A { return append(a, b...) }
 
 func List_range(lo any, hi any) any {
 	l, h := AsInt(lo), AsInt(hi)
+	// Parity with the Sky-source `range` (lo > hi -> []): return an empty
+	// list rather than `make` with a negative capacity (which panics).
+	if h < l {
+		return []any{}
+	}
 	result := make([]any, 0, h-l+1)
 	for i := l; i <= h; i++ {
 		result = append(result, i)
