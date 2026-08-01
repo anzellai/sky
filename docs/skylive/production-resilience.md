@@ -130,7 +130,54 @@ Shipped with red-on-bug regressions: **L5** persistent+sliding CSRF cookie ·
 coerced (no reflect panic) · **L8** dispatch panic → structured Error+errId+user
 notification · **L9** sub-app no longer inherits the host's durable store.
 
-**Remaining (2) — deep, dedicated follow-up (A1 already mitigates both):**
+**Update (2026-08-01, post-grill):** all four deep items were adversarially
+grilled (3 fresh-context agents). Outcomes:
+- **L10b content-derived handler IDs — REJECTED as unsound** (grill proof): they
+  collide by construction for identical-content payload-free siblings (10 `Delete`
+  buttons → all hash equal → click deletes the wrong row, silently) AND break
+  diff/patch targeting (sky-id is dual-purpose). Drift-resilience is already met
+  by A1 (heal-on-drift is the correct architecture; prevent-drift is impossible
+  for the payload case) and reorder-stability by `Ui.Keyed`. **Do not build.** The
+  only sound refinement it surfaced: an arity-gated direct-send handler-miss
+  fallback (payload-free clicks survive drift without a resync) — optional.
+- **L10a — SHIPPED (runtime parts):** the real runtime gaps were (1) a
+  panic-caches-success bug in gob registration (fixed: `tryGobRegisterVal`) and
+  (2) a silent encode-drop (now `sky_live_session_encode_fail_total{store}`).
+  "Register-on-encode" was already shipped; it was never the gap.
+- **L10c — SHIPPED:** opt-in `view()`-determinism dev check
+  (`SKY_LIVE_VIEW_DETERMINISM_CHECK=1`). Opt-in because the 2nd render doubles an
+  impure view's side effects. Chosen over a compiler lint (catches raw-map-FFI
+  nondeterminism a lint can't see).
+
+**Remaining (2) — grilled designs READY; implement as dedicated, tested changes:**
+- **#9 seq-gap — drop-keyed inline resync.** Grill correction: the drop source is
+  **server-side SSE buffer overflow** (5 `recordSseDrop` sites: 4 ingress-full +
+  1 egress-full in `fanOutFrame`), NOT network loss, and the server already
+  detects every drop. The client-seq heuristic (original idea) is WRONG — it
+  false-positives because `localSeq` is non-contiguous per connection. Design:
+  add `outOfSync bool` + cap-1 `resync chan struct{}` to `sseConn`; change
+  `sseConns map[uint64]sseConn` → `map[uint64]*sseConn` (touches
+  registerSSEConn/unregisterSSEConn/fanOutFrame/hasSSEConnOtherThan); egress drop
+  flags the one conn, ingress drop flags all; a new `case <-resync:` in the
+  handleSSE select renders + writes a full-body resync DIRECTLY to `w` (bypassing
+  the full buffer), reusing the reconnect-resync render (factor into
+  `renderResyncFrame`); the fresh seq > buffered stale frames so the client's
+  seq-guard orders it. No wire/client change, zero false-positives, composes with
+  A1. Risk: concurrent SSE fan-out — needs `sseConnMu`-as-leaf-lock discipline +
+  focused race testing. Bounded by A1 today.
+- **L10a-codegen — compiler-emitted exhaustive gob registration.** The deep
+  L10a defect is decode-side blindness to `any`-typed Model fields ACROSS
+  processes (gob's name→type registry is process-local; after a restart process B
+  never `gob.Register`ed the concrete type that only lived in an `any` field →
+  decode fails → session lost). Register-on-encode can't fix it (encoder isn't
+  the blind one). Fix: emit `rt.RegisterSkyGobTypes([]any{ State_Model_R{}, … })`
+  in generated `main.go` listing zero-values of every record-alias struct + ADT
+  ctor (crates/codegen), + a thin `rt` entry that walks each under `gobRegMu`.
+  Complication: parametric records (`Foo_R[T]`) can't be zero-valued without type
+  args — emit only monomorphised/concrete instantiations. Needs the full corpus
+  gates.
+
+**Superseded original text (2 deep items):**
 - **#9 seq-gap.** Needs the client to send its `__skyLastAppliedSeq` (it currently
   sends only its request counter `__skyClientSeq`) AND per-connection
   last-delivered-seq tracking on the server so a "client behind → full-body
