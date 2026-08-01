@@ -70,6 +70,42 @@ standalone `sky console-serve` hub / aggregator has no login cookie, so it
 renders no sign-out (driven by `SKY_CONSOLE_LOGOUT_URL`, which the embedded
 mount injects and the hub does not).
 
+### Fixed — `Std.Db.Store` multi-column `ORDER BY` was reversed
+
+`orderAsc`/`orderDesc` prepend each term, so a chained
+`q |> orderAsc "sort_pos" |> orderAsc "id"` rendered `ORDER BY id, sort_pos` —
+the **last** call became the **primary** sort key, silently corrupting any
+multi-column sort. It surfaced as a broken image-reorder gallery: the rows
+displayed in `id` order (random UUIDs) instead of `sort_pos` order, so the
+up/down arrows became no-ops. `orderTail` now reverses the accumulated terms so
+the **first** call is the primary key. Single-column ordering is unchanged.
+
+### Fixed — `Std.Ui.button` implicitly submitted enclosing forms
+
+A `<button>` with no `type` defaults to `type="submit"`, so a `Ui.button` inside
+a `Ui.form` submitted the form on click (firing the form's `onSubmit`, or
+double-firing alongside the button's own `onPress`) — e.g. a "Cancel" action
+button would SAVE the form. `Ui.button` now defaults to `type="button"`; a real
+submit control overrides with `Ui.htmlAttribute "type" "submit"`.
+
+### Fixed — `Std.Log.*With` dropped all structured fields
+
+`Log.warnWith`/`infoWith`/`errorWith`/`with`/`debugWith` take a k-v list, but the
+runtime only handled `[]any`. A homogeneous Sky list (all strings — the common
+case) lowers to Go `[]string`, so every structured field was silently dropped
+(logs showed just the message, no fields — in both plain and JSON output). The
+attrs are now reflected into the field bag regardless of slice type.
+
+### Added — compiler warning for memoised effect-reads (stale-CAF footgun)
+
+A zero-arg top-level binding is a memoised CAF (evaluated once, cached for the
+process). If it forces a **fresh-value** effect (`Time.now`/`Uuid.v4`/`Random.*`)
+or a **mutable-store read** — even laundered through a helper (`listActive =
+withConnList (\c -> Store.query …)`) — the value freezes and never reflects later
+writes/clock ticks. The compiler now warns and suggests the `name () = …`
+function form, while suppressing the blessed memoised-handle contract
+(`db = Task.run (Db.connect())`).
+
 ## v0.19.2 — Analytics on Store, Store partial-column update, sign-out un-attribution (2026-07-31)
 
 ### ⚠ Breaking
