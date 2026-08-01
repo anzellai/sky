@@ -57,7 +57,19 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 )
+
+// csrfCookieMaxAgeSeconds is the CSRF cookie's lifetime, keyed to the session
+// TTL (default 30 days) so it outlives the session it guards. The cookie is
+// re-issued on each request (sliding), so an active SPA never loses it. (L5.)
+func csrfCookieMaxAgeSeconds() int {
+	ttl := parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour)
+	if s := int(ttl.Seconds()); s > 0 {
+		return s
+	}
+	return 30 * 24 * 3600
+}
 
 const (
 	// SkyCsrfCookieName is the cookie that holds the session's CSRF
@@ -169,47 +181,52 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		if c, err := r.Cookie(SkyCsrfCookieName); err == nil {
 			cookieToken = c.Value
 		}
-		if cookieToken == "" {
+		newlyIssued := cookieToken == ""
+		if newlyIssued {
 			cookieToken = generateSkyCsrfToken()
-			// SameSite policy: Strict by default (its own purpose). When
-			// SKY_LIVE_FRAME_ANCESTORS opts this deploy into cross-origin
-			// embedding, browsers will silently drop a Strict cookie on
-			// every iframe request — POSTs from the iframed app's own JS
-			// would 403 with "csrf_missing" because the cookie never
-			// arrives. None+Secure lets the cookie ride; the X-Sky-Csrf
-			// header-vs-cookie check (set by the SAME-ORIGIN iframed JS)
-			// remains the actual CSRF gate, since cross-origin attackers
-			// can't read the cookie value to forge the header.
-			sameSite := http.SameSiteStrictMode
-			secure := r.TLS != nil
-			if crossOriginIframeMode() {
-				sameSite = http.SameSiteNoneMode
-				secure = true
-			} else if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
-				secure = true
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:     SkyCsrfCookieName,
-				Value:    cookieToken,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: sameSite,
-				Secure:   secure,
-			})
-			// Also stash the freshly-generated token on the
-			// request so downstream handlers calling
-			// `CurrentCsrfToken(r)` (in particular Sky.Live's
-			// HTML render) can embed it into the page's inlined
-			// JS on the SAME response that ships Set-Cookie.
-			// Without this the very first page load got
-			// `__skyCsrfToken = ""` baked in, every state-
-			// mutating POST had no `X-Sky-Csrf` header, and
-			// the middleware 403'd every click. Silent in
-			// production because a refresh would set the cookie
-			// the next time, but a SPA like Sky.Live never
-			// reloads — every click POSTs through the same JS
-			// instance, so the page-load embed is the only
-			// chance to seed `__skyCsrfToken`.
+		}
+		// L5: issue the CSRF cookie as a PERSISTENT, SLIDING cookie — re-set on
+		// every (non-observability) request with a fresh MaxAge, not a session
+		// cookie. Pre-fix it had no MaxAge, so browsers that clear session
+		// cookies on tab-discard / sleep-wake (Safari/ITP, Chrome tab discard)
+		// dropped it while a long-lived Sky.Live SPA stayed open; the next POST
+		// then regenerated a NEW cookie but the page still sent the OLD baked
+		// header → 403 forever (the SPA never reloads to re-seed the token). A
+		// persistent, re-issued cookie survives those evictions and slides with
+		// activity, keyed to the session TTL so it outlives the session it
+		// guards.
+		//
+		// SameSite policy: Strict by default (its own purpose). When
+		// SKY_LIVE_FRAME_ANCESTORS opts this deploy into cross-origin embedding,
+		// browsers silently drop a Strict cookie on every iframe request — POSTs
+		// from the iframed app's own JS would 403 with "csrf_missing" because the
+		// cookie never arrives. None+Secure lets the cookie ride; the X-Sky-Csrf
+		// header-vs-cookie check (set by the SAME-ORIGIN iframed JS) remains the
+		// actual CSRF gate, since cross-origin attackers can't read the cookie.
+		sameSite := http.SameSiteStrictMode
+		secure := r.TLS != nil
+		if crossOriginIframeMode() {
+			sameSite = http.SameSiteNoneMode
+			secure = true
+		} else if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
+			secure = true
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     SkyCsrfCookieName,
+			Value:    cookieToken,
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   csrfCookieMaxAgeSeconds(),
+			SameSite: sameSite,
+			Secure:   secure,
+		})
+		if newlyIssued {
+			// Stash the freshly-generated token on the request so downstream
+			// handlers calling `CurrentCsrfToken(r)` (in particular Sky.Live's
+			// HTML render) embed it into the page's inlined JS on the SAME
+			// response that ships Set-Cookie. Without this the very first page
+			// load got `__skyCsrfToken = ""` baked in, every state-mutating POST
+			// had no `X-Sky-Csrf` header, and the middleware 403'd every click.
 			r.AddCookie(&http.Cookie{
 				Name:  SkyCsrfCookieName,
 				Value: cookieToken,

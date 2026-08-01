@@ -3540,6 +3540,22 @@ func liveAppRun(cfg any) any {
 	// when unset or when the store already provides a cross-instance
 	// broker (store=redis).
 	app.topics = maybeOverrideBroker(app.topics)
+	// L6: a non-Redis broker is IN-PROCESS, so cross-replica broadcasts
+	// (Cmd.publish, and multi-tab fan-out across instances) silently don't reach
+	// users on OTHER replicas. Replica count can't be reliably detected from
+	// inside one process, so this is a heads-up (not a hard failure — single-
+	// instance postgres/sqlite deploys are correct and common). Main app +
+	// production only, once at startup.
+	if app.basePath == "" && productionFromEnv() {
+		if _, isRedis := app.topics.(*redisBroker); !isRedis {
+			logEmit(logLevelWarn, "warn",
+				"Sky.Live pub/sub broker is in-process — cross-replica broadcasts "+
+					"(Cmd.publish / multi-tab fan-out across instances) will NOT reach other replicas. "+
+					"If you run more than one replica, set SKY_LIVE_BROKER_URL to a Redis (or use "+
+					"store=redis). Single-instance deploys can ignore this.",
+				nil)
+		}
+	}
 	// Cycle 4 PT: register as the process-global broker so
 	// Std.PubSub.publish (Task-shaped, callable from raw api
 	// handlers / post-init goroutines / scheduled jobs) can find a
