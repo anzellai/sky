@@ -116,14 +116,12 @@ tests =
         (\_ -> Test.equal Nothing (String.toInt "abc"))
     , Test.test "toInt accepts a valid integer"
         (\_ -> Test.equal (Just 42) (String.toInt "42"))
-    -- FINDING (reported): `String.toInt` does NOT trim on the any-typed
-    -- runtime path (runtime-go/rt/rt.go:3433 — `Atoi(Sprintf(...))`, no
-    -- TrimSpace), so "  42  " -> Nothing. This is INCONSISTENT with both
-    -- `String.toFloat`, which trims (" 2.5 " -> Just 2.5, asserted below),
-    -- and the TYPED companion `String_toIntT` (rt.go:3520), which DOES
-    -- TrimSpace. Asserting the actual (surprising) any-path behavior here.
-    , Test.test "toInt does NOT trim surrounding whitespace (any-path inconsistency; see FINDING)"
-        (\_ -> Test.equal Nothing (String.toInt "  42  "))
+    -- FIXED (finding L2): `String.toInt` now trims surrounding whitespace,
+    -- consistent with `String.toFloat` and the typed `String_toIntT`
+    -- companion. Previously the any-typed path did not trim, so trimming
+    -- silently depended on the codegen path. This asserts the FIX.
+    , Test.test "toInt trims surrounding whitespace (consistent with toFloat)"
+        (\_ -> Test.equal (Just 42) (String.toInt "  42  "))
     , Test.test "toInt rejects a float-shaped string"
         (\_ -> Test.equal Nothing (String.toInt "4.5"))
     , Test.test "toInt rejects the empty string"

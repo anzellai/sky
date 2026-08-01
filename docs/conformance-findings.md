@@ -48,6 +48,34 @@ calls `coerceInner[<ADT>]("nope")` and PANICS (rt.go:655). Making the enum decod
 ResultCoerce is sound). Fix = strictness in the reflective decoders; add a
 belt-and-suspenders in `coerceInner` to never panic from a decode path.
 
+### L1 — every consing `Sky.Core.List` op is O(n²) in TIME  [SEVERE / ARCHITECTURAL — needs user decision]
+
+Sky lists are Go `[]any` slices, and `rt.List_cons` (runtime-go/rt/rt.go:1881-1893)
+rebuilds the ENTIRE accumulator on every prepend (`make([]any, 0, len(xs)+1)` +
+copy of all `xs`). So prepend is O(n), not the O(1) a cons-list gives — and every
+CPS/accumulator op (`range`/`map`/`filter`/`reverse`/`append`/`concat`/`zip`/
+`indexedMap`) is **O(n²) in time**. The v0.17 CPS rewrites fixed constant *stack*
+but not *time*; the docs' headline "1M-element input runs in constant Go stack"
+is misleading — 1M elements would take hours. Measured (`List.range 1 n`, ~4× per
+doubling → quadratic): 5k=291ms, 10k=1.2s, 20k=4.7s, 40k=18s; 200k ≈ 7.5 min.
+(The List conformance suite caps its stack test at 20k for this reason.)
+
+This is not a quick fix — the sound remedy is a cons-cell (or O(1)-prepend) list
+representation instead of `[]any`, which is a runtime + codegen + interop change
+touching the whole list surface. **Escalate to user**: whether to undertake the
+list-rep rewrite now (multi-session) or accept documented O(n²) with a corrected
+doc + a guardrail on large-list ops. Per no-deferral this is a "start the correct
+fix / get direction", not "ignore".
+
+### L2 — `String.toInt` does not trim whitespace (inconsistent with `toFloat`/`toIntT`)
+
+The any-typed `String_toInt` (rt.go:3433) does `Atoi(Sprintf(...))` with no
+`TrimSpace`, so `String.toInt "  42  " == Nothing` — but `String.toFloat` trims
+(`"  2.5  " == Just 2.5`) and the typed companion `String_toIntT` (rt.go:3520)
+trims. So trimming silently depends on the codegen path chosen. Fix: make
+`String_toInt` consistent (trim, matching `toFloat`/`toIntT` — the additive,
+least-surprising choice).
+
 ### C3 — cross-module reflective-codec type collision
 
 Two modules that each define a same-named type (e.g. both a `Prim`) trigger a

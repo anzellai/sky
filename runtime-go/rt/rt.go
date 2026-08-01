@@ -3430,7 +3430,11 @@ func String_split(sep any, s any) any {
 }
 
 func String_toInt(s any) any {
-	n, err := strconv.Atoi(fmt.Sprintf("%v", s))
+	// TrimSpace for consistency with String.toFloat and the typed String_toIntT
+	// companion (both trim). Without this, `String.toInt "  42  "` returned
+	// Nothing while `String.toFloat "  2.5  "` returned Just — trimming silently
+	// depended on which codegen path was chosen. (Conformance finding L2.)
+	n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", s)))
 	if err != nil {
 		return Nothing[any]()
 	}
