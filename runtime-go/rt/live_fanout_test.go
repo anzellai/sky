@@ -55,8 +55,8 @@ func expectNoFrame(t *testing.T, ch chan sseFrame, what string) {
 
 func TestFanOutFrame_ReachesAllConnections(t *testing.T) {
 	sess := newFanoutSession()
-	_, chA := sess.registerSSEConn("tabA")
-	_, chB := sess.registerSSEConn("tabB")
+	_, chA, _ := sess.registerSSEConn("tabA")
+	_, chB, _ := sess.registerSSEConn("tabB")
 
 	fr := sseFrame{event: "patches", data: "<F1>"}
 	sess.fanOutFrame(fr, "")
@@ -71,8 +71,8 @@ func TestFanOutFrame_ReachesAllConnections(t *testing.T) {
 
 func TestFanOutFrame_ExcludesOriginatingTab(t *testing.T) {
 	sess := newFanoutSession()
-	_, chA := sess.registerSSEConn("tabA")
-	_, chB := sess.registerSSEConn("tabB")
+	_, chA, _ := sess.registerSSEConn("tabA")
+	_, chB, _ := sess.registerSSEConn("tabB")
 
 	// A dispatch from tabA: mirror to others, exclude tabA.
 	sess.fanOutFrame(sseFrame{event: "patches", data: "<clickA>"}, "tabA")
@@ -107,8 +107,8 @@ func TestHasSSEConnOtherThan(t *testing.T) {
 
 func TestUnregisterSSEConn_Drops(t *testing.T) {
 	sess := newFanoutSession()
-	idA, chA := sess.registerSSEConn("tabA")
-	_, chB := sess.registerSSEConn("tabB")
+	idA, chA, _ := sess.registerSSEConn("tabA")
+	_, chB, _ := sess.registerSSEConn("tabB")
 
 	sess.unregisterSSEConn(idA)
 	if sess.hasSSEConnOtherThan("tabB") {
@@ -129,8 +129,8 @@ func TestSSERelay_FansIngressToAllConnections(t *testing.T) {
 	// second draining goroutine (which would steal frames).
 	sess.ensureSSERelay()
 
-	_, chA := sess.registerSSEConn("tabA")
-	_, chB := sess.registerSSEConn("tabB")
+	_, chA, _ := sess.registerSSEConn("tabA")
+	_, chB, _ := sess.registerSSEConn("tabB")
 
 	// A producer (runPerformBody / tick / pub-sub / WebSocket bridge)
 	// writes to the ingress channel; the relay fans it to both tabs.
@@ -152,8 +152,8 @@ func TestSSERelay_FansIngressToAllConnections(t *testing.T) {
 
 func TestFanOutFrame_DropOnFullConnBufferDoesNotBlock(t *testing.T) {
 	sess := newFanoutSession()
-	_, chSlow := sess.registerSSEConn("slow")
-	_, chFast := sess.registerSSEConn("fast")
+	_, chSlow, _ := sess.registerSSEConn("slow")
+	_, chFast, _ := sess.registerSSEConn("fast")
 
 	// Fill the slow connection's buffer without draining it.
 	for i := 0; i < sseChanBuffer; i++ {

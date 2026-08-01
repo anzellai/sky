@@ -2178,7 +2178,7 @@ type liveSession struct {
 	// registration / fan-out snapshot / count take it briefly; the
 	// actual per-connection channel sends happen OUTSIDE it so one slow
 	// consumer can't block the relay, the registry, or the other tabs.
-	sseConns   map[uint64]sseConn
+	sseConns   map[uint64]*sseConn
 	sseConnMu  sync.Mutex
 	sseConnSeq uint64
 	sseRelay   sync.Once
@@ -2690,6 +2690,16 @@ type sseFrame struct {
 type sseConn struct {
 	ch  chan sseFrame
 	tab string
+	// outOfSync (#9): set when a frame this connection should have received was
+	// DROPPED by a full server-side buffer (fanOutFrame egress-full, or an
+	// ingress-full producer). The client's DOM has then silently diverged from
+	// the server; the handleSSE loop ships an inline full-body resync to correct
+	// it. atomic so fanOutFrame can set it after releasing sseConnMu (the drop is
+	// detected outside the lock, during the non-blocking send loop).
+	outOfSync atomic.Bool
+	// resync (#9): cap-1 wake signal; a non-blocking send coalesces a burst of
+	// drops into one resync. handleSSE selects on it.
+	resync chan struct{}
 }
 
 // patchesEventEnvelope mirrors writeEventJSON's body so the wire
@@ -2836,14 +2846,14 @@ type liveApp struct {
 	// `identify` call. nil → no auto-identity (byte-identical to before).
 	analyticsIdentify any
 	api               []apiRoute    // REST-style custom handlers alongside Live pages
-	staticDir          string        // Serves files from this directory under /static/…
-	staticURL          string        // URL mount prefix (default "/static")
-	store              SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
-	sessionTTL         time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
-	locker             *sessionLocker
-	msgTags            map[string]int // SkyName → Tag cache for direct-send events
-	msgTagsMu          sync.Mutex
-	bannerCfg          liveBannerConfig // resolved env-vars + cfg.status overrides
+	staticDir         string        // Serves files from this directory under /static/…
+	staticURL         string        // URL mount prefix (default "/static")
+	store             SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
+	sessionTTL        time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
+	locker            *sessionLocker
+	msgTags           map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu         sync.Mutex
+	bannerCfg         liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
 	// parent Sky.Live runtime). Empty for root-mount (the common
@@ -4728,6 +4738,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 			// Cycle 3 P42 / Gap C14: buffer full; drop + count.
 			// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
 			recordSseDrop(sess.sid)
+			sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 		}
 	}
 }
@@ -5335,6 +5346,7 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 		// Cycle 3 P42 / Gap C14: channel full; drop + count.
 		// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
 		recordSseDrop(sess.sid)
+		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
 
@@ -5554,6 +5566,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 					// + count. Next tick's view-equality check (or
 					// the next user dispatch) supersedes anyway.
 					recordSseDrop(sess.sid)
+					sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 				}
 			}
 		}
@@ -5779,6 +5792,7 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 		// the same sky_live_sse_drops_total counter; the next user
 		// dispatch supersedes anyway (design doc §6.1).
 		recordSseDrop(sess.sid)
+		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
 
@@ -5990,6 +6004,7 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 	case sess.sseCh <- frame:
 	default:
 		recordSseDrop(sess.sid)
+		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
 
@@ -6051,7 +6066,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// lets the dispatch path exclude this tab from its own broadcast.
 	tab := r.URL.Query().Get("tab")
 	sess.ensureSSERelay()
-	connID, sseOut := sess.registerSSEConn(tab)
+	connID, sseOut, resyncCh := sess.registerSSEConn(tab)
 	defer sess.unregisterSSEConn(connID)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -6213,6 +6228,23 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			// click 404'd). A nil `done` channel never selects, so this is safe
 			// for sessions that predate the field.
 			return
+		case <-resyncCh:
+			// #9: a frame for THIS connection was dropped by a full buffer (its
+			// DOM has silently diverged). Ship the current full view to correct
+			// it. Written DIRECTLY to w (not via sseOut) so a full buffer can't
+			// block the correction; its fresh seq > any stale buffered frame's,
+			// so the client's seq guard orders it. Reuses the reconnect render.
+			if snap, ok := app.renderResyncFrame(sess); ok {
+				frame := encodeSSEFrameFromSnapshot(snap)
+				escaped := strings.ReplaceAll(frame, "\n", "\\n")
+				if _, err := fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped); err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			sess.clearConnOutOfSync(connID)
 		case fr := <-sseOut:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
 			// Gap C11: the event name now travels with the frame —
@@ -6559,17 +6591,62 @@ func (s *liveSession) ensureSSERelay() {
 // unregisterSSEConn) + the channel handleSSE's loop reads. Lazy-inits
 // the map so decoded / test-constructed sessions work without an
 // explicit registry init.
-func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame) {
+func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan struct{}) {
 	s.sseConnMu.Lock()
 	defer s.sseConnMu.Unlock()
 	if s.sseConns == nil {
-		s.sseConns = make(map[uint64]sseConn)
+		s.sseConns = make(map[uint64]*sseConn)
 	}
 	s.sseConnSeq++
 	id := s.sseConnSeq
 	ch := make(chan sseFrame, sseChanBuffer)
-	s.sseConns[id] = sseConn{ch: ch, tab: tab}
-	return id, ch
+	resync := make(chan struct{}, 1)
+	s.sseConns[id] = &sseConn{ch: ch, tab: tab, resync: resync}
+	return id, ch, resync
+}
+
+// signalResync wakes a connection's handleSSE loop to ship a full-body resync.
+// Non-blocking + cap-1, so a burst of drops coalesces into one resync.
+func signalResync(c *sseConn) {
+	select {
+	case c.resync <- struct{}{}:
+	default:
+	}
+}
+
+// markAllConnsOutOfSync (#9) flags every live connection + signals its resync.
+// Called at the INGRESS-drop sites (sess.sseCh full) — an ingress drop means the
+// frame never reached the relay, so every connection missed it. Snapshots under
+// the leaf lock, then flags/signals outside it (atomic set + non-blocking send).
+func (s *liveSession) markAllConnsOutOfSync() {
+	s.sseConnMu.Lock()
+	conns := make([]*sseConn, 0, len(s.sseConns))
+	for _, c := range s.sseConns {
+		conns = append(conns, c)
+	}
+	s.sseConnMu.Unlock()
+	for _, c := range conns {
+		c.outOfSync.Store(true)
+		signalResync(c)
+	}
+}
+
+// connOutOfSync reports whether the connection was flagged by a drop.
+func (s *liveSession) connOutOfSync(id uint64) bool {
+	s.sseConnMu.Lock()
+	c, ok := s.sseConns[id]
+	s.sseConnMu.Unlock()
+	return ok && c.outOfSync.Load()
+}
+
+// clearConnOutOfSync resets the flag once handleSSE has delivered the resync.
+func (s *liveSession) clearConnOutOfSync(id uint64) {
+	s.sseConnMu.Lock()
+	c, ok := s.sseConns[id]
+	s.sseConnMu.Unlock()
+	if ok {
+		c.outOfSync.Store(false)
+	}
 }
 
 // unregisterSSEConn removes a connection on disconnect (handleSSE
@@ -6589,19 +6666,25 @@ func (s *liveSession) unregisterSSEConn(id uint64) {
 // to outside it so no send happens while sseConnMu is held.
 func (s *liveSession) fanOutFrame(fr sseFrame, exceptTab string) {
 	s.sseConnMu.Lock()
-	chans := make([]chan sseFrame, 0, len(s.sseConns))
+	conns := make([]*sseConn, 0, len(s.sseConns))
 	for _, c := range s.sseConns {
 		if exceptTab != "" && c.tab == exceptTab {
 			continue
 		}
-		chans = append(chans, c.ch)
+		conns = append(conns, c)
 	}
 	s.sseConnMu.Unlock()
-	for _, ch := range chans {
+	for _, c := range conns {
 		select {
-		case ch <- fr:
+		case c.ch <- fr:
 		default:
+			// #9: this connection's buffer is full — the frame is dropped and its
+			// DOM silently diverges. Flag it + signal an inline resync so its
+			// handleSSE loop ships the current full body (correcting the drop)
+			// instead of leaving it permanently diverged.
 			recordSseDrop(s.sid)
+			c.outOfSync.Store(true)
+			signalResync(c)
 		}
 	}
 }
@@ -6618,6 +6701,31 @@ func (s *liveSession) hasSSEConnOtherThan(exceptTab string) bool {
 		}
 	}
 	return false
+}
+
+// renderResyncFrame (#9) re-renders sess's CURRENT view into a full-body frame
+// snapshot with a fresh seq — the same render the reconnect-resync performs. Used
+// by the handleSSE drop-resync case: when a frame was dropped by a full buffer,
+// the loop ships this to correct the client's silently-diverged DOM. Acquires
+// sess.mu; returns ok=false when sess.model is nil (session not yet initialised).
+func (app *liveApp) renderResyncFrame(sess *liveSession) (frameSnapshot, bool) {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.model == nil {
+		return frameSnapshot{}, false
+	}
+	var snap frameSnapshot
+	func() {
+		vn, _ := app.safeViewCall(sess.model)
+		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
+		applyStyleInjections(&vn)
+		sess.handlers = map[string]any{}
+		body := renderVNode(vn, sess.handlers)
+		sess.commitRender(&vn, body)
+		sess.lastShippedBody = body
+		snap = sess.prepareFrameSnapshot(body)
+	}()
+	return snap, true
 }
 
 // liveJS keeps the historical signature (used by tests + any external

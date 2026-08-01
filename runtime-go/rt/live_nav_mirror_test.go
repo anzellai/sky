@@ -62,8 +62,8 @@ func TestHandleInitial_MirrorsNavigationToOtherTabs(t *testing.T) {
 		t.Fatal("session not created")
 	}
 	// Two live tabs of the session.
-	_, chA := sess.registerSSEConn("tabA")
-	_, chB := sess.registerSSEConn("tabB")
+	_, chA, _ := sess.registerSSEConn("tabA")
+	_, chB, _ := sess.registerSSEConn("tabB")
 
 	// Tab A navigates (sky-nav carries X-Sky-Tab so the originator is
 	// excluded from its own mirror).
@@ -101,7 +101,7 @@ func TestHandleInitial_LoneTab_NoMirror(t *testing.T) {
 
 	// Only one tab connected — its own navigation must fan out to nobody
 	// (no wasted full-body encode/broadcast for the common single-tab case).
-	_, chA := sess.registerSSEConn("tabA")
+	_, chA, _ := sess.registerSSEConn("tabA")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Cookie", rr1.Header().Get("Set-Cookie"))
 	req.Header.Set("X-Sky-Nav", "1")
