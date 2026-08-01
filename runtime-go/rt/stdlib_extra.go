@@ -755,7 +755,16 @@ func JsonDec_succeed(v any) any {
 func JsonDec_fail(msg any) any {
 	m := fmt.Sprintf("%v", msg)
 	return JsonDecoder{run: func(_ any) any {
-		return Err[any, any](m)
+		// The Err payload MUST be a proper Error ADT (like every other
+		// decoder's failure — ErrDecode), NOT a bare string. `fromJson`
+		// has type `Codec a -> String -> Result Error a`; codegen wraps
+		// its result in `ResultCoerce[Error, a]`, whose Err path calls
+		// `coerceInner[Error](errValue)`. A bare string there cannot
+		// narrow to the Error SkyADT and panics (CoerceFailure,
+		// rt.go:coerceInner). Returning `ErrDecode(m)` keeps the
+		// `enum`/`taggedUnion` decode-failure path (which threads through
+		// `D.fail`) sound. Conformance finding C1.
+		return Err[any, any](ErrDecode(m))
 	}}
 }
 

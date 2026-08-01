@@ -239,7 +239,12 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 					out.Field(i).Set(fvv.Convert(f.Type))
 				}
 			} else {
-				fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, snake)], snake)
+				key := skyColKey(f, snake)
+				val, present := m[key]
+				if !present && !codecFieldOptional(f) {
+					return Err[any, any](ErrDecode(fmt.Sprintf("Codec.autoWith: missing required field %q", key)))
+				}
+				fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), val, snake)
 				if err != nil {
 					return Err[any, any](ErrDecode(err.Error()))
 				}
@@ -316,25 +321,59 @@ func Codec_autoEnc(snakeArg, record any) any {
 
 // ── Decode: JSON raw → value ─────────────────────────────────────────────────
 
+// codecStrictInt decodes a JSON number to int64, matching
+// Sky.Core.Json.Decode.int: the value must be a float64 (JSON has no
+// int/float distinction) with no fractional part. Rejects strings, bools,
+// null, and fractional numbers — this is conformance finding C2 (the
+// reflective record decoder must reject a wrong-typed field, not coerce it
+// to a zero-value default). Match the explicit object/field decoder.
+func codecStrictInt(raw any) (int64, error) {
+	f, ok := raw.(float64)
+	if !ok {
+		return 0, fmt.Errorf("Codec.auto: expected Int, got %s", jsonValueKind(raw))
+	}
+	if f != float64(int64(f)) {
+		return 0, fmt.Errorf("Codec.auto: expected Int, got a fractional number")
+	}
+	return int64(f), nil
+}
+
 func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
 	switch rt.Kind() {
 	case reflect.String:
-		return reflect.ValueOf(codecRawStr(raw)).Convert(rt), nil
-	case reflect.Bool:
-		if b, ok := raw.(bool); ok {
-			return reflect.ValueOf(b).Convert(rt), nil
+		s, ok := raw.(string)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: expected String, got %s", jsonValueKind(raw))
 		}
-		return reflect.ValueOf(dbTruthy(codecRawStr(raw))).Convert(rt), nil
+		return reflect.ValueOf(s).Convert(rt), nil
+	case reflect.Bool:
+		b, ok := raw.(bool)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Bool, got %s", jsonValueKind(raw))
+		}
+		return reflect.ValueOf(b).Convert(rt), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return reflect.ValueOf(codecRawInt(raw)).Convert(rt), nil
+		n, err := codecStrictInt(raw)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(n).Convert(rt), nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return reflect.ValueOf(uint64(codecRawInt(raw))).Convert(rt), nil
+		n, err := codecStrictInt(raw)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(uint64(n)).Convert(rt), nil
 	case reflect.Float32, reflect.Float64:
-		return reflect.ValueOf(codecRawFloat(raw)).Convert(rt), nil
+		f, ok := raw.(float64)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Float, got %s", jsonValueKind(raw))
+		}
+		return reflect.ValueOf(f).Convert(rt), nil
 	case reflect.Slice:
 		items, ok := raw.([]any)
 		if !ok {
-			return reflect.MakeSlice(rt, 0, 0), nil
+			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Array, got %s", jsonValueKind(raw))
 		}
 		out := reflect.MakeSlice(rt, len(items), len(items))
 		for i, it := range items {
@@ -369,6 +408,14 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 	}
 }
 
+// codecFieldOptional reports whether a record field may be omitted from the
+// JSON object (or be null) without a decode error — true only for Maybe-typed
+// fields, which decode an absent/null value to Nothing. Every other field is
+// required, matching the explicit object/field/buildObject decoder. C2.
+func codecFieldOptional(f reflect.StructField) bool {
+	return isSkyMaybeType(f.Type)
+}
+
 func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
 	m, ok := raw.(map[string]any)
 	if !ok {
@@ -380,7 +427,15 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value,
 		if f.PkgPath != "" {
 			continue
 		}
-		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), m[skyColKey(f, snake)], snake)
+		key := skyColKey(f, snake)
+		val, present := m[key]
+		// A required (non-Maybe) field absent from the object is a decode
+		// error — no more silent zero-value fill (C2). A Maybe field may be
+		// omitted: val is nil, which codecAutoDecodeTyped decodes to Nothing.
+		if !present && !codecFieldOptional(f) {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: missing required field %q", key)
+		}
+		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), val, snake)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -396,9 +451,13 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 		if isRegisteredEnum(declaredType) {
 			switch gt.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				if ord, ok := enumOrdinalForName(declaredType, codecRawStr(raw)); ok {
+				name := codecRawStr(raw)
+				if ord, ok := enumOrdinalForName(declaredType, name); ok {
 					return reflect.ValueOf(int64(ord)).Convert(gt), nil
 				}
+				// Unknown enum value: error rather than silently defaulting to
+				// ordinal 0 (the first variant) — that was silent corruption (C2).
+				return reflect.Value{}, fmt.Errorf("Codec.auto: unknown %s value %q", declaredType, name)
 			}
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyMaybe["); ok && isSkyMaybeType(gt) {
@@ -418,7 +477,7 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && gt.Kind() == reflect.Slice {
 			items, isList := raw.([]any)
 			if !isList {
-				return reflect.MakeSlice(gt, 0, 0), nil
+				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Array, got %s", jsonValueKind(raw))
 			}
 			out := reflect.MakeSlice(gt, len(items), len(items))
 			for i, it := range items {

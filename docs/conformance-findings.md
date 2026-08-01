@@ -9,45 +9,6 @@ suite stays green rather than aborting on a panic.
 
 ## Open
 
-### C1 — `Codec.fromJson` on an ADT (enum / taggedUnion) PANICS on decode failure  [SEVERE]
-
-A decode FAILURE against any `Codec.enum` / `Codec.taggedUnion` codec panics with
-`CoerceFailure` in `rt.ResultCoerce` / `coerceInner` ("source string cannot be
-cast to target rt.SkyADT") instead of returning `Err`. The success path works.
-Compiler typed-codegen routing bug in `Std_Codec_fromJson`'s `ResultCoerce[<ADT>]`.
-Repro:
-```elm
-Codec.fromJson (Codec.enum [ ( Stickers, "stickers" ) ]) "\"nope\""   -- panics
-Codec.fromJson shipmentTaggedUnionCodec "[\"GhostTag\"]"              -- panics
-```
-Violates the "no runtime panic from well-typed Sky" + "if it compiles it works"
-non-negotiables. **Highest priority.**
-
-### C2 — reflective `auto`/`autoCamel`/`autoWith` record decoder is PERMISSIVE
-
-A missing required field OR a wrong-typed field silently decodes to the
-zero-value default and returns `Ok` instead of `Err` (silent data corruption):
-```elm
-Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\"}"
-  -- Ok { name = "x", count = 0 }   (count invented)
-Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\",\"count\":\"z\"}"
-  -- Ok { name = "x", count = 0 }   (type mismatch ignored)
-```
-The explicit `object`/`field`/`buildObject` decoder is strict + correct on the
-same inputs — leniency is isolated to the reflective `Codec_autoDecoder` kernel.
-
-**Shared root of C1 + C2 (analysis):** the reflective decoders are LENIENT.
-`Codec_autoDecoder` (runtime-go/rt/codec_auto.go:439) returns `Err` when
-`codecAutoDecodeVal` errors — so C2's leniency lives INSIDE `codecAutoDecodeVal`
-(it must reject a missing required field / a type mismatch instead of filling the
-zero value). C1 is the enum/taggedUnion reflective decoder returning
-`Ok "<rawstring>"` on an unknown tag; that non-ADT `Ok` value then hits
-`rt.ResultCoerce[Error, <ADT>]` (rt.go:329, the `fromJson`-result wrap), which
-calls `coerceInner[<ADT>]("nope")` and PANICS (rt.go:655). Making the enum decoder
-`Err` on an unknown name fixes both the leniency AND the panic (the `Err` path of
-ResultCoerce is sound). Fix = strictness in the reflective decoders; add a
-belt-and-suspenders in `coerceInner` to never panic from a decode path.
-
 ### L1 — every consing `Sky.Core.List` op is O(n²) in TIME  [SEVERE / ARCHITECTURAL — needs user decision]
 
 Sky lists are Go `[]any` slices, and `rt.List_cons` (runtime-go/rt/rt.go:1881-1893)
@@ -60,12 +21,22 @@ is misleading — 1M elements would take hours. Measured (`List.range 1 n`, ~4×
 doubling → quadratic): 5k=291ms, 10k=1.2s, 20k=4.7s, 40k=18s; 200k ≈ 7.5 min.
 (The List conformance suite caps its stack test at 20k for this reason.)
 
-This is not a quick fix — the sound remedy is a cons-cell (or O(1)-prepend) list
-representation instead of `[]any`, which is a runtime + codegen + interop change
-touching the whole list surface. **Escalate to user**: whether to undertake the
-list-rep rewrite now (multi-session) or accept documented O(n²) with a corrected
-doc + a guardrail on large-list ops. Per no-deferral this is a "start the correct
-fix / get direction", not "ignore".
+**USER DECISION (2026-08-01): must fix L1.**
+
+**Chosen approach — O(n) runtime kernels, KEEP the `[]any` representation.** The
+hot ops (`map`/`filter`/`foldl`/`foldr`/`reverse`/`append`/`concat`/`range`/`zip`/
+`indexedMap`) are all Sky-source CPS/accumulator loops that `::`-cons per element;
+`List_cons` (immutable prepend to `[]any`) is O(n), so each op is O(n²). Reimplement
+each as an `Ffi.kernel` backed by an O(n) Go loop that builds the result with
+`append` in forward order (no per-element cons) — this keeps lists as `[]any` (so
+ALL FFI/interop/`rt.AsListT` typed-widening is unchanged), stays constant Go stack
+(a plain loop), and drops the ops to O(n). A cons-cell rep was rejected: O(1) cons
+but O(n) index + a whole-surface interop rewrite. Correctness bar: EXACT semantic
+parity (foldl/foldr direction, zip truncation, range bounds, indexedMap indices,
+empty/singleton edges) — the List conformance suite + example sweep are the gate,
+and the large-list test can then go to 200k+/1M and run in well under a second
+(prove O(n) with a doubling benchmark). Golden fixtures re-blessed where a map/etc.
+call site's emitted Go changes.
 
 ### L2 — `String.toInt` does not trim whitespace (inconsistent with `toFloat`/`toIntT`)
 
@@ -85,6 +56,36 @@ closer look (same family as the record-fieldset name-collision class).
 
 ## Fixed (test now asserts the fix)
 
+- **C1 — `Codec.fromJson` on an ADT (enum / taggedUnion) PANICKED on decode
+  failure** [SEVERE] — a decode FAILURE against a `Codec.enum` / `Codec.taggedUnion`
+  codec panicked with `CoerceFailure` in `rt.ResultCoerce` / `coerceInner`
+  ("source string cannot be cast to target rt.SkyADT") instead of returning `Err`.
+  **Root cause:** the enum/taggedUnion decoders DO fail correctly (via `D.fail` in
+  `Std.Codec`), but `JsonDec_fail` (runtime-go/rt/stdlib_extra.go) returned an Err
+  carrying a **bare string** rather than a proper Error ADT like every other
+  decoder (`ErrDecode`). `fromJson : Codec a -> String -> Result Error a` has its
+  result wrapped by codegen in `ResultCoerce[Error, a]`, whose Err path calls
+  `coerceInner[Error](errValue)` — a bare string cannot narrow to the Error SkyADT
+  and panicked (rt.go:coerceInner). **Fix:** `JsonDec_fail` now returns
+  `Err(ErrDecode(msg))`; plus a defensive guard in `coerceInner` wraps a bare
+  string → Error ADT (target `rt.SkyADT`) instead of aborting, so no decode path
+  can panic the runtime. Guarded by `CodecConformanceTest` (enum + taggedUnion
+  decode-failure → `Test.err`, proven red-on-bug) and the Go regression
+  `runtime-go/rt/codec_enum_decode_fail_test.go`.
+- **C2 — reflective `auto`/`autoCamel`/`autoWith` record decoder was PERMISSIVE**
+  — a missing required field OR a wrong-typed field silently decoded to the
+  zero-value default and returned `Ok` (silent data corruption). **Fix:** the
+  reflective decoder (`codecAutoDecodeVal` / `codecAutoDecodeStruct` /
+  `Codec_autoDecoderOverrides`, runtime-go/rt/codec_auto.go) is now STRICT — it
+  errors on (a) a required (non-Maybe) field absent from the object, (b) a field
+  whose JSON value has the wrong type for the target (string↔int↔bool↔float↔
+  array), (c) a fractional number where an Int is expected, and (d) an unknown
+  registered-enum value — matching the explicit `object`/`field`/`buildObject`
+  decoder. **Nuance preserved:** a `Maybe` field that is absent or null still
+  decodes to `Nothing` (only non-optional fields are required). Guarded by
+  `CodecConformanceTest` ("auto strict → Err" section + Maybe-absent positives)
+  and the Go regressions `TestAutoDecoder*` in
+  `runtime-go/rt/codec_enum_decode_fail_test.go`.
 - **S1 — `Std.Db.Store` multi-column `ORDER BY` reversed** — `orderAsc`/`orderDesc`
   prepended, so the last call became the primary key. Fixed (`orderTail` reverses).
   Guarded by `StoreConformanceTest` (proven red-on-bug).

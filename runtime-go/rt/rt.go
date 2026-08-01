@@ -391,6 +391,24 @@ func coerceInner[T any](v any) T {
 	if cast, ok := v.(T); ok {
 		return cast
 	}
+	// Belt-and-suspenders (conformance finding C1): a bare string can
+	// never soundly narrow to an ADT. This arises when a decode path
+	// yields an Err carrying a raw string (rather than a proper Error
+	// ADT) that then flows into a Result's typed E-slot via
+	// ResultCoerce[Error, _] → coerceInner[Error](rawString). Rather
+	// than aborting the whole process with a CoerceFailure panic, wrap
+	// it as an Unexpected Error (target E is the Error SkyADT). The
+	// primary fix (JsonDec_fail → ErrDecode) means real decode failures
+	// never reach here; this only catches anomalous raw-string→ADT
+	// coercions so a decode path can never panic the runtime.
+	if s, ok := v.(string); ok {
+		var zero T
+		if zt := reflect.TypeOf(zero); zt != nil && zt == reflect.TypeOf(SkyADT{}) {
+			if e, ok := makeError(10, "Unexpected", s).(T); ok {
+				return e
+			}
+		}
+	}
 	// Generic fallback: when T is itself a parametric Sky container
 	// (SkyMaybe[X] / SkyResult[E, X] / SkyTask[E, X]) and v is the
 	// any-parameter instantiation of the same container, reconstruct

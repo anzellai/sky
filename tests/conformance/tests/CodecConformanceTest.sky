@@ -7,35 +7,26 @@ derivation, Maybe↔null, empty vs non-empty lists, tagged-union arity, enum
 name mapping, and malformed-input rejection. Pure (no DB, no Task) — the codec
 is Layer-3 Sky over Sky.Core.Json.
 
-Two real defects were discovered while building this suite. They are recorded in
-the `KNOWN BUG` blocks below with minimal repros, and are NOT expressed as active
-assertions because one of them ABORTS the process (a compiler panic), which would
-mask every other result. The suite otherwise stays green and exercises the
-correct behavior comprehensively.
+Both defects surfaced while building this suite (C1 + C2) are now FIXED and
+asserted ACTIVE below.
 
-  KNOWN BUG 1 — ADT-target `fromJson` decode-FAILURE panics (CoerceFailure).
-    `Codec.fromJson` on any ADT-typed codec (`enum` / `taggedUnion`), when the
-    decoder legitimately fails, panics in `rt.ResultCoerce`/`coerceInner`
-    ("source string cannot be cast to target rt.SkyADT") instead of returning
-    `Err`. Compiler typed-codegen routing bug in `Std_Codec_fromJson`'s
-    `ResultCoerce[<ADT>]`. Minimal repro (panics, does NOT return Err):
-        Codec.fromJson (Codec.enum [ ( Stickers, "stickers" ) ]) "\"nope\""
-        Codec.fromJson shipmentTaggedUnionCodec "[\"GhostTag\"]"
-    The SUCCESS path for the same codecs works (see the enum/taggedUnion tests
-    below), so only the failure branch is broken.
+  FIXED — C1: ADT-target `fromJson` decode-FAILURE used to panic (CoerceFailure).
+    `Codec.fromJson` on an `enum`/`taggedUnion` codec, when the decoder
+    legitimately failed, panicked in `rt.ResultCoerce`/`coerceInner` instead of
+    returning `Err`. Root cause: `JsonDec_fail` returned an Err carrying a bare
+    string (not a proper Error ADT), which then failed to narrow to the Error
+    SkyADT in `ResultCoerce[Error, _]`. Fixed (`JsonDec_fail` → `ErrDecode`, plus
+    a defensive string→ADT guard in `coerceInner`). Asserted ACTIVE in the
+    enum + taggedUnion sections below (`Test.err`).
 
-  KNOWN BUG 2 — `auto`/`autoCamel`/`autoWith` record decoder is PERMISSIVE.
-    A missing required field OR a wrong-typed field silently decodes to the
-    zero-value default (`Ok`) instead of `Err`. Repro:
-        Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\"}"
-            -- returns  Ok { name = "x", count = 0 }   (count invented as 0)
-        Codec.fromJson (Codec.auto { name = "", count = 0 }) "{\"name\":\"x\",\"count\":\"z\"}"
-            -- returns  Ok { name = "x", count = 0 }   (type mismatch ignored)
-    The EXPLICIT `object`/`field`/`buildObject` decoder is strict and correctly
-    Errs on the same inputs (see the "malformed → Err" section, which therefore
-    uses an explicit-object codec). Scalar decoders (`Codec.int` on a string)
-    also fail correctly. The leniency is isolated to the reflective auto path
-    (`Codec_autoDecoder` kernel). -}
+  FIXED — C2: the reflective `auto`/`autoCamel`/`autoWith` record decoder is now
+    STRICT (was permissive — a missing required field OR a wrong-typed field
+    silently decoded to the zero-value default and returned `Ok`). The reflective
+    decoder (`codecAutoDecodeVal`/`codecAutoDecodeStruct`) now errors on a missing
+    required (non-Maybe) field and a wrong-typed field, matching the explicit
+    `object`/`field`/`buildObject` decoder. NUANCE PRESERVED: a `Maybe` field that
+    is absent or null still decodes to `Nothing` (not an error). Asserted ACTIVE
+    in the "auto strict → Err" section below. -}
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -318,7 +309,7 @@ tests =
     , Test.test "object/field: round-trips"
         (\_ -> roundTrip customInner { tag = "hello", n = 3 })
 
-    -- ── Tagged-union ADTs (SUCCESS path — see KNOWN BUG 1 for failures) ────
+    -- ── Tagged-union ADTs (round-trip + decode-failure → Err, C1 fixed) ────
     , Test.test "taggedUnion: nullary variant round-trips"
         (\_ -> roundTrip shipmentCodec NotShipped)
     , Test.test "taggedUnion: 2-arg variant round-trips (arity + order)"
@@ -332,8 +323,12 @@ tests =
             in
                 Test.isTrue (String.contains "[\"Shipped\"" j)
         )
+    , Test.test "taggedUnion: unknown tag → Err (C1: was a panic)"
+        (\_ -> Test.err (Codec.fromJson shipmentCodec "[\"GhostTag\"]"))
+    , Test.test "taggedUnion: non-array JSON → Err (C1: was a panic)"
+        (\_ -> Test.err (Codec.fromJson shipmentCodec "\"NotShipped\""))
 
-    -- ── enum (SUCCESS path — see KNOWN BUG 1 for unknown-name failure) ─────
+    -- ── enum (round-trip + unknown-name → Err, C1 fixed) ──────────────────
     , Test.test "enum: round-trips each nullary constructor by name"
         (\_ ->
             case ( roundTrip categoryCodec Stickers
@@ -354,6 +349,28 @@ tests =
         )
     , Test.test "enum: encodes to the readable name (\"stickers\"), not an index"
         (\_ -> Test.equal "\"stickers\"" (Codec.toJson categoryCodec Stickers))
+    , Test.test "enum: unknown name → Err (C1: was a panic)"
+        (\_ -> Test.err (Codec.fromJson categoryCodec "\"nope\""))
+    , Test.test "enum: wrong JSON type (number where string) → Err (C1)"
+        (\_ -> Test.err (Codec.fromJson categoryCodec "42"))
+
+    -- ── auto STRICT: missing/wrong-typed field → Err; Maybe absent → Ok (C2) ─
+    , Test.test "auto: missing required field → Err (C2: was lenient Ok)"
+        (\_ -> Test.err (Codec.fromJson primCodec "{\"name\":\"x\",\"count\":1,\"ratio\":1.0}"))
+    , Test.test "auto: wrong-typed field (string where int) → Err (C2)"
+        (\_ -> Test.err (Codec.fromJson primCodec "{\"name\":\"x\",\"count\":\"z\",\"ratio\":1.0,\"active\":true}"))
+    , Test.test "auto: fractional number where int → Err (C2)"
+        (\_ -> Test.err (Codec.fromJson primCodec "{\"name\":\"x\",\"count\":1.5,\"ratio\":1.0,\"active\":true}"))
+    , Test.test "autoCamel: missing required field → Err (C2)"
+        (\_ -> Test.err (Codec.fromJson productCamel "{\"name\":\"p\"}"))
+    , Test.test "autoWith: missing required field → Err (C2)"
+        (\_ -> Test.err (Codec.fromJson productOverride "{\"name\":\"p\"}"))
+    , Test.test "auto: complete + well-typed record still decodes Ok (no false reject)"
+        (\_ -> Test.ok (Codec.fromJson primCodec "{\"name\":\"x\",\"count\":7,\"ratio\":1.5,\"active\":true}"))
+    , Test.test "auto: absent Maybe field → Ok with Nothing (nuance preserved)"
+        (\_ -> Test.equal (Ok { label = "a", note = Nothing }) (Codec.fromJson optCodec "{\"label\":\"a\"}"))
+    , Test.test "auto: null Maybe field → Ok with Nothing (nuance preserved)"
+        (\_ -> Test.equal (Ok { label = "a", note = Nothing }) (Codec.fromJson optCodec "{\"label\":\"a\",\"note\":null}"))
 
     -- ── Malformed / mismatched JSON → Err (STRICT explicit-object codec) ───
     , Test.test "fromJson: missing required field → Err"
