@@ -178,32 +178,16 @@ foldl fn acc list =
             foldl fn (fn x acc) rest
 
 
-isEmpty list =
-    case list of
-
-        [] ->
-            True
-
-        _ ->
-            False
+-- | `isEmpty list` — True iff the list has no elements.
+isEmpty : List a -> Bool
+isEmpty =
+    Ffi.kernel "List_isEmpty"
 
 
--- | `length list` — number of elements. `lengthHelp` carries the running
--- count in tail position so the emitted Go is a `for { ... continue }` loop
--- (constant Go stack).
-length list =
-    lengthHelp list 0
-
-
-lengthHelp : List a -> Int -> Int
-lengthHelp list n =
-    case list of
-
-        [] ->
-            n
-
-        _ :: rest ->
-            lengthHelp rest (n + 1)
+-- | `length list` — number of elements (O(1) on the slice representation).
+length : List a -> Int
+length =
+    Ffi.kernel "List_length"
 
 
 head list =
