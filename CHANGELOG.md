@@ -11,6 +11,54 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.5 — Sky.Live resilience, part 2: CSRF/route/sub-app/panic hardening (2026-08-01)
+
+Five more runtime fixes for hidden Sky.Live production-failure modes (the second
+batch after v0.19.4). All pure-runtime — rebuild with this version to pick them up.
+
+### Fixed — long-lived tabs no longer start 403-ing every click (CSRF cookie)
+
+The CSRF cookie was a session cookie (no expiry). Browsers that clear session
+cookies on tab-discard / sleep-wake (Safari/ITP, Chrome tab discard) dropped it
+while a Sky.Live SPA stayed open; the next POST regenerated a new cookie but the
+page still sent the old token → **403 on every click until a manual reload**. The
+cookie is now persistent and re-issued on each request (sliding), keyed to the
+session TTL, so it survives those evictions.
+
+### Fixed — a typed route parameter no longer panics the page
+
+A route whose `Page` constructor takes a non-`String` parameter (e.g.
+`AppDetailPage Int`) panicked at request time (`reflect: Call using string as
+type int`) — compile-clean, then aborting every visit to that URL. Route
+parameters are now coerced to the constructor's parameter type (int/float/bool),
+and an unconvertible value (`/product/abc` for `ProductPage Int`) degrades to a
+warning instead of crashing the request.
+
+### Fixed — a crashing handler is now observable instead of a silent dead button
+
+A panic in a session's `update`/`view` was recovered but logged only to stderr —
+so a deterministic panic for a given `Msg` turned that control into a permanent
+silent no-op with nothing to grep. It now emits a structured Error log (visible
+in `Std.Log` + the console + metrics) with a correlation id and sets a
+user-visible notification.
+
+### Fixed — the dev console no longer opens a second connection to your database
+
+The inline `/_sky/console` mounts as a sub-app that ran its own store selection
+and inherited the host's `SKY_LIVE_STORE`, opening a **second** pool against your
+DB (SQLite writer contention; a redundant Postgres pool) — and, with v0.19.4's
+fail-loud store policy, a console store-connect failure could take down the host.
+Sub-app sessions are ephemeral, so a sub-app with no explicit store now uses an
+in-process memory store.
+
+### Added — multi-replica pub/sub heads-up
+
+In production, if the pub/sub broker is in-process (any non-Redis store with no
+`SKY_LIVE_BROKER_URL`), the runtime now logs a one-time note that cross-replica
+broadcasts (`Cmd.publish`, cross-instance multi-tab fan-out) won't reach other
+replicas — so a multi-replica deploy doesn't silently drop them. Single-instance
+deploys can ignore it.
+
 ## v0.19.4 — Sky.Live production resilience: self-healing desync + fail-loud stores (2026-08-01)
 
 A set of runtime fixes for a class of Sky.Live bugs that passed `sky check` +
