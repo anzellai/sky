@@ -105,6 +105,9 @@ verify-all-web) + darraghstudio redeploy as the e2e check.
   exhaustion return `Ok(pool)` (healable) not `Err` — self-heals on next query,
   zero contract change. Same for analytics_store.go (S10).
 
+### ✅ Tier 2 — DONE (feat/skylive-resilience: 9da61633)
+L2/L3/L4 shipped with the L2 regression; full runtime `go test ./rt/` green.
+
 ### Tier 2 — session-lifecycle correctness (ship with Tier 1)
 - **L2 sliding `sky_sid` cookie** (re-issue MaxAge each request; live.go:6022).
 - **L3 SSE heartbeat touches `lastSeen` + `case <-sessDone: return`** in the SSE
