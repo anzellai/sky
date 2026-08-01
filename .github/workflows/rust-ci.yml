@@ -148,6 +148,13 @@ jobs:
         run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Gate — stdlib behavioral conformance (sky test suites)
+        # The behavioral layer the corpus gates + oracle DON'T cover: asserts
+        # documented stdlib semantics with adversarial inputs (Store multi-col
+        # order, memoised-CAF stale reads, Log attrs, fromJson-ADT, stack safety).
+        run: |
+          cargo build --release -p sky --locked
+          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
       - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
         run: cargo run -q -p xtask -- build-run --shape live --run
       - name: Gate — http runtime (Sky.Http.Server examples start + serve)

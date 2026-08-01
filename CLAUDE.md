@@ -1442,6 +1442,16 @@ cd examples/01-hello-world && sky build src/Main.sky
 1. Rebuild: `( cd rust && cargo build --release -p sky ) && cp rust/target/release/sky sky-out/sky`
 2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
 3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden) — zero failures
+3b. **Stdlib behavioral conformance** — `scripts/conformance.sh` (the `sky test`
+    suites under `tests/conformance/`). This is the BEHAVIORAL layer the corpus
+    gates + differential oracle DON'T cover: they prove "builds" + "matches the
+    oracle", not "the stdlib behaves correctly at runtime". The suites assert
+    documented semantics with ADVERSARIAL inputs (opposite-collating keys,
+    homogeneous vs heterogeneous lists, data-mutated-after-read, malformed
+    JSON, unicode boundaries, 20k-element stack safety). Every past
+    compiles-clean-behaves-wrong bug (Store multi-column order, memoised-CAF
+    stale reads, Log dropped attrs, Ui.button submit, fromJson-ADT panic) is a
+    permanent assertion here. Must be green.
 4. Clean-build every example: loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`
 5. **Sky.Live + Sky.Http.Server runtime verify** — `scripts/verify-all-web.sh` (Playwright + the structural-events + round-trip-dispatch checks)
 6. **CLI / Tui / Cli runtime verify** — `scripts/verify-cli.sh`
