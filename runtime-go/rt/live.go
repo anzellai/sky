@@ -4282,7 +4282,10 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// Mark this 404 as a real Sky.Live response so the client's
 		// probe (in __skyForceReopenSSE) can distinguish "session gone,
 		// reload to recover" from a generic proxy-rewritten 404.
+		// X-Sky-Status: session-lost is the deterministic hard-reload signal
+		// (the client no longer has to sniff the response body string).
 		w.Header().Set("X-Sky-Live", "1")
+		w.Header().Set("X-Sky-Status", "session-lost")
 		http.Error(w, "session not found", 404)
 		return
 	}
@@ -4374,8 +4377,35 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		ok = true
 	}
 	if !ok {
+		// Session is VALID but the client's DOM references a handler ID this
+		// render no longer has — a client/server VIEW DESYNC: a deploy changed
+		// the view between the client's render and now (handler IDs are
+		// <sky-id>.<event>, position-derived, so any view change invalidates an
+		// open client's IDs), or the DOM went stale after an SSE drop. A bare
+		// 404 here strands the client — __skyPostEvent can't tell it apart from
+		// a proxy wedge, retries the same dead ID, and shows "disconnected"
+		// until a MANUAL REFRESH.
+		//
+		// Instead: re-render the CURRENT view and return it. The reply refreshes
+		// the client's DOM + data-sky-hid so its NEXT click matches, and
+		// X-Sky-Status: desync tells the client to DROP this (un-dispatchable)
+		// action rather than retry the dead handler ID. The offending action is
+		// unrecoverable — its captured payload lived only in the old server-side
+		// closure — which is acceptable (documented) and far better than
+		// stranding the whole client. Heals in one round-trip, no SSE churn, no
+		// reconnecting banner. Mirrors the empty-handlers rebuild above.
+		vn, _ := app.safeViewCall(sess.model)
+		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
+		applyStyleInjections(&vn)
+		sess.handlers = map[string]any{}
+		body := renderVNode(vn, sess.handlers)
+		sess.commitRender(&vn, body)
+		sess.lastShippedBody = body
+		respSeq := sess.nextLocalSeq()
+		respAck := ackInputsForPrevTree(sess)
 		sess.mu.Unlock()
-		http.Error(w, "handler not found", 404)
+		w.Header().Set("X-Sky-Status", "desync")
+		writeEventHTML(w, respSeq, respAck, body) // also sets X-Sky-Live: 1
 		return
 	}
 	// TEA application: if msg is a curried constructor (for onInput /
@@ -5816,6 +5846,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// flipped sky.toml [live] store from sqlite to memory, watch
 		// rebuilt, every browser session is now invalid).
 		w.Header().Set("X-Sky-Live", "1")
+		w.Header().Set("X-Sky-Status", "session-lost")
 		http.Error(w, "session not found", 404)
 		return
 	}
@@ -7261,6 +7292,53 @@ function __skyPostEvent(body) {
       // as transient — same retry path as a network failure.
       throw new Error("server " + r.status);
     }
+    // Server-authored desync classification — the universal resync invariant.
+    // A real Sky.Live desync response carries X-Sky-Status, so the client never
+    // has to sniff a body string or misread the response as a proxy wedge (the
+    // old bug: "handler not found" was misclassified → retried the dead handler
+    // → stranded until a manual refresh):
+    //   session-lost → the session cookie is unknown; only a full reload
+    //                  (fresh init + new session) can recover.
+    //   desync       → session valid, but this action can't dispatch against
+    //                  the current view (stale DOM after a deploy / SSE drop).
+    //                  The server already re-rendered the CURRENT view into
+    //                  this response body — apply it to refresh the DOM +
+    //                  data-sky-hid so the NEXT click matches. This action is
+    //                  dropped (its captured payload is unrecoverable), which
+    //                  beats stranding the whole client.
+    var skyStatus = r.headers.get("X-Sky-Status");
+    if (skyStatus === "session-lost") {
+      __skyOnPostSuccess();            // server reachable → clear backoff/banner
+      if (!__skyProbedReload) {
+        __skyProbedReload = true;
+        if (window.console && console.warn) console.warn("[sky.live] session lost — reloading to recover");
+        window.location.reload();
+      }
+      return;
+    }
+    if (skyStatus === "desync") {
+      __skyOnPostSuccess();            // clears the reconnecting/offline banner
+      if (window.console && console.warn) {
+        console.warn("[sky.live] view desync — refreshing to the current server view; this action was dropped");
+      }
+      // Backstop a pathological never-converging view: after a few consecutive
+      // desyncs, escalate to a full reload instead of looping.
+      __skyConsecutiveResync = (__skyConsecutiveResync || 0) + 1;
+      if (__skyConsecutiveResync > 5) {
+        __skyConsecutiveResync = 0;
+        if (!__skyProbedReload) { __skyProbedReload = true; window.location.reload(); }
+        return;
+      }
+      return r.text().then(function(t) {
+        var seqStr = r.headers.get("X-Sky-Seq");
+        var seq = seqStr ? parseInt(seqStr, 10) : 0;
+        var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
+        var ack = null;
+        if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
+        __skyHandleResponse(seq, ack, function() { __skyPatch(t); });
+      });
+    }
+    __skyConsecutiveResync = 0; // a normal response — reset the desync backstop
     // Reverse-proxy wedge detection: a real Sky.Live response always
     // carries X-Sky-Live: 1. Without it, we're looking at a proxy-
     // rewritten response (e.g. some edges turn upstream 502 into 200
@@ -8201,6 +8279,10 @@ function __skyForceReopenSSE() {
 var __skyProbedReload = false;  // one-shot guard so we don't trigger
                                 // multiple reloads from a burst of
                                 // failed reopen attempts.
+var __skyConsecutiveResync = 0; // consecutive X-Sky-Status:desync soft-resyncs;
+                                // reset on any normal response. Backstops a
+                                // pathological never-converging view by
+                                // escalating to a full reload after a few.
 function __skyProbeSessionLost() {
   if (__skyProbedReload) return;
   var headers = {"Content-Type": "application/json"};
