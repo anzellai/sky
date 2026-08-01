@@ -78,6 +78,11 @@ surfaces as a confusing production symptom.
 converts the ENTIRE silent class (store fallback, degraded broker, memory
 console) from invisible → orchestrator-visible.
 
+### ✅ Tier 1 — DONE (feat/skylive-resilience: ab13572a, ab9edabd, 7882f4d6)
+All three shipped with red-on-bug regressions; full runtime `go test ./rt/` green.
+Remaining before merge: milestone gates (cargo test + xtask + example sweep +
+verify-all-web) + darraghstudio redeploy as the e2e check.
+
 ### Tier 1 — core fundamental fixes (confirmed prod bug + meta-landmine)
 - **C1 (readiness probes).** Wire `RegisterReadinessProbe("session-store", …)` +
   `("db", …)`. Memory-fallback branches register a *degraded* probe. Add

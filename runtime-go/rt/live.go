@@ -6016,6 +6016,13 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-sess.done:
+			// L3: the session was evicted (TTL cleanup called markDone) — tear
+			// this connection down instead of heart-beating into a dead session
+			// (which kept the client's "connected" banner green while its next
+			// click 404'd). A nil `done` channel never selects, so this is safe
+			// for sessions that predate the field.
+			return
 		case fr := <-sseOut:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
 			// Gap C11: the event name now travels with the frame —
@@ -6037,6 +6044,12 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		case t := <-heartbeat.C:
+			// L3: an open connection keeps its session alive. Without this, only
+			// user EVENTS slid the TTL, so a connected-but-idle session (user
+			// reading, an SSE-only dashboard) was evicted under a live SSE — the
+			// next click then 404'd. The heartbeat already proves the client is
+			// present; treat it as activity.
+			sess.touchLastSeen()
 			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"ts\":%d}\n\n", t.UnixMilli()); err != nil {
 				return
 			}
@@ -6061,34 +6074,41 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		cookieName = "sky_sid"
 	}
 	if c, err := r.Cookie(cookieName); err == nil {
+		// L2: re-issue the cookie with a fresh MaxAge on every page load so the
+		// BROWSER's expiry window SLIDES in lockstep with the server-side TTL
+		// (which slides on activity via touchLastSeen). Without this, the cookie
+		// expired at its ORIGINAL fixed window while the server session kept
+		// sliding — an actively-used session past that window lost its cookie →
+		// new session → `init` wiped the Model (cart / auth / form) mid-use.
+		writeSessionCookie(w, cookieName, c.Value, ttl)
 		return c.Value
 	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	sid := hex.EncodeToString(b)
-	// Persistent cookie keyed to the session-store TTL so the cookie
-	// survives tab-close + browser-restart up to the same window the
-	// stored session is valid for.  Previously this was a session
-	// cookie (no MaxAge) — browsers that drop session cookies on
-	// last-tab-close (Chrome with "continue where you left off"
-	// disabled, some Safari configurations) would invalidate the
-	// cookie immediately, forcing `init` to fire on every reopen and
-	// destroying the user's Model state even though the sqlite /
-	// redis / postgres backing store still had it.  MaxAge matches
-	// the store TTL so a server-side expiry and the cookie expiry
-	// converge to the same time-of-death.
+	writeSessionCookie(w, cookieName, sid, ttl)
+	return sid
+}
+
+// writeSessionCookie sets the session cookie with a fresh MaxAge (a sliding
+// window keyed to the store TTL). Persistent (not a session cookie) so it
+// survives tab-close + browser-restart up to the same window the stored session
+// is valid for — a session cookie (no MaxAge) would be dropped by browsers that
+// clear session cookies on last-tab-close (Chrome without "continue where you
+// left off", some Safari configs), forcing `init` on every reopen and wiping
+// the user's Model even though the sqlite/redis/postgres store still had it.
+func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
 	maxAge := int(ttl.Seconds())
 	if maxAge <= 0 {
 		maxAge = 30 * 60 // 30 min sane default
 	}
-	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into
-	// being iframed cross-origin (e.g. a control plane's preview
-	// pane), the browser would silently drop a Lax-default cookie on
-	// every iframe request — Sky.Live's SSE + POST loop would
-	// reconnect-and-reset every few seconds. None+Secure lets the
-	// cookie ride along, and the existing CSRF check still gates
-	// state-mutating POSTs. Outside that mode keep Lax (the right
-	// floor for top-level nav + form posts on a same-origin app).
+	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into being iframed
+	// cross-origin (e.g. a control plane's preview pane), the browser would
+	// silently drop a Lax-default cookie on every iframe request — Sky.Live's
+	// SSE + POST loop would reconnect-and-reset every few seconds. None+Secure
+	// lets the cookie ride along, and the CSRF check still gates state-mutating
+	// POSTs. Outside that mode keep Lax (the right floor for top-level nav +
+	// form posts on a same-origin app).
 	sameSite, secure := http.SameSiteLaxMode, false
 	if crossOriginIframeMode() {
 		sameSite, secure = http.SameSiteNoneMode, true
@@ -6102,7 +6122,6 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		SameSite: sameSite,
 		Secure:   secure,
 	})
-	return sid
 }
 
 // crossOriginIframeMode reports whether SKY_LIVE_FRAME_ANCESTORS is

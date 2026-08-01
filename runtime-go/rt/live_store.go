@@ -470,6 +470,10 @@ func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
 		s.memMu.RUnlock()
+		// L4: a read slides the TTL, matching memoryStore.Get. Without this,
+		// only writes (events) kept a DB-backed session alive, so a read-heavy
+		// idle session (dashboard, SSE-only) got evicted under a live view.
+		sess.touchLastSeen()
 		return sess, true
 	}
 	s.memMu.RUnlock()
@@ -624,6 +628,7 @@ func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
 		s.memMu.RUnlock()
+		sess.touchLastSeen() // L4: a read slides the TTL, matching memoryStore.Get
 		return sess, true
 	}
 	s.memMu.RUnlock()
@@ -790,6 +795,7 @@ func (s *redisStore) Get(sid string) (*liveSession, bool) {
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
 		s.memMu.RUnlock()
+		sess.touchLastSeen() // L4: a read slides the TTL, matching memoryStore.Get
 		return sess, true
 	}
 	s.memMu.RUnlock()
