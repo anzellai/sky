@@ -356,6 +356,18 @@ that feature**. Config precedence is **process env > `.env` > `sky.toml`**, so
 every value here can be overridden at deploy time without editing the file (and
 secrets / connection strings should be — never commit them).
 
+**Persistence tier by traffic (the quick call — pick one, set `[live] store` +
+`[database]` to match):**
+
+| Scale | Sessions + data | Why |
+|---|---|---|
+| Single instance, **low–medium** traffic | **`sqlite`** | One local file — sessions + app data on one host, survives restart, zero external services. The right default for a prototype or a single VM. |
+| Production, **medium–heavy** traffic | **`postgres`** | Shared across replicas → run several instances behind a load balancer; one managed database for durable data + sessions. |
+| Production, **global / heavy** traffic | **`postgres` + `redis`** | Postgres for durable data + sessions; Redis adds the cross-instance pub/sub broker (broadcast to users across replicas — chat/collab/presence) and a fast session cache. Set `store = "redis"` (or `SKY_LIVE_BROKER_URL` to a Redis) alongside your Postgres. |
+
+The app code is identical across all three — you change only the config. `memory`
+is dev-only (per-process, lost on restart).
+
 - **`[live] store`** — where Sky.Live keeps session state. Start `memory` (dev;
   lost on restart). One instance → `sqlite` (a local file; survives restart).
   More than one replica → `postgres` or `redis` (shared across instances; `redis`
