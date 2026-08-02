@@ -216,7 +216,7 @@ func TestConcurrentGroupCommit(t *testing.T) {
 	if db.Len() != G*N {
 		t.Fatalf("Len = %d, want %d", db.Len(), G*N)
 	}
-	batches, writes := db.Stats()
+	batches, writes, _ := db.Stats()
 	if writes != G*N {
 		t.Fatalf("writes stat = %d, want %d", writes, G*N)
 	}

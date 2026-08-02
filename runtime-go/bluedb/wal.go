@@ -86,12 +86,19 @@ func decodePayload(p []byte) (entry, bool) {
 	return e, true
 }
 
-// replay reads every valid record from the WAL at path, calling apply in order,
-// and returns the highest seq seen plus the byte offset of the end of the last
-// valid record (validEnd). A missing file is not an error (fresh DB). It stops
-// at the first torn/invalid record; validEnd is where the file should be
-// truncated so future appends are clean.
-func replay(path string, apply func(entry)) (maxSeq uint64, validEnd int64, err error) {
+// replay reads every valid record from the WAL at path, calling apply in order
+// for records with seq > minSeq, and returns the highest seq seen plus the byte
+// offset of the end of the last valid record (validEnd). A missing file is not
+// an error (fresh DB). It stops at the first torn/invalid record; validEnd is
+// where the file should be truncated so future appends are clean.
+//
+// minSeq is the coveredSeq of a loaded snapshot: records with seq <= minSeq are
+// already reflected in the snapshot, so they are skipped. This makes recovery
+// correct even in the crash window between writing a snapshot and truncating the
+// WAL — a stale pre-snapshot record can never resurrect a value the snapshot
+// already superseded.
+func replay(path string, minSeq uint64, apply func(entry)) (maxSeq uint64, validEnd int64, err error) {
+	maxSeq = minSeq
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -123,11 +130,13 @@ func replay(path string, apply func(entry)) (maxSeq uint64, validEnd int64, err 
 		if !ok {
 			break
 		}
-		// Copy key/value out of the reader's buffer before handing to apply,
-		// so the memtable owns its bytes.
-		k := append([]byte(nil), ent.key...)
-		v := append([]byte(nil), ent.value...)
-		apply(entry{seq: ent.seq, op: ent.op, key: k, value: v})
+		if ent.seq > minSeq {
+			// Copy key/value out of the reader's buffer before handing to
+			// apply, so the memtable owns its bytes.
+			k := append([]byte(nil), ent.key...)
+			v := append([]byte(nil), ent.value...)
+			apply(entry{seq: ent.seq, op: ent.op, key: k, value: v})
+		}
 		if ent.seq > maxSeq {
 			maxSeq = ent.seq
 		}
