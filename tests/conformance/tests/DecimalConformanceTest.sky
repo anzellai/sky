@@ -1,0 +1,138 @@
+module DecimalConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Std.Decimal — the arbitrary-precision decimal used
+-- for money and any exact-arithmetic need. These assertions drive the SKY-SOURCE
+-- API (through the compiled binary), NOT the Go kernel directly — the int64 bug
+-- (v0.19.3) proved a Go kernel can be correct while the Sky lowering path is
+-- wrong or platform-dependent. Inputs are ADVERSARIAL: float-inexact sums,
+-- half-to-even vs half-up boundaries, divide-by-zero, malformed parse, and
+-- arbitrary precision beyond int64/float64 range.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Decimal as Decimal
+import Sky.Test as Test exposing (Test)
+
+
+-- Parse helper: adversarial suites assume these literals are well-formed, so a
+-- parse failure surfaces as a wrong toString, not a silent zero masking a bug.
+d : String -> Decimal.Decimal
+d s =
+    Result.withDefault (Decimal.fromInt -999999) (Decimal.fromString s)
+
+
+str : Decimal.Decimal -> String
+str x =
+    Decimal.toString x
+
+
+tests : List Test
+tests =
+    [ -- ── Exact arithmetic (the reason Decimal exists — no float error) ──
+      Test.test "0.1 + 0.2 == 0.3 exactly (not 0.30000000000000004)"
+        (\_ -> Test.equal "0.3" (str (Decimal.add (d "0.1") (d "0.2"))))
+    , Test.test "0.3 - 0.1 == 0.2 exactly"
+        (\_ -> Test.equal "0.2" (str (Decimal.sub (d "0.3") (d "0.1"))))
+    , Test.test "0.1 * 0.1 == 0.01 exactly"
+        (\_ -> Test.equal "0.01" (str (Decimal.mul (d "0.1") (d "0.1"))))
+    , Test.test "sum [0.1, 0.1, 0.1] == 0.3 exactly (float would drift)"
+        (\_ -> Test.equal "0.3" (str (Decimal.sum [ d "0.1", d "0.1", d "0.1" ])))
+
+      -- ── Arbitrary precision beyond int64 / float64 ──
+    , Test.test "arbitrary precision: 99999999999999999999.99 + 0.01 carries exactly"
+        (\_ -> Test.equal "100000000000000000000" (str (Decimal.add (d "99999999999999999999.99") (d "0.01"))))
+    , Test.test "arbitrary precision: 21+ significant digits preserved"
+        (\_ -> Test.equal "123456789012345678901.5" (str (d "123456789012345678901.5")))
+
+      -- ── Banker's rounding (round-half-to-even) — documented for `round` ──
+    , Test.test "round: 2.5 -> 2 (half to even)"
+        (\_ -> Test.equal "2" (str (Decimal.round 0 (d "2.5"))))
+    , Test.test "round: 3.5 -> 4 (half to even)"
+        (\_ -> Test.equal "4" (str (Decimal.round 0 (d "3.5"))))
+    , Test.test "round: 0.5 -> 0 (half to even)"
+        (\_ -> Test.equal "0" (str (Decimal.round 0 (d "0.5"))))
+    , Test.test "round: 1.5 -> 2 (half to even)"
+        (\_ -> Test.equal "2" (str (Decimal.round 0 (d "1.5"))))
+    , Test.test "round: -2.5 -> -2 (half to even)"
+        (\_ -> Test.equal "-2" (str (Decimal.round 0 (d "-2.5"))))
+
+      -- ── Half-up rounding — documented for `roundHalfUp` ──
+    , Test.test "roundHalfUp: 2.5 -> 3"
+        (\_ -> Test.equal "3" (str (Decimal.roundHalfUp 0 (d "2.5"))))
+    , Test.test "roundHalfUp: 0.5 -> 1"
+        (\_ -> Test.equal "1" (str (Decimal.roundHalfUp 0 (d "0.5"))))
+
+      -- ── Truncate (toward zero, never rounds) ──
+    , Test.test "truncate 0: 2.9 -> 2"
+        (\_ -> Test.equal "2" (str (Decimal.truncate 0 (d "2.9"))))
+    , Test.test "truncate 0: -2.9 -> -2 (toward zero)"
+        (\_ -> Test.equal "-2" (str (Decimal.truncate 0 (d "-2.9"))))
+
+      -- ── floor / ceil on negatives (classic sign trap) ──
+    , Test.test "floor: -1.5 -> -2"
+        (\_ -> Test.equal "-2" (str (Decimal.floor (d "-1.5"))))
+    , Test.test "ceil: -1.5 -> -1"
+        (\_ -> Test.equal "-1" (str (Decimal.ceil (d "-1.5"))))
+    , Test.test "floor: 1.5 -> 1"
+        (\_ -> Test.equal "1" (str (Decimal.floor (d "1.5"))))
+    , Test.test "ceil: 1.5 -> 2"
+        (\_ -> Test.equal "2" (str (Decimal.ceil (d "1.5"))))
+
+      -- ── Division: exact + fallible ──
+    , Test.test "div 10 / 4 == 2.5 (exact)"
+        (\_ -> Test.equal (Ok "2.5") (Result.map str (Decimal.div (d "10") (d "4"))))
+    , Test.test "div by zero -> Err (never panic, never Inf)"
+        (\_ -> Test.err (Decimal.div (d "1") Decimal.zero))
+    , Test.test "mod by zero -> Err"
+        (\_ -> Test.err (Decimal.mod (d "1") Decimal.zero))
+    , Test.test "mod 10 % 3 == 1"
+        (\_ -> Test.equal (Ok "1") (Result.map str (Decimal.mod (d "10") (d "3"))))
+
+      -- ── fromString: adversarial parse ──
+    , Test.test "fromString rejects double-dot 1.2.3 -> Err"
+        (\_ -> Test.err (Decimal.fromString "1.2.3"))
+    , Test.test "fromString rejects non-numeric abc -> Err"
+        (\_ -> Test.err (Decimal.fromString "abc"))
+    , Test.test "fromString rejects empty string -> Err"
+        (\_ -> Test.err (Decimal.fromString ""))
+    , Test.test "fromString accepts scientific 1e3 == 1000"
+        (\_ -> Test.equal True (Decimal.eq (d "1e3") (Decimal.fromInt 1000)))
+    , Test.test "fromString normalizes -0 to 0"
+        (\_ -> Test.equal "0" (str (d "-0")))
+
+      -- ── Minor-unit (money cents) round-trips ──
+    , Test.test "fromMinor 2 12345 -> 123.45"
+        (\_ -> Test.equal "123.45" (str (Decimal.fromMinor 2 12345)))
+    , Test.test "toMinor 2 of 123.45 -> 12345"
+        (\_ -> Test.equal 12345 (Decimal.toMinor 2 (d "123.45")))
+    , Test.test "minor round-trip: fromMinor 2 (toMinor 2 99.99) == 99.99"
+        (\_ -> Test.equal "99.99" (str (Decimal.fromMinor 2 (Decimal.toMinor 2 (d "99.99")))))
+
+      -- ── Comparison ignores trailing zeros (numeric, not lexical) ──
+    , Test.test "1.10 compares equal to 1.1 (numeric)"
+        (\_ -> Test.equal 0 (Decimal.compare (d "1.10") (d "1.1")))
+    , Test.test "eq 1.10 1.1 == True"
+        (\_ -> Test.equal True (Decimal.eq (d "1.10") (d "1.1")))
+    , Test.test "compare 1 vs 2 == -1"
+        (\_ -> Test.equal -1 (Decimal.compare (d "1") (d "2")))
+
+      -- ── Percent helpers (percentOf pct of_ ; addPercent pct base) ──
+    , Test.test "percentOf 10 200 == 20 (10% of 200)"
+        (\_ -> Test.equal "20" (str (Decimal.percentOf (d "10") (d "200"))))
+    , Test.test "addPercent 10 200 == 220"
+        (\_ -> Test.equal "220" (str (Decimal.addPercent (d "10") (d "200"))))
+    , Test.test "subPercent 10 200 == 180"
+        (\_ -> Test.equal "180" (str (Decimal.subPercent (d "10") (d "200"))))
+
+      -- ── neg / abs ──
+    , Test.test "neg 5 == -5"
+        (\_ -> Test.equal "-5" (str (Decimal.neg (d "5"))))
+    , Test.test "abs -5 == 5"
+        (\_ -> Test.equal "5" (str (Decimal.abs (d "-5"))))
+    , Test.test "abs of already-positive is unchanged"
+        (\_ -> Test.equal "5.5" (str (Decimal.abs (d "5.5"))))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

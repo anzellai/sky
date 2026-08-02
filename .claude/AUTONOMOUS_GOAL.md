@@ -1,75 +1,79 @@
-# Autonomous mandate — compiler + stdlib e2e test coverage (v0.19.x)
+# Autonomous mandate — comprehensive e2e test coverage (compiler + stdlib + console + LSP + tooling)
 
-Set: 2026-08-01. Branch: feat/std-analytics.
-(Supersedes the completed codec-derivation + kernel-metadata mandates.)
+Set: 2026-08-02. Branch: main.
+(Supersedes the completed v0.19.3 conformance-suite mandate.)
 
 ## User's goal (verbatim — the authority on "done")
 
-> "we need to have test suites, or extensive single example testing all of
-> these, not just regressed items, but most particular compiler issues that
-> could go wrong. do you have any good idea how we can test everything
-> compiler + stdlib e2e?"
+> "we need more thorough test e2e for compiler + standard libs + console etc.
+> LSP + tooling to ensure no regression and bugs"
 >
-> "ok keep going, grill + deep analysis for the fix/implementation, and fully
-> tested + verified"
+> Sequencing (answer to my scope question): "Full autonomous program" — grind
+> all 5 tiers to completion over multiple sessions with fresh-context Judge
+> verification at each tier boundary.
 >
-> "in autonomous mode"
->
-> "must fix L1, C2 -- lenient vs strict, i prefer strict"
->
-> "ok fully autonomous mode on, after fully tested + verified, usual e2e flow
-> tag release, redeployments"
+> "remember not to do individual release, we need holistic complete confidence
+> fix + refinement for the next release. we must be confident on reliability"
 
-## End state (the mandate now runs all the way to a shipped release)
+## Release discipline (user-set, INVIOLABLE for this mandate)
 
-1. Finish + FULLY test/verify: conformance suite + all fixes (incl. L1 O(n) list
-   ops, C2 strict decoder — both user-mandated).
-2. Fresh-context adversarial JUDGE must return 100% before "done".
-3. Usual e2e release flow (CLAUDE.md release checklist, incl. new step 3b
-   conformance): rebuild, smoke, cargo test --workspace + xtask gates,
-   conformance, clean-build examples, verify-all-web, verify-cli, from-scratch.
-4. Tag the release (v0.19.3 — CHANGELOG already staged) + gh release from the
-   CHANGELOG section (release-notes.sh). User has explicitly authorised the tag.
-5. Redeployments: SkyDeploy bump SKY_VERSION + deploy (per §5 + memory), and the
-   downstream apps (darraghstudio already on the fixed compiler; re-verify).
+**NO individual/incremental releases.** Batch the ENTIRE program (all 5 tiers +
+every bug found + every fix) locally. Push at tier boundaries (CI parity), but do
+**ONE holistic release only when the whole program is complete AND
+reliability-verified end to end.** The int64 fix (commit e3c2dd70) folds into that
+release — it is NOT tagged separately. No v0.19.8-per-fix.
 
-## What this means (the standard to hit)
+## What "done" means
 
-Close the "compiles-clean-behaves-wrong" gap that let 8 real bugs ship this
-session (all passed `sky check` + `go build` + corpus gates + oracle, yet were
-runtime-behavioral bugs). Build **comprehensive compiler + stdlib e2e testing**
-so this class is caught going forward:
+All 5 tiers of `docs/testing/coverage-hardening-plan.md` implemented + green, and
+every real bug the new adversarial tests surface FIXED at root cause (no-deferral
+§4). Each tier is closed only by a fresh-context adversarial **Judge**.
 
-- **Layer 1 — stdlib conformance suite** (Sky source, `sky test`, asserted with
-  ADVERSARIAL inputs, not happy-path). One suite per module; start with the
-  modules that bit us (`Std.Db.Store`, `Std.Codec`, `Std.Log`, `Std.Ui`) and
-  grow to broad coverage.
-- **Layer 2 — property / round-trip tests** (codec/JSON/base64 round-trip
-  identity, Store write-read identity, orderBy stable total order, etc.).
-- **Layer 3 — kitchen-sink behavioral e2e** (assert behavior, not just 200).
-- Wire into CI / the release gate.
+- **T1** Behavioral conformance suites driving the **Sky-source API** (through the
+  compiled binary, not the Go kernel) with adversarial/boundary inputs: Decimal,
+  Money, Jwt/Auth, Encoding, Csv, Compression, Time, Json-int64-boundary,
+  Random-golden, Math/Dict-Set/Regex/Uuid.
+- **T2** CI-enforcement wiring: Std.Db example-sweep in CI, macOS cargo tests +
+  golden, multi-tab in web verify, fmt/lsp local↔CI parity, non-CLI runtime
+  goldens incl. Tui gob round-trip.
+- **T3** Production-incident e2e: real-Postgres store (testcontainers),
+  cross-process gob, browser desync-recovery, SSE drop-resync/idle-survival,
+  CORS/BasicAuth tests, firestore implement-or-delete decision.
+- **T4** Tooling: `sky db` dialect flow, `sky fmt` interpolation paren-drop,
+  `sky watch`, LSP diagnostics parity + rename/references/semtokens,
+  add/doctor/doc/profile.
+- **T5** Compiler-internal depth: codegen/lower unit snapshots, infer
+  type-equality vs oracle, fuzz oracle-diff, divergence fixtures per ledger entry.
 
-Plus: finish + verify the **compiler lint** (memoized-effect CAF warning) and
-confirm all 9 findings are sound + correct + verified.
+## Hard rules (per CLAUDE.md §0)
 
-## The hard discipline (INVIOLABLE — CLAUDE.md §0)
+1. A new adversarial test that FAILS = a real bug → FIX the root cause. A test
+   failing because the TEST is wrong (bad API usage) is corrected, not counted.
+2. I cannot declare a tier "done" — a fresh-context adversarial Judge does, given
+   this verbatim goal + the tier's plan section. Any "but/except/mostly/for the
+   scope of" in a PASS → NOT done.
+3. Drift gate: each tier, re-read this file + quote the goal before work.
+4. Only stop condition: a genuine blocker needing user input (real-engine
+   integration needs Docker/Postgres the env can't provide; firestore
+   implement-vs-delete product decision).
+5. Every suite drives the Sky-source API through the compiled binary — the whole
+   point (int64 bug was Go-correct, Sky-path-wrong / platform-dependent).
+6. Narrow gate per change; full sweep + gates at milestone (tier) boundaries.
 
-- Each conformance test must be MEANINGFUL: provably FAIL on the buggy behavior
-  (demonstrate the red state), not just pass on the fixed stdlib.
-- I cannot declare "done" — only an independent adversarial Judge agent with
-  fresh context, given this verbatim goal, may return "100% achieved". Any
-  "but/except/mostly/for the scope of" in a PASS → NOT done.
-- Full sweep + gates at milestone boundaries; narrow gates per change.
-- Only stop on a genuine implementation blocker needing user decision.
+## Progress ledger
 
-## Findings tracked (this session)
+- [ ] T1 — behavioral conformance (IN PROGRESS)
+- [ ] T2 — CI enforcement
+- [ ] T3 — production-incident e2e
+- [ ] T4 — tooling
+- [ ] T5 — compiler-internal depth
 
-1. CAF memoized DB read (listActive) — app fixed; compiler lint in progress
-2. withOnNavigate sig — fixed + ty regression
-3. Ui.button type=button — fixed
-4. sky.toml inline comments — fixed + regression
-5. Store multi-col ORDER BY reversed — fixed + manual verify
-6. errRef frozen clock — fixed
-7. withConn* swallow + db boot-race — fixed
-8. Log structured attrs dropped — fixed + Go regression
-9. compiler memoized-effect lint — fork in progress
+Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
+per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
+[[feedback_ignore_skydeploy_redeploy]].)
+
+## Anchor
+
+- Plan: `docs/testing/coverage-hardening-plan.md`
+- Triggering bug fix: commit `e3c2dd70` (lossless int64 JSON round-trip)
+- Audit: 2026-08-02, 4-agent parallel coverage audit
