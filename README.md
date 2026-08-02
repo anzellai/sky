@@ -152,7 +152,7 @@ canvas, or `Std.Webview.app cfg` for a native desktop window.
 
 ```bash
 # macOS / Linux — single-binary install
-curl -fsSL https://sky-lang.org/install | bash
+curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
 
 # or build from source (Rust toolchain required to build the compiler)
 git clone https://github.com/anzellai/sky
