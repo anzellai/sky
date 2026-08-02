@@ -68,10 +68,30 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
       Auth.passwordStrength panic, Time.addMonths year-carry, Time.timeString UTC,
       Uuid.parse Result-vs-Maybe, + Json int64). Commits e3c2dd70, 3b63b673,
       f05756b9, 35184780. Codegen finding T5.0 (bare Math.pi/inf -> any) logged.
-- [ ] T2 — CI enforcement (IN PROGRESS)
-- [ ] T3 — production-incident e2e
+- [x] T2 — CI enforcement — DONE (macOS parity: project tests + golden + conformance
+      on BOTH platforms; test-ci.sh CI parity; nightly full example-sweep workflow).
+      Commit 88885b1e.
+- [~] T3 — production-incident e2e — WAVE 1 DONE (commit ee667b21 + 55a24d30):
+      CORS/BasicAuth 18 tests (sound), real-Postgres store 3 integration tests +
+      CI service container (sound), cross-process gob restart test + codegen test
+      (sound), AND bug #8 fixed: unknown session store kind (firestore/typo) now
+      fails loud in prod not silent-memory. REMAINING: browser e2e (desync-recovery
+      T3.3, SSE-drop/idle T3.4, multitab wiring), firestore implement-vs-remove
+      (USER DECISION surfaced).
 - [ ] T4 — tooling
 - [ ] T5 — compiler-internal depth (+ T5.0 bare-kernel-constant lowering)
+
+## Bugs found + fixed by this mandate (running count: 8)
+1. Json.Decode.int int64 platform-dependent (e3c2dd70) · 2. Money.allocate neg residue ·
+3. Bytes.length/slice rune-vs-byte · 4. Auth.passwordStrength success panic ·
+5. Time.addMonths backward year-carry · 6. Time.timeString host-TZ · 7. Uuid.parse
+never Just · 8. chooseStore unknown-kind silent-memory-degrade.
+
+## Pending USER DECISIONS
+- **Firestore**: documented as a Sky.Live session store (CLAUDE.md, Std.Live.sky,
+  sky.toml) but NOT implemented (no chooseStore branch). Fix #8 makes it fail loud
+  (safe) but the docs are now inaccurate. Decision: implement the Firestore backend
+  (GCP SDK work) OR remove it from the docs/config store options.
 
 Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
 per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
