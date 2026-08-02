@@ -59,6 +59,10 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
 
     let mut fails: Vec<String> = Vec::new();
     let mut checked = 0usize;
+    // The ids the gate ACTUALLY re-verified this run (a fixture with that header
+    // id was found + type-checked). Used below to close the ledger→fixture
+    // direction: every ledgered divergence MUST have been re-verified here.
+    let mut verified_ids: Vec<String> = Vec::new();
 
     for f in &fixtures {
         let name = f
@@ -82,6 +86,7 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
                 hdr.id
             ));
         }
+        verified_ids.push(hdr.id.clone());
 
         // (3) re-verify the Rust behaviour in-process.
         let outcome = check_rust(&src, &stdlib);
@@ -115,10 +120,45 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
         }
     }
 
+    // (4) ledger→fixture completeness: EVERY `[[divergence]]` entry in the ledger
+    // must have been re-verified by a fixture above, and its declared `fixture =`
+    // path must exist on disk. This closes the reverse of check (2): (2) stops an
+    // UNDOCUMENTED fixture; (4) stops a documented divergence with NO fixture — a
+    // "silently-dropped intentional rejection", where someone records that Rust
+    // intentionally rejects X in the ledger but never ships a fixture, so the
+    // gate never re-verifies that Rust still rejects X. Without (4) the ledger
+    // could grow entries the gate does not actually constrain.
+    let ledger_entries = parse_ledger_entries(&ledger);
+    if ledger_entries.is_empty() {
+        fails.push(
+            "known-divergences.toml has no parseable `[[divergence]]` `id = \"…\"` entries".into(),
+        );
+    }
+    for entry in &ledger_entries {
+        if !verified_ids.contains(&entry.id) {
+            fails.push(format!(
+                "ledger id `{}` has NO divergence-fixture that the gate re-verified \
+                 (add a fixture under rust/crates/xtask/divergence-fixtures/ whose header \
+                 reads `-- divergence: {} code=<CODE> rust=<REJECT|ACCEPT>` — a silently-\
+                 dropped intentional rejection is otherwise unconstrained)",
+                entry.id, entry.id
+            ));
+        }
+        if let Some(fx) = &entry.fixture {
+            if !repo_root.join(fx).exists() {
+                fails.push(format!(
+                    "ledger id `{}` declares `fixture = \"{}\"` but that file does not exist",
+                    entry.id, fx
+                ));
+            }
+        }
+    }
+
     if fails.is_empty() {
         println!(
             "DIVERGENCES GATE: PASS  ({checked} ledgered divergence(s) re-verified; \
-             fixtures ↔ known-divergences.toml in sync)"
+             {} ledger entr(y/ies) ↔ fixtures in sync, both directions)",
+            ledger_entries.len()
         );
         return 0;
     }
@@ -174,6 +214,61 @@ fn parse_header(src: &str) -> Option<Header> {
         code: code?,
         rust: rust?,
     })
+}
+
+/// A `[[divergence]]` block from the ledger — just the fields this gate needs
+/// for the completeness cross-check.
+struct LedgerEntry {
+    id: String,
+    fixture: Option<String>,
+}
+
+/// Parse `known-divergences.toml`'s `[[divergence]]` blocks into `(id, fixture)`
+/// pairs. Deliberately a small line scanner (no toml dep): each block starts at
+/// `[[divergence]]`, and within it the first `id = "…"` / `fixture = "…"` lines
+/// are captured. This mirrors the existing `ledger.contains("id = \"…\"")`
+/// string-match style already used for the forward cross-reference.
+fn parse_ledger_entries(ledger: &str) -> Vec<LedgerEntry> {
+    let mut entries: Vec<LedgerEntry> = Vec::new();
+    let mut cur: Option<LedgerEntry> = None;
+    let quoted = |line: &str, key: &str| -> Option<String> {
+        let rest = line.trim_start().strip_prefix(key)?.trim_start();
+        let rest = rest.strip_prefix('=')?.trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    };
+    for line in ledger.lines() {
+        let t = line.trim_start();
+        if t.starts_with("[[divergence]]") {
+            if let Some(e) = cur.take() {
+                entries.push(e);
+            }
+            cur = Some(LedgerEntry {
+                id: String::new(),
+                fixture: None,
+            });
+            continue;
+        }
+        if let Some(e) = cur.as_mut() {
+            if e.id.is_empty() {
+                if let Some(v) = quoted(t, "id") {
+                    e.id = v;
+                    continue;
+                }
+            }
+            if e.fixture.is_none() {
+                if let Some(v) = quoted(t, "fixture") {
+                    e.fixture = Some(v);
+                }
+            }
+        }
+    }
+    if let Some(e) = cur.take() {
+        entries.push(e);
+    }
+    entries.retain(|e| !e.id.is_empty());
+    entries
 }
 
 struct Outcome {

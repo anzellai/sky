@@ -111,11 +111,20 @@ never Just · 8. chooseStore unknown-kind silent-memory-degrade.
    2 Std.Db examples clean-build. Follow-ups: existing-column constraint toggles
    not diffed; secondary indexes not in Store.Project path.
 
-## Pending USER DECISIONS
-- **Firestore**: documented as a Sky.Live session store (CLAUDE.md, Std.Live.sky,
-  sky.toml) but NOT implemented (no chooseStore branch). Fix #8 makes it fail loud
-  (safe) but the docs are now inaccurate. Decision: implement the Firestore backend
-  (GCP SDK work) OR remove it from the docs/config store options.
+## USER DECISIONS — RESOLVED
+- **Firestore**: user chose REMOVE from docs (not implement) — poor session-store
+  fit (per-request latency + cost + doesn't provide the broker). Removed from all
+  session-store option lists (commit a9a2f22d); firestore-as-app-DB via FFI (skyshop)
+  kept. Fix #8 already made `store="firestore"` fail loud.
+
+## Fix count: 11 total — all FIXED + guarded
+#1 Json.Decode.int int64 · #2 Money.allocate neg-residue · #3 Bytes.length/slice
+rune-vs-byte · #4 Auth.passwordStrength panic · #5 Time.addMonths year-carry ·
+#6 Time.timeString host-TZ · #7 Uuid.parse never-Just · #8 chooseStore
+unknown-kind silent-degrade · #9 sky db migrate constraint-drop (Postgres-breaking) ·
+#10 (T5.0) Math constants → any lowering · #11 CSRF-idle (THE darraghstudio incident).
+Tiers T1(Judge✓) T2✓ T3✓ T4✓ done; T5 depth in progress (T5.0 done; codegen/lower
+snapshots + infer type-equality + fuzz oracle-diff + divergence fixtures remain).
 
 Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
 per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
