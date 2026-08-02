@@ -33,6 +33,22 @@ near diff =
         magnitude < 0.0000001
 
 
+-- T5.0 regression guards: a bare Math constant used DIRECTLY (NOT wrapped in an
+-- operator expression) must compile + run. Before the fix the constants lowered
+-- to Go `any` (`rt.Math_pi()`), so passing one straight to a monomorphic
+-- Float->Float function failed `go build` ("cannot use ... any as float64") and
+-- using one in a typed Float comparison failed ("operator > not defined on
+-- interface"). They now lower to the typed float64 variant (`rt.Math_piT`).
+passFloat : Float -> Float
+passFloat x =
+    x
+
+
+beyondInf : Float -> Bool
+beyondInf x =
+    x > Math.inf
+
+
 tests : List Test
 tests =
     [ -- ── abs (Int -> Int) ──
@@ -250,6 +266,17 @@ tests =
         (\_ -> Test.isTrue (near (Math.sqrt2 - Math.sqrt 2.0)))
     , Test.test "phi satisfies phi^2 == phi + 1 (defining identity)"
         (\_ -> Test.isTrue (near (Math.pow Math.phi 2.0 - (Math.phi + 1.0))))
+
+      -- ── T5.0: bare constants used DIRECTLY (no operator wrapper). These must
+      --    COMPILE — before the fix they lowered to Go `any` and failed go build.
+    , Test.test "T5.0 direct-pass: bare Math.pi straight into a Float->Float fn"
+        (\_ -> Test.isTrue (near (passFloat Math.pi - Math.pi)))
+    , Test.test "T5.0 bare compare: Math.inf > 1000000.0 (no operator wrapper)"
+        (\_ -> Test.isTrue (Math.inf > 1000000.0))
+    , Test.test "T5.0 bare compare via typed helper: beyondInf 1000000.0 == False"
+        (\_ -> Test.isFalse (beyondInf 1000000.0))
+    , Test.test "T5.0 bare nan: Math.nan == Math.nan is False (direct, no wrapper)"
+        (\_ -> Test.isFalse (Math.nan == Math.nan))
     ]
 
 
