@@ -1,0 +1,234 @@
+module EncodingConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Encoding + Sky.Core.Bytes — the
+-- text/byte codec surface (base64 / url / hex / UTF-8 / byte-buffer ops).
+-- These assertions drive the SKY-SOURCE API through the compiled binary,
+-- NOT the Go kernel directly. This is the ROUND-TRIP / BOUNDARY bug class
+-- the int64 bug (v0.19.3) lived in: a Go kernel can be individually correct
+-- while the documented contract at the Sky boundary is violated. Inputs are
+-- ADVERSARIAL: empty, ASCII, unicode/emoji, invalid-input rejection,
+-- odd-length hex, non-UTF8 bytes, standard-vs-urlsafe alphabet, and
+-- byte-vs-rune indexing (where the doc and impl diverge).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Bytes as Bytes
+import Sky.Test as Test exposing (Test)
+
+
+-- ── Round-trip helpers: encode then decode, unwrapping the fallible
+--    decoder with a poison sentinel so a decode failure surfaces as a
+--    wrong string, not a silent success. ──
+b64rt : String -> String
+b64rt s =
+    Result.withDefault "<<B64-DECODE-ERR>>" (Encoding.base64Decode (Encoding.base64Encode s))
+
+
+urlrt : String -> String
+urlrt s =
+    Result.withDefault "<<URL-DECODE-ERR>>" (Encoding.urlDecode (Encoding.urlEncode s))
+
+
+hexrt : String -> String
+hexrt s =
+    Result.withDefault "<<HEX-DECODE-ERR>>" (Encoding.hexDecode (Encoding.hexEncode s))
+
+
+-- Multi-byte adversarial fixtures. 世 and 界 are each 3 UTF-8 bytes; 😀 is 4.
+unicode : String
+unicode =
+    "héllo 世界 😀"
+
+
+tests : List Test
+tests =
+    [ -- ══════════════════════ Base64 ══════════════════════
+      -- Round-trip across the empty / ASCII / unicode spectrum.
+      Test.test "base64 round-trip: empty string"
+        (\_ -> Test.equal "" (b64rt ""))
+    , Test.test "base64 round-trip: ASCII"
+        (\_ -> Test.equal "Hello, World!" (b64rt "Hello, World!"))
+    , Test.test "base64 round-trip: unicode + emoji (multi-byte)"
+        (\_ -> Test.equal unicode (b64rt unicode))
+
+      -- Known vectors (RFC 4648 standard alphabet, WITH padding).
+    , Test.test "base64 known vector: encode foobar -> Zm9vYmFy"
+        (\_ -> Test.equal "Zm9vYmFy" (Encoding.base64Encode "foobar"))
+    , Test.test "base64 known vector: encode empty -> empty"
+        (\_ -> Test.equal "" (Encoding.base64Encode ""))
+    , Test.test "base64 padding: encode f -> Zg== (single-pad-pair)"
+        (\_ -> Test.equal "Zg==" (Encoding.base64Encode "f"))
+    , Test.test "base64 padding: encode fo -> Zm8= (single-pad)"
+        (\_ -> Test.equal "Zm8=" (Encoding.base64Encode "fo"))
+    , Test.test "base64 padding: encode foo -> Zm9v (no pad)"
+        (\_ -> Test.equal "Zm9v" (Encoding.base64Encode "foo"))
+    , Test.test "base64 decode known vector: Zm9vYmFy -> foobar"
+        (\_ -> Test.equal "foobar" (Result.withDefault "<<ERR>>" (Encoding.base64Decode "Zm9vYmFy")))
+
+      -- Standard alphabet uses '+' and '/' (NOT url-safe '-'/'_').
+      -- These vectors would be "Pj4-" / "Pz8_" under url-safe base64.
+    , Test.test "base64 alphabet: encode >>> -> Pj4+ (standard '+', not url-safe '-')"
+        (\_ -> Test.equal "Pj4+" (Encoding.base64Encode ">>>"))
+    , Test.test "base64 alphabet: encode ??? -> Pz8/ (standard '/', not url-safe '_')"
+        (\_ -> Test.equal "Pz8/" (Encoding.base64Encode "???"))
+
+      -- Invalid input must be rejected as Err, never panic, never wrong bytes.
+    , Test.test "base64 decode rejects invalid chars '!!!' -> Err"
+        (\_ -> Test.err (Encoding.base64Decode "!!!"))
+    , Test.test "base64 decode rejects bad padding 'Zg=' -> Err"
+        (\_ -> Test.err (Encoding.base64Decode "Zg="))
+    , Test.test "base64 decode rejects lone char 'A' -> Err"
+        (\_ -> Test.err (Encoding.base64Decode "A"))
+
+      -- ══════════════════════ URL encoding ══════════════════════
+      -- Round-trip over spaces / reserved chars / unicode.
+    , Test.test "url round-trip: spaces + reserved + unicode"
+        (\_ -> Test.equal "a b & c = d / e 世界" (urlrt "a b & c = d / e 世界"))
+    , Test.test "url round-trip: empty"
+        (\_ -> Test.equal "" (urlrt ""))
+
+      -- Known vectors (Go url.QueryEscape: space -> '+', reserved -> %XX).
+    , Test.test "url known vector: 'a b' -> 'a+b' (space becomes +)"
+        (\_ -> Test.equal "a+b" (Encoding.urlEncode "a b"))
+    , Test.test "url known vector: 'a&b' -> 'a%26b'"
+        (\_ -> Test.equal "a%26b" (Encoding.urlEncode "a&b"))
+    , Test.test "url known vector: 'a=b' -> 'a%3Db'"
+        (\_ -> Test.equal "a%3Db" (Encoding.urlEncode "a=b"))
+    , Test.test "url known vector: 'a/b' -> 'a%2Fb'"
+        (\_ -> Test.equal "a%2Fb" (Encoding.urlEncode "a/b"))
+    , Test.test "url known vector: unicode 'é' -> '%C3%A9' (UTF-8 percent bytes)"
+        (\_ -> Test.equal "%C3%A9" (Encoding.urlEncode "é"))
+    , Test.test "url decode: '+' round-trips back to space"
+        (\_ -> Test.equal "a b" (Result.withDefault "<<ERR>>" (Encoding.urlDecode "a+b")))
+
+      -- Malformed percent-escapes must be rejected, not silently mangled.
+    , Test.test "url decode rejects invalid escape '%zz' -> Err"
+        (\_ -> Test.err (Encoding.urlDecode "%zz"))
+    , Test.test "url decode rejects dangling percent '%' -> Err"
+        (\_ -> Test.err (Encoding.urlDecode "%"))
+
+      -- ══════════════════════ Hex ══════════════════════
+    , Test.test "hex round-trip: ASCII"
+        (\_ -> Test.equal "Hello" (hexrt "Hello"))
+    , Test.test "hex round-trip: unicode + emoji"
+        (\_ -> Test.equal unicode (hexrt unicode))
+    , Test.test "hex round-trip: empty -> empty"
+        (\_ -> Test.equal "" (hexrt ""))
+    , Test.test "hex known vector: encode ABC -> 414243 (lowercase)"
+        (\_ -> Test.equal "414243" (Encoding.hexEncode "ABC"))
+    , Test.test "hex known vector: encode empty -> empty"
+        (\_ -> Test.equal "" (Encoding.hexEncode ""))
+    , Test.test "hex decode known vector: 414243 -> ABC"
+        (\_ -> Test.equal "ABC" (Result.withDefault "<<ERR>>" (Encoding.hexDecode "414243")))
+    , Test.test "hex decode empty -> Ok empty"
+        (\_ -> Test.equal "" (Result.withDefault "<<ERR>>" (Encoding.hexDecode "")))
+
+      -- Odd length + non-hex chars must be rejected.
+    , Test.test "hex decode rejects odd-length 'abc' -> Err"
+        (\_ -> Test.err (Encoding.hexDecode "abc"))
+    , Test.test "hex decode rejects non-hex 'zz' -> Err"
+        (\_ -> Test.err (Encoding.hexDecode "zz"))
+    , Test.test "hex decode rejects non-hex 'gg' -> Err"
+        (\_ -> Test.err (Encoding.hexDecode "gg"))
+
+      -- ══════════════════════ Bytes: hex ══════════════════════
+    , Test.test "Bytes.toHex known vector: ABC -> 414243"
+        (\_ -> Test.equal "414243" (Bytes.toHex "ABC"))
+    , Test.test "Bytes.fromHex known vector: 414243 -> Just ABC"
+        (\_ -> Test.equal (Just "ABC") (Bytes.fromHex "414243"))
+    , Test.test "Bytes.fromHex is case-insensitive: 4A4B -> Just JK"
+        (\_ -> Test.equal (Just "JK") (Bytes.fromHex "4A4B"))
+    , Test.test "Bytes.fromHex rejects odd length 'abc' -> Nothing"
+        (\_ -> Test.equal Nothing (Bytes.fromHex "abc"))
+    , Test.test "Bytes.fromHex rejects non-hex 'zz' -> Nothing"
+        (\_ -> Test.equal Nothing (Bytes.fromHex "zz"))
+    , Test.test "Bytes.fromHex empty -> Just empty"
+        (\_ -> Test.equal (Just "") (Bytes.fromHex ""))
+
+      -- ══════════════════════ Bytes: base64 ══════════════════════
+    , Test.test "Bytes.toBase64 known vector: foobar -> Zm9vYmFy"
+        (\_ -> Test.equal "Zm9vYmFy" (Bytes.toBase64 "foobar"))
+    , Test.test "Bytes.fromBase64 known vector: Zm9vYmFy -> Just foobar"
+        (\_ -> Test.equal (Just "foobar") (Bytes.fromBase64 "Zm9vYmFy"))
+    , Test.test "Bytes.fromBase64 rejects invalid '###' -> Nothing"
+        (\_ -> Test.equal Nothing (Bytes.fromBase64 "###"))
+    , Test.test "Bytes.fromBase64 empty -> Just empty"
+        (\_ -> Test.equal (Just "") (Bytes.fromBase64 ""))
+
+      -- ══════════════════════ Bytes: UTF-8 (lossy toString) ══════════════════════
+    , Test.test "Bytes.toString on valid UTF-8 ASCII -> Just hello"
+        (\_ -> Test.equal (Just "hello") (Bytes.toString (Bytes.fromString "hello")))
+    , Test.test "Bytes.toString on valid UTF-8 unicode -> Just unicode"
+        (\_ -> Test.equal (Just unicode) (Bytes.toString (Bytes.fromString unicode)))
+    , Test.test "Bytes.toString on INVALID UTF-8 (bytes FF FE FD) -> Nothing"
+        (\_ ->
+            case Bytes.fromHex "fffefd" of
+                Just raw ->
+                    Test.equal Nothing (Bytes.toString raw)
+
+                Nothing ->
+                    Test.fail "fromHex fffefd should decode to raw bytes"
+        )
+    , Test.test "Bytes.fromString is total (round-trips any bytes through hex)"
+        (\_ -> Test.equal "fffefd" (Bytes.toHex (Result.withDefault "" (maybeToResult (Bytes.fromHex "fffefd")))))
+
+      -- ══════════════════════ Bytes: length / isEmpty ══════════════════════
+    , Test.test "Bytes.length ASCII 'abc' -> 3"
+        (\_ -> Test.equal 3 (Bytes.length "abc"))
+    , Test.test "Bytes.length empty -> 0"
+        (\_ -> Test.equal 0 (Bytes.length ""))
+    , Test.test "Bytes.isEmpty '' -> True"
+        (\_ -> Test.equal True (Bytes.isEmpty ""))
+    , Test.test "Bytes.isEmpty 'a' -> False"
+        (\_ -> Test.equal False (Bytes.isEmpty "a"))
+
+      -- ADVERSARIAL — doc claims BYTE count "NOT a rune count". 世界 = 6 UTF-8
+      -- bytes (3 each). If this returns 2, length is rune-based, contradicting
+      -- the module doc. (SUSPECTED REAL BUG — kept red.)
+    , Test.test "Bytes.length '世界' -> 6 (doc: byte count, NOT rune count)"
+        (\_ -> Test.equal 6 (Bytes.length "世界"))
+
+      -- ══════════════════════ Bytes: append / slice boundary ══════════════════════
+    , Test.test "Bytes.append concatenation"
+        (\_ -> Test.equal "abcdef" (Bytes.append "abc" "def"))
+    , Test.test "Bytes.append identity: append empty (left) is no-op"
+        (\_ -> Test.equal "abc" (Bytes.append "" "abc"))
+    , Test.test "Bytes.append identity: append empty (right) is no-op"
+        (\_ -> Test.equal "abc" (Bytes.append "abc" ""))
+    , Test.test "Bytes.slice ASCII [0,3) of 'abcdef' -> abc"
+        (\_ -> Test.equal "abc" (Bytes.slice 0 3 "abcdef"))
+    , Test.test "Bytes.slice ASCII [2,4) of 'abcdef' -> cd"
+        (\_ -> Test.equal "cd" (Bytes.slice 2 4 "abcdef"))
+    , Test.test "Bytes.slice out-of-range end clamps: [0,100) of 'abc' -> abc"
+        (\_ -> Test.equal "abc" (Bytes.slice 0 100 "abc"))
+    , Test.test "Bytes.slice empty range [2,2) -> empty"
+        (\_ -> Test.equal "" (Bytes.slice 2 2 "abcdef"))
+    , Test.test "Bytes.slice inverted range [4,2) -> empty (never panic)"
+        (\_ -> Test.equal "" (Bytes.slice 4 2 "abcdef"))
+    , Test.test "Bytes.slice negative indices count from end: [-3,-1) of 'abcdef' -> de"
+        (\_ -> Test.equal "de" (Bytes.slice -3 -1 "abcdef"))
+
+      -- ADVERSARIAL — doc says slice operates on BYTE indices. Buffer 'A世B'
+      -- is bytes 41 | E4 B8 96 | 42. Byte range [1,4) is the three bytes of 世.
+      -- If slice is rune-based it returns runes[1:] instead. (SUSPECTED REAL
+      -- BUG — kept red.)
+    , Test.test "Bytes.slice byte-indexing: [1,4) of 'A世B' -> 世 (doc: byte indices)"
+        (\_ -> Test.equal "世" (Bytes.slice 1 4 "A世B"))
+    ]
+
+
+-- Local Maybe->Result bridge so a fromHex value can flow through a
+-- Result.withDefault sentinel without needing Maybe.withDefault in scope.
+maybeToResult : Maybe a -> Result String a
+maybeToResult m =
+    case m of
+        Just x ->
+            Ok x
+
+        Nothing ->
+            Err "nothing"
+
+
+main : Program
+main =
+    Test.runMain tests

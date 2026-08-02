@@ -224,16 +224,30 @@ func init() {
 		// Work in minor units (integer) to avoid rounding drift.
 		totalMinor := amount.Shift(places).Truncate(0)
 		partsDec := decimal.NewFromInt(int64(parts))
-		// base = floor(totalMinor / parts), remainder = totalMinor - base*parts
+		// base = trunc(totalMinor / parts) (toward zero), so the residue
+		// carries the SAME SIGN as the total and |residue| < parts.
 		base := totalMinor.Div(partsDec).Truncate(0)
 		remainder := totalMinor.Sub(base.Mul(partsDec))
 		remInt := int(remainder.IntPart())
-		// Build list: first `rem` slots get base+1, rest get base.
+		// Distribute the residue one minor-unit at a time to the front of the
+		// list, respecting sign: a positive total spreads +1 cents, a NEGATIVE
+		// total (refund / chargeback / negative-balance split) spreads -1 cents.
+		// The old code compared `i < remInt` with a negative `remInt`, which is
+		// never true, so negative allocations dropped the residue cent and the
+		// parts summed to (total + sign) — violating the "parts sum to the input
+		// exactly" contract. Split into sign + magnitude so both directions fill
+		// exactly |residue| slots.
+		sign := int64(1)
+		nResidue := remInt
+		if remInt < 0 {
+			sign = -1
+			nResidue = -remInt
+		}
 		out := make([]any, parts)
 		for i := 0; i < parts; i++ {
 			share := base
-			if i < remInt {
-				share = base.Add(decimal.NewFromInt(1))
+			if i < nResidue {
+				share = base.Add(decimal.NewFromInt(sign))
 			}
 			// Shift back to "major" units.
 			out[i] = decimalBox(share.Shift(-places))

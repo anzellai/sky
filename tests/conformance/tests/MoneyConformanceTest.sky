@@ -1,0 +1,321 @@
+module MoneyConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Std.Money — currency-typed money built on
+-- Std.Decimal. These assertions drive the SKY-SOURCE Money API (through the
+-- compiled binary), NOT the Go kernel directly. Inputs are ADVERSARIAL:
+-- fair-split residue exactness, minor-unit boundaries across 0/2/3/8/18-dp
+-- currencies, cross-currency safety, FX round-trips, and negative amounts.
+--
+-- Every expectation below is anchored to a DOCUMENTED behaviour (the `-- |`
+-- doc comments in sky-stdlib/Std/Money.sky and the kernel contract in
+-- runtime-go/rt/money_kernel.go), never a guess.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Decimal as Dec
+import Std.Money as Money
+import Sky.Test as Test exposing (Test)
+
+
+-- Parse helper for Decimal literals (rates, percentages, scalars). Adversarial
+-- suites assume these literals are well-formed, so a parse failure surfaces as
+-- a wrong result rather than a silent zero masking a bug.
+dec : String -> Dec.Decimal
+dec s =
+    Result.withDefault (Dec.fromInt -999999) (Dec.fromString s)
+
+
+-- Format the head of an allocation list with its ISO code, or a sentinel.
+headFmt : List Money.Money -> String
+headFmt xs =
+    case List.head xs of
+
+        Just m ->
+            Money.formatWithCode m
+
+        Nothing ->
+            "EMPTY"
+
+
+-- Does a Money list sum EXACTLY to `target` (currency + amount)?
+sumsTo : Money.Currency -> List Money.Money -> Money.Money -> Bool
+sumsTo c xs target =
+    Money.eq (Money.sumOf c xs) target
+
+
+tests : List Test
+tests =
+    [ -- ── allocate: fair-split EXACTNESS (doc: "sum of returned parts
+      --    equals the input exactly", residue lands on the front) ──
+      Test.test "allocate 3 of $100.00 sums EXACTLY to $100.00 (not 99.99)"
+        (\_ -> Test.equal True (sumsTo Money.USD (Money.allocate 3 (Money.fromMajor Money.USD 100)) (Money.fromMajor Money.USD 100)))
+    , Test.test "allocate 3 of $100.00 puts the extra cent on the FRONT -> 33.34"
+        (\_ -> Test.equal "33.34 USD" (headFmt (Money.allocate 3 (Money.fromMajor Money.USD 100))))
+    , Test.test "allocate 7 of $100.00 sums EXACTLY to $100.00"
+        (\_ -> Test.equal True (sumsTo Money.USD (Money.allocate 7 (Money.fromMajor Money.USD 100)) (Money.fromMajor Money.USD 100)))
+    , Test.test "allocate 3 of $0.10 (10 cents) sums EXACTLY -> [0.04,0.03,0.03]"
+        (\_ -> Test.equal True (sumsTo Money.USD (Money.allocate 3 (Money.fromMinor Money.USD 10)) (Money.fromMinor Money.USD 10)))
+    , Test.test "allocate 3 of $0.10 front-loads the residue -> 0.04"
+        (\_ -> Test.equal "0.04 USD" (headFmt (Money.allocate 3 (Money.fromMinor Money.USD 10))))
+    , Test.test "allocate 3 of ¥100 (0-dp) sums EXACTLY -> [34,33,33]"
+        (\_ -> Test.equal True (sumsTo Money.JPY (Money.allocate 3 (Money.fromMajor Money.JPY 100)) (Money.fromMajor Money.JPY 100)))
+    , Test.test "allocate 3 of ¥100 front residue -> 34 JPY"
+        (\_ -> Test.equal "34 JPY" (headFmt (Money.allocate 3 (Money.fromMajor Money.JPY 100))))
+    , Test.test "allocate 3 of 1.000 BHD (3-dp) sums EXACTLY -> [0.334,0.333,0.333]"
+        (\_ -> Test.equal True (sumsTo Money.BHD (Money.allocate 3 (Money.fromMajor Money.BHD 1)) (Money.fromMajor Money.BHD 1)))
+    , Test.test "allocate 3 of 1.000 BHD front residue -> 0.334 BHD"
+        (\_ -> Test.equal "0.334 BHD" (headFmt (Money.allocate 3 (Money.fromMajor Money.BHD 1))))
+    , Test.test "allocate 1 of $100 returns the whole [100.00]"
+        (\_ -> Test.equal "100.00 USD" (headFmt (Money.allocate 1 (Money.fromMajor Money.USD 100))))
+    , Test.test "allocate 0 of $100 returns the empty list (no parts)"
+        (\_ ->
+            case List.head (Money.allocate 0 (Money.fromMajor Money.USD 100)) of
+
+                Nothing ->
+                    Test.pass
+
+                Just _ ->
+                    Test.fail "expected empty allocation for 0 parts"
+        )
+
+      -- ── SUSPECTED REAL BUG — allocate of a NEGATIVE amount ──
+      --    Doc: "The sum of returned parts equals the input exactly." The
+      --    kernel only distributes a POSITIVE remainder (`if i < remInt`),
+      --    so -$100.00 / 3 yields [-33.33,-33.33,-33.33] summing to -99.99.
+      --    Kept RED to capture the contract violation.
+    , Test.test "allocate 3 of -$100.00 sums EXACTLY to -$100.00 (doc: exact sum)"
+        (\_ -> Test.equal True (sumsTo Money.USD (Money.allocate 3 (Money.neg (Money.fromMajor Money.USD 100))) (Money.neg (Money.fromMajor Money.USD 100))))
+
+      -- ── Minor-unit correctness across currency decimal places ──
+    , Test.test "minorUnits USD == 2"
+        (\_ -> Test.equal 2 (Money.minorUnits Money.USD))
+    , Test.test "minorUnits JPY == 0 (no fractional minor unit)"
+        (\_ -> Test.equal 0 (Money.minorUnits Money.JPY))
+    , Test.test "minorUnits KRW == 0"
+        (\_ -> Test.equal 0 (Money.minorUnits Money.KRW))
+    , Test.test "minorUnits BHD == 3"
+        (\_ -> Test.equal 3 (Money.minorUnits Money.BHD))
+    , Test.test "minorUnits KWD == 3"
+        (\_ -> Test.equal 3 (Money.minorUnits Money.KWD))
+    , Test.test "minorUnits BTC == 8 (satoshi precision)"
+        (\_ -> Test.equal 8 (Money.minorUnits Money.BTC))
+    , Test.test "minorUnits ETH == 18 (wei precision)"
+        (\_ -> Test.equal 18 (Money.minorUnits Money.ETH))
+    , Test.test "minorUnits USDC == 6"
+        (\_ -> Test.equal 6 (Money.minorUnits Money.USDC))
+    , Test.test "minorUnits of CurrencyRaw unknown falls back to 2"
+        (\_ -> Test.equal 2 (Money.minorUnits (Money.CurrencyRaw "XYZ")))
+
+      -- ── fromMinor / toMinor round-trips per currency ──
+    , Test.test "USD fromMinor 12345 -> 123.45"
+        (\_ -> Test.equal "123.45 USD" (Money.formatWithCode (Money.fromMinor Money.USD 12345)))
+    , Test.test "USD toMinor of 123.45 -> 12345"
+        (\_ -> Test.equal 12345 (Money.toMinor (Money.fromMinor Money.USD 12345)))
+    , Test.test "USD minor round-trip fromMinor . toMinor == id"
+        (\_ -> Test.equal 99999 (Money.toMinor (Money.fromMinor Money.USD 99999)))
+    , Test.test "JPY fromMinor 1234 -> 1234 (0-dp: minor == major)"
+        (\_ -> Test.equal "1234 JPY" (Money.formatWithCode (Money.fromMinor Money.JPY 1234)))
+    , Test.test "JPY toMinor of ¥1234 -> 1234"
+        (\_ -> Test.equal 1234 (Money.toMinor (Money.fromMinor Money.JPY 1234)))
+    , Test.test "BHD fromMinor 1234 -> 1.234 (3-dp)"
+        (\_ -> Test.equal "1.234 BHD" (Money.formatWithCode (Money.fromMinor Money.BHD 1234)))
+    , Test.test "BHD toMinor of 1.234 -> 1234"
+        (\_ -> Test.equal 1234 (Money.toMinor (Money.fromMinor Money.BHD 1234)))
+    , Test.test "BTC fromMinor 100000000 (1e8 sat) -> 1 BTC"
+        (\_ -> Test.equal "1.00000000 BTC" (Money.formatWithCode (Money.fromMinor Money.BTC 100000000)))
+    , Test.test "BTC toMinor of 1 BTC -> 100000000 sat"
+        (\_ -> Test.equal 100000000 (Money.toMinor (Money.fromMinor Money.BTC 100000000)))
+    , Test.test "negative toMinor: -12.34 USD -> -1234"
+        (\_ -> Test.equal -1234 (Money.toMinor (Money.neg (Money.fromMinor Money.USD 1234))))
+
+      -- ── Currency-typed safety: mismatched-currency arithmetic ──
+      --    Doc: "Arithmetic is total within a currency; cross-currency
+      --    operations require explicit convert." add/sub GUARD the mismatch
+      --    by returning the LEFT operand unchanged (no cross-currency mixing).
+    , Test.test "add USD+EUR does NOT mix currencies (returns left operand)"
+        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
+    , Test.test "sub USD-EUR does NOT mix currencies (returns left operand)"
+        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
+    , Test.test "add USD+USD is total within currency -> 150.00 USD"
+        (\_ -> Test.equal "150.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50))))
+    , Test.test "eq is currency-aware: $100 /= €100"
+        (\_ -> Test.equal False (Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100)))
+    , Test.test "eq same currency + amount -> True"
+        (\_ -> Test.equal True (Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 100)))
+
+      -- ── FX / conversion round-trips (registry is process-local; each
+      --    test clears + sets its own rate in-thunk for determinism) ──
+    , Test.test "convert same currency is identity (no rate needed)"
+        (\_ ->
+            case Money.convert Money.USD (Money.fromMajor Money.USD 100) of
+
+                Ok m ->
+                    Test.equal "100.00 USD" (Money.formatWithCode m)
+
+                Err _ ->
+                    Test.fail "same-currency convert should always succeed"
+        )
+    , Test.test "convert forward @0.92: $100 USD -> €92.00"
+        (\_ ->
+            case Money.clearRates () of
+
+                Err _ ->
+                    Test.fail "clearRates failed"
+
+                Ok _ ->
+                    case Money.setRate Money.USD Money.EUR (dec "0.92") of
+
+                        Err _ ->
+                            Test.fail "setRate failed"
+
+                        Ok _ ->
+                            case Money.convert Money.EUR (Money.fromMajor Money.USD 100) of
+
+                                Ok m ->
+                                    Test.equal "92.00 EUR" (Money.formatWithCode m)
+
+                                Err _ ->
+                                    Test.fail "convert forward failed"
+        )
+    , Test.test "convert round-trip @clean rate 2.0: USD->EUR->USD == $100.00"
+        (\_ ->
+            case Money.clearRates () of
+
+                Err _ ->
+                    Test.fail "clearRates failed"
+
+                Ok _ ->
+                    case Money.setRate Money.USD Money.EUR (dec "2") of
+
+                        Err _ ->
+                            Test.fail "setRate failed"
+
+                        Ok _ ->
+                            case Money.convert Money.EUR (Money.fromMajor Money.USD 100) of
+
+                                Err _ ->
+                                    Test.fail "convert forward failed"
+
+                                Ok eur ->
+                                    case Money.convert Money.USD eur of
+
+                                        Ok back ->
+                                            Test.equal "100.00 USD" (Money.formatWithCode back)
+
+                                        Err _ ->
+                                            Test.fail "convert back failed (inverse not auto-registered?)"
+        )
+    , Test.test "setRate auto-registers the inverse (getRate EUR->USD == 0.5)"
+        (\_ ->
+            case Money.clearRates () of
+
+                Err _ ->
+                    Test.fail "clearRates failed"
+
+                Ok _ ->
+                    case Money.setRate Money.USD Money.EUR (dec "2") of
+
+                        Err _ ->
+                            Test.fail "setRate failed"
+
+                        Ok _ ->
+                            case Money.getRate Money.EUR Money.USD of
+
+                                Ok r ->
+                                    Test.equal "0.5" (Dec.toString r)
+
+                                Err _ ->
+                                    Test.fail "inverse rate not registered"
+        )
+    , Test.test "setRate rejects a ZERO rate -> Err"
+        (\_ -> Test.err (Money.setRate Money.USD Money.EUR (dec "0")))
+    , Test.test "setRate rejects a NEGATIVE rate -> Err"
+        (\_ -> Test.err (Money.setRate Money.USD Money.EUR (dec "-1.5")))
+    , Test.test "convert with NO registered rate -> Err (never panic)"
+        (\_ ->
+            case Money.clearRates () of
+
+                Err _ ->
+                    Test.fail "clearRates failed"
+
+                Ok _ ->
+                    Test.err (Money.convert Money.JPY (Money.fromMajor Money.USD 100))
+        )
+    , Test.test "hasRate is False after clearRates for an unset pair"
+        (\_ ->
+            case Money.clearRates () of
+
+                Err _ ->
+                    Test.fail "clearRates failed"
+
+                Ok _ ->
+                    Test.equal False (Money.hasRate Money.USD Money.GBP)
+        )
+
+      -- ── Percent helpers (percentOf pct m ; addPercent pct m) ──
+    , Test.test "percentOf 10% of $200 -> $20.00"
+        (\_ -> Test.equal "20.00 USD" (Money.formatWithCode (Money.percentOf (dec "10") (Money.fromMajor Money.USD 200))))
+    , Test.test "addPercent 8.875% NYC tax on $100 -> $108.88 (banker's round)"
+        (\_ -> Test.equal "108.88 USD" (Money.formatWithCode (Money.percentOf (dec "108.875") (Money.fromMajor Money.USD 100))))
+    , Test.test "addPercent 10% of $200 -> $220.00"
+        (\_ -> Test.equal "220.00 USD" (Money.formatWithCode (Money.addPercent (dec "10") (Money.fromMajor Money.USD 200))))
+    , Test.test "subPercent 10% of $200 -> $180.00"
+        (\_ -> Test.equal "180.00 USD" (Money.formatWithCode (Money.subPercent (dec "10") (Money.fromMajor Money.USD 200))))
+    , Test.test "mul scalar 3 x $10 -> $30.00 (currency carries)"
+        (\_ -> Test.equal "30.00 USD" (Money.formatWithCode (Money.mul (dec "3") (Money.fromMajor Money.USD 10))))
+
+      -- ── Negative / zero / formatting ──
+    , Test.test "format $100.00 -> $100.00 (symbol prefix)"
+        (\_ -> Test.equal "$100.00" (Money.format (Money.fromMajor Money.USD 100)))
+    , Test.test "format ¥1000 -> ¥1000 (0-dp, no decimal point)"
+        (\_ -> Test.equal "¥1000" (Money.format (Money.fromMajor Money.JPY 1000)))
+    , Test.test "format negative -> -$12.00 (sign before symbol)"
+        (\_ -> Test.equal "-$12.00" (Money.format (Money.neg (Money.fromMajor Money.USD 12))))
+    , Test.test "formatWithCode $100 -> 100.00 USD (B2B suffix form)"
+        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.fromMajor Money.USD 100)))
+    , Test.test "abs of -$5 -> $5.00"
+        (\_ -> Test.equal "5.00 USD" (Money.formatWithCode (Money.abs (Money.neg (Money.fromMajor Money.USD 5)))))
+    , Test.test "isNegative (neg $5) -> True"
+        (\_ -> Test.equal True (Money.isNegative (Money.neg (Money.fromMajor Money.USD 5))))
+    , Test.test "isPositive $5 -> True"
+        (\_ -> Test.equal True (Money.isPositive (Money.fromMajor Money.USD 5)))
+    , Test.test "isZero (zero USD) -> True"
+        (\_ -> Test.equal True (Money.isZero (Money.zero Money.USD)))
+    , Test.test "isZero $5 -> False"
+        (\_ -> Test.equal False (Money.isZero (Money.fromMajor Money.USD 5)))
+    , Test.test "sumOf empty list -> zero of currency"
+        (\_ -> Test.equal True (Money.eq (Money.sumOf Money.USD []) (Money.zero Money.USD)))
+    , Test.test "sumOf [10,20,30] USD -> $60.00"
+        (\_ -> Test.equal "60.00 USD" (Money.formatWithCode (Money.sumOf Money.USD [ Money.fromMajor Money.USD 10, Money.fromMajor Money.USD 20, Money.fromMajor Money.USD 30 ])))
+
+      -- ── Parse / construction round-trips ──
+    , Test.test "fromString USD \"12.34\" -> Ok, formats 12.34 USD"
+        (\_ ->
+            case Money.fromString Money.USD "12.34" of
+
+                Ok m ->
+                    Test.equal "12.34 USD" (Money.formatWithCode m)
+
+                Err _ ->
+                    Test.fail "fromString of a valid literal should succeed"
+        )
+    , Test.test "fromString USD \"abc\" -> Err (malformed)"
+        (\_ -> Test.err (Money.fromString Money.USD "abc"))
+    , Test.test "parseCurrency case-insensitive + trims: \"  eur \" -> EUR"
+        (\_ -> Test.equal "EUR" (Money.currencyCode (Money.parseCurrency "  eur ")))
+    , Test.test "parseCurrency unknown -> CurrencyRaw (upper-cased)"
+        (\_ -> Test.equal "ZZZ" (Money.currencyCode (Money.parseCurrency "zzz")))
+    , Test.test "knownCurrency USD -> True"
+        (\_ -> Test.equal True (Money.knownCurrency Money.USD))
+    , Test.test "knownCurrency (CurrencyRaw) -> False"
+        (\_ -> Test.equal False (Money.knownCurrency (Money.CurrencyRaw "ZZZ")))
+    , Test.test "isKnownCode \"USD\" -> True"
+        (\_ -> Test.equal True (Money.isKnownCode "USD"))
+    , Test.test "isKnownCode \"XYZ\" -> False"
+        (\_ -> Test.equal False (Money.isKnownCode "XYZ"))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

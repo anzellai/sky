@@ -5,10 +5,11 @@
 -- function expects "raw bytes" — `Crypto.aesGcmEncrypt`,
 -- `File.readFileBytes`, an RPC handler reading a binary upload —
 -- the value passed is a `String` whose bytes are NOT necessarily
--- valid UTF-8.  Treating it as text via `String.length` /
--- `String.append` works because those operate on bytes too, but
--- the helpers in this module spell out the byte-buffer intent and
--- handle hex / base64 / UTF-8 conversion safely.
+-- valid UTF-8.  `String.append` is byte-safe (concatenation), but
+-- `String.length`/`String.slice` are RUNE-based (correct for text,
+-- wrong for bytes) — so this module provides byte-accurate `length`
+-- and `slice` and handles hex / base64 / UTF-8 conversion safely.
+-- Spell out the byte-buffer intent by using these helpers.
 --
 -- Why not a new opaque type?  Sky.Core.String is already
 -- byte-string-shaped (Go-side).  An opaque `Bytes` wrapper would
@@ -49,12 +50,12 @@ empty =
     ""
 
 
--- | Byte count of the buffer.  This is `String.length` under the
--- hood — Go's `len(s)` over a `string` IS the byte count, NOT a
--- rune count.
+-- | Byte count of the buffer — Go's `len(s)`, NOT a rune count.
+-- `String.length` is rune-based (the correct semantics for text), so
+-- Bytes must NOT delegate to it: `Bytes.length "世界"` is 6 bytes.
 length : Bytes -> Int
-length b =
-    String.length b
+length =
+    Ffi.kernel "Bytes_length"
 
 
 isEmpty : Bytes -> Bool
@@ -115,8 +116,9 @@ append a b =
     String.append a b
 
 
--- | `slice start end b` — substring on byte indices.  Negative
--- indices count from the end (like `String.slice`).
+-- | `slice start end b` — substring on BYTE indices.  Negative
+-- indices count from the end.  Byte-based (not `String.slice`, which
+-- is rune-based) so it never splits a multi-byte sequence.
 slice : Int -> Int -> Bytes -> Bytes
-slice start end b =
-    String.slice start end b
+slice =
+    Ffi.kernel "Bytes_slice"

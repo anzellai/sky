@@ -1,0 +1,354 @@
+module JwtAuthConformanceTest exposing (main, tests)
+
+-- Adversarial SECURITY conformance for Sky.Core.Jwt + Std.Auth — the
+-- auth-bypass bug class, the single most correctness-critical suite in
+-- the project. These assertions drive the SKY-SOURCE crypto/JWT API
+-- (through the compiled binary), NOT the Go kernels directly. The whole
+-- point is that a forged, tampered, wrong-secret, alg:none, expired, or
+-- not-yet-valid token MUST be rejected — an `Ok` where the doc promises
+-- `Err` is a CRITICAL bypass, never a "harmless" edge case.
+--
+-- Only the PURE / Result-returning surface is exercised (this runs in a
+-- pure `sky test` suite): Jwt.encode/decode + the algorithm/claims
+-- builders; Auth.signToken/verifyToken/hashPassword/hashPasswordCost/
+-- verifyPassword/passwordStrength. The Task-typed flows
+-- (register/login/setRole) are effectful and out of scope here.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Jwt as Jwt
+import Sky.Core.Json.Decode as JsonDec
+import Std.Auth as Auth
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Jwt fixtures ──────────────────────────────────────────────────
+-- Sky.Core.Jwt.hs256 imposes no minimum secret length (it just HMACs),
+-- so any string works for the raw-JWT tests.
+jwtSecret : String
+jwtSecret =
+    "the-hs256-signing-secret"
+
+
+jwtAlg : Jwt.Algorithm
+jwtAlg =
+    Jwt.hs256 jwtSecret
+
+
+-- Build a signed HS256 token from a claim set. Encode failure surfaces
+-- as an obviously-wrong sentinel rather than a silent empty string.
+signWith : String -> Jwt.Claims -> String
+signWith secret c =
+    Result.withDefault "ENCODE_FAILED" (Jwt.encode (Jwt.hs256 secret) c)
+
+
+-- A claim set that is valid for a long time (exp far in the future).
+validClaims : Jwt.Claims
+validClaims =
+    Jwt.claims
+        |> Jwt.subject "u1"
+        |> Jwt.issuer "sky-conf"
+        |> Jwt.expiresAt 9999999999
+
+
+-- The base64url signature segment of a compact JWT (RFC 7515 §3).
+sigOf : String -> String
+sigOf tok =
+    case String.split "." tok of
+
+        [ _, _, s ] ->
+            s
+
+        _ ->
+            ""
+
+
+-- The `header.payload` signing input of a compact JWT.
+headPayloadOf : String -> String
+headPayloadOf tok =
+    case String.split "." tok of
+
+        [ h, p, _ ] ->
+            h ++ "." ++ p
+
+        _ ->
+            ""
+
+
+-- base64url encode (URL-safe alphabet, no padding) — used to hand-craft
+-- an `alg:none` header the way an attacker would.
+b64u : String -> String
+b64u s =
+    String.replace "=" ""
+        (String.replace "/" "_"
+            (String.replace "+" "-" (Encoding.base64Encode s)))
+
+
+-- Pull the `sub` claim out of a decoded payload JSON so a round-trip can
+-- prove the identity survived, not merely that *something* decoded.
+subOf : String -> Result Error String
+subOf payloadJson =
+    JsonDec.decodeString (JsonDec.field "sub" JsonDec.string) payloadJson
+
+
+-- ─── Auth fixtures ─────────────────────────────────────────────────
+-- Std.Auth.signToken/verifyToken enforce a 32-byte minimum secret.
+authSecret : String
+authSecret =
+    "0123456789abcdef0123456789abcdef-extra"
+
+
+authClaims : Dict.Dict String String
+authClaims =
+    Dict.fromList [ ( "sub", "u1" ), ( "role", "admin" ) ]
+
+
+-- Verify with an explicit claims-type annotation so HM has a concrete
+-- `a` to solve; only the Ok/Err constructor is inspected downstream.
+verifyAuth : String -> String -> Result Error (Dict.Dict String String)
+verifyAuth secret tok =
+    Auth.verifyToken secret tok
+
+
+-- A password that satisfies passwordStrength's rules (>=8, letter, digit).
+goodPassword : String
+goodPassword =
+    "correct-horse-battery-staple-9"
+
+
+tests : List Test
+tests =
+    [ -- ══════════════ Sky.Core.Jwt — signature integrity ══════════════
+
+      -- A validly signed HS256 token round-trips under the SAME secret,
+      -- and the `sub` identity survives verbatim (not just "decodes").
+      Test.test "Jwt: valid HS256 token round-trips + claims preserved"
+        (\_ ->
+            Test.equal
+                (Ok "u1")
+                (Jwt.decode jwtAlg 1000 (signWith jwtSecret validClaims)
+                    |> Result.andThen subOf))
+
+    , Test.test "Jwt: valid HS256 token verifies (Ok)"
+        (\_ -> Test.ok (Jwt.decode jwtAlg 1000 (signWith jwtSecret validClaims)))
+
+      -- BYPASS CLASS: tampered signature. Reverse the signature segment
+      -- (guaranteed different for an HMAC) and re-attach it. MUST reject.
+    , Test.test "Jwt: tampered signature (reversed) -> Err [BYPASS]"
+        (\_ ->
+            let
+                tok = signWith jwtSecret validClaims
+                forged = headPayloadOf tok ++ "." ++ String.reverse (sigOf tok)
+            in
+                Test.err (Jwt.decode jwtAlg 1000 forged))
+
+      -- BYPASS CLASS: signature forged with a DIFFERENT secret spliced
+      -- onto the genuine header.payload. MUST reject under the real secret.
+    , Test.test "Jwt: signature forged with other secret -> Err [BYPASS]"
+        (\_ ->
+            let
+                genuine = signWith jwtSecret validClaims
+                forgedSig = sigOf (signWith "a-totally-different-secret" validClaims)
+                forged = headPayloadOf genuine ++ "." ++ forgedSig
+            in
+                Test.err (Jwt.decode jwtAlg 1000 forged))
+
+      -- BYPASS CLASS: right token, WRONG verifying secret. MUST reject.
+    , Test.test "Jwt: wrong secret -> Err [BYPASS]"
+        (\_ ->
+            Test.err
+                (Jwt.decode (Jwt.hs256 "wrong-secret") 1000
+                    (signWith jwtSecret validClaims)))
+
+      -- BYPASS CLASS: the classic `alg:none` unsigned-token attack. A
+      -- hand-crafted header advertising alg "none" with an empty
+      -- signature MUST NOT verify against an HS256 verifier.
+    , Test.test "Jwt: alg:none unsigned token -> Err [BYPASS]"
+        (\_ ->
+            let
+                noneToken =
+                    b64u "{\"alg\":\"none\",\"typ\":\"JWT\"}"
+                        ++ "."
+                        ++ b64u "{\"sub\":\"admin\",\"exp\":9999999999}"
+                        ++ "."
+            in
+                Test.err (Jwt.decode jwtAlg 1000 noneToken))
+
+      -- ══════════════ Sky.Core.Jwt — time-window checks ══════════════
+
+      -- BYPASS CLASS: an expired token (exp in the past relative to now).
+    , Test.test "Jwt: expired token (now > exp) -> Err [BYPASS]"
+        (\_ ->
+            let
+                expired =
+                    signWith jwtSecret
+                        (Jwt.claims |> Jwt.subject "u1" |> Jwt.expiresAt 100)
+            in
+                Test.err (Jwt.decode jwtAlg 200 expired))
+
+      -- Same token, evaluated BEFORE its expiry, must verify — proves the
+      -- rejection above is the time check, not a broken signature path.
+    , Test.test "Jwt: same token before expiry (now < exp) -> Ok"
+        (\_ ->
+            let
+                tok =
+                    signWith jwtSecret
+                        (Jwt.claims |> Jwt.subject "u1" |> Jwt.expiresAt 100)
+            in
+                Test.ok (Jwt.decode jwtAlg 50 tok))
+
+      -- BYPASS CLASS: a not-before (nbf) claim in the future.
+    , Test.test "Jwt: nbf in the future (now < nbf) -> Err [BYPASS]"
+        (\_ ->
+            let
+                future =
+                    signWith jwtSecret
+                        (Jwt.claims
+                            |> Jwt.subject "u1"
+                            |> Jwt.notBefore 5000
+                            |> Jwt.expiresAt 9999999999)
+            in
+                Test.err (Jwt.decode jwtAlg 1000 future))
+
+      -- Once now >= nbf, the same token becomes valid.
+    , Test.test "Jwt: nbf satisfied (now >= nbf) -> Ok"
+        (\_ ->
+            let
+                tok =
+                    signWith jwtSecret
+                        (Jwt.claims
+                            |> Jwt.subject "u1"
+                            |> Jwt.notBefore 5000
+                            |> Jwt.expiresAt 9999999999)
+            in
+                Test.ok (Jwt.decode jwtAlg 6000 tok))
+
+      -- ══════════════ Sky.Core.Jwt — malformed input (never panic) ══════
+
+    , Test.test "Jwt: no dots -> Err (not panic)"
+        (\_ -> Test.err (Jwt.decode jwtAlg 1000 "not-a-jwt"))
+
+    , Test.test "Jwt: two segments -> Err (not panic)"
+        (\_ -> Test.err (Jwt.decode jwtAlg 1000 "only.two"))
+
+    , Test.test "Jwt: four segments -> Err (not panic)"
+        (\_ -> Test.err (Jwt.decode jwtAlg 1000 "a.b.c.d"))
+
+    , Test.test "Jwt: empty string -> Err (not panic)"
+        (\_ -> Test.err (Jwt.decode jwtAlg 1000 ""))
+
+    , Test.test "Jwt: non-base64 segments -> Err (not panic)"
+        (\_ -> Test.err (Jwt.decode jwtAlg 1000 "!!!.@@@.###"))
+
+      -- ══════════════ Std.Auth — token signing/verifying ══════════════
+
+      -- Happy path: a signed token verifies under the same secret.
+    , Test.test "Auth: signToken then verifyToken (same secret) -> Ok"
+        (\_ ->
+            let
+                signed = Auth.signToken authSecret authClaims 3600
+                tok = Result.withDefault "SIGN_FAILED" signed
+            in
+                Test.ok (verifyAuth authSecret tok))
+
+      -- BYPASS CLASS: verify with the WRONG secret -> Err.
+    , Test.test "Auth: verifyToken with wrong secret -> Err [BYPASS]"
+        (\_ ->
+            let
+                tok =
+                    Result.withDefault "SIGN_FAILED"
+                        (Auth.signToken authSecret authClaims 3600)
+            in
+                Test.err (verifyAuth "ffffffffffffffffffffffffffffffff-nope" tok))
+
+      -- BYPASS CLASS: tampered token body -> Err.
+    , Test.test "Auth: verifyToken of tampered token -> Err [BYPASS]"
+        (\_ ->
+            let
+                tok =
+                    Result.withDefault "SIGN_FAILED"
+                        (Auth.signToken authSecret authClaims 3600)
+                forged = headPayloadOf tok ++ "." ++ String.reverse (sigOf tok)
+            in
+                Test.err (verifyAuth authSecret forged))
+
+      -- WEAK-KEY REJECTION: a secret shorter than 32 bytes must not be
+      -- allowed to sign (RFC 7518 §3.2 HS256 minimum). -> Err.
+    , Test.test "Auth: signToken with <32-byte secret -> Err [WEAK KEY]"
+        (\_ -> Test.err (Auth.signToken "short-secret" authClaims 3600))
+
+      -- Weak-key rejection on the verify side too.
+    , Test.test "Auth: verifyToken with <32-byte secret -> Err [WEAK KEY]"
+        (\_ -> Test.err (verifyAuth "short-secret" "a.b.c"))
+
+      -- Malformed token to verifyToken -> Err, never panic.
+    , Test.test "Auth: verifyToken of garbage token -> Err (not panic)"
+        (\_ -> Test.err (verifyAuth authSecret "not-a-valid-token"))
+
+      -- ══════════════ Std.Auth — password hashing ══════════════
+
+      -- Correct password verifies against its own hash.
+    , Test.test "Auth: hashPassword then verifyPassword (correct) -> Ok True"
+        (\_ ->
+            Test.equal
+                (Ok True)
+                (Auth.hashPasswordCost goodPassword 10
+                    |> Result.andThen (\h -> Auth.verifyPassword goodPassword h)))
+
+      -- BYPASS CLASS: a WRONG password must not verify.
+    , Test.test "Auth: verifyPassword with wrong password -> Ok False [BYPASS]"
+        (\_ ->
+            Test.equal
+                (Ok False)
+                (Auth.hashPasswordCost goodPassword 10
+                    |> Result.andThen (\h -> Auth.verifyPassword "not-the-password" h)))
+
+      -- Salt: two hashes of the SAME password differ (no static salt).
+    , Test.test "Auth: two hashes of same password differ (salted)"
+        (\_ ->
+            Test.notEqual
+                (Auth.hashPasswordCost goodPassword 10)
+                (Auth.hashPasswordCost goodPassword 10))
+
+      -- verifyPassword against a non-bcrypt / garbage hash must not pass.
+    , Test.test "Auth: verifyPassword against garbage hash -> not verified"
+        (\_ ->
+            Test.notEqual
+                (Ok True)
+                (Auth.verifyPassword goodPassword "not-a-bcrypt-hash"))
+
+      -- ══════════════ Std.Auth — passwordStrength (documented rules) ══
+      --
+      -- Regression guard: passwordStrength previously returned Ok(unit) from
+      -- the kernel while its type is `Result Error String`, so typed codegen
+      -- emitted ResultCoerce[Error,string] and PANICKED on the success path.
+      -- Now it returns the documented category. These assertions lock the
+      -- accept path (no panic) AND the category thresholds (classes + length).
+    , Test.test "Auth: passwordStrength accept path returns Ok category (no panic)"
+        (\_ -> Test.ok (Auth.passwordStrength "password123"))
+    , Test.test "Auth: passwordStrength weak (8 chars, 2 classes)"
+        (\_ -> Test.equal (Ok "weak") (Auth.passwordStrength "abcdefg1"))
+    , Test.test "Auth: passwordStrength fair (>=10 chars, >=2 classes)"
+        (\_ -> Test.equal (Ok "fair") (Auth.passwordStrength "password123"))
+    , Test.test "Auth: passwordStrength strong (>=12 chars, >=3 classes)"
+        (\_ -> Test.equal (Ok "strong") (Auth.passwordStrength "Password123!"))
+
+      -- Too short (<8) rejected.
+    , Test.test "Auth: passwordStrength rejects short password -> Err"
+        (\_ -> Test.err (Auth.passwordStrength "ab1"))
+
+      -- No digit rejected.
+    , Test.test "Auth: passwordStrength rejects letters-only -> Err"
+        (\_ -> Test.err (Auth.passwordStrength "onlyletters"))
+
+      -- No letter rejected.
+    , Test.test "Auth: passwordStrength rejects digits-only -> Err"
+        (\_ -> Test.err (Auth.passwordStrength "12345678"))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

@@ -179,6 +179,43 @@ func Crypto_chachaKeyFromPassword(password any, salt any) any {
 // Sky.Core.Bytes helpers
 // ═══════════════════════════════════════════════════════════
 
+// Bytes.length : Bytes -> Int
+// BYTE count of the buffer — Go's len() over the string, NOT a rune count.
+// A Bytes buffer is arbitrary binary (base64/hex-decoded crypto/file/RPC
+// payloads), so length must be byte-accurate. String.length is rune-based (the
+// correct semantics for a text String), which is why Bytes must not delegate to
+// it — `Bytes.length "世界"` is 6 bytes, not 2 runes.
+func Bytes_length(b any) any {
+	return len(AsString(b))
+}
+
+// Bytes.slice : Int -> Int -> Bytes -> Bytes
+// BYTE-indexed substring with the same negative-from-end + clamp semantics as
+// String.slice, but operating on bytes so it never splits or reinterprets a
+// multi-byte sequence (rune-based slicing would corrupt a binary payload).
+func Bytes_slice(start any, end any, b any) any {
+	s := AsString(b)
+	total := len(s)
+	st := AsInt(start)
+	en := AsInt(end)
+	if st < 0 {
+		st = total + st
+	}
+	if en < 0 {
+		en = total + en
+	}
+	if st < 0 {
+		st = 0
+	}
+	if en > total {
+		en = total
+	}
+	if st > en {
+		return ""
+	}
+	return s[st:en]
+}
+
 // Bytes.toString : Bytes -> Maybe String
 // Returns Nothing if the bytes are not valid UTF-8.
 func Bytes_toString(b any) any {

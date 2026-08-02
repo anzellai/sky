@@ -1679,23 +1679,49 @@ func Auth_passwordStrength(pw any) any {
 	if len(s) > 72 {
 		return Err[any, any](ErrInvalidInput("password longer than 72 bytes (bcrypt limit)"))
 	}
-	hasLetter := false
+	hasLower := false
+	hasUpper := false
 	hasDigit := false
+	hasSymbol := false
 	for _, r := range s {
 		switch {
 		case r >= '0' && r <= '9':
 			hasDigit = true
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
-			hasLetter = true
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		default:
+			hasSymbol = true
 		}
 	}
-	if !hasLetter {
+	if !hasLower && !hasUpper {
 		return Err[any, any](ErrInvalidInput("password must contain a letter"))
 	}
 	if !hasDigit {
 		return Err[any, any](ErrInvalidInput("password must contain a digit"))
 	}
-	return Ok[any, any](struct{}{})
+	// Categorical strength for a password that clears the minimum gate above.
+	// `passwordStrength : String -> Result Error String` documents a
+	// "weak"/"fair"/"strong" category — the kernel previously returned
+	// Ok(struct{}{}) (unit), which the typed Result Error String codegen then
+	// tried to coerce unit->string and PANICKED on the success path. Score by
+	// distinct character classes (lower/upper/digit/symbol) + length.
+	classes := 0
+	for _, present := range []bool{hasLower, hasUpper, hasDigit, hasSymbol} {
+		if present {
+			classes++
+		}
+	}
+	n := len(s)
+	category := "weak"
+	switch {
+	case n >= 12 && classes >= 3:
+		category = "strong"
+	case n >= 10 && classes >= 2:
+		category = "fair"
+	}
+	return Ok[any, any](category)
 }
 
 // Auth.verifyPassword : String -> String -> Bool
