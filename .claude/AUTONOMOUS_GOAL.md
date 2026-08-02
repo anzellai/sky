@@ -81,7 +81,14 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
 - [~] T4 — tooling — sky fmt guarded (sound; commit 43839ea8), sky db bug #9 FIXED
       (commit 11987a89). REMAINING: LSP diagnostics parity + Go-FFI-alias
       false-positive; sky watch/doctor/doc/add/profile smoke.
-- [ ] T5 — compiler-internal depth (+ T5.0 bare-kernel-constant lowering)
+- [~] T5 — compiler-internal depth — T5.0 FIXED (commit 5d296f75): bare Math
+      constants (pi/e/phi/sqrt2/inf/nan) lowered to `any` → direct use failed
+      go build; repointed kernel map to typed `_T` variants; MathConformance
+      92→96 with direct-use guards; coerce-floor/repro/build-run all PASS.
+      REMAINING: codegen/lower unit snapshots, infer type-equality vs oracle,
+      fuzz oracle-diff, divergence fixtures per ledger entry.
+
+## Fix count: 10 (9 stdlib/runtime bugs + T5.0 codegen gap)
 
 ## Bugs found + fixed by this mandate (running count: 8 fixed, 1 in-flight)
 1. Json.Decode.int int64 platform-dependent (e3c2dd70) · 2. Money.allocate neg residue ·
