@@ -11,6 +11,105 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.8 — Reliability-hardening pass: 11 fixes + comprehensive e2e coverage (2026-08-02)
+
+A ground-up test-coverage pass across the compiler, standard library, Sky.Live,
+LSP, and tooling — driven by the observation that the existing gates prove
+"compiles + matches the oracle", not "behaves correctly at runtime". Adversarial
+behavioral tests (driving the real Sky-source API through the compiled binary,
+with boundary / malformed / platform-dependent inputs) surfaced **11 real
+"compiles-clean, behaves-wrong" bugs**, all fixed at root cause and each now
+guarded by a permanent regression test. Rebuild with this version to pick up the
+runtime fixes; no code changes required.
+
+### Fixed — stdlib correctness (adversarial conformance suites)
+
+- **`Json.Decode.int` / `Codec.int` corrupted large integers and was
+  platform-dependent.** JSON numbers were parsed via `float64`, so any integer
+  beyond 2^53 (a Snowflake ID, a nanosecond timestamp, a large counter) lost
+  precision on round-trip — and `max int64` decoded correctly on macOS but errored
+  on Linux (an out-of-range `float64`→`int64` conversion is implementation-defined
+  in Go). Now parsed via `json.Number`: the full int64 range round-trips
+  losslessly on every platform.
+- **`Money.allocate` dropped a cent when splitting a NEGATIVE total.** `allocate 3`
+  of `-$100.00` returned `[-33.33, -33.33, -33.33]` (sums to -99.99), violating the
+  documented "parts sum to the input exactly" contract — a real defect for refunds
+  / chargebacks. The residue is now distributed by sign + magnitude.
+- **`Std.Time.addMonths` dropped the year when going BACKWARD across a year
+  boundary.** `addMonths -1` of Jan 2023 gave Dec **2023** (should be Dec 2022) —
+  the month floored correctly but the year used truncating integer division. Fixed
+  via a single floored total-month index.
+- **`Sky.Core.Time.timeString` was host-timezone-dependent.** A function documented
+  as "pure formatting" returned different output on different machines; now pinned
+  to UTC like every other formatter.
+- **`Sky.Core.Bytes.length` / `slice` were rune-based on a byte buffer.**
+  `Bytes.length "世界"` returned 2 (runes) instead of 6 (bytes), and `slice` used
+  rune indices — silently corrupting binary payloads. Now byte-accurate.
+- **`Std.Auth.passwordStrength` panicked on a valid password.** The kernel returned
+  `Ok ()` where the type promised `Result Error String`, crashing on the success
+  path. Now returns the documented `"weak"` / `"fair"` / `"strong"` category. (The
+  auth-BYPASS surface — tampered-signature / `alg:none` / expired / wrong-secret —
+  was already correctly rejected; that's now covered by an adversarial suite too.)
+- **`Sky.Core.Uuid.parse` never returned `Just`.** It returned a `Result` where the
+  type is `Maybe String`, so every outcome read as `Nothing` (a valid UUID couldn't
+  be parsed). Fixed to return `Just` / `Nothing`.
+
+### Fixed — Sky.Live production incidents
+
+- **Idle sessions disconnected after ~20-30 minutes ("reconnecting… refresh fixes
+  it").** The CSRF cookie's lifetime was keyed to the session TTL, so with
+  `SKY_LIVE_TTL` set (the documented production pattern) it expired during idle
+  while the server session kept sliding on the SSE heartbeat — the next event POST
+  then 403'd and the tab stranded until a manual refresh. The CSRF cookie now
+  outlives an idle-sliding session (30-day floor). This is the root cause behind
+  the resilience work in v0.19.4-7; the earlier passes fixed adjacent modes but
+  missed this one. Now covered by a browser end-to-end test.
+- **A misconfigured session store silently became in-memory.** An unrecognised
+  `store` value (a typo, or a documented-but-unimplemented backend) fell through to
+  the memory store — losing every session on restart, never shared across replicas.
+  An explicitly-configured unknown store now fails loud in production (warns +
+  memory in dev), matching the v0.19.4 fail-loud policy for known stores.
+
+### Fixed — tooling + compiler
+
+- **`sky db migrate` silently dropped `UNIQUE`, serial `AUTOINCREMENT`/`BIGSERIAL`,
+  and `DEFAULT` constraints** that `sky db push` preserved. The committed-migration
+  path (the recommended production flow) rendered weaker DDL than the direct-create
+  path — so a `UNIQUE` column accepted duplicates on SQLite, and on Postgres a
+  serial primary key rendered as a plain `BIGINT` with no sequence, breaking every
+  insert. Both paths now render through one shared renderer, so they cannot diverge.
+- **Bare `Math` constants (`Math.pi`, `Math.e`, `Math.inf`, `Math.nan`, …) failed
+  `go build` when used directly.** Passing one straight to a `Float -> Float`
+  function, or using it in a comparison, type-checked but didn't compile (the
+  constant lowered to `any`). Now lowered to its typed value.
+
+### Changed
+
+- **Firestore removed from the documented Sky.Live session-store options.** It was
+  listed (`CLAUDE.md`, `sky.toml`, docs) but never implemented, and is a poor fit
+  for a session store (per-request latency + cost, and it doesn't provide the
+  cross-instance broadcast broker Redis does). Use `memory` / `sqlite` / `postgres`
+  / `redis`. (Firestore as an application database via the Go SDK / FFI is
+  unaffected — that's a separate, working capability.) An explicit
+  `store = "firestore"` now fails loud rather than silently degrading.
+- `Time.timeString` and `Bytes.length`/`slice` change output for non-ASCII / large
+  inputs (see Fixed above) — these correct clearly-documented behavior; code that
+  depended on the buggy output should adopt the corrected semantics.
+
+### Added — test coverage (no user-facing API change)
+
+Behavioral hardening so the above class of bug is caught going forward: 12 new
+adversarial stdlib conformance suites (Decimal, Money, Jwt/Auth, Encoding, Csv,
+Compression, Time, Random, Math, Dict/Set, Regex, Uuid) driving the real API
+through the compiled binary; CORS/BasicAuth + real-Postgres + cross-process-gob
+integration tests; browser end-to-end tests for the Sky.Live idle-survival and
+handler-desync-recovery paths; LSP diagnostics + `sky` verb (watch/doctor/doc/
+profile/add) coverage; compiler codegen/lower/inference snapshot tests; a nightly
+full example sweep; and `xtask welltyped`, a type-directed differential fuzzer that
+diffs the compiler against the reference implementation on generated well-typed
+programs. macOS CI now runs the behavioral conformance + golden gates too, so a
+platform-dependent regression (like the int64 one) is caught on both platforms.
+
 ## v0.19.7 — Sky.Live: SSE drop-resync + cross-restart session persistence (2026-08-01)
 
 The final two fixes in the Sky.Live resilience pass — the two hardest silent-
