@@ -1,0 +1,32 @@
+-- | Interpolation-torture fixture for the `sky fmt` safety gate (xtask fmt).
+-- Every `{{expr}}` string interpolation — especially PARENTHESIZED ones — must
+-- survive formatting verbatim. The formatter renders multiline strings as a raw
+-- source slice, so this holds by construction; this fixture locks it so a future
+-- refactor that re-rendered interpolation expressions (and dropped a grouping
+-- paren) is caught. Note: the gate's token multiset excludes parens, so the
+-- direct paren-preservation assertion lives in crates/fmt/src/lib.rs
+-- (`interpolation_parens_preserved`); this fixture adds idempotency + comment
+-- coverage over the same shapes.
+
+module InterpolationTorture exposing (render)
+
+import Sky.Core.Prelude exposing (..)
+
+
+-- render exercises every interpolation shape in one multiline string.
+render : Int -> String -> String
+render count name =
+    -- leading comment above a let, must survive
+    let
+        label =
+            "items"
+    in
+    """<div>
+    <h1>{{name}}</h1>
+    <p>count: {{String.fromInt (count + 1)}}</p>
+    <p>doubled: {{String.fromInt (count * 2)}}</p>
+    <p>redundant parens: {{(name)}}</p>
+    <p>nested parens: {{String.fromInt (((count + 1)))}}</p>
+    <p>label: {{label}}</p>
+    <p>mustache passthrough: \{{handlebars}} and \{{ spaced }}</p>
+</div>"""

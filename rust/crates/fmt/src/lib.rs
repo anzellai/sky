@@ -259,6 +259,33 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_parens_preserved() {
+        // Regression guard: `sky fmt` must NOT strip parentheses inside {{...}}
+        // string interpolation. The formatter renders a multiline string as a raw
+        // source slice (verbatim), so this holds by construction — but the
+        // safety-net token multiset deliberately EXCLUDES parens (the printer may
+        // add grouping parens on call args), so a future refactor that re-rendered
+        // interpolation expressions could drop a paren UNDETECTED by the gate. A
+        // dropped paren changes meaning (`String.fromInt (a + 1)` vs
+        // `String.fromInt a + 1`) or breaks compilation, so assert it directly.
+        let src = "greet a =\n    \"\"\"n={{String.fromInt (a + 1)}} r={{(a)}} lit=\\{{keep}}\"\"\"\n";
+        let out = format_source(src);
+        assert!(
+            out.contains("{{String.fromInt (a + 1)}}"),
+            "parenthesized interpolation must survive formatting verbatim; got: {out:?}"
+        );
+        assert!(
+            out.contains("{{(a)}}"),
+            "redundant interpolation parens must survive; got: {out:?}"
+        );
+        assert!(
+            out.contains("\\{{keep}}"),
+            "escaped literal braces must survive (not treated as interpolation); got: {out:?}"
+        );
+        idempotent(src);
+    }
+
+    #[test]
     fn header_comment_stays_above_imports() {
         // A file-header comment placed before the imports must remain ABOVE the
         // import block — not fall through to the first decl (below the imports).
