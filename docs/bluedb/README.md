@@ -174,10 +174,17 @@ swap the substrate underneath later without touching app code.**
 ## Roadmap
 
 - **Phase 0 — this branch.** Design + API/config spec. ← *you are here*
-- **Phase 1 — embedded reactive magic (next).** `autoBlueDB` working over an
-  embedded fast store: whole-Model persist (group-commit) + scope-keyed reactive
-  fan-out via the existing SSE + pub/sub. Single node, zero-ops, sub-ms hot path.
-  Delivers the demo and de-risks the whole bet.
+- **Phase 1 — embedded reactive magic (in progress).** `autoBlueDB` working over
+  an embedded fast store: whole-Model persist (group-commit) + scope-keyed
+  reactive fan-out via the existing SSE + pub/sub. Single node, zero-ops, sub-ms
+  hot path. Delivers the demo and de-risks the whole bet.
+  - **[landed]** Engine core — `runtime-go/bluedb/`: group-commit WAL +
+    in-memory keyspace + crash/torn-tail recovery. 8 tests green incl. race
+    detector; group commit proven (writes amortized across fsyncs). This is the
+    durability substrate from `durability.md`, made real.
+  - **[next]** Snapshot + WAL truncation (bound recovery time / disk) → runtime
+    session-store backend → the `Std.Live.autoBlueDB` stdlib surface + `[bluedb]`
+    sky.toml parsing → the reactive fan-out layer.
 - **Phase 2 — partial sync.** Change-feed + query-subscriptions so big Models
   sync diffs, not snapshots; hot-key sharded aggregates.
 - **Phase 3 — distributed substrate.** Native transactional ordered-KV (Pebble +
