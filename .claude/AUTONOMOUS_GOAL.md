@@ -144,3 +144,11 @@ Math constants + codegen/lower snapshots + infer-sig snapshot + divergences
 bidirectional + welltyped differential fuzzer, which found D002 ctor-arg divergence).
 11 bugs fixed. Firestore removed. Remaining: final holistic milestone sweep +
 CHANGELOG → USER authorizes the ONE holistic release.
+
+## ═══ MANDATE COMPLETE — v0.19.8 TAGGED (2026-08-02) ═══
+All 5 tiers Judge-verified · 11 bugs fixed · full pre-tag gate GREEN (CI all 9 jobs
+incl. macos-determinism + integration-postgres; local e2e web 10/10, resilience 2/0,
+CLI 13/0, welltyped 60/60). Tag v0.19.8 pushed → release.yml builds binaries +
+publishes from CHANGELOG. NO SkyDeploy (per feedback_ignore_skydeploy_redeploy).
+CI-speed optimisation dropped (user: ~35m is fine; the 60m+ was the now-fixed macOS
+`timeout`-not-found failure, not slowness).
