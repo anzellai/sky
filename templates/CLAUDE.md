@@ -343,7 +343,40 @@ path   = "app.db"
 [auth]                   # Std.Auth
 driver     = "jwt"
 cookieName = "sky_sid"   # secret comes from SKY_AUTH_TOKEN_SECRET (>=32 bytes), never committed
+
+[log]                    # structured logging
+format = "plain"         # plain (dev) | json (production)
+level  = "info"          # debug | info | warn | error
 ```
+
+### How to pick — and what to change as you grow
+
+Only `name` / `version` / `entry` are required; add a section **only when you use
+that feature**. Config precedence is **process env > `.env` > `sky.toml`**, so
+every value here can be overridden at deploy time without editing the file (and
+secrets / connection strings should be — never commit them).
+
+- **`[live] store`** — where Sky.Live keeps session state. Start `memory` (dev;
+  lost on restart). One instance → `sqlite` (a local file; survives restart).
+  More than one replica → `postgres` or `redis` (shared across instances; `redis`
+  also gives the cross-instance pub/sub broker you need for chat / collab /
+  same-user-two-devices). **Your app code never changes — only this value** (or
+  `SKY_LIVE_STORE`). `memory` and `sqlite` are both single-instance.
+- **`[live] ttl`** — session lifetime in seconds (idle sessions slide on activity).
+- **`[live] port`** — dev port; a deploy typically sets `SKY_LIVE_PORT` instead.
+- **`[database]`** — your APPLICATION data (separate from sessions). `sqlite` for a
+  prototype / single host; `postgres` for production / multiple instances. Leave
+  the real connection string to `DATABASE_URL` (env), not the committed file.
+- **`[auth]`** — only when you own users (`Std.Auth`). The signing secret is NEVER
+  in the file — it comes from `SKY_AUTH_TOKEN_SECRET` (≥32 bytes).
+- **`[log]`** — `plain`/`info` while developing; `json`/`warn` in production (JSON
+  logs are what a log aggregator ingests).
+
+**Going to production — set these via env (not the file):** `ENV=production`
+(locks the dev console + banner off, gates `/_sky/metrics` behind auth),
+`SKY_AUTH_TOKEN_SECRET`, `SKY_CONSOLE_AUTH`; a SHARED `SKY_LIVE_STORE`
+(`redis`/`postgres`) **and** load-balancer sticky sessions keyed on the `sky_sid`
+cookie if you run more than one replica.
 
 ## Non-negotiables
 
