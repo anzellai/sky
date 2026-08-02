@@ -1,0 +1,107 @@
+module RegexConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Regex — the RE2 regex surface
+-- (match / find / findAll / replace / split). These assertions drive the
+-- SKY-SOURCE API through the compiled binary, NOT the Go kernel directly.
+-- Inputs are ADVERSARIAL: anchored vs unanchored matches, capture-group
+-- shapes, empty split fields at boundaries, Unicode character classes,
+-- INVALID patterns (must degrade gracefully — never a process-aborting
+-- panic), and a pattern that catastrophically backtracks under a PCRE
+-- engine (RE2 is linear-time — it must return quickly + correctly).
+--
+-- Documented graceful-degradation contract (RE2 compile error is swallowed):
+--   match   bad-pattern -> False
+--   find    bad-pattern -> Nothing
+--   findAll bad-pattern -> []
+--   replace bad-pattern -> the input string unchanged
+--   split   bad-pattern -> [ input ]  (single-element list)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Regex as Regex
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ -- ── Literal + anchored match ──
+      Test.test "match: ^hello$ matches exactly hello"
+        (\_ -> Test.equal True (Regex.match "^hello$" "hello"))
+    , Test.test "match: ^hello$ does NOT match 'hello world' (anchored)"
+        (\_ -> Test.equal False (Regex.match "^hello$" "hello world"))
+    , Test.test "match: unanchored 'world' matches inside 'hello world'"
+        (\_ -> Test.equal True (Regex.match "world" "hello world"))
+    , Test.test "match: pattern absent -> False"
+        (\_ -> Test.equal False (Regex.match "zzz" "hello world"))
+
+      -- ── find: first match; groups don't change the returned span ──
+    , Test.test "find: first run of digits -> Just \"123\""
+        (\_ -> Test.equal (Just "123") (Regex.find "[0-9]+" "abc123def456"))
+    , Test.test "find: no match -> Nothing"
+        (\_ -> Test.equal Nothing (Regex.find "[0-9]+" "abcdef"))
+    , Test.test "find: capture groups still return the WHOLE match span"
+        (\_ -> Test.equal (Just "foobar") (Regex.find "(foo)(bar)" "xxfoobaryy"))
+
+      -- ── findAll: every non-overlapping match, in order ──
+    , Test.test "findAll: three digit runs -> [\"1\",\"22\",\"333\"]"
+        (\_ -> Test.equal [ "1", "22", "333" ] (Regex.findAll "[0-9]+" "a1b22c333"))
+    , Test.test "findAll: count of the three matches is 3"
+        (\_ -> Test.equal 3 (List.length (Regex.findAll "[0-9]+" "a1b22c333")))
+    , Test.test "findAll: non-overlapping 'aa' over 'aaaa' -> 2 matches"
+        (\_ -> Test.equal [ "aa", "aa" ] (Regex.findAll "aa" "aaaa"))
+    , Test.test "findAll: no match -> [] (empty list)"
+        (\_ -> Test.equal 0 (List.length (Regex.findAll "z" "abc")))
+
+      -- ── replace: all occurrences + $-group substitution ──
+    , Test.test "replace: every digit-run replaced with #"
+        (\_ -> Test.equal "a#b#c#" (Regex.replace "[0-9]+" "#" "a1b22c333"))
+    , Test.test "replace: $1 group substitution wraps each digit-run"
+        (\_ -> Test.equal "a<12>b<3>" (Regex.replace "([0-9]+)" "<$1>" "a12b3"))
+    , Test.test "replace: $2$1 swaps adjacent word chars (non-overlapping)"
+        (\_ -> Test.equal "badc" (Regex.replace "(\\w)(\\w)" "$2$1" "abcd"))
+    , Test.test "replace: pattern absent -> input unchanged"
+        (\_ -> Test.equal "abc" (Regex.replace "z" "#" "abc"))
+
+      -- ── split: empty fields at boundaries ──
+    , Test.test "split: interior empty field 'a,b,,c' -> 4 parts incl. \"\""
+        (\_ -> Test.equal [ "a", "b", "", "c" ] (Regex.split "," "a,b,,c"))
+    , Test.test "split: leading + trailing delimiters ',a,' -> [\"\",\"a\",\"\"]"
+        (\_ -> Test.equal [ "", "a", "" ] (Regex.split "," ",a,"))
+    , Test.test "split: whitespace-run delimiter collapses runs"
+        (\_ -> Test.equal [ "hello", "world", "foo" ] (Regex.split "\\s+" "hello   world  foo"))
+    , Test.test "split: no delimiter -> single-element list of the whole input"
+        (\_ -> Test.equal [ "abc" ] (Regex.split "," "abc"))
+
+      -- ── Unicode + character classes (\\d \\w \\p{L}) ──
+    , Test.test "match: \\d+ matches digits after unicode text 'café123'"
+        (\_ -> Test.equal True (Regex.match "\\d+" "café123"))
+    , Test.test "find: \\d+ inside 'café123' -> Just \"123\""
+        (\_ -> Test.equal (Just "123") (Regex.find "\\d+" "café123"))
+    , Test.test "match: ^\\w+$ accepts word chars + underscore"
+        (\_ -> Test.equal True (Regex.match "^\\w+$" "hello_123"))
+    , Test.test "match: \\p{L}+ matches a unicode-letter run 'café'"
+        (\_ -> Test.equal True (Regex.match "\\p{L}+" "café"))
+
+      -- ── INVALID pattern: graceful degradation, NEVER a panic ──
+    , Test.test "match: unbalanced '(' -> False (no panic)"
+        (\_ -> Test.equal False (Regex.match "(" "x"))
+    , Test.test "find: unbalanced '(' -> Nothing (no panic)"
+        (\_ -> Test.equal Nothing (Regex.find "(" "x"))
+    , Test.test "findAll: unbalanced '[' -> [] (no panic)"
+        (\_ -> Test.equal 0 (List.length (Regex.findAll "[" "x")))
+    , Test.test "replace: invalid pattern -> input returned unchanged"
+        (\_ -> Test.equal "abc" (Regex.replace "(" "#" "abc"))
+    , Test.test "split: invalid pattern -> [ input ] single element"
+        (\_ -> Test.equal [ "abc" ] (Regex.split "(" "abc"))
+
+      -- ── RE2 is linear-time: a PCRE-catastrophic pattern completes ──
+    , Test.test "match: (a+)+$ on 'aaaa…!' returns False fast (no backtracking blowup)"
+        (\_ -> Test.equal False (Regex.match "(a+)+$" (String.repeat 40 "a" ++ "!")))
+    , Test.test "match: (a+)+$ on all-a input returns True (still correct)"
+        (\_ -> Test.equal True (Regex.match "(a+)+$" (String.repeat 40 "a")))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

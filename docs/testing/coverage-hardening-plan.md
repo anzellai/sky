@@ -63,6 +63,7 @@ Cheap, high-value: wiring, not new tests.
 - **T4.5** `sky add/remove/install` verb orchestration; `sky doctor`/`sky doc`/`--profile` smoke.
 
 ### Tier 5 — Compiler-internal depth
+- **T5.0 (found by T1 Math suite)** Bare nullary kernel constants (`Math.pi`, `Math.e`, `Math.inf`, `Math.nan`, and likely other `Ffi.kernel` value constants) lower to Go `any`, so passing one DIRECTLY to a monomorphic user function (`f : Float -> Float`) or a Go inline operator (`Math.inf > x`, `Math.nan == Math.nan`) fails `go build` (type-assertion / "operator not defined on interface"). Routing through an arithmetic op first (`Math.pi - x`) yields a float64-typed expr that compiles. "Should-compile, fails-to-compile" lowering gap — safe (compile error, not silent runtime) but a real DX/soundness gap for a typed constant. Fix: lower a nullary kernel constant with its declared scalar Go type, not `any`.
 - **T5.1** `codegen` crate: 1 unit test for the whole Go emitter → snapshot tests per `GoExprKind`/`GoStmt` (record-literal/update/tuple/coercion).
 - **T5.2** `lower` crate goty tests: concrete-record-sharing-row-var, Dict-field record, record-update-in-tuple assert emitted GoTy is nominal `_R` not `any`.
 - **T5.3** `infer` gate: type-EQUALITY vs oracle (not just "zero errors") — catches wrong-but-accepted inferences (#166 shape).

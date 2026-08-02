@@ -1,0 +1,258 @@
+module MathConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Math — the pure numeric helpers. These
+-- assertions drive the SKY-SOURCE API (through the compiled binary), NOT the Go
+-- kernel directly. Inputs are ADVERSARIAL and concentrate on the class where
+-- float math bites: NaN identity (nan /= nan), infinities, rounding mode at the
+-- .5 boundary (round is half-AWAY-from-zero per Go's math.Round), floor/ceil/
+-- trunc sign traps on negatives, and the mod-vs-remainder sign convention
+-- (mod = sign of dividend; remainder = IEEE 754 round-half-to-even quotient).
+-- Expected values are pinned to the DOCUMENTED semantics in Sky/Core/Math.sky.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Math as Math
+import Sky.Test as Test exposing (Test)
+
+
+-- Float tolerance check, built from the API. Math.abs is Int-only, so this
+-- computes a manual absolute value of a difference and compares against a tight
+-- epsilon. Callers pass `(actual - expected)` — an operator expression that is
+-- statically Float-typed even when an operand is a bare kernel constant. A
+-- `near` pass proves the result rounds to the asserted value; it is not a
+-- substitute for exact `==` where the result is deterministic.
+near : Float -> Bool
+near diff =
+    let
+        magnitude =
+            if diff < 0.0 then
+                0.0 - diff
+
+            else
+                diff
+    in
+        magnitude < 0.0000001
+
+
+tests : List Test
+tests =
+    [ -- ── abs (Int -> Int) ──
+      Test.test "abs -5 == 5"
+        (\_ -> Test.equal 5 (Math.abs (-5)))
+    , Test.test "abs 5 == 5 (already positive unchanged)"
+        (\_ -> Test.equal 5 (Math.abs 5))
+    , Test.test "abs 0 == 0"
+        (\_ -> Test.equal 0 (Math.abs 0))
+
+      -- ── min / max (polymorphic a -> a -> a) ──
+    , Test.test "min 3 7 == 3 (Int)"
+        (\_ -> Test.equal 3 (Math.min 3 7))
+    , Test.test "max 3 7 == 7 (Int)"
+        (\_ -> Test.equal 7 (Math.max 3 7))
+    , Test.test "min -5 -2 == -5 (negative Ints)"
+        (\_ -> Test.equal (-5) (Math.min (-5) (-2)))
+    , Test.test "max -5 -2 == -2 (negative Ints)"
+        (\_ -> Test.equal (-2) (Math.max (-5) (-2)))
+    , Test.test "min 0.4 1.3 == 0.4 (Float, no int-truncation)"
+        (\_ -> Test.equal 0.4 (Math.min 0.4 1.3))
+    , Test.test "max 0.6 0.4 == 0.6 (Float, no int-truncation)"
+        (\_ -> Test.equal 0.6 (Math.max 0.6 0.4))
+    , Test.test "min \"apple\" \"banana\" == \"apple\" (comparable String)"
+        (\_ -> Test.equal "apple" (Math.min "apple" "banana"))
+
+      -- ── sqrt / pow / cbrt / hypot — exact perfect values ──
+    , Test.test "sqrt 4.0 == 2.0 (exact)"
+        (\_ -> Test.equal 2.0 (Math.sqrt 4.0))
+    , Test.test "sqrt 0.0 == 0.0"
+        (\_ -> Test.equal 0.0 (Math.sqrt 0.0))
+    , Test.test "sqrt 1.0 == 1.0"
+        (\_ -> Test.equal 1.0 (Math.sqrt 1.0))
+    , Test.test "sqrt 2.0 ~ 1.4142135623730951 (irrational)"
+        (\_ -> Test.isTrue (near (Math.sqrt 2.0 - 1.4142135623730951)))
+    , Test.test "pow 2.0 10.0 == 1024.0 (exact)"
+        (\_ -> Test.equal 1024.0 (Math.pow 2.0 10.0))
+    , Test.test "pow 2.0 0.0 == 1.0 (anything^0)"
+        (\_ -> Test.equal 1.0 (Math.pow 2.0 0.0))
+    , Test.test "pow 9.0 0.5 == 3.0 (fractional exponent = sqrt)"
+        (\_ -> Test.isTrue (near (Math.pow 9.0 0.5 - 3.0)))
+    , Test.test "cbrt 27.0 ~ 3.0"
+        (\_ -> Test.isTrue (near (Math.cbrt 27.0 - 3.0)))
+    , Test.test "cbrt -8.0 ~ -2.0 (odd cube root of negative)"
+        (\_ -> Test.isTrue (near (Math.cbrt (-8.0) - (-2.0))))
+    , Test.test "hypot 3.0 4.0 == 5.0 (3-4-5 triangle)"
+        (\_ -> Test.isTrue (near (Math.hypot 3.0 4.0 - 5.0)))
+    , Test.test "hypot 5.0 12.0 == 13.0"
+        (\_ -> Test.isTrue (near (Math.hypot 5.0 12.0 - 13.0)))
+
+      -- ── exp / log family ──
+    , Test.test "exp 0.0 == 1.0 (exact)"
+        (\_ -> Test.equal 1.0 (Math.exp 0.0))
+    , Test.test "exp2 10.0 == 1024.0 (exact power of two)"
+        (\_ -> Test.equal 1024.0 (Math.exp2 10.0))
+    , Test.test "exp 1.0 ~ e"
+        (\_ -> Test.isTrue (near (Math.exp 1.0 - Math.e)))
+    , Test.test "log 1.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.log 1.0))
+    , Test.test "log e ~ 1.0 (natural log inverse of exp)"
+        (\_ -> Test.isTrue (near (Math.log Math.e - 1.0)))
+    , Test.test "log2 1.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.log2 1.0))
+    , Test.test "log2 8.0 ~ 3.0"
+        (\_ -> Test.isTrue (near (Math.log2 8.0 - 3.0)))
+    , Test.test "log10 1000.0 ~ 3.0"
+        (\_ -> Test.isTrue (near (Math.log10 1000.0 - 3.0)))
+
+      -- ── Trigonometry — exact zeros ──
+    , Test.test "sin 0.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.sin 0.0))
+    , Test.test "cos 0.0 == 1.0 (exact)"
+        (\_ -> Test.equal 1.0 (Math.cos 0.0))
+    , Test.test "tan 0.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.tan 0.0))
+    , Test.test "sin (pi/2) ~ 1.0"
+        (\_ -> Test.isTrue (near (Math.sin (Math.pi / 2.0) - 1.0)))
+    , Test.test "cos pi ~ -1.0"
+        (\_ -> Test.isTrue (near (Math.cos Math.pi - (-1.0))))
+    , Test.test "asin 1.0 ~ pi/2"
+        (\_ -> Test.isTrue (near (Math.asin 1.0 - Math.pi / 2.0)))
+    , Test.test "acos 1.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.acos 1.0))
+    , Test.test "atan 0.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.atan 0.0))
+
+      -- ── atan2 — quadrant-aware (y first, x second) ──
+    , Test.test "atan2 1.0 1.0 ~ pi/4 (first quadrant)"
+        (\_ -> Test.isTrue (near (Math.atan2 1.0 1.0 - Math.pi / 4.0)))
+    , Test.test "atan2 1.0 -1.0 ~ 3pi/4 (second quadrant, positive)"
+        (\_ -> Test.isTrue (near (Math.atan2 1.0 (-1.0) - 3.0 * Math.pi / 4.0)))
+    , Test.test "atan2 -1.0 -1.0 ~ -3pi/4 (third quadrant, negative)"
+        (\_ -> Test.isTrue (near (Math.atan2 (-1.0) (-1.0) - (-3.0 * Math.pi / 4.0))))
+    , Test.test "atan2 0.0 1.0 == 0.0 (on positive x-axis)"
+        (\_ -> Test.equal 0.0 (Math.atan2 0.0 1.0))
+
+      -- ── Hyperbolic — exact zeros ──
+    , Test.test "sinh 0.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.sinh 0.0))
+    , Test.test "cosh 0.0 == 1.0 (exact)"
+        (\_ -> Test.equal 1.0 (Math.cosh 0.0))
+    , Test.test "tanh 0.0 == 0.0 (exact)"
+        (\_ -> Test.equal 0.0 (Math.tanh 0.0))
+    , Test.test "asinh 0.0 == 0.0"
+        (\_ -> Test.equal 0.0 (Math.asinh 0.0))
+    , Test.test "acosh 1.0 == 0.0 (domain floor)"
+        (\_ -> Test.equal 0.0 (Math.acosh 1.0))
+    , Test.test "atanh 0.0 == 0.0"
+        (\_ -> Test.equal 0.0 (Math.atanh 0.0))
+
+      -- ── floor (Float -> Int) — sign trap on negatives ──
+    , Test.test "floor 1.5 == 1"
+        (\_ -> Test.equal 1 (Math.floor 1.5))
+    , Test.test "floor -1.5 == -2 (toward negative infinity)"
+        (\_ -> Test.equal (-2) (Math.floor (-1.5)))
+    , Test.test "floor 2.0 == 2 (integer input unchanged)"
+        (\_ -> Test.equal 2 (Math.floor 2.0))
+    , Test.test "floor -0.1 == -1"
+        (\_ -> Test.equal (-1) (Math.floor (-0.1)))
+
+      -- ── ceil (Float -> Int) — sign trap on negatives ──
+    , Test.test "ceil 1.5 == 2"
+        (\_ -> Test.equal 2 (Math.ceil 1.5))
+    , Test.test "ceil -1.5 == -1 (toward positive infinity)"
+        (\_ -> Test.equal (-1) (Math.ceil (-1.5)))
+    , Test.test "ceil 2.0 == 2 (integer input unchanged)"
+        (\_ -> Test.equal 2 (Math.ceil 2.0))
+    , Test.test "ceil 0.1 == 1"
+        (\_ -> Test.equal 1 (Math.ceil 0.1))
+
+      -- ── trunc (Float -> Int) — always toward zero ──
+    , Test.test "trunc 1.5 == 1"
+        (\_ -> Test.equal 1 (Math.trunc 1.5))
+    , Test.test "trunc -1.5 == -1 (toward zero, NOT floor)"
+        (\_ -> Test.equal (-1) (Math.trunc (-1.5)))
+    , Test.test "trunc 3.7 == 3 (matches doc example)"
+        (\_ -> Test.equal 3 (Math.trunc 3.7))
+    , Test.test "trunc -3.7 == -3 (matches doc example)"
+        (\_ -> Test.equal (-3) (Math.trunc (-3.7)))
+
+      -- ── round (Float -> Int) — half AWAY from zero (Go math.Round) ──
+    , Test.test "round 2.4 == 2 (below .5 rounds down)"
+        (\_ -> Test.equal 2 (Math.round 2.4))
+    , Test.test "round 2.6 == 3 (above .5 rounds up)"
+        (\_ -> Test.equal 3 (Math.round 2.6))
+    , Test.test "round 2.5 == 3 (half away from zero, NOT half-even)"
+        (\_ -> Test.equal 3 (Math.round 2.5))
+    , Test.test "round 3.5 == 4 (half away from zero)"
+        (\_ -> Test.equal 4 (Math.round 3.5))
+    , Test.test "round 0.5 == 1 (half away from zero)"
+        (\_ -> Test.equal 1 (Math.round 0.5))
+    , Test.test "round -2.5 == -3 (half away from zero, negative)"
+        (\_ -> Test.equal (-3) (Math.round (-2.5)))
+    , Test.test "round -0.5 == -1 (half away from zero, negative)"
+        (\_ -> Test.equal (-1) (Math.round (-0.5)))
+
+      -- ── mod (Float) — result has sign of the DIVIDEND (Go math.Mod) ──
+    , Test.test "mod 5.0 3.0 == 2.0"
+        (\_ -> Test.equal 2.0 (Math.mod 5.0 3.0))
+    , Test.test "mod -5.0 3.0 == -2.0 (sign of dividend, negative)"
+        (\_ -> Test.equal (-2.0) (Math.mod (-5.0) 3.0))
+    , Test.test "mod 5.0 -3.0 == 2.0 (sign of dividend, positive)"
+        (\_ -> Test.equal 2.0 (Math.mod 5.0 (-3.0)))
+    , Test.test "mod 5.5 2.0 == 1.5 (fractional dividend)"
+        (\_ -> Test.isTrue (near (Math.mod 5.5 2.0 - 1.5)))
+
+      -- ── remainder (Float) — IEEE 754, quotient rounds half-to-even ──
+    , Test.test "remainder 5.0 3.0 == -1.0 (5/3 rounds to 2; 5-6=-1)"
+        (\_ -> Test.equal (-1.0) (Math.remainder 5.0 3.0))
+    , Test.test "remainder 7.0 3.0 == 1.0 (7/3 rounds to 2; 7-6=1)"
+        (\_ -> Test.equal 1.0 (Math.remainder 7.0 3.0))
+    , Test.test "remainder -5.0 3.0 == 1.0 (-5/3 rounds to -2; -5+6=1)"
+        (\_ -> Test.equal 1.0 (Math.remainder (-5.0) 3.0))
+    , Test.test "remainder 10.0 3.0 == 1.0 (10/3 rounds to 3; 10-9=1)"
+        (\_ -> Test.equal 1.0 (Math.remainder 10.0 3.0))
+
+      -- ── NaN — the identity trap (nan /= nan by IEEE 754) ──
+    , Test.test "isNaN (sqrt -1.0) == True (sqrt of negative is NaN)"
+        (\_ -> Test.isTrue (Math.isNaN (Math.sqrt (-1.0))))
+    , Test.test "isNaN nan == True"
+        (\_ -> Test.isTrue (Math.isNaN Math.nan))
+    , Test.test "isNaN 1.0 == False (finite is not NaN)"
+        (\_ -> Test.isFalse (Math.isNaN 1.0))
+    , Test.test "isNaN inf == False (infinity is not NaN)"
+        (\_ -> Test.isFalse (Math.isNaN Math.inf))
+    , Test.test "nan == nan is False (NaN is not equal to itself)"
+        (\_ -> Test.isFalse ((Math.nan - 0.0) == (Math.nan - 0.0)))
+    , Test.test "nan /= nan is True (only value unequal to itself)"
+        (\_ -> Test.isTrue ((Math.nan - 0.0) /= (Math.nan - 0.0)))
+    , Test.test "isNaN (log -1.0) == True (log of negative is NaN)"
+        (\_ -> Test.isTrue (Math.isNaN (Math.log (-1.0))))
+    , Test.test "isNaN (acos 2.0) == True (out of [-1,1] domain)"
+        (\_ -> Test.isTrue (Math.isNaN (Math.acos 2.0)))
+
+      -- ── Infinity ──
+    , Test.test "inf > 1000000.0 (positive infinity exceeds any finite)"
+        (\_ -> Test.isTrue ((Math.inf - 0.0) > 1000000.0))
+    , Test.test "0.0 - inf < -1000000.0 (negative infinity below any finite)"
+        (\_ -> Test.isTrue ((0.0 - Math.inf) < (-1000000.0)))
+    , Test.test "isNaN (inf - inf) == True (inf minus inf is NaN)"
+        (\_ -> Test.isTrue (Math.isNaN (Math.inf - Math.inf)))
+    , Test.test "inf > inf is False (infinity not greater than itself)"
+        (\_ -> Test.isFalse ((Math.inf - 0.0) > (Math.inf - 0.0)))
+
+      -- ── Constants — within tolerance of the documented values ──
+    , Test.test "pi ~ 3.141592653589793"
+        (\_ -> Test.isTrue (near (Math.pi - 3.141592653589793)))
+    , Test.test "e ~ 2.718281828459045"
+        (\_ -> Test.isTrue (near (Math.e - 2.718281828459045)))
+    , Test.test "phi ~ 1.618033988749895 (golden ratio)"
+        (\_ -> Test.isTrue (near (Math.phi - 1.618033988749895)))
+    , Test.test "sqrt2 ~ 1.4142135623730951"
+        (\_ -> Test.isTrue (near (Math.sqrt2 - 1.4142135623730951)))
+    , Test.test "sqrt2 ~ sqrt 2.0 (constant matches the function)"
+        (\_ -> Test.isTrue (near (Math.sqrt2 - Math.sqrt 2.0)))
+    , Test.test "phi satisfies phi^2 == phi + 1 (defining identity)"
+        (\_ -> Test.isTrue (near (Math.pow Math.phi 2.0 - (Math.phi + 1.0))))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

@@ -1,0 +1,135 @@
+module UuidConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Uuid — v4 / v7 generation + parse.
+-- v4 / v7 are `Task Error String` (entropy), so a pure `sky test` suite
+-- forces them via `Task.run` (top-level bindings below — each distinct
+-- binding is its own CAF, hence its own forcing / distinct UUID). Inputs
+-- are ADVERSARIAL: RFC-4122 version-nibble + variant-bit inspection at the
+-- exact string positions, uniqueness across two draws, and parse of
+-- malformed input (wrong length / bad chars / missing dashes / empty)
+-- which MUST return Nothing (never a panic, never a false accept).
+--
+-- RFC 4122 canonical form (36 chars, indices shown):
+--   xxxxxxxx-xxxx-Vxxx-Nxxx-xxxxxxxxxxxx
+--   0        8    13   18   23
+--   index 14 = version nibble (4 for v4, 7 for v7)
+--   index 19 = variant nibble (one of 8 / 9 / a / b)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Uuid as Uuid
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+
+
+-- Two independent v4 draws (distinct CAFs -> distinct forcings).
+v4a : String
+v4a =
+    Result.withDefault "ERR" (Task.run Uuid.v4)
+
+
+v4b : String
+v4b =
+    Result.withDefault "ERR" (Task.run Uuid.v4)
+
+
+-- Two independent v7 draws.
+v7a : String
+v7a =
+    Result.withDefault "ERR" (Task.run Uuid.v7)
+
+
+v7b : String
+v7b =
+    Result.withDefault "ERR" (Task.run Uuid.v7)
+
+
+charAt : Int -> String -> String
+charAt i s =
+    String.slice i (i + 1) s
+
+
+isVariant : String -> Bool
+isVariant c =
+    List.member c [ "8", "9", "a", "b" ]
+
+
+describe : Maybe String -> String
+describe m =
+    case m of
+        Just s ->
+            "JUST:" ++ s
+
+        Nothing ->
+            "NOTHING"
+
+
+-- A UUID this very program will also try to parse (canonical, lowercase).
+canonical : String
+canonical =
+    "550e8400-e29b-41d4-a716-446655440000"
+
+
+tests : List Test
+tests =
+    [ -- ── v4 structural conformance (RFC 4122) ──
+      Test.test "v4: canonical 36-char length"
+        (\_ -> Test.equal 36 (String.length v4a))
+    , Test.test "v4: dash at index 8"
+        (\_ -> Test.equal "-" (charAt 8 v4a))
+    , Test.test "v4: dash at index 13"
+        (\_ -> Test.equal "-" (charAt 13 v4a))
+    , Test.test "v4: dash at index 18"
+        (\_ -> Test.equal "-" (charAt 18 v4a))
+    , Test.test "v4: dash at index 23"
+        (\_ -> Test.equal "-" (charAt 23 v4a))
+    , Test.test "v4: version nibble at index 14 is '4'"
+        (\_ -> Test.equal "4" (charAt 14 v4a))
+    , Test.test "v4: variant nibble at index 19 is one of 8/9/a/b"
+        (\_ -> Test.equal True (isVariant (charAt 19 v4a)))
+    , Test.test "v4: two independent draws differ (uniqueness)"
+        (\_ -> Test.notEqual v4a v4b)
+    , Test.test "v4: lowercase canonical form (no uppercase hex)"
+        (\_ -> Test.equal (String.toLower v4a) v4a)
+
+      -- ── v7 structural conformance (RFC 4122, time-ordered) ──
+    , Test.test "v7: canonical 36-char length"
+        (\_ -> Test.equal 36 (String.length v7a))
+    , Test.test "v7: version nibble at index 14 is '7'"
+        (\_ -> Test.equal "7" (charAt 14 v7a))
+    , Test.test "v7: variant nibble at index 19 is one of 8/9/a/b"
+        (\_ -> Test.equal True (isVariant (charAt 19 v7a)))
+    , Test.test "v7: two independent draws differ (uniqueness)"
+        (\_ -> Test.notEqual v7a v7b)
+
+      -- ── parse: malformed input MUST be Nothing (never panic/false-accept) ──
+    , Test.test "parse: too short -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse "123"))
+    , Test.test "parse: empty string -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse ""))
+    , Test.test "parse: non-hex chars -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse "zzzzzzzz-e29b-41d4-a716-446655440000"))
+    , Test.test "parse: missing dashes (32 hex, no separators) -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse "550e8400e29b41d4a716446655440000x"))
+    , Test.test "parse: wrong length (37 chars) -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse (canonical ++ "0")))
+    , Test.test "parse: bare word -> Nothing"
+        (\_ -> Test.equal Nothing (Uuid.parse "not-a-uuid"))
+
+      -- ── parse: well-formed input SHOULD round-trip (documents a REAL BUG) ──
+      -- Sky sig is `parse : String -> Maybe String`, but the runtime kernel
+      -- `Uuid_parse` returns Ok/Err (a SkyResult), so the Maybe read tags
+      -- every result as Nothing — parse can NEVER return Just. These two
+      -- assertions assert the DOCUMENTED contract ("Nothing on malformed
+      -- input" implies Just on well-formed) and are expected RED until the
+      -- kernel return shape is aligned with the Sky signature.
+    , Test.test "parse: canonical UUID -> Just <canonical> (REAL BUG: returns Nothing)"
+        (\_ -> Test.equal ("JUST:" ++ canonical) (describe (Uuid.parse canonical)))
+    , Test.test "parse: round-trips a v4 this program generated (REAL BUG: returns Nothing)"
+        (\_ -> Test.equal ("JUST:" ++ v4a) (describe (Uuid.parse v4a)))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

@@ -1,0 +1,305 @@
+module DictSetConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Sky.Core.Dict + Sky.Core.Set — asserts DOCUMENTED
+semantics with ADVERSARIAL inputs. Runs the SKY-SOURCE API through the compiled
+binary (not the Go kernel directly).
+
+ORDERING DETERMINISM IS LOAD-BEARING. Sky.Live's view-determinism (v0.19.6)
+depends on `Dict.toList` / `Set.toList` producing a STABLE order independent of
+insertion order — raw Go map iteration is randomised, so a non-deterministic
+enumeration would drift Sky.Live handler IDs and desync the DOM. Elm's Dict/Set
+are ordered by key; Sky matches: String keys sort lexically, Int keys sort
+NUMERICALLY (2 before 10, not "10" before "2"). Every ordering assertion below
+builds the same structure TWO WAYS (different insertion order + shuffled
+fromList) and asserts identical, sorted output. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Set as Set
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Typed empty literals (avoid ambiguous [] at assertion sites) ───
+emptyInts : List Int
+emptyInts =
+    []
+
+
+emptyStrs : List String
+emptyStrs =
+    []
+
+
+emptyIntPairs : List ( Int, String )
+emptyIntPairs =
+    []
+
+
+emptyStrPairs : List ( String, String )
+emptyStrPairs =
+    []
+
+
+emptyIntDict : Dict Int String
+emptyIntDict =
+    Dict.empty
+
+
+emptyStrDict : Dict String String
+emptyStrDict =
+    Dict.empty
+
+
+-- ─── Int-keyed dicts built TWO ways (same content, opposite orders) ──
+-- Adversarial keys 1, 2, 10: numeric sort = [1,2,10]; lexical string sort
+-- would (wrongly) be [1,10,2]. This single case distinguishes a correct
+-- numeric Dict Int ordering from a stringified-key lexical one.
+intAscending : Dict Int String
+intAscending =
+    Dict.insert 10 "ten" (Dict.insert 2 "two" (Dict.insert 1 "one" Dict.empty))
+
+
+intDescending : Dict Int String
+intDescending =
+    Dict.insert 1 "one" (Dict.insert 2 "two" (Dict.insert 10 "ten" Dict.empty))
+
+
+intFromShuffled : Dict Int String
+intFromShuffled =
+    Dict.fromList [ ( 2, "two" ), ( 10, "ten" ), ( 1, "one" ) ]
+
+
+intSortedPairs : List ( Int, String )
+intSortedPairs =
+    [ ( 1, "one" ), ( 2, "two" ), ( 10, "ten" ) ]
+
+
+-- ─── String-keyed dicts built TWO ways ──────────────────────────────
+strForward : Dict String String
+strForward =
+    Dict.insert "cherry" "c" (Dict.insert "banana" "b" (Dict.insert "apple" "a" Dict.empty))
+
+
+strReverse : Dict String String
+strReverse =
+    Dict.insert "apple" "a" (Dict.insert "banana" "b" (Dict.insert "cherry" "c" Dict.empty))
+
+
+strFromShuffled : Dict String String
+strFromShuffled =
+    Dict.fromList [ ( "banana", "b" ), ( "cherry", "c" ), ( "apple", "a" ) ]
+
+
+strSortedPairs : List ( String, String )
+strSortedPairs =
+    [ ( "apple", "a" ), ( "banana", "b" ), ( "cherry", "c" ) ]
+
+
+-- ─── Sets built TWO ways ────────────────────────────────────────────
+intSetForward : Set Int
+intSetForward =
+    Set.insert 10 (Set.insert 2 (Set.insert 1 Set.empty))
+
+
+intSetReverse : Set Int
+intSetReverse =
+    Set.insert 1 (Set.insert 2 (Set.insert 10 Set.empty))
+
+
+intSetShuffled : Set Int
+intSetShuffled =
+    Set.fromList [ 2, 10, 1 ]
+
+
+strSetShuffled : Set String
+strSetShuffled =
+    Set.fromList [ "banana", "cherry", "apple" ]
+
+
+-- Overlapping sets for the algebra assertions.
+setA : Set Int
+setA =
+    Set.fromList [ 1, 2, 3 ]
+
+
+setB : Set Int
+setB =
+    Set.fromList [ 2, 3, 4 ]
+
+
+tests : List Test
+tests =
+    [ -- ══════════════════════════════════════════════════════════════
+      -- ORDERING DETERMINISM (HIGH severity — Sky.Live depends on it)
+      -- ══════════════════════════════════════════════════════════════
+      -- Int keys: numeric sort, independent of insertion order.
+      Test.test "Dict Int toList is sorted numerically (1,2,10 not 1,10,2)"
+        (\_ -> Test.equal intSortedPairs (Dict.toList intAscending))
+    , Test.test "Dict Int toList is INSERTION-ORDER independent (ascending vs descending build)"
+        (\_ -> Test.equal (Dict.toList intAscending) (Dict.toList intDescending))
+    , Test.test "Dict Int toList from shuffled fromList == from inserts (same order)"
+        (\_ -> Test.equal (Dict.toList intAscending) (Dict.toList intFromShuffled))
+    , Test.test "Dict Int fromList shuffled yields numeric-sorted toList"
+        (\_ -> Test.equal intSortedPairs (Dict.toList intFromShuffled))
+
+      -- String keys: lexical sort, independent of insertion order.
+    , Test.test "Dict String toList is sorted lexically"
+        (\_ -> Test.equal strSortedPairs (Dict.toList strForward))
+    , Test.test "Dict String toList is INSERTION-ORDER independent (forward vs reverse build)"
+        (\_ -> Test.equal (Dict.toList strForward) (Dict.toList strReverse))
+    , Test.test "Dict String toList from shuffled fromList == from inserts"
+        (\_ -> Test.equal (Dict.toList strForward) (Dict.toList strFromShuffled))
+    , Test.test "Dict String fromList shuffled yields lexical-sorted toList"
+        (\_ -> Test.equal strSortedPairs (Dict.toList strFromShuffled))
+
+      -- keys / values enumerate in the same sorted key order.
+    , Test.test "Dict String keys are sorted lexically, insertion-order independent"
+        (\_ -> Test.equal [ "apple", "banana", "cherry" ] (Dict.keys strReverse))
+    , Test.test "Dict String values follow sorted-key order"
+        (\_ -> Test.equal [ "a", "b", "c" ] (Dict.values strReverse))
+    , Test.test "Dict String keys identical regardless of build order"
+        (\_ -> Test.equal (Dict.keys strForward) (Dict.keys strReverse))
+
+      -- foldl visits in ascending key order (adversarial: order-sensitive fold).
+    , Test.test "Dict String foldl visits ascending key order (concat keys)"
+        (\_ -> Test.equal "applebananacherry" (Dict.foldl (\k _ acc -> acc ++ k) "" strReverse))
+
+      -- Set ordering: numeric for Int, insertion-order independent.
+    , Test.test "Set Int toList sorted numerically (1,2,10 not 1,10,2)"
+        (\_ -> Test.equal [ 1, 2, 10 ] (Set.toList intSetForward))
+    , Test.test "Set Int toList INSERTION-ORDER independent (forward vs reverse)"
+        (\_ -> Test.equal (Set.toList intSetForward) (Set.toList intSetReverse))
+    , Test.test "Set Int toList from shuffled fromList is numeric-sorted"
+        (\_ -> Test.equal [ 1, 2, 10 ] (Set.toList intSetShuffled))
+    , Test.test "Set String toList sorted lexically, insertion-order independent"
+        (\_ -> Test.equal [ "apple", "banana", "cherry" ] (Set.toList strSetShuffled))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- get / member / insert / remove semantics
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "get present key -> Just value"
+        (\_ -> Test.equal (Just "b") (Dict.get "banana" strForward))
+    , Test.test "get absent key -> Nothing"
+        (\_ -> Test.equal Nothing (Dict.get "durian" strForward))
+    , Test.test "get after remove -> Nothing"
+        (\_ -> Test.equal Nothing (Dict.get "banana" (Dict.remove "banana" strForward)))
+    , Test.test "remove keeps the other keys"
+        (\_ -> Test.equal (Just "a") (Dict.get "apple" (Dict.remove "banana" strForward)))
+    , Test.test "get after re-insert (overwrite) -> Just newValue (last write wins)"
+        (\_ -> Test.equal (Just "B2") (Dict.get "banana" (Dict.insert "banana" "B2" strForward)))
+    , Test.test "member present -> True"
+        (\_ -> Test.isTrue (Dict.member "apple" strForward))
+    , Test.test "member absent -> False"
+        (\_ -> Test.isFalse (Dict.member "durian" strForward))
+    , Test.test "member after remove -> False"
+        (\_ -> Test.isFalse (Dict.member "apple" (Dict.remove "apple" strForward)))
+
+      -- insert idempotence: same key twice -> size unchanged, value overwritten.
+    , Test.test "insert overwrite: size unchanged (3, not 4)"
+        (\_ -> Test.equal 3 (Dict.size (Dict.insert "banana" "B2" strForward)))
+    , Test.test "insert new key: size grows by 1"
+        (\_ -> Test.equal 4 (Dict.size (Dict.insert "durian" "d" strForward)))
+    , Test.test "remove of absent key -> unchanged size"
+        (\_ -> Test.equal 3 (Dict.size (Dict.remove "durian" strForward)))
+    , Test.test "remove of absent key -> unchanged contents"
+        (\_ -> Test.equal strSortedPairs (Dict.toList (Dict.remove "durian" strForward)))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- fromList duplicate-key resolution (documented: later wins)
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "fromList duplicate keys: last value wins"
+        (\_ -> Test.equal (Just "second") (Dict.get "k" (Dict.fromList [ ( "k", "first" ), ( "k", "second" ) ])))
+    , Test.test "fromList duplicate keys: size counts distinct keys only"
+        (\_ -> Test.equal 1 (Dict.size (Dict.fromList [ ( "k", "first" ), ( "k", "second" ) ])))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- union bias (documented: LEFT operand wins on collision)
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "Dict.union is LEFT-biased on key collision"
+        (\_ ->
+            Test.equal (Just "LEFT")
+                (Dict.get "k"
+                    (Dict.union (Dict.fromList [ ( "k", "LEFT" ) ]) (Dict.fromList [ ( "k", "RIGHT" ) ]))
+                )
+        )
+    , Test.test "Dict.union merges disjoint keys from both sides"
+        (\_ ->
+            Test.equal [ ( "a", "1" ), ( "b", "2" ) ]
+                (Dict.toList (Dict.union (Dict.fromList [ ( "a", "1" ) ]) (Dict.fromList [ ( "b", "2" ) ])))
+        )
+    , Test.test "Dict.union result is sorted regardless of operand order"
+        (\_ ->
+            Test.equal (Dict.toList (Dict.union (Dict.fromList [ ( "a", "1" ) ]) (Dict.fromList [ ( "b", "2" ) ])))
+                (Dict.toList (Dict.union (Dict.fromList [ ( "b", "2" ) ]) (Dict.fromList [ ( "a", "1" ) ])))
+        )
+
+      -- ══════════════════════════════════════════════════════════════
+      -- Set algebra correctness (result also sorted via toList)
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "Set.union {1,2,3} {2,3,4} -> [1,2,3,4]"
+        (\_ -> Test.equal [ 1, 2, 3, 4 ] (Set.toList (Set.union setA setB)))
+    , Test.test "Set.union is commutative on contents"
+        (\_ -> Test.equal (Set.toList (Set.union setA setB)) (Set.toList (Set.union setB setA)))
+    , Test.test "Set.intersect {1,2,3} {2,3,4} -> [2,3]"
+        (\_ -> Test.equal [ 2, 3 ] (Set.toList (Set.intersect setA setB)))
+    , Test.test "Set.diff {1,2,3} {2,3,4} -> [1] (in A not B)"
+        (\_ -> Test.equal [ 1 ] (Set.toList (Set.diff setA setB)))
+    , Test.test "Set.diff {2,3,4} {1,2,3} -> [4] (asymmetric)"
+        (\_ -> Test.equal [ 4 ] (Set.toList (Set.diff setB setA)))
+    , Test.test "Set.fromList de-duplicates"
+        (\_ -> Test.equal [ 1, 2, 3 ] (Set.toList (Set.fromList [ 1, 2, 2, 3, 3, 3, 1 ])))
+    , Test.test "Set.size counts distinct elements only"
+        (\_ -> Test.equal 3 (Set.size (Set.fromList [ 1, 2, 2, 3, 3, 3, 1 ])))
+    , Test.test "Set.member present -> True"
+        (\_ -> Test.isTrue (Set.member 2 setA))
+    , Test.test "Set.member absent -> False"
+        (\_ -> Test.isFalse (Set.member 9 setA))
+    , Test.test "Set.insert idempotent: size unchanged when already present"
+        (\_ -> Test.equal 3 (Set.size (Set.insert 2 setA)))
+    , Test.test "Set.remove of absent element -> unchanged"
+        (\_ -> Test.equal [ 1, 2, 3 ] (Set.toList (Set.remove 99 setA)))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- size / keys / values / cardinality consistency
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "size == length keys"
+        (\_ -> Test.equal (Dict.size strForward) (List.length (Dict.keys strForward)))
+    , Test.test "size == length values"
+        (\_ -> Test.equal (Dict.size strForward) (List.length (Dict.values strForward)))
+    , Test.test "length keys == length values"
+        (\_ -> Test.equal (List.length (Dict.keys strForward)) (List.length (Dict.values strForward)))
+    , Test.test "size == length toList"
+        (\_ -> Test.equal (Dict.size strForward) (List.length (Dict.toList strForward)))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- Empty edge cases
+      -- ══════════════════════════════════════════════════════════════
+    , Test.test "empty Dict: isEmpty True"
+        (\_ -> Test.isTrue (Dict.isEmpty emptyStrDict))
+    , Test.test "non-empty Dict: isEmpty False"
+        (\_ -> Test.isFalse (Dict.isEmpty strForward))
+    , Test.test "empty Dict: size 0"
+        (\_ -> Test.equal 0 (Dict.size emptyStrDict))
+    , Test.test "empty Dict: get -> Nothing"
+        (\_ -> Test.equal Nothing (Dict.get "anything" emptyStrDict))
+    , Test.test "empty Dict String: toList []"
+        (\_ -> Test.equal emptyStrPairs (Dict.toList emptyStrDict))
+    , Test.test "empty Dict Int: toList []"
+        (\_ -> Test.equal emptyIntPairs (Dict.toList emptyIntDict))
+    , Test.test "empty Dict: keys []"
+        (\_ -> Test.equal emptyStrs (Dict.keys emptyStrDict))
+    , Test.test "removing the last key yields an empty Dict"
+        (\_ -> Test.isTrue (Dict.isEmpty (Dict.remove "only" (Dict.insert "only" "x" emptyStrDict))))
+    , Test.test "empty Set: size 0"
+        (\_ -> Test.equal 0 (Set.size (Set.fromList emptyInts)))
+    , Test.test "empty Set: toList []"
+        (\_ -> Test.equal emptyInts (Set.toList (Set.fromList emptyInts)))
+    , Test.test "empty Set: member -> False"
+        (\_ -> Test.isFalse (Set.member 1 (Set.fromList emptyInts)))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

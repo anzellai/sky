@@ -170,15 +170,17 @@ func Uuid_v7() any {
 	}
 }
 
-// Uuid.parse : String -> Result String String
-// Parses and canonicalises a UUID string, returning its 36-char form.
-// Useful for rejecting malformed UUIDs at the API boundary.
+// Uuid.parse : String -> Maybe String
+// Parses and canonicalises a UUID string, returning Just its 36-char form, or
+// Nothing if malformed. MUST return a SkyMaybe to match the Sky signature — it
+// previously returned Ok/Err (a SkyResult), so a Maybe read tagged EVERY outcome
+// as Nothing and parse could never surface a parsed UUID (non-functional).
 func Uuid_parse(s any) any {
 	u, err := uuid.Parse(fmt.Sprintf("%v", s))
 	if err != nil {
-		return Err[any, any](ErrFfi("uuid.parse: " + err.Error()))
+		return Nothing[any]()
 	}
-	return Ok[any, any](u.String())
+	return Just[any](u.String())
 }
 
 // ═══════════════════════════════════════════════════════════
