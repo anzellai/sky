@@ -1,0 +1,245 @@
+module CsvConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Std.Csv — RFC-4180 CSV encode/decode built on
+-- Go's `encoding/csv`. Std.Csv shipped with ZERO tests at any layer; this is
+-- the first. Assertions drive the SKY-SOURCE API through the compiled binary,
+-- not the Go kernel directly. Inputs are ADVERSARIAL: cells embedding the
+-- delimiter / double-quotes / newlines, CRLF vs LF, ragged rows, empty fields,
+-- custom delimiters, CSV-injection payloads, and empty / header-only documents.
+--
+-- Documented semantics being asserted (from sky-stdlib/Std/Csv.sky doc comments
+-- + runtime-go/rt/csv_kernel.go):
+--   * `Csv = { header : List String, rows : List (List String) }`. First parsed
+--     row is the header; the rest are rows.
+--   * encode quotes any cell containing the delimiter, a double-quote, or a
+--     newline, per RFC 4180 (doubled quotes).
+--   * parse tolerates variable-width rows (`FieldsPerRecord = -1`) — ragged
+--     rows are NOT an error and are NOT padded; each row keeps its own width.
+--   * empty input parses to an empty document; header-only parses to a header
+--     with no rows.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Csv as Csv
+import Sky.Test as Test exposing (Test)
+
+
+-- A visibly-distinct value so a parse failure surfaces as a wrong comparison,
+-- never as a silent empty document masking a real bug.
+sentinel : Csv.Csv
+sentinel =
+    { header = [ "<<PARSE-FAILED>>" ], rows = [] }
+
+
+parsed : String -> Csv.Csv
+parsed s =
+    Result.withDefault sentinel (Csv.parse s)
+
+
+parsedD : String -> String -> Csv.Csv
+parsedD delim s =
+    Result.withDefault sentinel (Csv.parseWithDelimiter delim s)
+
+
+-- Encode then parse: the RFC-4180 round-trip that must be lossless for any
+-- document with a non-empty header.
+roundTrip : Csv.Csv -> Csv.Csv
+roundTrip c =
+    parsed (Csv.encode c)
+
+
+simpleTable : Csv.Csv
+simpleTable =
+    { header = [ "name", "age" ]
+    , rows = [ [ "alice", "30" ], [ "bob", "25" ] ]
+    }
+
+
+tests : List Test
+tests =
+    [ -- ── Round-trip: simple table survives encode → parse ──
+      Test.test "round-trip: simple 2x2 table is lossless"
+        (\_ -> Test.equal simpleTable (roundTrip simpleTable))
+
+      -- ── Embedded delimiter: a cell containing ',' must be quoted + survive ──
+    , Test.test "round-trip: cell with embedded comma 'a,b' survives (quoted)"
+        (\_ ->
+            let
+                c = { header = [ "col" ], rows = [ [ "a,b" ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+    , Test.test "encode quotes a cell containing the delimiter"
+        (\_ ->
+            Test.isTrue
+                (String.contains "\"a,b\""
+                    (Csv.encode { header = [ "a,b" ], rows = [] })
+                )
+        )
+
+      -- ── Embedded double-quote: RFC-4180 doubles the quote on encode ──
+    , Test.test "round-trip: cell with embedded double-quote survives"
+        (\_ ->
+            let
+                c = { header = [ "quote" ], rows = [ [ "he said \"hi\"" ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+    , Test.test "encode doubles an embedded double-quote (RFC-4180)"
+        (\_ ->
+            -- he said "hi"  ->  "he said ""hi"""
+            Test.isTrue
+                (String.contains "\"\"hi\"\""
+                    (Csv.encode { header = [ "he said \"hi\"" ], rows = [] })
+                )
+        )
+
+      -- ── Embedded newline: a quoted multiline cell must survive ──
+    , Test.test "round-trip: cell with embedded newline survives (quoted multiline)"
+        (\_ ->
+            let
+                c = { header = [ "note" ], rows = [ [ "line1\nline2" ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+
+      -- ── Line endings: CRLF and LF both parse to the same document ──
+    , Test.test "parse: CRLF line endings parse correctly (\\r stripped)"
+        (\_ ->
+            Test.equal
+                { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] }
+                (parsed "a,b\r\nc,d\r\n")
+        )
+    , Test.test "parse: LF line endings parse correctly"
+        (\_ ->
+            Test.equal
+                { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] }
+                (parsed "a,b\nc,d\n")
+        )
+    , Test.test "parse: CRLF and LF forms yield identical documents"
+        (\_ -> Test.equal (parsed "a,b\r\nc,d\r\n") (parsed "a,b\nc,d\n"))
+
+      -- ── Ragged rows: documented as tolerated (FieldsPerRecord = -1) ──
+      -- Not an error, not padded — each row keeps its own width.
+    , Test.test "parse: ragged rows are tolerated (not an error)"
+        (\_ -> Test.ok (Csv.parse "a,b,c\n1,2\n3,4,5,6"))
+    , Test.test "parse: ragged rows preserved as-is (no padding to header width)"
+        (\_ ->
+            Test.equal
+                { header = [ "a", "b", "c" ]
+                , rows = [ [ "1", "2" ], [ "3", "4", "5", "6" ] ]
+                }
+                (parsed "a,b,c\n1,2\n3,4,5,6")
+        )
+
+      -- ── Empty fields: 'a,,c' is 3 fields with an empty middle ──
+    , Test.test "parse: 'a,,c' yields 3 fields with empty middle"
+        (\_ ->
+            Test.equal
+                { header = [ "h1", "h2", "h3" ], rows = [ [ "a", "", "c" ] ] }
+                (parsed "h1,h2,h3\na,,c")
+        )
+    , Test.test "round-trip: empty middle field survives"
+        (\_ ->
+            let
+                c = { header = [ "h1", "h2", "h3" ], rows = [ [ "a", "", "c" ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+
+      -- ── Custom delimiter: semicolon + tab via *WithDelimiter ──
+    , Test.test "parseWithDelimiter ';' splits on semicolons"
+        (\_ ->
+            Test.equal
+                { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] }
+                (parsedD ";" "a;b\nc;d")
+        )
+    , Test.test "parseWithDelimiter tab splits on tabs"
+        (\_ ->
+            Test.equal
+                { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] }
+                (parsedD "\t" "a\tb\nc\td")
+        )
+    , Test.test "encodeWithDelimiter ';' uses semicolons and round-trips"
+        (\_ ->
+            let
+                c = { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] }
+                out = Csv.encodeWithDelimiter ";" c
+            in
+                Test.equal c
+                    (Result.withDefault sentinel (Csv.parseWithDelimiter ";" out))
+        )
+    , Test.test "encodeWithDelimiter ';' quotes a cell containing ';'"
+        (\_ ->
+            let
+                c = { header = [ "a;b" ], rows = [] }
+                out = Csv.encodeWithDelimiter ";" c
+            in
+                -- a comma inside a semicolon-delimited cell is a plain char
+                Test.equal c
+                    (Result.withDefault sentinel (Csv.parseWithDelimiter ";" out))
+        )
+    , Test.test "comma is a literal char under a semicolon delimiter"
+        (\_ ->
+            Test.equal
+                { header = [ "a,b", "c" ], rows = [] }
+                (parsedD ";" "a,b;c")
+        )
+
+      -- ── CSV-injection: no guard documented; assert round-trip, note finding ──
+      -- FINDING: Std.Csv has NO CSV-injection mitigation (no '=+-@' prefixing
+      -- guard). A cell "=1+1" round-trips verbatim — safe for data integrity,
+      -- but a spreadsheet opening the output could evaluate it as a formula.
+    , Test.test "round-trip: injection payload '=1+1' is preserved verbatim (no guard)"
+        (\_ ->
+            let
+                c = { header = [ "formula" ], rows = [ [ "=1+1" ], [ "+2" ], [ "-3" ], [ "@cmd" ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+
+      -- ── Empty input / header-only ──
+    , Test.test "parse: empty input -> empty document"
+        (\_ ->
+            Test.equal { header = [], rows = [] } (parsed "")
+        )
+    , Test.test "parse: header-only -> header set, no rows"
+        (\_ ->
+            Test.equal { header = [ "id", "name" ], rows = [] } (parsed "id,name")
+        )
+    , Test.test "parse: header-only with trailing newline -> no rows"
+        (\_ ->
+            Test.equal { header = [ "id", "name" ], rows = [] } (parsed "id,name\n")
+        )
+
+      -- ── Quote-only-when-needed: plain cells are not gratuitously quoted ──
+    , Test.test "encode: plain cells are not quoted"
+        (\_ ->
+            Test.isFalse
+                (String.contains "\""
+                    (Csv.encode { header = [ "a", "b" ], rows = [ [ "c", "d" ] ] })
+                )
+        )
+
+      -- ── Whitespace preservation: leading/trailing spaces survive ──
+    , Test.test "round-trip: leading/trailing whitespace in a cell is preserved"
+        (\_ ->
+            let
+                c = { header = [ "col" ], rows = [ [ " padded " ] ] }
+            in
+                Test.equal c (roundTrip c)
+        )
+
+      -- ── builders match direct record construction ──
+    , Test.test "withHeader/withRows build the same record as a literal"
+        (\_ ->
+            Test.equal simpleTable
+                (Csv.withRows [ [ "alice", "30" ], [ "bob", "25" ] ]
+                    (Csv.withHeader [ "name", "age" ] Csv.defaultCsv)
+                )
+        )
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

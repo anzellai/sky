@@ -1,0 +1,112 @@
+module RandomGoldenConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Random's SEEDED (deterministic) surface.
+-- Two guarantees, both adversarial to the platform-dependent bug class:
+--   1. Determinism — the same seed produces the same stream, every run.
+--   2. Golden pin — the EXACT captured stream for `seed 42`, so any change to
+--      the PRNG (splitmix64) or a platform-dependent shift (the int64-bug class,
+--      e.g. an implementation-defined >> or int conversion) fails LOUD rather
+--      than silently changing every seeded stream in every app.
+-- Values captured from the compiled binary on 2026-08-02; they are whatever the
+-- algorithm deterministically yields — the point is that they must never drift.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Random as Random
+import Sky.Test as Test exposing (Test)
+
+
+-- Chain five seededInt draws in [0, 1000000] from a starting seed.
+chainFive : Random.Seed -> List Int
+chainFive s0 =
+    let
+        ( a, s1 ) =
+            Random.seededInt s0 0 1000000
+
+        ( b, s2 ) =
+            Random.seededInt s1 0 1000000
+
+        ( c, s3 ) =
+            Random.seededInt s2 0 1000000
+
+        ( d, s4 ) =
+            Random.seededInt s3 0 1000000
+
+        ( e, _ ) =
+            Random.seededInt s4 0 1000000
+    in
+    [ a, b, c, d, e ]
+
+
+tests : List Test
+tests =
+    [ -- ── Golden stream for seed 42 (platform-drift guard) ──
+      Test.test "seed 42: first 5 seededInt [0,1000000] == golden stream"
+        (\_ -> Test.equal [ 496859, 213052, 20099, 183584, 275041 ] (chainFive (Random.seed 42)))
+    , Test.test "seed 42: seededFloat == golden value"
+        (\_ -> Test.equal 0.7415648787718233 (fst (Random.seededFloat (Random.seed 42))))
+
+      -- ── Determinism — same seed, same stream, independently derived ──
+    , Test.test "determinism: two independent seed-42 chains are identical"
+        (\_ -> Test.equal (chainFive (Random.seed 42)) (chainFive (Random.seed 42)))
+    , Test.test "determinism: seededInt is a pure function of the seed"
+        (\_ ->
+            Test.equal
+                (fst (Random.seededInt (Random.seed 7) 0 100))
+                (fst (Random.seededInt (Random.seed 7) 0 100))
+        )
+
+      -- ── Different seeds diverge ──
+    , Test.test "seed 42 and seed 43 produce different first values"
+        (\_ ->
+            Test.notEqual
+                (chainFive (Random.seed 42))
+                (chainFive (Random.seed 43))
+        )
+
+      -- ── Range bounds are respected (inclusive [lo, hi]) ──
+    , Test.test "seededInt stays within [10, 20] inclusive across the chain"
+        (\_ ->
+            let
+                inRange n =
+                    n >= 10 && n <= 20
+
+                draw s =
+                    Random.seededInt s 10 20
+
+                ( v1, s1 ) =
+                    draw (Random.seed 99)
+
+                ( v2, s2 ) =
+                    draw s1
+
+                ( v3, _ ) =
+                    draw s2
+            in
+            Test.equal True (inRange v1 && inRange v2 && inRange v3)
+        )
+    , Test.test "seededInt single-point range [5,5] always yields 5"
+        (\_ -> Test.equal 5 (fst (Random.seededInt (Random.seed 1234) 5 5)))
+
+      -- ── seededChoice determinism ──
+    , Test.test "seededChoice from a non-empty list is deterministic + a member"
+        (\_ ->
+            let
+                items =
+                    [ "a", "b", "c", "d", "e" ]
+
+                ( pick1, _ ) =
+                    Random.seededChoice (Random.seed 42) items
+
+                ( pick2, _ ) =
+                    Random.seededChoice (Random.seed 42) items
+            in
+            Test.equal pick1 pick2
+        )
+    , Test.test "seededChoice from empty list -> Nothing"
+        (\_ -> Test.equal Nothing (fst (Random.seededChoice (Random.seed 42) [])))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

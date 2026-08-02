@@ -1,0 +1,254 @@
+module TimeConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Std.Time (IANA calendar helpers) + Sky.Core.Time
+-- (formatting/arithmetic). This is a PLATFORM / tzdata-dependent boundary
+-- class — the Go kernel embeds `time/tzdata` and leans on Go's `time.Date`
+-- normalisation, so a correct-looking kernel can still clamp wrong, carry the
+-- wrong year, mis-number an ISO week, or fail to reject a bad zone. Only
+-- happy-path Go unit tests exist; these assertions are ADVERSARIAL and drive
+-- the SKY-SOURCE API through the compiled binary.
+--
+-- A pure `sky test` suite cannot call the Task-typed clock (`now`/`unixMillis`/
+-- `sleep`/`every`), so every input is a FIXED epoch-millis Int built purely via
+-- `Time.fromParts "UTC" ...`. Field-level expectations (extracted back with the
+-- `*Utc` companions) keep the expected values easy to verify by hand — no giant
+-- epoch literals to mis-transcribe.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Time as T
+import Sky.Core.Time as CTime
+import Sky.Test as Test exposing (Test)
+
+
+-- Build a UTC epoch-ms from calendar parts. Adversarial suites assume the
+-- literals are well-formed, so a construction failure surfaces as a wrong
+-- field assertion (via the -1 sentinel), not a silent zero masking a bug.
+mk : Int -> Int -> Int -> Int -> Int -> Int -> Int
+mk y m d h mi s =
+    Result.withDefault (-1) (T.fromParts "UTC" y m d h mi s)
+
+
+-- Midnight-UTC epoch-ms for a Y-M-D.
+mkd : Int -> Int -> Int -> Int
+mkd y m d =
+    mk y m d 0 0 0
+
+
+tests : List Test
+tests =
+    [ -- ── Sanity anchors: fromParts "UTC" is the ground truth we build on ──
+      Test.test "fromParts UTC epoch anchor: 1970-01-01T00:00:00Z == 0"
+        (\_ -> Test.equal 0 (mkd 1970 1 1))
+    , Test.test "fromParts UTC: 1970-01-01T00:00:01Z == 1000 ms"
+        (\_ -> Test.equal 1000 (mk 1970 1 1 0 0 1))
+    , Test.test "fromParts UTC pre-epoch: 1969-12-31T00:00:00Z == -86400000 ms"
+        (\_ -> Test.equal (-86400000) (mkd 1969 12 31))
+    , Test.test "fromParts empty zone falls back to UTC (loadZone contract) -> Ok"
+        (\_ -> Test.ok (T.fromParts "" 2021 1 1 0 0 0))
+
+      -- ── addMonths month-end CLAMP (the documented headline behaviour) ──
+      -- Jan 31 + 1 month must land on end-of-Feb, NOT Mar 2/3.
+    , Test.test "addMonths clamp: Jan 31 2023 + 1mo -> Feb (month 2)"
+        (\_ -> Test.equal 2 (T.monthUtc (T.addMonths 1 (mkd 2023 1 31))))
+    , Test.test "addMonths clamp: Jan 31 2023 + 1mo -> day 28 (2023 non-leap)"
+        (\_ -> Test.equal 28 (T.dayUtc (T.addMonths 1 (mkd 2023 1 31))))
+    , Test.test "addMonths clamp: Jan 31 2024 + 1mo -> day 29 (2024 leap)"
+        (\_ -> Test.equal 29 (T.dayUtc (T.addMonths 1 (mkd 2024 1 31))))
+    , Test.test "addMonths clamp: Jan 31 2024 + 1mo -> Feb (month 2), year 2024"
+        (\_ -> Test.equal True
+            (T.monthUtc (T.addMonths 1 (mkd 2024 1 31)) == 2
+                && T.yearUtc (T.addMonths 1 (mkd 2024 1 31)) == 2024))
+    , Test.test "addMonths clamp: Mar 31 + 1mo -> Apr 30 (30-day month)"
+        (\_ -> Test.equal 30 (T.dayUtc (T.addMonths 1 (mkd 2023 3 31))))
+    , Test.test "addMonths forward year-carry: Dec 15 2023 + 1mo -> Jan 2024"
+        (\_ -> Test.equal True
+            (T.monthUtc (T.addMonths 1 (mkd 2023 12 15)) == 1
+                && T.yearUtc (T.addMonths 1 (mkd 2023 12 15)) == 2024))
+
+      -- ── addMonths NEGATIVE (back-dating; months : Int, not Nat) ──
+      -- Subtracting a month across a year boundary must decrement the year.
+    , Test.test "addMonths back-carry: Jan 15 2023 - 1mo -> Dec 2022 (month 12)"
+        (\_ -> Test.equal 12 (T.monthUtc (T.addMonths (-1) (mkd 2023 1 15))))
+    , Test.test "addMonths back-carry: Jan 15 2023 - 1mo -> YEAR 2022"
+        (\_ -> Test.equal 2022 (T.yearUtc (T.addMonths (-1) (mkd 2023 1 15))))
+    , Test.test "addMonths back-carry: Jun 15 2023 - 12mo -> Jun 2022"
+        (\_ -> Test.equal 2022 (T.yearUtc (T.addMonths (-12) (mkd 2023 6 15))))
+
+      -- ── addYears clamp on Feb 29 ──
+    , Test.test "addYears clamp: Feb 29 2024 + 1yr -> Feb 28 2025 (day 28)"
+        (\_ -> Test.equal 28 (T.dayUtc (T.addYears 1 (mkd 2024 2 29))))
+    , Test.test "addYears clamp: Feb 29 2024 + 1yr -> month 2, year 2025"
+        (\_ -> Test.equal True
+            (T.monthUtc (T.addYears 1 (mkd 2024 2 29)) == 2
+                && T.yearUtc (T.addYears 1 (mkd 2024 2 29)) == 2025))
+    , Test.test "addYears no-clamp: Feb 29 2024 + 4yr -> Feb 29 2028 (day 29)"
+        (\_ -> Test.equal 29 (T.dayUtc (T.addYears 4 (mkd 2024 2 29))))
+    , Test.test "addYears back: Feb 29 2024 - 1yr -> Feb 28 2023 (day 28)"
+        (\_ -> Test.equal 28 (T.dayUtc (T.addYears (-1) (mkd 2024 2 29))))
+
+      -- ── isLeapYear: the century rule (÷100 not-leap unless ÷400) ──
+    , Test.test "isLeapYear 2000 -> True (÷400)"
+        (\_ -> Test.isTrue (T.isLeapYear 2000))
+    , Test.test "isLeapYear 1900 -> False (÷100, not ÷400 — the century trap)"
+        (\_ -> Test.isFalse (T.isLeapYear 1900))
+    , Test.test "isLeapYear 2100 -> False (÷100, not ÷400)"
+        (\_ -> Test.isFalse (T.isLeapYear 2100))
+    , Test.test "isLeapYear 2024 -> True (÷4)"
+        (\_ -> Test.isTrue (T.isLeapYear 2024))
+    , Test.test "isLeapYear 2023 -> False"
+        (\_ -> Test.isFalse (T.isLeapYear 2023))
+
+      -- ── daysInMonth: Feb across leap/century, plus 30/31 months ──
+    , Test.test "daysInMonth 2024 2 -> 29 (leap Feb)"
+        (\_ -> Test.equal 29 (T.daysInMonth 2024 2))
+    , Test.test "daysInMonth 2023 2 -> 28 (non-leap Feb)"
+        (\_ -> Test.equal 28 (T.daysInMonth 2023 2))
+    , Test.test "daysInMonth 2000 2 -> 29 (÷400 leap)"
+        (\_ -> Test.equal 29 (T.daysInMonth 2000 2))
+    , Test.test "daysInMonth 1900 2 -> 28 (century non-leap)"
+        (\_ -> Test.equal 28 (T.daysInMonth 1900 2))
+    , Test.test "daysInMonth 2024 4 -> 30 (April)"
+        (\_ -> Test.equal 30 (T.daysInMonth 2024 4))
+    , Test.test "daysInMonth 2024 12 -> 31 (December)"
+        (\_ -> Test.equal 31 (T.daysInMonth 2024 12))
+
+      -- ── dayOfWeek ISO numbering: Mon=1 .. Sun=7 (NOT Go's Sun=0) ──
+    , Test.test "dayOfWeek: 2021-01-01 (Friday) -> 5 (ISO)"
+        (\_ -> Test.equal 5 (T.dayOfWeekUtc (mkd 2021 1 1)))
+    , Test.test "dayOfWeek: 2021-01-03 (Sunday) -> 7 (ISO, not 0)"
+        (\_ -> Test.equal 7 (T.dayOfWeekUtc (mkd 2021 1 3)))
+    , Test.test "dayOfWeek: 2021-01-04 (Monday) -> 1 (ISO)"
+        (\_ -> Test.equal 1 (T.dayOfWeekUtc (mkd 2021 1 4)))
+
+      -- ── isWeekend ──
+    , Test.test "isWeekend: 2021-01-02 (Saturday) -> True"
+        (\_ -> Test.isTrue (T.isWeekendUtc (mkd 2021 1 2)))
+    , Test.test "isWeekend: 2021-01-03 (Sunday) -> True"
+        (\_ -> Test.isTrue (T.isWeekendUtc (mkd 2021 1 3)))
+    , Test.test "isWeekend: 2021-01-01 (Friday) -> False"
+        (\_ -> Test.isFalse (T.isWeekendUtc (mkd 2021 1 1)))
+
+      -- ── weekOfYear ISO-8601 boundaries (the classic year-straddle trap) ──
+      -- 2021-01-01 (Fri) belongs to ISO week 53 of 2020.
+    , Test.test "weekOfYear ISO: 2021-01-01 -> week 53 (belongs to 2020)"
+        (\_ -> Test.equal 53 (T.weekOfYearUtc (mkd 2021 1 1)))
+    , Test.test "weekOfYear ISO: 2020-12-31 (Thu) -> week 53"
+        (\_ -> Test.equal 53 (T.weekOfYearUtc (mkd 2020 12 31)))
+    , Test.test "weekOfYear ISO: 2021-01-04 (first Monday) -> week 1"
+        (\_ -> Test.equal 1 (T.weekOfYearUtc (mkd 2021 1 4)))
+
+      -- ── dayOfYear (1..366) ──
+    , Test.test "dayOfYear: 2021-01-01 -> 1"
+        (\_ -> Test.equal 1 (T.dayOfYearUtc (mkd 2021 1 1)))
+    , Test.test "dayOfYear: 2021-12-31 -> 365 (non-leap)"
+        (\_ -> Test.equal 365 (T.dayOfYearUtc (mkd 2021 12 31)))
+    , Test.test "dayOfYear: 2024-12-31 -> 366 (leap)"
+        (\_ -> Test.equal 366 (T.dayOfYearUtc (mkd 2024 12 31)))
+
+      -- ── Period boundaries: start* truncates, end* is last-ms of period ──
+    , Test.test "startOfDay: 2023-06-15 13:45:30 -> 2023-06-15 00:00:00"
+        (\_ -> Test.equal (mkd 2023 6 15) (T.startOfDayUtc (mk 2023 6 15 13 45 30)))
+    , Test.test "startOfMonth: mid-June -> 2023-06-01 00:00:00"
+        (\_ -> Test.equal (mkd 2023 6 1) (T.startOfMonthUtc (mk 2023 6 15 13 45 30)))
+    , Test.test "startOfYear: mid-June -> 2023-01-01 00:00:00"
+        (\_ -> Test.equal (mkd 2023 1 1) (T.startOfYearUtc (mk 2023 6 15 13 45 30)))
+    , Test.test "startOfWeek (Mon start): 2021-01-01 (Fri) -> 2020-12-28 (Mon)"
+        (\_ -> Test.equal (mkd 2020 12 28) (T.startOfWeekUtc (mkd 2021 1 1)))
+    , Test.test "endOfDay: 2023-06-15 -> 2023-06-16 00:00 minus 1ms"
+        (\_ -> Test.equal (mkd 2023 6 16 - 1) (T.endOfDayUtc (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfMonth: June 2023 -> 2023-07-01 00:00 minus 1ms (30-day)"
+        (\_ -> Test.equal (mkd 2023 7 1 - 1) (T.endOfMonthUtc (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfMonth: Feb 2024 (leap) -> 2024-03-01 00:00 minus 1ms"
+        (\_ -> Test.equal (mkd 2024 3 1 - 1) (T.endOfMonthUtc (mk 2024 2 10 8 0 0)))
+    , Test.test "endOfYear: 2023 -> 2024-01-01 00:00 minus 1ms"
+        (\_ -> Test.equal (mkd 2024 1 1 - 1) (T.endOfYearUtc (mk 2023 6 15 13 45 30)))
+
+      -- ── diff helpers (a - b), including negative direction ──
+    , Test.test "diffDays: Jan 10 - Jan 1 2023 -> 9"
+        (\_ -> Test.equal 9 (T.diffDays (mkd 2023 1 10) (mkd 2023 1 1)))
+    , Test.test "diffHours: 9 days -> 216"
+        (\_ -> Test.equal 216 (T.diffHours (mkd 2023 1 10) (mkd 2023 1 1)))
+    , Test.test "diffMinutes: 9 days -> 12960"
+        (\_ -> Test.equal 12960 (T.diffMinutes (mkd 2023 1 10) (mkd 2023 1 1)))
+    , Test.test "diffSeconds: 9 days -> 777600"
+        (\_ -> Test.equal 777600 (T.diffSeconds (mkd 2023 1 10) (mkd 2023 1 1)))
+    , Test.test "diffDays negative direction: Jan 1 - Jan 10 -> -9"
+        (\_ -> Test.equal (-9) (T.diffDays (mkd 2023 1 1) (mkd 2023 1 10)))
+
+      -- ── Bad / unknown zone MUST Err (Result-returning zoned fns) ──
+    , Test.test "year with bogus zone -> Err"
+        (\_ -> Test.err (T.year "Not/AZone" 0))
+    , Test.test "startOfDay with bogus zone -> Err"
+        (\_ -> Test.err (T.startOfDay "Bogus/Zone" 0))
+    , Test.test "fromParts with bogus zone -> Err"
+        (\_ -> Test.err (T.fromParts "Bad/Zone" 2021 1 1 0 0 0))
+    , Test.test "year with valid zone -> Ok"
+        (\_ -> Test.ok (T.year "America/New_York" 0))
+
+      -- ── *Utc companions are infallible (never touch the fallible path) ──
+    , Test.test "yearUtc of epoch 0 -> 1970 (infallible)"
+        (\_ -> Test.equal 1970 (T.yearUtc 0))
+
+      -- ── fromParts out-of-range field validation -> Err ──
+    , Test.test "fromParts rejects month 13 -> Err"
+        (\_ -> Test.err (T.fromParts "UTC" 2021 13 1 0 0 0))
+    , Test.test "fromParts rejects day 32 -> Err"
+        (\_ -> Test.err (T.fromParts "UTC" 2021 1 32 0 0 0))
+    , Test.test "fromParts rejects hour 24 -> Err"
+        (\_ -> Test.err (T.fromParts "UTC" 2021 1 1 24 0 0))
+    , Test.test "fromParts rejects minute 60 -> Err"
+        (\_ -> Test.err (T.fromParts "UTC" 2021 1 1 0 60 0))
+    , Test.test "fromParts accepts second 0 boundary -> Ok"
+        (\_ -> Test.ok (T.fromParts "UTC" 2021 1 1 0 0 0))
+
+      -- ── DST: America/New_York offset + abbreviation change (accounts for DST) ──
+      -- 2021 US DST window: Mar 14 -> Nov 7.
+    , Test.test "zoneOffset NY winter (2021-01-01) -> -18000s (EST, UTC-5)"
+        (\_ -> Test.equal (Ok (-18000)) (T.zoneOffset "America/New_York" (mk 2021 1 1 12 0 0)))
+    , Test.test "zoneOffset NY summer (2021-07-01) -> -14400s (EDT, UTC-4)"
+        (\_ -> Test.equal (Ok (-14400)) (T.zoneOffset "America/New_York" (mk 2021 7 1 12 0 0)))
+    , Test.test "zoneName NY winter -> EST"
+        (\_ -> Test.equal (Ok "EST") (T.zoneName "America/New_York" (mk 2021 1 1 12 0 0)))
+    , Test.test "zoneName NY summer -> EDT"
+        (\_ -> Test.equal (Ok "EDT") (T.zoneName "America/New_York" (mk 2021 7 1 12 0 0)))
+    , Test.test "zoneOffset UTC -> 0"
+        (\_ -> Test.equal (Ok 0) (T.zoneOffset "UTC" (mk 2021 7 1 12 0 0)))
+    , Test.test "DST spring-forward gap hour (2021-03-14 02:30 NY) does not error -> Ok"
+        (\_ -> Test.ok (T.fromParts "America/New_York" 2021 3 14 2 30 0))
+
+      -- ── Sky.Core.Time formatting of a known UTC epoch (deterministic) ──
+    , Test.test "formatISO8601: 2021-01-01T00:00:00Z"
+        (\_ -> Test.equal "2021-01-01T00:00:00.000Z" (CTime.formatISO8601 (mkd 2021 1 1)))
+    , Test.test "formatRFC3339: whole-second omits fraction"
+        (\_ -> Test.equal "2021-01-01T00:00:00Z" (CTime.formatRFC3339 (mkd 2021 1 1)))
+    , Test.test "formatHTTP: RFC 1123 GMT date header (2021-01-01 is Fri)"
+        (\_ -> Test.equal "Fri, 01 Jan 2021 00:00:00 GMT" (CTime.formatHTTP (mkd 2021 1 1)))
+    , Test.test "format custom Go layout: 2021-03-14 15:30:45"
+        (\_ -> Test.equal "2021-03-14 15:30:45" (CTime.format "2006-01-02 15:04:05" (mk 2021 3 14 15 30 45)))
+      -- timeString is documented "Pure formatting" -> must be UTC-deterministic,
+      -- NOT host-local (regression guard: the kernel omitted .UTC(), so output
+      -- varied by the host timezone — a determinism hazard on a pure function).
+    , Test.test "timeString: UTC HH:MM:SS, host-timezone independent"
+        (\_ -> Test.equal "15:30:45" (CTime.timeString (mk 2021 3 14 15 30 45)))
+    , Test.test "timeString: midnight epoch -> 00:00:00 (UTC)"
+        (\_ -> Test.equal "00:00:00" (CTime.timeString (mkd 2021 1 1)))
+    , Test.test "formatISO8601 pre-epoch: 1969-12-31T00:00:00.000Z"
+        (\_ -> Test.equal "1969-12-31T00:00:00.000Z" (CTime.formatISO8601 (mkd 1969 12 31)))
+    , Test.test "formatISO8601 large future: 2100-01-01"
+        (\_ -> Test.equal "2100-01-01T00:00:00.000Z" (CTime.formatISO8601 (mkd 2100 1 1)))
+
+      -- ── addMillis / diffMillis round-trip (incl. negative epoch) ──
+    , Test.test "addMillis: delta 5000 to 1000 -> 6000"
+        (\_ -> Test.equal 6000 (CTime.addMillis 5000 1000))
+    , Test.test "diffMillis: 6000 - 1000 -> 5000"
+        (\_ -> Test.equal 5000 (CTime.diffMillis 6000 1000))
+    , Test.test "addMillis/diffMillis round-trip over a large epoch"
+        (\_ -> Test.equal (mkd 2100 1 1) (CTime.diffMillis (CTime.addMillis 999 (mkd 2100 1 1)) 999))
+    , Test.test "addMillis over pre-epoch stays consistent"
+        (\_ -> Test.equal (mkd 1969 12 31 + 1000) (CTime.addMillis 1000 (mkd 1969 12 31)))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

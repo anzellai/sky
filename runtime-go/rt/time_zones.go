@@ -94,10 +94,16 @@ func init() {
 		}
 		t := time.UnixMilli(int64(AsInt(args[1]))).UTC()
 		y, m, d := t.Date()
-		newM := int(m) + AsInt(args[0])
-		// Normalise into 1..12 + year carry.
-		ny := y + (newM-1)/12
-		nm := time.Month(((newM-1)%12+12)%12 + 1)
+		// Derive year + month from ONE floored total-month index so a backward
+		// crossing carries the year correctly. The old code floored the month
+		// (`((newM-1)%12+12)%12`) but computed the year with Go's TRUNCATING
+		// integer division (`(newM-1)/12`), which for a small negative newM-1
+		// (e.g. Jan + -1 month -> newM-1 == -1) gives 0 instead of -1 and
+		// silently dropped the year decrement. `total` is always positive for
+		// realistic years, so `/` and `%` floor correctly.
+		total := y*12 + (int(m) - 1) + AsInt(args[0])
+		ny := total / 12
+		nm := time.Month(total%12 + 1)
 		// Clamp day to last day of target month.
 		lastDay := daysInMonthFor(ny, nm)
 		if d > lastDay {

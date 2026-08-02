@@ -6037,7 +6037,11 @@ func Time_now(_ any) any {
 }
 
 func Time_timeString(ms any) any {
-	return time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05")
+	// Pin .UTC(): timeString is documented "Pure formatting" (Int -> String), so
+	// it must be deterministic. Without .UTC() the output used the host's local
+	// timezone — a host-dependent result from a "pure" function, and inconsistent
+	// with every other formatter (formatISO8601/RFC3339/HTTP/format all pin UTC).
+	return time.Unix(int64(AsInt(ms))/1000, 0).UTC().Format("15:04:05")
 }
 
 // Typed companions — same shape as the any-path. Task-shaped helpers

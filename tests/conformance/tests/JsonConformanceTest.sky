@@ -153,6 +153,39 @@ tests =
             (Decode.decodeString Decode.int
                 (Encode.encode 0 (Encode.int 1000000000000))))
 
+    -- ─── int64 boundary (the v0.19.3 platform-dependent bug's own module) ───
+    -- Regression guard for the JSON-number-as-float64 corruption: integers
+    -- beyond 2^53 lost precision, and max int64 was platform-dependent
+    -- (float64->int64 overflow is implementation-defined). Decode.int must now
+    -- round-trip the full int64 range losslessly via json.Number's exact text.
+    , Test.test "int: 2^53+1 round-trips exactly (beyond float64 exact-int limit)" (\_ ->
+        Test.equal (Ok 9007199254740993)
+            (Decode.decodeString Decode.int
+                (Encode.encode 0 (Encode.int 9007199254740993))))
+    , Test.test "int: max int64 round-trips exactly on every platform" (\_ ->
+        Test.equal (Ok 9223372036854775807)
+            (Decode.decodeString Decode.int
+                (Encode.encode 0 (Encode.int 9223372036854775807))))
+    , Test.test "int: 2^63 (out of int64 range) -> Err (deterministic, not corruption)" (\_ ->
+        -- 9223372036854775808 as a bare Sky Int literal would overflow, so the
+        -- out-of-range value is fed as raw JSON text directly to the decoder.
+        Test.err (Decode.decodeString Decode.int "9223372036854775808"))
+    , Test.test "int: 1e400 (overflows to Inf) -> Err, never a garbage Int" (\_ ->
+        Test.err (Decode.decodeString Decode.int "1e400"))
+
+    -- ─── adversarial JSON structure ────────────────────────────────
+    , Test.test "duplicate object keys: last value wins (pinned behavior)" (\_ ->
+        Test.equal (Ok 2)
+            (Decode.decodeString (Decode.field "a" Decode.int) "{\"a\":1,\"a\":2}"))
+    , Test.test "unicode surrogate pair decodes to one code point (emoji)" (\_ ->
+        Test.equal (Ok 1)
+            (Result.map String.length
+                (Decode.decodeString Decode.string "\"\\uD83D\\uDE00\"")))
+    , Test.test "deeply-nested array parses without stack overflow (500 deep)" (\_ ->
+        Test.equal (Ok "ok")
+            (Decode.decodeString (Decode.succeed "ok")
+                (String.append (String.repeat 500 "[") (String.repeat 500 "]"))))
+
     -- ─── Pipeline: optional vs required ────────────────────────────
     , Test.test "pipeline: optional field absent -> default" (\_ ->
         Test.equal (Ok { name = "Ada", nick = "anon" })
