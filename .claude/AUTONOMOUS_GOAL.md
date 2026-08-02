@@ -135,3 +135,12 @@ per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
 - Plan: `docs/testing/coverage-hardening-plan.md`
 - Triggering bug fix: commit `e3c2dd70` (lossless int64 JSON round-trip)
 - Audit: 2026-08-02, 4-agent parallel coverage audit
+
+## ═══ ALL 5 TIERS JUDGE-VERIFIED (2026-08-02) — program complete ═══
+T1 (Judge✓ 18/18 conformance, 7 bugs) · T2 (CI-validated) · T3 (CI-validated:
+CORS/BasicAuth + Postgres + gob + browser e2e; bug #8, bug #11 the darraghstudio
+incident) · T4 (fmt + bug #9 sky-db + LSP diagnostics + verb smoke) · T5 (Judge✓:
+Math constants + codegen/lower snapshots + infer-sig snapshot + divergences
+bidirectional + welltyped differential fuzzer, which found D002 ctor-arg divergence).
+11 bugs fixed. Firestore removed. Remaining: final holistic milestone sweep +
+CHANGELOG → USER authorizes the ONE holistic release.
