@@ -216,3 +216,17 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test, 2nd platform)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # Platform parity for the emit + go-build regression class. The #164/#166
+      # alias-collision / record-update-field-drop bugs are gated only by these
+      # `project` integration tests (they run real `go build` on emitted Go), and
+      # the CLI golden set is the only runtime-output-correctness gate — both were
+      # Linux-only, so a macOS-specific codegen/runtime divergence (the very class
+      # the int64 bug belonged to) could ship green. Run them on the 2nd platform.
+      - name: Gate — project integration tests (go build regressions, 2nd platform)
+        run: cargo test -p project --locked
+      - name: Gate — golden (runtime-correctness CLI subset, 2nd platform)
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Gate — stdlib behavioral conformance (2nd platform)
+        run: |
+          cargo build --release -p sky --locked
+          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh

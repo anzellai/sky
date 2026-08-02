@@ -39,13 +39,13 @@ New `tests/conformance/tests/*.sky` suites, run by `scripts/conformance.sh` (alr
 - **T1.10 Math / Dict-Set / Regex / Uuid conformance** — NaN/Inf/round-half; toList ordering determinism (Live view-determinism depends on it); regex anchors/invalid-pattern/bounded-backtrack; uuid v4 bits + round-trip.
 
 ### Tier 2 — CI enforcement gaps (tests that EXIST but CI never runs, or run on one platform only)
-Cheap, high-value: wiring, not new tests.
+Cheap, high-value: wiring, not new tests. **DONE 2026-08-02** (Judge-pending).
 
-- **T2.1** Wire `scripts/example-sweep.sh` (FFI/Std.Db examples — skyvote/skychess) into `rust-ci.yml`. Today the entire Std.Db + `List (Dict String String)` + row-var-sharing class has NO automated CI gate (only a manual sweep).
-- **T2.2** macOS `macos-determinism` job runs only repro+coerce-floor+rt-tests. Add `cargo test -p project` (the #164/#166 `go build` regressions) + `build-run --shape cli --golden`. Today all go-build integration regressions are Linux-only.
-- **T2.3** Wire `verify-pubsub-multitab.mjs` (+ streaming) into `verify-all-web.sh` / `test-ci.sh` — they exist but no gate runs them.
-- **T2.4** `scripts/test-ci.sh` add `xtask fmt` + `xtask lsp` gates (local↔CI parity — today they only run in Actions).
-- **T2.5** Runtime-correctness for non-CLI shapes: a golden deterministic SSE-frame assertion for one Live example; a Tui model gob round-trip test (serialize→deserialize→assert-equal — roovo's bug class, currently no assertion).
+- **T2.1 ✅** Full `scripts/example-sweep.sh` (all examples incl. FFI/Std.Db/skyshop-Stripe) wired as a NIGHTLY workflow (`.github/workflows/nightly-sweep.yml`, cron + workflow_dispatch) — too slow for per-push, so nightly is the right home. The #164/#166 Std.Db-record shape itself is ALSO gated per-push by `cargo test -p project` (typecheck_gate does real `go build`), now on both platforms (see T2.2). (Note: the Std.Db examples are kernel-backed — no `sky add` — so they already build under the per-push live/http gates; the sweep adds the real-FFI clean-slate coverage.)
+- **T2.2 ✅** macOS `macos-determinism` job extended: `cargo test -p project` (#164/#166 go-build regressions), `build-run --shape cli --run --golden` (runtime-output correctness), AND `conformance` — so a macOS-vs-Linux stdlib divergence (the int64 class) is caught on BOTH platforms. Verified all three green on macOS locally.
+- **T2.3 → moved to T3** `verify-pubsub-multitab` wiring is a Sky.Live e2e concern; folded into Tier 3.
+- **T2.4 ✅** `scripts/test-ci.sh` brought to CI parity: added `fmt`/`s8`/`divergences`/`lsp` gates + `golden` + the behavioral `conformance` gate (was CI-only; it's the int64-class gate). Budget 1800→2700s.
+- **T2.5 → moved to T3** SSE-frame golden + cross-restart gob are Sky.Live runtime concerns; folded into Tier 3 (T3.2 cross-process gob already covers the restart class).
 
 ### Tier 3 — Production-incident e2e (the darraghstudio class)
 - **T3.1** Postgres session store real-engine round-trip via testcontainers (`//go:build integration`): Set→Get→Delete + `lastSeen` touch. Today Postgres — the store the prod shop runs on — is NEVER tested against a real engine, only its fail-loud branch.

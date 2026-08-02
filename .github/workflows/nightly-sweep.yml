@@ -1,0 +1,59 @@
+name: Nightly example sweep
+
+# The FULL clean-slate example sweep — every example under examples/ is wiped
+# (rm -rf sky-out .skycache .skydeps) and rebuilt from scratch, INCLUDING the
+# FFI / Std.Db / real-SDK examples (skyshop's 76k Stripe symbols, Fyne, etc.)
+# that the per-push Rust CI's build-run gate skips because their FFI surface
+# regeneration (`sky install`) is too slow for a per-push runner.
+#
+# This is the gate for the whole FFI + Std.Db + Dict-in-record class (the shape
+# behind the #164/#166 real-app regressions): the per-push CI gates "compiles +
+# byte-matches oracle" and the `project` integration tests gate the specific
+# #164/#166 shapes, but ONLY the sweep clean-builds every real example end to
+# end. Runs nightly (and on demand) so the expensive coverage exists without
+# slowing every push.
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # 06:00 UTC daily
+  workflow_dispatch: {} # manual trigger
+
+# Don't stack nightly runs; a newer run supersedes an in-flight one.
+concurrency:
+  group: nightly-sweep
+  cancel-in-progress: true
+
+jobs:
+  example-sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-sweep-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-sweep-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+      - name: Build sky binary
+        run: |
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          mkdir -p sky-out
+          cp rust/target/release/sky sky-out/sky
+          sky-out/sky --version
+      - name: Full example sweep (clean-slate build of every example, incl. FFI/Std.Db)
+        run: scripts/example-sweep.sh
