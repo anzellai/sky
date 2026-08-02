@@ -1,0 +1,42 @@
+-- divergence: D002-ctor-arg-compound-types code=E0001 rust=ACCEPT
+-- The Haskell oracle REJECTS this program at PARSE ([E0001]) — its
+-- constructor-argument grammar does not admit an inline tuple type
+-- `C (Int, String)` or record type `C { f : T }`. The Rust primary ACCEPTS,
+-- compiles, and RUNS it (verified end-to-end: prints 1 then "hi") — both are
+-- standard Elm, so Rust is the Elm-conformant side and the retired oracle is
+-- simply too strict here. Discovered by the `xtask welltyped` differential
+-- fuzzer. See known-divergences.toml D002.
+module DivCtorArgCompound exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type Pair
+    = P (Int, String)
+
+
+type Boxed
+    = B { label : String }
+
+
+first : Pair -> Int
+first p =
+    case p of
+        P ( a, _ ) ->
+            a
+
+
+lbl : Boxed -> String
+lbl b =
+    case b of
+        B rec ->
+            rec.label
+
+
+main =
+    let
+        _ =
+            println (String.fromInt (first (P ( 1, "x" ))))
+    in
+    println (lbl (B { label = "hi" }))

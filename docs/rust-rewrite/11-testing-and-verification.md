@@ -282,6 +282,23 @@ This already exists in two tiers and is reused directly:
   (source + Go + logs) preserved on first failure. Backend-agnostic: point
   `SKY=<rust-sky>` at it. Criterion-8 grade: ≥10k clean before a milestone
   closes.
+- **Tier A′ — well-typed DIFFERENTIAL (`cargo run -p xtask -- welltyped`).**
+  The Rust-side `WellTypedFuzzerSpec` analog. A bounded, deterministic,
+  type-directed builder constructs well-typed Sky programs (build a typed term →
+  pretty-print → valid by construction), then runs BOTH the Rust compiler AND the
+  Haskell oracle in check-only mode (verdict read at the type-check boundary —
+  Rust's `-- Generating Go` / the oracle's `Types OK`, both strictly before
+  codegen / `go build`, so a check costs type-check time, not build time) and
+  asserts they AGREE on ACCEPT/REJECT for every program, modulo the ledgered
+  `known-divergences.toml` entries. This closes the accept/reject-parity gap on
+  GENERATED valid programs that neither `xtask fuzz` (mutates corpus → mostly
+  INVALID, asserts only no-panic + determinism) nor the accept-parity corpus gate
+  covers. Deterministic: a fixed base seed → identical programs + verdicts
+  run-to-run. LOCAL / release-only, exactly like `xtask divergences` — it shells
+  the oracle, which is not built in CI; absent oracle → the gate SKIPS (still
+  verifying generator determinism). `--count=N` (default 120) bounds it;
+  `--emit-only` prints the programs without a compiler. Point it at explicit
+  binaries with `SKY_RUST_BIN` / `SKY_ORACLE_BIN`.
 
 ### 5b. Parser fuzzer → no crash + recovery invariant
 
@@ -364,6 +381,8 @@ it — **both** compilers build in CI (the oracle stays live under
 | Runtime web | `scripts/verify-all-web.sh` (macOS: Playwright) | yes | §1 tier-2/3 |
 | Runtime CLI/TUI | `scripts/verify-cli.sh` + `scripts/example-e2e.sh` | yes | §1 |
 | LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 17/17 |
+| Fuzz (robustness + determinism) | `cargo run -p xtask -- fuzz` | yes | §5 — mutated-corpus no-panic + L4 determinism |
+| Well-typed differential (local/release) | `cargo run -p xtask -- welltyped` | no (oracle absent in CI) | §5a Tier-A′ — generated-valid-program accept/reject parity vs oracle |
 | Fuzz (nightly) | `fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser | nightly | §5 milestone grade |
 | fmt idempotent + `sky check` smoke | (existing steps) | yes | tooling parity |
 

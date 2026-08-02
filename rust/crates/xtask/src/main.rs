@@ -19,6 +19,7 @@ mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
 mod s8_gate;
+mod welltyped_gate;
 
 use std::path::{Path, PathBuf};
 
@@ -40,6 +41,7 @@ fn main() {
         Some("divergences") => divergences_gate::run(&args[1..], &repo_root()),
         Some("fmt") => fmt_gate::run(&args[1..], &repo_root()),
         Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
+        Some("welltyped") => welltyped_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
         Some("diff") => {
             println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
@@ -51,7 +53,7 @@ fn main() {
         _ => {
             println!("{VERSION}");
             println!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz> [args]"
+                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz|welltyped> [args]"
             );
             0
         }

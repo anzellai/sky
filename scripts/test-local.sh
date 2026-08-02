@@ -49,7 +49,7 @@ echo "==========================================================="
 echo
 
 phase_test_ci() {
-    echo "--- phase 1/4: test-ci (cabal + sweep) ---"
+    echo "--- phase 1/5: test-ci (cabal + sweep) ---"
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/test-ci.sh"
     local rc=$?
@@ -60,7 +60,7 @@ phase_test_ci() {
 
 phase_web_verify() {
     echo
-    echo "--- phase 2/4: Playwright web verify ---"
+    echo "--- phase 2/5: Playwright web verify ---"
     if [ ! -x "$ROOT/scripts/verify-all-web.sh" ]; then
         echo "  scripts/verify-all-web.sh missing or not executable — SKIP"
         return 0
@@ -75,7 +75,7 @@ phase_web_verify() {
 
 phase_cli_verify() {
     echo
-    echo "--- phase 3/4: CLI / Tui / Webview verify ---"
+    echo "--- phase 3/5: CLI / Tui / Webview verify ---"
     if [ ! -x "$ROOT/scripts/verify-cli.sh" ]; then
         echo "  scripts/verify-cli.sh missing or not executable — SKIP"
         return 0
@@ -90,13 +90,29 @@ phase_cli_verify() {
 
 phase_ui_showcase() {
     echo
-    echo "--- phase 4/4: UI showcase visual regression ---"
+    echo "--- phase 4/5: UI showcase visual regression ---"
     if [ ! -x "$ROOT/scripts/verify-ui-showcase.sh" ]; then
         echo "  scripts/verify-ui-showcase.sh missing or not executable — SKIP"
         return 0
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-ui-showcase.sh"
+    local rc=$?
+    local t1; t1=$(date +%s)
+    echo "  $(( t1 - t0 ))s (exit $rc)"
+    return $rc
+}
+
+phase_release_parity() {
+    echo
+    echo "--- phase 5/5: well-typed differential fuzzer (Rust ⇄ Haskell oracle) ---"
+    # Generates bounded, deterministic well-typed Sky programs and asserts the
+    # Rust compiler and the Haskell oracle AGREE (accept/reject) on every one —
+    # the WellTypedFuzzerSpec analog, inference parity on inputs beyond the fixed
+    # corpus. Needs the oracle (NOT available in CI); the gate self-skips (exit 0)
+    # when the oracle binary is absent, so this phase is safe everywhere.
+    local t0; t0=$(date +%s)
+    ( cd "$ROOT/rust" && timeout 900 cargo run -q -p xtask -- welltyped )
     local rc=$?
     local t1; t1=$(date +%s)
     echo "  $(( t1 - t0 ))s (exit $rc)"
@@ -111,6 +127,7 @@ main() {
     phase_web_verify || any_fail=1
     phase_cli_verify || any_fail=1
     phase_ui_showcase || any_fail=1
+    phase_release_parity || any_fail=1
 
     local t_end; t_end=$(date +%s)
     echo

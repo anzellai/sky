@@ -54,3 +54,29 @@ on the oracle (ACCEPT) and fails on Rust with [E1011] at the import site.
 Site: crates/hir resolve.rs `bind_exposing_dep`. See CLAUDE.md
 §"Export enforcement — `exposing` is a real boundary".
 """
+
+
+[[divergence]]
+id = "D002-ctor-arg-compound-types"
+direction = "rust-lenient"      # rust-stricter | rust-lenient | equivalent-output
+oracle = "REJECT"
+rust = "ACCEPT"
+code = "E0001"
+fixture = "rust/crates/xtask/divergence-fixtures/ctor_arg_compound_types.sky"
+summary = "Rust accepts inline tuple / record types in constructor-argument position (standard Elm); the retired oracle rejects them at parse [E0001]."
+detail = """
+In constructor-argument position, the Rust parser admits an inline compound type
+expression — a tuple `type Pair = P (Int, String)` or a record
+`type Boxed = B { label : String }` — that the Haskell oracle rejects at PARSE
+with [E0001] (error at the `(` / `{`). Both are standard Elm syntax, and Rust
+ACCEPTS, type-checks, lowers, `go build`s, and RUNS them correctly (verified
+end-to-end 2026-08-02: the fixture prints `1` then `hi`). Controls agree (both
+ACCEPT): `C (List Int)`, `C (Maybe Int)`, atomic scalars, ADT names, and
+alias-first (`type alias P = (Int, String)` then `C P`). So Rust is the
+Elm-conformant primary and the retired oracle's constructor-argument grammar is
+simply too strict — an intentional rust-lenient divergence, not a bug.
+
+Discovered by the `xtask welltyped` well-typed differential fuzzer (T5.4) on
+first contact. Direction rust-lenient: the gate re-verifies the Rust checker
+still ACCEPTS the fixture (it must never regress to rejecting valid Elm).
+"""
