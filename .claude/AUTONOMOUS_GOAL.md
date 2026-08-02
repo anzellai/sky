@@ -62,11 +62,16 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
 
 ## Progress ledger
 
-- [ ] T1 — behavioral conformance (IN PROGRESS)
-- [ ] T2 — CI enforcement
+- [x] T1 — behavioral conformance — **JUDGE-VERIFIED 2026-08-02** (18/18 suites, 12
+      new adversarial Sky-source suites, 7 real "compiles-clean, behaves-wrong"
+      bugs found+fixed: Money.allocate neg-residue, Bytes.length/slice rune-vs-byte,
+      Auth.passwordStrength panic, Time.addMonths year-carry, Time.timeString UTC,
+      Uuid.parse Result-vs-Maybe, + Json int64). Commits e3c2dd70, 3b63b673,
+      f05756b9, 35184780. Codegen finding T5.0 (bare Math.pi/inf -> any) logged.
+- [ ] T2 — CI enforcement (IN PROGRESS)
 - [ ] T3 — production-incident e2e
 - [ ] T4 — tooling
-- [ ] T5 — compiler-internal depth
+- [ ] T5 — compiler-internal depth (+ T5.0 bare-kernel-constant lowering)
 
 Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
 per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
