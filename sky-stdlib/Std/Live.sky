@@ -154,7 +154,7 @@ withPort =
 
 
 -- | Select the session store kind ("memory" / "sqlite" / "redis" /
--- "postgres" / "firestore"). Env `SKY_LIVE_STORE` wins.
+-- "postgres"). Env `SKY_LIVE_STORE` wins.
 withStore : String -> AppConfig model msg -> AppConfig model msg
 withStore =
     Ffi.kernel "Live_withStore"

@@ -121,7 +121,6 @@ Sky.Live supports multiple backends for session state:
 | `sqlite` | `[live] store = "sqlite", storePath = "./data.db"` | Single-instance prod |
 | `redis` | `[live] store = "redis", storePath = "redis://..."` | Multi-instance deployments |
 | `postgres` | `[live] store = "postgres", storePath = "postgres://..."` | Shared SQL backend |
-| `firestore` | `[live] store = "firestore"` | Serverless GCP |
 
 Configure in `sky.toml`:
 

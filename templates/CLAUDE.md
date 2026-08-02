@@ -332,7 +332,7 @@ root = "src"
 
 [live]                   # Sky.Live apps
 port  = 8000
-store = "sqlite"         # memory | sqlite | redis | postgres | firestore
+store = "sqlite"         # memory | sqlite | redis | postgres
 ttl   = 1800
 
 [database]               # persistence

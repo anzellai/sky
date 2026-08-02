@@ -119,7 +119,7 @@ env-var default at startup, namespaced by `[env] prefix`
 ```toml
 [live]
 port         = 8000              # HTTP listener port
-store        = "sqlite"          # session store: memory / sqlite / redis / postgres / firestore
+store        = "sqlite"          # session store: memory / sqlite / redis / postgres
 storePath    = "./sessions.db"   # file path or connection URL
 ttl          = 1800              # session TTL in seconds (30 min)
 static       = "public"          # static asset directory served at /static
@@ -129,7 +129,7 @@ maxBodyBytes = 5242880           # cap for /_sky/event POST body (5 MiB)
 | Key            | Env var                       | Default     | Meaning                                                    |
 |----------------|-------------------------------|-------------|------------------------------------------------------------|
 | `port`         | `<PREFIX>_LIVE_PORT`          | `8000`      | HTTP listener port                                         |
-| `store`        | `<PREFIX>_LIVE_STORE`         | `memory`    | `memory` / `sqlite` / `redis` / `postgres` / `firestore`   |
+| `store`        | `<PREFIX>_LIVE_STORE`         | `memory`    | `memory` / `sqlite` / `redis` / `postgres`   |
 | `storePath`    | `<PREFIX>_LIVE_STORE_PATH`    | (empty)     | sqlite file path, or `host:port` / `redis://…` / `postgres://…` URL |
 | `ttl`          | `<PREFIX>_LIVE_TTL`           | `1800`      | Session TTL in seconds                                     |
 | `static`       | `<PREFIX>_LIVE_STATIC_DIR`    | (empty)     | Static asset directory served at `/static`                 |

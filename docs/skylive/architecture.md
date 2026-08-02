@@ -372,7 +372,6 @@ Implementations:
 - `sqliteSessionStore` — single-node persistence.
 - `redisSessionStore` — multi-instance via shared Redis.
 - `postgresSessionStore` — shared SQL backend.
-- `firestoreSessionStore` — GCP serverless.
 
 Sessions are serialised as JSON. The model itself is always `any`-boxed Sky data structures, encoded via `SkyEncode`.
 

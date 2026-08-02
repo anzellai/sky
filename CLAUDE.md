@@ -129,7 +129,7 @@ Production-grade code does not survive guesswork.
    OAuth (Google/GitHub via Go SDK) / external (Auth0 / Clerk /
    Cognito).
 4. **Sky.Live session store** — memory (dev only) / sqlite / redis /
-   postgres / firestore. Required even when the user picks a
+   postgres. Required even when the user picks a
    different primary DB.
 5. **Deployment target** — local binary / Docker / Cloud Run via
    SkyDeploy / Kubernetes / VM under systemd.
@@ -175,7 +175,7 @@ entry = "src/Main.sky"
 
 [live]                          # Sky.Live apps only
 port = 8000
-store = "sqlite"                # memory / sqlite / redis / postgres / firestore
+store = "sqlite"                # memory / sqlite / redis / postgres
 storePath = "sessions.db"
 ttl = "30m"
 
@@ -206,8 +206,8 @@ Run" / "Kubernetes":
 * Confirm `SKY_CONSOLE_AUTH` is set (`token` or `app`).  Production
   with `SKY_CONSOLE_AUTH` unset emits a warn log and refuses to
   mount `/_sky/console`.
-* Confirm the session store is a SHARED store (`redis` / `postgres` /
-  `firestore`) when there is more than one replica. `memory` AND
+* Confirm the session store is a SHARED store (`redis` / `postgres`)
+  when there is more than one replica. `memory` AND
   `sqlite` are BOTH single-instance — `memory` is per-process (lost on
   restart) and `sqlite` is a local file (one per host, not shareable;
   a network-FS file is a corruption hazard, not a shared store). Single
@@ -1337,7 +1337,6 @@ params skip `coerceArg` (its `eraseTypeParams` would rewrite
 | `memory` | `sync.Map` + TTL cleanup goroutine; user count × session size |
 | `sqlite` | Disk + connection pool |
 | `redis` / `postgres` | External service config |
-| `firestore` | GCP quota |
 
 ### Compile-time + runtime memory protections
 
@@ -1505,7 +1504,7 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 |---|---|---|
 | `SKY_LIVE_PORT` | `port` | 8000 |
 | `SKY_LIVE_TTL` | `ttl` | `30m` |
-| `SKY_LIVE_STORE` | `store` | `memory` (memory \| sqlite \| redis \| postgres \| firestore) |
+| `SKY_LIVE_STORE` | `store` | `memory` (memory \| sqlite \| redis \| postgres) |
 | `SKY_LIVE_STORE_PATH` | `storePath` | `DATABASE_URL` / `REDIS_URL` fallback |
 | `SKY_LIVE_STATIC_DIR` | `static` | none |
 | `SKY_LIVE_INPUT` | `input` | none |
@@ -1730,8 +1729,8 @@ alias declared in the module's `.sky` source, so `sky doc`, LSP hover, and the
 type-checker all read one place — no `?` on hover, no drifting doc registry.
 
 HTTP-first (full HTML on load, patches on events), SSE
-subscriptions, session stores (memory / sqlite / redis / postgres /
-firestore), type-safe events, VNode diffing.
+subscriptions, session stores (memory / sqlite / redis / postgres),
+type-safe events, VNode diffing.
 
 **`init` is per-session, not per-page-reload.** First request from a
 browser with no `sky_sid` cookie fires `init`. Browser reload while
@@ -2037,8 +2036,8 @@ Three reasons:
    watch DOM mutations on password inputs. Every server-driven
    re-render with `value=…` triggers a re-prompt/re-fill cycle.
 2. **Secret never lives in Model** — no `onInput UpdatePassword`
-   Msg → no Model field → never serialised into Redis / Postgres /
-   Firestore session stores.
+   Msg → no Model field → never serialised into Redis / Postgres
+   session stores.
 3. **Race-free submit** — form submit reads the live DOM value, not
    a debounced keystroke.
 
