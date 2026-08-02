@@ -1440,7 +1440,7 @@ cd examples/01-hello-world && sky build src/Main.sky
 
 1. Rebuild: `( cd rust && cargo build --release -p sky ) && cp rust/target/release/sky sky-out/sky`
 2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
-3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden) — zero failures
+3. Test sweep: `cargo test --workspace` + the xtask gate suite (`cargo run -p xtask -- <gate>` for each of roundtrip / resolve / infer / reject / fuzz / coerce-floor / repro / build-run / golden / divergences / fmt / s8) — zero failures. Plus, LOCALLY (needs the Haskell oracle, not in CI): `cargo run -p xtask -- welltyped` (the well-typed differential fuzzer — Rust ⇄ oracle accept/reject parity on generated valid programs; self-skips if the oracle is absent) — run via `test-local.sh` phase 5.
 3b. **Stdlib behavioral conformance** — `scripts/conformance.sh` (the `sky test`
     suites under `tests/conformance/`). This is the BEHAVIORAL layer the corpus
     gates + differential oracle DON'T cover: they prove "builds" + "matches the
