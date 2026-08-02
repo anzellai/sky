@@ -160,6 +160,7 @@ Production-grade code does not survive guesswork.
 | Auth                 | `Std.Auth` — bcrypt + HS256 JWT cookies.  Never `fmt.Sprintf("%v", secret)`. |
 | Forms with passwords | `Ui.form [Ui.onSubmit DoSignIn]` with typed record arg.  Never per-keystroke `onInput` on password. |
 | DB                   | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON + dialect-safe DB read/write/schema); `Std.Db.Schema`/`Std.Db.Table` for DDL-only / no-codec; raw `Std.Db` (`query`/`exec`/`withTransaction` + `SqlValue`) for joins/aggregates/transactions. SQLite for prototypes; PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). |
+| Serialization        | `Std.Codec` is the portable default for record↔JSON: one `Codec.auto blank` gives `Codec.toJson`/`fromJson` AND (if persisted) the dialect-safe DB mapping from a single definition — no drift between JSON and DB shapes, same codec on every backend. Raw `Sky.Core.Json.Encode`/`Decode` only for a JSON shape a codec can't express (custom/legacy wire format, or third-party JSON you don't own → a hand-written `Decoder`). |
 | Money / decimals     | `Std.Money` on `Std.Decimal`.  Never raw `Float` for currency. |
 | Concurrency          | `Cmd.batch` / `Task.parallel`.  In-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Observability        | `Std.Log` structured logs; `/_sky/console` auto-mounted; `OTEL_EXPORTER_OTLP_ENDPOINT` for external collector. |
