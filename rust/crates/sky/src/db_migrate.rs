@@ -13,6 +13,20 @@ pub struct SchemaColumn {
     pub kind: String,
     #[serde(default)]
     pub nullable: bool,
+    /// Serial AUTOINCREMENT / BIGSERIAL PK (Store.serial). Only ever set on the PK.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub autoinc: bool,
+    /// UNIQUE constraint (Store.unique).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unique: bool,
+    /// Column DEFAULT (Store.defaultNow / defaultText / defaultInt / defaultBool),
+    /// carried as the `{int|text|bool|now}` shape the runtime renderer expects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -85,10 +99,23 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                     .columns
                     .iter()
                     .map(|c| {
-                        json!({
+                        // Carry the column-level constraints through to the
+                        // createTable op so the applier renders serial
+                        // AUTOINCREMENT/BIGSERIAL, UNIQUE, and DEFAULT — exactly
+                        // what the push path emits. Dropping these here was the
+                        // data-integrity bug (UNIQUE lost, serial PK → null-PK
+                        // violation on Postgres).
+                        let mut jc = json!({
                             "name": c.name, "type": c.kind,
                             "nullable": c.nullable, "pk": c.name == t.pk,
-                        })
+                            "autoinc": c.autoinc, "unique": c.unique,
+                        });
+                        if let Some(d) = &c.default {
+                            jc.as_object_mut()
+                                .unwrap()
+                                .insert("default".into(), d.clone());
+                        }
+                        jc
                     })
                     .collect();
                 ops.push(json!({ "kind": "createTable", "table": t.name, "columns": columns }));
@@ -315,7 +342,25 @@ mod tests {
     use super::*;
 
     fn col(name: &str, kind: &str, nullable: bool) -> SchemaColumn {
-        SchemaColumn { name: name.into(), kind: kind.into(), nullable }
+        SchemaColumn {
+            name: name.into(),
+            kind: kind.into(),
+            nullable,
+            autoinc: false,
+            unique: false,
+            default: None,
+        }
+    }
+
+    fn col_full(
+        name: &str,
+        kind: &str,
+        nullable: bool,
+        autoinc: bool,
+        unique: bool,
+        default: Option<Value>,
+    ) -> SchemaColumn {
+        SchemaColumn { name: name.into(), kind: kind.into(), nullable, autoinc, unique, default }
     }
 
     #[test]
@@ -439,6 +484,54 @@ mod tests {
         d.set_default("users", "role", json!({ "text": "member" }));
         let s = serde_json::to_string(&d.ops).unwrap();
         assert!(s.contains(r#""default":{"text":"member"}"#));
+    }
+
+    #[test]
+    fn create_table_carries_column_constraints() {
+        // Bug #9 regression: a serial PK + UNIQUE + defaultNow must survive the
+        // diff into the createTable op (previously dropped → UNIQUE lost + null-PK
+        // violation on Postgres).
+        let snapshot = Schema::default();
+        let target = Schema {
+            tables: vec![SchemaTable {
+                name: "users".into(),
+                pk: "id".into(),
+                columns: vec![
+                    col_full("id", "int", false, true, false, None),
+                    col_full("email", "text", false, false, true, None),
+                    col_full("created_at", "int", false, false, false, Some(json!({ "now": true }))),
+                ],
+            }],
+        };
+        let d = diff(&target, &snapshot);
+        assert_eq!(d.ops.len(), 1);
+        let cols = d.ops[0].get("columns").and_then(|c| c.as_array()).unwrap();
+        let id = &cols[0];
+        assert_eq!(id.get("autoinc"), Some(&json!(true)), "serial PK autoinc carried");
+        let email = &cols[1];
+        assert_eq!(email.get("unique"), Some(&json!(true)), "UNIQUE carried");
+        let created = &cols[2];
+        assert_eq!(created.get("default"), Some(&json!({ "now": true })), "DEFAULT now carried");
+    }
+
+    #[test]
+    fn schema_column_roundtrips_constraints() {
+        // dump JSON → SchemaColumn → snapshot JSON must preserve the flags so the
+        // committed snapshot (db/schema.json) is not lossy.
+        let dump = r#"{"tables":[{"name":"users","pk":"id","columns":[
+            {"name":"id","kind":"int","nullable":false,"autoinc":true},
+            {"name":"email","kind":"text","nullable":false,"unique":true},
+            {"name":"created_at","kind":"int","nullable":false,"default":{"now":true}}
+        ]}]}"#;
+        let s: Schema = serde_json::from_str(dump).unwrap();
+        let c = &s.tables[0].columns;
+        assert!(c[0].autoinc);
+        assert!(c[1].unique);
+        assert_eq!(c[2].default, Some(json!({ "now": true })));
+        // Re-serialize (as the snapshot writer does) and re-read: still intact.
+        let round: Schema = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(round.tables[0].columns[0].autoinc);
+        assert!(round.tables[0].columns[1].unique);
     }
 
     #[test]

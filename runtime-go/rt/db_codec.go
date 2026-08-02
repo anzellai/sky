@@ -93,6 +93,26 @@ func codecColKindToSchema(kind string) string {
 	}
 }
 
+// schemaColMap builds the single per-column Schema-Table map that schemaRenderTable
+// consumes. This is the ONE place a column's DDL flags are assembled, shared by BOTH
+// the direct-create/push path (codecColspecSchemaMap) AND the committed-migration
+// path (renderMigOp's createTable). Routing both through here is what keeps
+// `sky db push` and `sky db migrate` byte-identical — they physically cannot diverge.
+//
+//   - A required (non-Maybe) column is NOT NULL on a FRESH table; the PK always is.
+//     (An ALTER ADD on an existing table stays nullable — see Db_autoMigrate — since
+//     existing rows can't satisfy NOT NULL.)
+//   - Auto-increment only applies to the PK (schemaRenderColumn renders the serial
+//     token only when IsPk && IsAutoInc), so guard it with isPk here too.
+func schemaColMap(name, codecKind string, isPk, nullable, unique, autoInc bool, defKind, defVal string) map[string]any {
+	return map[string]any{
+		"Name": name, "Kind": codecColKindToSchema(codecKind),
+		"IsPk": isPk, "IsNotNull": !nullable || isPk, "IsUnique": unique,
+		"IsAutoInc": autoInc && isPk, "DefaultKind": defKind, "DefaultVal": defVal,
+		"ForeignKey": "",
+	}
+}
+
 // codecColspecSchemaMap builds a Schema-Table map from a (name,kind) colspec.
 // The PK column is NOT NULL; all others are nullable (the codec enforces types).
 func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]any {
@@ -102,16 +122,9 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 		name := AsString(t.V0)
 		rawKind := AsString(t.V1)
 		_, nullable := codecSplitKind(rawKind)
-		autoInc := codecColIsAutoInc(rawKind) && name == pk
 		unique, defKind, defVal := codecColExtras(rawKind)
-		cols = append(cols, map[string]any{
-			"Name": name, "Kind": codecColKindToSchema(rawKind),
-			// A required (non-Maybe) column is NOT NULL on a FRESH table; the PK
-			// always is. (ALTER ADD on an existing table stays nullable — see
-			// Db_autoMigrate — since existing rows can't satisfy NOT NULL.)
-			"IsPk": name == pk, "IsNotNull": !nullable || name == pk, "IsUnique": unique,
-			"IsAutoInc": autoInc, "DefaultKind": defKind, "DefaultVal": defVal, "ForeignKey": "",
-		})
+		cols = append(cols, schemaColMap(
+			name, rawKind, name == pk, nullable, unique, codecColIsAutoInc(rawKind), defKind, defVal))
 	}
 	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}
 }
@@ -486,10 +499,22 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 // this is the pure schema-dump the file-based migration flow diffs against.
 func Db_dumpProject(tablesArg any) any {
 	return func() any {
+		// jdefault mirrors the runtime's migDefault (db_migrate_ops.go) AND the Rust
+		// side's default shape, so a captured DEFAULT round-trips dump → schema.json →
+		// createTable op → renderMigOp unchanged.
+		type jdefault struct {
+			Int  *int64  `json:"int,omitempty"`
+			Text *string `json:"text,omitempty"`
+			Bool *bool   `json:"bool,omitempty"`
+			Now  bool    `json:"now,omitempty"`
+		}
 		type jcol struct {
-			Name     string `json:"name"`
-			Kind     string `json:"kind"`
-			Nullable bool   `json:"nullable"`
+			Name     string    `json:"name"`
+			Kind     string    `json:"kind"`
+			Nullable bool      `json:"nullable"`
+			Autoinc  bool      `json:"autoinc,omitempty"`
+			Unique   bool      `json:"unique,omitempty"`
+			Default  *jdefault `json:"default,omitempty"`
 		}
 		type jtable struct {
 			Name    string `json:"name"`
@@ -506,8 +531,28 @@ func Db_dumpProject(tablesArg any) any {
 			}
 			for _, c := range AsList(Field(t, "Cols")) {
 				tup := AsTuple2(c)
-				base, nullable := codecSplitKind(AsString(tup.V1))
-				jt.Columns = append(jt.Columns, jcol{Name: AsString(tup.V0), Kind: base, Nullable: nullable})
+				raw := AsString(tup.V1)
+				base, nullable := codecSplitKind(raw)
+				unique, defKind, defVal := codecColExtras(raw)
+				jc := jcol{
+					Name: AsString(tup.V0), Kind: base, Nullable: nullable,
+					Autoinc: codecColIsAutoInc(raw), Unique: unique,
+				}
+				switch defKind {
+				case "now":
+					jc.Default = &jdefault{Now: true}
+				case "int":
+					if n, err := strconv.ParseInt(defVal, 10, 64); err == nil {
+						jc.Default = &jdefault{Int: &n}
+					}
+				case "text":
+					v := defVal
+					jc.Default = &jdefault{Text: &v}
+				case "bool":
+					b := defVal == "true"
+					jc.Default = &jdefault{Bool: &b}
+				}
+				jt.Columns = append(jt.Columns, jc)
 			}
 			out.Tables = append(out.Tables, jt)
 		}

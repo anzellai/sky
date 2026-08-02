@@ -20,9 +20,10 @@ type migDefault struct {
 
 type migColumn struct {
 	Name     string      `json:"name"`
-	Type     string      `json:"type"` // schema kind: text/int/bigint/real/bool/blob/…
+	Type     string      `json:"type"` // codec kind: text/int/real/bool/blob (→ codecColKindToSchema)
 	Nullable bool        `json:"nullable"`
 	Pk       bool        `json:"pk"`
+	Autoinc  bool        `json:"autoinc"`
 	Unique   bool        `json:"unique"`
 	Default  *migDefault `json:"default,omitempty"`
 }
@@ -95,15 +96,16 @@ func renderMigOp(driver string, op migOp) (string, error) {
 	}
 	switch op.Kind {
 	case "createTable":
+		// Route through the SAME per-column map builder the push/create path uses
+		// (schemaColMap in db_codec.go) so the committed-migration CREATE TABLE is
+		// byte-identical to `sky db push` — carrying serial AUTOINCREMENT/BIGSERIAL,
+		// UNIQUE, and DEFAULT. Both paths converge on schemaRenderTable; the two DDL
+		// renderings cannot diverge.
 		cols := make([]any, 0, len(op.Columns))
 		for _, c := range op.Columns {
-			cols = append(cols, map[string]any{
-				"Name": c.Name, "Kind": codecColKindToSchema(c.Type),
-				"IsPk": c.Pk, "IsNotNull": !c.Nullable && !c.Pk, "IsUnique": c.Unique,
-				"IsAutoInc":   false,
-				"DefaultKind": migDefKind(c.Default), "DefaultVal": migDefVal(c.Default),
-				"ForeignKey": "",
-			})
+			cols = append(cols, schemaColMap(
+				c.Name, c.Type, c.Pk, c.Nullable, c.Unique, c.Autoinc,
+				migDefKind(c.Default), migDefVal(c.Default)))
 		}
 		sm := map[string]any{"Name": op.Table, "Columns": cols, "Indexes": []any{}}
 		return strings.Join(schemaRenderTable(driver, sm), ";\n"), nil

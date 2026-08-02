@@ -75,6 +75,12 @@ func Compression_zstdCompress(inputArg any) any {
 func Compression_zstdDecompress(inputArg any) any {
 	return func() any {
 		in := asBytesString(inputArg)
+		// NB: empty input decodes to "" (klauspost zstd DecodeAll treats it as a
+		// zero-frame). This is REQUIRED for the empty round-trip: zstdCompress ""
+		// returns "" (EncodeAll of empty is empty), so zstdDecompress "" must be
+		// Ok "" for `zstdDecompress (zstdCompress "")` to hold. gunzip "" -> Err
+		// only because gzip has a mandatory frame header (gzipCompress "" is
+		// ~20 non-empty bytes) — the codecs differ by construction, not by bug.
 		dec, err := zstd.NewReader(nil)
 		if err != nil {
 			return Err[any, any](ErrFfi("compression.zstd decoder: " + err.Error()))

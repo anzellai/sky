@@ -45,3 +45,77 @@ func TestRenderMigOp(t *testing.T) {
 		t.Error("expected error on injection identifier")
 	}
 }
+
+// TestRenderMigOpCreateTableConstraints is the bug #9 regression: the committed-
+// migration createTable must render serial AUTOINCREMENT/BIGSERIAL, UNIQUE, and
+// DEFAULT — previously all three were silently dropped, so SQLite accepted
+// duplicate emails and Postgres serial PKs became plain BIGINT (null-PK violation
+// on Store.insert, which omits the generated PK).
+func TestRenderMigOpCreateTableConstraints(t *testing.T) {
+	ct := migOp{Kind: "createTable", Table: "users", Columns: []migColumn{
+		{Name: "id", Type: "int", Pk: true, Autoinc: true},
+		{Name: "email", Type: "text", Nullable: false, Unique: true},
+		{Name: "created_at", Type: "int", Nullable: false, Default: &migDefault{Now: true}},
+	}}
+
+	gotSqlite, err := renderMigOp("sqlite", ct)
+	if err != nil {
+		t.Fatalf("sqlite render error: %v", err)
+	}
+	for _, want := range []string{
+		"id INTEGER PRIMARY KEY AUTOINCREMENT",
+		"email TEXT NOT NULL UNIQUE",
+		"created_at INTEGER NOT NULL DEFAULT (datetime('now'))",
+	} {
+		if !strings.Contains(gotSqlite, want) {
+			t.Errorf("sqlite createTable missing %q in:\n%s", want, gotSqlite)
+		}
+	}
+
+	gotPg, err := renderMigOp("pgx", ct)
+	if err != nil {
+		t.Fatalf("pg render error: %v", err)
+	}
+	for _, want := range []string{
+		"id BIGSERIAL PRIMARY KEY",
+		"email TEXT NOT NULL UNIQUE",
+		"created_at BIGINT NOT NULL DEFAULT now()",
+	} {
+		if !strings.Contains(gotPg, want) {
+			t.Errorf("pg createTable missing %q in:\n%s", want, gotPg)
+		}
+	}
+}
+
+// TestMigrateCreateTableByteMatchesPush is invariant A: the committed-migration
+// createTable DDL BYTE-MATCHES the `sky db push` DDL (codecColspecSchemaMap →
+// schemaRenderTable) for BOTH dialects. Both paths now route through schemaColMap,
+// so they physically cannot diverge — this test locks that in.
+func TestMigrateCreateTableByteMatchesPush(t *testing.T) {
+	// The push-path colspec Store builds for `serial "id" |> unique "email" |>
+	// defaultNow "created_at"` (markers per Std.Db.Store: `!` autoinc, `|u` unique,
+	// `|dnow` default-now).
+	pushColspec := []any{
+		T2[any, any]{V0: "id", V1: "int!"},
+		T2[any, any]{V0: "email", V1: "text|u"},
+		T2[any, any]{V0: "created_at", V1: "int|dnow"},
+	}
+	// The migOp the dump → diff → createTable pipeline yields for the same table.
+	migColumns := []migColumn{
+		{Name: "id", Type: "int", Pk: true, Autoinc: true},
+		{Name: "email", Type: "text", Nullable: false, Unique: true},
+		{Name: "created_at", Type: "int", Nullable: false, Default: &migDefault{Now: true}},
+	}
+
+	for _, driver := range []string{"sqlite", "pgx"} {
+		pushDDL := strings.Join(
+			schemaRenderTable(driver, codecColspecSchemaMap("users", pushColspec, "id")), ";\n")
+		migDDL, err := renderMigOp(driver, migOp{Kind: "createTable", Table: "users", Columns: migColumns})
+		if err != nil {
+			t.Fatalf("%s migrate render error: %v", driver, err)
+		}
+		if pushDDL != migDDL {
+			t.Errorf("%s: push DDL != migrate DDL\npush:    %q\nmigrate: %q", driver, pushDDL, migDDL)
+		}
+	}
+}
