@@ -60,15 +60,25 @@ import (
 	"time"
 )
 
-// csrfCookieMaxAgeSeconds is the CSRF cookie's lifetime, keyed to the session
-// TTL (default 30 days) so it outlives the session it guards. The cookie is
-// re-issued on each request (sliding), so an active SPA never loses it. (L5.)
+// csrfCookieMaxAgeSeconds is the CSRF cookie's lifetime. It MUST outlive the
+// session it guards — including a session that SLIDES indefinitely via the SSE
+// heartbeat while the tab sits IDLE (no GET/POST in flight to re-issue the
+// cookie). Keying Max-Age to SKY_LIVE_TTL broke that: with e.g.
+// SKY_LIVE_TTL=30m (the documented production pattern) the __sky_csrf cookie
+// expired after 30m of idle while the server session kept sliding on the
+// heartbeat, so the next event POST 403'd, got queued+retried (all 403), painted
+// the reconnecting/offline banner, and stranded the user until a manual refresh
+// re-issued the cookie via GET — the exact "idle 20-30min → disconnected →
+// refresh fixes it" incident. The double-submit token's security is the
+// cookie==header match, NOT a short cookie lifetime, so use a long fixed floor
+// (30 days) decoupled from the session TTL, never below a longer configured TTL.
 func csrfCookieMaxAgeSeconds() int {
+	const floorSeconds = 30 * 24 * 3600 // 30 days — outlives any realistic idle-slide
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour)
-	if s := int(ttl.Seconds()); s > 0 {
+	if s := int(ttl.Seconds()); s > floorSeconds {
 		return s
 	}
-	return 30 * 24 * 3600
+	return floorSeconds
 }
 
 const (

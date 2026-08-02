@@ -109,4 +109,51 @@ if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
     fi
 fi
 
+# Sky.Live resilience e2e — the v0.19.4-7 hardening paths (idle keep-alive
+# + desync soft-resync) driven through a REAL browser against the REAL
+# runtime wire. These reproduce two production incidents that the Go unit
+# tests never exercised end-to-end (CSRF double-submit + SSE lifecycle +
+# desync classification header + client response handler). See
+# scripts/verify-live-resilience.mjs.
+if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
+    echo ""
+    echo "--- live resilience e2e ---"
+
+    # desync-recovery — the redeploy handler-drift heal (fast, ~10s). A
+    # stale handler id must return X-Sky-Status: desync + a fresh inline
+    # re-render, and the NEXT interaction must round-trip (no strand, no
+    # full reload). This is a hard gate.
+    res_out=$(node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
+    res_rc=$?
+    echo "$res_out" | tail -4
+    if [ "$res_rc" -eq 0 ]; then
+        echo "✓ resilience-desync"
+    else
+        echo "✗ resilience-desync"
+        fail=$((fail+1))
+        FAILS+=("resilience-desync")
+        echo "VERIFY: $pass pass / $fail fail (with resilience-desync)"
+    fi
+
+    # idle-survival — reproduces the darraghstudio "idle → disconnected →
+    # refresh fixes it" incident. HARD GATE (bug #11 FIXED): the __sky_csrf
+    # cookie's Max-Age was keyed to the session TTL and NOT slid by the SSE
+    # heartbeat, so an idle-but-connected session past its TTL 403'd on the next
+    # POST even though the session was alive server-side. Fixed —
+    # csrfCookieMaxAgeSeconds uses a 30-day floor decoupled from the TTL. Takes
+    # ~80s (must cross the 60s memory-store cleanup tick); the idle hold is a
+    # fixed wait + a deterministic POST-200 assertion, so it is not timing-flaky.
+    echo "--- resilience idle-survival (~80s) ---"
+    idle_out=$(node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
+    idle_rc=$?
+    echo "$idle_out" | tail -6
+    if [ "$idle_rc" -eq 0 ]; then
+        echo "✓ resilience-idle"
+    else
+        echo "✗ resilience-idle"
+        fail=$((fail+1))
+        FAILS+=("resilience-idle")
+    fi
+fi
+
 exit $fail

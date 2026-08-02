@@ -1,0 +1,112 @@
+module Main exposing (main)
+
+-- Minimal stateful Sky.Live app used by scripts/verify-live-resilience.mjs.
+--
+-- Deliberately has NO subscriptions (no Time.every) so the session is
+-- genuinely IDLE between user interactions — the resilience e2e needs a
+-- session whose Model does NOT drift on its own so it can assert the
+-- state SURVIVED an idle period longer than the (short) session TTL.
+-- The 09-live-counter example auto-ticks every second, which makes it
+-- unusable for an idle-survival assertion.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route, config)
+import Std.Html.Events exposing (onClick, onInput)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+type alias Model =
+    { page : Page
+    , count : Int
+    , note : String
+    }
+
+type Page
+    = HomePage
+
+type Msg
+    = Increment
+    | Decrement
+    | Reset
+    | SetNote String
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    ( { page = HomePage, count = 0, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        Reset ->
+            ( { model | count = 0 }, Cmd.none )
+
+        SetNote s ->
+            ( { model | note = s }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _model =
+    Sub.none
+
+
+view : Model -> Html Msg
+view model =
+    div
+        [ class "app" ]
+        [ h1 [] [ text "Sky.Live Resilience Fixture" ]
+        , div
+              [ class "count" ]
+              [ span
+                    [ id "count-value", attribute "data-testid" "count" ]
+                    [ text (String.fromInt model.count) ]
+              ]
+        , div
+              [ class "buttons" ]
+              [ button
+                    [ onClick Decrement, id "btn-dec", class "btn" ]
+                    [ text "-" ]
+              , button
+                    [ onClick Reset, id "btn-reset", class "btn" ]
+                    [ text "Reset" ]
+              , button
+                    [ onClick Increment, id "btn-inc", class "btn" ]
+                    [ text "+" ]
+              ]
+        , div
+              [ class "note-row" ]
+              [ input
+                    [ id "note-input"
+                    , attribute "name" "note"
+                    , attribute "type" "text"
+                    , value model.note
+                    , onInput SetNote
+                    ]
+              , span
+                    [ id "note-echo", attribute "data-testid" "note" ]
+                    [ text model.note ]
+              ]
+        ]
+
+
+main =
+    app
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            })
