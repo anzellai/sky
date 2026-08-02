@@ -181,6 +181,39 @@ jobs:
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz
 
+  # ── Real-Postgres session-store integration (the store prod shops run on) ───
+  # The per-push rt tests cover memory/sqlite round-trip + the postgres fail-loud
+  # branch; the happy-path postgresStore (Get/Set/Delete/TTL/cross-instance
+  # decode) was never tested against a live engine. A `postgres:16` service
+  # container + the `integration`-tagged tests close that gap.
+  integration-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Postgres session-store integration tests
+        working-directory: runtime-go
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: CGO_ENABLED=0 go test -tags integration ./rt/ -run Postgres -v
+
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
   # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
   # 2nd platform. Full example builds / parity corpora are platform-agnostic and
