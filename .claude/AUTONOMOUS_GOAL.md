@@ -78,14 +78,23 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
       fails loud in prod not silent-memory. REMAINING: browser e2e (desync-recovery
       T3.3, SSE-drop/idle T3.4, multitab wiring), firestore implement-vs-remove
       (USER DECISION surfaced).
-- [ ] T4 — tooling
+- [~] T4 — tooling — sky fmt guarded (sound; commit 43839ea8), sky db bug #9 FIXED
+      (commit 11987a89). REMAINING: LSP diagnostics parity + Go-FFI-alias
+      false-positive; sky watch/doctor/doc/add/profile smoke.
 - [ ] T5 — compiler-internal depth (+ T5.0 bare-kernel-constant lowering)
 
-## Bugs found + fixed by this mandate (running count: 8)
+## Bugs found + fixed by this mandate (running count: 8 fixed, 1 in-flight)
 1. Json.Decode.int int64 platform-dependent (e3c2dd70) · 2. Money.allocate neg residue ·
 3. Bytes.length/slice rune-vs-byte · 4. Auth.passwordStrength success panic ·
 5. Time.addMonths backward year-carry · 6. Time.timeString host-TZ · 7. Uuid.parse
 never Just · 8. chooseStore unknown-kind silent-memory-degrade.
+9. **FIXED (11987a89):** `sky db migrate` (committed-migration path) DROPPED
+   UNIQUE + serial AUTOINCREMENT/BIGSERIAL + DEFAULT that `sky db push` preserves
+   → duplicate rows accepted on SQLite; app BROKEN on Postgres. Fixed by routing
+   BOTH paths through one shared schemaColMap renderer (can't diverge). Verified:
+   byte-match invariant, real-SQLite dup rejection, db_flow.rs, Store conformance,
+   2 Std.Db examples clean-build. Follow-ups: existing-column constraint toggles
+   not diffed; secondary indexes not in Store.Project path.
 
 ## Pending USER DECISIONS
 - **Firestore**: documented as a Sky.Live session store (CLAUDE.md, Std.Live.sky,
