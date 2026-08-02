@@ -5,7 +5,7 @@
 > (cargo workspace at `rust/`, primary); the retired Haskell
 > compiler lives under `legacy-haskell-compiler/` and serves as the
 > **differential oracle** (`sky-out/sky`). Current line is
-> **v0.18.x** — the Rust compiler drives every verb (`build` /
+> **v0.19.x** — the Rust compiler drives every verb (`build` /
 > `run` / `check` / `watch` / `test` / `fmt` / `lsp` / `doc` / the
 > FFI + dep verbs), emits the same phased pipeline log the oracle
 > prints, and reproduces the oracle's Elm-style type-error output
