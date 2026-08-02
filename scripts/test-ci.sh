@@ -78,25 +78,19 @@ phase_compiler_build() {
 phase_rust_gates() {
     echo "--- phase: rust gate suite ---"
     local t0; t0=$(date +%s)
-    # 2700 s budget — tolerates first-run-cache misses across the full gate
-    # set (parity + build-run + golden + behavioral conformance) without being
-    # so loose that a real hang goes undiagnosed.
-    #
-    # This mirrors .github/workflows/rust-ci.yml so a regression surfaces LOCALLY
-    # before Actions: the parity loop adds fmt/s8/divergences (were CI-only), the
-    # `lsp` gate self-skips loudly when Neovim is absent, `golden` is the
-    # runtime-correctness CLI subset, and `conformance` is the stdlib behavioral
-    # layer (adversarial Sky-source suites — the gate that catches the
-    # int64-class "compiles-clean, behaves-wrong" bugs the corpus gates miss).
-    ( cd "$ROOT/rust" && timeout 2700 bash -c '
+    # 2400 s budget — the FAST pre-push subset: cargo test + all parity gates
+    # (incl. the fmt/s8/divergences/lsp additions that were CI-only) + build-run
+    # --all. This mirrors the per-push jobs of .github/workflows/rust-ci.yml so a
+    # fmt/nvim/parity regression surfaces LOCALLY before Actions. The heavier
+    # runtime-correctness gates — `golden` + the behavioral `conformance` suites —
+    # live in scripts/test-local.sh (the pre-tag gate) and CI's codegen-build job,
+    # NOT here, to keep the pre-push gate from ballooning past its budget.
+    ( cd "$ROOT/rust" && timeout 2400 bash -c '
         cargo test --workspace --locked || exit 1
         for g in roundtrip resolve infer reject fuzz coerce-floor repro fmt s8 divergences lsp; do
             cargo run -q -p xtask -- "$g" || exit 1
         done
         cargo run -q -p xtask -- build-run --all || exit 1
-        cargo run -q -p xtask -- build-run --shape cli --run --golden || exit 1
-        cargo build --release -p sky --locked || exit 1
-        SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh || exit 1
     ' )
     local rc=$?
     local t1; t1=$(date +%s)

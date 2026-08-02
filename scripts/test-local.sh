@@ -49,7 +49,7 @@ echo "==========================================================="
 echo
 
 phase_test_ci() {
-    echo "--- phase 1/5: test-ci (cabal + sweep) ---"
+    echo "--- phase 1/6: test-ci (workspace + gates) ---"
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/test-ci.sh"
     local rc=$?
@@ -58,9 +58,29 @@ phase_test_ci() {
     return $rc
 }
 
+phase_behavioral() {
+    echo
+    echo "--- phase 2/6: runtime-correctness golden + behavioral conformance ---"
+    # The heavier runtime-correctness gates, kept OUT of the fast pre-push
+    # test-ci.sh: `golden` (emitted-Go runtime output matches committed goldens
+    # for the CLI subset) + `conformance` (the adversarial Sky-source stdlib
+    # suites — the int64-class "compiles-clean, behaves-wrong" gate). Also run on
+    # both platforms in CI's codegen-build / macos-determinism jobs.
+    local t0; t0=$(date +%s)
+    ( cd "$ROOT/rust" && timeout 1500 bash -c '
+        cargo run -q -p xtask -- build-run --shape cli --run --golden || exit 1
+        cargo build --release -p sky --locked || exit 1
+        SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh || exit 1
+    ' )
+    local rc=$?
+    local t1; t1=$(date +%s)
+    echo "  $(( t1 - t0 ))s (exit $rc)"
+    return $rc
+}
+
 phase_web_verify() {
     echo
-    echo "--- phase 2/5: Playwright web verify ---"
+    echo "--- phase 3/6: Playwright web verify ---"
     if [ ! -x "$ROOT/scripts/verify-all-web.sh" ]; then
         echo "  scripts/verify-all-web.sh missing or not executable — SKIP"
         return 0
@@ -75,7 +95,7 @@ phase_web_verify() {
 
 phase_cli_verify() {
     echo
-    echo "--- phase 3/5: CLI / Tui / Webview verify ---"
+    echo "--- phase 4/6: CLI / Tui / Webview verify ---"
     if [ ! -x "$ROOT/scripts/verify-cli.sh" ]; then
         echo "  scripts/verify-cli.sh missing or not executable — SKIP"
         return 0
@@ -90,7 +110,7 @@ phase_cli_verify() {
 
 phase_ui_showcase() {
     echo
-    echo "--- phase 4/5: UI showcase visual regression ---"
+    echo "--- phase 5/6: UI showcase visual regression ---"
     if [ ! -x "$ROOT/scripts/verify-ui-showcase.sh" ]; then
         echo "  scripts/verify-ui-showcase.sh missing or not executable — SKIP"
         return 0
@@ -105,7 +125,7 @@ phase_ui_showcase() {
 
 phase_release_parity() {
     echo
-    echo "--- phase 5/5: well-typed differential fuzzer (Rust ⇄ Haskell oracle) ---"
+    echo "--- phase 6/6: well-typed differential fuzzer (Rust ⇄ Haskell oracle) ---"
     # Generates bounded, deterministic well-typed Sky programs and asserts the
     # Rust compiler and the Haskell oracle AGREE (accept/reject) on every one —
     # the WellTypedFuzzerSpec analog, inference parity on inputs beyond the fixed
@@ -124,6 +144,7 @@ main() {
     local any_fail=0
 
     phase_test_ci    || any_fail=1
+    phase_behavioral || any_fail=1
     phase_web_verify || any_fail=1
     phase_cli_verify || any_fail=1
     phase_ui_showcase || any_fail=1

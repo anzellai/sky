@@ -46,6 +46,14 @@ FAILS=()
 for entry in "${TESTS[@]}"; do
     set -- $entry
     name=$1; scenario=$2; port=$3
+    # Build the app if its binary is missing — robust to clean checkouts and to
+    # artifacts pruned by disk hygiene (the example sweep normally pre-builds
+    # them; without this, a pruned example fails with "binary missing" rather
+    # than being verified). Uses the freshly-built compiler at sky-out/sky.
+    if [ ! -x "$REPO_ROOT/examples/$name/sky-out/app" ] && [ -x "$REPO_ROOT/sky-out/sky" ]; then
+        echo "  building $name (binary missing) ..."
+        ( cd "$REPO_ROOT/examples/$name" && "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 )
+    fi
     # Kill any process on this port pre-flight
     pid=$(lsof -ti ":$port" 2>/dev/null || true)
     [ -n "$pid" ] && kill -9 $pid 2>/dev/null || true
