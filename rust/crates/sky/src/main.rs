@@ -4660,4 +4660,155 @@ mod tests {
         v.sort();
         assert_eq!(v, vec![Severity::Info, Severity::Warn, Severity::Error]);
     }
+
+    // ---- `sky watch` option parsing ------------------------------------
+    //
+    // The watch verb path itself is not exercised by any test (it spawns a
+    // long-lived file watcher + child process). Its argument parser and the
+    // watched-path allowlist ARE pure and are the parts that decide behaviour,
+    // so pin them here.
+
+    fn sw(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn watch_opts_defaults() {
+        let o = WatchOpts::parse(&[]).expect("empty parse");
+        assert_eq!(o.file, None);
+        assert!(!o.no_run);
+        assert!(!o.clear);
+        assert_eq!(o.debounce_ms, 150);
+        assert_eq!(o.interval_ms, None);
+        assert_eq!(o.kill_timeout_ms, 5000);
+        assert!(o.extra_watch.is_empty());
+    }
+
+    #[test]
+    fn watch_opts_positional_file_and_bare_flags() {
+        let o = WatchOpts::parse(&sw("src/Main.sky --no-run --clear")).unwrap();
+        assert_eq!(o.file.as_deref(), Some("src/Main.sky"));
+        assert!(o.no_run);
+        assert!(o.clear);
+        // First non-flag positional wins; a second one is ignored (not an error).
+        let o2 = WatchOpts::parse(&sw("a.sky b.sky")).unwrap();
+        assert_eq!(o2.file.as_deref(), Some("a.sky"));
+    }
+
+    #[test]
+    fn watch_opts_valued_flags_eq_form() {
+        let o = WatchOpts::parse(&sw(
+            "src/Main.sky --debounce=300 --interval=1000 --kill-timeout=2500 --watch=extra",
+        ))
+        .unwrap();
+        assert_eq!(o.debounce_ms, 300);
+        assert_eq!(o.interval_ms, Some(1000));
+        assert_eq!(o.kill_timeout_ms, 2500);
+        assert_eq!(o.extra_watch, vec![PathBuf::from("extra")]);
+    }
+
+    #[test]
+    fn watch_opts_multiple_watch_dirs_accumulate() {
+        let o = WatchOpts::parse(&sw("--watch=one --watch=two --watch=three")).unwrap();
+        assert_eq!(
+            o.extra_watch,
+            vec![
+                PathBuf::from("one"),
+                PathBuf::from("two"),
+                PathBuf::from("three"),
+            ]
+        );
+    }
+
+    #[test]
+    fn watch_opts_invalid_numeric_values_error() {
+        assert!(WatchOpts::parse(&sw("--debounce=abc")).is_err());
+        assert!(WatchOpts::parse(&sw("--interval=x")).is_err());
+        assert!(WatchOpts::parse(&sw("--kill-timeout=-5")).is_err()); // u64 rejects negatives
+    }
+
+    #[test]
+    fn watch_opts_unknown_flag_errors() {
+        // WatchOpts has no Debug impl, so match on the Result rather than
+        // .unwrap_err() (which would require T: Debug).
+        match WatchOpts::parse(&sw("--bogus")) {
+            Err(err) => assert!(err.contains("unknown flag"), "got: {err}"),
+            Ok(_) => panic!("expected an error for --bogus"),
+        }
+        // A bare positional after a valid file is fine; an unknown FLAG is not.
+        assert!(WatchOpts::parse(&sw("src/Main.sky --nope")).is_err());
+    }
+
+    #[test]
+    fn is_watched_change_accepts_sky_and_toml() {
+        assert!(is_watched_change(Path::new("src/Main.sky")));
+        assert!(is_watched_change(Path::new("src/nested/View.sky")));
+        assert!(is_watched_change(Path::new("sky.toml")));
+        assert!(is_watched_change(Path::new("/abs/project/sky.toml")));
+        // Non-source files never trigger a rebuild.
+        assert!(!is_watched_change(Path::new("README.md")));
+        assert!(!is_watched_change(Path::new("Cargo.toml")));
+        assert!(!is_watched_change(Path::new("src/data.json")));
+    }
+
+    #[test]
+    fn is_watched_change_excludes_generated_dirs() {
+        // Generated / vendor dirs are excluded even when they contain .sky files.
+        for p in [
+            "sky-out/main.sky",
+            "sky-out-rust/x.sky",
+            ".skycache/lowered/Main.sky",
+            ".skydeps/foo.sky",
+            "dist-newstyle/build/x.sky",
+            ".git/hooks/x.sky",
+            "node_modules/pkg/a.sky",
+            ".vscode/x.sky",
+            ".idea/x.sky",
+            "project/sky-out/nested/App.sky",
+        ] {
+            assert!(!is_watched_change(Path::new(p)), "should exclude {p}");
+        }
+    }
+
+    // ---- `sky run --profile` flag parsing ------------------------------
+
+    #[test]
+    fn parse_profile_absent_is_none() {
+        let (rest, prof) = parse_profile(&sw("src/Main.sky --db-seed"));
+        assert!(prof.is_none());
+        assert_eq!(rest, sw("src/Main.sky --db-seed"));
+    }
+
+    #[test]
+    fn parse_profile_bare_flag_enables() {
+        let (rest, prof) = parse_profile(&sw("src/Main.sky --profile"));
+        let p = prof.expect("profile enabled");
+        assert_eq!(p.dir, None);
+        assert_eq!(p.timeout, None);
+        // The --profile flag is consumed; the entry file passes through.
+        assert_eq!(rest, sw("src/Main.sky"));
+    }
+
+    #[test]
+    fn parse_profile_dir_and_timeout_space_and_eq_forms() {
+        let (rest, prof) =
+            parse_profile(&sw("app.sky --profile-dir /tmp/p --profile-timeout 30s"));
+        let p = prof.unwrap();
+        assert_eq!(p.dir.as_deref(), Some("/tmp/p"));
+        assert_eq!(p.timeout.as_deref(), Some("30s"));
+        assert_eq!(rest, sw("app.sky"));
+
+        let (_r2, p2) = parse_profile(&sw("--profile-dir=/tmp/q --profile-timeout=5s"));
+        let p2 = p2.unwrap();
+        assert_eq!(p2.dir.as_deref(), Some("/tmp/q"));
+        assert_eq!(p2.timeout.as_deref(), Some("5s"));
+    }
+
+    #[test]
+    fn parse_profile_dir_alone_implies_enabled() {
+        // Passing only --profile-dir (without a bare --profile) still turns
+        // profiling on.
+        let (_rest, prof) = parse_profile(&sw("app.sky --profile-dir out"));
+        assert!(prof.is_some());
+    }
 }
