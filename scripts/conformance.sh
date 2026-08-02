@@ -20,6 +20,17 @@ PROJ="$ROOT/tests/conformance"
 FILTER="${1:-}"
 SKY="${SKY_BIN:-sky}"
 
+# Portable per-suite timeout. GNU coreutils `timeout` is NOT on macOS runners by
+# default (only `gtimeout` via `brew install coreutils`), so a bare `timeout`
+# fails with "command not found" and every suite errors. Resolve to whichever
+# exists; if neither, run without a per-suite timeout (the CI job still has its
+# own outer timeout, so a hang is still bounded).
+TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+run_suite() { # run_suite <secs> <cmd...>
+    local secs="$1"; shift
+    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; else "$@"; fi
+}
+
 if [ ! -d "$PROJ/tests" ]; then
     echo "conformance: no suites at $PROJ/tests" >&2
     exit 2
@@ -38,7 +49,7 @@ for suite in tests/*Test.sky; do
     echo "── $base ──────────────────────────────────────────"
     # unique out dir per suite so parallel/repeat runs don't clobber
     out="sky-out-conf-$base"
-    if timeout 180 "$SKY" test "$suite" --out "$out" 2>&1 | tee "/tmp/conf-$base.log" | tail -30; then
+    if run_suite 180 "$SKY" test "$suite" --out "$out" 2>&1 | tee "/tmp/conf-$base.log" | tail -30; then
         # `sky test` exit code is the source of truth; also guard on the summary line
         if grep -qE "[1-9][0-9]* failed" "/tmp/conf-$base.log"; then
             fail=$((fail + 1))
