@@ -88,7 +88,15 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
       REMAINING: codegen/lower unit snapshots, infer type-equality vs oracle,
       fuzz oracle-diff, divergence fixtures per ledger entry.
 
-## Fix count: 10 (9 stdlib/runtime bugs + T5.0 codegen gap)
+## Fix count: 11 (9 stdlib/runtime + T5.0 codegen + bug #11 CSRF-idle)
+11. **FIXED (915faf21) — THE darraghstudio incident root cause.** __sky_csrf
+    cookie Max-Age keyed to SKY_LIVE_TTL → expired during idle while the server
+    session slid on the SSE heartbeat → next POST 403 → strand. The v0.19.4-7
+    resilience work MISSED this; the browser e2e (T3.3/T3.4) caught it. Fixed
+    with a 30-day Max-Age floor. Both idle-survival + desync-recovery e2e now
+    HARD GATES in verify-all-web.sh (2 pass/0 fail).
+
+## T3 browser e2e — DONE (idle-survival + desync-recovery gated; found bug #11)
 
 ## Bugs found + fixed by this mandate (running count: 8 fixed, 1 in-flight)
 1. Json.Decode.int int64 platform-dependent (e3c2dd70) · 2. Money.allocate neg residue ·
