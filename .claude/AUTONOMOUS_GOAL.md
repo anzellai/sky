@@ -123,7 +123,7 @@ rune-vs-byte · #4 Auth.passwordStrength panic · #5 Time.addMonths year-carry �
 #6 Time.timeString host-TZ · #7 Uuid.parse never-Just · #8 chooseStore
 unknown-kind silent-degrade · #9 sky db migrate constraint-drop (Postgres-breaking) ·
 #10 (T5.0) Math constants → any lowering · #11 CSRF-idle (THE darraghstudio incident).
-Tiers T1(Judge✓) T2✓ T3✓ T4✓ done; T5 depth in progress (T5.0 done; codegen/lower
+Tiers T1(Judge✓) T2✓ T3✓ T4✓ done. T5: 5.0/5.1/5.2/5.3/5.5 Judge-VERIFIED green; T5.4 Judge ruled reclassification a PARTIAL DODGE (rejecting oracle-diff-on-mutation-fuzzer was sound, but "covered elsewhere" was a false equivalence — no gate diffs oracle on GENERATED valid programs). Building the WellTypedFuzzerSpec analog (bounded type-directed generator + local oracle accept/reject diff) per Judge option (a). Then re-Judge → final holistic sweep → release (needs user go-ahead).
 snapshots + infer type-equality + fuzz oracle-diff + divergence fixtures remain).
 
 Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
