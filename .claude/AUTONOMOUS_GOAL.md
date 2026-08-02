@@ -78,7 +78,7 @@ every real bug the new adversarial tests surface FIXED at root cause (no-deferra
       fails loud in prod not silent-memory. REMAINING: browser e2e (desync-recovery
       T3.3, SSE-drop/idle T3.4, multitab wiring), firestore implement-vs-remove
       (USER DECISION surfaced).
-- [~] T4 — tooling — sky fmt guarded (sound; commit 43839ea8), sky db bug #9 FIXED
+- [x] T4 — tooling — DONE: sky fmt guarded, bug #9 sky db constraint-drop FIXED, LSP diagnostics parity (FFI-alias + cross-module false-positive guards), watch/doctor/doc/profile/add smoke tests. No new bugs beyond #9.
       (commit 11987a89). REMAINING: LSP diagnostics parity + Go-FFI-alias
       false-positive; sky watch/doctor/doc/add/profile smoke.
 - [~] T5 — compiler-internal depth — T5.0 FIXED (commit 5d296f75): bare Math
