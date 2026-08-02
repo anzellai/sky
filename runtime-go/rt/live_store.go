@@ -1263,8 +1263,33 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		}
 		log.Printf("[sky.live] session store: redis @ %s (ttl=%s)", path, ttl)
 		return store
-	default:
+	case "", "memory":
 		log.Printf("[sky.live] session store: memory (ttl=%s)", ttl)
+		return newMemoryStore(ttl)
+	default:
+		// An explicitly-configured store kind we don't recognise: a typo
+		// ("postgress", "psql"), or a DOCUMENTED-BUT-UNIMPLEMENTED backend
+		// ("firestore" is listed as a store option in the docs + sky.toml but
+		// has no branch here). Silently falling back to memory would lose every
+		// session on restart and never share across replicas — the exact
+		// silent-degrade class the v0.19.4 fail-loud work targets, and it slipped
+		// through because that work only covered KNOWN stores that fail to
+		// connect, not UNKNOWN store names. Fail loud in production; warn + memory
+		// in dev.
+		if productionFromEnv() {
+			storeFatalf("[sky.live] FATAL: unknown session store %q — valid kinds are "+
+				"memory, sqlite, postgres, redis. Refusing to start with a silent in-memory "+
+				"fallback in production (sessions would be lost on every restart and never "+
+				"shared across replicas). Fix [live] store / SKY_LIVE_STORE, or set it to "+
+				"\"memory\" to opt in to the in-memory store deliberately.", kind)
+			// storeFatalf is log.Fatalf in prod (never returns); a test override
+			// may return, so fall through to a memory store to keep a valid value.
+		}
+		log.Printf("┌─ [sky.live] WARNING ────────────────────────────────────────")
+		log.Printf("│ unknown session store %q — valid: memory, sqlite, postgres, redis", kind)
+		log.Printf("│ DEV fallback → in-memory sessions: lost on restart, single-instance only.")
+		log.Printf("│ In PRODUCTION (ENV set) this is a HARD failure — the app refuses to start.")
+		log.Printf("└─────────────────────────────────────────────────────────────")
 		return newMemoryStore(ttl)
 	}
 }
