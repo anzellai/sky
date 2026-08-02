@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -470,7 +472,7 @@ func jsonValueKind(v any) string {
 		return "Null"
 	case bool:
 		return "Boolean"
-	case float64, int, int64:
+	case float64, int, int64, json.Number:
 		return "Number"
 	case string:
 		return "String"
@@ -554,9 +556,20 @@ func extractErrMsg(result any) string {
 
 func JsonDec_decodeString(decoder any, input any) any {
 	s := fmt.Sprintf("%v", input)
+	// UseNumber keeps JSON numbers as json.Number (their exact source text)
+	// instead of coercing every number to float64 at parse time. That coercion
+	// silently corrupts any integer beyond 2^53 (float64's exact-integer limit)
+	// — a Snowflake ID, a nanosecond timestamp, a large counter — and, worse,
+	// converting the resulting out-of-range float64 back to int64 is
+	// implementation-defined in Go, so the SAME value round-trips on one
+	// platform and errors on another (this bug shipped a macOS-passing /
+	// Linux-failing conformance suite). The int/float decoders below read the
+	// exact text, so the full int64 range round-trips losslessly on every
+	// platform.
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
 	var raw any
-	err := json.Unmarshal([]byte(s), &raw)
-	if err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		return Err[any, any](ErrDecode("JSON parse error: " + err.Error()))
 	}
 	d, ok := decoder.(JsonDecoder)
@@ -564,6 +577,62 @@ func JsonDec_decodeString(decoder any, input any) any {
 		return Ok[any, any](raw)
 	}
 	return d.run(raw)
+}
+
+// jsonDecodeInt extracts an exact int64 from a decoded JSON number, accepting
+// both json.Number (the UseNumber parse — preserves exact integer text) and
+// float64 (any legacy/direct tree). json.Number's text parses losslessly across
+// the whole int64 range with no float64 detour. Rejects fractional numbers
+// (Elm's Json.Decode.int semantics) and out-of-range magnitudes with a
+// deterministic error on every platform.
+func jsonDecodeInt(v any) (int64, error) {
+	switch n := v.(type) {
+	case json.Number:
+		if i, err := strconv.ParseInt(n.String(), 10, 64); err == nil {
+			return i, nil
+		}
+		// Exponent / decimal-point integer forms ("1e2", "3.0"): parse as float,
+		// then require integral + in-range.
+		f, err := strconv.ParseFloat(n.String(), 64)
+		if err != nil {
+			return 0, fmt.Errorf("expected Int, got %s", n.String())
+		}
+		return floatToStrictInt(f)
+	case float64:
+		return floatToStrictInt(n)
+	default:
+		return 0, fmt.Errorf("expected Int, got %s", jsonValueKind(v))
+	}
+}
+
+// floatToStrictInt converts an integral, in-range float64 to int64
+// deterministically. Converting an out-of-range float64 to int64 is
+// implementation-defined in Go (it saturates on some platforms, wraps on
+// others), so bounds-check BEFORE the conversion. 2^63 is exactly representable
+// as a float64; int64 max is 2^63-1, so `>= 2^63` is the correct upper cutoff
+// and -2^63 (int64 min, exactly representable) is the inclusive lower bound.
+func floatToStrictInt(f float64) (int64, error) {
+	if f != math.Trunc(f) {
+		return 0, fmt.Errorf("expected Int, got a fractional number")
+	}
+	if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+		return 0, fmt.Errorf("number %v is out of Int (int64) range", f)
+	}
+	return int64(f), nil
+}
+
+// jsonDecodeFloat extracts a float64 from a decoded JSON number (json.Number or
+// float64).
+func jsonDecodeFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		f, err := strconv.ParseFloat(n.String(), 64)
+		return f, err == nil
+	case float64:
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func JsonDec_string() any {
@@ -577,24 +646,21 @@ func JsonDec_string() any {
 
 func JsonDec_int() any {
 	return JsonDecoder{run: func(v any) any {
-		if f, ok := v.(float64); ok {
-			// Reject a fractional number rather than silently truncating
-			// (Elm's Json.Decode.int semantics). Integral-valued floats
-			// (3.0, 1e2) still decode — JSON has no int/float distinction,
-			// so `3` arrives as float64(3). float64(int64(f)) round-trips
-			// exactly iff f has no fractional part and fits the int range.
-			if f != float64(int64(f)) {
-				return Err[any, any](ErrDecode("expected Int, got a fractional number"))
-			}
-			return Ok[any, any](int(f))
+		// Integral-valued JSON numbers decode (3.0, 1e2) — JSON has no
+		// int/float distinction. Fractional and out-of-int64-range numbers are
+		// rejected (Elm's Json.Decode.int semantics), and the full int64 range
+		// round-trips losslessly via json.Number's exact text.
+		i, err := jsonDecodeInt(v)
+		if err != nil {
+			return Err[any, any](ErrDecode(err.Error()))
 		}
-		return Err[any, any](ErrDecode("expected Int, got " + jsonValueKind(v)))
+		return Ok[any, any](int(i))
 	}}
 }
 
 func JsonDec_float() any {
 	return JsonDecoder{run: func(v any) any {
-		if f, ok := v.(float64); ok {
+		if f, ok := jsonDecodeFloat(v); ok {
 			return Ok[any, any](f)
 		}
 		return Err[any, any](ErrDecode("expected Float, got " + jsonValueKind(v)))

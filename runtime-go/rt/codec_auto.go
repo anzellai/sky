@@ -7,6 +7,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -328,14 +329,16 @@ func Codec_autoEnc(snakeArg, record any) any {
 // reflective record decoder must reject a wrong-typed field, not coerce it
 // to a zero-value default). Match the explicit object/field decoder.
 func codecStrictInt(raw any) (int64, error) {
-	f, ok := raw.(float64)
-	if !ok {
-		return 0, fmt.Errorf("Codec.auto: expected Int, got %s", jsonValueKind(raw))
+	// Shares the exact-text, platform-deterministic int decode with the
+	// hand-written Codec.int (jsonDecodeInt): json.Number preserves the full
+	// int64 range losslessly, and an out-of-range/fractional value errors the
+	// same way on every platform. Re-prefix with "Codec.auto:" for the
+	// reflective-decoder context.
+	i, err := jsonDecodeInt(raw)
+	if err != nil {
+		return 0, fmt.Errorf("Codec.auto: %s", err.Error())
 	}
-	if f != float64(int64(f)) {
-		return 0, fmt.Errorf("Codec.auto: expected Int, got a fractional number")
-	}
-	return int64(f), nil
+	return i, nil
 }
 
 func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
@@ -365,7 +368,7 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 		}
 		return reflect.ValueOf(uint64(n)).Convert(rt), nil
 	case reflect.Float32, reflect.Float64:
-		f, ok := raw.(float64)
+		f, ok := jsonDecodeFloat(raw)
 		if !ok {
 			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Float, got %s", jsonValueKind(raw))
 		}
@@ -583,6 +586,10 @@ func codecRawStr(raw any) string {
 
 func codecRawInt(raw any) int64 {
 	switch v := raw.(type) {
+	case json.Number:
+		if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
+			return n
+		}
 	case float64:
 		return int64(v)
 	case int64:
@@ -599,6 +606,10 @@ func codecRawInt(raw any) int64 {
 
 func codecRawFloat(raw any) float64 {
 	switch v := raw.(type) {
+	case json.Number:
+		if f, err := strconv.ParseFloat(v.String(), 64); err == nil {
+			return f
+		}
 	case float64:
 		return v
 	case int64:
