@@ -780,6 +780,11 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         return cfg;
     };
     let mut section = String::new();
+    // [bluedb] is decided at section level (not per key): a `[bluedb]` section
+    // selects the embedded bluedb session store unless `embedded = false`.
+    let mut bluedb_seen = false;
+    let mut bluedb_embedded: Option<bool> = None;
+    let mut bluedb_path: Option<String> = None;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -828,6 +833,23 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("live", "maxBodyBytes") => {
                 cfg.extra_defaults.push(("LIVE_MAX_BODY_BYTES".into(), val))
             }
+            // `[bluedb]` — the unified embedded store (docs/bluedb/). For now it
+            // drives the Sky.Live SESSION store; `path` or `embedded = true`
+            // selects the bluedb store + its file. `scope`/`sync`/`consistency`
+            // are reserved for the reactive layer (not consumed yet).
+            ("bluedb", "embedded") => {
+                bluedb_seen = true;
+                bluedb_embedded = Some(val == "true");
+            }
+            ("bluedb", "path") => {
+                bluedb_seen = true;
+                bluedb_path = Some(val);
+            }
+            ("bluedb", _) => {
+                // scope / sync / consistency / mode / url — reserved for the
+                // reactive layer; presence still counts as "use bluedb".
+                bluedb_seen = true;
+            }
             // `[auth]` keys (canonical names per docs/sky-toml.md) → the suffixes
             // the runtime's fixed AUTH defaults use, so sky.toml overrides them
             // (the prologue emits these fallbacks AFTER extra_defaults). `secret`
@@ -843,6 +865,15 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // compiler previously emitted nothing, so it was silently ignored).
             ("env", "prefix") => cfg.env_prefix = Some(val),
             _ => {}
+        }
+    }
+    // [bluedb] section → select the embedded bluedb session store, unless the
+    // user explicitly opted out (`embedded = false`). Seeded as env DEFAULTS, so
+    // a real SKY_LIVE_STORE env still wins.
+    if bluedb_seen && bluedb_embedded != Some(false) {
+        cfg.extra_defaults.push(("LIVE_STORE".into(), "bluedb".into()));
+        if let Some(p) = bluedb_path {
+            cfg.extra_defaults.push(("LIVE_STORE_PATH".into(), p));
         }
     }
     cfg
@@ -1487,6 +1518,46 @@ mod sky_toml_tests {
         assert!(has("LIVE_STORE_PATH", "data/a#b.db")); // '#' inside quotes kept
         assert!(has("AUTH_TOKEN_TTL", "720h"));
         assert!(has("AUTH_DRIVER", "jwt"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bluedb_section_selects_store_at_section_level() {
+        let dir = std::env::temp_dir().join(format!("skytoml-bluedb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let parse = |toml: &str| {
+            let p = dir.join("sky.toml");
+            std::fs::write(&p, toml).unwrap();
+            read_sky_toml_config(&p)
+        };
+        let store = |c: &lower::LowerConfig, v: &str| {
+            c.extra_defaults.iter().any(|(k, val)| k == "LIVE_STORE" && val == v)
+        };
+        let store_path = |c: &lower::LowerConfig, v: &str| {
+            c.extra_defaults.iter().any(|(k, val)| k == "LIVE_STORE_PATH" && val == v)
+        };
+        let any_store = |c: &lower::LowerConfig| {
+            c.extra_defaults.iter().any(|(k, _)| k == "LIVE_STORE")
+        };
+
+        // embedded = true + path → bluedb + its file.
+        let c = parse("[bluedb]\nembedded = true\npath = \"app.blue\"\n");
+        assert!(store(&c, "bluedb"), "{:?}", c.extra_defaults);
+        assert!(store_path(&c, "app.blue"));
+
+        // path alone (no embedded) → section presence selects bluedb.
+        let c = parse("[bluedb]\npath = \"x.blue\"\n");
+        assert!(store(&c, "bluedb"));
+        assert!(store_path(&c, "x.blue"));
+
+        // embedded = false → explicit opt-out even with a path (F2).
+        let c = parse("[bluedb]\nembedded = false\npath = \"x.blue\"\n");
+        assert!(!any_store(&c), "embedded=false must not select bluedb: {:?}", c.extra_defaults);
+
+        // section present with only reactive-layer keys → still selects (F4).
+        let c = parse("[bluedb]\nscope = \"session\"\nsync = \"eager\"\n");
+        assert!(store(&c, "bluedb"), "{:?}", c.extra_defaults);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

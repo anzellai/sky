@@ -38,6 +38,7 @@ module Std.Live exposing
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
+    , autoBlueDB
     )
 
 import Sky.Ffi as Ffi
@@ -154,7 +155,7 @@ withPort =
 
 
 -- | Select the session store kind ("memory" / "sqlite" / "redis" /
--- "postgres"). Env `SKY_LIVE_STORE` wins.
+-- "postgres" / "bluedb"). Env `SKY_LIVE_STORE` wins.
 withStore : String -> AppConfig model msg -> AppConfig model msg
 withStore =
     Ffi.kernel "Live_withStore"
@@ -164,6 +165,22 @@ withStore =
 withStorePath : String -> AppConfig model msg -> AppConfig model msg
 withStorePath =
     Ffi.kernel "Live_withStorePath"
+
+
+-- | One-line opt-in to BlueDB — the embedded, durable, zero-ops store
+-- (docs/bluedb/). Your Model persists to a single-file, group-committed,
+-- crash-safe BlueDB engine and survives restarts, with no `[live] store`
+-- config. Equivalent today to `withStore "bluedb"`; the reactive scope-sync
+-- layer will attach here later without changing the call site.
+--
+--     Live.app
+--         (Live.config { init = init, update = update, view = view
+--                      , subscriptions = subscriptions, routes = routes
+--                      , notFound = Home }
+--             |> Live.autoBlueDB)
+autoBlueDB : AppConfig model msg -> AppConfig model msg
+autoBlueDB cfg =
+    withStore "bluedb" cfg
 
 
 -- | Session TTL ("30m" / "24h" / bare seconds; env `SKY_LIVE_TTL` wins).

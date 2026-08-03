@@ -119,7 +119,7 @@ env-var default at startup, namespaced by `[env] prefix`
 ```toml
 [live]
 port         = 8000              # HTTP listener port
-store        = "sqlite"          # session store: memory / sqlite / redis / postgres
+store        = "sqlite"          # session store: memory / sqlite / redis / postgres / bluedb
 storePath    = "./sessions.db"   # file path or connection URL
 ttl          = 1800              # session TTL in seconds (30 min)
 static       = "public"          # static asset directory served at /static
@@ -129,8 +129,8 @@ maxBodyBytes = 5242880           # cap for /_sky/event POST body (5 MiB)
 | Key            | Env var                       | Default     | Meaning                                                    |
 |----------------|-------------------------------|-------------|------------------------------------------------------------|
 | `port`         | `<PREFIX>_LIVE_PORT`          | `8000`      | HTTP listener port                                         |
-| `store`        | `<PREFIX>_LIVE_STORE`         | `memory`    | `memory` / `sqlite` / `redis` / `postgres`   |
-| `storePath`    | `<PREFIX>_LIVE_STORE_PATH`    | (empty)     | sqlite file path, or `host:port` / `redis://…` / `postgres://…` URL |
+| `store`        | `<PREFIX>_LIVE_STORE`         | `memory`    | `memory` / `sqlite` / `redis` / `postgres` / `bluedb` |
+| `storePath`    | `<PREFIX>_LIVE_STORE_PATH`    | (empty)     | sqlite/bluedb file path, or `host:port` / `redis://…` / `postgres://…` URL |
 | `ttl`          | `<PREFIX>_LIVE_TTL`           | `1800`      | Session TTL in seconds                                     |
 | `static`       | `<PREFIX>_LIVE_STATIC_DIR`    | (empty)     | Static asset directory served at `/static`                 |
 | `maxBodyBytes` | `<PREFIX>_LIVE_MAX_BODY_BYTES`| `5242880`   | Max `/_sky/event` POST body (bump for `Event.onFile` uploads)|
@@ -144,6 +144,34 @@ Connection-status banner config is env-only (not in sky.toml):
 (default `500`), `<PREFIX>_LIVE_RETRY_MAX_MS` (default `16000`),
 `<PREFIX>_LIVE_RETRY_MAX_ATTEMPTS` (default `10`),
 `<PREFIX>_LIVE_QUEUE_MAX` (default `50`).
+
+---
+
+## `[bluedb]`
+
+The embedded, zero-ops durable store (`docs/bluedb/`). Today it drives the
+Sky.Live **session store** — the one-liner alternative to
+`[live] store = "bluedb"`:
+
+```toml
+[bluedb]
+embedded = true          # in-process, single file — the only mode today
+path     = "app.blue"    # store file (default: sky_sessions.blue)
+```
+
+`embedded = true` or a `path` selects the bluedb session store (seeds
+`LIVE_STORE=bluedb` + `LIVE_STORE_PATH`). Sessions persist across restarts on a
+group-committed, crash-safe engine (`docs/bluedb/durability.md`). Process env
+`<PREFIX>_LIVE_STORE` overrides the sky.toml seed, same as every key.
+
+| Key        | Effect                                                          |
+|------------|-----------------------------------------------------------------|
+| `embedded` | `true` → use the embedded bluedb session store                  |
+| `path`     | store file → `LIVE_STORE_PATH` (default `sky_sessions.blue`)     |
+
+`scope` / `sync` / `consistency` are reserved for the reactive layer (not
+consumed yet). In code, `config {...} |> Live.autoBlueDB` is the equivalent
+one-line opt-in.
 
 ---
 

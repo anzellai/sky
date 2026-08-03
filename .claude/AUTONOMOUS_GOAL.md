@@ -53,3 +53,22 @@ summary.
       restart (fresh session=0), readyz reflects health.
 
 MANDATE COMPLETE — both phases implemented, grilled, fixed, tested/e2e-verified.
+
+## Extension (user, 2026-08-03): "keep going fully autonomous until e2e integration works"
+
+App-level BlueDB integration end-to-end (persistence first; reactive is a later
+phase). Grill + e2e-verify each step.
+- [x] A: `[bluedb]` sky.toml section → selects the bluedb session store
+      (section-level: presence selects unless `embedded = false`). E2E: persists
+      across restart, no env. Also `[live] store = "bluedb"` already worked.
+- [x] B: `Live.autoBlueDB` — PURE SKY over the existing `withStore "bluedb"`
+      builder, NO compiler-kernel work. E2E: `config {...} |> Live.autoBlueDB`
+      persists across restart, no env.
+- GRILLED (fresh-context): fixed F1/F3 (code-set store silently beat
+      `SKY_LIVE_STORE` env → deploy-override broken; now env > cfg, verified: env
+      override → memory, no persist) + F2/F4 ([bluedb] edge cases → section-level
+      mapping + unit test). Docs: sky-toml.md `[bluedb]`, README roadmap.
+
+INTEGRATION WORKS: three opt-ins (`[live] store`, `[bluedb]`, `autoBlueDB`), all
+e2e-verified persisting across a restart. Reactive scope-sync (multiplayer) is
+the next phase — the seam is `autoBlueDB`'s call site.

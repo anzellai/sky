@@ -191,8 +191,16 @@ swap the substrate underneath later without touching app code.**
     lost. 18 tests green incl. `-race`.
   - **[landed]** Sky.Live session-store driver — `SKY_LIVE_STORE=bluedb`
     (`rt/live_store_bluedb.go`): the embedded, zero-ops durable session store.
-  - **[next]** The `Std.Live.autoBlueDB` stdlib surface + `[bluedb]` sky.toml
-    parsing → the reactive fan-out layer (compiler-kernel work, deferred).
+  - **[landed]** App-level opt-in, three ways, all e2e-verified (Model persists
+    across a server restart, no env var): `[live] store = "bluedb"`, the unified
+    **`[bluedb]`** sky.toml section (`embedded`/`path` → the store), and
+    **`Live.autoBlueDB`** in code (`config {...} |> Live.autoBlueDB`). autoBlueDB
+    is pure Sky over the existing `withStore "bluedb"` builder — **no
+    compiler-kernel work needed** (the reactive layer will attach to the same
+    call site later). Grilled.
+  - **[next]** The reactive fan-out layer — change-feed → scope-keyed sync over
+    SSE → the two-browsers-live-counter demo. This is where `autoBlueDB` gains
+    the multiplayer magic; it's the largest remaining piece.
 - **Phase 2 — partial sync.** Change-feed + query-subscriptions so big Models
   sync diffs, not snapshots; hot-key sharded aggregates.
 - **Phase 3 — distributed substrate.** Native transactional ordered-KV (Pebble +

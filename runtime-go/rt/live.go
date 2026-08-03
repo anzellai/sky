@@ -3563,12 +3563,21 @@ func liveAppRun(cfg any) any {
 			app.staticURL = s
 		}
 	}
-	// Session store selection. Config fields `store` and `storePath`
-	// override the defaults; env vars <PREFIX>_LIVE_STORE /
-	// <PREFIX>_LIVE_STORE_PATH take precedence over config; final
-	// fallback is memory.
-	storeKind := stringField(cfg, "Store")
-	storePath := stringField(cfg, "StorePath")
+	// Session store selection. Documented precedence: env >
+	// config. A real <PREFIX>_LIVE_STORE / <PREFIX>_LIVE_STORE_PATH
+	// (or the sky.toml seed, which sets those env DEFAULTS) wins over a
+	// code-set store (Live.withStore / Live.autoBlueDB) — so a deploy can
+	// always redirect the store. The cfg field is the fallback when the env
+	// is unset; final fallback (both empty) is memory. (chooseStore reads the
+	// env again if kind is still empty — a harmless no-op here.)
+	storeKind := skyGetenv("LIVE_STORE")
+	if storeKind == "" {
+		storeKind = stringField(cfg, "Store")
+	}
+	storePath := skyGetenv("LIVE_STORE_PATH")
+	if storePath == "" {
+		storePath = stringField(cfg, "StorePath")
+	}
 	// TTL resolution order:  env > sky.toml > default (30m).
 	// Two value shapes accepted at BOTH layers, per CLAUDE.md
 	// docs ("30m" default form):
