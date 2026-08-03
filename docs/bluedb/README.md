@@ -98,6 +98,41 @@ Live.withBlueDB : BlueConfig -> AppConfig -> AppConfig
    scoping is enforced **server-side** (the v0.16.6 multi-tenant SQL-WHERE gate,
    generalized to a scope key) — a client cannot read across scopes.
 
+## Admin queries — inspect + edit your data (SHIPPED)
+
+BlueDB is a key–value store, so a "query" is a key lookup or a **prefix scan +
+filter**, not SQL. Namespace your keys (`"user:1"`, `"order:2026-…"`) and two
+surfaces cover admin/ops:
+
+**In-app (live), via `Std.BlueDB`** — runs inside the app process, so it reads a
+consistent snapshot of the live store under the engine lock:
+
+```elm
+BlueDB.scan store "user:" 100                  -- deterministic ascending, bounded
+BlueDB.scanValues userCodec store "user:" 100  -- typed, Codec-decoded
+BlueDB.scanFrom store "user:" lastKey 100      -- cursor pagination
+```
+
+**Offline, via the `sky bluedb` CLI** — inspect or edit a **stopped** store or a
+copied/backup file on any host (no Sky, no toolchain once built):
+
+```bash
+sky bluedb data/app.blue stats
+sky bluedb data/app.blue keys user:            # sorted; --limit N
+sky bluedb data/app.blue scan user: --json     # values JSON-parsed
+sky bluedb data/app.blue get  user:1 --json
+sky bluedb data/app.blue put  user:1 '{"name":"Ada"}'
+sky bluedb data/app.blue delete user:1 --yes
+sky bluedb data/app.blue compact               # snapshot + truncate WAL
+```
+
+**Why the split — a `.blue` store is single-writer.** A running app holds an
+exclusive lock, so the CLI refuses a **live** store (exit 3; a second writer
+would corrupt the WAL). Mutate a live store **through the app** (an
+authenticated console/admin action); use the CLI when the app is stopped, or on
+a copy. The CLI is the same engine-backed tool as the standalone `bluedb` binary
+(`go build ./runtime-go/cmd/sky-bluedb`) — one format reader/writer, no drift.
+
 ## sky.toml — one section for everything (the "just put it all in BlueDB")
 
 Today an app juggles `[database]` (app data) + `[live].store` (sessions) +

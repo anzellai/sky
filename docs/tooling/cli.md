@@ -581,6 +581,36 @@ only the entry-point module switches between `Live.app` and
   local}`) — production-mode gate; suppresses console + banner
   entirely and gates `/_sky/metrics` behind auth.
 
+## Data stores
+
+### `sky bluedb <path> <command> [args]`
+
+Offline inspector/editor for a [BlueDB](../bluedb/README.md) store
+file. Engine-backed (one format reader/writer — no drift), built +
+cached per-version on first use, and also usable as the standalone
+`bluedb` binary on any host (`go build ./runtime-go/cmd/sky-bluedb`
+— no Sky, no toolchain once built).
+
+```bash
+sky bluedb data/app.blue stats
+sky bluedb data/app.blue keys   [prefix] [--limit N] [--json]
+sky bluedb data/app.blue scan   [prefix] [--limit N] [--json]
+sky bluedb data/app.blue get    <key>    [--json] [--raw]
+sky bluedb data/app.blue put    <key> <value>  [--stdin]
+sky bluedb data/app.blue delete <key>    [--yes]
+sky bluedb data/app.blue compact         [--yes]
+```
+
+**Offline only.** A running app holds the store's exclusive lock, so
+the CLI refuses a **live** store (exit 3) — a second writer would
+corrupt the WAL. Operate on a stopped store or a copied/backup file;
+to inspect or edit a live store, go **through the app** (its console /
+admin action). Destructive verbs (`delete`, `compact`) confirm unless
+`--yes`. Values render losslessly — UTF-8 as-is, JSON parsed for
+`--json`, otherwise `<binary N bytes>` (or hex with `--raw`) — so a
+gob session blob never prints as garbage. For **in-app** (live) admin
+queries use `Std.BlueDB.scan` / `scanValues` / `scanFrom`.
+
 ## Formatting
 
 ### `sky fmt <file>`
