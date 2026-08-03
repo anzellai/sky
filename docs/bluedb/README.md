@@ -126,12 +126,27 @@ sky bluedb data/app.blue delete user:1 --yes
 sky bluedb data/app.blue compact               # snapshot + truncate WAL
 ```
 
-**Why the split — a `.blue` store is single-writer.** A running app holds an
-exclusive lock, so the CLI refuses a **live** store (exit 3; a second writer
-would corrupt the WAL). Mutate a live store **through the app** (an
-authenticated console/admin action); use the CLI when the app is stopped, or on
-a copy. The CLI is the same engine-backed tool as the standalone `bluedb` binary
-(`go build ./runtime-go/cmd/sky-bluedb`) — one format reader/writer, no drift.
+**Live / remote (zero-downtime), via `sky bluedb --url`** — because a `.blue`
+store is **single-writer** (the running app holds an exclusive lock), you never
+touch its file while it's live. Instead the app exposes an authenticated admin
+endpoint and the CLI is a client of it — like `redis-cli`/`psql` to a live
+server:
+
+```bash
+sky bluedb --url https://myapp --token $TOK stores            # list open stores
+sky bluedb --url https://myapp --token $TOK <store> scan user:
+sky bluedb --url https://myapp --token $TOK <store> put user:1 '{"name":"Ada"}'   # LIVE edit
+sky bluedb --env prod.env <store> get user:1                  # url+token from a .env
+```
+
+The app opts in: `SKY_CONSOLE_DATA=readonly` (reads) or `readwrite` (edits) +
+`SKY_ADMIN_TOKEN`. The endpoint (`/_sky/console/api/data`) is hardened — bearer
+token required with **no loopback bypass**, writes need `readwrite` in every env
++ a custom header (no cross-site POST), values bounded, every mutation
+audit-logged, and **only app stores** are writable (session stores are excluded;
+a raw write would corrupt the gob frame). The app console's **Data** tab is the
+GUI over the same endpoint. Offline vs live is one tool, one reader/writer (the
+real engine) — no drift; the offline binary is `go build ./runtime-go/cmd/sky-bluedb`.
 
 ## sky.toml — one section for everything (the "just put it all in BlueDB")
 

@@ -601,15 +601,40 @@ sky bluedb data/app.blue delete <key>    [--yes]
 sky bluedb data/app.blue compact         [--yes]
 ```
 
-**Offline only.** A running app holds the store's exclusive lock, so
-the CLI refuses a **live** store (exit 3) — a second writer would
-corrupt the WAL. Operate on a stopped store or a copied/backup file;
-to inspect or edit a live store, go **through the app** (its console /
-admin action). Destructive verbs (`delete`, `compact`) confirm unless
-`--yes`. Values render losslessly — UTF-8 as-is, JSON parsed for
-`--json`, otherwise `<binary N bytes>` (or hex with `--raw`) — so a
-gob session blob never prints as garbage. For **in-app** (live) admin
-queries use `Std.BlueDB.scan` / `scanValues` / `scanFrom`.
+**Offline (direct-file) mode** is above: a running app holds the store's
+exclusive lock, so the filemode CLI refuses a **live** store (exit 3) —
+a second writer would corrupt the WAL. Operate on a stopped store or a
+copied/backup file. Destructive verbs (`delete`, `compact`) confirm
+unless `--yes`. Values render losslessly — UTF-8 as-is, JSON parsed for
+`--json`, otherwise `<binary N bytes>` (or hex with `--raw`).
+
+**Live / remote mode — edit a RUNNING app with zero downtime.** Pass
+`--url <app>` (+ a token) and the CLI talks to the app's admin endpoint
+instead of the file — the app is the sole writer and performs the op:
+
+```bash
+sky bluedb --url https://myapp.example --token $TOK stores          # list open stores
+sky bluedb --url https://myapp.example --token $TOK <store> scan user:
+sky bluedb --url https://myapp.example --token $TOK <store> put user:1 '{"name":"Ada"}'
+sky bluedb --url https://myapp.example --token $TOK <store> delete user:1 --yes
+sky bluedb --env prod.env <store> get user:1        # url+token from a .env (keeps the token out of argv)
+```
+
+`--env <file>` reads `SKY_BLUEDB_URL` / `SKY_ADMIN_TOKEN` from a dotenv.
+The app must enable the endpoint: **`SKY_CONSOLE_DATA=readonly`** (reads)
+or **`readwrite`** (edits), plus **`SKY_ADMIN_TOKEN`** (the bearer). The
+endpoint is hardened — a bearer token is required with **no loopback
+bypass**, writes need `readwrite` in every env, and every mutation is
+audit-logged. Session stores are never writable (only app stores opened
+via `Std.BlueDB`).
+
+### `sky bluedb console <path> [--tui] [--port N]`
+
+Interactive browser for a BlueDB store — a bundled Sky.Live (web,
+default) / Sky.Tui (`--tui`) app. Offline (direct): the store must be
+stopped, or a copy. For **in-app** (live) admin queries from Sky code
+use `Std.BlueDB.scan` / `scanValues` / `scanFrom`; the app console's
+**Data** tab browses live stores in the browser.
 
 ## Formatting
 
