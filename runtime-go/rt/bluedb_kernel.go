@@ -165,6 +165,28 @@ func BlueDB_keys(idArg any) any {
 	}
 }
 
+// BlueDB_scan : Int -> String -> String -> Int -> Task Error (List (String, String))
+// Prefix scan in ascending key order, starting strictly after `startAfter` ("" =
+// from the beginning), up to `limit` pairs (limit <= 0 = no cap). Deterministic +
+// paginable: pass the last key as the next startAfter. Admin/inspection path.
+func BlueDB_scan(idArg, prefixArg, startAfterArg, limitArg any) any {
+	return func() any {
+		db := bluedbLookup(idArg)
+		if db == nil {
+			return Err[any, any](ErrInvalidInput("BlueDB.scan: store not found (closed?)"))
+		}
+		prefix := []byte(AsString(prefixArg))
+		after := []byte(AsString(startAfterArg))
+		limit := int(AsInt(limitArg))
+		pairs := []any{}
+		db.Scan(prefix, after, limit, func(k, v []byte) bool {
+			pairs = append(pairs, SkyTuple2{V0: string(k), V1: string(v)})
+			return true
+		})
+		return Ok[any, any](pairs)
+	}
+}
+
 // BlueDB_close : Int -> Task Error () — idempotent.
 func BlueDB_close(idArg any) any {
 	return func() any {

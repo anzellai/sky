@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -447,6 +449,42 @@ func (db *DB) ForEach(fn func(key, value []byte) bool) {
 		if !fn(e.k, e.v) {
 			return
 		}
+	}
+}
+
+// Scan visits keys with the given prefix in ASCENDING key order (deterministic,
+// unlike ForEach's map-random order), starting strictly AFTER startAfter — pass
+// nil/"" for the beginning — and stopping after limit matches (limit <= 0 means
+// no cap) or when fn returns false. Sorting makes it STABLE and paginable: pass
+// the last key you saw as startAfter to get the next page.
+//
+// This is the admin/inspection path, not the point-read hot path: it snapshots
+// the prefix-matching key set under a short read lock, then sorts it — O(m log m)
+// in the number of matches m. On future ordered storage the same signature
+// becomes a native O(log n + k) range scan (the sort falls away). value slices
+// alias the memtable (like ForEach); treat them as read-only.
+func (db *DB) Scan(prefix, startAfter []byte, limit int, fn func(key, value []byte) bool) {
+	type kv struct{ k, v []byte }
+	pfx := string(prefix)
+	after := string(startAfter)
+	db.mu.RLock()
+	matches := make([]kv, 0, 16)
+	for k, v := range db.mem {
+		if strings.HasPrefix(k, pfx) && k > after {
+			matches = append(matches, kv{[]byte(k), v})
+		}
+	}
+	db.mu.RUnlock()
+	sort.Slice(matches, func(i, j int) bool { return string(matches[i].k) < string(matches[j].k) })
+	n := 0
+	for _, e := range matches {
+		if limit > 0 && n >= limit {
+			return
+		}
+		if !fn(e.k, e.v) {
+			return
+		}
+		n++
 	}
 }
 

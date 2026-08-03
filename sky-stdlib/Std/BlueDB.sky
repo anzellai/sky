@@ -1,4 +1,18 @@
-module Std.BlueDB exposing (Store, open, close, put, get, delete, has, keys, putValue, getValue)
+module Std.BlueDB exposing
+    ( Store
+    , open
+    , close
+    , put
+    , get
+    , delete
+    , has
+    , keys
+    , scan
+    , scanFrom
+    , scanValues
+    , putValue
+    , getValue
+    )
 
 {-| BlueDB — the embedded, durable, group-committed key-value store for a Sky
 app's OWN data (see docs/bluedb/). The same engine that backs the Sky.Live
@@ -26,6 +40,7 @@ this module is for arbitrary app data beyond the Model.
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Task as Task
 import Std.Codec as Codec exposing (Codec)
@@ -133,6 +148,59 @@ keys store =
 
         Store raw ->
             keysRaw raw
+
+
+-- Prefix scan (admin queries) -------------------------------------------------
+scanRaw : Int -> String -> String -> Int -> Task Error (List ( String, String ))
+scanRaw =
+    Ffi.kernel "BlueDB_scan"
+
+
+{-| Scan the key/value pairs whose key starts with `prefix`, in ASCENDING key
+order, up to `limit` pairs (`limit <= 0` = no cap — only for small keyspaces).
+Deterministic + bounded — the admin-query primitive. Namespace your keys
+("user:1", "order:…") so a scan touches only what you want; this walks + sorts
+the matching set in the running process (consistent snapshot, no torn read).
+
+To PAGINATE, pass the last key you saw to `scanFrom` as the cursor. -}
+scan : Store -> String -> Int -> Task Error (List ( String, String ))
+scan store prefix limit =
+    scanFrom store prefix "" limit
+
+
+{-| `scan` with a cursor: returns pairs with key `> startAfter` (exclusive).
+Page by feeding the last key of one page as the next `startAfter`. -}
+scanFrom : Store -> String -> String -> Int -> Task Error (List ( String, String ))
+scanFrom store prefix startAfter limit =
+    case store of
+
+        Store raw ->
+            scanRaw raw prefix startAfter limit
+
+
+{-| Typed prefix scan: decode each value via its `Codec`, keeping the key. A
+value present but not decodable FAILS the task (schema drift surfaces rather
+than silently dropping). Bounded by `limit`; paginate with `scan`/`scanFrom`
+on the raw keys when you need cursors. -}
+scanValues : Codec a -> Store -> String -> Int -> Task Error (List ( String, a ))
+scanValues codec store prefix limit =
+    scan store prefix limit
+        |> Task.andThen
+               (\pairs -> Task.sequence (List.map (decodePair codec) pairs))
+
+
+decodePair : Codec a -> ( String, String ) -> Task Error ( String, a )
+decodePair codec pair =
+    case pair of
+
+        ( key, raw ) ->
+            case Codec.fromJson codec raw of
+
+                Ok v ->
+                    Task.succeed ( key, v )
+
+                Err e ->
+                    Task.fail e
 
 
 -- Typed via Codec -------------------------------------------------------------
