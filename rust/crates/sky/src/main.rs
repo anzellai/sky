@@ -66,6 +66,7 @@ fn main() -> ExitCode {
         // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
         Some("console") => cmd_console(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
+        Some("bluedb") => cmd_bluedb(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -1579,6 +1580,86 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
         Ok(s) => propagate(s.code()),
         Err(e) => {
             eprintln!("sky console-serve: could not launch hub: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `sky bluedb <path> <stats|keys|scan|get|put|delete|compact> [args]` — the
+/// OFFLINE inspector/editor for a BlueDB store file. Forwards to the engine-backed
+/// `sky-bluedb` helper (the same tool you can `go build ./runtime-go/cmd/sky-bluedb`
+/// and run standalone on any host — no `sky`, no toolchain, once built). A LIVE
+/// store (running app) holds an exclusive lock and is refused with guidance; edit
+/// a live store through the app's console, not here.
+fn cmd_bluedb(args: &[String]) -> ExitCode {
+    if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
+        eprintln!(
+            "usage: sky bluedb <path> <stats|keys|scan|get|put|delete|compact> [args] [--json] [--limit N] [--yes]\n\
+             Offline inspector/editor for a BlueDB store file. A live store (running app)\n\
+             is locked — inspect/edit it through the app's console instead."
+        );
+        return ExitCode::from(2);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let runtime_go = repo_root.join("runtime-go");
+    if !runtime_go
+        .join("cmd")
+        .join("sky-bluedb")
+        .join("main.go")
+        .is_file()
+    {
+        eprintln!(
+            "sky bluedb: runtime-go/cmd/sky-bluedb not found under {}.\n\
+             The tool source is embedded in the binary and extracted on first use;\n\
+             a missing source here means the embedded asset extraction failed.",
+            repo_root.display()
+        );
+        return ExitCode::from(2);
+    }
+
+    // Build the inspector into the per-version cache (one-time per version).
+    // CGO_ENABLED=0: runtime-go transitively imports webview (cgo on darwin);
+    // disabling cgo routes through the stub — the inspector never touches it.
+    let tool_dir = bundled::cache_root().join(format!("bluedb-{}", version_slug()));
+    let tool_bin = tool_dir.join("sky-bluedb");
+    if !tool_bin.is_file() {
+        if let Err(e) = std::fs::create_dir_all(&tool_dir) {
+            eprintln!("sky bluedb: could not create cache dir: {e}");
+            return ExitCode::FAILURE;
+        }
+        eprintln!("sky bluedb: building inspector (one-time per version)...");
+        let status = Command::new("go")
+            .args(["build", "-o"])
+            .arg(&tool_bin)
+            .arg("./cmd/sky-bluedb")
+            .current_dir(&runtime_go)
+            .env("CGO_ENABLED", "0")
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!(
+                    "sky bluedb: go build sky-bluedb failed (exit {})",
+                    s.code().unwrap_or(-1)
+                );
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("sky bluedb: could not launch go build: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let status = Command::new(&tool_bin).args(args).status();
+    match status {
+        Ok(s) => propagate(s.code()),
+        Err(e) => {
+            eprintln!("sky bluedb: could not launch inspector: {e}");
             ExitCode::FAILURE
         }
     }
