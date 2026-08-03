@@ -209,6 +209,10 @@ swap the substrate underneath later without touching app code.**
     Durable, persists across restart, path-deduped (one engine per file). Pure
     additive stdlib (`Ffi.kernel` routes generically — no compiler-kernel change).
     e2e-verified; `sky doc Std.BlueDB` renders it.
+  - **[landed]** Migration path (`docs/bluedb/migration.md`) — verified deploy
+    behaviour (additive Model change resumes with new field = zero; breaking
+    change resets to init cleanly) + **`Live.withMigrate`** (resume-time
+    `model -> model` fix-up hook) + the versioned-record pattern for `Std.BlueDB`.
   - **[next]** The reactive fan-out layer — change-feed → scope-keyed sync over
     SSE → the two-browsers-live-counter demo. This is where `autoBlueDB` gains
     the multiplayer magic; it's the largest remaining piece.
