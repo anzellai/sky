@@ -8,6 +8,7 @@ package rt
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -100,6 +101,9 @@ func BlueDB_put(idArg, keyArg, valueArg any) any {
 		if db == nil {
 			return Err[any, any](ErrInvalidInput("BlueDB.put: store not found (closed?)"))
 		}
+		if strings.ContainsRune(AsString(keyArg), 0) {
+			return Err[any, any](ErrInvalidInput("BlueDB.put: key must not contain NUL (reserved for the index keyspace)"))
+		}
 		if err := db.Put([]byte(AsString(keyArg)), []byte(AsString(valueArg))); err != nil {
 			return Err[any, any](ErrFfi("BlueDB.put: " + err.Error()))
 		}
@@ -158,6 +162,9 @@ func BlueDB_keys(idArg any) any {
 		}
 		keys := []any{}
 		db.ForEach(func(k, _ []byte) bool {
+			if bluedbIsReserved(string(k)) { // hide index/manifest entries from app keys
+				return true
+			}
 			keys = append(keys, string(k))
 			return true
 		})
@@ -175,11 +182,18 @@ func BlueDB_scan(idArg, prefixArg, startAfterArg, limitArg any) any {
 		if db == nil {
 			return Err[any, any](ErrInvalidInput("BlueDB.scan: store not found (closed?)"))
 		}
-		prefix := []byte(AsString(prefixArg))
+		prefixS := AsString(prefixArg)
+		prefix := []byte(prefixS)
 		after := []byte(AsString(startAfterArg))
 		limit := int(AsInt(limitArg))
+		// Hide the reserved index/manifest keyspace UNLESS the caller explicitly
+		// scans into it (the admin escape hatch: scan "\x00...").
+		hideReserved := !strings.HasPrefix(prefixS, bluedbReserved)
 		pairs := []any{}
 		db.Scan(prefix, after, limit, func(k, v []byte) bool {
+			if hideReserved && bluedbIsReserved(string(k)) {
+				return true
+			}
 			pairs = append(pairs, SkyTuple2{V0: string(k), V1: string(v)})
 			return true
 		})
