@@ -708,16 +708,31 @@ tabFetches model tab filter =
                 [ Cmd.perform (model.store.readDataStores ()) GotDataStores ]
 
 
+consoleAuthToken : String
+consoleAuthToken =
+    System.getenvOr "SKY_CONSOLE_INTERNAL_TOKEN" ""
+
+
+{-| Every console→parent fetch goes through this so the per-boot internal token
+(F1) is carried on ALL of them — the parent gate authenticates by token, not by a
+proxy-spoofable loopback IP. A single missed site would 401 a tab in prod. -}
+authGet : String -> Task Error Http.HttpResponse
+authGet url =
+    Http.request
+        (Http.defaultRequest url
+            |> Http.withHeader "Authorization" ("Bearer " ++ consoleAuthToken))
+
+
 fetchOverview : String -> Task Error Overview
 fetchOverview parent =
-    Http.get (parent ++ "/_sky/console/api/overview")
+    authGet (parent ++ "/_sky/console/api/overview")
         |> Task.andThenResult
                (\resp -> Decode.decodeString overviewDecoder resp.body)
 
 
 fetchLogs : String -> LogFilter -> Task Error (List LogEntry)
 fetchLogs parent filter =
-    Http.get
+    authGet
         (parent ++ "/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
         |> Task.andThenResult
                (\resp -> Decode.decodeString logsDecoder resp.body)
@@ -762,28 +777,28 @@ buildLogQuery f =
 
 fetchMetrics : String -> Task Error (List MetricRow)
 fetchMetrics parent =
-    Http.get (parent ++ "/_sky/console/api/metrics-summary")
+    authGet (parent ++ "/_sky/console/api/metrics-summary")
         |> Task.andThenResult
                (\resp -> Decode.decodeString metricsDecoder resp.body)
 
 
 fetchTraces : String -> Task Error (List TraceRow)
 fetchTraces parent =
-    Http.get (parent ++ "/_sky/console/api/traces?limit=100")
+    authGet (parent ++ "/_sky/console/api/traces?limit=100")
         |> Task.andThenResult
                (\resp -> Decode.decodeString tracesDecoder resp.body)
 
 
 fetchErrors : String -> Task Error (List ErrorRow)
 fetchErrors parent =
-    Http.get (parent ++ "/_sky/console/api/errors")
+    authGet (parent ++ "/_sky/console/api/errors")
         |> Task.andThenResult
                (\resp -> Decode.decodeString errorsDecoder resp.body)
 
 
 fetchAnalytics : String -> Task Error Analytics
 fetchAnalytics parent =
-    Http.get (parent ++ "/_sky/console/api/analytics")
+    authGet (parent ++ "/_sky/console/api/analytics")
         |> Task.andThenResult
                (\resp -> Decode.decodeString analyticsDecoder resp.body)
 
@@ -791,7 +806,7 @@ fetchAnalytics parent =
 -- exp/bluedb: list the host app's currently-open BlueDB stores.
 fetchDataStores : String -> Task Error (List String)
 fetchDataStores parent =
-    Http.get (parent ++ "/_sky/console/api/data")
+    authGet (parent ++ "/_sky/console/api/data")
         |> Task.andThenResult
                (\resp -> Decode.decodeString dataStoresDecoder resp.body)
 
@@ -802,7 +817,7 @@ fetchDataStores parent =
 -- query string.
 fetchDataRows : String -> String -> String -> Task Error (List ( String, String ))
 fetchDataRows parent store prefix =
-    Http.get
+    authGet
         (parent ++ "/_sky/console/api/data?limit=200&store="
             ++ Encoding.urlEncode store
             ++ "&prefix="

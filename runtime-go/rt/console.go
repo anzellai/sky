@@ -42,6 +42,7 @@ package rt
 // before the user can interact).
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -318,6 +319,11 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// never sees it, so it shows no sign-out.
 	os.Setenv("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout")
 
+	// F1 — mint + publish the per-boot internal token BEFORE the sub-app inits,
+	// so its loopback fetches to /_sky/console/api/* authenticate by token, not by
+	// a (proxy-spoofable) loopback IP.
+	ConsoleInternalTokenInit()
+
 	// v0.16.1 PR10-F — mount the inline console via the canonical
 	// Sky.Live sub-app primitive. The bundled console's Sky-source
 	// init / update / view / subscriptions cycle drives the SSE +
@@ -390,8 +396,20 @@ func HandleConsole(w http.ResponseWriter, r *http.Request) {
 // Returns true when the request may proceed; false when a response
 // (401 / 403 / 503) has been written.
 func consoleAccessAllowed(w http.ResponseWriter, r *http.Request) bool {
-	if isLoopbackRemoteAddr(r) {
-		return true
+	// F1: authenticate the caller by TOKEN, never by loopback IP (a reverse proxy
+	// makes every request's RemoteAddr loopback). The in-process console sub-app
+	// carries the per-boot internal token; an operator tool carries SKY_ADMIN_TOKEN;
+	// a browser authenticates via the console cookie in evaluateConsoleAuth (which
+	// also preserves dev-open). No IP is ever trusted.
+	if tok := bearerToken(r); tok != "" {
+		if it := currentConsoleInternalToken(); it != "" &&
+			subtle.ConstantTimeCompare([]byte(tok), []byte(it)) == 1 {
+			return true
+		}
+		if admin := skyGetenv("ADMIN_TOKEN"); admin != "" &&
+			subtle.ConstantTimeCompare([]byte(tok), []byte(admin)) == 1 {
+			return true
+		}
 	}
 	return evaluateConsoleAuth(w, r)
 }

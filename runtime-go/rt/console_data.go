@@ -64,6 +64,13 @@ func dataAuthOK(w http.ResponseWriter, r *http.Request, write bool) bool {
 		subtle.ConstantTimeCompare([]byte(supplied), []byte(admin)) == 1 {
 		return true
 	}
+	// The in-process console (Data tab) carries the per-boot internal token, not
+	// the admin token — accept it so the tab works in production without a
+	// loopback-IP bypass.
+	if it := currentConsoleInternalToken(); it != "" && supplied != "" &&
+		subtle.ConstantTimeCompare([]byte(supplied), []byte(it)) == 1 {
+		return true
+	}
 	if !write && !productionFromEnv() && admin == "" {
 		return true // dev-open reads only
 	}
