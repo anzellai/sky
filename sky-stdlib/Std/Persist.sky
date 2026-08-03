@@ -1,0 +1,268 @@
+module Std.Persist exposing
+    ( Conn
+    , Relational
+    , KeyValue
+    , Collection
+    , collection
+    , key
+    , connectRelational
+    , connectKeyValue
+    , get
+    , put
+    , delete
+    , count
+    , all
+    , create
+    , scan
+    , sql
+    , kv
+    )
+
+{-| Std.Persist — the ONE front door for typed record persistence, over SQL
+(`Std.Db.Store`) and the embedded KV (`Std.BlueDB`), on `Std.Codec`.
+
+You define a record ONCE as a `Store` (codec = schema), wrap it in a `Collection`,
+connect to a backend, and run the SAME universal verbs — the compiler refuses any
+verb the backend can't do (a phantom backend tag, so it's a *compile* error, never
+a runtime failure).
+
+    import Std.Persist as Persist
+    import Std.Db.Store as Store
+    import Std.Codec as Codec
+
+    users : Persist.Collection User
+    users =
+        Persist.collection
+            (Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id")
+
+    main =
+        Persist.connectRelational ()             -- or connectKeyValue "data/app.blue"
+            |> Task.andThen (\conn -> Persist.put conn users alice)
+
+**Universal** (any backend): `get` / `put` / `delete` / `count` / `all` / `create`.
+**KV-only**: `scan` (prefix). **Escape hatches**: `sql` → raw `Std.Db`, `kv` → raw
+`BlueDB.Store` — for the backend-specific power (joins/aggregates via Store's query
+builder; prefix ops) the universal verbs deliberately don't wrap.
+
+The point is the **graduation story**: start embedded on BlueDB, later move the same
+CRUD to SQL by changing ONLY the `connect` call — the universal verbs survive, and
+anything backend-specific stops compiling at exactly the call sites that need power.
+-}
+
+import Sky.Ffi as Ffi
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Std.Codec exposing (Codec)
+import Std.Db as Db exposing (Db)
+import Std.Db.Store as Store exposing (Store)
+import Std.BlueDB as BlueDB
+
+-- Backend capability markers (nullary phantom tags).
+type Relational
+    = Relational
+
+type KeyValue
+    = KeyValue
+
+{-| An open connection, tagged by its backend capability. OPAQUE — the only way
+to mint one is `connectRelational` / `connectKeyValue`, which pin the phantom, so
+the capability guarantee can't be forged at construction. -}
+type Conn cap
+    = SqlConn Db
+    | KvConn BlueDB.Store
+
+{-| A named, codec-typed record set — backend-agnostic. Wraps a full `Store` so
+every schema builder (serial / unique / defaults / touchOnUpdate) is reachable. -}
+type Collection a
+    = Collection { store : Store a
+, keyField : String
+}
+
+
+{-| Define a collection from a `Store` (built with all its schema builders). The
+key field defaults to "id"; override with `key`. -}
+collection : Store a -> Collection a
+collection store =
+    Collection { store = store, keyField = "id" }
+
+
+{-| Set the record FIELD name that is the primary key (used to derive the KV key
+from a record on `put`). Defaults to "id". -}
+key : String -> Collection a -> Collection a
+key k coll =
+    case coll of
+
+        Collection c ->
+            Collection { c | keyField = k }
+
+
+storeOf : Collection a -> Store a
+storeOf coll =
+    case coll of
+
+        Collection c ->
+            c.store
+
+
+codecOf : Collection a -> Codec a
+codecOf coll =
+    Store.codecOf (storeOf coll)
+
+
+keyFieldOf : Collection a -> String
+keyFieldOf coll =
+    case coll of
+
+        Collection c ->
+            c.keyField
+
+
+-- Connect -----------------------------------------------------------------------
+{-| Open a relational connection (sqlite/postgres — driver from `[database]` in
+sky.toml). The static tag is `Relational` regardless of driver (dialect is a
+runtime property of the handle), so capability stays known at compile time. -}
+connectRelational : () -> Task Error (Conn Relational)
+connectRelational _ =
+    Task.map SqlConn (Db.connect ())
+
+
+{-| Open an embedded key-value connection (a BlueDB store at `path`). -}
+connectKeyValue : String -> Task Error (Conn KeyValue)
+connectKeyValue path =
+    Task.map KvConn (BlueDB.open path)
+
+
+-- Universal verbs (compile on every backend) -----------------------------------
+{-| Read a record by its primary key. -}
+get : Conn cap -> Collection a -> String -> Task Error (Maybe a)
+get conn coll keyStr =
+    case conn of
+
+        SqlConn db ->
+            Store.getByKey db (storeOf coll) keyStr
+
+        KvConn store ->
+            BlueDB.getValue (codecOf coll) store keyStr
+
+
+{-| Upsert a record (by its self-assigned primary key). For a DB-assigned
+(`serial`) key use the raw Store via `sql` + `Store.insert` — an auto-key has no
+value to upsert on. -}
+put : Conn cap -> Collection a -> a -> Task Error ()
+put conn coll record =
+    case conn of
+
+        SqlConn db ->
+            Store.upsert db (storeOf coll) record |> Task.map (\_ -> ())
+
+        KvConn store ->
+            case persistKeyString (keyFieldOf coll) record of
+
+                Ok keyStr ->
+                    BlueDB.putValue (codecOf coll) store keyStr record
+
+                Err e ->
+                    Task.fail e
+
+
+{-| Delete a record by its primary key. -}
+delete : Conn cap -> Collection a -> String -> Task Error ()
+delete conn coll keyStr =
+    case conn of
+
+        SqlConn db ->
+            Store.deleteByKey db (storeOf coll) keyStr |> Task.map (\_ -> ())
+
+        KvConn store ->
+            BlueDB.delete store keyStr
+
+
+{-| Count all records. (SQL: `COUNT(*)`; KV: a key scan — O(n), an analytics act.) -}
+count : Conn cap -> Collection a -> Task Error Int
+count conn coll =
+    case conn of
+
+        SqlConn db ->
+            Store.count db (Store.query (storeOf coll))
+
+        KvConn store ->
+            BlueDB.keys store |> Task.map List.length
+
+
+{-| Every record. Bounded on SQL by nothing (whole table) and on KV by a large
+scan cap — for large sets this is an analytics act, not a point op. -}
+all : Conn cap -> Collection a -> Task Error (List a)
+all conn coll =
+    case conn of
+
+        SqlConn db ->
+            Store.all db (storeOf coll)
+
+        KvConn store ->
+            BlueDB.scanValues (codecOf coll) store "" 1000000
+                |> Task.map (List.map snd)
+
+
+{-| Ensure the collection's storage exists. SQL: `CREATE TABLE IF NOT EXISTS`
+(dialect-correct). KV: a no-op (BlueDB is schemaless). -}
+create : Conn cap -> Collection a -> Task Error ()
+create conn coll =
+    case conn of
+
+        SqlConn db ->
+            Store.create db (storeOf coll)
+
+        KvConn _ ->
+            Task.succeed ()
+
+
+-- KV-only verb (Conn KeyValue) --------------------------------------------------
+{-| Prefix scan (key/value pairs). KV-only — SQL has no key-prefix notion; drop
+to the query builder via `sql` for relational filters. -}
+scan : Conn KeyValue -> Collection a -> String -> Int -> Task Error (List ( String, a ))
+scan conn coll prefix limit =
+    case conn of
+
+        KvConn store ->
+            BlueDB.scanValues (codecOf coll) store prefix limit
+
+        SqlConn _ ->
+            -- unreachable: the type gates this to a KV connection
+            Task.fail
+                (Error.unexpected "Persist.scan: not a key-value connection")
+
+
+-- Escape hatches (Task-typed; the dead arm is a Task.fail, never a panic) --------
+{-| Drop to the raw `Std.Db` connection for SQL power the universal verbs don't
+wrap (joins, `Store` query builder, `selectRaw`, transactions). -}
+sql : Conn Relational -> Task Error Db
+sql conn =
+    case conn of
+
+        SqlConn db ->
+            Task.succeed db
+
+        KvConn _ ->
+            Task.fail
+                (Error.unexpected "Persist.sql: not a relational connection")
+
+
+{-| Drop to the raw `Std.BlueDB` store for KV power the universal verbs don't wrap. -}
+kv : Conn KeyValue -> Task Error BlueDB.Store
+kv conn =
+    case conn of
+
+        KvConn store ->
+            Task.succeed store
+
+        SqlConn _ ->
+            Task.fail
+                (Error.unexpected "Persist.kv: not a key-value connection")
+
+
+-- Reflective key extraction (no JSON round-trip) --------------------------------
+persistKeyString : String -> a -> Result Error String
+persistKeyString =
+    Ffi.kernel "Persist_keyString"

@@ -48,6 +48,9 @@ module Std.Db.Store exposing
     , adjust
     , all
     , findBy
+    , getByKey
+    , deleteByKey
+    , codecOf
     , selectRaw
     , delete
     , deleteWhere
@@ -95,6 +98,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Result as Result
 import Sky.Core.Json.Encode exposing (Value)
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue)
@@ -499,6 +503,53 @@ delete conn (Store s) col value =
         conn
         ("DELETE FROM " ++ s.name ++ " WHERE " ++ col ++ " = ?")
         [ value ]
+
+
+-- | Get the row by its PRIMARY KEY, binding the key with the PK column's TYPE
+-- (so an Int PK works on Postgres, where `id = '5'` — text vs integer — errors;
+-- `findBy` binds every value as text). The key is given as a String and coerced
+-- to the PK's kind. This is the by-PK read the unified `Std.Persist` delegates to.
+getByKey : Db -> Store a -> String -> Task Error (Maybe a)
+getByKey conn store keyStr =
+    case store of
+
+        Store s ->
+            toMaybe
+                conn
+                (where_
+                    (eq s.pk (keyToSql (kindOf s.pk s.cols) keyStr))
+                    (query store))
+
+
+-- | Delete the row by its PRIMARY KEY, PK-typed like `getByKey`. Returns rows
+-- affected (0 if absent).
+deleteByKey : Db -> Store a -> String -> Task Error Int
+deleteByKey conn store keyStr =
+    case store of
+
+        Store s ->
+            deleteWhere
+                conn
+                store
+                (eq s.pk (keyToSql (kindOf s.pk s.cols) keyStr))
+
+
+-- | The codec that drives this store — so a higher layer (e.g. `Std.Persist`)
+-- can reuse it for the same record type on a different backend (JSON / KV).
+codecOf : Store a -> Codec a
+codecOf (Store s) =
+    s.codec
+
+
+-- Coerce a String key to the PK column's `SqlValue` by kind (int-ish → SqlInt so
+-- Postgres binds an integer; everything else → SqlString).
+keyToSql : String -> String -> SqlValue
+keyToSql kind keyStr =
+    if kind == "int" || kind == "bigint" || kind == "serial" || kind == "bigserial" then
+        Db.SqlInt (Result.withDefault 0 (String.toInt keyStr))
+
+    else
+        Db.SqlString keyStr
 
 
 -- | Delete every row matching a `Cond` — for compound conditions the single-column
