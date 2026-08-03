@@ -1,5 +1,12 @@
 -- | Std.Db.Table — a reflection-based record↔row mapper (Layer 3 Sky source).
 --
+-- DEPRECATED (v0.19+): prefer `Std.Db.Store` — it is codec-driven, so ONE
+-- `Store.fromCodec name (Codec.auto blank) |> Store.primaryKey "id"` gives Table's
+-- no-hand-written-mapping experience PLUS the query builder, migrations, and the
+-- same `Codec` that already drives your JSON — no second reflection mapper to
+-- learn. New code targets `Std.Persist` (the unified front door over Store + BlueDB)
+-- or `Std.Db.Store` directly. `Table` keeps working; it is no longer recommended.
+--
 -- ONE `Table a` value per table is the single source of truth: it drives the
 -- DDL, typed reads, and typed writes — no separate decoder, no `SqlValue`
 -- lists. The record type declares the columns (field names + types); the
