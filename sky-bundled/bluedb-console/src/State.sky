@@ -1,0 +1,20 @@
+module State exposing (Model, Msg(..), Page(..))
+
+import Sky.Core.Prelude exposing (..)
+
+type Page
+    = BrowsePage
+
+type alias Model =
+    { storeName : String
+    , error : String
+    , filter : String
+    , rows : List ( String, String )
+    , selected : Maybe ( String, String )
+    }
+
+type Msg
+    = Refresh
+    | SetFilter String
+    | GotRows (Result Error (List ( String, String )))
+    | Select String

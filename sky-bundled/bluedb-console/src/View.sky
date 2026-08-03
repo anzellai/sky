@@ -1,0 +1,110 @@
+module View exposing (view)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        [ Background.color (Ui.rgb 20 22 30)
+        , Font.color (Ui.rgb 225 228 235)
+        , Font.size 14
+        ]
+        (Ui.column
+            [ Ui.spacing 10, Ui.padding 20, Ui.width Ui.fill ]
+            [ Ui.el
+                  [ Font.size 22, Font.bold ]
+                  (Ui.text ("bluedb · " ++ model.storeName))
+            , banner model
+            , Ui.el
+                  [ Font.size 12, Font.color (Ui.rgb 150 155 165) ]
+                  (Ui.text (String.fromInt (List.length model.rows) ++ " keys"))
+            , Ui.row
+                  [ Ui.spacing 20, Ui.width Ui.fill ]
+                  [ Ui.column
+                        [ Ui.spacing 4, Ui.width (Ui.fillPortion 1) ]
+                        (List.map (rowView model.selected) model.rows)
+                  , detailPanel model.selected
+                  ]
+            ])
+
+
+banner : Model -> Element Msg
+banner model =
+    if String.isEmpty model.error then
+        Ui.none
+
+    else
+        Ui.el
+            [ Font.color (Ui.rgb 250 180 180)
+            , Background.color (Ui.rgb 60 26 30)
+            , Ui.padding 8
+            , Border.rounded 6
+            ]
+            (Ui.text ("error: " ++ model.error))
+
+
+rowView : Maybe ( String, String ) -> ( String, String ) -> Element Msg
+rowView selected row =
+    let
+        isSel =
+            case selected of
+
+                Just s ->
+                    fst s == fst row
+
+                Nothing ->
+                    False
+    in
+        Ui.el
+            [ Ui.onClick (Select (fst row))
+            , Ui.pointer
+            , Ui.padding 6
+            , Ui.width Ui.fill
+            , Border.rounded 4
+            , Background.color
+                  (if isSel then
+                      Ui.rgb 44 60 90
+
+                  else
+                      Ui.rgb 28 31 42)
+            ]
+            (Ui.text (fst row ++ "  " ++ preview (snd row)))
+
+
+detailPanel : Maybe ( String, String ) -> Element Msg
+detailPanel selected =
+    case selected of
+
+        Nothing ->
+            Ui.el
+                [ Ui.width (Ui.fillPortion 1), Font.color (Ui.rgb 130 135 145) ]
+                (Ui.text "select a key")
+
+        Just row ->
+            Ui.column
+                [ Ui.width (Ui.fillPortion 1)
+                , Ui.spacing 8
+                , Ui.padding 12
+                , Background.color (Ui.rgb 28 31 42)
+                , Border.rounded 6
+                ]
+                [ Ui.el [ Font.bold ] (Ui.text (fst row))
+                , Ui.el [ Font.family Font.monospace ] (Ui.text (snd row))
+                ]
+
+
+preview : String -> String
+preview value =
+    if String.length value > 60 then
+        String.slice 0 60 value ++ "…"
+
+    else
+        value

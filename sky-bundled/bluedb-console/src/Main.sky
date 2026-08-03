@@ -1,0 +1,39 @@
+module Main exposing (main)
+
+{-| Sky.Live (web) entry for the bluedb console. Opens the store DIRECTLY (the
+offline provider) from SKY_BLUEDB_CONSOLE_PATH and renders the shared View. The
+same State/Update/View render in MainTui.sky (terminal) and are reused as the
+in-app console "Data" tab — only the Source provider differs. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Live as Live exposing (app, config, route)
+import Std.Sub as Sub
+import Std.BlueDB as BlueDB
+import Source
+import State exposing (..)
+import Update
+import View
+
+
+storePath : String
+storePath =
+    System.getenvOr "SKY_BLUEDB_CONSOLE_PATH" "data/app.blue"
+
+
+source : Source.Source
+source =
+    Source.sourceFrom (Task.run (BlueDB.open storePath))
+
+
+main =
+    app
+        (config
+            { init = Update.init source storePath
+            , update = Update.update source
+            , view = View.view
+            , subscriptions = \_ -> Sub.none
+            , routes = [ route "/" BrowsePage ]
+            , notFound = BrowsePage
+            })

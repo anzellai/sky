@@ -1,0 +1,46 @@
+module Source exposing (Source, directSource, sourceFrom)
+
+{-| The DataSource — a record of `Task`-valued ops the console UI renders over.
+Swap the provider without touching the UI: `directSource` reads a BlueDB handle
+in-process (offline file OR the live handle via path-dedup); an API provider
+(HTTP client to `/_sky/console/api/data`) plugs in the same shape for remote use.
+Same pattern the Sky Console already uses to swap httpStore <-> hubStore. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.BlueDB as BlueDB exposing (Store)
+
+type alias Source =
+    { scan : String -> Int -> Task Error (List ( String, String ))
+    , get : String -> Task Error (Maybe String)
+    , put : String -> String -> Task Error ()
+    , delete : String -> Task Error ()
+    }
+
+
+{-| Direct in-process provider over an open BlueDB handle. -}
+directSource : Store -> Source
+directSource store =
+    { scan = \prefix limit -> BlueDB.scan store prefix limit
+    , get = \key -> BlueDB.get store key
+    , put = \key value -> BlueDB.put store key value
+    , delete = \key -> BlueDB.delete store key
+    }
+
+
+{-| Build a Source from the result of opening the store. A failed open (e.g. the
+store is LIVE — locked by a running app) yields a Source whose every op fails
+with that error, so the UI surfaces "store is locked" instead of showing empty. -}
+sourceFrom : Result Error Store -> Source
+sourceFrom opened =
+    case opened of
+
+        Ok store ->
+            directSource store
+
+        Err e ->
+            { scan = \_ _ -> Task.fail e
+            , get = \_ -> Task.fail e
+            , put = \_ _ -> Task.fail e
+            , delete = \_ -> Task.fail e
+            }

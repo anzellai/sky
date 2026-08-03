@@ -1,0 +1,56 @@
+module Update exposing (init, update)
+
+{-| The `Source` is threaded in as the first arg (partial-applied in Main), so it
+never lives in the Model — which keeps the Model gob-encodable for the Sky.Live
+session store (a record of functions is not serializable). -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Error as Error
+import Std.Cmd as Cmd
+import Source exposing (Source)
+import State exposing (..)
+
+
+scanLimit : Int
+scanLimit =
+    500
+
+
+init : Source -> String -> a -> ( Model, Cmd Msg )
+init source storeName _ =
+    ( { storeName = storeName
+      , error = ""
+      , filter = ""
+      , rows = []
+      , selected = Nothing
+      }
+    , Cmd.perform (source.scan "" scanLimit) GotRows
+    )
+
+
+update : Source -> Msg -> Model -> ( Model, Cmd Msg )
+update source msg model =
+    case msg of
+
+        Refresh ->
+            ( model, Cmd.perform (source.scan model.filter scanLimit) GotRows )
+
+        SetFilter f ->
+            ( { model | filter = f }
+            , Cmd.perform (source.scan f scanLimit) GotRows
+            )
+
+        GotRows (Ok pairs) ->
+            ( { model | rows = pairs, error = "" }, Cmd.none )
+
+        GotRows (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        Select key ->
+            ( { model | selected = findRow key model.rows }, Cmd.none )
+
+
+findRow : String -> List ( String, String ) -> Maybe ( String, String )
+findRow key rows =
+    List.head (List.filter (\p -> fst p == key) rows)

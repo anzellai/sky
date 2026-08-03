@@ -1,0 +1,5 @@
+name = "sky-bluedb-console"
+entry = "src/Main.sky"
+
+[live]
+port = 8099

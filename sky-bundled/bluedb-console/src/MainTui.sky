@@ -1,0 +1,38 @@
+module Main exposing (main)
+
+{-| Sky.Tui (terminal) entry — reuses the SAME Source/State/Update/View as the
+Sky.Live entry in Main.sky. Because the console reads the store DIRECTLY (local
+file, no HTTP wire), the terminal backend uses the real `directSource` — full
+offline browsing over SSH, no browser. The bundled build keeps exactly one of
+Main.sky / MainTui.sky. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Tui as Tui
+import Std.BlueDB as BlueDB
+import Source
+import State exposing (..)
+import Update
+import View
+
+
+storePath : String
+storePath =
+    System.getenvOr "SKY_BLUEDB_CONSOLE_PATH" "data/app.blue"
+
+
+source : Source.Source
+source =
+    Source.sourceFrom (Task.run (BlueDB.open storePath))
+
+
+main =
+    Tui.app
+        (Tui.config
+            { init = Update.init source storePath
+            , update = Update.update source
+            , view = View.view
+            , subscriptions = \_ -> Sub.none
+            })
+        |> Task.run

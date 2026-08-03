@@ -1592,6 +1592,11 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
 /// store (running app) holds an exclusive lock and is refused with guidance; edit
 /// a live store through the app's console, not here.
 fn cmd_bluedb(args: &[String]) -> ExitCode {
+    // `sky bluedb console <path> [--tui] [--port N]` launches the interactive
+    // browser (bundled Sky.Live + Sky.Tui app) over the DIRECT provider.
+    if args.first().map(|s| s.as_str()) == Some("console") {
+        return cmd_bluedb_console(&args[1..]);
+    }
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         eprintln!(
             "usage: sky bluedb <path> <stats|keys|scan|get|put|delete|compact> [args] [--json] [--limit N] [--yes]\n\
@@ -1662,6 +1667,74 @@ fn cmd_bluedb(args: &[String]) -> ExitCode {
             eprintln!("sky bluedb: could not launch inspector: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// `sky bluedb console <path> [--tui] [--port N]` — the interactive bluedb
+/// browser. A bundled Sky.Live (web, default) + Sky.Tui (`--tui`) app that opens
+/// the store DIRECTLY (offline — the app must be stopped, or a copy). The store
+/// path is passed via SKY_BLUEDB_CONSOLE_PATH. Same UI is reused as the in-app
+/// console "Data" tab (in-process handle) and, later, `--url` remote mode.
+fn cmd_bluedb_console(args: &[String]) -> ExitCode {
+    let tui = args.iter().any(|a| a == "--tui");
+    let port = parse_port(args, 8099);
+    let path = args
+        .iter()
+        .find(|a| !a.starts_with("--") && *a != &port.to_string());
+    let Some(path) = path else {
+        eprintln!("usage: sky bluedb console <path> [--tui] [--port N]");
+        return ExitCode::from(2);
+    };
+    // Absolute — the bundled app runs from its own out dir, so a relative store
+    // path would resolve against the wrong cwd.
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    });
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "bluedb-console") else {
+        return bundled_missing("bluedb-console");
+    };
+    let (variant, entry): (&str, &str) = if tui {
+        ("tui", bundled::ENTRY_TUI)
+    } else {
+        ("live", bundled::ENTRY_LIVE)
+    };
+    let out_dir = match bundled::ensure_built(
+        &repo_root,
+        &src_dir,
+        "bluedb-console",
+        variant,
+        entry,
+        &version_slug(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let envs = vec![(
+        "SKY_BLUEDB_CONSOLE_PATH".to_string(),
+        abs.to_string_lossy().to_string(),
+    )];
+    if tui {
+        println!("sky bluedb console: {} (Ctrl-C to exit)...", abs.display());
+        spawn_foreground(&out_dir, &envs)
+    } else {
+        let mut envs = envs;
+        envs.push(("SKY_LIVE_PORT".to_string(), port.to_string()));
+        println!(
+            "sky bluedb console: {} → http://127.0.0.1:{port} (Ctrl-C to stop)",
+            abs.display()
+        );
+        spawn_foreground(&out_dir, &envs)
     }
 }
 
