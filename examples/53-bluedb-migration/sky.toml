@@ -1,0 +1,11 @@
+name = "bluedb-migration"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[live]
+port = 8000
+# The session store is also selected in code via `Live.autoBlueDB` (see Main.sky).
+# You could instead declare it here and drop the `|> Live.autoBlueDB` line:
+#   store     = "bluedb"
+#   storePath = "data/app.blue"
+storePath = "data/app.blue"

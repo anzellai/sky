@@ -1,0 +1,148 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Live as Live exposing (app, config, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+-- The ENTIRE Model is persisted to BlueDB by `Live.autoBlueDB` (in `main`), so
+-- it survives a server restart — the count is durable, not just in RAM.
+--
+-- MIGRATION: pretend `theme` was ADDED in a later deploy ("v2"). A session that
+-- was persisted by the earlier build ("v1", which had no `theme`) RESUMES with
+-- `theme = ""` (gob fills a new field with its zero value, not init's default).
+-- `Live.withMigrate` (below) fixes that up. A *breaking* change (e.g. changing
+-- `count`'s type) instead resets the session to `init` cleanly — never a crash.
+type alias Model =
+    { count : Int
+    , theme : String -- added in "v2"
+    }
+
+
+type Page
+    = HomePage
+
+
+type Msg
+    = Inc
+    | Dec
+    | ToggleTheme
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, theme = "light" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Dec ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        ToggleTheme ->
+            ( { model
+                | theme =
+                    if model.theme == "dark" then
+                        "light"
+
+                    else
+                        "dark"
+              }
+            , Cmd.none
+            )
+
+
+dark : Bool -> Model -> Ui.Color
+dark onDark model =
+    if model.theme == "dark" then
+        if onDark then
+            Ui.rgb 235 235 245
+
+        else
+            Ui.rgb 24 24 32
+
+    else if onDark then
+        Ui.rgb 30 30 40
+
+    else
+        Ui.rgb 250 250 252
+
+
+btn : List (Ui.Attribute Msg) -> Msg -> String -> Element Msg
+btn attrs msg lbl =
+    Ui.button
+        (attrs
+            ++ [ Ui.paddingXY 18 10
+               , Border.rounded 8
+               , Font.size 18
+               ]
+        )
+        { onPress = Just msg, label = Ui.text lbl }
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        [ Background.color (dark False model)
+        , Font.color (dark True model)
+        ]
+        (Ui.column
+            [ Ui.spacing 18
+            , Ui.padding 32
+            , Ui.centerX
+            , Ui.centerY
+            ]
+            [ Ui.el [ Font.size 26, Font.bold ] (Ui.text "BlueDB persistent counter")
+            , Ui.el [ Font.size 48, Font.bold ] (Ui.text ("count: " ++ String.fromInt model.count))
+            , Ui.el [ Font.size 15 ] (Ui.text ("theme: " ++ model.theme))
+            , Ui.row [ Ui.spacing 12 ]
+                [ btn [ Background.color (Ui.rgb 220 80 80), Font.color Ui.white ] Dec "−"
+                , btn [ Background.color (Ui.rgb 80 170 90), Font.color Ui.white ] Inc "+"
+                , btn [ Background.color (Ui.rgb 90 110 220), Font.color Ui.white ] ToggleTheme "toggle theme"
+                ]
+            , Ui.el [ Font.size 13, Ui.width (Ui.maximum 360 Ui.fill) ]
+                (Ui.text "Increment, then stop + restart the server — the count is still here (it lives in BlueDB, not RAM).")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- Runs ONCE on a session RESUMED from BlueDB (serialized by a previous build),
+-- before it's used. Keep it idempotent (it runs on every resume): guard each fix
+-- on a sentinel. Here a "v1" session had no `theme` → resumes as "" → default it.
+migrate : Model -> Model
+migrate model =
+    if String.isEmpty model.theme then
+        { model | theme = "light" }
+
+    else
+        model
+
+
+main =
+    app
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            }
+            |> Live.autoBlueDB
+            |> Live.withMigrate migrate
+        )
