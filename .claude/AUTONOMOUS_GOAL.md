@@ -67,7 +67,27 @@ production-grade, with the v2 path documented, not hand-waved.
       kernel + advisory file lock / ErrLocked in the engine), MaxValueBytes default
       (OOM guard), getValue now FAILS on decode error (was silent Nothing = data
       loss), doc example fixed.
-- [ ] T-D Judge — verbatim-goal verification
+- [~] T-D Judge — fresh-context Judge RAN the tests + built the compiler +
+      e2e-ran a real Sky program. Confirmed reliability/throughput/seamless/grill
+      genuinely strong + the v2 scoping honest (no false cluster claim). Returned
+      NOT-ACHIEVED on 2 fair gaps, BOTH NOW FIXED:
+      G1 — MaxKeys OOM guard existed+tested but was OFF in both production opens →
+           now wired on (bluedb_kernel.go 20M, live_store_bluedb.go 5M) +
+           MaxValueBytes; verified guard tests green + app works with bounds on.
+      G2 — durability.md/capacity.md claimed unbuilt LSM/SSTable/idempotency/txn/
+           WAL-shipping/Raft as if implemented → added v1-vs-design STATUS banners
+           + fixed the LSM-substrate + spill-to-SSD framings.
+      Minor — BlueDB.open now mkdir -p's the parent dir (verified nested path).
+      Re-Judge pending.
+
+## Migration path (user Q, 2026-08-03): "Model data change between server down/up"
+Empirically verified + made first-class. Additive Model change RESUMES (new field
+= gob ZERO, not init default); breaking change → gob-decode-fail → clean RESET to
+init (no crash). New **`Live.withMigrate`** (kernel Live_withMigrate + resume-time
+apply in live.go) fixes up a resumed Model; e2e-verified (v1 count=7 + v2 note
+field → resume 7 + withMigrate sets note). docs/bluedb/migration.md documents all
+modes (session / autoBlueDB / Std.BlueDB versioned records) + the "Model ephemeral,
+DB source of truth" discipline.
 
 Prior (done, grilled): engine core + snapshot/recovery + session store +
 app-level opt-in (autoBlueDB / [bluedb] / [live] store). See [[bluedb_exp]].

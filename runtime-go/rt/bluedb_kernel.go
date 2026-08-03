@@ -6,15 +6,23 @@
 package rt
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"sky-app/bluedb"
 )
 
-// bluedbMaxValueBytes guards a single pathological write (the working set is
-// RAM-resident — size the store to fit RAM; see docs/bluedb/capacity.md).
-const bluedbMaxValueBytes = 64 << 20 // 64 MiB
+// The working set is RAM-resident (docs/bluedb/capacity.md), so both bounds are
+// ON by default: a single pathological value, and a key-count safety ceiling
+// that returns ErrFull instead of OOM-killing the process. The ceiling is
+// generous (a v1 embedded store past it should move to the distributed v2 tier);
+// it's a guard, not a tight quota.
+const (
+	bluedbMaxValueBytes = 64 << 20   // 64 MiB
+	bluedbMaxKeys       = 20_000_000 // ~20M keys before ErrFull (OOM guard)
+)
 
 type bluedbEntry struct {
 	db   *bluedb.DB
@@ -58,10 +66,14 @@ func BlueDB_open(pathArg any) any {
 		}
 		bluedbRegMu.Unlock()
 
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0o755) // create the parent dir so "data/app.blue" just works
+		}
 		db, err := bluedb.Open(path, bluedb.Options{
 			Sync:            true,
 			CheckpointEvery: 10000,
 			MaxValueBytes:   bluedbMaxValueBytes,
+			MaxKeys:         bluedbMaxKeys,
 		})
 		if err != nil {
 			return Err[any, any](ErrFfi("BlueDB.open: " + err.Error()))

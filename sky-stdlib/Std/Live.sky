@@ -29,6 +29,7 @@ module Std.Live exposing
     , withConsoleAuth
     , withOnNavigate
     , withGuard
+    , withMigrate
     , withStatic
     , withStaticUrl
     , withPort
@@ -133,6 +134,21 @@ withOnNavigate =
 withGuard : (msg -> model -> Result Error ()) -> AppConfig model msg -> AppConfig model msg
 withGuard =
     Ffi.kernel "Live_withGuard"
+
+
+-- | Resume-time Model migration. When a session is RESUMED from a persistent
+-- store (sqlite / postgres / redis / bluedb, or `Live.autoBlueDB`) it was
+-- serialized by a PREVIOUS build; `migrate model` runs once on that resumed
+-- Model before it's used. An additive Model change resumes with the new field
+-- at its ZERO value (not `init`'s default), so use `withMigrate` to set the
+-- right default (or coerce a renamed/restructured value). A breaking change
+-- already reset the session to `init`, so the hook isn't reached there.
+--
+--     |> Live.withMigrate
+--         (\m -> if String.isEmpty m.theme then { m | theme = "light" } else m)
+withMigrate : (model -> model) -> AppConfig model msg -> AppConfig model msg
+withMigrate =
+    Ffi.kernel "Live_withMigrate"
 
 
 -- | Serve a static directory at `/static` (override the mount with

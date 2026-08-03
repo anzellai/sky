@@ -2788,7 +2788,8 @@ type liveApp struct {
 	subscriptions any // Model -> Sub Msg
 	routes        []liveRoute
 	notFound      any
-	guard         any // Maybe (Msg -> Model -> Result String ()) — nil = no guard
+	guard         any // Maybe (Msg -> Model -> Result String ())
+	migrate       any // (model -> model) — resume-time Model migration; nil = none — nil = no guard
 	// head : Model -> List (Html msg) — optional. When set, the
 	// returned list is rendered to HTML and spliced into <head> on
 	// the initial full-page response, after the baseline meta tags
@@ -3529,6 +3530,7 @@ func liveAppRun(cfg any) any {
 		subscriptions:      Field(cfg, "Subscriptions"),
 		notFound:           Field(cfg, "NotFound"),
 		guard:              Field(cfg, "Guard"),
+		migrate:            Field(cfg, "Migrate"),
 		head:               Field(cfg, "Head"),
 		consoleAuth:        Field(cfg, "ConsoleAuth"),
 		onNavigate:         Field(cfg, "OnNavigate"),
@@ -4032,6 +4034,16 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	var cmd any
 	if existing && sess != nil && sess.model != nil {
 		model = sess.model
+		// Resume-time Model migration: a session loaded from the store was
+		// serialized by a PREVIOUS build. gob resumes an additive Model change
+		// with the new field at its ZERO value (not init's default), and a
+		// breaking change already reset to init. `migrate` (Live.withMigrate)
+		// lets the app fix up a resumed Model — set new-field defaults, coerce a
+		// renamed value, etc. It runs ONCE per resume, before the Model is used.
+		if app.migrate != nil && isFunc(app.migrate) {
+			model = SkyCall(app.migrate, model)
+			sess.model = model
+		}
 	} else {
 		// v0.16.7 #417 — extend init's `req` with `params : Dict
 		// String String`, keyed by the route pattern's `:name`

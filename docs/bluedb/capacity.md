@@ -1,8 +1,13 @@
 # BlueDB — single-instance capacity
 
-Rough capacity of one **embedded** instance, and when to leave it. Numbers are
-order-of-magnitude for a Pebble/RocksDB-class LSM (the substrate BlueDB is built
-on); no measured BlueDB figures exist yet.
+Rough capacity of one **embedded** instance, and when to leave it.
+
+> **What v1 actually is.** The v1 engine is a group-committed **WAL + in-RAM
+> memtable + periodic snapshot** — *not* an LSM/SSTable engine (SSTable tiering,
+> compaction, and spill-to-disk are design-target v2). The whole working set is
+> resident in RAM and does **not** spill to disk. The numbers below are
+> **measured from the v1 engine** (§ Measured) — an order-of-magnitude guide, not
+> a tuned load test.
 
 ## The mental model — three limits
 
@@ -68,11 +73,12 @@ shoppers without noticing.
 
 ## When you've actually outgrown one instance — only three signals
 
-1. **Working set > RAM** → reads hit the SSD → IOPS-bound (~15k–100k random
-   reads/sec on cloud SSD).
-2. **Sustained writes saturate the disk**, or **compaction saturates CPU** (LSM
-   background compaction competes for cores/bandwidth under a constant torrent;
-   bursty small writes are fine).
+1. **Working set approaches RAM** → v1 holds everything in RAM and does **not**
+   spill to disk; as it fills you hit `ErrFull` (the `MaxKeys` ceiling — a clean
+   error, not an OOM kill) rather than a slow spill. Size the store to fit RAM.
+   (Transparent spill/tiering is v2.)
+2. **Sustained writes saturate one disk's fsync/bandwidth** — group commit
+   amortizes the fsync, but one disk is one disk.
 3. **You need to survive the node dying.**
 
 ## The honest punchline

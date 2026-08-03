@@ -85,6 +85,11 @@ func Live_withOnNavigate(fn, cfg any) any { return liveCfgSet(cfg, "OnNavigate",
 // Live_withGuard — `guard : msg -> model -> Result Error ()` per-Msg gate.
 func Live_withGuard(fn, cfg any) any { return liveCfgSet(cfg, "Guard", fn) }
 
+// Live_withMigrate — `migrate : model -> model`, applied to a session Model
+// RESUMED from the store (serialized by a previous build) before it is used, so
+// a deploy that changed the Model shape can fix up the resumed value.
+func Live_withMigrate(fn, cfg any) any { return liveCfgSet(cfg, "Migrate", fn) }
+
 // Live_withStatic — `static : String` directory served at /static.
 func Live_withStatic(dir, cfg any) any { return liveCfgSet(cfg, "Static", dir) }
 

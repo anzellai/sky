@@ -35,7 +35,15 @@ type bluedbStore struct {
 }
 
 func newBlueDBStore(path string, ttl time.Duration) (*bluedbStore, error) {
-	db, err := bluedb.Open(path, bluedb.Options{Sync: true, CheckpointEvery: 5000})
+	// MaxKeys bounds the RAM-resident session set (it's a soft DoS/OOM ceiling —
+	// a flood of new sessions gets ErrFull, not an OOM kill; active sessions are
+	// also TTL-reaped). MaxValueBytes guards a single pathological session blob.
+	db, err := bluedb.Open(path, bluedb.Options{
+		Sync:            true,
+		CheckpointEvery: 5000,
+		MaxKeys:         5_000_000,
+		MaxValueBytes:   16 << 20,
+	})
 	if err != nil {
 		return nil, err
 	}

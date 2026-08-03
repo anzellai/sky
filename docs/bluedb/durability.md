@@ -7,6 +7,18 @@ The core rule: **a write is only ever acked after it is recoverable.** "Acked"
 means fsync'd (embedded) or quorum-committed (cluster). Everything below is the
 machinery that makes that true without killing the fast/frequent-write hot path.
 
+> **Status — v1 (built) vs design (v2).** v1 implements the embedded path:
+> group-committed **WAL** (CRC + length framing), an **in-RAM memtable**,
+> **snapshot/checkpoint** + torn-tail truncation, crash recovery, all-or-nothing
+> batch rollback, and an advisory **file lock**. **What v1 guarantees:** an acked
+> write is fsync-durable and survives process crash / power loss / torn tail
+> (recovered from the WAL); a second engine can't open one file. Sections below
+> that describe an **SSTable/MANIFEST** LSM, **idempotency-key exactly-once**,
+> **multi-key transactions**, **WAL-shipping DR**, or **Raft quorum** are the
+> **target design (v2)** — read them as the roadmap, not current v1 guarantees.
+> DR beyond one disk (replication / WAL-shipping) is v2; for v1, take periodic
+> file backups of the store (it's a single file + its `.snap`).
+
 ## Failure taxonomy — what survives what
 
 | Failure | Mechanism | Guarantee |
