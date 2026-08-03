@@ -1,0 +1,273 @@
+module DataTab exposing (dataView)
+
+-- exp/bluedb Data tab — a read-only browser over the host app's open
+-- BlueDB stores. Rendered by View.sky's content router when the
+-- active tab is `DataTab`. Data comes from the parent's
+-- /_sky/console/api/data endpoint (see Main.sky fetchDataStores /
+-- fetchDataRows), which reads the SAME stores the app has open — the
+-- console runs in-process with the host, so there is no second DB and
+-- no env plumbing. Reads are open in dev (ENV unset).
+--
+-- Layout: a left "open stores" list (click to select) → a right pane
+-- with a key-prefix filter box + a two-column ( key, value ) list.
+--
+-- CRITICAL: rows are TUPLES `( String, String )` rendered via
+-- `fst` / `snd`, NOT a { key, value } record. A same-field-name
+-- record collides with `Std.Analytics.EventProp` in the record-
+-- fieldset table and miscompiles to a runtime CoerceFailure.
+--
+-- Palette mirrors AnalyticsTab.sky so the tab is visually consistent
+-- with the rest of the console.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgSel : Ui.Color
+bgSel =
+    Ui.rgb 44 60 90
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+mono : String
+mono =
+    "ui-monospace, Menlo, monospace"
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+dataView : Model -> List (Element Msg)
+dataView model =
+    if List.isEmpty model.dataStores then
+        [ panel "BlueDB stores" [ emptyState "no BlueDB stores open" ] ]
+
+    else
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 12 ]
+              [ storesPanel model.dataStores model.dataSelectedStore
+              , rowsPanel model
+              ]
+        ]
+
+
+-- ── open-store list ─────────────────────────────────────────────
+storesPanel : List String -> String -> Element Msg
+storesPanel stores selected =
+    Ui.el
+        [ Ui.width (Ui.fillPortion 1), Ui.alignTop ]
+        (panel "Open stores" (List.map (storeRowView selected) stores))
+
+
+storeRowView : String -> String -> Element Msg
+storeRowView selected path =
+    let
+        isSel = path == selected
+    in
+        Ui.el
+            [ Ui.onClick (SelectDataStore path)
+            , Ui.pointer
+            , Ui.width Ui.fill
+            , Ui.paddingXY 6 5
+            , Border.rounded 4
+            , Background.color
+                  (if isSel then
+                      bgSel
+
+                  else
+                      bgRaised)
+            , Font.size 12
+            , Font.color
+                  (if isSel then
+                      textPrimary
+
+                  else
+                      textSecondary)
+            , Font.family mono
+            ]
+            (Ui.text (storeLabel path))
+
+
+-- Show just the file's base name in the list; the full path stays
+-- the selection key so the row fetch is unambiguous.
+storeLabel : String -> String
+storeLabel path =
+    let
+        parts = String.split "/" path
+    in
+        case List.head (List.reverse parts) of
+
+            Just base ->
+                if base == "" then
+                    path
+
+                else
+                    base
+
+            Nothing ->
+                path
+
+
+-- ── rows pane (prefix filter + key/value list) ──────────────────
+rowsPanel : Model -> Element Msg
+rowsPanel model =
+    Ui.el
+        [ Ui.width (Ui.fillPortion 2), Ui.alignTop ]
+        (if model.dataSelectedStore == "" then
+            panel "Rows" [ emptyState "select a store to browse its keys" ]
+
+        else
+            panel
+                (storeLabel model.dataSelectedStore)
+                (prefixRow model.dataPrefix :: countLine model.dataRows
+                    :: rowsList model.dataRows))
+
+
+prefixRow : String -> Element Msg
+prefixRow current =
+    Ui.row
+        [ Ui.spacing 6, Ui.width Ui.fill, Ui.paddingXY 0 4 ]
+        [ Ui.el
+              [ Font.color textSecondary
+              , Font.size 11
+              , Ui.paddingXY 0 4
+              , Ui.width (Ui.px 60)
+              ]
+              (Ui.text "Prefix")
+        , Ui.input
+              [ Ui.htmlAttribute "type" "search"
+              , Ui.htmlAttribute "placeholder" "Filter keys by prefix…"
+              , Ui.htmlAttribute "value" current
+              , Ui.onInput DataPrefixQuery
+              , Ui.width Ui.fill
+              , Background.color bgRaised
+              , Border.width 1
+              , Border.color border_
+              , Border.rounded 4
+              , Ui.paddingXY 8 4
+              , Font.color textPrimary
+              , Font.size 11
+              , Font.family mono
+              ]
+        ]
+
+
+countLine : List ( String, String ) -> Element Msg
+countLine rows =
+    Ui.el
+        [ Font.size 11, Font.color textMuted, Ui.paddingXY 0 2 ]
+        (Ui.text (String.fromInt (List.length rows) ++ " keys"))
+
+
+rowsList : List ( String, String ) -> List (Element Msg)
+rowsList rows =
+    if List.isEmpty rows then
+        [ emptyState "no keys match" ]
+
+    else
+        List.map kvRowView rows
+
+
+kvRowView : ( String, String ) -> Element Msg
+kvRowView row =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 5
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.fillPortion 1)
+              , Font.size 12
+              , Font.bold
+              , Font.color accent
+              , Font.family mono
+              ]
+              (Ui.text (fst row))
+        , Ui.el
+              [ Ui.width (Ui.fillPortion 2)
+              , Font.size 12
+              , Font.color textSecondary
+              , Font.family mono
+              ]
+              (Ui.text (preview (snd row)))
+        ]
+
+
+preview : String -> String
+preview value =
+    if String.length value > 120 then
+        String.slice 0 120 value ++ "…"
+
+    else
+        value
+
+
+-- ── shared panel + empty-state helpers (mirror AnalyticsTab.sky) ─
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)

@@ -17,6 +17,7 @@ import MetricsTab exposing (viewMetricsTab)
 import TracesTab exposing (viewTracesTab)
 import ErrorsTab exposing (viewErrorsTab)
 import AnalyticsTab exposing (analyticsView)
+import DataTab exposing (dataView)
 
 
 -- ─── Palette ─────────────────────────────────────────────────────
@@ -193,7 +194,14 @@ tabStrip active =
         ]
         (List.map
             (tabButton active)
-            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab, AnalyticsTab ])
+            [ OverviewTab
+            , MetricsTab
+            , LogsTab
+            , TracesTab
+            , ErrorsTab
+            , AnalyticsTab
+            , DataTab
+            ])
 
 
 -- ─── Global filter strip (v0.16.18 #558-PR1 + PR2) ──────────────
@@ -603,7 +611,13 @@ content model =
             -- both modes — the data is the app's own event store, read
             -- via the parent's /_sky/console/api/analytics endpoint.
             AnalyticsTab ->
-                analyticsView model.analytics)
+                analyticsView model.analytics
+
+            -- exp/bluedb: read-only browser over the host app's open
+            -- BlueDB stores. Same view in both modes — the hub Store
+            -- returns an empty store list (BlueDB is per-host-app).
+            DataTab ->
+                dataView model)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────

@@ -40,6 +40,8 @@ tuiStore =
     , readFilteredTraces = \_ -> Task.succeed mockTraces
     , readFilteredErrors = \_ -> Task.succeed mockErrors
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    , readDataStores = \_ -> Task.succeed []
+    , readDataRows = \_ _ -> Task.succeed []
     }
 
 
@@ -65,6 +67,11 @@ init _ =
       , nowMs = 0
       , globalQuery = ""
       , analytics = emptyAnalytics
+      , logoutUrl = ""
+      , dataStores = []
+      , dataSelectedStore = ""
+      , dataRows = []
+      , dataPrefix = ""
       }
     , Cmd.none
     )

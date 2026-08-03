@@ -22,6 +22,7 @@ type Tab
     | TracesTab
     | ErrorsTab
     | AnalyticsTab
+    | DataTab
 
 
 tabLabel : Tab -> String
@@ -45,6 +46,9 @@ tabLabel tab =
 
         AnalyticsTab ->
             "Analytics"
+
+        DataTab ->
+            "Data"
 
 -- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
 -- Overview tab payload — wire shape mirrors `OverviewResponse`
@@ -348,7 +352,18 @@ type alias Store =
     , readFilteredTraces : String -> Task Error (List TraceRow)
     , readFilteredErrors : String -> Task Error (List ErrorRow)
     , readAnalytics : () -> Task Error Analytics
+    , readDataStores : () -> Task Error (List String)
+    , readDataRows : String -> String -> Task Error (List ( String, String ))
     }
+    -- exp/bluedb: read-only Data plane over the host app's open
+    -- BlueDB stores, served by the parent's
+    -- `GET /_sky/console/api/data` endpoint. `readDataStores`
+    -- lists the open store file paths; `readDataRows store prefix`
+    -- scans one store's key/value pairs (prefix "" = all). Rows are
+    -- held as TUPLES `( key, value )` — NOT a { key, value } record —
+    -- because a same-field-name record collides with
+    -- `Std.Analytics.EventProp` in the record-fieldset table and
+    -- miscompiles to a runtime CoerceFailure.
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
 --
@@ -379,7 +394,16 @@ type alias Model =
     , globalQuery : String
     , analytics : Analytics
     , logoutUrl : String
+    , dataStores : List String
+    , dataSelectedStore : String
+    , dataRows : List ( String, String )
+    , dataPrefix : String
     }
+    -- exp/bluedb Data tab state. `dataStores` is the open-store
+    -- list; `dataSelectedStore` is the store whose rows are shown
+    -- ("" = none picked); `dataRows` holds ( key, value ) tuples;
+    -- `dataPrefix` is the key-prefix filter typed into the search
+    -- box (re-fetched with `&prefix=` on change).
     -- Non-empty ONLY in embedded mode, where the runtime mounts a
     -- __Host-sky_console cookie + a /_sky/console/_logout route and
     -- injects SKY_CONSOLE_LOGOUT_URL. Standalone hub / aggregator
@@ -438,6 +462,10 @@ type Msg
     | SelectRange Range
     | GotNowMs (Result Error Int)
     | GlobalQuery String
+    | GotDataStores (Result Error (List String))
+    | GotDataRows (Result Error (List ( String, String )))
+    | SelectDataStore String
+    | DataPrefixQuery String
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
     -- A successful response with a tenant claim derives the

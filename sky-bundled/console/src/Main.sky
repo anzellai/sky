@@ -174,6 +174,30 @@ analyticsEventDecoder =
         |> Pipeline.optional "path" Decode.string ""
 
 
+-- exp/bluedb Data tab wire decoders. `{stores:[...]}` and
+-- `{rows:[{key,value}]}`. Rows decode into `List ( String, String )`
+-- via a map2-into-tuple — NEVER a { key, value } record (that field
+-- set collides with Std.Analytics.EventProp and CoerceFailures).
+dataStoresDecoder : Decode.Decoder (List String)
+dataStoresDecoder =
+    Decode.oneOf
+        [ Decode.field "stores" (Decode.list Decode.string), Decode.succeed [] ]
+
+
+dataRowsDecoder : Decode.Decoder (List ( String, String ))
+dataRowsDecoder =
+    Decode.oneOf
+        [ Decode.field "rows" (Decode.list dataRowDecoder), Decode.succeed [] ]
+
+
+dataRowDecoder : Decode.Decoder ( String, String )
+dataRowDecoder =
+    Decode.map2
+        (\k v -> ( k, v ))
+        (Decode.oneOf [ Decode.field "key" Decode.string, Decode.succeed "" ])
+        (Decode.oneOf [ Decode.field "value" Decode.string, Decode.succeed "" ])
+
+
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
@@ -206,6 +230,10 @@ httpStore parent =
     , readFilteredTraces = \_svc -> fetchTraces parent
     , readFilteredErrors = \_svc -> fetchErrors parent
     , readAnalytics = \_ -> fetchAnalytics parent
+    -- exp/bluedb: browse the host app's open BlueDB stores over the
+    -- parent's /_sky/console/api/data endpoint (reads are open in dev).
+    , readDataStores = \_ -> fetchDataStores parent
+    , readDataRows = \store prefix -> fetchDataRows parent store prefix
     }
 
 
@@ -300,6 +328,10 @@ init _req =
             , globalQuery = initialQuery
             , analytics = emptyAnalytics
             , logoutUrl = logoutUrl
+            , dataStores = []
+            , dataSelectedStore = ""
+            , dataRows = []
+            , dataPrefix = ""
             }
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the
@@ -514,6 +546,35 @@ update msg model =
         GlobalQuery q ->
             ( { model | globalQuery = q }, Cmd.none )
 
+        -- exp/bluedb Data tab handlers.
+        GotDataStores (Ok ss) ->
+            ( { model | dataStores = ss, lastError = "" }, Cmd.none )
+
+        GotDataStores (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        GotDataRows (Ok rows) ->
+            ( { model | dataRows = rows, lastError = "" }, Cmd.none )
+
+        GotDataRows (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        -- Selecting a store fetches its rows with the current prefix.
+        SelectDataStore path ->
+            ( { model | dataSelectedStore = path }
+            , Cmd.perform
+                  (model.store.readDataRows path model.dataPrefix)
+                  GotDataRows
+            )
+
+        -- Typing in the key-prefix box re-scans the selected store.
+        DataPrefixQuery p ->
+            ( { model | dataPrefix = p }
+            , Cmd.perform
+                  (model.store.readDataRows model.dataSelectedStore p)
+                  GotDataRows
+            )
+
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg
 fetchLogsOnly model filter =
@@ -610,6 +671,11 @@ tabFetches model tab filter =
             AnalyticsTab ->
                 [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
 
+            -- exp/bluedb: fetch the open-store list on tab select;
+            -- picking a store then fetches its rows (SelectDataStore).
+            DataTab ->
+                [ Cmd.perform (model.store.readDataStores ()) GotDataStores ]
+
     else
         case tab of
 
@@ -637,6 +703,9 @@ tabFetches model tab filter =
 
             AnalyticsTab ->
                 [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
+
+            DataTab ->
+                [ Cmd.perform (model.store.readDataStores ()) GotDataStores ]
 
 
 fetchOverview : String -> Task Error Overview
@@ -717,6 +786,29 @@ fetchAnalytics parent =
     Http.get (parent ++ "/_sky/console/api/analytics")
         |> Task.andThenResult
                (\resp -> Decode.decodeString analyticsDecoder resp.body)
+
+
+-- exp/bluedb: list the host app's currently-open BlueDB stores.
+fetchDataStores : String -> Task Error (List String)
+fetchDataStores parent =
+    Http.get (parent ++ "/_sky/console/api/data")
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString dataStoresDecoder resp.body)
+
+
+-- exp/bluedb: scan one store's ( key, value ) rows, optionally
+-- filtered by key prefix. Both the store path and the prefix are
+-- URL-encoded so absolute file paths + arbitrary keys survive the
+-- query string.
+fetchDataRows : String -> String -> String -> Task Error (List ( String, String ))
+fetchDataRows parent store prefix =
+    Http.get
+        (parent ++ "/_sky/console/api/data?limit=200&store="
+            ++ Encoding.urlEncode store
+            ++ "&prefix="
+            ++ Encoding.urlEncode prefix)
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString dataRowsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg

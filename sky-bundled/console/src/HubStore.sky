@@ -59,6 +59,12 @@ hubStore dbPath =
     -- the hub Store surfaces an empty payload. The embedded console
     -- (httpStore) is where the Analytics tab renders real data.
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    -- exp/bluedb: BlueDB stores are per-host-app (like analytics),
+    -- not aggregated into the hub's console-hot.db, so the hub Store
+    -- surfaces an empty data plane. The embedded console (httpStore)
+    -- is where the Data tab renders real stores.
+    , readDataStores = \_ -> Task.succeed []
+    , readDataRows = \_ _ -> Task.succeed []
     }
 
 
