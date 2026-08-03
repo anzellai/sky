@@ -12,6 +12,8 @@ package rt
 import (
 	"encoding/binary"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -35,6 +37,15 @@ type bluedbStore struct {
 }
 
 func newBlueDBStore(path string, ttl time.Duration) (*bluedbStore, error) {
+	// Create the parent dir so a configured storePath like "data/app.blue" works
+	// out of the box — otherwise Open fails ("no such file or directory") and the
+	// store silently falls back to memory (sessions lost on restart). Mirrors the
+	// mkdir-p the Std.BlueDB app-data kernel does.
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
 	// MaxKeys bounds the RAM-resident session set (it's a soft DoS/OOM ceiling —
 	// a flood of new sessions gets ErrFull, not an OOM kill; active sessions are
 	// also TTL-reaped). MaxValueBytes guards a single pathological session blob.
