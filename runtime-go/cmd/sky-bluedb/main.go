@@ -43,20 +43,18 @@ func main() {
 }
 
 type flags struct {
-	limit int
-	json  bool
-	raw   bool
-	yes   bool
-	stdin bool
+	limit   int
+	json    bool
+	raw     bool
+	yes     bool
+	stdin   bool
+	url     string // remote mode: the running app's base URL
+	token   string // remote mode: SKY_ADMIN_TOKEN bearer
+	envFile string // read url/token from a .env file
 }
 
 func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(argv) < 2 {
-		fmt.Fprint(stderr, usage)
-		return 2
-	}
-	path, cmd := argv[0], argv[1]
-	rest, f, err := parseFlags(argv[2:])
+	positional, f, err := parseFlags(argv)
 	if err != nil {
 		fmt.Fprintf(stderr, "bluedb: %v\n\n%s", err, usage)
 		return 2
@@ -64,6 +62,21 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if f.limit == 0 {
 		f.limit = 100 // a sane default cap for keys/scan so a huge store doesn't flood
 	}
+	resolveRemoteConfig(&f) // --env file + process-env fallbacks for url/token
+
+	// Remote mode: talk to a RUNNING app's admin endpoint (zero-downtime live
+	// inspect/edit) instead of opening the file. Positional[0] is the store path
+	// ON the remote (or the literal "stores" to list them).
+	if f.url != "" {
+		return runRemote(positional, f, stdin, stdout, stderr)
+	}
+
+	if len(positional) < 2 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	path, cmd := positional[0], positional[1]
+	rest := positional[2:]
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		_ = os.MkdirAll(dir, 0o755) // engine Open won't create the parent dir
@@ -130,6 +143,30 @@ func parseFlags(args []string) (positional []string, f flags, err error) {
 				return nil, f, fmt.Errorf("--limit: %v", e)
 			}
 			f.limit = n
+		case a == "--url":
+			if i+1 >= len(args) {
+				return nil, f, errors.New("--url needs a value")
+			}
+			i++
+			f.url = args[i]
+		case strings.HasPrefix(a, "--url="):
+			f.url = strings.TrimPrefix(a, "--url=")
+		case a == "--token":
+			if i+1 >= len(args) {
+				return nil, f, errors.New("--token needs a value")
+			}
+			i++
+			f.token = args[i]
+		case strings.HasPrefix(a, "--token="):
+			f.token = strings.TrimPrefix(a, "--token=")
+		case a == "--env":
+			if i+1 >= len(args) {
+				return nil, f, errors.New("--env needs a value")
+			}
+			i++
+			f.envFile = args[i]
+		case strings.HasPrefix(a, "--env="):
+			f.envFile = strings.TrimPrefix(a, "--env=")
 		case strings.HasPrefix(a, "--"):
 			return nil, f, fmt.Errorf("unknown flag %q", a)
 		default:

@@ -248,6 +248,11 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	safeMount(mux, "/_sky/console/api/traces", HandleConsoleTraces)
 	safeMount(mux, "/_sky/console/api/errors", HandleConsoleErrors)
 	safeMount(mux, "/_sky/console/api/analytics", HandleConsoleAnalytics)
+	// Data admin endpoint — its OWN hardened gate (Bearer, no loopback bypass,
+	// off-by-default). The handlers self-gate on dataReadsEnabled/dataWritesEnabled,
+	// so mounting is always safe (a disabled endpoint 404s).
+	safeMount(mux, "/_sky/console/api/data", HandleConsoleData)
+	safeMount(mux, "/_sky/console/api/data/mutate", HandleConsoleDataMutate)
 }
 
 // MountEmbeddedConsole wires the inline Std.Ui-rendered Sky Console
