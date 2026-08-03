@@ -1,74 +1,65 @@
-# Autonomous mandate — BlueDB Phase 1 (steps 1–2)
+# Autonomous mandate — BlueDB v1 (production-ready, seamless for Sky apps)
 
 Set: 2026-08-03. Branch: `exp/bluedb`.
-(Supersedes the COMPLETE v0.19.8 coverage-hardening mandate — see memory
-[[coverage_hardening_mandate]].)
 
 ## User's goal (verbatim — the authority on "done")
 
-> "ok please follow your suggested plan, in fully autonomous mode"
-> "remember to grill the design + implementation each phase"
+> "implement + grill until fully e2e for a full v1 bluedb ready for sky app to
+> use seamlessly with reliability + scaling + good throughput as must achieve
+> goal. fully autonomous"
 
-The suggested plan the user approved (verbatim from the assistant turn):
+## What v1 means (the gradeable criteria)
 
-1. **Finish the storage engine** — snapshot + WAL truncation (bounds recovery
-   time & disk growth; today it replays the whole WAL). Pure Go, self-contained.
-2. **Runtime backend** — make BlueDB a Sky.Live session-store driver
-   (`SKY_LIVE_STORE=bluedb`) — the smallest real integration, proves persistence
-   end-to-end with zero new API.
+**Must-achieve: reliability + scaling + good throughput.** Grill + e2e each tier.
+Distributed/horizontal (Raft) is honestly v2 — v1 is the **embedded** engine made
+production-grade, with the v2 path documented, not hand-waved.
+
+- **T-A Reliability (keystone).** A crash-consistency FUZZ harness: random op
+  sequences + random crash points (torn writes / abandon-and-reopen) → reopen →
+  invariant holds (every ACKED op present, no corruption, no resurrection, matches
+  an oracle). Plus resource bounds (max value size; working-set-in-RAM documented
+  + guarded), and the ForEach-holds-lock stall fixed (scans don't block writes).
+- **T-B Throughput + scaling (embedded).** Go benchmarks: cached point-read,
+  durable group-committed write, concurrent, mixed — prove the capacity.md numbers
+  order-of-magnitude. Fix anything the bench reveals. Document the single-instance
+  ceiling + the v2 distributed path.
+- **T-C Seamless Sky-app use.** Beyond sessions: a Sky app stores its OWN typed
+  data in bluedb. A `Std.BlueDB` KV/document module (Codec-typed get/put/delete/
+  scan) + kernel bindings + runtime, e2e-verified in a real app. (If the kernel
+  surface proves too large/destabilising to finish cleanly, ship the engine +
+  session use as v1 and document the app-data API as the remaining surface — do
+  NOT ship a half-wired kernel.)
+- **T-D Judge.** Fresh-context adversarial Judge verifies the verbatim goal:
+  reliability (fuzz/crash proven), scaling (concurrency + bounds + documented v2),
+  throughput (benchmarked), seamless (real app uses it). No "but/except/mostly".
 
 ## Hard rules
 
-1. **Grill design + implementation EACH phase** (user, explicit). Before/after
-   implementing a phase, run a fresh-context adversarial grill against the design
-   AND the code — attack crash-window correctness, races, torn writes, seq skip,
-   TTL/expiry, interface conformance, prod fallback semantics. Fix what it finds
-   before committing.
-2. Engine unit tests green incl. `-race`. The session-store driver exercised by
-   an ACTUAL Sky.Live example running with `SKY_LIVE_STORE=bluedb` (persist across
-   a restart), not just a unit test.
-3. **Do NOT touch the compiler kernel registry** this pass (that's step #3,
-   deferred). Runtime-only + a store-driver wiring.
-4. No-deferral (§4): a real bug the grill/tests surface is fixed at root cause.
-5. Commit at each phase boundary; push to `exp/bluedb`.
-
-## Definition of done
-
-Both steps implemented, grilled, tested (engine `-race` green; a real Sky.Live app
-persists sessions through a restart via BlueDB), committed, pushed. One end
-summary.
+1. **Grill design + implementation each tier** (fresh-context agent) — fix what it
+   finds before committing. This caught a CRITICAL engine bug + a deploy-breaker
+   already; keep doing it.
+2. Every reliability claim = the three-leg stool (runtime test + fault/fuzz +
+   real-app e2e), not one leg.
+3. Narrow gate per change; full engine test + `-race` + benchmarks at tier
+   boundaries. Commit per tier; push at tier boundaries.
+4. No-deferral: a real bug the fuzz/grill surfaces is fixed at root cause.
+5. Honesty: v1 = embedded. Distributed scaling is v2 with a documented path — do
+   not claim horizontal scale that isn't built.
 
 ## Progress ledger
 
-- [x] Phase 1 — snapshot + WAL truncation (engine core `runtime-go/bluedb/`).
-      GRILLED (fresh-context): CRITICAL mid-batch-write-error rollback bug found
-      + fixed (F1) + F2/F4/F5 hardening. 18 tests green incl. -race. Commit
-      2f6fc9ec.
-- [x] Phase 2 — BlueDB Sky.Live session-store driver (`SKY_LIVE_STORE=bluedb`).
-      GRILLED (fresh-context): 5 real regressions vs sqlite found + fixed —
-      Ping-lies-on-sealed-engine (readyz, HIGH), reap-TOCTOU + dead read-slide
-      (active session lost on restart, MEDIUM), Get-returns-torn-down-session
-      (F4), Close-doesn't-join-cleanup (F5). E2E VERIFIED: 09-live-counter with
-      SKY_LIVE_STORE=bluedb — 30 increments persisted through a full server
-      restart (fresh session=0), readyz reflects health.
+- [x] T-A Reliability — crash-consistency FUZZ harness (random ops + torn-tail
+      crash-append + concurrent disjoint-keyspace → reopen matches oracle),
+      MaxValueBytes + MaxKeys/ErrFull guards, ForEach snapshot-under-short-lock.
+      GRILLED: fixed F1 (fuzz did clean-shutdown not crash → added torn-tail
+      append), F2 (serial → batch always 1 → added concurrent fuzz), F4/F5/F6.
+      -race clean.
+- [x] T-B Throughput — benchmarks (bench_test.go): cached read ~8.7M/sec;
+      DURABLE writes SCALE with concurrency via group commit (4→326 writes/fsync,
+      ~0.8k→~51k/sec); NoSync ~319k/sec. Measured numbers in capacity.md
+      (honest, macOS F_FULLFSYNC floor).
+- [ ] T-C Seamless — Std.BlueDB app-data store (or documented if kernel too large)
+- [ ] T-D Judge — verbatim-goal verification
 
-MANDATE COMPLETE — both phases implemented, grilled, fixed, tested/e2e-verified.
-
-## Extension (user, 2026-08-03): "keep going fully autonomous until e2e integration works"
-
-App-level BlueDB integration end-to-end (persistence first; reactive is a later
-phase). Grill + e2e-verify each step.
-- [x] A: `[bluedb]` sky.toml section → selects the bluedb session store
-      (section-level: presence selects unless `embedded = false`). E2E: persists
-      across restart, no env. Also `[live] store = "bluedb"` already worked.
-- [x] B: `Live.autoBlueDB` — PURE SKY over the existing `withStore "bluedb"`
-      builder, NO compiler-kernel work. E2E: `config {...} |> Live.autoBlueDB`
-      persists across restart, no env.
-- GRILLED (fresh-context): fixed F1/F3 (code-set store silently beat
-      `SKY_LIVE_STORE` env → deploy-override broken; now env > cfg, verified: env
-      override → memory, no persist) + F2/F4 ([bluedb] edge cases → section-level
-      mapping + unit test). Docs: sky-toml.md `[bluedb]`, README roadmap.
-
-INTEGRATION WORKS: three opt-ins (`[live] store`, `[bluedb]`, `autoBlueDB`), all
-e2e-verified persisting across a restart. Reactive scope-sync (multiplayer) is
-the next phase — the seam is `autoBlueDB`'s call site.
+Prior (done, grilled): engine core + snapshot/recovery + session store +
+app-level opt-in (autoBlueDB / [bluedb] / [live] store). See [[bluedb_exp]].

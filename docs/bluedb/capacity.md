@@ -32,9 +32,30 @@ Two reasons reads are that fast — both the point of **embedded-first**:
 
 **Group commit is what makes the write number real.** Naive fsync-per-write caps
 any single SSD at ~1–2k durable writes/sec (the fsync-latency floor); group commit
-amortizes one fsync across a whole batch, lifting it to tens of thousands while
-p99 stays ~1 ms. Without it, "fast frequent durable writes on one box" is
-impossible.
+amortizes one fsync across a whole batch, lifting it to tens of thousands. Without
+it, "fast frequent durable writes on one box" is impossible.
+
+## Measured — bluedb v1 engine (`go test -bench`)
+
+Real numbers from `runtime-go/bluedb/bench_test.go` on an 8-core Apple-silicon
+laptop (macOS, where Go's `File.Sync()` issues `F_FULLFSYNC` — a *true* durable
+barrier, ~ms; Linux `fsync` is faster, so these are a conservative floor):
+
+| Benchmark | ns/op | Throughput | Group-commit batch |
+|---|---|---|---|
+| Cached point read (parallel) | ~115 | **~8.7M reads/sec** | — |
+| Durable write, ~8 in-flight | ~1.21M | ~0.8k/sec | 4 writes/fsync |
+| Durable write, ~512 in-flight | ~19.5k | **~51k durable writes/sec** | **326 writes/fsync** |
+| Relaxed (NoSync) write | ~3.1k | **~319k writes/sec** | — |
+
+**The load-bearing result: durable write throughput SCALES with concurrency.**
+As in-flight writers grow, group commit packs more writes into each fsync
+(4 → 326), so durable throughput climbs from ~0.8k to **~51k writes/sec** — the
+amortization the whole design turns on. A reactive app with many concurrent
+sessions is exactly the high-concurrency regime, so it lands near the top. p99
+per-write latency stays ~one fsync regardless. (These are Go-benchmark averages,
+not a tuned load test; treat them as order-of-magnitude, and expect Linux to beat
+the macOS `F_FULLFSYNC` floor.)
 
 ## darraghstudio reality check
 

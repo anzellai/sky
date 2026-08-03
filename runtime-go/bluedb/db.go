@@ -16,6 +16,13 @@ var ErrClosed = errors.New("bluedb: closed")
 // could not roll back — it refuses further writes rather than risk a torn WAL.
 var ErrFailed = errors.New("bluedb: engine failed (unrecoverable write error)")
 
+// ErrTooLarge is returned by Put when key+value exceeds Options.MaxValueBytes.
+var ErrTooLarge = errors.New("bluedb: value exceeds MaxValueBytes")
+
+// ErrFull is returned by Put when inserting a NEW key would exceed
+// Options.MaxKeys — an operator-visible bound instead of an OOM kill.
+var ErrFull = errors.New("bluedb: store is full (MaxKeys)")
+
 const (
 	chanBuf  = 4096 // commit queue depth
 	maxBatch = 1024 // max records fsync'd in one group commit
@@ -46,6 +53,17 @@ type Options struct {
 	// checkpoint only on explicit Checkpoint().
 	CheckpointEvery int
 
+	// MaxValueBytes, if > 0, rejects a Put whose key+value exceeds it with
+	// ErrTooLarge — a guard against a single pathological write. 0 = unlimited.
+	MaxValueBytes int
+
+	// MaxKeys, if > 0, rejects a Put that would insert a NEW key beyond this
+	// count with ErrFull (overwrites of existing keys are always allowed) — an
+	// operator-visible ceiling instead of an OOM kill. The working set is
+	// memory-resident (see docs/bluedb/capacity.md), so bound it to fit RAM. The
+	// check is approximate under concurrency (a soft cap, not a hard limit).
+	MaxKeys int
+
 	// walWrap, test-only, wraps the WAL file to inject faults.
 	walWrap func(walFile) walFile
 }
@@ -70,6 +88,9 @@ type DB struct {
 	ch   chan *commitReq
 	wg   sync.WaitGroup
 	sync bool
+
+	maxValueBytes int // immutable after Open; 0 = unlimited
+	maxKeys       int // immutable after Open; 0 = unlimited
 
 	// committer-owned (single goroutine; no locking needed):
 	seq             uint64 // monotonic record seq, in commit order
@@ -104,6 +125,8 @@ func Open(path string, opts ...Options) (*DB, error) {
 		ch:              make(chan *commitReq, chanBuf),
 		sync:            o.Sync,
 		checkpointEvery: o.CheckpointEvery,
+		maxValueBytes:   o.MaxValueBytes,
+		maxKeys:         o.MaxKeys,
 	}
 
 	// Recover: snapshot first, then the WAL tail after the snapshot's seq.
@@ -181,6 +204,24 @@ func (db *DB) enqueue(op uint8, key, value []byte) error {
 	if db.failed.Load() {
 		db.cmu.RUnlock()
 		return ErrFailed
+	}
+	// Guards (Put only): value-size, then the soft key-count ceiling. Checked
+	// after closed/failed so those errors dominate.
+	if op == opPut {
+		if db.maxValueBytes > 0 && len(key)+len(value) > db.maxValueBytes {
+			db.cmu.RUnlock()
+			return ErrTooLarge
+		}
+		if db.maxKeys > 0 {
+			db.mu.RLock()
+			_, exists := db.mem[string(key)]
+			atCap := len(db.mem) >= db.maxKeys
+			db.mu.RUnlock()
+			if !exists && atCap {
+				db.cmu.RUnlock()
+				return ErrFull
+			}
+		}
 	}
 	req := &commitReq{
 		op:    op,
@@ -378,14 +419,22 @@ func (db *DB) Len() int {
 	return n
 }
 
-// ForEach calls fn for every live key/value, in unspecified order, holding a read
-// lock for the whole scan (writes block meanwhile — keep fn fast). Returning
-// false stops iteration. The slices are owned by the DB; do not retain or mutate.
+// ForEach calls fn for every live key/value, in unspecified order. Returning
+// false stops iteration. It snapshots key/value references under a short read
+// lock, then calls fn OUTSIDE the lock, so a large scan does not block writes for
+// its whole duration — fn sees a consistent point-in-time view. Values are never
+// mutated in place (a Put installs a fresh slice), so the captured references
+// stay valid; the DB owns them — do not retain or mutate.
 func (db *DB) ForEach(fn func(key, value []byte) bool) {
+	type kv struct{ k, v []byte }
 	db.mu.RLock()
-	defer db.mu.RUnlock()
+	snap := make([]kv, 0, len(db.mem))
 	for k, v := range db.mem {
-		if !fn([]byte(k), v) {
+		snap = append(snap, kv{[]byte(k), v})
+	}
+	db.mu.RUnlock()
+	for _, e := range snap {
+		if !fn(e.k, e.v) {
 			return
 		}
 	}
