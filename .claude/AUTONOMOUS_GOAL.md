@@ -67,7 +67,9 @@ production-grade, with the v2 path documented, not hand-waved.
       kernel + advisory file lock / ErrLocked in the engine), MaxValueBytes default
       (OOM guard), getValue now FAILS on decode error (was silent Nothing = data
       loss), doc example fixed.
-- [~] T-D Judge — fresh-context Judge RAN the tests + built the compiler +
+## ═══ v1 ACHIEVED (re-Judge 2026-08-03) — both gaps closed, no regression ═══
+
+- [x] T-D Judge — fresh-context Judge RAN the tests + built the compiler +
       e2e-ran a real Sky program. Confirmed reliability/throughput/seamless/grill
       genuinely strong + the v2 scoping honest (no false cluster claim). Returned
       NOT-ACHIEVED on 2 fair gaps, BOTH NOW FIXED:
