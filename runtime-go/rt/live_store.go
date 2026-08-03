@@ -1263,6 +1263,22 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		}
 		log.Printf("[sky.live] session store: redis @ %s (ttl=%s)", path, ttl)
 		return store
+	case "bluedb":
+		if path == "" {
+			path = "sky_sessions.blue"
+		}
+		store, err := connectStoreWithRetry("bluedb", func() (SessionStore, error) {
+			s, e := newBlueDBStore(path, ttl)
+			if e != nil {
+				return nil, e
+			}
+			return s, nil
+		})
+		if err != nil {
+			return failDurableStore("bluedb", err, ttl)
+		}
+		log.Printf("[sky.live] session store: bluedb @ %s (ttl=%s)", path, ttl)
+		return store
 	case "", "memory":
 		log.Printf("[sky.live] session store: memory (ttl=%s)", ttl)
 		return newMemoryStore(ttl)
@@ -1278,7 +1294,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		// in dev.
 		if productionFromEnv() {
 			storeFatalf("[sky.live] FATAL: unknown session store %q — valid kinds are "+
-				"memory, sqlite, postgres, redis. Refusing to start with a silent in-memory "+
+				"memory, sqlite, postgres, redis, bluedb. Refusing to start with a silent in-memory "+
 				"fallback in production (sessions would be lost on every restart and never "+
 				"shared across replicas). Fix [live] store / SKY_LIVE_STORE, or set it to "+
 				"\"memory\" to opt in to the in-memory store deliberately.", kind)
@@ -1286,7 +1302,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 			// may return, so fall through to a memory store to keep a valid value.
 		}
 		log.Printf("┌─ [sky.live] WARNING ────────────────────────────────────────")
-		log.Printf("│ unknown session store %q — valid: memory, sqlite, postgres, redis", kind)
+		log.Printf("│ unknown session store %q — valid: memory, sqlite, postgres, redis, bluedb", kind)
 		log.Printf("│ DEV fallback → in-memory sessions: lost on restart, single-instance only.")
 		log.Printf("│ In PRODUCTION (ENV set) this is a HARD failure — the app refuses to start.")
 		log.Printf("└─────────────────────────────────────────────────────────────")

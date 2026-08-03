@@ -1096,6 +1096,12 @@ fn write_out(
     // materialise a pruned copy of runtime-go/rt (tests stripped).
     let rt_dst = out_dir.join("rt");
     materialise_rt(&rt_src.join("rt"), &rt_dst, console_needed)?;
+    // materialise runtime-go/bluedb (the embedded storage engine imported by
+    // rt's SKY_LIVE_STORE=bluedb session-store driver). Tests stripped.
+    let bluedb_src = rt_src.join("bluedb");
+    if bluedb_src.is_dir() {
+        materialise_rt(&bluedb_src, &out_dir.join("bluedb"), false)?;
+    }
     Ok(())
 }
 

@@ -179,12 +179,20 @@ swap the substrate underneath later without touching app code.**
   reactive fan-out via the existing SSE + pub/sub. Single node, zero-ops, sub-ms
   hot path. Delivers the demo and de-risks the whole bet.
   - **[landed]** Engine core — `runtime-go/bluedb/`: group-commit WAL +
-    in-memory keyspace + crash/torn-tail recovery. 8 tests green incl. race
-    detector; group commit proven (writes amortized across fsyncs). This is the
-    durability substrate from `durability.md`, made real.
-  - **[next]** Snapshot + WAL truncation (bound recovery time / disk) → runtime
-    session-store backend → the `Std.Live.autoBlueDB` stdlib surface + `[bluedb]`
-    sky.toml parsing → the reactive fan-out layer.
+    in-memory keyspace + crash/torn-tail recovery. Group commit proven (writes
+    amortized across fsyncs). The durability substrate from `durability.md`.
+  - **[landed]** Snapshot + WAL truncation — checkpoints (manual + auto-every-N)
+    bound recovery time and disk; recovery loads snapshot + replays the WAL tail,
+    skipping records ≤ coveredSeq (crash-window guard). **Adversarially grilled**
+    (fresh-context review): fixed a CRITICAL bug — a mid-batch write error
+    (ENOSPC) could leave a torn record behind good ones and silently drop acked
+    writes on recovery; now the whole batch rolls back to a clean boundary (or the
+    engine seals if it can't). Fault-injection tests prove no acked write is ever
+    lost. 18 tests green incl. `-race`.
+  - **[landed]** Sky.Live session-store driver — `SKY_LIVE_STORE=bluedb`
+    (`rt/live_store_bluedb.go`): the embedded, zero-ops durable session store.
+  - **[next]** The `Std.Live.autoBlueDB` stdlib surface + `[bluedb]` sky.toml
+    parsing → the reactive fan-out layer (compiler-kernel work, deferred).
 - **Phase 2 — partial sync.** Change-feed + query-subscriptions so big Models
   sync diffs, not snapshots; hot-key sharded aggregates.
 - **Phase 3 — distributed substrate.** Native transactional ordered-KV (Pebble +

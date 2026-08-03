@@ -355,6 +355,21 @@ func (db *DB) Close() error {
 	return db.f.Close()
 }
 
+// Err reports engine health for callers wiring a readiness probe: ErrFailed if
+// an unrecoverable write sealed the engine, ErrClosed if it's closed, else nil.
+func (db *DB) Err() error {
+	if db.failed.Load() {
+		return ErrFailed
+	}
+	db.cmu.RLock()
+	c := db.closed
+	db.cmu.RUnlock()
+	if c {
+		return ErrClosed
+	}
+	return nil
+}
+
 // Len returns the number of live keys.
 func (db *DB) Len() int {
 	db.mu.RLock()

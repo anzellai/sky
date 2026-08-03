@@ -177,6 +177,9 @@ fn stage_runtime(src: &Path, dst: &Path) {
     stage(&src.join("rt"), &dst.join("rt"));
     // cmd/ — the `sky-hub` daemon main package (`sky console-serve`).
     stage(&src.join("cmd"), &dst.join("cmd"));
+    // bluedb/ — the embedded BlueDB storage engine (imported by rt's
+    // SKY_LIVE_STORE=bluedb session-store driver).
+    stage(&src.join("bluedb"), &dst.join("bluedb"));
 }
 
 fn copy_file(src: &Path, dst: &Path) {
