@@ -91,6 +91,14 @@ legacy-ts-compiler/node_modules/
 *.db-shm
 *.db-wal
 
+# BlueDB store files + the default data/ dir a running app/example creates
+# (Live.autoBlueDB / [live] storePath). Local runtime state, never source.
+# (data/ stays path-anchored — unanchored would shadow src/**/Data/ on a
+# case-insensitive filesystem; repo-root /data/ is covered above.)
+*.blue
+*.blue-*
+examples/*/data/
+
 # Stray SQLite files named literally "{}" when a test's connection
 # string was the unsubstituted placeholder. Never source; never commit.
 **/\{\}
