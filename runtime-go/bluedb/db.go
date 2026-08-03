@@ -23,6 +23,10 @@ var ErrTooLarge = errors.New("bluedb: value exceeds MaxValueBytes")
 // Options.MaxKeys — an operator-visible bound instead of an OOM kill.
 var ErrFull = errors.New("bluedb: store is full (MaxKeys)")
 
+// ErrLocked is returned by Open when another process (or another open handle)
+// already holds the store — a second engine on one WAL file would corrupt it.
+var ErrLocked = errors.New("bluedb: store is already open (locked by another process)")
+
 const (
 	chanBuf  = 4096 // commit queue depth
 	maxBatch = 1024 // max records fsync'd in one group commit
@@ -158,6 +162,12 @@ func Open(path string, opts ...Options) (*DB, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
+	}
+	// Refuse a second engine on this WAL — it would corrupt it. The advisory
+	// lock is held on the append fd for the DB's lifetime (released by Close).
+	if err := lockFile(f); err != nil {
+		f.Close()
+		return nil, ErrLocked
 	}
 	var wf walFile = f
 	if o.walWrap != nil {

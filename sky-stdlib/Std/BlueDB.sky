@@ -1,0 +1,169 @@
+module Std.BlueDB exposing (Store, open, close, put, get, delete, has, keys, putValue, getValue)
+
+{-| BlueDB — the embedded, durable, group-committed key-value store for a Sky
+app's OWN data (see docs/bluedb/). The same engine that backs the Sky.Live
+session store, here exposed as a typed KV an app opens and reads/writes directly.
+
+    main =
+        BlueDB.open "data/app.blue"
+            |> Task.andThen
+                (\store ->
+                    BlueDB.putValue userCodec store "user:1" alice
+                        |> Task.andThen (\_ -> BlueDB.getValue userCodec store "user:1")
+                )
+            |> Task.run
+
+`open` is idempotent per path within a process (a second open of the same path
+returns the SAME handle — never a second engine on one file); open it once and
+share the handle.
+
+Values are strings; pair with `Std.Codec` (`putValue` / `getValue`) to store
+typed records as JSON — one codec drives both JSON and BlueDB, no drift.
+Reliability + throughput: docs/bluedb/durability.md + capacity.md. For the
+Sky.Live Model, prefer `Live.autoBlueDB` (persists the Model automatically);
+this module is for arbitrary app data beyond the Model.
+-}
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Task as Task
+import Std.Codec as Codec exposing (Codec)
+
+-- | An open BlueDB store handle.
+type Store
+    = Store Int
+
+
+-- Open / close ----------------------------------------------------------------
+openRaw : String -> Task Error Int
+openRaw =
+    Ffi.kernel "BlueDB_open"
+
+
+{-| Open (creating if needed) an embedded BlueDB store at `path`. Durable,
+crash-safe, group-committed. Open ONCE and share the handle — it is a memoised
+connection, like a DB pool. -}
+open : String -> Task Error Store
+open path =
+    Task.map Store (openRaw path)
+
+
+closeRaw : Int -> Task Error ()
+closeRaw =
+    Ffi.kernel "BlueDB_close"
+
+
+{-| Close the store (idempotent); flushes in-flight writes. -}
+close : Store -> Task Error ()
+close store =
+    case store of
+
+        Store raw ->
+            closeRaw raw
+
+
+-- String KV -------------------------------------------------------------------
+putRaw : Int -> String -> String -> Task Error ()
+putRaw =
+    Ffi.kernel "BlueDB_put"
+
+
+{-| Durably store a string `value` under `key` (returns after fsync). -}
+put : Store -> String -> String -> Task Error ()
+put store key value =
+    case store of
+
+        Store raw ->
+            putRaw raw key value
+
+
+getRaw : Int -> String -> Task Error (Maybe String)
+getRaw =
+    Ffi.kernel "BlueDB_get"
+
+
+{-| Look up `key`: `Just value` on hit, `Nothing` if absent. -}
+get : Store -> String -> Task Error (Maybe String)
+get store key =
+    case store of
+
+        Store raw ->
+            getRaw raw key
+
+
+deleteRaw : Int -> String -> Task Error ()
+deleteRaw =
+    Ffi.kernel "BlueDB_delete"
+
+
+{-| Durably remove `key`. -}
+delete : Store -> String -> Task Error ()
+delete store key =
+    case store of
+
+        Store raw ->
+            deleteRaw raw key
+
+
+hasRaw : Int -> String -> Task Error Bool
+hasRaw =
+    Ffi.kernel "BlueDB_has"
+
+
+{-| Whether `key` is present. -}
+has : Store -> String -> Task Error Bool
+has store key =
+    case store of
+
+        Store raw ->
+            hasRaw raw key
+
+
+keysRaw : Int -> Task Error (List String)
+keysRaw =
+    Ffi.kernel "BlueDB_keys"
+
+
+{-| Every key in the store (unordered snapshot). For a large store prefer a
+key-prefix convention + your own filter over this full scan. -}
+keys : Store -> Task Error (List String)
+keys store =
+    case store of
+
+        Store raw ->
+            keysRaw raw
+
+
+-- Typed via Codec -------------------------------------------------------------
+{-| Store a TYPED value via its `Codec` (encoded to JSON) — the seamless typed
+put. Pair with `getValue`. -}
+putValue : Codec a -> Store -> String -> a -> Task Error ()
+putValue codec store key value =
+    put store key (Codec.toJson codec value)
+
+
+{-| Get + decode a typed value via its `Codec`. `Just v` on hit, `Nothing` when
+the key is ABSENT. If the stored JSON is present but doesn't decode (schema
+drift / corruption), this FAILS with the decode error rather than returning
+`Nothing` — so a mismatch surfaces instead of masquerading as a miss (which,
+paired with a "read → if Nothing, write default" idiom, would silently destroy
+the old value). -}
+getValue : Codec a -> Store -> String -> Task Error (Maybe a)
+getValue codec store key =
+    get store key
+        |> Task.andThen
+               (\m ->
+                   case m of
+
+                       Nothing ->
+                           Task.succeed Nothing
+
+                       Just s ->
+                           case Codec.fromJson codec s of
+
+                               Ok v ->
+                                   Task.succeed (Just v)
+
+                               Err e ->
+                                   Task.fail e)

@@ -198,6 +198,17 @@ swap the substrate underneath later without touching app code.**
     is pure Sky over the existing `withStore "bluedb"` builder — **no
     compiler-kernel work needed** (the reactive layer will attach to the same
     call site later). Grilled.
+  - **[landed]** v1 hardening — crash-consistency **fuzz harness** (random ops +
+    torn-tail crash-append + concurrent disjoint-keyspace → reopen matches an
+    oracle), throughput **benchmarks** (cached reads ~8.7M/sec; durable writes
+    scale to ~51k/sec as group commit amortizes the fsync), resource guards
+    (`MaxValueBytes`/`MaxKeys`→`ErrFull`), and an advisory **file lock** so two
+    engines can't open one WAL (`ErrLocked`). All grilled.
+  - **[landed]** `Std.BlueDB` — a typed KV store for an app's OWN data
+    (`open`/`put`/`get`/`delete`/`has`/`keys` + Codec `putValue`/`getValue`).
+    Durable, persists across restart, path-deduped (one engine per file). Pure
+    additive stdlib (`Ffi.kernel` routes generically — no compiler-kernel change).
+    e2e-verified; `sky doc Std.BlueDB` renders it.
   - **[next]** The reactive fan-out layer — change-feed → scope-keyed sync over
     SSE → the two-browsers-live-counter demo. This is where `autoBlueDB` gains
     the multiplayer magic; it's the largest remaining piece.

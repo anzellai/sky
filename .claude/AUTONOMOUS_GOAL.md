@@ -58,7 +58,15 @@ production-grade, with the v2 path documented, not hand-waved.
       DURABLE writes SCALE with concurrency via group commit (4→326 writes/fsync,
       ~0.8k→~51k/sec); NoSync ~319k/sec. Measured numbers in capacity.md
       (honest, macOS F_FULLFSYNC floor).
-- [ ] T-C Seamless — Std.BlueDB app-data store (or documented if kernel too large)
+- [x] T-C Seamless — `Std.BlueDB`: typed KV for an app's OWN data (open/put/get/
+      delete/has/keys + Codec putValue/getValue). Pure additive (Ffi.kernel routes
+      generically — no hir/lower/registry change); rt/bluedb_kernel.go +
+      Std/BlueDB.sky. E2E: typed round-trip + persists across process restart +
+      path-dedup (write via one handle, read via a 2nd open of same path). sky doc
+      renders it. GRILLED: fixed CRITICAL double-open corruption (path-dedup in the
+      kernel + advisory file lock / ErrLocked in the engine), MaxValueBytes default
+      (OOM guard), getValue now FAILS on decode error (was silent Nothing = data
+      loss), doc example fixed.
 - [ ] T-D Judge — verbatim-goal verification
 
 Prior (done, grilled): engine core + snapshot/recovery + session store +
