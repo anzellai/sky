@@ -21,7 +21,16 @@ import (
 const (
 	opPut    uint8 = 1
 	opDelete uint8 = 2
+	// opBatch is an ATOMIC multi-mutation record: its payload carries N (op,key,
+	// value) mutations under ONE crc + length, so the existing torn-tail logic
+	// makes the whole batch all-or-nothing on a crash (the record validates
+	// wholly → all N apply, or it is the torn tail → none apply). Never a subset.
+	opBatch uint8 = 4
 )
+
+// maxBatchMuts bounds the declared mutation count so a corrupt/torn 4-byte count
+// can't drive a huge allocation on replay (a garbage count is a torn record).
+const maxBatchMuts = 1 << 24 // 16M mutations — far above any real batch
 
 // maxRecordSize is a sanity bound; a declared payload length beyond it is
 // treated as a torn record (garbage length from a partial write).
@@ -32,7 +41,15 @@ type entry struct {
 	seq   uint64
 	op    uint8
 	key   []byte
-	value []byte // empty for opDelete
+	value []byte     // empty for opDelete
+	muts  []mutation // non-nil only when op == opBatch
+}
+
+// mutation is one op inside an opBatch record.
+type mutation struct {
+	op    uint8 // opPut | opDelete
+	key   []byte
+	value []byte
 }
 
 // On-disk record layout (little-endian):
@@ -50,15 +67,35 @@ type entry struct {
 // the header or the payload, an oversized length, or a CRC mismatch all mean
 // "the last write didn't complete" — recovery stops there.
 func encodeRecord(e entry) []byte {
-	payload := make([]byte, 0, 8+1+4+len(e.key)+len(e.value))
 	var num [8]byte
-	binary.LittleEndian.PutUint64(num[:8], e.seq)
-	payload = append(payload, num[:8]...)
-	payload = append(payload, e.op)
-	binary.LittleEndian.PutUint32(num[:4], uint32(len(e.key)))
-	payload = append(payload, num[:4]...)
-	payload = append(payload, e.key...)
-	payload = append(payload, e.value...)
+	var payload []byte
+	if e.op == opBatch {
+		// [seq][opBatch][mutCount] then each [op][klen][key][vlen][val]
+		payload = make([]byte, 0, 8+1+4+batchMutBytes(e.muts))
+		binary.LittleEndian.PutUint64(num[:8], e.seq)
+		payload = append(payload, num[:8]...)
+		payload = append(payload, opBatch)
+		binary.LittleEndian.PutUint32(num[:4], uint32(len(e.muts)))
+		payload = append(payload, num[:4]...)
+		for _, m := range e.muts {
+			payload = append(payload, m.op)
+			binary.LittleEndian.PutUint32(num[:4], uint32(len(m.key)))
+			payload = append(payload, num[:4]...)
+			payload = append(payload, m.key...)
+			binary.LittleEndian.PutUint32(num[:4], uint32(len(m.value)))
+			payload = append(payload, num[:4]...)
+			payload = append(payload, m.value...)
+		}
+	} else {
+		payload = make([]byte, 0, 8+1+4+len(e.key)+len(e.value))
+		binary.LittleEndian.PutUint64(num[:8], e.seq)
+		payload = append(payload, num[:8]...)
+		payload = append(payload, e.op)
+		binary.LittleEndian.PutUint32(num[:4], uint32(len(e.key)))
+		payload = append(payload, num[:4]...)
+		payload = append(payload, e.key...)
+		payload = append(payload, e.value...)
+	}
 
 	out := make([]byte, 8+len(payload))
 	binary.LittleEndian.PutUint32(out[0:4], crc32.ChecksumIEEE(payload))
@@ -68,12 +105,19 @@ func encodeRecord(e entry) []byte {
 }
 
 func decodePayload(p []byte) (entry, bool) {
+	if len(p) < 8+1 {
+		return entry{}, false
+	}
+	op := p[8]
+	if op == opBatch {
+		return decodeBatch(p)
+	}
 	if len(p) < 8+1+4 {
 		return entry{}, false
 	}
 	e := entry{}
 	e.seq = binary.LittleEndian.Uint64(p[0:8])
-	e.op = p[8]
+	e.op = op
 	klen := binary.LittleEndian.Uint32(p[9:13])
 	if int(klen) > len(p)-13 {
 		return entry{}, false
@@ -84,6 +128,64 @@ func decodePayload(p []byte) (entry, bool) {
 		return entry{}, false
 	}
 	return e, true
+}
+
+// decodeBatch parses an opBatch payload: [seq][opBatch][mutCount] then each
+// [op][klen][key][vlen][val]. It must consume EXACTLY the payload — a mutCount
+// that doesn't match the bytes present (truncated or trailing) is rejected as
+// torn, so a partial write can never decode as a smaller-but-valid batch.
+func decodeBatch(p []byte) (entry, bool) {
+	if len(p) < 13 {
+		return entry{}, false
+	}
+	count := binary.LittleEndian.Uint32(p[9:13])
+	// count==0 is never written (an empty batch is an API no-op), so a zero-count
+	// record is corruption → torn. Bound count by the smallest possible mutation
+	// (1 op + 4 klen + 4 vlen = 9 bytes) BEFORE allocating, so a crafted/torn huge
+	// count can't drive an OOM on replay (snapshot F4 parity).
+	if count == 0 || count > maxBatchMuts || int64(count)*9 > int64(len(p)-13) {
+		return entry{}, false
+	}
+	off := 13
+	muts := make([]mutation, 0, count) // count now provably ≤ (len(p)-13)/9
+	for i := uint32(0); i < count; i++ {
+		if off+1+4 > len(p) {
+			return entry{}, false
+		}
+		mop := p[off]
+		if mop != opPut && mop != opDelete {
+			return entry{}, false
+		}
+		klen := int(binary.LittleEndian.Uint32(p[off+1 : off+5]))
+		off += 5
+		if klen < 0 || off+klen+4 > len(p) {
+			return entry{}, false
+		}
+		key := p[off : off+klen]
+		off += klen
+		vlen := int(binary.LittleEndian.Uint32(p[off : off+4]))
+		off += 4
+		if vlen < 0 || off+vlen > len(p) {
+			return entry{}, false
+		}
+		val := p[off : off+vlen]
+		off += vlen
+		muts = append(muts, mutation{op: mop, key: key, value: val})
+	}
+	if off != len(p) {
+		return entry{}, false // trailing bytes → mutCount lied → torn
+	}
+	return entry{seq: binary.LittleEndian.Uint64(p[0:8]), op: opBatch, muts: muts}, true
+}
+
+// batchMutBytes is the encoded size of a batch's mutation list (for the record
+// buffer + the over-size guard).
+func batchMutBytes(muts []mutation) int {
+	n := 0
+	for _, m := range muts {
+		n += 1 + 4 + len(m.key) + 4 + len(m.value)
+	}
+	return n
 }
 
 // replay reads every valid record from the WAL at path, calling apply in order
@@ -131,11 +233,23 @@ func replay(path string, minSeq uint64, apply func(entry)) (maxSeq uint64, valid
 			break
 		}
 		if ent.seq > minSeq {
-			// Copy key/value out of the reader's buffer before handing to
-			// apply, so the memtable owns its bytes.
-			k := append([]byte(nil), ent.key...)
-			v := append([]byte(nil), ent.value...)
-			apply(entry{seq: ent.seq, op: ent.op, key: k, value: v})
+			// Copy key/value out of the record buffer before handing to apply, so
+			// the memtable owns its bytes.
+			if ent.op == opBatch {
+				cm := make([]mutation, len(ent.muts))
+				for i, m := range ent.muts {
+					cm[i] = mutation{
+						op:    m.op,
+						key:   append([]byte(nil), m.key...),
+						value: append([]byte(nil), m.value...),
+					}
+				}
+				apply(entry{seq: ent.seq, op: opBatch, muts: cm})
+			} else {
+				k := append([]byte(nil), ent.key...)
+				v := append([]byte(nil), ent.value...)
+				apply(entry{seq: ent.seq, op: ent.op, key: k, value: v})
+			}
 		}
 		if ent.seq > maxSeq {
 			maxSeq = ent.seq

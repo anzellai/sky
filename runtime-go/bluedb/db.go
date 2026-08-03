@@ -113,6 +113,7 @@ type commitReq struct {
 	op    uint8
 	key   []byte
 	value []byte
+	muts  []mutation // set only when op == opBatch
 	done  chan error
 }
 
@@ -207,6 +208,116 @@ func (db *DB) Delete(key []byte) error { return db.enqueue(opDelete, key, nil) }
 // Checkpoint forces a snapshot + WAL truncation now and returns when durable.
 func (db *DB) Checkpoint() error { return db.enqueue(opCheckpoint, nil, nil) }
 
+// mutTotal counts individual mutations across a group (a batch counts as its
+// mutation count, not 1) so Stats().writes and CheckpointEvery stay meaningful.
+func mutTotal(reqs []*commitReq) int {
+	n := 0
+	for _, r := range reqs {
+		if r.op == opBatch {
+			n += len(r.muts)
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// reqEntry builds the WAL/apply entry for a commit request.
+func reqEntry(r *commitReq, seq uint64) entry {
+	if r.op == opBatch {
+		return entry{seq: seq, op: opBatch, muts: r.muts}
+	}
+	return entry{seq: seq, op: r.op, key: r.key, value: r.value}
+}
+
+// Batch accumulates mutations to commit ATOMICALLY as one WAL record. Build with
+// Put/Delete, then DB.WriteBatch. Don't reuse a Batch after WriteBatch.
+type Batch struct {
+	muts []mutation
+}
+
+// NewBatch returns an empty batch.
+func NewBatch() *Batch { return &Batch{} }
+
+// Put stages a key/value write (copied, so the caller's buffers are free to reuse).
+func (b *Batch) Put(key, value []byte) *Batch {
+	b.muts = append(b.muts, mutation{
+		op:    opPut,
+		key:   append([]byte(nil), key...),
+		value: append([]byte(nil), value...),
+	})
+	return b
+}
+
+// Delete stages a key removal.
+func (b *Batch) Delete(key []byte) *Batch {
+	b.muts = append(b.muts, mutation{op: opDelete, key: append([]byte(nil), key...)})
+	return b
+}
+
+// Len is the number of staged mutations.
+func (b *Batch) Len() int { return len(b.muts) }
+
+// WriteBatch commits every mutation in b ATOMICALLY: one WAL record, durable
+// after one fsync, all-or-nothing on a crash (recovery applies all or none — never
+// a subset). This is the primitive secondary indexes ride on (index + primary in
+// one batch). An empty batch is a no-op. Applied in staged order (last-writer-wins
+// for a key repeated in the batch).
+func (db *DB) WriteBatch(b *Batch) error {
+	if b == nil || len(b.muts) == 0 {
+		return nil
+	}
+	db.cmu.RLock()
+	if db.closed {
+		db.cmu.RUnlock()
+		return ErrClosed
+	}
+	if db.failed.Load() {
+		db.cmu.RUnlock()
+		return ErrFailed
+	}
+	// Per-mutation value-size guard.
+	if db.maxValueBytes > 0 {
+		for _, m := range b.muts {
+			if m.op == opPut && len(m.key)+len(m.value) > db.maxValueBytes {
+				db.cmu.RUnlock()
+				return ErrTooLarge
+			}
+		}
+	}
+	// The whole encoded record must fit maxRecordSize — checked BEFORE ack, else
+	// replay would reject the over-large record as torn and lose an acked batch.
+	if 8+1+4+batchMutBytes(b.muts) > maxRecordSize {
+		db.cmu.RUnlock()
+		return ErrTooLarge
+	}
+	// Soft key-count ceiling: count puts of keys not currently present.
+	if db.maxKeys > 0 {
+		db.mu.RLock()
+		net := 0
+		seen := map[string]bool{}
+		for _, m := range b.muts {
+			if m.op == opPut {
+				k := string(m.key)
+				if _, exists := db.mem[k]; !exists && !seen[k] {
+					net++
+					seen[k] = true
+				}
+			}
+		}
+		full := len(db.mem)+net > db.maxKeys
+		db.mu.RUnlock()
+		if full {
+			db.cmu.RUnlock()
+			return ErrFull
+		}
+	}
+	req := &commitReq{op: opBatch, muts: b.muts, done: make(chan error, 1)}
+	db.ch <- req
+	db.cmu.RUnlock()
+	return <-req.done
+}
+
 func (db *DB) enqueue(op uint8, key, value []byte) error {
 	db.cmu.RLock()
 	if db.closed {
@@ -287,7 +398,7 @@ func (db *DB) process(batch []*commitReq) {
 		var written int64
 		for _, r := range writes {
 			db.seq++
-			rec := encodeRecord(entry{seq: db.seq, op: r.op, key: r.key, value: r.value})
+			rec := encodeRecord(reqEntry(r, db.seq))
 			n, e := db.f.Write(rec)
 			written += int64(n)
 			if e != nil {
@@ -304,10 +415,10 @@ func (db *DB) process(batch []*commitReq) {
 			db.walSize = start + written
 			db.mu.Lock()
 			for _, r := range writes {
-				applyEntry(db.mem, entry{op: r.op, key: r.key, value: r.value})
+				applyEntry(db.mem, reqEntry(r, 0))
 			}
 			db.mu.Unlock()
-			db.writesSinceCkpt += len(writes)
+			db.writesSinceCkpt += mutTotal(writes)
 		} else {
 			// F1: a write (or its fsync) failed mid-batch. The WAL may now hold a
 			// partial/torn record followed by nothing — but if we kept appending,
@@ -332,7 +443,7 @@ func (db *DB) process(batch []*commitReq) {
 
 		atomic.AddUint64(&db.batches, 1)
 		if werr == nil {
-			atomic.AddUint64(&db.writes, uint64(len(writes)))
+			atomic.AddUint64(&db.writes, uint64(mutTotal(writes)))
 		}
 		for _, r := range writes {
 			r.done <- werr
@@ -497,6 +608,18 @@ func (db *DB) Stats() (batches, writes, checkpoints uint64) {
 }
 
 func applyEntry(mem map[string][]byte, e entry) {
+	if e.op == opBatch {
+		// Apply in order — last-writer-wins for a key repeated within the batch,
+		// identically on the live path and on recovery.
+		for _, m := range e.muts {
+			if m.op == opDelete {
+				delete(mem, string(m.key))
+			} else {
+				mem[string(m.key)] = m.value
+			}
+		}
+		return
+	}
 	if e.op == opDelete {
 		delete(mem, string(e.key))
 		return
