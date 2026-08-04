@@ -136,15 +136,19 @@ type bluedbChangePayload struct {
 // bluedbPublishChange routes one decoded record change to the running Sky.Live
 // app's broker (the process-global handle), on the change's collection topic
 // (bluedbCollTopic). A no-op when no Live app is registered (a CLI / BlueDB-only
-// process), and for a resync marker (not collection-targeted — the declarative
-// layer re-runs all queries on resync).
+// process). A resync marker (rc.Resync, emitted by the pump on a feed overflow) is
+// published as an op="resync" change on its collection topic so subscribers that
+// fell behind re-read rather than silently diverge.
 func bluedbPublishChange(rc bluedbRecordChange) {
 	app := processBroker.Load()
-	if app == nil || rc.Resync {
+	if app == nil {
 		return
 	}
 	op := "put"
-	if rc.IsDelete {
+	switch {
+	case rc.Resync:
+		op = "resync"
+	case rc.IsDelete:
 		op = "delete"
 	}
 	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: rc.Coll, Pk: rc.Pk, Record: rc.Record})
@@ -164,17 +168,26 @@ func bluedbStartReactivePump(db *bluedb.DB, publish func(bluedbRecordChange)) fu
 	sub, cancel := db.Subscribe(0)
 	done := make(chan struct{})
 	go func() {
+		// Track the collections we've seen changes for, so an overflow resync can
+		// be targeted at each collection's topic (the feed's dropped deltas aren't
+		// collection-labelled, so we re-signal every collection that has had
+		// activity — the realistic subscribed set).
+		seen := map[string]bool{}
 		for {
 			select {
 			case <-done:
 				cancel()
 				return
 			case evs := <-sub.C:
-				if sub.Overflowed() {
-					publish(bluedbRecordChange{Resync: true})
-				}
+				overflowed := sub.Overflowed()
 				for _, rc := range bluedbDecodeChanges(evs) {
+					seen[rc.Coll] = true
 					publish(rc)
+				}
+				if overflowed {
+					for coll := range seen {
+						publish(bluedbRecordChange{Coll: coll, Resync: true})
+					}
 				}
 			}
 		}

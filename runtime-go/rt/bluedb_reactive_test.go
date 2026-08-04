@@ -195,3 +195,30 @@ func TestReactivePumpPublishesToBroker(t *testing.T) {
 	// (pump not started for id2; nothing to assert beyond no panic / clean write)
 	collPut(t, id2, "users", "x", `{"id":"x"}`)
 }
+
+// A feed-overflow resync is published as an op="resync" change on the collection
+// topic (subscribers re-read rather than silently diverge).
+func TestReactiveResyncPublish(t *testing.T) {
+	unregisterProcessBroker()
+	reg := newTopicRegistry(16)
+	app := &liveApp{topics: reg}
+	registerProcessBroker(app)
+	defer unregisterProcessBroker()
+
+	ch, cancel := reg.Subscribe(bluedbCollTopic("users"))
+	defer cancel()
+
+	bluedbPublishChange(bluedbRecordChange{Coll: "users", Resync: true})
+	select {
+	case ev := <-ch:
+		var p bluedbChangePayload
+		if err := json.Unmarshal([]byte(ev.Payload.(string)), &p); err != nil {
+			t.Fatalf("payload not JSON: %v", err)
+		}
+		if p.Op != "resync" || p.Coll != "users" {
+			t.Fatalf("resync payload = %+v want op=resync coll=users", p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no resync change published to the collection topic")
+	}
+}

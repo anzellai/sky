@@ -896,8 +896,11 @@ bool =
 -- by re-querying (correctness) or merging the record. (KV backend only — SQL has
 -- no change-feed; use a Postgres LISTEN/NOTIFY bridge there.)
 {-| One record change delivered to a `watchCollection` subscriber. `op` is
-`"put"` or `"delete"`; `record` is the record JSON for a put (decode with your
-`Codec` via `Codec.fromJson`), or `""` for a delete. -}
+`"put"` or `"delete"` (`record` is the record JSON for a put — decode with your
+`Codec` via `Codec.fromJson` — or `""` for a delete), OR `"resync"`: the change
+feed dropped deltas under load, so re-read (re-query) rather than trust the last
+state. Handling any `Change` by re-querying is always correct and covers all
+three ops. -}
 type alias Change =
     { op : String
     , coll : String
