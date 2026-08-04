@@ -16,6 +16,10 @@ module Std.Persist exposing
     , scan
     , sql
     , kv
+    , index
+    , reindex
+    , findByIndex
+    , findAllByIndex
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -54,7 +58,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Task as Task
 import Sky.Core.List as List
-import Std.Codec exposing (Codec)
+import Std.Codec as Codec exposing (Codec)
 import Std.Db as Db exposing (Db)
 import Std.Db.Store as Store exposing (Store)
 import Std.BlueDB as BlueDB
@@ -78,6 +82,7 @@ every schema builder (serial / unique / defaults / touchOnUpdate) is reachable. 
 type Collection a
     = Collection { store : Store a
 , keyField : String
+, indexes : List String
 }
 
 
@@ -85,7 +90,26 @@ type Collection a
 key field defaults to "id"; override with `key`. -}
 collection : Store a -> Collection a
 collection store =
-    Collection { store = store, keyField = "id" }
+    Collection { store = store, keyField = "id", indexes = [] }
+
+
+{-| Declare a secondary index on a record FIELD (KV backend). Maintained
+atomically with the record; enables `findByIndex`/`findAllByIndex`. Call
+`reindex` once at startup to backfill existing records. Pure (no I/O). -}
+index : String -> Collection a -> Collection a
+index field coll =
+    case coll of
+
+        Collection c ->
+            Collection { c | indexes = c.indexes ++ [ field ] }
+
+
+indexesOf : Collection a -> List String
+indexesOf coll =
+    case coll of
+
+        Collection c ->
+            c.indexes
 
 
 {-| Set the record FIELD name that is the primary key (used to derive the KV key
@@ -160,11 +184,36 @@ put conn coll record =
         KvConn store ->
             case persistKeyString (keyFieldOf coll) record of
 
-                Ok keyStr ->
-                    BlueDB.putValue (codecOf coll) store keyStr record
+                Ok pk ->
+                    if List.isEmpty (indexesOf coll) then
+                        BlueDB.putValue (codecOf coll) store pk record
+
+                    else
+                        -- no indexes → the plain path, byte-identical to before
+                        BlueDB.putIndexed
+                            store
+                            pk
+                            (Codec.toJson (codecOf coll) record)
+                            (indexFieldValues coll record)
 
                 Err e ->
                     Task.fail e
+
+
+-- (field, value) pairs for the declared indexes, value = the field's key-string.
+indexFieldValues : Collection a -> a -> List ( String, String )
+indexFieldValues coll record =
+    List.foldr
+        (\f acc ->
+            case persistKeyString f record of
+
+                Ok v ->
+                    ( f, v ) :: acc
+
+                Err _ ->
+                    acc)
+        []
+        (indexesOf coll)
 
 
 {-| Delete a record by its primary key. -}
@@ -176,7 +225,11 @@ delete conn coll keyStr =
             Store.deleteByKey db (storeOf coll) keyStr |> Task.map (\_ -> ())
 
         KvConn store ->
-            BlueDB.delete store keyStr
+            if List.isEmpty (indexesOf coll) then
+                BlueDB.delete store keyStr
+
+            else
+                BlueDB.deleteIndexed store keyStr (indexesOf coll)
 
 
 {-| Count all records. (SQL: `COUNT(*)`; KV: a key scan — O(n), an analytics act.) -}
@@ -232,6 +285,67 @@ scan conn coll prefix limit =
             -- unreachable: the type gates this to a KV connection
             Task.fail
                 (Error.unexpected "Persist.scan: not a key-value connection")
+
+
+{-| Backfill the declared indexes over existing records — call once at startup
+(idempotent, manifest-guarded, so it's O(1) when nothing changed). KV-only; SQL
+indexes are DDL. -}
+reindex : Conn KeyValue -> Collection a -> Task Error ()
+reindex conn coll =
+    case conn of
+
+        KvConn store ->
+            BlueDB.reindex store (indexesOf coll) |> Task.map (\_ -> ())
+
+        SqlConn _ ->
+            Task.fail
+                (Error.unexpected "Persist.reindex: not a key-value connection")
+
+
+{-| All records whose declared-index `field` equals `value` (KV-only). Non-unique:
+returns every match. For a relational filter use the query builder via `sql`. -}
+findAllByIndex : Conn KeyValue -> Collection a -> String -> String -> Task Error (List a)
+findAllByIndex conn coll field value =
+    case conn of
+
+        KvConn store ->
+            BlueDB.findByIndex store field value
+                |> Task.andThen
+                       (\pks ->
+                           Task.sequence
+                               (List.map
+                                   (\pk ->
+                                       BlueDB.getValue (codecOf coll) store pk)
+                                   pks))
+                |> Task.map keepJusts
+
+        SqlConn _ ->
+            Task.fail
+                (Error.unexpected
+                    "Persist.findAllByIndex: not a key-value connection")
+
+
+{-| The first record whose indexed `field` equals `value` (KV-only). Use for a
+field you know is unique — BlueDB does not ENFORCE uniqueness (use a serial/UUID
+PK or the SQL backend for a real constraint). -}
+findByIndex : Conn KeyValue -> Collection a -> String -> String -> Task Error (Maybe a)
+findByIndex conn coll field value =
+    findAllByIndex conn coll field value |> Task.map List.head
+
+
+keepJusts : List (Maybe a) -> List a
+keepJusts xs =
+    List.foldr
+        (\m acc ->
+            case m of
+
+                Just x ->
+                    x :: acc
+
+                Nothing ->
+                    acc)
+        []
+        xs
 
 
 -- Escape hatches (Task-typed; the dead arm is a Task.fail, never a panic) --------

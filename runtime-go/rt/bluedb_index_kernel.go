@@ -62,8 +62,12 @@ type bluedbFieldVal struct{ field, value string }
 func bluedbParseFieldVals(arg any) []bluedbFieldVal {
 	out := []bluedbFieldVal{}
 	for _, it := range asList(arg) {
-		if t, ok := it.(SkyTuple2); ok {
-			out = append(out, bluedbFieldVal{field: AsString(t.V0), value: AsString(t.V1)})
+		// A Sky (String,String) may lower to SkyTuple2 OR T2[string,string]; read
+		// V0/V1 reflectively so both work.
+		v0 := Field(it, "V0")
+		v1 := Field(it, "V1")
+		if v0 != nil && v1 != nil {
+			out = append(out, bluedbFieldVal{field: AsString(v0), value: AsString(v1)})
 		}
 	}
 	return out
