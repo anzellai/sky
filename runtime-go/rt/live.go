@@ -4570,10 +4570,15 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// ordering works uniformly.
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
-	sess.mu.Unlock()
-	// Persist the mutated session so DB-backed stores see the new
-	// state. Memory store is a no-op on Set for an already-tracked sid.
+	// Persist the mutated session so DB-backed stores see the new state (memory
+	// store is a no-op for an already-tracked sid). R2: this MUST happen under
+	// sess.mu — encodeSession reads + reflect-walks sess.model, and doing it
+	// off-lock races an async dispatch (Cmd.perform / Time.every / pub-sub /
+	// reactive refresh) reassigning sess.model → an unrecoverable
+	// `concurrent map read and map write` crash. The mount path already persists
+	// under the lock; match it.
 	app.store.Set(req.SessionID, sess)
+	sess.mu.Unlock()
 
 	// Phase 1 fan-out: mirror this dispatch to the OTHER live tabs of
 	// the session (same shared model) so they reflect the change without
@@ -6224,6 +6229,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			snap = sess.prepareFrameSnapshot(body)
 			haveSnap = true
 		}()
+		// Persist the rebuilt prevTree + lastComputedBody + lastShippedBody so
+		// future events diff against the new-binary view and don't fall back to
+		// full-body. R2: under sess.mu — encodeSession off-lock races async
+		// dispatch reassigning sess.model → concurrent-map crash.
+		app.store.Set(sid, sess)
 		sess.mu.Unlock()
 		if haveSnap {
 			frame := encodeSSEFrameFromSnapshot(snap)
@@ -6233,10 +6243,6 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		}
-		// Persist the rebuilt prevTree + lastComputedBody +
-		// lastShippedBody so future events diff against the
-		// new-binary view and don't fall back to full-body.
-		app.store.Set(sid, sess)
 	} else {
 		sess.mu.Unlock()
 	}

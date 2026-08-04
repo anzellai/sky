@@ -225,9 +225,15 @@ func (s *bluedbStore) reap(now time.Time) {
 		fresh := inCache && !sess.lastSeenTime().Before(cut)
 		s.memMu.RUnlock()
 		if fresh {
-			// Active via reads (or just re-Set): refresh the durable blob.
-			if blob, err := encodeSession(sess); err == nil {
-				_ = s.db.Put([]byte(c.key), encodeBlueValue(sess.lastSeenTime().Unix(), blob))
+			// Active via reads (or just re-Set): refresh the durable blob. R2:
+			// encode under sess.mu — a concurrent dispatch reassigns sess.model,
+			// so an off-lock encodeSession here would race → concurrent-map crash.
+			sess.mu.Lock()
+			blob, err := encodeSession(sess)
+			ls := sess.lastSeenTime().Unix()
+			sess.mu.Unlock()
+			if err == nil {
+				_ = s.db.Put([]byte(c.key), encodeBlueValue(ls, blob))
 			}
 			continue
 		}
