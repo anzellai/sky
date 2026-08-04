@@ -142,6 +142,9 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg any) any {
 				return Err[any, any](ErrIo("Store.create: " + err.Error()))
 			}
 		}
+		// Register this table as browsable in the console Data tab (default-deny:
+		// only Store-created tables are listed, never a raw information_schema walk).
+		registerBrowsableTable(d.name, AsString(tableArg))
 		return Ok[any, any](struct{}{})
 	}
 }

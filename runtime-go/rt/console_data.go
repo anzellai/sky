@@ -125,9 +125,22 @@ func HandleConsoleData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+
+	// SQL browsing (R2): ?sql=<dbName>[&table=<t>&limit=&offset=]. Read-only,
+	// allow-listed, redacted, capped — an analytics act, separate from KV point ops.
+	if sqlName := q.Get("sql"); sqlName != "" {
+		handleSqlBrowse(w, r, sqlName, q)
+		return
+	}
+
 	store := q.Get("store")
 	if store == "" {
-		writeJSON(w, map[string]any{"stores": listBluedbStores(), "writable": dataWritesEnabled()})
+		// Discovery: KV stores + SQL sources, capability-tagged.
+		writeJSON(w, map[string]any{
+			"stores":     listBluedbStores(),
+			"sqlSources": listSqlSources(),
+			"writable":   dataWritesEnabled(),
+		})
 		return
 	}
 	entry := findBluedbStore(store)
