@@ -25,3 +25,9 @@ sky run src/Main.sky      # http://localhost:8000 — open two tabs, add in one
 ```
 
 Add a todo in one tab; it appears in the other with no refresh.
+
+## Verified
+
+`scripts/verify-reactive-todos.sh` drives two independent browser sessions
+(Playwright): tab A adds a todo, tab B's list updates with no reload
+(~170ms), both directions, plus writer self-notification.
