@@ -2,6 +2,8 @@ package rt
 
 import (
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,5 +127,85 @@ func TestSqlBrowseRedactAndAllowlist(t *testing.T) {
 	conn.Exec(`CREATE TABLE secrets (k TEXT)`)
 	if _, err := browseSqlTable(d, "secrets", 10, 0); err == nil {
 		t.Fatal("non-allowlisted table must be denied")
+	}
+}
+
+// e2e through HandleConsoleData: discovery lists the SQL source by handle;
+// ?sql lists tables; ?sql&table browses redacted rows. Auth applies as to KV.
+func TestConsoleDataSqlBrowseEndToEnd(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("SKY_CONSOLE_DATA", "readonly")
+	t.Setenv("SKY_ADMIN_TOKEN", "tok-123456789012345678901234567890")
+
+	path := filepath.Join(t.TempDir(), "e2e.db")
+	driver, dsn := detectDriver(path)
+	conn, err := sql.Open(driver, dsn)
+	if err != nil {
+		t.Skipf("sqlite unavailable: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Exec(`CREATE TABLE members (id TEXT, email TEXT, password TEXT)`); err != nil {
+		t.Skipf("create: %v", err)
+	}
+	conn.Exec(`INSERT INTO members VALUES ('m1','ada@x','topsecret')`)
+	d := &SkyDb{conn: conn, name: path, driver: driver}
+	dbRegistryMu.Lock()
+	dbRegistry[path] = d
+	dbRegistryMu.Unlock()
+	defer func() {
+		dbRegistryMu.Lock()
+		delete(dbRegistry, path)
+		dbRegistryMu.Unlock()
+	}()
+	registerBrowsableTable(path, "members")
+
+	bearer := "Bearer tok-123456789012345678901234567890"
+	handle := sqlSourceHandle(path)
+
+	// discovery: lists the handle, NEVER the raw path/DSN.
+	req := httptest.NewRequest("GET", "/_sky/console/api/data", nil)
+	req.Header.Set("Authorization", bearer)
+	w := httptest.NewRecorder()
+	HandleConsoleData(w, req)
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, handle) {
+		t.Fatalf("discovery: code=%d body=%s", w.Code, body)
+	}
+	if strings.Contains(body, path) {
+		t.Fatalf("discovery must NOT leak the DSN/path: %s", body)
+	}
+
+	// list tables for the source.
+	req = httptest.NewRequest("GET", "/_sky/console/api/data?sql="+handle, nil)
+	req.Header.Set("Authorization", bearer)
+	w = httptest.NewRecorder()
+	HandleConsoleData(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "members") {
+		t.Fatalf("list tables: code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// browse rows: email visible, password redacted.
+	req = httptest.NewRequest("GET", "/_sky/console/api/data?sql="+handle+"&table=members", nil)
+	req.Header.Set("Authorization", bearer)
+	w = httptest.NewRecorder()
+	HandleConsoleData(w, req)
+	rb := w.Body.String()
+	if w.Code != 200 || !strings.Contains(rb, "ada@x") {
+		t.Fatalf("browse rows: code=%d body=%s", w.Code, rb)
+	}
+	if strings.Contains(rb, "topsecret") {
+		t.Fatalf("password leaked in rows: %s", rb)
+	}
+	if !strings.Contains(rb, `"***"`) {
+		t.Fatalf("expected redacted marker: %s", rb)
+	}
+
+	// no auth → 401 (SQL path gated like KV).
+	req = httptest.NewRequest("GET", "/_sky/console/api/data?sql="+handle+"&table=members", nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	w = httptest.NewRecorder()
+	HandleConsoleData(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("no-token SQL browse must be 401, got %d", w.Code)
 	}
 }
