@@ -99,6 +99,39 @@ Persist.kv conn                        -- : Task Error BlueDB.Store
 The escape hatches are `Task`-typed (their impossible-backend arm is a
 `Task.fail`, never a panic — so the no-runtime-panic guarantee holds).
 
+## Secondary indexes (KV backend)
+
+On BlueDB, declare an index on a record field to look records up by that field
+(not just by primary key). Indexes are **opt-in** (a collection with none is
+byte-identical to before) and **maintained atomically** with the record — the
+index entry and the record commit together in one write, so they never diverge
+across a crash.
+
+```elm
+users : Persist.Collection User
+users =
+    Persist.collection (Store.fromCodec "users" (Codec.auto blank) |> Store.primaryKey "id")
+        |> Persist.index "email"          -- declare a secondary index (pure)
+
+-- at startup, backfill existing records (idempotent, O(1) when nothing changed):
+Persist.reindex conn users
+
+Persist.findByIndex conn users "email" "ada@x"      -- : Task Error (Maybe User)
+Persist.findAllByIndex conn users "status" "active" -- : Task Error (List User) — non-unique
+Persist.countByIndex conn users "status" "active"   -- : Task Error Int (no record fetch)
+```
+
+- **Non-unique** — several records may share a value; `findByIndex` returns the
+  first, `findAllByIndex` returns all. BlueDB does **not enforce** uniqueness (use
+  a serial/UUID PK, or the SQL backend, for a real constraint).
+- `findByIndex`/`findAllByIndex`/`countByIndex`/`reindex` are **KV-tag verbs**
+  (`Conn KeyValue`) — the phantom-tag verb set that the KV backend supports.
+- **No ordered/numeric range** over the KV index: a lexical range over an int
+  field would silently return wrong rows, so it isn't offered — use the SQL
+  backend's typed query builder (via `Persist.sql`) for `>`/`<`/`BETWEEN`.
+- `countByIndex` is exact but an **O(N)-scan analytics op** (cold path), not a
+  hot-path point read.
+
 ## How it relates to the other surfaces
 
 | You want… | Reach for |

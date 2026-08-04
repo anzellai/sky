@@ -20,6 +20,7 @@ module Std.Persist exposing
     , reindex
     , findByIndex
     , findAllByIndex
+    , countByIndex
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -331,6 +332,24 @@ PK or the SQL backend for a real constraint). -}
 findByIndex : Conn KeyValue -> Collection a -> String -> String -> Task Error (Maybe a)
 findByIndex conn coll field value =
     findAllByIndex conn coll field value |> Task.map List.head
+
+
+{-| Count the records whose indexed `field` equals `value` (KV-only) — counts
+index entries (no record fetch), exact as-of-snapshot. An O(N)-scan analytics op
+(cold path), not a hot-path point read. (Ordered/numeric RANGE queries over the KV
+index aren't offered: a lexical range over an int field would silently return wrong
+rows — use the SQL backend's typed query builder via `sql` for typed ranges.) -}
+countByIndex : Conn KeyValue -> Collection a -> String -> String -> Task Error Int
+countByIndex conn coll field value =
+    case conn of
+
+        KvConn store ->
+            BlueDB.countByIndex store field value
+
+        SqlConn _ ->
+            Task.fail
+                (Error.unexpected
+                    "Persist.countByIndex: not a key-value connection")
 
 
 keepJusts : List (Maybe a) -> List a

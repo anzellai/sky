@@ -200,3 +200,22 @@ func TestIndexCrashConsistencyReopen(t *testing.T) {
 		t.Fatalf("index entry missing after reopen (index+primary not atomic): %d", n)
 	}
 }
+
+func TestIndexCountByIndex(t *testing.T) {
+	id := registerIdxStore(t)
+	putIdx(t, id, "u1", `{"status":"active"}`, [2]string{"status", "active"})
+	putIdx(t, id, "u2", `{"status":"active"}`, [2]string{"status", "active"})
+	putIdx(t, id, "u3", `{"status":"idle"}`, [2]string{"status", "idle"})
+	count := func(v string) int {
+		return BlueDB_countByIndex(id, "status", v).(func() any)().(SkyResult[any, any]).OkValue.(int)
+	}
+	if count("active") != 2 {
+		t.Fatalf("count active = %d, want 2", count("active"))
+	}
+	if count("idle") != 1 {
+		t.Fatalf("count idle = %d, want 1", count("idle"))
+	}
+	if count("none") != 0 {
+		t.Fatalf("count none = %d, want 0", count("none"))
+	}
+}

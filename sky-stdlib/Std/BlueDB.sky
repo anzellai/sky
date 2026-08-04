@@ -16,6 +16,7 @@ module Std.BlueDB exposing
     , deleteIndexed
     , findByIndex
     , reindex
+    , countByIndex
     )
 
 {-| BlueDB — the embedded, durable, group-committed key-value store for a Sky
@@ -305,3 +306,19 @@ reindex store indexFields =
 
         Store raw ->
             reindexRaw raw indexFields
+
+
+countByIndexRaw : Int -> String -> String -> Task Error Int
+countByIndexRaw =
+    Ffi.kernel "BlueDB_countByIndex"
+
+
+{-| Count the records whose indexed `field` equals `value` — counts index entries
+(no record fetch). Exact as-of-snapshot. An O(N)-scan analytics op (cold path), not
+a hot-path point read. -}
+countByIndex : Store -> String -> String -> Task Error Int
+countByIndex store field value =
+    case store of
+
+        Store raw ->
+            countByIndexRaw raw field value

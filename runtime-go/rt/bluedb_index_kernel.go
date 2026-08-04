@@ -217,6 +217,29 @@ func BlueDB_findByIndex(idArg, fieldArg, valueArg any) any {
 	}
 }
 
+// BlueDB_countByIndex : Int -> String -> String -> Task Error Int
+// Count the records whose <field> == <value> by counting index entries (no record
+// fetch — cheaper than findByIndex). EXACT as-of-snapshot: Scan copies matches
+// under one read lock while a value-change commits as one WriteBatch under the
+// write lock, so a count sees a batch fully pre- or post-, never torn. Cost is an
+// O(N) memtable scan holding a brief read lock — an analytics/cold-path op, NOT a
+// hot-path point read. Exact-value equality only: no ordering hazard.
+func BlueDB_countByIndex(idArg, fieldArg, valueArg any) any {
+	return func() any {
+		db := bluedbLookup(idArg)
+		if db == nil {
+			return Err[any, any](ErrInvalidInput("BlueDB.countByIndex: store not found (closed?)"))
+		}
+		prefix := bluedbIndexPrefix(AsString(fieldArg), AsString(valueArg))
+		n := 0
+		db.Scan([]byte(prefix), nil, 0, func(_, _ []byte) bool {
+			n++
+			return true
+		})
+		return Ok[any, any](n)
+	}
+}
+
 // BlueDB_reindex : Int -> List String -> Task Error Int
 // Idempotent backfill: if the declared field set equals the manifest, skip (O(1));
 // else backfill added fields over all primaries (through the pk lock, so it's safe
