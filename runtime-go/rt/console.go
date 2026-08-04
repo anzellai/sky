@@ -42,6 +42,7 @@ package rt
 // before the user can interact).
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -83,24 +84,24 @@ var (
 //
 // The fix:
 //
-//   1. When `MountEmbeddedConsole` mounts inline successfully, it
-//      sets `inlineConsoleHealthy` BEFORE `MountObservabilityEndpoints`
-//      runs (which is where `MountConsoleEndpoints` lives).
-//   2. `MountConsoleEndpoints` checks the flag and SKIPS the
-//      `/_sky/console` HTML-shell registration when inline owns it.
-//      The JSON API endpoints under `/_sky/console/api/*` stay —
-//      they're MORE specific patterns under Go ServeMux longest-
-//      prefix-match, so they coexist with the inline mount and are
-//      what the inline console (and the legacy shell, when it
-//      serves) call back into for fresh telemetry.
-//   3. A boot-time invariant check (called from the Sky.Live +
-//      Sky.Http.Server entry points) verifies that, when
-//      `SKY_CONSOLE_AUTH` is explicitly set to a non-`off` value
-//      AND we're not in sub-app context AND `SKY_CONSOLE_EMBED`
-//      isn't off, AT LEAST ONE of {inline, legacy} ended up
-//      claiming the path. If neither did, we exit 1 with a clear
-//      stderr line — the user explicitly asked for a console but
-//      none ever materialised.
+//  1. When `MountEmbeddedConsole` mounts inline successfully, it
+//     sets `inlineConsoleHealthy` BEFORE `MountObservabilityEndpoints`
+//     runs (which is where `MountConsoleEndpoints` lives).
+//  2. `MountConsoleEndpoints` checks the flag and SKIPS the
+//     `/_sky/console` HTML-shell registration when inline owns it.
+//     The JSON API endpoints under `/_sky/console/api/*` stay —
+//     they're MORE specific patterns under Go ServeMux longest-
+//     prefix-match, so they coexist with the inline mount and are
+//     what the inline console (and the legacy shell, when it
+//     serves) call back into for fresh telemetry.
+//  3. A boot-time invariant check (called from the Sky.Live +
+//     Sky.Http.Server entry points) verifies that, when
+//     `SKY_CONSOLE_AUTH` is explicitly set to a non-`off` value
+//     AND we're not in sub-app context AND `SKY_CONSOLE_EMBED`
+//     isn't off, AT LEAST ONE of {inline, legacy} ended up
+//     claiming the path. If neither did, we exit 1 with a clear
+//     stderr line — the user explicitly asked for a console but
+//     none ever materialised.
 var (
 	inlineConsoleHealthy atomic.Bool
 	legacyConsoleHealthy atomic.Bool
@@ -313,6 +314,11 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// never sees it, so it shows no sign-out.
 	os.Setenv("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout")
 
+	// F1 — mint + publish the per-boot internal token BEFORE the sub-app inits,
+	// so its loopback fetches to /_sky/console/api/* authenticate by that token,
+	// not by a (proxy-spoofable) loopback IP. See console_internal_token.go.
+	ConsoleInternalTokenInit()
+
 	// v0.16.1 PR10-F — mount the inline console via the canonical
 	// Sky.Live sub-app primitive. The bundled console's Sky-source
 	// init / update / view / subscriptions cycle drives the SSE +
@@ -370,23 +376,32 @@ func HandleConsole(w http.ResponseWriter, r *http.Request) {
 //
 // v0.16.0 PR 3: delegates to evaluateConsoleAuth which dispatches
 // on SKY_CONSOLE_AUTH = token | app | off (+ the production +
-// dev-open defaults). The v0.15.x admin-token / serverless branches
-// migrated INTO that function, so this is now a thin alias.
+// dev-open defaults).
 //
-// v0.16.1 PR10-F: same-process loopback callers (the inline
-// console's Sky-side Cmd.perform → Http.get on /_sky/console/api/*)
-// bypass the auth check. Loopback originates from RemoteAddr =
-// 127.0.0.1 OR ::1 — never reachable from a browser, so it cannot
-// be abused to bypass the gate on a deployed binary. This keeps the
-// canonical Sky.Live console update loop working in token-mode
-// without requiring the loopback Http.get to mint + carry the
-// console auth cookie.
+// F1 (security fix): authenticate the same-process console sub-app by a per-boot
+// internal TOKEN, never by a loopback IP. The old gate returned true for any
+// loopback RemoteAddr — but behind a reverse proxy (app on 127.0.0.1, proxy
+// terminates TLS) EVERY request's RemoteAddr is loopback, so the console read
+// APIs (overview/logs/traces/metrics/errors/analytics — telemetry that can carry
+// PII/secrets) were reachable unauthenticated in production, and an app-side SSRF
+// could hit them too. Now the inline console carries the internal token (minted by
+// ConsoleInternalTokenInit, injected via SKY_CONSOLE_INTERNAL_TOKEN) as a Bearer;
+// an operator tool carries SKY_ADMIN_TOKEN; a browser authenticates via the
+// console cookie in evaluateConsoleAuth (which still preserves dev-open). No IP is
+// ever trusted. See console_internal_token.go.
 //
 // Returns true when the request may proceed; false when a response
 // (401 / 403 / 503) has been written.
 func consoleAccessAllowed(w http.ResponseWriter, r *http.Request) bool {
-	if isLoopbackRemoteAddr(r) {
-		return true
+	if tok := bearerToken(r); tok != "" {
+		if it := currentConsoleInternalToken(); it != "" &&
+			subtle.ConstantTimeCompare([]byte(tok), []byte(it)) == 1 {
+			return true
+		}
+		if admin := skyGetenv("ADMIN_TOKEN"); admin != "" &&
+			subtle.ConstantTimeCompare([]byte(tok), []byte(admin)) == 1 {
+			return true
+		}
 	}
 	return evaluateConsoleAuth(w, r)
 }
@@ -426,16 +441,16 @@ func isLoopbackRemoteAddr(r *http.Request) bool {
 // Fields chosen to power the dashboard's at-a-glance pane: traffic
 // rate, error rate, latency, active sessions, build info.
 type OverviewResponse struct {
-	BuiltAt        string  `json:"builtAt"`
-	Commit         string  `json:"commit"`
-	SkyVersion     string  `json:"skyVersion"`
-	UptimeSeconds  float64 `json:"uptimeSeconds"`
-	RequestsTotal  float64 `json:"requestsTotal"`
-	ErrorRate5xx   float64 `json:"errorRate5xx"`     // fraction in [0,1]
-	BufferLogUsed  uint64  `json:"bufferLogUsed"`
-	BufferTraceUsed uint64 `json:"bufferTraceUsed"`
-	ServerlessMode bool    `json:"serverlessMode"`
-	ProductionMode bool    `json:"productionMode"`
+	BuiltAt         string  `json:"builtAt"`
+	Commit          string  `json:"commit"`
+	SkyVersion      string  `json:"skyVersion"`
+	UptimeSeconds   float64 `json:"uptimeSeconds"`
+	RequestsTotal   float64 `json:"requestsTotal"`
+	ErrorRate5xx    float64 `json:"errorRate5xx"` // fraction in [0,1]
+	BufferLogUsed   uint64  `json:"bufferLogUsed"`
+	BufferTraceUsed uint64  `json:"bufferTraceUsed"`
+	ServerlessMode  bool    `json:"serverlessMode"`
+	ProductionMode  bool    `json:"productionMode"`
 }
 
 // HandleConsoleOverview returns the at-a-glance JSON payload.
@@ -559,9 +574,9 @@ func flattenMetricLabels(labels map[string]string) string {
 // HandleConsoleLogs returns the most-recent ring entries. Filter
 // via query params:
 //
-//   ?level=warn,error    — comma-separated set; default: all levels
-//   ?req=<id>           — exact match on req_id field
-//   ?limit=50           — cap on entries returned (default 50, max 1000)
+//	?level=warn,error    — comma-separated set; default: all levels
+//	?req=<id>           — exact match on req_id field
+//	?limit=50           — cap on entries returned (default 50, max 1000)
 //
 // Default cap lowered from 200 → 50 in v0.16.1 PR11 — the polling
 // console under Sub.every 3000 was returning 67 KB JSON per tick
@@ -679,12 +694,12 @@ func HandleConsoleErrors(w http.ResponseWriter, r *http.Request) {
 	}
 	logs := telemetry.Default().RecentLogs(0)
 	type errSummary struct {
-		Level       string `json:"level"`
-		Message     string `json:"message"`
-		Count       int    `json:"count"`
-		LastSeen    string `json:"lastSeen"`
-		LastReqID   string `json:"lastReqId,omitempty"`
-		LastError   string `json:"lastError,omitempty"`
+		Level     string `json:"level"`
+		Message   string `json:"message"`
+		Count     int    `json:"count"`
+		LastSeen  string `json:"lastSeen"`
+		LastReqID string `json:"lastReqId,omitempty"`
+		LastError string `json:"lastError,omitempty"`
 	}
 	buckets := make(map[string]*errSummary)
 	for _, l := range logs {
