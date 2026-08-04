@@ -2095,8 +2095,14 @@ type liveSession struct {
 	// call. See analytics_kernel.go.
 	analytics *analyticsSessionState
 	model     any
-	handlers  map[string]any
-	prevTree  *VNode // Last rendered tree; used by the diff protocol.
+	// lastPersistedModel is the Model as of the last persistSession — a
+	// DeepEqual dirty-check skips re-encoding + re-writing an unchanged Model
+	// (P1: kills the write-amplification of no-op ticks / pub-sub deliveries /
+	// reactive refreshes that don't change THIS session's view). Held only
+	// between a dispatch and its persist, so no lasting memory overhead.
+	lastPersistedModel any
+	handlers           map[string]any
+	prevTree           *VNode // Last rendered tree; used by the diff protocol.
 	// View-body bookkeeping for the SSE no-op suppression contract
 	// (Cycle 3 P39 / Gap C2 — split out from the historical single
 	// `prevBody` field whose dual meaning had bitten v0.15.14).
@@ -5343,7 +5349,17 @@ func (app *liveApp) persistSession(sess *liveSession) {
 	if app == nil || app.store == nil || sess == nil {
 		return
 	}
+	// P1 dirty-check: skip the encode + durable write when the Model is unchanged
+	// since the last persist — the common case for a Time.every tick, a pub-sub
+	// delivery, or a reactive refresh that didn't alter THIS session's view. The
+	// Model is validated (no funcs/chans) before it can be persisted, so it is
+	// DeepEqual-safe. (Other fields — localSeq/identity/analytics — ride the next
+	// Model-changing persist; the Model is the durability-critical state.)
+	if sess.lastPersistedModel != nil && reflect.DeepEqual(sess.model, sess.lastPersistedModel) {
+		return
+	}
 	app.store.Set(sess.sid, sess)
+	sess.lastPersistedModel = sess.model
 }
 
 func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {

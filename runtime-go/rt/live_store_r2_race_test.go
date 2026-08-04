@@ -113,3 +113,47 @@ func TestAsyncDispatchPersistsR1(t *testing.T) {
 		t.Fatalf("async Model mutation not persisted: n=%v want 42", m["n"])
 	}
 }
+
+// P1 regression: persistSession must skip the encode + durable write when the
+// Model is unchanged since the last persist (write-amplification: no-op ticks /
+// pub-sub / reactive refreshes). A changed Model (even a DeepEqual-different
+// value) persists; an unchanged or equal-content Model skips.
+type countingStore struct{ sets int }
+
+func (c *countingStore) Get(string) (*liveSession, bool) { return nil, false }
+func (c *countingStore) Set(_ string, _ *liveSession)    { c.sets++ }
+func (c *countingStore) Delete(string)                   {}
+func (c *countingStore) NewID() string                   { return "" }
+func (c *countingStore) Close() error                    { return nil }
+func (c *countingStore) Broker() Broker                  { return nil }
+func (c *countingStore) Ping() error                     { return nil }
+
+func TestPersistDirtyCheckP1(t *testing.T) {
+	store := &countingStore{}
+	app := &liveApp{store: store}
+	sess := &liveSession{sid: "s", model: map[string]any{"n": float64(1)}}
+
+	persist := func() {
+		sess.mu.Lock()
+		app.persistSession(sess)
+		sess.mu.Unlock()
+	}
+
+	persist() // first: dirty → 1 write
+	persist() // unchanged → skip
+	if store.sets != 1 {
+		t.Fatalf("unchanged Model re-persisted: sets=%d want 1", store.sets)
+	}
+
+	sess.model = map[string]any{"n": float64(2)} // changed
+	persist()
+	if store.sets != 2 {
+		t.Fatalf("changed Model not persisted: sets=%d want 2", store.sets)
+	}
+
+	sess.model = map[string]any{"n": float64(2)} // equal content, different value
+	persist()
+	if store.sets != 2 {
+		t.Fatalf("equal-content Model re-persisted: sets=%d want 2", store.sets)
+	}
+}
