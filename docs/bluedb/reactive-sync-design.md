@@ -86,7 +86,80 @@ or *client-authoritative* mode would reintroduce it — explicitly out of scope.
 
 ---
 
-## Decisions needed
+## Decisions — LOCKED (2026-08-04): A2 + B2 + C1
+
+The user chose the maximum-magic path: **full query-subscriptions (A2)**,
+**fully-declarative auto-refresh (B2)**, **change payload + re-query helper (C1)**.
+The end state is a reactive query whose result lives in the Model and re-computes
+itself whenever a write could have changed it — no subscription code.
+
+### Refined architecture for A2 + B2
+
+**A2 query-overlap engine (the "could this change affect this query?" filter).**
+A query subscription registers `(collection, Cond)`. On a committed change to that
+collection carrying the new record JSON, we reuse the **P5 KV `Cond` evaluator**
+(`bluedbEvalCond`) to test whether the changed record matches the query's `Cond`:
+
+- **insert / update** → the change-feed carries the new record; if it matches the
+  `Cond`, the query result may have gained/changed a row → re-run.
+- **delete** (and the "row *left* the result set" case on update) → we may not hold
+  the *old* record, so matching only the new value is not sufficient. **Correct-by-
+  construction rule:** a query re-runs if the changed record matches its `Cond`
+  **OR** the change is a delete **OR** the pk is already in the query's last result
+  set (the framework caches each subscription's result pks). This never misses a
+  transition (in, out, or reorder) and avoids re-running unrelated queries. The
+  collection-level fallback (re-run every query on the collection) is always
+  available and always correct — the overlap filter is a safe *narrowing*.
+
+**B2 declarative reactive-query binding.** "Zero subscription code" in TEA is
+realised as a **declared binding** the framework owns end-to-end — the app declares,
+once, `(query-of-model, apply-result-to-model)`; the framework subscribes, re-runs
+on a relevant change, and folds the result into the Model, then the normal diff
+paints the tabs. Shape (final naming in P-R4):
+
+```elm
+-- in the Live config (or a `Persist.reactive` list):
+reactiveQueries model =
+    [ Persist.live
+        (Persist.query todos |> Persist.where_ (Persist.eq "userId" model.me))
+        (\rows model2 -> { model2 | todos = rows })   -- fold result into Model
+    ]
+```
+
+The framework: evaluates each binding's query at mount (fills the Model), registers
+`(collection, Cond, resultPks)`, and on every relevant change re-runs the query and
+applies the fold — the user writes no `subscriptions` line and no Msg arm. (True
+*compiler-introspected* zero-declaration binding — detecting query-backed Model
+fields automatically — is a later compiler concern; this declared-binding form is
+the maximum magic achievable at the stdlib layer and is what "auto-refresh" means
+here.)
+
+**C1 payload.** The change event carries `{ op, collection, pk, record }`; the
+overlap engine uses `record` for the `Cond` match, and the re-run produces the fresh
+result the binding folds in. A lower-level `Persist.watch*` Sub (the change payload
+directly) is also exposed for apps that want to merge manually instead of re-query.
+
+### Revised phasing (builds A2+B2+C1 bottom-up, each phase shippable)
+
+- **P-R1** Engine change-feed — `DB.Subscribe`, buffered async fan-out, overflow
+  policy, slow-consumer-never-stalls-commits fault test.
+- **P-R2** Decoder + broker publish — `rt/bluedb_reactive.go`: key→(coll,pk,op),
+  one-record-not-five batching, publish `{op,coll,pk,record}` to a per-collection
+  broker topic (`__bluedb:<coll>`). Collection-scoped invalidation working e2e.
+- **P-R3** Query-overlap engine (A2) — subscription registry `(coll, Cond,
+  resultPks)`; `bluedbEvalCond`-based narrowing (match ∨ delete ∨ pk∈lastResult);
+  differential test vs the always-re-run fallback.
+- **P-R4** Declarative reactive bindings (B2) + C1 — `Persist.live` binding surface
+  + framework wiring at `setupSubscriptions` + the `store.Set`/`autoBlueDB` seam;
+  plus the low-level `Persist.watch*` Sub.
+- **P-R5** autoBlueDB integration — the change-feed attaches at the `autoBlueDB`
+  seam so a plain Model-persist write is observable with no app code.
+- **P-R6** two-session e2e (in-process + Redis broker) — A writes, B's reactive
+  list updates with no poll; cross-replica proven.
+
+---
+
+## Original decision menu (superseded by the LOCKED section above)
 
 ### DECISION A — scope-key granularity (v1)
 
