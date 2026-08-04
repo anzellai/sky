@@ -287,3 +287,45 @@ the boundary, per the standing methodology.
 | Fan-out to a session's tabs | `fanOutFrame` (`live.go:6688`) |
 | Scope identity | `SessionIdentity` claims (`session_identity.go:76`) |
 | Attach seam | `autoBlueDB` (`Std/Live.sky:197`) / `store.Set` (`live.go:4553`) |
+
+## P-R4b GRILL OUTCOME (2026-08-04) — design revised, decision pending
+
+Two adversarial grills (typing/soundness + integration/concurrency) found the
+sketched `Persist.live` design UNSOUND as specified. Verdicts split
+(don't-build-keep-watch vs build-as-hybrid); substance agreed:
+
+- **BLOCKING — pk erasure:** `Task Error (model -> model)` throws away the result
+  pks, so the P-R3 overlap engine runs with an empty result set → a delete of an
+  on-screen row never re-runs (permanent stale row). Fix: the RUNTIME runs the
+  query and applies a `List a -> model -> model` fold (sees pks → feeds
+  `setResultPks`).
+- **BLOCKING — SQL silent staleness:** the change-feed is KV-only; `live` on
+  `connectRelational` mounts once and never refreshes/errors. Must gate `live`
+  to `Conn KeyValue` (compile error) → reactivity does NOT survive SQL graduation
+  without a Postgres LISTEN/NOTIFY bridge (separate large piece).
+- **BLOCKING — resync hole:** `bluedbPublishChange` drops the overflow/resync
+  signal (bluedb_reactive.go:142) → under a write burst reactive views go stale
+  with no self-correction. Must propagate a "re-run all bindings" signal.
+- **HIGH — lock discipline:** run `refresh` OUTSIDE `sess.mu` (match
+  runPerformBody:5306 / runSubscriberDispatch:5777), fold-apply INSIDE.
+- **HIGH — thundering herd:** per-record publish → need per-binding coalescing
+  (dirty flag + single in-flight refresh); a bulk write else storms N×sessions.
+- **HIGH — shared collection:** per-topic registration is last-write-wins → two
+  bindings on one collection collapse; registration must carry a SLICE of bindings.
+- **HIGH — model-dependent Cond lifecycle:** `setupSubscriptions` keys on topic
+  string only → a stale `where_ (eq "userId" model.me)` never re-registers.
+  Re-derive the query from live `sess.model` at delivery, or re-bind on change.
+- **INVARIANT:** reactive folds cannot emit Cmds (no Cmd slot) — this is what
+  keeps the write→refresh loop finite; enforce it in the binding type.
+
+Griller-2 hybrid blueprint (if BUILD): ride
+setupSubscriptions/applyTopicSubsDiff/runSubscriberLoop/markDone; add a reactive
+leaf kind carrying `[]reactiveBinding{refresh, fold, *bluedbQuerySub}`; branch
+once in runSubscriberDispatch to a lean fold-apply+render helper (mirrors
+dispatch tail 4921-4936 inside the panic-rollback 4837-4879, no
+guard/msgTags/lifecycle/runCmd); `Live_withReactive` config kernel; post-mount
+paint-then-fill initial refresh. ~6 new pieces + 3 blocking fixes.
+
+The shipped `watchCollection` (browser-verified) already delivers the reactivity
+through the hardened update/dispatch path; P-R4b's marginal win is removing the
+`subscriptions` line + the re-query Msg arm.
