@@ -55,6 +55,8 @@ module Std.Persist exposing
     , bool
     , Change
     , watchCollection
+    , Live
+    , live
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -932,6 +934,63 @@ watchCollection coll toMsg =
     Sub.subscribeTopic
         (bluedbTopic (collNameOf coll))
         (\raw -> toMsg (parseChange raw))
+
+{-| A REACTIVE QUERY — the magic. Declare a query and where its result goes in the
+Model; the framework keeps it fresh forever: it runs the query at mount, and
+whenever ANY session's write could change the result it re-runs and folds the rows
+into the Model, so every session updates itself. NO `subscriptions`, NO Msg, NO
+re-query, NO polling. Wire a list of these onto your app with `Live.withReactive`:
+
+    reactiveQueries model =
+        [ Persist.live db (Persist.query todos |> Persist.orderAsc "id")
+            (\rows m -> { m | todos = rows })
+        ]
+
+    main = Live.app (config { … } |> Live.withReactive reactiveQueries)
+
+Works on every backend (KV + SQLite + Postgres). For the 0.0001% that need custom
+control (merge a change instead of re-query), drop to `Persist.watchCollection`. -}
+type alias Live model =
+    { coll : String
+    , condPlan : String
+    , run : Task Error ( model -> model, List String )
+    }
+
+
+{-| Build a reactive query (see `Live` / `Live.withReactive`). Opaque in practice
+— you only ever build one with `live` and hand the list to `Live.withReactive`. -}
+live : Conn cap -> Query a -> (List a -> model -> model) -> Live model
+live conn q fold =
+    case q of
+
+        Query qr ->
+            { coll = collNameOf qr.coll
+            , condPlan =
+                Store.condPlanJson
+                    (Store.colsOf (storeOf qr.coll))
+                    (combinedCond qr.conds)
+            , run =
+                toList conn q
+                    |> Task.map
+                           (\rows ->
+                               ( \m -> fold rows m
+                               , keepJusts
+                                     (List.map
+                                         (reactivePkOf (keyFieldOf qr.coll))
+                                         rows)
+                               ))
+            }
+
+
+reactivePkOf : String -> a -> Maybe String
+reactivePkOf field record =
+    case persistKeyString field record of
+
+        Ok pk ->
+            Just pk
+
+        Err _ ->
+            Nothing
 
 
 -- Must match the runtime's bluedbCollTopic (rt/bluedb_reactive.go) byte-for-byte.

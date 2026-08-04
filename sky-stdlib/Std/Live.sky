@@ -30,6 +30,7 @@ module Std.Live exposing
     , withOnNavigate
     , withGuard
     , withMigrate
+    , withReactive
     , withStatic
     , withStaticUrl
     , withPort
@@ -45,6 +46,7 @@ module Std.Live exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Std.Html exposing (Html)
+import Std.Persist as Persist
 
 -- | The built Sky.Live app configuration. Opaque — produced by `config`,
 -- refined by the `withX` builders, consumed by `app`. Phantom `model` /
@@ -149,6 +151,21 @@ withGuard =
 withMigrate : (model -> model) -> AppConfig model msg -> AppConfig model msg
 withMigrate =
     Ffi.kernel "Live_withMigrate"
+
+
+-- | Attach REACTIVE QUERIES — the magic. Give a function from the Model to a list
+-- of `Persist.live` bindings; the framework keeps each one's result fresh in the
+-- Model automatically (runs at mount, re-runs whenever a write could change it),
+-- so every session updates itself with NO subscription code. See `Persist.live`.
+--
+--     main =
+--         Live.app (config { … } |> Live.withReactive reactiveQueries)
+--
+--     reactiveQueries model =
+--         [ Persist.live db (Persist.query todos) (\rows m -> { m | todos = rows }) ]
+withReactive : (model -> List (Persist.Live model)) -> AppConfig model msg -> AppConfig model msg
+withReactive =
+    Ffi.kernel "Live_withReactive"
 
 
 -- | Serve a static directory at `/static` (override the mount with

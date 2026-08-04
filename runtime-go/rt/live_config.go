@@ -85,6 +85,10 @@ func Live_withOnNavigate(fn, cfg any) any { return liveCfgSet(cfg, "OnNavigate",
 // Live_withGuard — `guard : msg -> model -> Result Error ()` per-Msg gate.
 func Live_withGuard(fn, cfg any) any { return liveCfgSet(cfg, "Guard", fn) }
 
+// Live_withReactive — `model -> List (Persist.Live model)` reactive query
+// bindings; the framework keeps each result fresh in the Model (live_reactive.go).
+func Live_withReactive(fn, cfg any) any { return liveCfgSet(cfg, "Reactive", fn) }
+
 // Live_withMigrate — `migrate : model -> model`, applied to a session Model
 // RESUMED from the store (serialized by a previous build) before it is used, so
 // a deploy that changed the Model shape can fix up the resumed value.

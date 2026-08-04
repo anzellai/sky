@@ -2259,6 +2259,10 @@ type liveSession struct {
 	activeSubs   map[string]*subRegistration
 	activeSubsMu sync.Mutex
 
+	// reactive — the session's reactive-query registry (Live.withReactive);
+	// nil until startReactive wires it. Torn down by stopReactive on session end.
+	reactive *reactiveState
+
 	// streams — Sky.Core.Http.Stream open handles owned by this
 	// session, keyed by stream id (Cycle 4 HS). HttpStream_open
 	// registers each new handle here; HttpStream_close deletes;
@@ -2383,6 +2387,10 @@ func (s *liveSession) markDone() {
 				reg.cancel()
 			}
 		}
+
+		// Reactive query bindings (Live.withReactive): stop the per-collection
+		// broker subscriptions + loops so the goroutines exit + refcounts drop.
+		s.teardownReactive()
 
 		// Cycle 4 HS: close every open Http.Stream owned by this
 		// session so the spool goroutines exit + the body
@@ -2805,6 +2813,10 @@ type liveApp struct {
 	// navigation that already triggers a sky-nav fetch +
 	// full-body patch + history push).
 	head any
+	// reactive : model -> List (Persist.Live model) — optional reactive query
+	// bindings (Live.withReactive); nil = none. Serviced per session by the
+	// reactive registry (live_reactive.go).
+	reactive any
 	// consoleAuth : Request -> Task Error (Maybe Identity) — optional.
 	// When the embedded console mounts in `app`-mode (env
 	// SKY_CONSOLE_AUTH=app), the framework calls this callback BEFORE
@@ -3532,6 +3544,7 @@ func liveAppRun(cfg any) any {
 		guard:              Field(cfg, "Guard"),
 		migrate:            Field(cfg, "Migrate"),
 		head:               Field(cfg, "Head"),
+		reactive:           Field(cfg, "Reactive"),
 		consoleAuth:        Field(cfg, "ConsoleAuth"),
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
@@ -4200,6 +4213,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Unlock()
 	if mirror {
 		sess.fanOutFrame(mirrorFrame, navTab)
+	}
+	// Reactive query bindings (Live.withReactive): wire the session's
+	// subscriptions + paint-then-fill, once, asynchronously so the initial HTTP
+	// response isn't blocked on the first query. Idempotent per session.
+	if app.hasReactive() {
+		go app.startReactive(sess)
 	}
 
 	setSecurityHeaders(w.Header())
