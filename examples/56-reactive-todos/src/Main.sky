@@ -1,0 +1,179 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Font as Font
+import Std.Ui.Border as Border
+import Std.Ui.Background as Background
+import Std.Ui.Input as Input
+import Std.Live as Live exposing (app, config, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Codec as Codec
+import Std.Db.Store as Store
+import Std.Persist as Persist
+
+-- A shared todo list. Every browser session sees the SAME list, and when ANY
+-- session adds a todo it appears in ALL sessions instantly — no polling, no manual
+-- pub/sub. The ONLY reactive wiring is `Persist.watchCollection` in subscriptions:
+-- a write to the collection fans out a `Change` to every subscriber, which
+-- re-queries. This is the BlueDB change-feed (P-R1..P-R4) end to end.
+type alias Todo =
+    { id : Int
+    , text : String
+    }
+
+
+blankTodo : Todo
+blankTodo =
+    { id = 0, text = "" }
+
+
+todos : Persist.Collection Todo
+todos =
+    Persist.collection
+        (Store.fromCodec "todos" (Codec.auto blankTodo) |> Store.serial "id")
+
+
+db : Persist.Conn Persist.KeyValue
+db =
+    case Task.run (Persist.connectKeyValue "data/todos.blue") of
+
+        Ok conn ->
+            conn
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[FATAL] cannot open todos.blue: " ++ errorToString e)
+            in
+                System.exit 1
+
+
+allTodos : () -> Task Error (List Todo)
+allTodos _ =
+    Persist.toList db (Persist.query todos |> Persist.orderAsc "id")
+
+type alias Model =
+    { todos : List Todo
+    , draft : String
+    }
+
+type Page
+    = HomePage
+
+type Msg
+    = UpdateDraft String
+    | AddTodo
+    | Added (Result Error Todo)
+    | TodosChanged Persist.Change
+    | TodosLoaded (Result Error (List Todo))
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = [], draft = "" }, Cmd.perform (allTodos ()) TodosLoaded )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        UpdateDraft s ->
+            ( { model | draft = s }, Cmd.none )
+
+        AddTodo ->
+            if String.trim model.draft == "" then
+                ( model, Cmd.none )
+
+            else
+                ( { model | draft = "" }
+                , Cmd.perform
+                      (Persist.insert
+                          db
+                          todos
+                          { id = 0, text = String.trim model.draft })
+                      Added
+                )
+
+        Added _ ->
+            -- The re-query happens for EVERY session (incl. this one) via the
+            -- change-feed → TodosChanged below, so nothing to do here.
+            ( model, Cmd.none )
+
+        TodosChanged _ ->
+            ( model, Cmd.perform (allTodos ()) TodosLoaded )
+
+        TodosLoaded result ->
+            ( { model | todos = Result.withDefault model.todos result }
+            , Cmd.none
+            )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Persist.watchCollection todos TodosChanged
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 16
+            , Ui.padding 32
+            , Ui.width (Ui.maximum 560 Ui.fill)
+            , Ui.centerX
+            ]
+            [ Ui.el
+                  [ Font.size 28, Font.bold ]
+                  (Ui.text "Shared todos (reactive)")
+            , Ui.row
+                  [ Ui.spacing 8, Ui.width Ui.fill ]
+                  [ Input.text
+                        [ Ui.width Ui.fill ]
+                        { onChange = UpdateDraft
+                        , text = model.draft
+                        , placeholder = Nothing
+                        , label = Input.labelHidden "New todo"
+                        }
+                  , Ui.button
+                        [ Ui.paddingXY 16 10
+                        , Background.color (Ui.rgb 40 100 220)
+                        , Font.color Ui.white
+                        , Border.rounded 6
+                        ]
+                        { onPress = Just AddTodo, label = Ui.text "Add" }
+                  ]
+            , Ui.column
+                  [ Ui.spacing 6, Ui.width Ui.fill ]
+                  (List.map todoRow model.todos)
+            ])
+
+
+todoRow : Todo -> Element Msg
+todoRow t =
+    Ui.el
+        [ Ui.padding 10
+        , Ui.width Ui.fill
+        , Background.color (Ui.rgb 245 245 248)
+        , Border.rounded 6
+        ]
+        (Ui.text (String.fromInt t.id ++ ". " ++ t.text))
+
+
+main =
+    app
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ route "/" HomePage ]
+            , notFound = HomePage
+            })

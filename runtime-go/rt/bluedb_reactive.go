@@ -123,6 +123,38 @@ func bluedbChangeAffectsQuery(rc bluedbRecordChange, s *bluedbQuerySub) bool {
 	return bluedbEvalCond(s.cond, m)
 }
 
+// ── Broker publish (P-R4a) ───────────────────────────────────────────────────
+
+// bluedbChangePayload is the JSON payload delivered to Persist.watch* subscribers.
+type bluedbChangePayload struct {
+	Op     string `json:"op"`     // "put" | "delete"
+	Coll   string `json:"coll"`   // collection name
+	Pk     string `json:"pk"`     // primary key
+	Record string `json:"record"` // record JSON for a put; "" for a delete
+}
+
+// bluedbPublishChange routes one decoded record change to the running Sky.Live
+// app's broker (the process-global handle), on the change's collection topic
+// (bluedbCollTopic). A no-op when no Live app is registered (a CLI / BlueDB-only
+// process), and for a resync marker (not collection-targeted — the declarative
+// layer re-runs all queries on resync).
+func bluedbPublishChange(rc bluedbRecordChange) {
+	app := processBroker.Load()
+	if app == nil || rc.Resync {
+		return
+	}
+	op := "put"
+	if rc.IsDelete {
+		op = "delete"
+	}
+	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: rc.Coll, Pk: rc.Pk, Record: rc.Record})
+	if err != nil {
+		return
+	}
+	topic := bluedbCollTopic(rc.Coll)
+	app.Publish(topic, SessionEvent{Topic: topic, Payload: string(payload)})
+}
+
 // bluedbStartReactivePump subscribes to a store's change-feed and pumps decoded
 // record changes to publish on a background goroutine. On a feed overflow it first
 // emits a Resync change (the consumer must re-read, having missed deltas). Returns

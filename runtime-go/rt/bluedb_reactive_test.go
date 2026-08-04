@@ -152,3 +152,46 @@ func TestChangeAffectsQuery(t *testing.T) {
 		t.Fatal("match-all: deleting a result pk must affect it")
 	}
 }
+
+// P-R4a: opening a data store while a Live app is running starts the pump, and a
+// write publishes a change to the collection topic on the app broker.
+func TestReactivePumpPublishesToBroker(t *testing.T) {
+	unregisterProcessBroker() // clear any leftover from a prior test
+	reg := newTopicRegistry(16)
+	app := &liveApp{topics: reg}
+	registerProcessBroker(app)
+	defer unregisterProcessBroker()
+
+	ch, cancelSub := reg.Subscribe(bluedbCollTopic("users"))
+	defer cancelSub()
+
+	dir := t.TempDir()
+	id := runOK(t, BlueDB_open(dir+"/data.blue")).(int)
+	defer func() { BlueDB_close(id).(func() any)() }()
+
+	collPut(t, id, "users", "u1", `{"id":"u1","name":"Ada"}`)
+
+	select {
+	case ev := <-ch:
+		s, ok := ev.Payload.(string)
+		if !ok {
+			t.Fatalf("payload not a string: %T", ev.Payload)
+		}
+		var p bluedbChangePayload
+		if err := json.Unmarshal([]byte(s), &p); err != nil {
+			t.Fatalf("payload not JSON: %v (%q)", err, s)
+		}
+		if p.Op != "put" || p.Coll != "users" || p.Pk != "u1" || p.Record == "" {
+			t.Fatalf("payload = %+v", p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no change event delivered to the broker topic")
+	}
+
+	// No Live app → no publish (a store opened without a broker isn't reactive).
+	unregisterProcessBroker()
+	id2 := runOK(t, BlueDB_open(dir+"/data2.blue")).(int)
+	defer func() { BlueDB_close(id2).(func() any)() }()
+	// (pump not started for id2; nothing to assert beyond no panic / clean write)
+	collPut(t, id2, "users", "x", `{"id":"x"}`)
+}

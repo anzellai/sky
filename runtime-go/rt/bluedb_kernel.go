@@ -90,7 +90,44 @@ func BlueDB_open(pathArg any) any {
 		bluedbRegistry[id] = &bluedbEntry{db: db, path: path}
 		bluedbByPath[path] = id
 		bluedbRegMu.Unlock()
+		bluedbMaybeStartPump(id, db)
 		return Ok[any, any](int(id))
+	}
+}
+
+// Reactive change-feed pumps, one per open data store (P-R4a). Keyed by the same
+// store handle as bluedbRegistry; guarded by its own mutex to avoid coupling to
+// bluedbRegMu (the pump start calls into the engine's own locks).
+var (
+	bluedbPumpMu sync.Mutex
+	bluedbPumps  = map[int64]func(){}
+)
+
+// bluedbMaybeStartPump starts the reactive change-feed pump for a newly-opened
+// store IFF a Sky.Live app is running (so its writes can drive reactive UI
+// updates). No Live app (CLI / BlueDB-only) → no pump and no per-write overhead.
+// (The normal flow opens data stores after the Live app boots, so the app handle
+// is present; a store opened before boot simply isn't reactive.)
+func bluedbMaybeStartPump(id int64, db *bluedb.DB) {
+	if processBroker.Load() == nil {
+		return
+	}
+	bluedbPumpMu.Lock()
+	defer bluedbPumpMu.Unlock()
+	if _, running := bluedbPumps[id]; running {
+		return
+	}
+	bluedbPumps[id] = bluedbStartReactivePump(db, bluedbPublishChange)
+}
+
+// bluedbStopPump stops and unregisters a store's reactive pump (called on close).
+func bluedbStopPump(id int64) {
+	bluedbPumpMu.Lock()
+	stop := bluedbPumps[id]
+	delete(bluedbPumps, id)
+	bluedbPumpMu.Unlock()
+	if stop != nil {
+		stop()
 	}
 }
 
@@ -212,6 +249,7 @@ func BlueDB_close(idArg any) any {
 			delete(bluedbByPath, e.path)
 		}
 		bluedbRegMu.Unlock()
+		bluedbStopPump(id)
 		if e == nil {
 			return Ok[any, any](nil)
 		}
