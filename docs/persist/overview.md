@@ -51,13 +51,21 @@ backend), capability-gated verbs pin it (so misuse is a type error).
 |---|---|---|
 | `create conn coll` | any | SQL: `CREATE TABLE IF NOT EXISTS`; KV: no-op (schemaless) |
 | `put conn coll record` | any | Upsert by the record's self-assigned key |
+| `insert conn coll record` | any | Insert, returning the row with **DB-generated fields filled** (a `serial` PK, `defaultNow` stamps) |
 | `get conn coll key` | any | Read by primary key (SQL binds the key **typed** — Int PKs work on Postgres) |
 | `delete conn coll key` | any | Delete by primary key |
 | `count conn coll` | any | SQL `COUNT(*)`; KV key scan (O(n) — an analytics act) |
 | `all conn coll` | any | Every record |
+| `query coll \|> where_ … \|> toList/toMaybe/toCount conn` | any | **Portable filter query** — same builder, both backends (see below) |
 | `scan conn coll prefix limit` | **KV only** | Prefix scan → `(key, record)` pairs |
-| `sql conn` | **Relational only** | Escape hatch → raw `Std.Db` (joins, query builder, `selectRaw`, transactions) |
+| `sql conn` | **Relational only** | Escape hatch → raw `Std.Db` (joins, aggregates, `selectRaw`, transactions) |
 | `kv conn` | **KeyValue only** | Escape hatch → raw `Std.BlueDB.Store` |
+
+The schema builders on the underlying `Store` — `serial` (auto-increment PK),
+`unique`, `defaultNow`, `touchOnUpdate`, `default*` — are **enforced on the KV
+backend too**, so a collection behaves identically whichever backend it runs on.
+Use `insert` (not `put`) when the PK is DB-assigned (`Store.serial`): `put`
+upserts by a self-assigned key, so it has no id to hand back.
 
 Calling a KV-only verb on a relational connection (or vice-versa) is a **compile
 error**:
@@ -83,14 +91,50 @@ Every universal-verb site survives the swap. Anything backend-specific (a prefix
 that need attention — the compiler shows you the port, it isn't a runtime
 surprise.
 
+## Portable queries — one builder, both backends
+
+Filtering is a **universal verb**, not an escape hatch. Build a query with
+`query`/`where_`/`orderAsc`/`orderDesc`/`limit`/`offset`, run it with a terminal
+(`toList`/`toMaybe`/`toCount`) — the SAME query compiles on SQL and KV:
+
+```elm
+active : Persist.Query User
+active =
+    Persist.query users
+        |> Persist.where_ (Persist.eq "status" (Persist.string "active"))
+        |> Persist.where_ (Persist.gte "age" (Persist.int 18))
+        |> Persist.orderDesc "age"
+        |> Persist.limit 20
+
+-- runs unchanged on either connection:
+Persist.toList  conn active            -- : Task Error (List User)
+Persist.toCount conn active            -- : Task Error Int
+```
+
+- **Condition leaves** (all re-exported from `Persist`, so you build queries from
+  one import): `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList`,
+  combined with `and_`/`or_`/`not_` (multiple `where_` clauses AND together).
+- **Values**: `Persist.string`/`int`/`float`/`bool` (or the full `Std.Db.SqlValue`
+  constructors). Column names accept the record **field** or the snake column.
+- **SQL** renders a `WHERE` clause; **KV** evaluates the same condition over each
+  record. On KV this is a full-collection scan + predicate — an **analytics /
+  cold-path** op, *never* the reactive hot path. For a point lookup declare an
+  `index` and use `findAllByIndex` (below).
+- **Index acceleration**: when a `where_` equality leaf targets a declared `index`
+  field (and is AND-reachable, not under an `or_`), the KV backend **seeks the
+  index** for candidate rows instead of scanning the whole collection — the query
+  code is identical, it just gets faster once the field is indexed.
+
+Joins, `GROUP BY`, and aggregates stay SQL-only — reach for `Persist.sql` there.
+
 ## Escape hatches — you never leave the type world
 
-The universal verbs are deliberately the CRUD subset. For backend-specific power,
-drop one rung:
+The universal verbs cover CRUD **and portable filtering**. For backend-specific
+power (SQL joins/aggregates; raw KV prefix ops), drop one rung:
 
 ```elm
 Persist.sql conn                       -- : Task Error Db  → the raw Std.Db handle
-    |> Task.andThen (\db -> Store.toList db (Store.query userStore |> Store.where_ (Store.gt "age" (Db.SqlInt 18))))
+    |> Task.andThen (\db -> Store.selectRaw db reportCodec "SELECT status, COUNT(*) … GROUP BY status" [])
 
 Persist.kv conn                        -- : Task Error BlueDB.Store
     |> Task.andThen (\store -> BlueDB.scanValues codec store "session:" 100)
