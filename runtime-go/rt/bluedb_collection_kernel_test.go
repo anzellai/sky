@@ -261,3 +261,74 @@ func TestCollDefaultsAndTouch(t *testing.T) {
 		t.Fatalf("deliberate non-zero status must be preserved: %v", m3["status"])
 	}
 }
+
+func colListOf(cols [][2]string) []any {
+	out := []any{}
+	for _, c := range cols {
+		out = append(out, SkyTuple2{V0: c[0], V1: c[1]})
+	}
+	return out
+}
+
+func serialIDOf(t *testing.T, stored string) int {
+	t.Helper()
+	var m map[string]any
+	json.Unmarshal([]byte(stored), &m)
+	return int(m["id"].(float64))
+}
+
+// P3: serial PK assignment — an unset "!" pk gets the next per-collection id.
+func TestCollSerial(t *testing.T) {
+	id := registerIdxStore(t)
+	cols := [][2]string{{"id", "int!"}}
+	if s := collPutCols(t, id, "u", "", `{"id":0,"name":"Ann"}`, cols); serialIDOf(t, s) != 1 {
+		t.Fatalf("first serial id != 1: %s", s)
+	}
+	if s := collPutCols(t, id, "u", "", `{"id":0,"name":"Bo"}`, cols); serialIDOf(t, s) != 2 {
+		t.Fatalf("second serial id != 2: %s", s)
+	}
+	// records land at pk "1" and "2"
+	if _, ok := collGet(t, id, "u", "1"); !ok {
+		t.Fatal("serial record 1 missing")
+	}
+	if _, ok := collGet(t, id, "u", "2"); !ok {
+		t.Fatal("serial record 2 missing")
+	}
+	// a record WITH an explicit pk is an upsert, not a new assignment
+	if s := collPutCols(t, id, "u", "1", `{"id":1,"name":"Ann2"}`, cols); serialIDOf(t, s) != 1 {
+		t.Fatalf("explicit pk must upsert, not reassign: %s", s)
+	}
+	if collCountN(id, "u") != 2 {
+		t.Fatalf("count after upsert = %d want 2", collCountN(id, "u"))
+	}
+}
+
+// Concurrent serial inserts get DISTINCT contiguous ids (seq lock serializes).
+func TestCollSerialConcurrent(t *testing.T) {
+	id := registerIdxStore(t)
+	cols := colListOf([][2]string{{"id", "int!"}})
+	const n = 50
+	var wg sync.WaitGroup
+	ids := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := BlueDB_collPut(id, "u", "", `{"id":0}`, []any{}, cols).(func() any)().(SkyResult[any, any])
+			ids[i] = serialIDOf(t, r.OkValue.(string))
+		}(i)
+	}
+	wg.Wait()
+	seen := map[int]bool{}
+	for _, x := range ids {
+		if seen[x] {
+			t.Fatalf("duplicate serial id %d in %v", x, ids)
+		}
+		seen[x] = true
+	}
+	for i := 1; i <= n; i++ {
+		if !seen[i] {
+			t.Fatalf("missing serial id %d", i)
+		}
+	}
+}

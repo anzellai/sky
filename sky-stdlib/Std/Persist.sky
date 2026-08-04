@@ -9,6 +9,7 @@ module Std.Persist exposing
     , connectKeyValue
     , get
     , put
+    , insert
     , delete
     , count
     , all
@@ -204,6 +205,60 @@ put conn coll record =
                         (indexFieldValues coll record)
                         (Store.colsOf (storeOf coll))
                         |> Task.map (\_ -> ())
+
+                Err e ->
+                    Task.fail e
+
+
+{-| Insert a record, returning it with DB-generated fields FILLED — a serial
+(auto-increment) primary key and any `defaultNow` timestamps. Use this when the
+PK is DB-assigned (`Store.serial`): `put` upserts by a self-assigned key, so it
+has no id to return. On SQL uses the auto-assigned rowid; on KV assigns the next
+per-collection serial id + stamps defaults, decoding the stored record back. -}
+insert : Conn cap -> Collection a -> a -> Task Error a
+insert conn coll record =
+    case conn of
+
+        SqlConn db ->
+            Store.insert db (storeOf coll) record
+                |> Task.andThen
+                       (\rowid ->
+                           Store.getByKey
+                               db
+                               (storeOf coll)
+                               (String.fromInt rowid)
+                               |> Task.andThen
+                                      (\m ->
+                                          case m of
+
+                                              Just r ->
+                                                  Task.succeed r
+
+                                              Nothing ->
+                                                  Task.fail
+                                                      (Error.unexpected
+                                                          "Persist.insert: inserted row not found")))
+
+        KvConn store ->
+            case persistKeyString (keyFieldOf coll) record of
+
+                Ok pk ->
+                    BlueDB.collPut
+                        store
+                        (collNameOf coll)
+                        pk
+                        (Codec.toJson (codecOf coll) record)
+                        (indexFieldValues coll record)
+                        (Store.colsOf (storeOf coll))
+                        |> Task.andThen
+                               (\storedJson ->
+                                   case Codec.fromJson (codecOf coll) storedJson of
+
+                                       Ok r ->
+                                           Task.succeed r
+
+                                       Err e ->
+                                           Task.fail e)
 
                 Err e ->
                     Task.fail e

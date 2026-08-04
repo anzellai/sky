@@ -155,6 +155,19 @@ func bluedbCollManifestKey(coll string) []byte {
 	return []byte(bluedbReserved + "m\x00" + coll)
 }
 
+// bluedbCollSeqKey holds the per-collection serial (auto-increment) counter.
+func bluedbCollSeqKey(coll string) []byte {
+	return []byte(bluedbReserved + "s\x00" + coll)
+}
+
+func bluedbReadSeq(db *bluedb.DB, key []byte) int64 {
+	if v, ok := db.Get(key); ok {
+		n, _ := strconv.ParseInt(string(v), 10, 64)
+		return n
+	}
+	return 0
+}
+
 // bluedbCollManifest: per-collection layout + declared index fields.
 type bluedbCollManifest struct {
 	Layout int      `json:"layout"`
@@ -198,15 +211,38 @@ func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg, colsArg any) any {
 		id := int64(AsInt(idArg))
 		coll := AsString(collArg)
 		pk := AsString(pkArg)
-		if e := bluedbCollNULCheck(coll, pk); e != nil {
-			return Err[any, any](e)
-		}
 		fvts := bluedbParseFVT(fvtArg)
 		cols := bluedbParseFT(colsArg) // (colName, kind-with-flags)
 
 		var m map[string]any
 		if err := json.Unmarshal([]byte(AsString(jsonArg)), &m); err != nil {
 			return Err[any, any](ErrInvalidInput("BlueDB.collPut: record is not JSON"))
+		}
+
+		// Serial PK: a "!" auto-increment column with an unset pk gets the next
+		// per-collection sequence value. The seq lock (outermost) serializes serial
+		// inserts; the counter bump rides the record's WriteBatch (crash-safe — a
+		// crash leaves neither the record nor the bump, so no gap / double-assign).
+		serialCol := ""
+		for _, c := range cols {
+			if codecColIsAutoInc(c.colType) {
+				serialCol = c.field
+				break
+			}
+		}
+		seqKey := bluedbCollSeqKey(coll)
+		assignSerial := serialCol != "" && (pk == "" || pk == "0")
+		var newSeq int64
+		if assignSerial {
+			seqLk := bluedbPkLock(id, "\x00seq\x00"+coll)
+			seqLk.Lock()
+			defer seqLk.Unlock()
+			newSeq = bluedbReadSeq(db, seqKey) + 1
+			pk = strconv.FormatInt(newSeq, 10)
+			m[serialCol] = float64(newSeq)
+		}
+		if e := bluedbCollNULCheck(coll, pk); e != nil {
+			return Err[any, any](e)
 		}
 
 		lk := bluedbPkLock(id, coll+"\x00"+pk)
@@ -252,6 +288,9 @@ func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg, colsArg any) any {
 			b.Put(bluedbCollIndexKey(coll, f.field, f.value, f.colType, pk), nil)
 		}
 		b.Put(recKey, stored)
+		if assignSerial {
+			b.Put(seqKey, []byte(strconv.FormatInt(newSeq, 10)))
+		}
 		if err := db.WriteBatch(b); err != nil {
 			return Err[any, any](ErrFfi("BlueDB.collPut: " + err.Error()))
 		}
