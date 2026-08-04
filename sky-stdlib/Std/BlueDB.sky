@@ -414,18 +414,20 @@ collGet store coll pk =
             collGetRaw raw coll pk
 
 
-collDeleteRaw : Int -> String -> String -> List ( String, String ) -> Task Error ()
+collDeleteRaw : Int -> String -> String -> List ( String, String ) -> List ( String, String ) -> Task Error ()
 collDeleteRaw =
     Ffi.kernel "BlueDB_collDelete"
 
 
-{-| Delete a record + its index entries (given `(field, colType)` pairs) within `coll`. -}
-collDelete : Store -> String -> String -> List ( String, String ) -> Task Error ()
-collDelete store coll pk fieldTypes =
+{-| Delete a record + its secondary-index AND unique-index entries within `coll`.
+`fieldTypes` = the declared `(indexField, colType)` pairs; `cols` = the
+`(name, kind-with-flags)` descriptor (so unique entries are cleaned up too). -}
+collDelete : Store -> String -> String -> List ( String, String ) -> List ( String, String ) -> Task Error ()
+collDelete store coll pk fieldTypes cols =
     case store of
 
         Store raw ->
-            collDeleteRaw raw coll pk fieldTypes
+            collDeleteRaw raw coll pk fieldTypes cols
 
 
 collAllRaw : Int -> String -> Int -> Task Error (List ( String, String ))

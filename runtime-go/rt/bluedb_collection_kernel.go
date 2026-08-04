@@ -21,8 +21,10 @@ package rt
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sky-app/bluedb"
@@ -168,6 +170,27 @@ func bluedbReadSeq(db *bluedb.DB, key []byte) int64 {
 	return 0
 }
 
+// bluedbCollUniqueKey = \x00x\x00u\x00<coll>\x00<field>\x00<E(v)> → <owner-pk>. ONE
+// entry per value (not per-pk), so a second pk claiming the same value collides.
+func bluedbCollUniqueKey(coll, field, value, colType string) []byte {
+	enc, _ := bluedbEncodeIndexVal(value, colType)
+	buf := []byte(bluedbReserved + "u\x00" + coll + "\x00" + field + "\x00")
+	return append(buf, enc...)
+}
+
+// bluedbUniqueLock serializes writers racing to claim ONE (coll,field,value) — the
+// cross-pk uniqueness race (distinct from the per-pk lock). Held across the
+// Get(uniqueKey)→check→WriteBatch so no two pks can both pass the check.
+func bluedbUniqueLock(id int64, coll, field string, enc []byte) *sync.Mutex {
+	return bluedbPkLock(id, "\x00u\x00"+coll+"\x00"+field+"\x00"+string(enc))
+}
+
+type bluedbUniqueSpec struct {
+	field, colType, value string
+	key                   []byte
+	enc                   []byte
+}
+
 // bluedbCollManifest: per-collection layout + declared index fields.
 type bluedbCollManifest struct {
 	Layout int      `json:"layout"`
@@ -245,12 +268,53 @@ func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg, colsArg any) any {
 			return Err[any, any](e)
 		}
 
+		// Unique constraints: derive the (field, value) each declared |u column
+		// claims from the record. NULL/absent skips (SQL allows multiple NULLs).
+		// Lock order = seq (already held) → per-(field,value) locks in sorted key
+		// order (deadlock-free even with multiple unique cols) → pk lock.
+		var uniques []bluedbUniqueSpec
+		for _, c := range cols {
+			uniq, _, _ := codecColExtras(c.colType)
+			if !uniq {
+				continue
+			}
+			rv, has := bluedbOldIndexVal(m, c.field)
+			if !has {
+				continue
+			}
+			base, _ := codecSplitKind(c.colType)
+			enc, _ := bluedbEncodeIndexVal(rv, base)
+			uniques = append(uniques, bluedbUniqueSpec{
+				field: c.field, colType: base, value: rv,
+				key: bluedbCollUniqueKey(coll, c.field, rv, base), enc: enc,
+			})
+		}
+		sort.Slice(uniques, func(i, j int) bool {
+			return bytes.Compare(uniques[i].key, uniques[j].key) < 0
+		})
+		for _, u := range uniques {
+			ul := bluedbUniqueLock(id, coll, u.field, u.enc)
+			ul.Lock()
+			defer ul.Unlock()
+		}
+
 		lk := bluedbPkLock(id, coll+"\x00"+pk)
 		lk.Lock()
 		defer lk.Unlock()
 
 		recKey := bluedbCollRecordKey(coll, pk)
 		old, isUpdate := db.Get(recKey)
+
+		// Enforce uniqueness under the held value locks: a value owned by a
+		// DIFFERENT pk is a conflict (self-upsert with owner==pk is fine).
+		for _, u := range uniques {
+			if owner, ok := db.Get(u.key); ok && string(owner) != pk {
+				return Err[any, any](ErrInvalidInput(
+					"BlueDB.collPut: unique constraint \"" + u.field + "\"=\"" + u.value +
+						"\" already held by \"" + string(owner) + "\""))
+			}
+		}
+
 		bluedbInjectDefaults(m, cols, !isUpdate)
 
 		// Re-derive each index value from the (possibly defaulted) record so an
@@ -282,10 +346,18 @@ func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg, colsArg any) any {
 						b.Delete(bluedbCollIndexKey(coll, f.field, oldVal, f.colType, pk))
 					}
 				}
+				for _, u := range uniques {
+					if oldVal, has := bluedbOldIndexVal(oldM, u.field); has && oldVal != u.value {
+						b.Delete(bluedbCollUniqueKey(coll, u.field, oldVal, u.colType))
+					}
+				}
 			}
 		}
 		for _, f := range derived {
 			b.Put(bluedbCollIndexKey(coll, f.field, f.value, f.colType, pk), nil)
+		}
+		for _, u := range uniques {
+			b.Put(u.key, []byte(pk))
 		}
 		b.Put(recKey, stored)
 		if assignSerial {
@@ -313,8 +385,10 @@ func BlueDB_collGet(idArg, collArg, pkArg any) any {
 	}
 }
 
-// BlueDB_collDelete : Int -> String(coll) -> String(pk) -> List (String,String) -> Task Error ()
-func BlueDB_collDelete(idArg, collArg, pkArg, ftArg any) any {
+// BlueDB_collDelete : Int -> String(coll) -> String(pk) -> List (String,String)(idx fieldTypes)
+//   -> List (String,String)(cols) -> Task Error ()
+// Removes the record + its secondary index AND unique-index entries.
+func BlueDB_collDelete(idArg, collArg, pkArg, ftArg, colsArg any) any {
 	return func() any {
 		db := bluedbLookup(idArg)
 		if db == nil {
@@ -324,6 +398,7 @@ func BlueDB_collDelete(idArg, collArg, pkArg, ftArg any) any {
 		coll := AsString(collArg)
 		pk := AsString(pkArg)
 		fts := bluedbParseFT(ftArg)
+		cols := bluedbParseFT(colsArg)
 		lk := bluedbPkLock(id, coll+"\x00"+pk)
 		lk.Lock()
 		defer lk.Unlock()
@@ -339,6 +414,14 @@ func BlueDB_collDelete(idArg, collArg, pkArg, ftArg any) any {
 			for _, ft := range fts {
 				if v, has := bluedbOldIndexVal(m, ft.field); has {
 					b.Delete(bluedbCollIndexKey(coll, ft.field, v, ft.colType, pk))
+				}
+			}
+			for _, c := range cols {
+				if uniq, _, _ := codecColExtras(c.colType); uniq {
+					if v, has := bluedbOldIndexVal(m, c.field); has {
+						base, _ := codecSplitKind(c.colType)
+						b.Delete(bluedbCollUniqueKey(coll, c.field, v, base))
+					}
 				}
 			}
 		}

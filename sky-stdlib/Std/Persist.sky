@@ -352,6 +352,7 @@ delete conn coll keyStr =
                 (collNameOf coll)
                 keyStr
                 (indexFieldTypes coll)
+                (Store.colsOf (storeOf coll))
 
 
 {-| Count all records. (SQL: `COUNT(*)`; KV: a key scan — O(n), an analytics act.) -}

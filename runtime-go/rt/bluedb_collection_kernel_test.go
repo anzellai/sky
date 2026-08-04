@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"sky-app/bluedb"
@@ -122,7 +123,7 @@ func TestCollCRUDAndStaleIndex(t *testing.T) {
 		t.Fatalf("new entry: %v", got)
 	}
 	// delete → record + index gone
-	runOK(t, BlueDB_collDelete(id, "c", "u1", ftPairs([2]string{"email", "text"})))
+	runOK(t, BlueDB_collDelete(id, "c", "u1", ftPairs([2]string{"email", "text"}), []any{}))
 	if _, ok := collGet(t, id, "c", "u1"); ok {
 		t.Fatal("record must be gone after delete")
 	}
@@ -332,3 +333,98 @@ func TestCollSerialConcurrent(t *testing.T) {
 		}
 	}
 }
+
+func collPutErr(id int, coll, pk, jsonStr string, cols [][2]string) bool {
+	// true if the put returned Err
+	r := BlueDB_collPut(id, coll, pk, jsonStr, []any{}, colListOf(cols)).(func() any)().(SkyResult[any, any])
+	return r.Tag != 0
+}
+
+// P4: unique constraint — the cross-pk keystone.
+func TestCollUnique(t *testing.T) {
+	id := registerIdxStore(t)
+	cols := [][2]string{{"email", "text|u"}}
+	// first claim OK
+	if collPutErr(id, "u", "1", `{"email":"a@x"}`, cols) {
+		t.Fatal("first unique claim should succeed")
+	}
+	// second pk, same value → conflict
+	if !collPutErr(id, "u", "2", `{"email":"a@x"}`, cols) {
+		t.Fatal("duplicate unique value from a different pk must conflict")
+	}
+	// self-upsert (same pk, same value) → OK
+	if collPutErr(id, "u", "1", `{"email":"a@x"}`, cols) {
+		t.Fatal("self-upsert with unchanged unique value must succeed")
+	}
+	// pk 1 changes its value → frees a@x; then pk 2 can take it
+	if collPutErr(id, "u", "1", `{"email":"b@x"}`, cols) {
+		t.Fatal("changing own unique value should succeed")
+	}
+	if collPutErr(id, "u", "2", `{"email":"a@x"}`, cols) {
+		t.Fatal("value freed by an update should be claimable")
+	}
+	// delete pk 2 frees a@x again
+	runOK(t, BlueDB_collDelete(id, "u", "2", []any{}, colListOf(cols)))
+	if collPutErr(id, "u", "3", `{"email":"a@x"}`, cols) {
+		t.Fatal("value freed by a delete should be claimable")
+	}
+	// NULL/absent unique value: multiple records with no email are fine
+	if collPutErr(id, "u", "10", `{"name":"x"}`, cols) || collPutErr(id, "u", "11", `{"name":"y"}`, cols) {
+		t.Fatal("absent (NULL) unique values must not conflict")
+	}
+}
+
+// M goroutines racing to claim ONE unique value: exactly one wins.
+func TestCollUniqueRace(t *testing.T) {
+	id := registerIdxStore(t)
+	cols := colListOf([][2]string{{"email", "text|u"}})
+	const m = 40
+	var wg sync.WaitGroup
+	var okCount int32
+	for i := 0; i < m; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			pk := fmt.Sprintf("u%02d", i)
+			r := BlueDB_collPut(id, "c", pk, `{"email":"contested@x"}`, []any{}, cols).(func() any)().(SkyResult[any, any])
+			if r.Tag == 0 {
+				atomicAddInt32(&okCount, 1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("exactly one writer must win the contested unique value, got %d", okCount)
+	}
+	// exactly one record exists (the winner)
+	if n := collCountN(id, "c"); n != 1 {
+		t.Fatalf("exactly one record should exist, got %d", n)
+	}
+}
+
+// Two records, two unique cols, inserted in OPPOSITE field order → no deadlock
+// (ordered lock acquisition). If this hangs, the lock ordering is wrong.
+func TestCollUniqueNoDeadlock(t *testing.T) {
+	id := registerIdxStore(t)
+	cols := colListOf([][2]string{{"email", "text|u"}, {"handle", "text|u"}})
+	const rounds = 200
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			pk := fmt.Sprintf("a%d", i)
+			BlueDB_collPut(id, "c", pk, fmt.Sprintf(`{"email":"e%d","handle":"h%d"}`, i, i), []any{}, cols).(func() any)()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			pk := fmt.Sprintf("b%d", i)
+			BlueDB_collPut(id, "c", pk, fmt.Sprintf(`{"handle":"H%d","email":"E%d"}`, i, i), []any{}, cols).(func() any)()
+		}
+	}()
+	wg.Wait() // must return (no deadlock)
+}
+
+func atomicAddInt32(p *int32, d int32) { atomic.AddInt32(p, d) }
