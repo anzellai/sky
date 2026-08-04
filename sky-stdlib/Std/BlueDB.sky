@@ -15,8 +15,10 @@ module Std.BlueDB exposing
     , putIndexed
     , deleteIndexed
     , findByIndex
+    , findByIndexRange
     , reindex
     , countByIndex
+    , countByIndexRange
     )
 
 {-| BlueDB — the embedded, durable, group-committed key-value store for a Sky
@@ -242,73 +244,98 @@ getValue codec store key =
                                    Task.fail e)
 
 
--- Secondary indexes (E2) -------------------------------------------------------
+-- Secondary indexes (E2/E3) + ordered range (R1) ------------------------------
 -- Opt-in per field. Maintained atomically with the primary (one WriteBatch), so
 -- index + record never diverge across a crash. NON-unique (pk-in-key): findByIndex
 -- returns every pk whose <field> == <value>. Higher layers (Std.Persist) compute
--- the pk / recordJson (via Codec) / (field,value) pairs and call these.
-putIndexedRaw : Int -> String -> String -> List ( String, String ) -> Task Error ()
+-- the pk / recordJson (via Codec) / (field, value, colType) triples and call these.
+--
+-- The `colType` tag (from the codec shape: "int"/"bool"/"text"/…) drives an
+-- ORDER-PRESERVING key encoding so `findByIndexRange` is CORRECT for numeric/date
+-- fields (a lexical range over decimal-string ints would silently return wrong
+-- rows). It is uniform per field (never per-value), so write, equality-read, and
+-- range all agree by construction.
+putIndexedRaw : Int -> String -> String -> List ( String, String, String ) -> Task Error ()
 putIndexedRaw =
     Ffi.kernel "BlueDB_putIndexed"
 
 
 {-| Upsert a record AND maintain its declared index entries in ONE atomic batch.
-`pk` = the primary key; `recordJson` = the codec-encoded record; `fieldValues` =
-`(indexField, value)` pairs (value = the field's key-string). -}
-putIndexed : Store -> String -> String -> List ( String, String ) -> Task Error ()
-putIndexed store pk recordJson fieldValues =
+`pk` = the primary key; `recordJson` = the codec-encoded record; `fieldValueTypes`
+= `(indexField, value, colType)` triples (value = the field's key-string). -}
+putIndexed : Store -> String -> String -> List ( String, String, String ) -> Task Error ()
+putIndexed store pk recordJson fieldValueTypes =
     case store of
 
         Store raw ->
-            putIndexedRaw raw pk recordJson fieldValues
+            putIndexedRaw raw pk recordJson fieldValueTypes
 
 
-deleteIndexedRaw : Int -> String -> List String -> Task Error ()
+deleteIndexedRaw : Int -> String -> List ( String, String ) -> Task Error ()
 deleteIndexedRaw =
     Ffi.kernel "BlueDB_deleteIndexed"
 
 
-{-| Delete a record AND its index entries (for the given index fields) atomically. -}
-deleteIndexed : Store -> String -> List String -> Task Error ()
-deleteIndexed store pk indexFields =
+{-| Delete a record AND its index entries atomically. `fieldTypes` = `(indexField,
+colType)` pairs. -}
+deleteIndexed : Store -> String -> List ( String, String ) -> Task Error ()
+deleteIndexed store pk fieldTypes =
     case store of
 
         Store raw ->
-            deleteIndexedRaw raw pk indexFields
+            deleteIndexedRaw raw pk fieldTypes
 
 
-findByIndexRaw : Int -> String -> String -> Task Error (List String)
+findByIndexRaw : Int -> String -> String -> String -> Task Error (List String)
 findByIndexRaw =
     Ffi.kernel "BlueDB_findByIndex"
 
 
-{-| The primary keys whose indexed `field` equals `value` (two O(1)-ish lookups
-away from the records). Non-unique: may return several. -}
-findByIndex : Store -> String -> String -> Task Error (List String)
-findByIndex store field value =
+{-| The primary keys whose indexed `field` equals `value` (`colType` = the field's
+codec kind). Non-unique: may return several. -}
+findByIndex : Store -> String -> String -> String -> Task Error (List String)
+findByIndex store field value colType =
     case store of
 
         Store raw ->
-            findByIndexRaw raw field value
+            findByIndexRaw raw field value colType
 
 
-reindexRaw : Int -> List String -> Task Error Int
+findByIndexRangeRaw : Int -> String -> String -> Bool -> String -> Bool -> String -> Task Error (List String)
+findByIndexRangeRaw =
+    Ffi.kernel "BlueDB_findByIndexRange"
+
+
+{-| The primary keys whose indexed `field` is in the half-open range `[lo, hi)`.
+`hasLo`/`hasHi` = whether that bound is set (an absent bound is unbounded, NOT "").
+Correct for int/bool/text (order-preserving encoding); errors on real/blob/money —
+use the SQL backend's typed query builder for those. -}
+findByIndexRange : Store -> String -> String -> Bool -> String -> Bool -> String -> Task Error (List String)
+findByIndexRange store field colType hasLo lo hasHi hi =
+    case store of
+
+        Store raw ->
+            findByIndexRangeRaw raw field colType hasLo lo hasHi hi
+
+
+reindexRaw : Int -> List ( String, String ) -> Task Error Int
 reindexRaw =
     Ffi.kernel "BlueDB_reindex"
 
 
-{-| Idempotent backfill of the declared index fields over existing records (call
-at startup). Manifest-guarded — O(1) when the declared set is unchanged. Returns
-the number of records (re)indexed. -}
-reindex : Store -> List String -> Task Error Int
-reindex store indexFields =
+{-| Idempotent backfill of the declared index fields (`(field, colType)` pairs)
+over existing records (call at startup). Manifest-guarded — O(1) when unchanged.
+Also performs the index FORMAT MIGRATION (older raw-string entries are re-encoded
+in the order-preserving format). Returns the number of records (re)indexed. -}
+reindex : Store -> List ( String, String ) -> Task Error Int
+reindex store fieldTypes =
     case store of
 
         Store raw ->
-            reindexRaw raw indexFields
+            reindexRaw raw fieldTypes
 
 
-countByIndexRaw : Int -> String -> String -> Task Error Int
+countByIndexRaw : Int -> String -> String -> String -> Task Error Int
 countByIndexRaw =
     Ffi.kernel "BlueDB_countByIndex"
 
@@ -316,9 +343,24 @@ countByIndexRaw =
 {-| Count the records whose indexed `field` equals `value` — counts index entries
 (no record fetch). Exact as-of-snapshot. An O(N)-scan analytics op (cold path), not
 a hot-path point read. -}
-countByIndex : Store -> String -> String -> Task Error Int
-countByIndex store field value =
+countByIndex : Store -> String -> String -> String -> Task Error Int
+countByIndex store field value colType =
     case store of
 
         Store raw ->
-            countByIndexRaw raw field value
+            countByIndexRaw raw field value colType
+
+
+countByIndexRangeRaw : Int -> String -> String -> Bool -> String -> Bool -> String -> Task Error Int
+countByIndexRangeRaw =
+    Ffi.kernel "BlueDB_countByIndexRange"
+
+
+{-| Count the records whose indexed `field` is in `[lo, hi)` (see `findByIndexRange`
+for the bound + colType rules). -}
+countByIndexRange : Store -> String -> String -> Bool -> String -> Bool -> String -> Task Error Int
+countByIndexRange store field colType hasLo lo hasHi hi =
+    case store of
+
+        Store raw ->
+            countByIndexRangeRaw raw field colType hasLo lo hasHi hi
