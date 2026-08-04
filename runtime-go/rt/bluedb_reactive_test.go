@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -86,5 +87,68 @@ func TestReactivePump(t *testing.T) {
 func TestReactiveCollTopic(t *testing.T) {
 	if got := bluedbCollTopic("todos"); got != "__bluedb:todos" {
 		t.Fatalf("topic = %q", got)
+	}
+}
+
+func parseCondNode(t *testing.T, s string) map[string]any {
+	t.Helper()
+	if s == "" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		t.Fatalf("parse cond: %v", err)
+	}
+	return m
+}
+
+// P-R3: the query-overlap engine re-runs iff a change could change the result —
+// row enters (match), row leaves (was in result), delete of a result pk — and
+// skips provably-irrelevant changes.
+func TestChangeAffectsQuery(t *testing.T) {
+	// query: status == "active", currently showing {u1}
+	cond := parseCondNode(t, `{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}}`)
+	sub := newBluedbQuerySub("users", cond)
+	sub.setResultPks([]string{"u1"})
+
+	put := func(coll, pk, rec string) bluedbRecordChange {
+		return bluedbRecordChange{Coll: coll, Pk: pk, Record: rec}
+	}
+	del := func(coll, pk string) bluedbRecordChange {
+		return bluedbRecordChange{Coll: coll, Pk: pk, IsDelete: true}
+	}
+
+	cases := []struct {
+		name string
+		rc   bluedbRecordChange
+		want bool
+	}{
+		{"row enters (new active)", put("users", "u2", `{"status":"active"}`), true},
+		{"unrelated put (idle, not in result)", put("users", "u3", `{"status":"idle"}`), false},
+		{"result row updated (u1 → idle: may leave)", put("users", "u1", `{"status":"idle"}`), true},
+		{"result row deleted", del("users", "u1"), true},
+		{"delete of non-result row", del("users", "u3"), false},
+		{"other collection", put("orders", "o1", `{"status":"active"}`), false},
+		{"resync", bluedbRecordChange{Resync: true}, true},
+		{"undecodable record → re-run", put("users", "u4", `{not json`), true},
+	}
+	for _, c := range cases {
+		if got := bluedbChangeAffectsQuery(c.rc, sub); got != c.want {
+			t.Errorf("%s: affects=%v want %v", c.name, got, c.want)
+		}
+	}
+
+	// match-all query (no where_): any put to its collection affects it; a delete
+	// only if the pk was in the result.
+	all := newBluedbQuerySub("users", parseCondNode(t, ""))
+	all.setResultPks([]string{"z"})
+	if !bluedbChangeAffectsQuery(put("users", "new", `{"x":1}`), all) {
+		t.Fatal("match-all: a put must affect it")
+	}
+	if bluedbChangeAffectsQuery(del("users", "other"), all) {
+		t.Fatal("match-all: deleting a non-result pk must not affect it")
+	}
+	if !bluedbChangeAffectsQuery(del("users", "z"), all) {
+		t.Fatal("match-all: deleting a result pk must affect it")
 	}
 }

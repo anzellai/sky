@@ -9,6 +9,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"strings"
 
 	"sky-app/bluedb"
@@ -63,6 +64,63 @@ func bluedbDecodeChanges(evs []bluedb.ChangeEvent) []bluedbRecordChange {
 		out = append(out, rc)
 	}
 	return out
+}
+
+// ── Query-overlap engine (P-R3 / decision A2) ────────────────────────────────
+//
+// A reactive query subscription tracks its collection, its Cond (the P5 plan node,
+// evaluated by bluedbEvalCond), and the pk set of its current result. Given a
+// record change, bluedbChangeAffectsQuery decides whether the query MUST re-run —
+// a precise, correct-by-construction narrowing of the always-re-run fallback.
+
+type bluedbQuerySub struct {
+	coll      string
+	cond      map[string]any  // P5 plan Cond node; nil/empty ⇒ match-all
+	resultPks map[string]bool // pks currently in the query's result set
+}
+
+func newBluedbQuerySub(coll string, cond map[string]any) *bluedbQuerySub {
+	return &bluedbQuerySub{coll: coll, cond: cond, resultPks: map[string]bool{}}
+}
+
+// setResultPks replaces the tracked result-pk set (called after each (re-)run).
+func (s *bluedbQuerySub) setResultPks(pks []string) {
+	m := make(map[string]bool, len(pks))
+	for _, pk := range pks {
+		m[pk] = true
+	}
+	s.resultPks = m
+}
+
+// bluedbChangeAffectsQuery reports whether a record change could change the query's
+// result set, so the query must re-run. Reasoning (never misses a transition —
+// enter, leave, or in-place change — while skipping provably-irrelevant changes):
+//   - resync → always (we missed deltas).
+//   - other collection → never.
+//   - pk already IN the result → any change to it (update or delete) can change the
+//     result → re-run.
+//   - pk NOT in the result + delete → deleting a row that wasn't shown can't change
+//     the result → skip.
+//   - pk NOT in the result + put/update → re-run IFF the new record now matches the
+//     Cond (the row just entered the result).
+func bluedbChangeAffectsQuery(rc bluedbRecordChange, s *bluedbQuerySub) bool {
+	if rc.Resync {
+		return true
+	}
+	if rc.Coll != s.coll {
+		return false
+	}
+	if s.resultPks[rc.Pk] {
+		return true
+	}
+	if rc.IsDelete {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(rc.Record), &m) != nil {
+		return true // undecodable record → re-run rather than risk missing a change
+	}
+	return bluedbEvalCond(s.cond, m)
 }
 
 // bluedbStartReactivePump subscribes to a store's change-feed and pumps decoded
