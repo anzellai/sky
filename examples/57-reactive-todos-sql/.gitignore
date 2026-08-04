@@ -4,3 +4,4 @@ sky-out/
 data/
 *.db
 *.db-*
+DATABASE_URL*
