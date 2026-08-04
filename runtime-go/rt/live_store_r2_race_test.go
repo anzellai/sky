@@ -67,3 +67,49 @@ func TestReapEncodeUnderLockR2(t *testing.T) {
 	wg.Wait()
 	_ = store.Close()
 }
+
+// R1 regression: server-initiated (async) dispatches must persist their Model
+// mutation, so it survives a restart. Before the fix, only human-interaction
+// paths called store.Set — Cmd.perform / Time.every / pub-sub / reactive
+// refresh mutated sess.model + shipped an (acked) SSE frame the server then
+// forgot on restart. This drives persistSession (as the async paths now do) and
+// verifies the mutation is durable across a store reopen (a "restart").
+func TestAsyncDispatchPersistsR1(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sess.blue"
+	store, err := newBlueDBStore(path, time.Hour)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	app := &liveApp{store: store}
+	sess := &liveSession{
+		sid:       "s1",
+		sseCh:     make(chan sseFrame, 4),
+		cancelSub: make(chan struct{}),
+		done:      make(chan struct{}),
+		model:     map[string]any{"n": float64(1)},
+	}
+	store.Set("s1", sess) // initial persist (as mount would)
+
+	// Simulate an async dispatch: mutate the Model, then persist under sess.mu.
+	sess.mu.Lock()
+	sess.model = map[string]any{"n": float64(42)}
+	app.persistSession(sess)
+	sess.mu.Unlock()
+	_ = store.Close()
+
+	// "Restart": reopen the file + Get (decodes from disk, no memCache).
+	store2, err := newBlueDBStore(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store2.Close()
+	got, ok := store2.Get("s1")
+	if !ok {
+		t.Fatal("session not persisted across restart")
+	}
+	m, _ := got.model.(map[string]any)
+	if m["n"] != float64(42) {
+		t.Fatalf("async Model mutation not persisted: n=%v want 42", m["n"])
+	}
+}

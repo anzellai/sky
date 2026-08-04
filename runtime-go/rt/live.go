@@ -4771,6 +4771,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		}
 		haveFrame = true
 	}
+	app.persistSession(sess) // R1: persist the batched-dispatch Model mutation
 	sess.mu.Unlock()
 	// Push to other subscribers (other tabs, SSE listeners). The
 	// originating tab has already unloaded so the frame is for anyone
@@ -5328,6 +5329,23 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 	})
 }
 
+// persistSession checkpoints the session to the store after a dispatch.
+//
+// MUST be called with sess.mu held — encodeSession reads + reflect-walks
+// sess.model, so an off-lock persist races an async dispatch reassigning
+// sess.model into an unrecoverable concurrent-map crash (R2).
+//
+// Server-initiated dispatches (Cmd.perform completion, Time.every, pub-sub,
+// WebSocket, reactive refresh) call this so their Model mutations survive a
+// restart (R1) — the human-interaction paths (mount/event) already persist, but
+// the async paths did not, silently losing async/real-time state on restart.
+func (app *liveApp) persistSession(sess *liveSession) {
+	if app == nil || app.store == nil || sess == nil {
+		return
+	}
+	app.store.Set(sess.sid, sess)
+}
+
 func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// task is a Sky Task — a zero-arg func() any returning SkyResult.
 	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
@@ -5379,6 +5397,11 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 		}
 		haveFrame = true
 	}
+	// R1: persist the server-initiated Model mutation so it survives a restart.
+	// Cmd.perform completion mutates sess.model + ships an (acked) SSE frame; only
+	// human-interaction paths persisted before, so async/real-time state was
+	// silently lost on restart. Under sess.mu (R2).
+	app.persistSession(sess)
 	sess.mu.Unlock()
 	if !haveFrame {
 		return
@@ -5597,6 +5620,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 					}
 					haveFrame = true
 				}
+				app.persistSession(sess) // R1: persist the Time.every tick's Model mutation
 				sess.mu.Unlock()
 				// Suppress SSE write when the tick didn't change
 				// the view — prevents Time.every from pushing an
@@ -5829,6 +5853,7 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 		}
 		haveFrame = true
 	}
+	app.persistSession(sess) // R1: persist the pub-sub delivery's Model mutation
 	sess.mu.Unlock()
 	if !haveFrame {
 		return
@@ -6044,6 +6069,7 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 		}
 		haveFrame = true
 	}
+	app.persistSession(sess) // R1: persist the WebSocket delivery's Model mutation
 	sess.mu.Unlock()
 	if !haveFrame {
 		return

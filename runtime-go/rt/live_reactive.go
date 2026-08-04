@@ -290,6 +290,7 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) (retry b
 		}
 		haveFrame = true
 	}
+	app.persistSession(sess) // R1: persist the reactive refresh's Model mutation
 	sess.mu.Unlock()
 	if !haveFrame {
 		return errored
