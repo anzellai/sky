@@ -42,6 +42,8 @@ tuiStore =
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
     , readDataStores = \_ -> Task.succeed []
     , readDataRows = \_ _ -> Task.succeed []
+    , readSqlSources = \_ -> Task.succeed []
+    , readSqlRows = \_ _ -> Task.succeed ( [], [], [] )
     }
 
 
@@ -72,6 +74,12 @@ init _ =
       , dataSelectedStore = ""
       , dataRows = []
       , dataPrefix = ""
+      , sqlSources = []
+      , sqlSelectedSource = ""
+      , sqlSelectedTable = ""
+      , sqlColumns = []
+      , sqlRows = []
+      , sqlRedacted = []
       }
     , Cmd.none
     )

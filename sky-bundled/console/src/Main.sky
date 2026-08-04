@@ -198,6 +198,51 @@ dataRowDecoder =
         (Decode.oneOf [ Decode.field "value" Decode.string, Decode.succeed "" ])
 
 
+-- SQL-source browsing wire decoders. Discovery returns
+-- `{sqlSources:[{name,label,tables}]}`; each source maps to a
+-- ( handle, label, tables ) 3-TUPLE — NEVER a { name, label, tables }
+-- record (that field set risks the record-fieldset codegen collision
+-- the DataTab comment warns about). Browse returns
+-- `{columns:[...],rows:[[...]],redacted:[...]}` → a
+-- ( columns, rows, redacted ) tuple. Missing fields tolerate to empties.
+sqlSourcesDecoder : Decode.Decoder (List ( String, String, List String ))
+sqlSourcesDecoder =
+    Decode.oneOf
+        [ Decode.field "sqlSources" (Decode.list sqlSourceDecoder)
+        , Decode.succeed []
+        ]
+
+
+sqlSourceDecoder : Decode.Decoder ( String, String, List String )
+sqlSourceDecoder =
+    Decode.map3
+        (\n l t -> ( n, l, t ))
+        (Decode.oneOf [ Decode.field "name" Decode.string, Decode.succeed "" ])
+        (Decode.oneOf [ Decode.field "label" Decode.string, Decode.succeed "" ])
+        (Decode.oneOf
+            [ Decode.field "tables" (Decode.list Decode.string)
+            , Decode.succeed []
+            ])
+
+
+sqlRowsDecoder : Decode.Decoder ( List String, List (List String), List String )
+sqlRowsDecoder =
+    Decode.map3
+        (\c r red -> ( c, r, red ))
+        (Decode.oneOf
+            [ Decode.field "columns" (Decode.list Decode.string)
+            , Decode.succeed []
+            ])
+        (Decode.oneOf
+            [ Decode.field "rows" (Decode.list (Decode.list Decode.string))
+            , Decode.succeed []
+            ])
+        (Decode.oneOf
+            [ Decode.field "redacted" (Decode.list Decode.string)
+            , Decode.succeed []
+            ])
+
+
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
@@ -234,6 +279,12 @@ httpStore parent =
     -- parent's /_sky/console/api/data endpoint (reads are open in dev).
     , readDataStores = \_ -> fetchDataStores parent
     , readDataRows = \store prefix -> fetchDataRows parent store prefix
+    -- SQL-source browsing over the SAME /_sky/console/api/data
+    -- discovery endpoint (its response carries both `stores` and
+    -- `sqlSources`); a browse hits `?sql=<handle>&table=<t>`. The
+    -- handle is an opaque server-side key (never a raw DSN).
+    , readSqlSources = \_ -> fetchSqlSources parent
+    , readSqlRows = \handle table -> fetchSqlRows parent handle table
     }
 
 
@@ -332,6 +383,12 @@ init _req =
             , dataSelectedStore = ""
             , dataRows = []
             , dataPrefix = ""
+            , sqlSources = []
+            , sqlSelectedSource = ""
+            , sqlSelectedTable = ""
+            , sqlColumns = []
+            , sqlRows = []
+            , sqlRedacted = []
             }
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the
@@ -575,6 +632,46 @@ update msg model =
                   GotDataRows
             )
 
+        -- SQL-source browsing handlers.
+        GotSqlSources (Ok ss) ->
+            ( { model | sqlSources = ss, lastError = "" }, Cmd.none )
+
+        GotSqlSources (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        -- Picking a source clears any previously-selected table + rows;
+        -- the user then picks a table from the source's inline list.
+        SelectSqlSource h ->
+            ( { model | sqlSelectedSource = h
+              , sqlSelectedTable = ""
+              , sqlColumns = []
+              , sqlRows = []
+              , sqlRedacted = []
+              }
+            , Cmd.none
+            )
+
+        -- Selecting a table fetches its columns + rows for the
+        -- currently-selected source handle.
+        SelectSqlTable t ->
+            ( { model | sqlSelectedTable = t }
+            , Cmd.perform
+                  (model.store.readSqlRows model.sqlSelectedSource t)
+                  GotSqlRows
+            )
+
+        GotSqlRows (Ok ( cols, rows, red )) ->
+            ( { model | sqlColumns = cols
+              , sqlRows = rows
+              , sqlRedacted = red
+              , lastError = ""
+              }
+            , Cmd.none
+            )
+
+        GotSqlRows (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg
 fetchLogsOnly model filter =
@@ -673,8 +770,11 @@ tabFetches model tab filter =
 
             -- exp/bluedb: fetch the open-store list on tab select;
             -- picking a store then fetches its rows (SelectDataStore).
+            -- Also fetch the SQL sources (same discovery endpoint).
             DataTab ->
-                [ Cmd.perform (model.store.readDataStores ()) GotDataStores ]
+                [ Cmd.perform (model.store.readDataStores ()) GotDataStores
+                , Cmd.perform (model.store.readSqlSources ()) GotSqlSources
+                ]
 
     else
         case tab of
@@ -705,7 +805,9 @@ tabFetches model tab filter =
                 [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
 
             DataTab ->
-                [ Cmd.perform (model.store.readDataStores ()) GotDataStores ]
+                [ Cmd.perform (model.store.readDataStores ()) GotDataStores
+                , Cmd.perform (model.store.readSqlSources ()) GotSqlSources
+                ]
 
 
 consoleAuthToken : String
@@ -824,6 +926,28 @@ fetchDataRows parent store prefix =
             ++ Encoding.urlEncode prefix)
         |> Task.andThenResult
                (\resp -> Decode.decodeString dataRowsDecoder resp.body)
+
+
+-- List the host app's registered SQL sources. Shares the discovery
+-- endpoint with fetchDataStores — the response carries both `stores`
+-- (BlueDB) and `sqlSources` (SQL); we decode only the latter here.
+fetchSqlSources : String -> Task Error (List ( String, String, List String ))
+fetchSqlSources parent =
+    authGet (parent ++ "/_sky/console/api/data")
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString sqlSourcesDecoder resp.body)
+
+
+-- Browse one SQL source's table. `handle` is the opaque server-side
+-- source key; `table` is a plain identifier — both are safe idents so
+-- no URL-encoding is needed. Returns ( columns, rows, redacted ).
+fetchSqlRows : String -> String -> String -> Task Error ( List String, List (List String), List String )
+fetchSqlRows parent handle table =
+    authGet
+        (parent ++ "/_sky/console/api/data?sql=" ++ handle ++ "&table=" ++ table
+            ++ "&limit=200")
+        |> Task.andThenResult
+               (\resp -> Decode.decodeString sqlRowsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg

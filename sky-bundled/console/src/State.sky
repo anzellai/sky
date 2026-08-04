@@ -354,6 +354,8 @@ type alias Store =
     , readAnalytics : () -> Task Error Analytics
     , readDataStores : () -> Task Error (List String)
     , readDataRows : String -> String -> Task Error (List ( String, String ))
+    , readSqlSources : () -> Task Error (List ( String, String, List String ))
+    , readSqlRows : String -> String -> Task Error ( List String, List (List String), List String )
     }
     -- exp/bluedb: read-only Data plane over the host app's open
     -- BlueDB stores, served by the parent's
@@ -398,6 +400,12 @@ type alias Model =
     , dataSelectedStore : String
     , dataRows : List ( String, String )
     , dataPrefix : String
+    , sqlSources : List ( String, String, List String )
+    , sqlSelectedSource : String
+    , sqlSelectedTable : String
+    , sqlColumns : List String
+    , sqlRows : List (List String)
+    , sqlRedacted : List String
     }
     -- exp/bluedb Data tab state. `dataStores` is the open-store
     -- list; `dataSelectedStore` is the store whose rows are shown
@@ -466,6 +474,10 @@ type Msg
     | GotDataRows (Result Error (List ( String, String )))
     | SelectDataStore String
     | DataPrefixQuery String
+    | GotSqlSources (Result Error (List ( String, String, List String )))
+    | SelectSqlSource String
+    | SelectSqlTable String
+    | GotSqlRows (Result Error ( List String, List (List String), List String ))
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
     -- A successful response with a tenant claim derives the

@@ -76,8 +76,18 @@ mono =
 
 
 -- ─── Entry point ────────────────────────────────────────────────
+-- Two independent planes stack vertically: the BlueDB key/value
+-- browser (top) and the SQL-source browser (below). Each renders
+-- only when it has data — an app with only SQL sources shows just
+-- the SQL section, and vice versa.
 dataView : Model -> List (Element Msg)
 dataView model =
+    bluedbSection model ++ sqlSection model
+
+
+-- ── BlueDB plane ────────────────────────────────────────────────
+bluedbSection : Model -> List (Element Msg)
+bluedbSection model =
     if List.isEmpty model.dataStores then
         [ panel "BlueDB stores" [ emptyState "no BlueDB stores open" ] ]
 
@@ -87,6 +97,24 @@ dataView model =
               [ storesPanel model.dataStores model.dataSelectedStore
               , rowsPanel model
               ]
+        ]
+
+
+-- ── SQL plane ───────────────────────────────────────────────────
+-- Left: a list of SQL sources (shown by `label`); the selected
+-- source expands its inline `tables`. Right: the selected table's
+-- columns header (redacted columns flagged with a lock) + rows.
+-- Renders nothing when there are no SQL sources so a BlueDB-only
+-- app is unaffected.
+sqlSection : Model -> List (Element Msg)
+sqlSection model =
+    if List.isEmpty model.sqlSources then
+        []
+
+    else
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 12 ]
+              [ sqlSourcesPanel model, sqlRowsPanel model ]
         ]
 
 
@@ -271,3 +299,178 @@ emptyState message =
     Ui.el
         [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
         (Ui.text message)
+
+
+-- ── SQL sources list (left pane) ────────────────────────────────
+-- Each source is a ( handle, label, tables ) 3-TUPLE — destructured
+-- via let-pattern (Sky has no 3-tuple fst/snd). The handle is the
+-- opaque selection key; the label is what the user sees.
+sqlSourcesPanel : Model -> Element Msg
+sqlSourcesPanel model =
+    Ui.el
+        [ Ui.width (Ui.fillPortion 1), Ui.alignTop ]
+        (panel
+            "SQL sources"
+            (List.map
+                (sqlSourceView model.sqlSelectedSource model.sqlSelectedTable)
+                model.sqlSources))
+
+
+sqlSourceView : String -> String -> ( String, String, List String ) -> Element Msg
+sqlSourceView selectedSource selectedTable source =
+    let
+        ( handle, label, tables ) = source
+        isSel = handle == selectedSource
+    in
+        Ui.column
+            [ Ui.width Ui.fill, Ui.spacing 3 ]
+            (sqlSourceHeader isSel handle label
+                :: (if isSel then
+                       List.map (sqlTableRowView selectedTable) tables
+
+                   else
+                       []))
+
+
+sqlSourceHeader : Bool -> String -> String -> Element Msg
+sqlSourceHeader isSel handle label =
+    Ui.el
+        [ Ui.onClick (SelectSqlSource handle)
+        , Ui.pointer
+        , Ui.width Ui.fill
+        , Ui.paddingXY 6 5
+        , Border.rounded 4
+        , Background.color
+              (if isSel then
+                  bgSel
+
+              else
+                  bgRaised)
+        , Font.size 12
+        , Font.color
+              (if isSel then
+                  textPrimary
+
+              else
+                  textSecondary)
+        , Font.family mono
+        ]
+        (Ui.text label)
+
+
+sqlTableRowView : String -> String -> Element Msg
+sqlTableRowView selectedTable table =
+    let
+        isSel = table == selectedTable
+    in
+        Ui.el
+            [ Ui.onClick (SelectSqlTable table)
+            , Ui.pointer
+            , Ui.width Ui.fill
+            , Ui.paddingEach { top = 4, right = 6, bottom = 4, left = 18 }
+            , Border.rounded 4
+            , Background.color
+                  (if isSel then
+                      bgSel
+
+                  else
+                      bgRaised)
+            , Font.size 11
+            , Font.color
+                  (if isSel then
+                      accent
+
+                  else
+                      textMuted)
+            , Font.family mono
+            ]
+            (Ui.text table)
+
+
+-- ── SQL rows pane (columns header + row table, right pane) ───────
+sqlRowsPanel : Model -> Element Msg
+sqlRowsPanel model =
+    Ui.el
+        [ Ui.width (Ui.fillPortion 2), Ui.alignTop ]
+        (if model.sqlSelectedSource == "" then
+            panel
+                "Rows"
+                [ emptyState "select a SQL source to browse its tables" ]
+
+        else if model.sqlSelectedTable == "" then
+            panel "Rows" [ emptyState "select a table to view its rows" ]
+
+        else
+            panel
+                model.sqlSelectedTable
+                (sqlCountLine model.sqlRows
+                    :: sqlHeaderRow model.sqlColumns model.sqlRedacted
+                    :: sqlDataRows model.sqlRows))
+
+
+sqlCountLine : List (List String) -> Element Msg
+sqlCountLine rows =
+    Ui.el
+        [ Font.size 11, Font.color textMuted, Ui.paddingXY 0 2 ]
+        (Ui.text (String.fromInt (List.length rows) ++ " rows"))
+
+
+sqlHeaderRow : List String -> List String -> Element Msg
+sqlHeaderRow columns redacted =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 0 5
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color border_
+        ]
+        (List.map (sqlHeaderCell redacted) columns)
+
+
+sqlHeaderCell : List String -> String -> Element Msg
+sqlHeaderCell redacted col =
+    Ui.el
+        [ Ui.width Ui.fill
+        , Font.size 11
+        , Font.bold
+        , Font.color textMuted
+        , Font.family mono
+        ]
+        (Ui.text
+            (if List.member col redacted then
+                col ++ " 🔒"
+
+            else
+                col))
+
+
+sqlDataRows : List (List String) -> List (Element Msg)
+sqlDataRows rows =
+    if List.isEmpty rows then
+        [ emptyState "no rows" ]
+
+    else
+        List.map sqlDataRowView rows
+
+
+sqlDataRowView : List String -> Element Msg
+sqlDataRowView cells =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 5
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        (List.map sqlCellView cells)
+
+
+sqlCellView : String -> Element Msg
+sqlCellView cell =
+    Ui.el
+        [ Ui.width Ui.fill
+        , Font.size 12
+        , Font.color textSecondary
+        , Font.family mono
+        ]
+        (Ui.text (preview cell))

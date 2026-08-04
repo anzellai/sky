@@ -65,6 +65,12 @@ hubStore dbPath =
     -- is where the Data tab renders real stores.
     , readDataStores = \_ -> Task.succeed []
     , readDataRows = \_ _ -> Task.succeed []
+    -- SQL sources are per-host-app (like analytics + BlueDB), not
+    -- aggregated into the hub's console-hot.db, so the hub Store
+    -- surfaces an empty SQL plane. The embedded console (httpStore)
+    -- is where the Data tab's SQL section renders real sources.
+    , readSqlSources = \_ -> Task.succeed []
+    , readSqlRows = \_ _ -> Task.succeed ( [], [], [] )
     }
 
 

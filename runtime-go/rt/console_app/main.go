@@ -289,12 +289,18 @@ type State_Model_R struct {
 	DataSelectedStore string                                   `sky:"dataSelectedStore,string"`
 	DataRows          []rt.T2[string, string]                  `sky:"dataRows,[]rt.T2[string, string]"`
 	DataPrefix        string                                   `sky:"dataPrefix,string"`
+	SqlSources        []rt.T3[string, string, []string]        `sky:"sqlSources,[]rt.T3[string, string, []string]"`
+	SqlSelectedSource string                                   `sky:"sqlSelectedSource,string"`
+	SqlSelectedTable  string                                   `sky:"sqlSelectedTable,string"`
+	SqlColumns        []string                                 `sky:"sqlColumns,[]string"`
+	SqlRows           [][]string                               `sky:"sqlRows,[][]string"`
+	SqlRedacted       []string                                 `sky:"sqlRedacted,[]string"`
 }
 
 func init() { rt.RegisterGobType(State_Model_R{}) }
 
-func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[Std_Live_Console_Identity_R], p15 string, p16 State_Range, p17 int, p18 string, p19 State_Analytics_R, p20 string, p21 []string, p22 string, p23 []rt.T2[string, string], p24 string) State_Model_R {
-	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, LogFilter: p10, TraceQuery: p11, SelectedService: p12, ServiceStats: p13, Identity: p14, TenantPrefix: p15, Range: p16, NowMs: p17, GlobalQuery: p18, Analytics: p19, LogoutUrl: p20, DataStores: p21, DataSelectedStore: p22, DataRows: p23, DataPrefix: p24}
+func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[Std_Live_Console_Identity_R], p15 string, p16 State_Range, p17 int, p18 string, p19 State_Analytics_R, p20 string, p21 []string, p22 string, p23 []rt.T2[string, string], p24 string, p25 []rt.T3[string, string, []string], p26 string, p27 string, p28 []string, p29 [][]string, p30 []string) State_Model_R {
+	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, LogFilter: p10, TraceQuery: p11, SelectedService: p12, ServiceStats: p13, Identity: p14, TenantPrefix: p15, Range: p16, NowMs: p17, GlobalQuery: p18, Analytics: p19, LogoutUrl: p20, DataStores: p21, DataSelectedStore: p22, DataRows: p23, DataPrefix: p24, SqlSources: p25, SqlSelectedSource: p26, SqlSelectedTable: p27, SqlColumns: p28, SqlRows: p29, SqlRedacted: p30}
 }
 
 type State_Msg = rt.SkyADT
@@ -393,6 +399,22 @@ func State_Msg_DataPrefixQuery(v0 any) State_Msg {
 	return State_Msg{Tag: 23, SkyName: "DataPrefixQuery", Fields: []any{v0}}
 }
 
+func State_Msg_GotSqlSources(v0 any) State_Msg {
+	return State_Msg{Tag: 24, SkyName: "GotSqlSources", Fields: []any{v0}}
+}
+
+func State_Msg_SelectSqlSource(v0 any) State_Msg {
+	return State_Msg{Tag: 25, SkyName: "SelectSqlSource", Fields: []any{v0}}
+}
+
+func State_Msg_SelectSqlTable(v0 any) State_Msg {
+	return State_Msg{Tag: 26, SkyName: "SelectSqlTable", Fields: []any{v0}}
+}
+
+func State_Msg_GotSqlRows(v0 any) State_Msg {
+	return State_Msg{Tag: 27, SkyName: "GotSqlRows", Fields: []any{v0}}
+}
+
 func init() {
 	rt.RegisterAdtTag("SelectTab", 0)
 	rt.RegisterMsgVariant("State_Msg", "SelectTab", 0, 1)
@@ -442,6 +464,14 @@ func init() {
 	rt.RegisterMsgVariant("State_Msg", "SelectDataStore", 22, 1)
 	rt.RegisterAdtTag("DataPrefixQuery", 23)
 	rt.RegisterMsgVariant("State_Msg", "DataPrefixQuery", 23, 1)
+	rt.RegisterAdtTag("GotSqlSources", 24)
+	rt.RegisterMsgVariant("State_Msg", "GotSqlSources", 24, 1)
+	rt.RegisterAdtTag("SelectSqlSource", 25)
+	rt.RegisterMsgVariant("State_Msg", "SelectSqlSource", 25, 1)
+	rt.RegisterAdtTag("SelectSqlTable", 26)
+	rt.RegisterMsgVariant("State_Msg", "SelectSqlTable", 26, 1)
+	rt.RegisterAdtTag("GotSqlRows", 27)
+	rt.RegisterMsgVariant("State_Msg", "GotSqlRows", 27, 1)
 }
 
 type State_Overview_R struct {
@@ -493,26 +523,28 @@ func State_ServiceStat(p0 string, p1 string, p2 float64, p3 float64, p4 float64,
 }
 
 type State_Store_R struct {
-	ReadOverview        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]                    `sky:"readOverview,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]"`
-	ReadLogs            func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]         `sky:"readLogs,func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
-	ReadMetrics         func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                 `sky:"readMetrics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
-	ReadTraces          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                  `sky:"readTraces,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
-	ReadErrors          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                  `sky:"readErrors,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
-	ListServices        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                            `sky:"listServices,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
-	ReadServiceStats    func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]               `sky:"readServiceStats,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]"`
-	ReadFilteredLogs    func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] `sky:"readFilteredLogs,func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
-	ReadFilteredMetrics func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                   `sky:"readFilteredMetrics,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
-	ReadFilteredTraces  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                    `sky:"readFilteredTraces,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
-	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                    `sky:"readFilteredErrors,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
-	ReadAnalytics       func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]                   `sky:"readAnalytics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]"`
-	ReadDataStores      func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                            `sky:"readDataStores,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
-	ReadDataRows        func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]       `sky:"readDataRows,func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]"`
+	ReadOverview        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]                            `sky:"readOverview,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]"`
+	ReadLogs            func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]                 `sky:"readLogs,func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
+	ReadMetrics         func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                         `sky:"readMetrics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
+	ReadTraces          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                          `sky:"readTraces,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
+	ReadErrors          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                          `sky:"readErrors,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
+	ListServices        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                                    `sky:"listServices,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
+	ReadServiceStats    func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]                       `sky:"readServiceStats,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]"`
+	ReadFilteredLogs    func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]         `sky:"readFilteredLogs,func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
+	ReadFilteredMetrics func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                           `sky:"readFilteredMetrics,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
+	ReadFilteredTraces  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                            `sky:"readFilteredTraces,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
+	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                            `sky:"readFilteredErrors,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
+	ReadAnalytics       func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]                           `sky:"readAnalytics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]"`
+	ReadDataStores      func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                                    `sky:"readDataStores,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
+	ReadDataRows        func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]               `sky:"readDataRows,func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]"`
+	ReadSqlSources      func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]]           `sky:"readSqlSources,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]]"`
+	ReadSqlRows         func(string, string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]] `sky:"readSqlRows,func(string, string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]]"`
 }
 
 func init() { rt.RegisterGobType(State_Store_R{}) }
 
-func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R], p1 func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p2 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p3 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p4 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p5 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p6 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R], p7 func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p8 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p9 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p10 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p11 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R], p12 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p13 func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]) State_Store_R {
-	return State_Store_R{ReadOverview: p0, ReadLogs: p1, ReadMetrics: p2, ReadTraces: p3, ReadErrors: p4, ListServices: p5, ReadServiceStats: p6, ReadFilteredLogs: p7, ReadFilteredMetrics: p8, ReadFilteredTraces: p9, ReadFilteredErrors: p10, ReadAnalytics: p11, ReadDataStores: p12, ReadDataRows: p13}
+func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R], p1 func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p2 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p3 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p4 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p5 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p6 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R], p7 func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p8 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p9 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p10 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p11 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R], p12 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p13 func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]], p14 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]], p15 func(string, string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]]) State_Store_R {
+	return State_Store_R{ReadOverview: p0, ReadLogs: p1, ReadMetrics: p2, ReadTraces: p3, ReadErrors: p4, ListServices: p5, ReadServiceStats: p6, ReadFilteredLogs: p7, ReadFilteredMetrics: p8, ReadFilteredTraces: p9, ReadFilteredErrors: p10, ReadAnalytics: p11, ReadDataStores: p12, ReadDataRows: p13, ReadSqlSources: p14, ReadSqlRows: p15}
 }
 
 type State_Tab = int
@@ -1375,42 +1407,56 @@ func View_content(v_0 State_Model_R) Std_Ui_Element {
 }
 
 func DataTab_dataView(v_0 State_Model_R) []Std_Ui_Element {
+	return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.Concat(any(DataTab_bluedbSection(v_0)), any(DataTab_sqlSection(v_0))))
+}
+
+func DataTab_sqlSection(v_0 State_Model_R) []Std_Ui_Element {
 	return func() []Std_Ui_Element {
-		if /* FFI return */ rt.AsBool(rt.List_isEmpty(any(v_0.DataStores))) {
-			return []Std_Ui_Element{DataTab_panel("BlueDB stores", []Std_Ui_Element{DataTab_emptyState("no BlueDB stores open")})}
+		if /* FFI return */ rt.AsBool(rt.List_isEmpty(any(v_0.SqlSources))) {
+			return []Std_Ui_Element{}
 		} else {
-			return []Std_Ui_Element{Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{DataTab_storesPanel(v_0.DataStores, v_0.DataSelectedStore), DataTab_rowsPanel(v_0)})}
+			return []Std_Ui_Element{Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{DataTab_sqlSourcesPanel(v_0), DataTab_sqlRowsPanel(v_0)})}
 		}
 	}()
 }
 
-func DataTab_rowsPanel(v_0 State_Model_R) Std_Ui_Element {
+func DataTab_sqlRowsPanel(v_0 State_Model_R) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(2)), Std_Ui_alignTop()}, func() Std_Ui_Element {
-		if v_0.DataSelectedStore == "" {
-			return DataTab_panel("Rows", []Std_Ui_Element{DataTab_emptyState("select a store to browse its keys")})
+		if v_0.SqlSelectedSource == "" {
+			return DataTab_panel("Rows", []Std_Ui_Element{DataTab_emptyState("select a SQL source to browse its tables")})
 		} else {
-			return DataTab_panel(DataTab_storeLabel(v_0.DataSelectedStore) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_prefixRow(v_0.DataPrefix)), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_countLine(v_0.DataRows)), any(DataTab_rowsList(v_0.DataRows))))))))
+			return func() Std_Ui_Element {
+				if v_0.SqlSelectedTable == "" {
+					return DataTab_panel("Rows", []Std_Ui_Element{DataTab_emptyState("select a table to view its rows")})
+				} else {
+					return DataTab_panel(v_0.SqlSelectedTable /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_sqlCountLine(v_0.SqlRows)), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_sqlHeaderRow(v_0.SqlColumns, v_0.SqlRedacted)), any(DataTab_sqlDataRows(v_0.SqlRows))))))))
+				}
+			}()
 		}
 	}())
 }
 
-func DataTab_rowsList(v_0 []rt.T2[string, string]) []Std_Ui_Element {
+func DataTab_sqlDataRows(v_0 [][]string) []Std_Ui_Element {
 	return func() []Std_Ui_Element {
 		if /* FFI return */ rt.AsBool(rt.List_isEmpty(any(v_0))) {
-			return []Std_Ui_Element{DataTab_emptyState("no keys match")}
+			return []Std_Ui_Element{DataTab_emptyState("no rows")}
 		} else {
-			return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(DataTab_kvRowView), any(v_0)))
+			return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(DataTab_sqlDataRowView), any(v_0)))
 		}
 	}()
 }
 
-func DataTab_kvRowView(v_0 rt.T2[string, string]) Std_Ui_Element {
+func DataTab_sqlDataRowView(v_0 []string) Std_Ui_Element {
 	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 5), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
 		Bottom int
 		Left   int
 		Right  int
 		Top    int
-	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(DataTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(1)), Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(DataTab_accent()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.Basics_fst(any(v_0))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(2)), Std_Ui_Font_size(12), Std_Ui_Font_color(DataTab_textSecondary()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(DataTab_preview( /* FFI return */ rt.AsString(rt.Basics_snd(any(v_0))))))})
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(DataTab_borderSoft())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(DataTab_sqlCellView), any(v_0))))
+}
+
+func DataTab_sqlCellView(v_0 string) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(DataTab_textSecondary()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(DataTab_preview(v_0)))
 }
 
 func DataTab_preview(v_0 string) string {
@@ -1467,24 +1513,10 @@ func Std_Ui_fontSize(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrFontSize(v_0)
 }
 
-func Std_Ui_fillPortion(v_0 int) Std_Ui_Length {
-	return Std_Ui_Length_Fill(v_0)
-}
+var Std_Ui_fill__caf rt.LazyCaf[Std_Ui_Length]
 
-var DataTab_accent__caf rt.LazyCaf[Std_Ui_Color]
-
-func DataTab_accent() Std_Ui_Color {
-	return DataTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
-}
-
-var Std_Ui_Font_bold__caf rt.LazyCaf[Std_Ui_Attribute]
-
-func Std_Ui_Font_bold() Std_Ui_Attribute {
-	return Std_Ui_Font_bold__caf.Get(func() Std_Ui_Attribute { return Std_Ui_fontWeight(700) })
-}
-
-func Std_Ui_fontWeight(v_0 int) Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrFontWeight(v_0)
+func Std_Ui_fill() Std_Ui_Length {
+	return Std_Ui_fill__caf.Get(func() Std_Ui_Length { return Std_Ui_Length_Fill(1) })
 }
 
 var DataTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
@@ -1520,12 +1552,6 @@ func Std_Ui_spacing(v_0 int) Std_Ui_Attribute {
 
 func Std_Ui_paddingXY(v_0 int, v_1 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrPadding(v_1, v_0, v_1, v_0)
-}
-
-var Std_Ui_fill__caf rt.LazyCaf[Std_Ui_Length]
-
-func Std_Ui_fill() Std_Ui_Length {
-	return Std_Ui_fill__caf.Get(func() Std_Ui_Length { return Std_Ui_Length_Fill(1) })
 }
 
 func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
@@ -1570,18 +1596,80 @@ func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrPadding(v_0, v_0, v_0, v_0)
 }
 
-func DataTab_countLine(v_0 []rt.T2[string, string]) Std_Ui_Element {
-	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_paddingXY(0, 2)}, Std_Ui_text(( /* FFI return */ rt.AsString(rt.String_fromInt(any( /* FFI return */ rt.AsInt(rt.List_length(any(v_0)))))) + " keys")))
+func DataTab_sqlHeaderRow(v_0 []string, v_1 []string) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12), Std_Ui_paddingXY(0, 5), Std_Ui_Border_widthEach(struct {
+		Bottom int
+		Left   int
+		Right  int
+		Top    int
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(DataTab_border_())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(func(_p0 any) Std_Ui_Element { return DataTab_sqlHeaderCell(v_1 /* FFI return */, rt.AsString(_p0)) }), any(v_0))))
 }
 
-func DataTab_prefixRow(v_0 string) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 4)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(DataTab_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Prefix")), Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter keys by prefix…"), Std_Ui_htmlAttribute("value", v_0), Std_Ui_onInput( /* primitive join */ rt.Coerce[func(string) any](func(_p0 any) State_Msg { return State_Msg_DataPrefixQuery(_p0) })), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(DataTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(DataTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(DataTab_textPrimary()), Std_Ui_Font_size(11), Std_Ui_Font_family(DataTab_mono())})})
+func DataTab_sqlHeaderCell(v_0 []string, v_1 string) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(11), Std_Ui_Font_bold(), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(func() string {
+		if Sky_Core_List_member(v_1 /* primitive join */, rt.AsListT[any](v_0)) {
+			return (v_1 + " 🔒")
+		} else {
+			return v_1
+		}
+	}()))
 }
 
-var DataTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+func Sky_Core_List_member(v_0 any, v_1 []any) bool {
+	for {
+		_subj0 := v_1
+		if rt.SkyLen(_subj0) == 0 {
+			return false
+		}
+		if rt.SkyLen(_subj0) >= 1 {
+			v_2 := rt.SkyElem(_subj0, 0)
+			v_3 := rt.SkyTailSlice(_subj0)
+			_ = v_2
+			_ = v_3
+			if /* FFI return */ rt.AsBool(rt.Eq(v_0, v_2)) {
+				return true
+			} else {
+				_t1 := v_0
+				_t2 := v_3
+				v_0 = _t1
+				v_1 = _t2
+				continue
+			}
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
 
-func DataTab_textPrimary() Std_Ui_Color {
-	return DataTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
+var Std_Ui_Font_bold__caf rt.LazyCaf[Std_Ui_Attribute]
+
+func Std_Ui_Font_bold() Std_Ui_Attribute {
+	return Std_Ui_Font_bold__caf.Get(func() Std_Ui_Attribute { return Std_Ui_fontWeight(700) })
+}
+
+func Std_Ui_fontWeight(v_0 int) Std_Ui_Attribute {
+	return Std_Ui_Attribute_AttrFontWeight(v_0)
+}
+
+var DataTab_border___caf rt.LazyCaf[Std_Ui_Color]
+
+func DataTab_border_() Std_Ui_Color {
+	return DataTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
+}
+
+func DataTab_sqlCountLine(v_0 [][]string) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_paddingXY(0, 2)}, Std_Ui_text(( /* FFI return */ rt.AsString(rt.String_fromInt(any( /* FFI return */ rt.AsInt(rt.List_length(any(v_0)))))) + " rows")))
+}
+
+func DataTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(DataTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(DataTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
+}
+
+func Std_Ui_Font_letterSpacing(v_0 float64) Std_Ui_Attribute {
+	return Std_Ui_fontLetterSpacing(v_0)
+}
+
+func Std_Ui_fontLetterSpacing(v_0 float64) Std_Ui_Attribute {
+	return Std_Ui_Attribute_AttrFontLetterSpacing(v_0)
 }
 
 func Std_Ui_Border_rounded(v_0 int) Std_Ui_Attribute {
@@ -1590,12 +1678,6 @@ func Std_Ui_Border_rounded(v_0 int) Std_Ui_Attribute {
 
 func Std_Ui_borderRounded(v_0 int) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrBorderRounded(v_0)
-}
-
-var DataTab_border___caf rt.LazyCaf[Std_Ui_Color]
-
-func DataTab_border_() Std_Ui_Color {
-	return DataTab_border___caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(53, 59, 70) })
 }
 
 func Std_Ui_Border_width(v_0 int) Std_Ui_Attribute {
@@ -1618,6 +1700,183 @@ func Std_Ui_Background_color(v_0 Std_Ui_Color) Std_Ui_Attribute {
 
 func Std_Ui_bgColor(v_0 Std_Ui_Color) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrBgColor(v_0)
+}
+
+func Std_Ui_column(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_colMarker()), any(v_0)), v_1)
+}
+
+var Std_Ui_colMarker__caf rt.LazyCaf[Std_Ui_Attribute]
+
+func Std_Ui_colMarker() Std_Ui_Attribute {
+	return Std_Ui_colMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__col", "true") })
+}
+
+var Std_Ui_alignTop__caf rt.LazyCaf[Std_Ui_Attribute]
+
+func Std_Ui_alignTop() Std_Ui_Attribute {
+	return Std_Ui_alignTop__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrAlignY(Std_Ui_VAlign_AlignTop) })
+}
+
+func Std_Ui_fillPortion(v_0 int) Std_Ui_Length {
+	return Std_Ui_Length_Fill(v_0)
+}
+
+func DataTab_sqlSourcesPanel(v_0 State_Model_R) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(1)), Std_Ui_alignTop()}, DataTab_panel("SQL sources" /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(func(_p0 any) Std_Ui_Element {
+		return DataTab_sqlSourceView(v_0.SqlSelectedSource, v_0.SqlSelectedTable /* FFI return */, rt.Coerce[rt.T3[string, string, []string]](_p0))
+	}), any(v_0.SqlSources)))))
+}
+
+func DataTab_sqlSourceView(v_0 string, v_1 string, v_2 rt.T3[string, string, []string]) Std_Ui_Element {
+	return func() Std_Ui_Element {
+		_t0 := v_2
+		_ = _t0
+		v_4 := _t0.V0
+		v_5 := _t0.V1
+		v_6 := _t0.V2
+		_ = v_4
+		_ = v_5
+		_ = v_6
+		isSel_3 := (v_4 == v_0)
+		_ = isSel_3
+		return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(3)} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_sqlSourceHeader(isSel_3, v_4, v_5)), any(func() []Std_Ui_Element {
+			if isSel_3 {
+				return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(func(_p1 any) Std_Ui_Element { return DataTab_sqlTableRowView(v_1 /* FFI return */, rt.AsString(_p1)) }), any(v_6)))
+			} else {
+				return []Std_Ui_Element{}
+			}
+		}()))))
+	}()
+}
+
+func DataTab_sqlTableRowView(v_0 string, v_1 string) Std_Ui_Element {
+	return func() Std_Ui_Element {
+		isSel_2 := (v_1 == v_0)
+		_ = isSel_2
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_onClick(State_Msg_SelectSqlTable(v_1)), Std_Ui_pointer(), Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingEach(struct {
+			Bottom int
+			Left   int
+			Right  int
+			Top    int
+		}{Top: 4, Right: 6, Bottom: 4, Left: 18}), Std_Ui_Border_rounded(4), Std_Ui_Background_color(func() Std_Ui_Color {
+			if isSel_2 {
+				return DataTab_bgSel()
+			} else {
+				return DataTab_bgRaised()
+			}
+		}()), Std_Ui_Font_size(11), Std_Ui_Font_color(func() Std_Ui_Color {
+			if isSel_2 {
+				return DataTab_accent()
+			} else {
+				return DataTab_textMuted()
+			}
+		}()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(v_1))
+	}()
+}
+
+var DataTab_accent__caf rt.LazyCaf[Std_Ui_Color]
+
+func DataTab_accent() Std_Ui_Color {
+	return DataTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
+}
+
+var DataTab_bgSel__caf rt.LazyCaf[Std_Ui_Color]
+
+func DataTab_bgSel() Std_Ui_Color {
+	return DataTab_bgSel__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 60, 90) })
+}
+
+func Std_Ui_paddingEach(v_0 struct {
+	Bottom int
+	Left   int
+	Right  int
+	Top    int
+}) Std_Ui_Attribute {
+	return Std_Ui_Attribute_AttrPadding(v_0.Top, v_0.Right, v_0.Bottom, v_0.Left)
+}
+
+var Std_Ui_pointer__caf rt.LazyCaf[Std_Ui_Attribute]
+
+func Std_Ui_pointer() Std_Ui_Attribute {
+	return Std_Ui_pointer__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrPointer() })
+}
+
+func Std_Ui_onClick(v_0 any) Std_Ui_Attribute {
+	return Std_Ui_Attribute_AttrEvent(Std_Html_Events_onClick(v_0))
+}
+
+func Std_Html_Events_onClick(v_0 any) Std_Ui_Attribute {
+	return /* primitive join */ rt.Coerce[Std_Ui_Attribute](Std_Html_Attributes_Attribute_EventAttr(Std_Html_Attributes_Event_OnMsg("click", v_0)))
+}
+
+func DataTab_sqlSourceHeader(v_0 bool, v_1 string, v_2 string) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_onClick(State_Msg_SelectSqlSource(v_1)), Std_Ui_pointer(), Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(6, 5), Std_Ui_Border_rounded(4), Std_Ui_Background_color(func() Std_Ui_Color {
+		if v_0 {
+			return DataTab_bgSel()
+		} else {
+			return DataTab_bgRaised()
+		}
+	}()), Std_Ui_Font_size(12), Std_Ui_Font_color(func() Std_Ui_Color {
+		if v_0 {
+			return DataTab_textPrimary()
+		} else {
+			return DataTab_textSecondary()
+		}
+	}()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(v_2))
+}
+
+var DataTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
+
+func DataTab_textPrimary() Std_Ui_Color {
+	return DataTab_textPrimary__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(240, 243, 247) })
+}
+
+func DataTab_bluedbSection(v_0 State_Model_R) []Std_Ui_Element {
+	return func() []Std_Ui_Element {
+		if /* FFI return */ rt.AsBool(rt.List_isEmpty(any(v_0.DataStores))) {
+			return []Std_Ui_Element{DataTab_panel("BlueDB stores", []Std_Ui_Element{DataTab_emptyState("no BlueDB stores open")})}
+		} else {
+			return []Std_Ui_Element{Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{DataTab_storesPanel(v_0.DataStores, v_0.DataSelectedStore), DataTab_rowsPanel(v_0)})}
+		}
+	}()
+}
+
+func DataTab_rowsPanel(v_0 State_Model_R) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(2)), Std_Ui_alignTop()}, func() Std_Ui_Element {
+		if v_0.DataSelectedStore == "" {
+			return DataTab_panel("Rows", []Std_Ui_Element{DataTab_emptyState("select a store to browse its keys")})
+		} else {
+			return DataTab_panel(DataTab_storeLabel(v_0.DataSelectedStore) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_prefixRow(v_0.DataPrefix)), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(DataTab_countLine(v_0.DataRows)), any(DataTab_rowsList(v_0.DataRows))))))))
+		}
+	}())
+}
+
+func DataTab_rowsList(v_0 []rt.T2[string, string]) []Std_Ui_Element {
+	return func() []Std_Ui_Element {
+		if /* FFI return */ rt.AsBool(rt.List_isEmpty(any(v_0))) {
+			return []Std_Ui_Element{DataTab_emptyState("no keys match")}
+		} else {
+			return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(DataTab_kvRowView), any(v_0)))
+		}
+	}()
+}
+
+func DataTab_kvRowView(v_0 rt.T2[string, string]) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 5), Std_Ui_spacing(12), Std_Ui_Border_widthEach(struct {
+		Bottom int
+		Left   int
+		Right  int
+		Top    int
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(DataTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(1)), Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(DataTab_accent()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.Basics_fst(any(v_0))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(2)), Std_Ui_Font_size(12), Std_Ui_Font_color(DataTab_textSecondary()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(DataTab_preview( /* FFI return */ rt.AsString(rt.Basics_snd(any(v_0))))))})
+}
+
+func DataTab_countLine(v_0 []rt.T2[string, string]) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_paddingXY(0, 2)}, Std_Ui_text(( /* FFI return */ rt.AsString(rt.String_fromInt(any( /* FFI return */ rt.AsInt(rt.List_length(any(v_0)))))) + " keys")))
+}
+
+func DataTab_prefixRow(v_0 string) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 4)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(DataTab_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Prefix")), Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter keys by prefix…"), Std_Ui_htmlAttribute("value", v_0), Std_Ui_onInput( /* primitive join */ rt.Coerce[func(string) any](func(_p0 any) State_Msg { return State_Msg_DataPrefixQuery(_p0) })), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(DataTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(DataTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(DataTab_textPrimary()), Std_Ui_Font_size(11), Std_Ui_Font_family(DataTab_mono())})})
 }
 
 func Std_Ui_onInput(v_0 func(string) any) Std_Ui_Attribute {
@@ -1672,34 +1931,6 @@ func Sky_Core_List_head(v_0 []any) rt.SkyMaybe[any] {
 	}()
 }
 
-func DataTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(DataTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(DataTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(DataTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))), any(v_1))))
-}
-
-func Std_Ui_Font_letterSpacing(v_0 float64) Std_Ui_Attribute {
-	return Std_Ui_fontLetterSpacing(v_0)
-}
-
-func Std_Ui_fontLetterSpacing(v_0 float64) Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrFontLetterSpacing(v_0)
-}
-
-func Std_Ui_column(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_colMarker()), any(v_0)), v_1)
-}
-
-var Std_Ui_colMarker__caf rt.LazyCaf[Std_Ui_Attribute]
-
-func Std_Ui_colMarker() Std_Ui_Attribute {
-	return Std_Ui_colMarker__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrStyle("__col", "true") })
-}
-
-var Std_Ui_alignTop__caf rt.LazyCaf[Std_Ui_Attribute]
-
-func Std_Ui_alignTop() Std_Ui_Attribute {
-	return Std_Ui_alignTop__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrAlignY(Std_Ui_VAlign_AlignTop) })
-}
-
 func DataTab_storesPanel(v_0 []string, v_1 string) Std_Ui_Element {
 	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fillPortion(1)), Std_Ui_alignTop()}, DataTab_panel("Open stores" /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_mapAny(any(func(_p0 any) Std_Ui_Element { return DataTab_storeRowView(v_1 /* FFI return */, rt.AsString(_p0)) }), any(v_0)))))
 }
@@ -1722,26 +1953,6 @@ func DataTab_storeRowView(v_0 string, v_1 string) Std_Ui_Element {
 			}
 		}()), Std_Ui_Font_family(DataTab_mono())}, Std_Ui_text(DataTab_storeLabel(v_1)))
 	}()
-}
-
-var DataTab_bgSel__caf rt.LazyCaf[Std_Ui_Color]
-
-func DataTab_bgSel() Std_Ui_Color {
-	return DataTab_bgSel__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(44, 60, 90) })
-}
-
-var Std_Ui_pointer__caf rt.LazyCaf[Std_Ui_Attribute]
-
-func Std_Ui_pointer() Std_Ui_Attribute {
-	return Std_Ui_pointer__caf.Get(func() Std_Ui_Attribute { return Std_Ui_Attribute_AttrPointer() })
-}
-
-func Std_Ui_onClick(v_0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrEvent(Std_Html_Events_onClick(v_0))
-}
-
-func Std_Html_Events_onClick(v_0 any) Std_Ui_Attribute {
-	return /* primitive join */ rt.Coerce[Std_Ui_Attribute](Std_Html_Attributes_Attribute_EventAttr(Std_Html_Attributes_Event_OnMsg("click", v_0)))
 }
 
 func AnalyticsTab_analyticsView(v_0 State_Analytics_R) []Std_Ui_Element {
@@ -2248,15 +2459,6 @@ func View_compactTime(v_0 string) string {
 	}()
 }
 
-func Std_Ui_paddingEach(v_0 struct {
-	Bottom int
-	Left   int
-	Right  int
-	Top    int
-}) Std_Ui_Attribute {
-	return Std_Ui_Attribute_AttrPadding(v_0.Top, v_0.Right, v_0.Bottom, v_0.Left)
-}
-
 func View_spanDepth(v_0 []State_TraceRow_R, v_1 int, v_2 string) int {
 	return func() int {
 		if (v_1 <= 0) || (v_2 == "") {
@@ -2329,31 +2531,6 @@ func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
 			}
 		}()
 	}), []any{} /* primitive join */, rt.AsListT[any](v_0)))
-}
-
-func Sky_Core_List_member(v_0 any, v_1 []any) bool {
-	for {
-		_subj0 := v_1
-		if rt.SkyLen(_subj0) == 0 {
-			return false
-		}
-		if rt.SkyLen(_subj0) >= 1 {
-			v_2 := rt.SkyElem(_subj0, 0)
-			v_3 := rt.SkyTailSlice(_subj0)
-			_ = v_2
-			_ = v_3
-			if /* FFI return */ rt.AsBool(rt.Eq(v_0, v_2)) {
-				return true
-			} else {
-				_t1 := v_0
-				_t2 := v_3
-				v_0 = _t1
-				v_1 = _t2
-				continue
-			}
-		}
-		panic(rt.Unreachable("case"))
-	}
 }
 
 func Sky_Core_List_foldl(v_0 func(any, any) any, v_1 any, v_2 []any) any {
@@ -6892,6 +7069,63 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 			_ = v_40
 			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.DataPrefix = v_40; return _u }(), V1: rt.Cmd_perform(any(v_1.Store.ReadDataRows(v_1.DataSelectedStore, v_40)), any(func(_p3 any) State_Msg { return State_Msg_GotDataRows(_p3) }))}
 		}
+		if (_subj.Tag == 24) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
+			v_41 := /* FFI return */ rt.AsListT[rt.T3[string, string, []string]]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+			_ = v_41
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.SqlSources = v_41; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+		}
+		if (_subj.Tag == 24) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
+			v_42 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+			_ = v_42
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
+				_u := v_1
+				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_42)))
+				return _u
+			}(), V1: rt.Cmd_none()}
+		}
+		if _subj.Tag == 25 {
+			v_43 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_43
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
+				_u := v_1
+				_u.SqlSelectedSource = v_43
+				_u.SqlSelectedTable = ""
+				_u.SqlColumns = []string{}
+				_u.SqlRows = [][]string{}
+				_u.SqlRedacted = []string{}
+				return _u
+			}(), V1: rt.Cmd_none()}
+		}
+		if _subj.Tag == 26 {
+			v_44 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_44
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.SqlSelectedTable = v_44; return _u }(), V1: rt.Cmd_perform(any(v_1.Store.ReadSqlRows(v_1.SqlSelectedSource, v_44)), any(func(_p4 any) State_Msg { return State_Msg_GotSqlRows(_p4) }))}
+		}
+		if (_subj.Tag == 27) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
+			v_45 := /* FFI return */ rt.AsListT[string]( /* generic erase */ rt.Coerce[rt.T3[any, any, any]]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue).V0)
+			v_46 := /* FFI return */ rt.AsListT[[]string]( /* generic erase */ rt.Coerce[rt.T3[any, any, any]]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue).V1)
+			v_47 := /* FFI return */ rt.AsListT[string]( /* generic erase */ rt.Coerce[rt.T3[any, any, any]]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue).V2)
+			_ = v_45
+			_ = v_46
+			_ = v_47
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
+				_u := v_1
+				_u.SqlColumns = v_45
+				_u.SqlRows = v_46
+				_u.SqlRedacted = v_47
+				_u.LastError = ""
+				return _u
+			}(), V1: rt.Cmd_none()}
+		}
+		if (_subj.Tag == 27) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
+			v_48 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+			_ = v_48
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
+				_u := v_1
+				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_48)))
+				return _u
+			}(), V1: rt.Cmd_none()}
+		}
 		panic(rt.Unreachable("case"))
 	}()
 }
@@ -6945,7 +7179,7 @@ func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []
 					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) State_Msg { return State_Msg_GotAnalytics(_p5) }))}
 				}
 				if _subj == State_Tab_DataTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadDataStores(struct{}{})), any(func(_p6 any) State_Msg { return State_Msg_GotDataStores(_p6) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadDataStores(struct{}{})), any(func(_p6 any) State_Msg { return State_Msg_GotDataStores(_p6) })), rt.Cmd_perform(any(v_0.Store.ReadSqlSources(struct{}{})), any(func(_p7 any) State_Msg { return State_Msg_GotSqlSources(_p7) }))}
 				}
 				panic(rt.Unreachable("case"))
 			}()
@@ -6953,25 +7187,25 @@ func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []
 			return func() []any {
 				_subj := v_1
 				if _subj == State_Tab_OverviewTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p7 any) State_Msg { return State_Msg_GotServiceStats(_p7) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p8 any) State_Msg { return State_Msg_GotServiceStats(_p8) }))}
 				}
 				if _subj == State_Tab_LogsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p8 any) State_Msg { return State_Msg_GotLogs(_p8) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p9 any) State_Msg { return State_Msg_GotLogs(_p9) }))}
 				}
 				if _subj == State_Tab_MetricsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p9 any) State_Msg { return State_Msg_GotMetrics(_p9) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p10 any) State_Msg { return State_Msg_GotMetrics(_p10) }))}
 				}
 				if _subj == State_Tab_TracesTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p10 any) State_Msg { return State_Msg_GotTraces(_p10) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p11 any) State_Msg { return State_Msg_GotTraces(_p11) }))}
 				}
 				if _subj == State_Tab_ErrorsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p11 any) State_Msg { return State_Msg_GotErrors(_p11) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p12 any) State_Msg { return State_Msg_GotErrors(_p12) }))}
 				}
 				if _subj == State_Tab_AnalyticsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p12 any) State_Msg { return State_Msg_GotAnalytics(_p12) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p13 any) State_Msg { return State_Msg_GotAnalytics(_p13) }))}
 				}
 				if _subj == State_Tab_DataTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadDataStores(struct{}{})), any(func(_p13 any) State_Msg { return State_Msg_GotDataStores(_p13) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadDataStores(struct{}{})), any(func(_p14 any) State_Msg { return State_Msg_GotDataStores(_p14) })), rt.Cmd_perform(any(v_0.Store.ReadSqlSources(struct{}{})), any(func(_p15 any) State_Msg { return State_Msg_GotSqlSources(_p15) }))}
 				}
 				panic(rt.Unreachable("case"))
 			}()
@@ -7039,7 +7273,7 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 			} else {
 				return []State_LogEntry_R{}
 			}
-		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: initialService_6, ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: initialRange_4, NowMs: 0, GlobalQuery: initialQuery_5, Analytics: State_emptyAnalytics(), LogoutUrl: logoutUrl_3, DataStores: []string{}, DataSelectedStore: "", DataRows: []rt.T2[string, string]{}, DataPrefix: ""}
+		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: initialService_6, ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: initialRange_4, NowMs: 0, GlobalQuery: initialQuery_5, Analytics: State_emptyAnalytics(), LogoutUrl: logoutUrl_3, DataStores: []string{}, DataSelectedStore: "", DataRows: []rt.T2[string, string]{}, DataPrefix: "", SqlSources: []rt.T3[string, string, []string]{}, SqlSelectedSource: "", SqlSelectedTable: "", SqlColumns: []string{}, SqlRows: [][]string{}, SqlRedacted: []string{}}
 		_ = startModel_9
 		identityCmd_10 := func() any {
 			if hubDbPath_2 != "" {
@@ -7094,13 +7328,17 @@ func Main_httpStore(v_0 string) State_Store_R {
 		return Main_fetchLogs(v_0, v_3)
 	}), ReadFilteredMetrics: /* primitive join */ rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]](func(v_4 any) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] { return Main_fetchMetrics(v_0) }), ReadFilteredTraces: /* primitive join */ rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]](func(v_5 any) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] { return Main_fetchTraces(v_0) }), ReadFilteredErrors: /* primitive join */ rt.Coerce[func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]](func(v_6 any) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] { return Main_fetchErrors(v_0) }), ReadAnalytics: /* primitive join */ rt.Coerce[func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]](func(_ any) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] { return Main_fetchAnalytics(v_0) }), ReadDataStores: /* primitive join */ rt.Coerce[func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]](func(_ any) rt.SkyTask[Sky_Core_Error_Error, []string] { return Main_fetchDataStores(v_0) }), ReadDataRows: func(v_7 string, v_8 string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]] {
 		return Main_fetchDataRows(v_0, v_7, v_8)
+	}, ReadSqlSources: /* primitive join */ rt.Coerce[func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]]](func(_ any) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]] {
+		return Main_fetchSqlSources(v_0)
+	}), ReadSqlRows: func(v_9 string, v_10 string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]] {
+		return Main_fetchSqlRows(v_0, v_9, v_10)
 	}}
 }
 
-func Main_fetchDataRows(v_0 string, v_1 string, v_2 string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []rt.T2[string, string]](rt.Task_andThenResult(any(func(v_3 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []rt.T2[string, string]] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []rt.T2[string, string]](rt.JsonDec_decodeString(Main_dataRowsDecoder(), any(v_3.Body)))
-	}), any(Main_authGet((v_0 + ("/_sky/console/api/data?limit=200&store=" + ( /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_1))) + ("&prefix=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_2)))))))))))
+func Main_fetchSqlRows(v_0 string, v_1 string, v_2 string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]] {
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]](rt.Task_andThenResult(any(func(v_3 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]] {
+		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]](rt.JsonDec_decodeString(Main_sqlRowsDecoder(), any(v_3.Body)))
+	}), any(Main_authGet((v_0 + ("/_sky/console/api/data?sql=" + (v_1 + ("&table=" + (v_2 + "&limit=200")))))))))
 }
 
 func Main_authGet(v_0 string) rt.SkyTask[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R] {
@@ -7125,6 +7363,46 @@ func Sky_Core_Http_withHeader(v_0 string, v_1 string, v_2 Sky_Core_Http_HttpRequ
 		_u.Headers = /* FFI return */ rt.AsListT[rt.T2[string, string]](rt.List_cons(any(rt.T2[string, string]{V0: v_0, V1: v_1}), any(v_2.Headers)))
 		return _u
 	}()
+}
+
+var Main_sqlRowsDecoder__caf rt.LazyCaf[any]
+
+func Main_sqlRowsDecoder() any {
+	return Main_sqlRowsDecoder__caf.Get(func() any {
+		return rt.JsonDec_map3(any(func(v_0 []string, v_1 [][]string, v_2 []string) rt.T3[[]string, [][]string, []string] {
+			return rt.T3[[]string, [][]string, []string]{V0: v_0, V1: v_1, V2: v_2}
+		}), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("columns"), rt.JsonDec_list(rt.JsonDec_string())), rt.JsonDec_succeed(any([]string{}))})), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("rows"), rt.JsonDec_list(rt.JsonDec_list(rt.JsonDec_string()))), rt.JsonDec_succeed(any([][]string{}))})), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("redacted"), rt.JsonDec_list(rt.JsonDec_string())), rt.JsonDec_succeed(any([]string{}))})))
+	})
+}
+
+func Main_fetchSqlSources(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]] {
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []rt.T3[string, string, []string]](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []rt.T3[string, string, []string]] {
+		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []rt.T3[string, string, []string]](rt.JsonDec_decodeString(Main_sqlSourcesDecoder(), any(v_1.Body)))
+	}), any(Main_authGet((v_0 + "/_sky/console/api/data")))))
+}
+
+var Main_sqlSourcesDecoder__caf rt.LazyCaf[any]
+
+func Main_sqlSourcesDecoder() any {
+	return Main_sqlSourcesDecoder__caf.Get(func() any {
+		return rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("sqlSources"), rt.JsonDec_list(Main_sqlSourceDecoder())), rt.JsonDec_succeed(any([]rt.T3[string, string, []string]{}))}))
+	})
+}
+
+var Main_sqlSourceDecoder__caf rt.LazyCaf[any]
+
+func Main_sqlSourceDecoder() any {
+	return Main_sqlSourceDecoder__caf.Get(func() any {
+		return rt.JsonDec_map3(any(func(v_0 string, v_1 string, v_2 []string) rt.T3[string, string, []string] {
+			return rt.T3[string, string, []string]{V0: v_0, V1: v_1, V2: v_2}
+		}), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("name"), rt.JsonDec_string()), rt.JsonDec_succeed(any(""))})), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("label"), rt.JsonDec_string()), rt.JsonDec_succeed(any(""))})), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("tables"), rt.JsonDec_list(rt.JsonDec_string())), rt.JsonDec_succeed(any([]string{}))})))
+	})
+}
+
+func Main_fetchDataRows(v_0 string, v_1 string, v_2 string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]] {
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []rt.T2[string, string]](rt.Task_andThenResult(any(func(v_3 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []rt.T2[string, string]] {
+		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []rt.T2[string, string]](rt.JsonDec_decodeString(Main_dataRowsDecoder(), any(v_3.Body)))
+	}), any(Main_authGet((v_0 + ("/_sky/console/api/data?limit=200&store=" + ( /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_1))) + ("&prefix=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_2)))))))))))
 }
 
 var Main_dataRowsDecoder__caf rt.LazyCaf[any]
@@ -7380,6 +7658,10 @@ func HubStore_hubStore(v_0 string) State_Store_R {
 		return /* FFI return */ rt.TaskCoerceT[any, []any](rt.AnyTaskSucceed(any([]any{})))
 	}), ReadDataRows: /* primitive join */ rt.Coerce[func(string, string) rt.SkyTask[Sky_Core_Error_Error, []rt.T2[string, string]]](func(_ any, _ any) rt.SkyTask[any, []any] {
 		return /* FFI return */ rt.TaskCoerceT[any, []any](rt.AnyTaskSucceed(any([]any{})))
+	}), ReadSqlSources: /* primitive join */ rt.Coerce[func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []rt.T3[string, string, []string]]](func(_ any) rt.SkyTask[any, []any] {
+		return /* FFI return */ rt.TaskCoerceT[any, []any](rt.AnyTaskSucceed(any([]any{})))
+	}), ReadSqlRows: /* primitive join */ rt.Coerce[func(string, string) rt.SkyTask[Sky_Core_Error_Error, rt.T3[[]string, [][]string, []string]]](func(_ any, _ any) rt.SkyTask[any, rt.T3[[]any, []any, []any]] {
+		return /* FFI return */ rt.TaskCoerceT[any, rt.T3[[]any, []any, []any]](rt.AnyTaskSucceed(any(rt.T3[[]any, []any, []any]{V0: []any{}, V1: []any{}, V2: []any{}})))
 	})}
 }
 
