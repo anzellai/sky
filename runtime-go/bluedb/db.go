@@ -107,6 +107,13 @@ type DB struct {
 	batches     uint64 // atomic: group-commit fsyncs
 	writes      uint64 // atomic: individual mutations committed
 	checkpoints uint64 // atomic: snapshots taken
+
+	// change-feed (reactive layer — see changefeed.go). Guarded by subMu; emitted
+	// from the committer after the memtable lock is released, never under db.mu.
+	subMu     sync.RWMutex
+	subs      map[uint64]*changeSub
+	subNext   uint64
+	changeSeq uint64 // atomic: monotonic per-change-event ordinal
 }
 
 type commitReq struct {
@@ -419,6 +426,13 @@ func (db *DB) process(batch []*commitReq) {
 			}
 			db.mu.Unlock()
 			db.writesSinceCkpt += mutTotal(writes)
+			// Reactive change-feed: publish this committed batch to subscribers
+			// AFTER releasing the memtable lock (never under db.mu) and only when
+			// someone is listening. emitChanges is non-blocking — a slow subscriber
+			// drops its delta and resyncs, so the committer is never stalled.
+			if db.hasSubs() {
+				db.emitChanges(db.buildChanges(writes))
+			}
 		} else {
 			// F1: a write (or its fsync) failed mid-batch. The WAL may now hold a
 			// partial/torn record followed by nothing — but if we kept appending,
