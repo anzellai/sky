@@ -1,0 +1,9 @@
+sky-out/
+.skycache/
+.skydeps/
+data/
+DATABASE_URL*
+*.db
+*.db-*
+*.blue
+*.blue-*
