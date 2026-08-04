@@ -122,6 +122,104 @@ func bluedbCollEqCandidatePks(db *bluedb.DB, coll, field, value, colType string)
 	return pks
 }
 
+type bluedbRangeSeek struct {
+	field   string
+	colType string
+	hasLo   bool
+	lo      string
+	hasHi   bool
+	hi      string
+}
+
+// bluedbPickRangeSeek finds AND-reachable ordering leaves on a single indexed,
+// order-preserving field and maps them to a SUPERSET-safe index range (the R1
+// range is inclusive-lo / exclusive-hi):
+//   - `>= X` / `> X`  → lo = X inclusive (a `>` superset includes X, dropped by the
+//     full Cond re-eval).
+//   - `< Y`           → hi = Y exclusive (exact).
+//   - `<= Y`          → NOT superset-safe with an exclusive hi (it would drop Y), so
+//     it contributes no hi bound; the full Cond still filters the upper end.
+// Gated to (int,int) + (text,str). Needs at least one bound to justify a seek.
+func bluedbPickRangeSeek(cond map[string]any, indexes []bluedbIndexSpec) (bluedbRangeSeek, bool) {
+	var leaves []map[string]any
+	switch t, _ := cond["t"].(string); t {
+	case "op":
+		leaves = []map[string]any{cond}
+	case "and":
+		leaves = bluedbNodeList(cond["cs"])
+	}
+
+	idxColType := func(col string) (string, string, bool) {
+		nc := bluedbNormalizeCol(col)
+		for _, ix := range indexes {
+			if bluedbNormalizeCol(ix.Field) == nc {
+				return ix.Field, ix.ColType, true
+			}
+		}
+		return "", "", false
+	}
+	rangeable := func(ct string) bool { return ct == "int" || ct == "text" }
+	kindOK := func(ct, kind string) bool {
+		return (ct == "int" && kind == "int") || (ct == "text" && kind == "str")
+	}
+	leafSpec := func(n map[string]any) (op, field, colType, val string, ok bool) {
+		if t, _ := n["t"].(string); t != "op" {
+			return "", "", "", "", false
+		}
+		op, _ = n["op"].(string)
+		col, _ := n["col"].(string)
+		pv, _ := n["v"].(map[string]any)
+		kind, _ := pv["k"].(string)
+		val, _ = pv["s"].(string)
+		f, ct, found := idxColType(col)
+		if !found || !rangeable(ct) || !kindOK(ct, kind) {
+			return "", "", "", "", false
+		}
+		return op, f, ct, val, true
+	}
+
+	// Fix the target field to the first ordering leaf on a rangeable indexed field.
+	var field, colType string
+	for _, n := range leaves {
+		op, f, ct, _, ok := leafSpec(n)
+		if ok && (op == ">" || op == ">=" || op == "<") {
+			field, colType = f, ct
+			break
+		}
+	}
+	if field == "" {
+		return bluedbRangeSeek{}, false
+	}
+	rs := bluedbRangeSeek{field: field, colType: colType}
+	for _, n := range leaves {
+		op, f, ct, val, ok := leafSpec(n)
+		if !ok || f != field || ct != colType {
+			continue
+		}
+		switch op {
+		case ">", ">=":
+			if !rs.hasLo {
+				rs.hasLo, rs.lo = true, val
+			}
+		case "<":
+			if !rs.hasHi {
+				rs.hasHi, rs.hi = true, val
+			}
+		}
+	}
+	if !rs.hasLo && !rs.hasHi {
+		return rs, false
+	}
+	return rs, true
+}
+
+func bluedbCollRangeCandidatePks(db *bluedb.DB, coll string, rs bluedbRangeSeek) []string {
+	pks := []string{}
+	bluedbCollRangeScan(db, coll, rs.field, rs.colType, rs.hasLo, rs.lo, rs.hasHi, rs.hi,
+		func(pk string) { pks = append(pks, pk) })
+	return pks
+}
+
 func bluedbRecGet(rec map[string]any, col string) (any, bool) {
 	if v, ok := rec[col]; ok {
 		return v, true
@@ -406,12 +504,22 @@ func bluedbRunQuery(db *bluedb.DB, coll, planJSON string, wantRows bool) (out []
 		return len(rows) < offset+limit
 	}
 
-	// Fast path: an AND-reachable equality leaf on an indexed field lets us seek
-	// the index for candidate pks (O(matches)) instead of scanning every record
-	// (O(collection)). The full Cond is still evaluated per candidate — the index
-	// only narrows, so a row is never wrongly included OR excluded.
+	// Fast path: an AND-reachable equality OR ordering leaf on an indexed field
+	// lets us seek the index for candidate pks (O(matches)) instead of scanning
+	// every record (O(collection)). The full Cond is still evaluated per candidate,
+	// so the seek only NARROWS — a row is never wrongly included or excluded.
+	var candidatePks []string
+	seeked := false
 	if seekField, seekType, seekVal, ok := bluedbPickEqSeek(plan.Cond, plan.Indexes); ok {
-		for _, pk := range bluedbCollEqCandidatePks(db, coll, seekField, seekVal, seekType) {
+		candidatePks = bluedbCollEqCandidatePks(db, coll, seekField, seekVal, seekType)
+		seeked = true
+	} else if rs, ok := bluedbPickRangeSeek(plan.Cond, plan.Indexes); ok {
+		candidatePks = bluedbCollRangeCandidatePks(db, coll, rs)
+		seeked = true
+	}
+
+	if seeked {
+		for _, pk := range candidatePks {
 			v, has := db.Get(bluedbCollRecordKey(coll, pk))
 			if !has {
 				continue

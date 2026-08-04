@@ -554,3 +554,65 @@ func TestPickEqSeek(t *testing.T) {
 		t.Fatalf("camel/snake match = %q,%v want userId,true", f, ok)
 	}
 }
+
+// P5 range acceleration: AND-reachable ordering leaves on an indexed field seek a
+// superset-safe index range; result MUST equal the full-scan result, and a lone
+// `<=` (no superset-safe bound) must fall back to a correct full-scan.
+func TestCollQueryRangeSeek(t *testing.T) {
+	id := registerIdxStore(t)
+	put := func(pk string, age int) {
+		collPut(t, id, "u", pk, fmt.Sprintf(`{"id":%q,"age":%d}`, pk, age),
+			[3]string{"age", fmt.Sprintf("%d", age), "int"})
+	}
+	put("a", 5)
+	put("b", 18)
+	put("c", 29)
+	put("d", 42)
+	put("e", 100)
+
+	pksOf := func(plan string) []string {
+		r := BlueDB_collQuery(id, "u", plan).(func() any)().(SkyResult[any, any])
+		out := []string{}
+		for _, it := range r.OkValue.([]any) {
+			out = append(out, it.(SkyTuple2).V0.(string))
+		}
+		sort.Strings(out)
+		return out
+	}
+	idx := `,"indexes":[{"field":"age","colType":"int"}]`
+
+	// age > 18 AND age < 50 → c(29), d(42); seek == scan
+	cond := `{"t":"and","cs":[{"t":"op","col":"age","op":">","v":{"k":"int","s":"18"}},{"t":"op","col":"age","op":"<","v":{"k":"int","s":"50"}}]}`
+	scan := pksOf(`{"cond":` + cond + `}`)
+	seek := pksOf(`{"cond":` + cond + idx + `}`)
+	if !eqStrs(scan, seek) || !eqStrs(seek, []string{"c", "d"}) {
+		t.Fatalf("range seek != scan: scan=%v seek=%v want [c d]", scan, seek)
+	}
+	// age >= 42 → d, e (inclusive lo)
+	if got := pksOf(`{"cond":{"t":"op","col":"age","op":">=","v":{"k":"int","s":"42"}}` + idx + `}`); !eqStrs(got, []string{"d", "e"}) {
+		t.Fatalf(">=42 = %v want [d e]", got)
+	}
+	// lone age <= 18 → no superset-safe seek bound; must full-scan correctly → a, b
+	if got := pksOf(`{"cond":{"t":"op","col":"age","op":"<=","v":{"k":"int","s":"18"}}` + idx + `}`); !eqStrs(got, []string{"a", "b"}) {
+		t.Fatalf("<=18 = %v want [a b]", got)
+	}
+}
+
+func TestPickRangeSeek(t *testing.T) {
+	idx := []bluedbIndexSpec{{Field: "age", ColType: "int"}}
+	and := map[string]any{"t": "and", "cs": []any{
+		map[string]any{"t": "op", "col": "age", "op": ">", "v": map[string]any{"k": "int", "s": "18"}},
+		map[string]any{"t": "op", "col": "age", "op": "<", "v": map[string]any{"k": "int", "s": "50"}},
+	}}
+	if rs, ok := bluedbPickRangeSeek(and, idx); !ok || !rs.hasLo || rs.lo != "18" || !rs.hasHi || rs.hi != "50" || rs.field != "age" {
+		t.Fatalf("range pick = %+v,%v want lo=18 hi=50 field=age", rs, ok)
+	}
+	le := map[string]any{"t": "op", "col": "age", "op": "<=", "v": map[string]any{"k": "int", "s": "30"}}
+	if _, ok := bluedbPickRangeSeek(le, idx); ok {
+		t.Fatal("lone <= must not seed a range seek (no superset-safe bound)")
+	}
+	ge := map[string]any{"t": "op", "col": "age", "op": ">=", "v": map[string]any{"k": "int", "s": "29"}}
+	if rs, ok := bluedbPickRangeSeek(ge, idx); !ok || !rs.hasLo || rs.hasHi {
+		t.Fatalf(">= = %+v,%v want lo-only", rs, ok)
+	}
+}

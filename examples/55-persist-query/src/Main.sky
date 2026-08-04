@@ -27,6 +27,7 @@ users =
     Persist.collection
         (Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id")
         |> Persist.index "status"
+        |> Persist.index "age"
 
 
 sample : List User
@@ -56,6 +57,15 @@ orQuery =
                    [ Persist.eq "status" (Persist.string "idle")
                    , Persist.gt "age" (Persist.int 50)
                    ])
+
+
+-- 20 < age < 40, ordered by age — a pure range on the indexed `age` field, so the
+-- KV backend seeks the index range instead of scanning every record.
+rangeQuery : Persist.Query User
+rangeQuery =
+    Persist.query users |> Persist.where_ (Persist.gt "age" (Persist.int 20))
+        |> Persist.where_ (Persist.lt "age" (Persist.int 40))
+        |> Persist.orderAsc "age"
 
 
 seedAll : Persist.Conn cap -> Task Error ()
@@ -101,7 +111,7 @@ runBackend label conn =
                            conn
                            (Persist.query users
                                |> Persist.where_ (Persist.like "name" "%o%"))
-                           |> Task.map
+                           |> Task.andThen
                                   (\ls ->
                                       let
                                           _ =
@@ -110,8 +120,19 @@ runBackend label conn =
                                                       ++ String.join
                                                              ","
                                                              (List.map .name ls))
+                                          -- indexed range: 20 < age < 40 (age is
+                                          -- indexed → KV seeks the index range)
                                       in
-                                          ()))
+                                          Persist.toList conn rangeQuery))
+        |> Task.map
+               (\rows ->
+                   let
+                       _ =
+                           println
+                               (label ++ " 20<age<40 asc: "
+                                   ++ String.join "," (List.map .name rows))
+                   in
+                       ())
 
 
 main : Task Error ()
