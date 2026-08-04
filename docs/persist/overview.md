@@ -121,16 +121,46 @@ Persist.findAllByIndex conn users "status" "active" -- : Task Error (List User) 
 Persist.countByIndex conn users "status" "active"   -- : Task Error Int (no record fetch)
 ```
 
+### Ordered range
+
+An index over a numeric/date/text field also supports an **ordered range** — the
+half-open interval `[lo, hi)`, with either bound `Nothing` for unbounded:
+
+```elm
+events : Persist.Collection Event
+events =
+    Persist.collection (Store.fromCodec "events" (Codec.auto blank) |> Store.primaryKey "id")
+        |> Persist.index "ts"             -- an Int field
+
+-- events with 1000 <= ts < 2000:
+Persist.findAllByIndexRange conn events "ts" (Just "1000") (Just "2000")  -- : Task Error (List Event)
+-- everything from 1700 onward (unbounded upper):
+Persist.findAllByIndexRange conn events "ts" (Just "1700") Nothing
+-- count only, no record fetch:
+Persist.countByIndexRange conn events "ts" (Just "1000") (Just "2000")    -- : Task Error Int
+```
+
+The range is **correct for the field's type** — an `Int` field compares
+numerically, not lexically (so `5 < 18 < 100`, never the string order
+`"100" < "18" < "5"`). The index stores an **order-preserving** encoding derived
+from the codec's field type, so this holds for `int`, `bool`, and `text`
+(text/date range by byte order = code-point / ISO-8601 order). `real`/`money`/
+`float` fields have **no** KV range (they'd need scale/IEEE normalisation) — the
+call returns an error; use the SQL backend's typed query builder (`Persist.sql`)
+for those. Bounds are the field's key-string form (`"1700"`, `"2026-01-01"`).
+
+> **Format note.** The index encoding is versioned. `Persist.reindex` at startup
+> migrates an older index to the current format (a one-time full rebuild) — so
+> always call `reindex` once at startup before serving.
+
 - **Non-unique** — several records may share a value; `findByIndex` returns the
   first, `findAllByIndex` returns all. BlueDB does **not enforce** uniqueness (use
   a serial/UUID PK, or the SQL backend, for a real constraint).
-- `findByIndex`/`findAllByIndex`/`countByIndex`/`reindex` are **KV-tag verbs**
-  (`Conn KeyValue`) — the phantom-tag verb set that the KV backend supports.
-- **No ordered/numeric range** over the KV index: a lexical range over an int
-  field would silently return wrong rows, so it isn't offered — use the SQL
-  backend's typed query builder (via `Persist.sql`) for `>`/`<`/`BETWEEN`.
-- `countByIndex` is exact but an **O(N)-scan analytics op** (cold path), not a
-  hot-path point read.
+- `findByIndex`/`findAllByIndex`/`findAllByIndexRange`/`countByIndex`/
+  `countByIndexRange`/`reindex` are **KV-tag verbs** (`Conn KeyValue`) — the
+  phantom-tag verb set that the KV backend supports.
+- `countByIndex`/`countByIndexRange` are exact but **O(N)-scan analytics ops**
+  (cold path), not hot-path point reads.
 
 ## How it relates to the other surfaces
 
