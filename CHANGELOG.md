@@ -11,6 +11,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.9 — Security: console API auth no longer trusts a loopback IP (2026-08-04)
+
+### Security
+- **The `/_sky/console` read APIs are no longer reachable unauthenticated behind
+  a reverse proxy.** The console auth gate (`consoleAccessAllowed`) previously
+  treated any request from a loopback `RemoteAddr` as trusted. Behind a reverse
+  proxy — the app on `127.0.0.1`, the proxy terminating TLS — **every** request's
+  `RemoteAddr` is loopback, so the console `overview` / `logs` / `traces` /
+  `metrics-summary` / `errors` / `analytics` endpoints (telemetry that can carry
+  PII and secrets) were served **without authentication** in production, and an
+  app-side SSRF could reach them too. The gate now authenticates the in-process
+  console sub-app by a per-boot internal token (and still accepts the operator's
+  `SKY_ADMIN_TOKEN`), falling through to the existing cookie / `SKY_CONSOLE_AUTH`
+  gate otherwise, and **never trusts a source IP**. No configuration change is
+  required — rebuild or `sky upgrade` to pick up the fix. Anyone running a
+  Sky.Live or Sky.Http.Server app behind a proxy with `SKY_CONSOLE_AUTH` set
+  should upgrade.
+
 ## v0.19.8 — Reliability-hardening pass: 11 fixes + comprehensive e2e coverage (2026-08-02)
 
 A ground-up test-coverage pass across the compiler, standard library, Sky.Live,
