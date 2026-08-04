@@ -159,6 +159,64 @@ directly) is also exposed for apps that want to merge manually instead of re-que
 
 ---
 
+## Build status (2026-08-04)
+
+**Foundation SHIPPED + tested (`exp/bluedb`):**
+- **P-R1** engine change-feed — `runtime-go/bluedb/changefeed.go` (`DB.Subscribe`,
+  non-blocking, slow-consumer-never-stalls, `-race`).
+- **P-R2** record-change decoder + pump — `runtime-go/rt/bluedb_reactive.go`
+  (`bluedbDecodeRecordKey`, `bluedbStartReactivePump`, `bluedbCollTopic`; one
+  record change per write, siblings filtered).
+- **P-R3** query-overlap engine — same file (`bluedbQuerySub`,
+  `bluedbChangeAffectsQuery`; reuses P5 `bluedbEvalCond`).
+
+**Remaining: P-R4/5/6 — the Sky.Live runtime integration** (the delicate part —
+touches the `live.go` session loop; do this as a focused, fresh effort).
+
+## P-R4 implementation plan (next — precise spec)
+
+Two slices, smaller first:
+
+### P-R4a — watch-Sub level (reuses ALL existing subscription machinery)
+
+The reactive magic at the `Sub` level: a session gets a Msg when a watched
+collection changes, then re-queries in its `update`.
+
+1. **Store→broker pump linkage** (the one genuinely new wiring). When a BlueDB
+   DATA store is used by a Live app, start `bluedbStartReactivePump` on it,
+   publishing each decoded change to the app broker via `liveApp.Publish(
+   bluedbCollTopic(coll), payload)` (broker at `live.go:2973`; payload =
+   `{op, coll, pk, record}` JSON). Design question to settle: how the app's data
+   store (opened by `Persist.connectKeyValue`, often a top-level CAF) reaches the
+   running app's `*liveApp`/broker. Candidate: a process-global registry keyed by
+   store path that the Live app bridges its broker to at boot (mirrors how
+   `bluedbStore` already owns an in-process broker at `live_store_bluedb.go:66`).
+   Confirm single-writer/one-pump-per-store.
+2. **`Persist.watchCollection coll toMsg : Sub msg`** — thin Sky over
+   `Sub.subscribeTopic (bluedbCollTopic coll) toMsg` (NO new kernel — rides
+   `setupSubscriptions`/`runSubscriberDispatch` verbatim). `watchKey` variant
+   filters to a pk. The payload decodes to a typed change via a codec (C1).
+3. e2e: two sessions, A `Persist.put`s, B's `watchCollection` Msg fires → B
+   re-queries → B's SSE repaints. Both in-process and (P-R6) Redis brokers.
+
+### P-R4b — declarative auto-refresh (B2) on top of P-R4a
+
+4. **`Persist.live query applyFn`** binding + a config list
+   (`reactiveQueries model`). Framework, per session: run each query at mount
+   (fill Model via `applyFn`), register a `bluedbQuerySub` (collection + Cond via
+   `Store.condPlanJson` + result pks), subscribe to the collection topic, and on a
+   change where `bluedbChangeAffectsQuery` is true, re-run + `applyFn` fold + update
+   result pks — via the existing `sess.mu → dispatch → sseCh` path
+   (`runSubscriberDispatch`, `live.go:5766`). Zero subscription code for the app.
+5. **P-R5** attach at the `autoBlueDB` seam (`Std/Live.sky:197`) so a Model-persist
+   write is observable with no app code.
+6. **P-R6** two-session e2e on in-process + Redis brokers (cross-replica).
+
+Each slice: three-leg verified, committed at the boundary. The `live.go` changes
+are best isolated (worktree) given the core-loop surface.
+
+---
+
 ## Original decision menu (superseded by the LOCKED section above)
 
 ### DECISION A — scope-key granularity (v1)
