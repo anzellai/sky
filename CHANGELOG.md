@@ -11,6 +11,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.10 — Sky.Live: navigation scrolls the new page to the top (2026-08-04)
+
+### Fixed
+- **Sky.Live navigation now scrolls to the top of the new page**, like a normal
+  browser navigation. Previously the runtime restored the pre-patch scroll
+  position on every full-body/patch cycle — correct for in-place updates, but it
+  meant navigating to a new page (a `sky-nav` link click, a programmatic
+  `Navigate`, or any page change) landed you at the *old* page's scroll offset,
+  so the new page often appeared anchored mid-page or at the bottom. The runtime
+  now distinguishes a real page navigation (the URL pathname changed → scroll to
+  top) from an in-place update (SSE tick, same-page event, a filter change that
+  keeps the path → leave the scroll exactly where the user had it). Rebuild or
+  `sky upgrade` to pick it up; no app changes required.
+
 ## v0.19.9 — Security: console API auth no longer trusts a loopback IP (2026-08-04)
 
 ### Security

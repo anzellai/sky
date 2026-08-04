@@ -6846,6 +6846,10 @@ var __skyBase = %q;
 // response). Two tabs of one session get distinct ids; a reload mints a
 // fresh one. Random base36 — URL-safe, no escaping needed.
 var __skyTabId = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+// Tracks the last settled URL path so a patch can tell a real page navigation
+// (scroll the new page to the top, like a normal browser navigation) from an
+// in-place SSE/event update on the same page (leave the user's scroll alone).
+var __skyLastPath = location.pathname;
 var __skyCsrfToken = %q;
 var __skyBannerEnabled = %t;
 var __skyRetryBaseMs = %d;
@@ -7245,6 +7249,17 @@ function __skyCopyAttrsExceptAuthority(src, dst) {
   }
 }
 
+// __skyDidNavigate: true when the URL pathname changed since the last settled
+// patch (a genuine page navigation), updating the tracker either way. A
+// navigation should land the new page at the top; an in-place update (SSE tick,
+// same-page event, filter change that keeps the path) must not move the scroll.
+function __skyDidNavigate() {
+  var cur = location.pathname;
+  var moved = (cur !== __skyLastPath);
+  __skyLastPath = cur;
+  return moved;
+}
+
 // __skyPatch: full-body replacement for sky-nav clicks, popstate,
 // and the server's full-HTML fallback path. Routes through the
 // node-preservation splicer so keystrokes never land on a destroyed
@@ -7257,9 +7272,13 @@ function __skyPatch(t) {
   // the rendered body, same as before.
   var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
   if (m) t = m[1];
+  // The URL is already updated before __skyPatch runs (sky-nav pushState /
+  // popstate). So a page navigation scrolls the new page to the top; a
+  // same-page full-body patch preserves the user's scroll so nothing jumps.
   var scrollX = window.scrollX, scrollY = window.scrollY;
   __skyReplaceHTMLPreservingFocus(root, t);
-  window.scrollTo(scrollX, scrollY);
+  if (__skyDidNavigate()) window.scrollTo(0, 0);
+  else window.scrollTo(scrollX, scrollY);
   __skyBindEvents(document);
   __skyRunEvals(root);
   // Full-body patch (sky-nav click / popstate / mount): the URL is already
@@ -7939,6 +7958,11 @@ function __skyApplyPatches(patches) {
   // push=true: a programmatic Navigate is a real navigation and gets a
   // Back-able history entry.
   __skyRunPaths(document, true);
+  // If those patches were a programmatic navigation to a different page (the
+  // pathname just changed above), scroll the new page to the top — matching
+  // sky-nav clicks. Ordinary same-page SSE/event updates (and filter changes
+  // that keep the path) leave the scroll where the user had it.
+  if (__skyDidNavigate()) window.scrollTo(0, 0);
   // Any <script> in newly-patched HTML wouldn't execute via innerHTML
   // — revive them so JS bundles (e.g. sky-editor) bootstrap correctly
   // when their host element first appears via a patch (not the initial
