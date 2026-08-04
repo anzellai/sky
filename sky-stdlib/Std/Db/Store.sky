@@ -51,6 +51,7 @@ module Std.Db.Store exposing
     , getByKey
     , deleteByKey
     , codecOf
+    , nameOf
     , selectRaw
     , delete
     , deleteWhere
@@ -539,6 +540,13 @@ deleteByKey conn store keyStr =
 codecOf : Store a -> Codec a
 codecOf (Store s) =
     s.codec
+
+
+{-| The store's table/collection name (used by the KV backend to namespace the
+collection's keyspace, and by the SQL backend as the table name). -}
+nameOf : Store a -> String
+nameOf (Store s) =
+    s.name
 
 
 -- Coerce a String key to the PK column's `SqlValue` by kind (int-ish → SqlInt so

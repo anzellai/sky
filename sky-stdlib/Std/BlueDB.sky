@@ -19,6 +19,18 @@ module Std.BlueDB exposing
     , reindex
     , countByIndex
     , countByIndexRange
+    , collPut
+    , collGet
+    , collDelete
+    , collAll
+    , collCount
+    , collFindByIndex
+    , collFindByIndexRange
+    , collCountByIndex
+    , collCountByIndexRange
+    , collReindex
+    , collGetValue
+    , collAllValues
     )
 
 {-| BlueDB — the embedded, durable, group-committed key-value store for a Sky
@@ -364,3 +376,194 @@ countByIndexRange store field colType hasLo lo hasHi hi =
 
         Store raw ->
             countByIndexRangeRaw raw field colType hasLo lo hasHi hi
+
+
+-- Per-collection namespaced KV (P1) -------------------------------------------
+-- One BlueDB store cleanly holds many ISOLATED collections (records + indexes +
+-- manifest namespaced by the collection name). Std.Persist drives these; the
+-- collection name = the Store's name (Store.nameOf).
+collPutRaw : Int -> String -> String -> String -> List ( String, String, String ) -> Task Error ()
+collPutRaw =
+    Ffi.kernel "BlueDB_collPut"
+
+
+{-| Namespaced upsert: the record + its secondary index entries for `coll`, in one
+atomic WriteBatch. `fieldValueTypes` = `(indexField, value, colType)` triples. -}
+collPut : Store -> String -> String -> String -> List ( String, String, String ) -> Task Error ()
+collPut store coll pk recordJson fieldValueTypes =
+    case store of
+
+        Store raw ->
+            collPutRaw raw coll pk recordJson fieldValueTypes
+
+
+collGetRaw : Int -> String -> String -> Task Error (Maybe String)
+collGetRaw =
+    Ffi.kernel "BlueDB_collGet"
+
+
+{-| Read a record's JSON by pk within `coll`. -}
+collGet : Store -> String -> String -> Task Error (Maybe String)
+collGet store coll pk =
+    case store of
+
+        Store raw ->
+            collGetRaw raw coll pk
+
+
+collDeleteRaw : Int -> String -> String -> List ( String, String ) -> Task Error ()
+collDeleteRaw =
+    Ffi.kernel "BlueDB_collDelete"
+
+
+{-| Delete a record + its index entries (given `(field, colType)` pairs) within `coll`. -}
+collDelete : Store -> String -> String -> List ( String, String ) -> Task Error ()
+collDelete store coll pk fieldTypes =
+    case store of
+
+        Store raw ->
+            collDeleteRaw raw coll pk fieldTypes
+
+
+collAllRaw : Int -> String -> Int -> Task Error (List ( String, String ))
+collAllRaw =
+    Ffi.kernel "BlueDB_collAll"
+
+
+{-| Every `(pk, json)` in `coll` (bounded by `limit`). Only this collection's rows. -}
+collAll : Store -> String -> Int -> Task Error (List ( String, String ))
+collAll store coll limit =
+    case store of
+
+        Store raw ->
+            collAllRaw raw coll limit
+
+
+collCountRaw : Int -> String -> Task Error Int
+collCountRaw =
+    Ffi.kernel "BlueDB_collCount"
+
+
+{-| Number of records in `coll` (a key scan — analytics/cold-path). -}
+collCount : Store -> String -> Task Error Int
+collCount store coll =
+    case store of
+
+        Store raw ->
+            collCountRaw raw coll
+
+
+collFindByIndexRaw : Int -> String -> String -> String -> String -> Task Error (List String)
+collFindByIndexRaw =
+    Ffi.kernel "BlueDB_collFindByIndex"
+
+
+{-| Pks in `coll` whose indexed `field` equals `value`. -}
+collFindByIndex : Store -> String -> String -> String -> String -> Task Error (List String)
+collFindByIndex store coll field value colType =
+    case store of
+
+        Store raw ->
+            collFindByIndexRaw raw coll field value colType
+
+
+collFindByIndexRangeRaw : Int -> String -> String -> String -> Bool -> String -> Bool -> String -> Task Error (List String)
+collFindByIndexRangeRaw =
+    Ffi.kernel "BlueDB_collFindByIndexRange"
+
+
+{-| Pks in `coll` whose indexed `field` is in `[lo, hi)` (Maybe bounds via flags). -}
+collFindByIndexRange : Store -> String -> String -> String -> Bool -> String -> Bool -> String -> Task Error (List String)
+collFindByIndexRange store coll field colType hasLo lo hasHi hi =
+    case store of
+
+        Store raw ->
+            collFindByIndexRangeRaw raw coll field colType hasLo lo hasHi hi
+
+
+collCountByIndexRaw : Int -> String -> String -> String -> String -> Task Error Int
+collCountByIndexRaw =
+    Ffi.kernel "BlueDB_collCountByIndex"
+
+
+{-| Count records in `coll` whose indexed `field` equals `value`. -}
+collCountByIndex : Store -> String -> String -> String -> String -> Task Error Int
+collCountByIndex store coll field value colType =
+    case store of
+
+        Store raw ->
+            collCountByIndexRaw raw coll field value colType
+
+
+collCountByIndexRangeRaw : Int -> String -> String -> String -> Bool -> String -> Bool -> String -> Task Error Int
+collCountByIndexRangeRaw =
+    Ffi.kernel "BlueDB_collCountByIndexRange"
+
+
+{-| Count records in `coll` whose indexed `field` is in `[lo, hi)`. -}
+collCountByIndexRange : Store -> String -> String -> String -> Bool -> String -> Bool -> String -> Task Error Int
+collCountByIndexRange store coll field colType hasLo lo hasHi hi =
+    case store of
+
+        Store raw ->
+            collCountByIndexRangeRaw raw coll field colType hasLo lo hasHi hi
+
+
+collReindexRaw : Int -> String -> List ( String, String ) -> Task Error Int
+collReindexRaw =
+    Ffi.kernel "BlueDB_collReindex"
+
+
+{-| Startup migration + index (re)build for `coll`: moves any legacy bare-pk records
+into the collection namespace, rebuilds this collection's indexes, and versions the
+per-collection manifest. Idempotent; call once at startup before serving. -}
+collReindex : Store -> String -> List ( String, String ) -> Task Error Int
+collReindex store coll fieldTypes =
+    case store of
+
+        Store raw ->
+            collReindexRaw raw coll fieldTypes
+
+
+{-| `collGet` + decode via `Codec`. `Nothing` = absent; a present-but-undecodable
+value FAILS the task (schema drift surfaces, never a silent miss). -}
+collGetValue : Codec a -> Store -> String -> String -> Task Error (Maybe a)
+collGetValue codec store coll pk =
+    collGet store coll pk
+        |> Task.andThen
+               (\m ->
+                   case m of
+
+                       Nothing ->
+                           Task.succeed Nothing
+
+                       Just s ->
+                           case Codec.fromJson codec s of
+
+                               Ok v ->
+                                   Task.succeed (Just v)
+
+                               Err e ->
+                                   Task.fail e)
+
+
+{-| `collAll` + decode each value via `Codec` (keeps only the decoded records). -}
+collAllValues : Codec a -> Store -> String -> Int -> Task Error (List a)
+collAllValues codec store coll limit =
+    collAll store coll limit
+        |> Task.andThen
+               (\pairs -> Task.sequence (List.map (decodeCollSnd codec) pairs))
+
+
+decodeCollSnd : Codec a -> ( String, String ) -> Task Error a
+decodeCollSnd codec pair =
+    case pair of
+
+        ( _, raw ) ->
+            case Codec.fromJson codec raw of
+
+                Ok v ->
+                    Task.succeed v
+
+                Err e ->
+                    Task.fail e

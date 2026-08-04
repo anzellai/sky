@@ -139,6 +139,13 @@ codecOf coll =
     Store.codecOf (storeOf coll)
 
 
+-- The collection name — used to namespace the KV keyspace so one BlueDB store
+-- holds many isolated collections (records + indexes scoped per collection).
+collNameOf : Collection a -> String
+collNameOf coll =
+    Store.nameOf (storeOf coll)
+
+
 keyFieldOf : Collection a -> String
 keyFieldOf coll =
     case coll of
@@ -172,7 +179,7 @@ get conn coll keyStr =
             Store.getByKey db (storeOf coll) keyStr
 
         KvConn store ->
-            BlueDB.getValue (codecOf coll) store keyStr
+            BlueDB.collGetValue (codecOf coll) store (collNameOf coll) keyStr
 
 
 {-| Upsert a record (by its self-assigned primary key). For a DB-assigned
@@ -189,16 +196,12 @@ put conn coll record =
             case persistKeyString (keyFieldOf coll) record of
 
                 Ok pk ->
-                    if List.isEmpty (indexesOf coll) then
-                        BlueDB.putValue (codecOf coll) store pk record
-
-                    else
-                        -- no indexes → the plain path, byte-identical to before
-                        BlueDB.putIndexed
-                            store
-                            pk
-                            (Codec.toJson (codecOf coll) record)
-                            (indexFieldValues coll record)
+                    BlueDB.collPut
+                        store
+                        (collNameOf coll)
+                        pk
+                        (Codec.toJson (codecOf coll) record)
+                        (indexFieldValues coll record)
 
                 Err e ->
                     Task.fail e
@@ -287,11 +290,11 @@ delete conn coll keyStr =
             Store.deleteByKey db (storeOf coll) keyStr |> Task.map (\_ -> ())
 
         KvConn store ->
-            if List.isEmpty (indexesOf coll) then
-                BlueDB.delete store keyStr
-
-            else
-                BlueDB.deleteIndexed store keyStr (indexFieldTypes coll)
+            BlueDB.collDelete
+                store
+                (collNameOf coll)
+                keyStr
+                (indexFieldTypes coll)
 
 
 {-| Count all records. (SQL: `COUNT(*)`; KV: a key scan — O(n), an analytics act.) -}
@@ -303,7 +306,7 @@ count conn coll =
             Store.count db (Store.query (storeOf coll))
 
         KvConn store ->
-            BlueDB.keys store |> Task.map List.length
+            BlueDB.collCount store (collNameOf coll)
 
 
 {-| Every record. Bounded on SQL by nothing (whole table) and on KV by a large
@@ -316,8 +319,7 @@ all conn coll =
             Store.all db (storeOf coll)
 
         KvConn store ->
-            BlueDB.scanValues (codecOf coll) store "" 1000000
-                |> Task.map (List.map snd)
+            BlueDB.collAllValues (codecOf coll) store (collNameOf coll) 1000000
 
 
 {-| Ensure the collection's storage exists. SQL: `CREATE TABLE IF NOT EXISTS`
@@ -341,12 +343,41 @@ scan conn coll prefix limit =
     case conn of
 
         KvConn store ->
-            BlueDB.scanValues (codecOf coll) store prefix limit
+            -- Records are namespaced per collection now; scan the collection then
+            -- keep only the pks matching `prefix`, decoding each kept value.
+            BlueDB.collAll store (collNameOf coll) limit
+                |> Task.andThen
+                       (\pairs ->
+                           Task.sequence
+                               (List.foldr
+                                   (\p acc ->
+                                       if String.startsWith prefix (fst p) then
+                                           decodeScanPair (codecOf coll) p
+                                               :: acc
+
+                                       else
+                                           acc)
+                                   []
+                                   pairs))
 
         SqlConn _ ->
             -- unreachable: the type gates this to a KV connection
             Task.fail
                 (Error.unexpected "Persist.scan: not a key-value connection")
+
+
+decodeScanPair : Codec a -> ( String, String ) -> Task Error ( String, a )
+decodeScanPair codec pair =
+    case pair of
+
+        ( pk, raw ) ->
+            case Codec.fromJson codec raw of
+
+                Ok v ->
+                    Task.succeed ( pk, v )
+
+                Err e ->
+                    Task.fail e
 
 
 {-| Backfill the declared indexes over existing records — call once at startup
@@ -357,7 +388,8 @@ reindex conn coll =
     case conn of
 
         KvConn store ->
-            BlueDB.reindex store (indexFieldTypes coll) |> Task.map (\_ -> ())
+            BlueDB.collReindex store (collNameOf coll) (indexFieldTypes coll)
+                |> Task.map (\_ -> ())
 
         SqlConn _ ->
             Task.fail
@@ -371,8 +403,9 @@ findAllByIndex conn coll field value =
     case conn of
 
         KvConn store ->
-            BlueDB.findByIndex
+            BlueDB.collFindByIndex
                 store
+                (collNameOf coll)
                 field
                 value
                 (colTypeFor (codecOf coll) field)
@@ -381,7 +414,11 @@ findAllByIndex conn coll field value =
                            Task.sequence
                                (List.map
                                    (\pk ->
-                                       BlueDB.getValue (codecOf coll) store pk)
+                                       BlueDB.collGetValue
+                                           (codecOf coll)
+                                           store
+                                           (collNameOf coll)
+                                           pk)
                                    pks))
                 |> Task.map keepJusts
 
@@ -409,8 +446,9 @@ countByIndex conn coll field value =
     case conn of
 
         KvConn store ->
-            BlueDB.countByIndex
+            BlueDB.collCountByIndex
                 store
+                (collNameOf coll)
                 field
                 value
                 (colTypeFor (codecOf coll) field)
@@ -432,8 +470,9 @@ findAllByIndexRange conn coll field lo hi =
     case conn of
 
         KvConn store ->
-            BlueDB.findByIndexRange
+            BlueDB.collFindByIndexRange
                 store
+                (collNameOf coll)
                 field
                 (colTypeFor (codecOf coll) field)
                 (boundHas lo)
@@ -445,7 +484,11 @@ findAllByIndexRange conn coll field lo hi =
                            Task.sequence
                                (List.map
                                    (\pk ->
-                                       BlueDB.getValue (codecOf coll) store pk)
+                                       BlueDB.collGetValue
+                                           (codecOf coll)
+                                           store
+                                           (collNameOf coll)
+                                           pk)
                                    pks))
                 |> Task.map keepJusts
 
@@ -462,8 +505,9 @@ countByIndexRange conn coll field lo hi =
     case conn of
 
         KvConn store ->
-            BlueDB.countByIndexRange
+            BlueDB.collCountByIndexRange
                 store
+                (collNameOf coll)
                 field
                 (colTypeFor (codecOf coll) field)
                 (boundHas lo)
