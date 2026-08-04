@@ -1,0 +1,10 @@
+name = "reactive-todos-sql"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[live]
+port = 8000
+
+[database]
+driver = "sqlite"
+url = "DATABASE_URL"

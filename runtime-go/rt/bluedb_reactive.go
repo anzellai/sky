@@ -140,10 +140,6 @@ type bluedbChangePayload struct {
 // published as an op="resync" change on its collection topic so subscribers that
 // fell behind re-read rather than silently diverge.
 func bluedbPublishChange(rc bluedbRecordChange) {
-	app := processBroker.Load()
-	if app == nil {
-		return
-	}
 	op := "put"
 	switch {
 	case rc.Resync:
@@ -151,12 +147,37 @@ func bluedbPublishChange(rc bluedbRecordChange) {
 	case rc.IsDelete:
 		op = "delete"
 	}
-	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: rc.Coll, Pk: rc.Pk, Record: rc.Record})
+	reactivePublish(rc.Coll, op, rc.Pk, rc.Record)
+}
+
+// reactivePublish is the ONE reactive fan-out point: publish a {op,coll,pk,record}
+// change to the running Sky.Live app's broker on the collection topic. Fed by BOTH
+// the BlueDB engine change-feed (KV) AND the Persist/Store write layer (SQL —
+// SQLite + Postgres, which have no engine feed), so watch/reactive subscriptions
+// are backend-agnostic. A no-op when no Live app is registered. On a shared
+// (Redis) broker this crosses replicas, so app writes drive reactivity across
+// instances without a per-backend push mechanism.
+func reactivePublish(coll, op, pk, record string) {
+	app := processBroker.Load()
+	if app == nil {
+		return
+	}
+	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: coll, Pk: pk, Record: record})
 	if err != nil {
 		return
 	}
-	topic := bluedbCollTopic(rc.Coll)
+	topic := bluedbCollTopic(coll)
 	app.Publish(topic, SessionEvent{Topic: topic, Payload: string(payload)})
+}
+
+// Persist_publishChange : String(coll) -> String(op) -> String(pk) -> String(record)
+//   -> Task Error () — the Persist SQL write arms call this after a successful
+// write so SQLite/Postgres get the same reactive fan-out the KV engine feed gives.
+func Persist_publishChange(collArg, opArg, pkArg, recordArg any) any {
+	return func() any {
+		reactivePublish(AsString(collArg), AsString(opArg), AsString(pkArg), AsString(recordArg))
+		return Ok[any, any](nil)
+	}
 }
 
 // bluedbStartReactivePump subscribes to a store's change-feed and pumps decoded

@@ -224,7 +224,8 @@ put conn coll record =
     case conn of
 
         SqlConn db ->
-            Store.upsert db (storeOf coll) record |> Task.map (\_ -> ())
+            Store.upsert db (storeOf coll) record
+                |> Task.andThen (\_ -> publishSqlPut coll record)
 
         KvConn store ->
             case persistKeyString (keyFieldOf coll) record of
@@ -265,7 +266,8 @@ insert conn coll record =
                                           case m of
 
                                               Just r ->
-                                                  Task.succeed r
+                                                  publishSqlPut coll r
+                                                      |> Task.map (\_ -> r)
 
                                               Nothing ->
                                                   Task.fail
@@ -377,7 +379,14 @@ delete conn coll keyStr =
     case conn of
 
         SqlConn db ->
-            Store.deleteByKey db (storeOf coll) keyStr |> Task.map (\_ -> ())
+            Store.deleteByKey db (storeOf coll) keyStr
+                |> Task.andThen
+                       (\_ ->
+                           publishChangeKernel
+                               (collNameOf coll)
+                               "delete"
+                               keyStr
+                               "")
 
         KvConn store ->
             BlueDB.collDelete
@@ -929,6 +938,33 @@ watchCollection coll toMsg =
 bluedbTopic : String -> String
 bluedbTopic coll =
     "__bluedb:" ++ coll
+
+
+-- Publish a record change to the reactive broker. The KV backend publishes via
+-- the BlueDB engine change-feed (all writes, at the source); the SQL backends
+-- (SQLite + Postgres) have no engine feed, so the Persist SQL write arms call
+-- this after a successful write — making `watchCollection` / reactive queries
+-- work the SAME on SQLite and Postgres. On a Redis broker it crosses replicas.
+publishChangeKernel : String -> String -> String -> String -> Task Error ()
+publishChangeKernel =
+    Ffi.kernel "Persist_publishChange"
+
+
+-- Best-effort put-notify from a record: a pk-extraction failure just skips the
+-- notify (the write already succeeded — never fail a write on a notify problem).
+publishSqlPut : Collection a -> a -> Task Error ()
+publishSqlPut coll record =
+    case persistKeyString (keyFieldOf coll) record of
+
+        Ok pk ->
+            publishChangeKernel
+                (collNameOf coll)
+                "put"
+                pk
+                (Codec.toJson (codecOf coll) record)
+
+        Err _ ->
+            Task.succeed ()
 
 
 changeDecoder : Decode.Decoder Change

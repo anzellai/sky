@@ -39,18 +39,22 @@ todos =
         (Store.fromCodec "todos" (Codec.auto blankTodo) |> Store.serial "id")
 
 
-db : Persist.Conn Persist.KeyValue
+db : Persist.Conn Persist.Relational
 db =
-    case Task.run (Persist.connectKeyValue "data/todos.blue") of
+    case Task.run (Persist.connectRelational ()) of
 
         Ok conn ->
-            conn
+            let
+                _ =
+                    Task.run (Persist.create conn todos)
+            in
+                conn
 
         Err e ->
             let
                 _ =
                     println
-                        ("[FATAL] cannot open todos.blue: " ++ errorToString e)
+                        ("[FATAL] cannot open sqlite db: " ++ errorToString e)
             in
                 System.exit 1
 

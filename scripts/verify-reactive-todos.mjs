@@ -13,10 +13,17 @@ const PORT = parseInt(process.env.REACTIVE_PORT || '8129', 10);
 const BASE = `http://localhost:${PORT}`;
 const SLA_MS = 1500; // reactive round-trip (change-feed → re-query → SSE)
 const TIMEOUT_MS = 8000;
-const SETTLE_MS = 350; // let the SSE handshake + subscription park
+const SETTLE_MS = 700; // let the SSE handshake + subscription park
 
 async function addTodo(page, text) {
-    await page.locator('input').first().fill(text);
+    const input = page.locator('input').first();
+    // Fill, confirm the value stuck (a concurrent re-render can clobber it), then
+    // click Add. Retry the fill if a patch reset it mid-type.
+    for (let i = 0; i < 5; i++) {
+        await input.fill(text);
+        await page.waitForTimeout(30);
+        if ((await input.inputValue().catch(() => '')) === text) break;
+    }
     await page.getByRole('button', { name: 'Add' }).click();
 }
 
@@ -41,6 +48,25 @@ async function main() {
         await tabB.goto(BASE, { waitUntil: 'domcontentloaded' });
         await tabA.waitForTimeout(SETTLE_MS);
         await tabB.waitForTimeout(SETTLE_MS);
+
+        // Warmup handshake: pub/sub has no replay, so a write before a session's
+        // watchCollection subscription is parked is missed. Add a warmup todo and
+        // wait until BOTH tabs show it — that proves both subscriptions are live
+        // before we measure. (A freshly loaded page's own init-query already has
+        // current state; only this sub-second establishment window is racy.)
+        const warm = 'warmup-' + Date.now();
+        for (let attempt = 0; attempt < 10; attempt++) {
+            await addTodo(tabA, warm);
+            const wa = await waitForText(tabA, warm, Date.now(), Date.now() + 1500);
+            const wb = await waitForText(tabB, warm, Date.now(), Date.now() + 1500);
+            if (wa !== null && wb !== null) break;
+            await tabA.waitForTimeout(300);
+            if (attempt === 9) {
+                console.error('FAIL verify-reactive-todos');
+                console.error('    subscriptions never established (warmup never reached both tabs)');
+                return;
+            }
+        }
 
         const text = 'reactive-' + Date.now();
         const t0 = Date.now();

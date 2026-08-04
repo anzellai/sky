@@ -222,3 +222,30 @@ func TestReactiveResyncPublish(t *testing.T) {
 		t.Fatal("no resync change published to the collection topic")
 	}
 }
+
+// The Persist SQL write-layer publish kernel fans a change out to the broker (so
+// SQLite/Postgres reactivity uses the SAME path as the KV engine feed).
+func TestPersistPublishChange(t *testing.T) {
+	unregisterProcessBroker()
+	reg := newTopicRegistry(16)
+	app := &liveApp{topics: reg}
+	registerProcessBroker(app)
+	defer unregisterProcessBroker()
+
+	ch, cancel := reg.Subscribe(bluedbCollTopic("todos"))
+	defer cancel()
+
+	runOK(t, Persist_publishChange("todos", "put", "7", `{"id":7,"text":"x"}`))
+	select {
+	case ev := <-ch:
+		var p bluedbChangePayload
+		if err := json.Unmarshal([]byte(ev.Payload.(string)), &p); err != nil {
+			t.Fatalf("payload not JSON: %v", err)
+		}
+		if p.Op != "put" || p.Coll != "todos" || p.Pk != "7" {
+			t.Fatalf("payload = %+v", p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Persist_publishChange did not reach the broker topic")
+	}
+}

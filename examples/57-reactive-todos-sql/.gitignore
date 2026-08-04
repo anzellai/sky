@@ -1,0 +1,6 @@
+sky-out/
+.skycache/
+.skydeps/
+data/
+*.db
+*.db-*
