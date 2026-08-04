@@ -1046,18 +1046,33 @@ resolveOrder known (OrderTerm col dir) =
 -- Predicate value kinds: String / Int / Float / Bool / Decimal serialize
 -- exactly; Money / Time / Bytes map through their scalar string/number forms.
 -- | Full query plan JSON for the KV backend: the resolved condition + order
--- terms + limit + offset. `orders` are `(column, "asc"|"desc")` pairs (column
--- resolved field → snake). Consumed by `BlueDB.collQuery` / `collQueryCount`.
-planJson : List ( String, String ) -> Cond -> List ( String, String ) -> Int -> Int -> String
-planJson known cond orders limitN offsetN =
+-- terms + declared indexes + limit + offset. `orders` are `(column,
+-- "asc"|"desc")` pairs (column resolved field → snake); `indexes` are
+-- `(declaredField, colType)` pairs (declared verbatim so they match the KV index
+-- keyspace) that let the backend seek an indexed equality leaf instead of
+-- full-scanning. Consumed by `BlueDB.collQuery` / `collQueryCount`.
+planJson : List ( String, String ) -> Cond -> List ( String, String ) -> List ( String, String ) -> Int -> Int -> String
+planJson known cond orders indexes limitN offsetN =
     Encode.encode
         0
         (Encode.object
             [ ( "cond", condToPlanV (resolveCond known cond) )
             , ( "orders", Encode.list (orderToPlanV known) orders )
+            , ( "indexes", Encode.list indexToPlanV indexes )
             , ( "limit", Encode.int limitN )
             , ( "offset", Encode.int offsetN )
             ])
+
+
+indexToPlanV : ( String, String ) -> Value
+indexToPlanV pair =
+    case pair of
+
+        ( field, colType ) ->
+            Encode.object
+                [ ( "field", Encode.string field )
+                , ( "colType", Encode.string colType )
+                ]
 
 
 orderToPlanV : List ( String, String ) -> ( String, String ) -> Value

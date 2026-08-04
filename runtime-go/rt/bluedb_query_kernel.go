@@ -27,11 +27,99 @@ type bluedbOrderTerm struct {
 	Dir string `json:"dir"`
 }
 
+type bluedbIndexSpec struct {
+	Field   string `json:"field"`
+	ColType string `json:"colType"`
+}
+
 type bluedbQueryPlan struct {
-	Cond   map[string]any    `json:"cond"`
-	Orders []bluedbOrderTerm `json:"orders"`
-	Limit  int               `json:"limit"`
-	Offset int               `json:"offset"`
+	Cond    map[string]any    `json:"cond"`
+	Orders  []bluedbOrderTerm `json:"orders"`
+	Indexes []bluedbIndexSpec `json:"indexes"`
+	Limit   int               `json:"limit"`
+	Offset  int               `json:"offset"`
+}
+
+// bluedbNormalizeCol lower-cases + strips underscores so a query column
+// (snake-resolved) matches a declared index field (possibly camelCase), the same
+// normalization Std.Persist's colTypeFor uses.
+func bluedbNormalizeCol(s string) string {
+	return strings.ToLower(strings.ReplaceAll(s, "_", ""))
+}
+
+// bluedbPickEqSeek finds an equality leaf on an INDEXED field that is
+// AND-reachable from the top of the condition tree — so the index's matching set
+// is a guaranteed SUPERSET of the query's matches for that leaf (the full Cond is
+// still re-evaluated on each candidate, so the seek only narrows, never decides).
+// An eq under OR/NOT is NOT necessary and must not seed a seek. Returns the
+// DECLARED index field (used verbatim to build the index prefix), its colType,
+// the value string, and ok.
+func bluedbPickEqSeek(cond map[string]any, indexes []bluedbIndexSpec) (field, colType, value string, ok bool) {
+	idxColType := func(col string) (string, string, bool) {
+		nc := bluedbNormalizeCol(col)
+		for _, ix := range indexes {
+			if bluedbNormalizeCol(ix.Field) == nc {
+				return ix.Field, ix.ColType, true
+			}
+		}
+		return "", "", false
+	}
+	tryLeaf := func(n map[string]any) (string, string, string, bool) {
+		if t, _ := n["t"].(string); t != "op" {
+			return "", "", "", false
+		}
+		if op, _ := n["op"].(string); op != "=" {
+			return "", "", "", false
+		}
+		col, _ := n["col"].(string)
+		pv, _ := n["v"].(map[string]any)
+		kind, _ := pv["k"].(string)
+		s, _ := pv["s"].(string)
+		f, ct, found := idxColType(col)
+		if found && bluedbSeekableKind(ct, kind) {
+			return f, ct, s, true
+		}
+		return "", "", "", false
+	}
+	if f, ct, v, found := tryLeaf(cond); found {
+		return f, ct, v, true
+	}
+	if t, _ := cond["t"].(string); t == "and" {
+		for _, ch := range bluedbNodeList(cond["cs"]) {
+			if f, ct, v, found := tryLeaf(ch); found {
+				return f, ct, v, true
+			}
+		}
+	}
+	return "", "", "", false
+}
+
+// bluedbSeekableKind gates the index-seek to (colType, planValueKind) pairs whose
+// string encoding provably matches the index's stored encoding, so the seek can
+// never miss a row. text↔str and int↔int are exact; everything else full-scans.
+func bluedbSeekableKind(colType, kind string) bool {
+	switch colType {
+	case "text":
+		return kind == "str"
+	case "int":
+		return kind == "int"
+	default:
+		return false
+	}
+}
+
+// bluedbCollEqCandidatePks returns the pks whose indexed `field` == `value`, by
+// scanning the collection's index eq-prefix (the R1 order-preserving index).
+func bluedbCollEqCandidatePks(db *bluedb.DB, coll, field, value, colType string) []string {
+	prefix := bluedbCollEqPrefix(coll, field, value, colType)
+	fpLen := len(bluedbCollFieldPrefix(coll, field))
+	width := bluedbFixedWidth(colType)
+	pks := []string{}
+	db.Scan(prefix, nil, 0, func(k, _ []byte) bool {
+		pks = append(pks, bluedbExtractPk(k, fpLen, width))
+		return true
+	})
+	return pks
 }
 
 func bluedbRecGet(rec map[string]any, col string) (any, bool) {
@@ -287,6 +375,12 @@ func bluedbLessByOrders(a, b map[string]any, orders []bluedbOrderTerm) bool {
 	return false
 }
 
+type bluedbQRow struct {
+	pk  string
+	raw string
+	rec map[string]any
+}
+
 func bluedbRunQuery(db *bluedb.DB, coll, planJSON string, wantRows bool) (out []any, count int) {
 	var plan bluedbQueryPlan
 	_ = json.Unmarshal([]byte(planJSON), &plan)
@@ -298,12 +392,43 @@ func bluedbRunQuery(db *bluedb.DB, coll, planJSON string, wantRows bool) (out []
 	if offset < 0 {
 		offset = 0
 	}
-	prefix := bluedbCollRecordPrefix(coll)
-	out = []any{}
+	ordered := len(plan.Orders) > 0
 
-	// No ORDER BY: stream in primary-key order with an early stop at limit.
-	if len(plan.Orders) == 0 {
-		skipped := 0
+	// Collect matching rows. When there's no ORDER BY we can early-stop once we
+	// have offset+limit rows; with ORDER BY we must see every match before sorting
+	// (bounded by the result cap).
+	rows := make([]bluedbQRow, 0, 16)
+	keep := func(pk, raw string, rec map[string]any) bool {
+		rows = append(rows, bluedbQRow{pk: pk, raw: raw, rec: rec})
+		if ordered {
+			return len(rows) < bluedbQueryMaxRows
+		}
+		return len(rows) < offset+limit
+	}
+
+	// Fast path: an AND-reachable equality leaf on an indexed field lets us seek
+	// the index for candidate pks (O(matches)) instead of scanning every record
+	// (O(collection)). The full Cond is still evaluated per candidate — the index
+	// only narrows, so a row is never wrongly included OR excluded.
+	if seekField, seekType, seekVal, ok := bluedbPickEqSeek(plan.Cond, plan.Indexes); ok {
+		for _, pk := range bluedbCollEqCandidatePks(db, coll, seekField, seekVal, seekType) {
+			v, has := db.Get(bluedbCollRecordKey(coll, pk))
+			if !has {
+				continue
+			}
+			var m map[string]any
+			if json.Unmarshal(v, &m) != nil {
+				continue
+			}
+			if !bluedbEvalCond(plan.Cond, m) {
+				continue
+			}
+			if !keep(pk, string(v), m) {
+				break
+			}
+		}
+	} else {
+		prefix := bluedbCollRecordPrefix(coll)
 		db.Scan([]byte(prefix), nil, 0, func(k, v []byte) bool {
 			var m map[string]any
 			if json.Unmarshal(v, &m) != nil {
@@ -312,40 +437,17 @@ func bluedbRunQuery(db *bluedb.DB, coll, planJSON string, wantRows bool) (out []
 			if !bluedbEvalCond(plan.Cond, m) {
 				return true
 			}
-			if skipped < offset {
-				skipped++
-				return true
-			}
-			if wantRows {
-				out = append(out, SkyTuple2{V0: string(k)[len(prefix):], V1: string(v)})
-			}
-			count++
-			return count < limit
+			return keep(string(k)[len(prefix):], string(v), m)
 		})
-		return out, count
 	}
 
-	// ORDER BY present: collect matches (capped), sort, then offset+limit.
-	type qrow struct {
-		pk  string
-		raw string
-		rec map[string]any
+	if ordered {
+		sort.SliceStable(rows, func(i, j int) bool {
+			return bluedbLessByOrders(rows[i].rec, rows[j].rec, plan.Orders)
+		})
 	}
-	rows := []qrow{}
-	db.Scan([]byte(prefix), nil, 0, func(k, v []byte) bool {
-		var m map[string]any
-		if json.Unmarshal(v, &m) != nil {
-			return true
-		}
-		if !bluedbEvalCond(plan.Cond, m) {
-			return true
-		}
-		rows = append(rows, qrow{pk: string(k)[len(prefix):], raw: string(v), rec: m})
-		return len(rows) < bluedbQueryMaxRows
-	})
-	sort.SliceStable(rows, func(i, j int) bool {
-		return bluedbLessByOrders(rows[i].rec, rows[j].rec, plan.Orders)
-	})
+
+	out = []any{}
 	for i := offset; i < len(rows) && count < limit; i++ {
 		if wantRows {
 			out = append(out, SkyTuple2{V0: rows[i].pk, V1: rows[i].raw})

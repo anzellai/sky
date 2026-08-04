@@ -26,6 +26,7 @@ users : Persist.Collection User
 users =
     Persist.collection
         (Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id")
+        |> Persist.index "status"
 
 
 sample : List User

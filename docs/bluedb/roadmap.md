@@ -34,10 +34,21 @@ keys), F2 (mandatory 10k result cap + early-stop). e2e parity SQL≡KV proven in
 `examples/55-persist-query`. Cost: O(n) memtable scan + per-row JSON decode — a
 cold/analytics path, NEVER the reactive hot path (declared `index` +
 `findAllByIndex` is the point-lookup path).
-**Phase 2 (deferred):** single-index seek acceleration for a sargable eq/range
-leaf (currently every query is a full scan); multi-index AND/OR planning;
-aggregates; exact Money/Time/Bytes predicate representation. Joins/GROUP BY stay
-SQL-only. F3 (console redaction) rides with the surfacing tier.
+**Index acceleration (shipped on top of P5):** an AND-reachable equality leaf on
+a declared `index` field now SEEKS the index for candidate pks
+(`bluedbPickEqSeek` + `bluedbCollEqCandidatePks`) instead of full-scanning —
+O(matches) not O(collection). The full `Cond` is still re-evaluated on each
+candidate, so the seek only narrows (never mis-includes/excludes). Gated to
+`(text,str)` + `(int,int)` where the plan value's string encoding provably
+matches the stored index encoding; an eq under OR/NOT is not necessary and does
+NOT seed a seek. Differential test asserts seek-result ≡ full-scan-result
+(`TestCollQueryIndexSeek`/`TestPickEqSeek`); e2e in `examples/55-persist-query`
+(declares `index "status"`).
+**Phase 2 (deferred):** RANGE seek acceleration (gt/gte/lt/lte on an indexed
+field — currently full-scans); multi-index AND/OR planning; aggregates; exact
+Money/Time/Bytes predicate representation; index-seek for bool/float eq once
+encoding parity is verified. Joins/GROUP BY stay SQL-only. F3 (console redaction)
+rides with the surfacing tier.
 
 ## Tier 2 — Multi-writer ergonomics (headline feature #2 — mostly already done)
 Concurrent in-process writers ALREADY scale via group-commit (~51k durable

@@ -727,6 +727,7 @@ kvPlan q =
         (Store.colsOf (storeOf q.coll))
         (combinedCond q.conds)
         q.orders
+        (indexFieldTypes q.coll)
         q.limitN
         q.offsetN
 

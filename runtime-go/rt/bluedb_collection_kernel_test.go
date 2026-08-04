@@ -474,3 +474,83 @@ func TestCollQuery(t *testing.T) {
 		t.Fatalf("limit 1 = %v want len 1", got)
 	}
 }
+
+// P5 index acceleration: an AND-reachable eq on an indexed field seeks the index;
+// the result MUST equal the full-scan result (an optimization that drops a row is
+// a correctness bug), and an eq under OR must NOT seed a seek.
+func TestCollQueryIndexSeek(t *testing.T) {
+	id := registerIdxStore(t)
+	put := func(pk string, age int, status string) {
+		collPut(t, id, "u", pk, fmt.Sprintf(`{"id":%q,"age":%d,"status":%q}`, pk, age, status),
+			[3]string{"status", status, "text"},
+			[3]string{"age", fmt.Sprintf("%d", age), "int"})
+	}
+	put("1", 30, "active")
+	put("2", 17, "active")
+	put("3", 52, "idle")
+	put("4", 29, "active")
+
+	pksOf := func(plan string) []string {
+		r := BlueDB_collQuery(id, "u", plan).(func() any)().(SkyResult[any, any])
+		out := []string{}
+		for _, it := range r.OkValue.([]any) {
+			out = append(out, it.(SkyTuple2).V0.(string))
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	condAnd := `{"t":"and","cs":[{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}},{"t":"op","col":"age","op":">","v":{"k":"int","s":"18"}}]}`
+	scan := pksOf(`{"cond":` + condAnd + `}`)
+	seek := pksOf(`{"cond":` + condAnd + `,"indexes":[{"field":"status","colType":"text"}]}`)
+	if !eqStrs(scan, seek) || !eqStrs(seek, []string{"1", "4"}) {
+		t.Fatalf("index-seek must equal full-scan: scan=%v seek=%v want [1 4]", scan, seek)
+	}
+
+	// int index eq
+	if got := pksOf(`{"cond":{"t":"op","col":"age","op":"=","v":{"k":"int","s":"30"}},"indexes":[{"field":"age","colType":"int"}]}`); !eqStrs(got, []string{"1"}) {
+		t.Fatalf("int index-seek age=30 = %v want [1]", got)
+	}
+
+	// eq under OR must NOT seed a seek but stay correct (idle OR age>50 → 3)
+	condOr := `{"cond":{"t":"or","cs":[{"t":"op","col":"status","op":"=","v":{"k":"str","s":"idle"}},{"t":"op","col":"age","op":">","v":{"k":"int","s":"50"}}]},"indexes":[{"field":"status","colType":"text"}]}`
+	if got := pksOf(condOr); !eqStrs(got, []string{"3"}) {
+		t.Fatalf("OR with index present = %v want [3] (must full-scan, not seek the OR-eq)", got)
+	}
+
+	// seek + ORDER BY + limit still correct
+	if got := pksOf(`{"cond":` + condAnd + `,"indexes":[{"field":"status","colType":"text"}],"orders":[{"col":"age","dir":"desc"}],"limit":1}`); !eqStrs(got, []string{"1"}) {
+		t.Fatalf("seek+order desc+limit1 = %v want [1] (age 30 > 29)", got)
+	}
+}
+
+func TestPickEqSeek(t *testing.T) {
+	idx := []bluedbIndexSpec{{Field: "status", ColType: "text"}, {Field: "age", ColType: "int"}}
+	and := map[string]any{"t": "and", "cs": []any{
+		map[string]any{"t": "op", "col": "status", "op": "=", "v": map[string]any{"k": "str", "s": "active"}},
+		map[string]any{"t": "op", "col": "age", "op": ">", "v": map[string]any{"k": "int", "s": "18"}},
+	}}
+	if f, ct, v, ok := bluedbPickEqSeek(and, idx); !ok || f != "status" || ct != "text" || v != "active" {
+		t.Fatalf("AND eq pick = %q,%q,%q,%v want status,text,active,true", f, ct, v, ok)
+	}
+	or := map[string]any{"t": "or", "cs": []any{
+		map[string]any{"t": "op", "col": "status", "op": "=", "v": map[string]any{"k": "str", "s": "idle"}},
+	}}
+	if _, _, _, ok := bluedbPickEqSeek(or, idx); ok {
+		t.Fatal("OR-nested eq must not be picked for a seek")
+	}
+	ne := map[string]any{"t": "op", "col": "name", "op": "=", "v": map[string]any{"k": "str", "s": "x"}}
+	if _, _, _, ok := bluedbPickEqSeek(ne, idx); ok {
+		t.Fatal("eq on non-indexed field must not be picked")
+	}
+	fl := map[string]any{"t": "op", "col": "age", "op": "=", "v": map[string]any{"k": "float", "s": "18"}}
+	if _, _, _, ok := bluedbPickEqSeek(fl, idx); ok {
+		t.Fatal("float value on int index must not seek (kind gate)")
+	}
+	// camelCase declared index vs snake query col match (userId vs user_id)
+	idx2 := []bluedbIndexSpec{{Field: "userId", ColType: "text"}}
+	leaf := map[string]any{"t": "op", "col": "user_id", "op": "=", "v": map[string]any{"k": "str", "s": "u9"}}
+	if f, _, _, ok := bluedbPickEqSeek(leaf, idx2); !ok || f != "userId" {
+		t.Fatalf("camel/snake match = %q,%v want userId,true", f, ok)
+	}
+}
