@@ -28,6 +28,8 @@ module Std.BlueDB exposing
     , collFindByIndexRange
     , collCountByIndex
     , collCountByIndexRange
+    , collQuery
+    , collQueryCount
     , collReindex
     , collGetValue
     , collAllValues
@@ -528,6 +530,36 @@ collReindex store coll fieldTypes =
 
         Store raw ->
             collReindexRaw raw coll fieldTypes
+
+
+collQueryRaw : Int -> String -> String -> Task Error (List ( String, String ))
+collQueryRaw =
+    Ffi.kernel "BlueDB_collQuery"
+
+
+{-| Every `(pk, json)` in `coll` matching the query `plan` (a serialized
+`Std.Db.Store` condition + limit/offset — see `Store.planJson`). A full-scan
+predicate over this collection's records; capped by the plan's limit. -}
+collQuery : Store -> String -> String -> Task Error (List ( String, String ))
+collQuery store coll plan =
+    case store of
+
+        Store raw ->
+            collQueryRaw raw coll plan
+
+
+collQueryCountRaw : Int -> String -> String -> Task Error Int
+collQueryCountRaw =
+    Ffi.kernel "BlueDB_collQueryCount"
+
+
+{-| Count of records in `coll` matching the query `plan`. -}
+collQueryCount : Store -> String -> String -> Task Error Int
+collQueryCount store coll plan =
+    case store of
+
+        Store raw ->
+            collQueryCountRaw raw coll plan
 
 
 {-| `collGet` + decode via `Codec`. `Nothing` = absent; a present-but-undecodable

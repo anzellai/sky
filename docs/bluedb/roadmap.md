@@ -18,17 +18,26 @@ more on it → the two headline features → production hardening → the v2 rew
   world-readable `0o644`; NUL/reserved rejection is kernel-only so console-mutate +
   CLI can corrupt the index keyspace).
 
-## Tier 1 — Querying / filtering (headline feature #1)
+## Tier 1 — Querying / filtering (headline feature #1) — **P5 SHIPPED (Phase 1)**
 Reuse the `Std.Db.Store` `Cond` builder; expose query terminals on `Std.Persist`
-that dispatch `SqlConn`/`KvConn` so the SAME query compiles on both backends. KV
-kernel: index-seek one sargable eq/range leaf → re-evaluate the full `Cond` in Go
-over decoded JSON via the order-preserving encoder (no injection, fail-fast on
-unknown columns). Phase 1: full `Cond` + single-index accel + single-key sort +
-limit/offset/toList/toMaybe/count. Phase 2: multi-index AND/OR, aggregates.
-Joins/GROUP BY stay SQL-only. **Bake in security must-fixes:** F1 skip-reserved,
-F2 mandatory cap + streaming (Scan not ForEach), F4 enforced collection/tenant
-scope, F3 console redaction. Cost: indexed = O(m log m); non-indexed = O(n)
-memtable scan + per-row JSON decode (cold/analytics path, never the hot path).
+that dispatch `SqlConn`/`KvConn` so the SAME query compiles on both backends.
+**Shipped (P5):** `Persist.query |> where_/orderAsc/orderDesc/limit/offset` +
+`toList`/`toMaybe`/`toCount` terminals + the full `Cond` builder
+(`eq/neq/gt/gte/lt/lte/like/isNull/notNull/inList/and_/or_/not_`) and value
+builders (`string/int/float/bool`), all re-exported from Persist so a KV app
+queries from one import. KV kernel (`BlueDB.collQuery`/`collQueryCount`,
+`runtime-go/rt/bluedb_query_kernel.go`): full collection scan → evaluate the
+serialized `Cond` plan (`Store.planJson`) in Go over each decoded record; ORDER
+BY sorts in-memory post-scan. **Security baked in:** F1 (scan the exact
+`\x00x\x00d\x00<coll>\x00` record prefix — never reserved/index/other-collection
+keys), F2 (mandatory 10k result cap + early-stop). e2e parity SQL≡KV proven in
+`examples/55-persist-query`. Cost: O(n) memtable scan + per-row JSON decode — a
+cold/analytics path, NEVER the reactive hot path (declared `index` +
+`findAllByIndex` is the point-lookup path).
+**Phase 2 (deferred):** single-index seek acceleration for a sargable eq/range
+leaf (currently every query is a full scan); multi-index AND/OR planning;
+aggregates; exact Money/Time/Bytes predicate representation. Joins/GROUP BY stay
+SQL-only. F3 (console redaction) rides with the surfacing tier.
 
 ## Tier 2 — Multi-writer ergonomics (headline feature #2 — mostly already done)
 Concurrent in-process writers ALREADY scale via group-commit (~51k durable
@@ -37,7 +46,7 @@ document "open once, share the handle"; expose `BlueDB.batch`/`withBatch`
 (multi-key atomic + one fsync); per-store `Sync=false` relaxed tier (~319k/s);
 stripes 256→4096. Multi-*process* write is the irreducible floor — never build it.
 
-## Tier 3 — Graduation-story integrity (compat) — **IN PROGRESS**
+## Tier 3 — Graduation-story integrity (compat) — **P1–P4 SHIPPED**
 **G5: enforce the SQL schema guarantees on KV** so a `Store` behaves identically
 on both backends. Scope decided with the user:
 - **D1** Add `Persist.insert : Conn cap -> Collection a -> a -> Task Error a`
@@ -61,7 +70,11 @@ on both backends. Scope decided with the user:
 - **G6** keyspace partition for the unified-store vision (sessions gob vs app JSON).
 - Detailed phased design + concurrency/lock-ordering spec: produced by the design
   agent + grill, then implemented P1 (namespacing+migration) → P2 (defaults/touch)
-  → P3 (serial+insert) → P4 (unique), each three-leg tested.
+  → P3 (serial+insert) → P4 (unique) → P5 (Cond querying), each three-leg tested.
+  **All five phases shipped.** Runtime: `runtime-go/rt/bluedb_collection_kernel.go`
+  + `bluedb_query_kernel.go`; Sky: `Std.BlueDB` `coll*` verbs, `Std.Persist`
+  universal + query surface, `Std.Db.Store.planJson`. e2e demos:
+  `examples/53-bluedb-migration`, `examples/55-persist-query`.
 
 ## Tier 4 — Operability / production-readiness
 - **G4 `sky bluedb <path> verify`** (full CRC scan, reports first bad offset, no

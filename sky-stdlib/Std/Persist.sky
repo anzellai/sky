@@ -24,6 +24,35 @@ module Std.Persist exposing
     , findAllByIndexRange
     , countByIndex
     , countByIndexRange
+    , Query
+    , Cond
+    , SqlValue
+    , query
+    , where_
+    , orderAsc
+    , orderDesc
+    , limit
+    , offset
+    , toList
+    , toMaybe
+    , toCount
+    , eq
+    , neq
+    , gt
+    , gte
+    , lt
+    , lte
+    , like
+    , isNull
+    , notNull
+    , inList
+    , and_
+    , or_
+    , not_
+    , string
+    , int
+    , float
+    , bool
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -592,6 +621,264 @@ keepJusts xs =
                     acc)
         []
         xs
+
+-- ── Portable query builder (both backends) ───────────────────────────────────
+--
+-- Reuses Std.Db.Store's `Cond` builder. Build with `query`/`where_`/`orderAsc`/
+-- `limit`, run with a terminal (`toList`/`toMaybe`/`toCount`) against EITHER
+-- backend — SQL renders a WHERE clause; KV evaluates the SAME condition over each
+-- record (a full-scan predicate: an analytics/cold-path op, never the reactive hot
+-- path — reach for a declared `index` + `findAllByIndex` for point lookups).
+--
+-- Predicate value kinds String/Int/Float/Bool are exact on both backends.
+type alias Cond =
+    Store.Cond
+
+type alias SqlValue =
+    Db.SqlValue
+
+type Query a
+    = Query { coll : Collection a
+, conds : List Cond
+, orders : List ( String, String )
+, limitN : Int
+, offsetN : Int
+}
+
+
+{-| Start a portable query over a collection. -}
+query : Collection a -> Query a
+query coll =
+    Query { coll = coll, conds = [], orders = [], limitN = 0, offsetN = 0 }
+
+
+{-| AND another condition into the query (multiple `where_` AND together, so
+OR/nesting is first-class via `or_`/`and_`). -}
+where_ : Cond -> Query a -> Query a
+where_ c (Query q) =
+    Query { q | conds = q.conds ++ [ c ] }
+
+
+{-| Order results ascending by a column (record field or snake column). On the KV
+backend the sort happens in-memory after the scan. -}
+orderAsc : String -> Query a -> Query a
+orderAsc col (Query q) =
+    Query { q | orders = q.orders ++ [ ( col, "asc" ) ] }
+
+
+{-| Order results descending by a column. -}
+orderDesc : String -> Query a -> Query a
+orderDesc col (Query q) =
+    Query { q | orders = q.orders ++ [ ( col, "desc" ) ] }
+
+
+{-| Cap the number of returned rows. -}
+limit : Int -> Query a -> Query a
+limit n (Query q) =
+    Query { q | limitN = n }
+
+
+{-| Skip the first `n` rows. -}
+offset : Int -> Query a -> Query a
+offset n (Query q) =
+    Query { q | offsetN = n }
+
+
+{-| Run the query, returning every matching record (decoded via the codec). -}
+toList : Conn cap -> Query a -> Task Error (List a)
+toList conn (Query q) =
+    case conn of
+
+        SqlConn db ->
+            Store.toList db (buildSqlQuery (Query q))
+
+        KvConn store ->
+            BlueDB.collQuery store (collNameOf q.coll) (kvPlan q)
+                |> Task.andThen (decodeRows (codecOf q.coll))
+
+
+{-| Run the query, returning the first matching record (adds `LIMIT 1`). -}
+toMaybe : Conn cap -> Query a -> Task Error (Maybe a)
+toMaybe conn q =
+    toList conn (limit 1 q) |> Task.map List.head
+
+
+{-| Count the matching records (no decode). -}
+toCount : Conn cap -> Query a -> Task Error Int
+toCount conn (Query q) =
+    case conn of
+
+        SqlConn db ->
+            Store.count db (buildSqlQuery (Query q))
+
+        KvConn store ->
+            BlueDB.collQueryCount store (collNameOf q.coll) (kvPlan q)
+
+
+-- Serialize the accumulated query to the KV plan JSON.
+kvPlan : { coll : Collection a
+, conds : List Cond
+, orders : List ( String, String )
+, limitN : Int
+, offsetN : Int
+} -> String
+kvPlan q =
+    Store.planJson
+        (Store.colsOf (storeOf q.coll))
+        (combinedCond q.conds)
+        q.orders
+        q.limitN
+        q.offsetN
+
+
+-- Fold the accumulated clauses onto a Store.Query for the SQL backend.
+buildSqlQuery : Query a -> Store.Query a
+buildSqlQuery (Query q) =
+    let
+        base =
+            List.foldl Store.where_ (Store.query (storeOf q.coll)) q.conds
+        ordered = List.foldl applyOrder base q.orders
+        limited =
+            if q.limitN > 0 then
+                Store.limit q.limitN ordered
+
+            else
+                ordered
+    in
+        if q.offsetN > 0 then
+            Store.offset q.offsetN limited
+
+        else
+            limited
+
+
+applyOrder : ( String, String ) -> Store.Query a -> Store.Query a
+applyOrder pair sq =
+    case pair of
+
+        ( col, "desc" ) ->
+            Store.orderDesc col sq
+
+        ( col, _ ) ->
+            Store.orderAsc col sq
+
+
+-- AND the accumulated conditions into one (empty → match-all).
+combinedCond : List Cond -> Cond
+combinedCond conds =
+    case conds of
+
+        [single] ->
+            single
+
+        many ->
+            Store.and_ many
+
+
+decodeRows : Codec a -> List ( String, String ) -> Task Error (List a)
+decodeRows codec pairs =
+    Task.sequence
+        (List.map
+            (\p ->
+                case p of
+
+                    ( _, raw ) ->
+                        case Codec.fromJson codec raw of
+
+                            Ok v ->
+                                Task.succeed v
+
+                            Err e ->
+                                Task.fail e)
+            pairs)
+
+
+-- Condition leaves + combinators, re-exported from Std.Db.Store so a Persist app
+-- builds queries from ONE import.
+eq : String -> SqlValue -> Cond
+eq =
+    Store.eq
+
+
+neq : String -> SqlValue -> Cond
+neq =
+    Store.neq
+
+
+gt : String -> SqlValue -> Cond
+gt =
+    Store.gt
+
+
+gte : String -> SqlValue -> Cond
+gte =
+    Store.gte
+
+
+lt : String -> SqlValue -> Cond
+lt =
+    Store.lt
+
+
+lte : String -> SqlValue -> Cond
+lte =
+    Store.lte
+
+
+like : String -> String -> Cond
+like =
+    Store.like
+
+
+isNull : String -> Cond
+isNull =
+    Store.isNull
+
+
+notNull : String -> Cond
+notNull =
+    Store.notNull
+
+
+inList : String -> List SqlValue -> Cond
+inList =
+    Store.inList
+
+
+and_ : List Cond -> Cond
+and_ =
+    Store.and_
+
+
+or_ : List Cond -> Cond
+or_ =
+    Store.or_
+
+
+not_ : Cond -> Cond
+not_ =
+    Store.not_
+
+
+-- Value constructors, re-exported from Std.Db so query values need ONE import.
+string : String -> SqlValue
+string =
+    Db.SqlString
+
+
+int : Int -> SqlValue
+int =
+    Db.SqlInt
+
+
+float : Float -> SqlValue
+float =
+    Db.SqlFloat
+
+
+bool : Bool -> SqlValue
+bool =
+    Db.SqlBool
 
 
 -- Escape hatches (Task-typed; the dead arm is a Task.fail, never a panic) --------

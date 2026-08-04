@@ -93,6 +93,8 @@ module Std.Db.Store exposing
     , count
     , sqlOf
     , transaction
+    , planJson
+    , condPlanJson
     )
 
 import Sky.Ffi as Ffi
@@ -101,7 +103,9 @@ import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Result as Result
-import Sky.Core.Json.Encode exposing (Value)
+import Sky.Core.Json.Encode as Encode exposing (Value)
+import Std.Decimal as Decimal
+import Std.Money as Money
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue)
 
@@ -1028,6 +1032,151 @@ resolveCond known c =
 resolveOrder : List ( String, String ) -> OrderTerm -> OrderTerm
 resolveOrder known (OrderTerm col dir) =
     OrderTerm (resolveCol known col) dir
+
+
+-- ── KV query plan serialization ──────────────────────────────────────────────
+--
+-- The SQL backend renders a `Cond` to a WHERE clause (`renderCond`). The KV
+-- (BlueDB) backend can't run SQL, so `Std.Persist` serializes the SAME resolved
+-- `Cond` to a compact plan JSON and hands it to the collection-query kernel,
+-- which evaluates it over each decoded record. This keeps ONE query builder
+-- across both backends. Column names are resolved (field → snake column) first
+-- so the plan keys line up with the codec-stored JSON keys.
+--
+-- Predicate value kinds: String / Int / Float / Bool / Decimal serialize
+-- exactly; Money / Time / Bytes map through their scalar string/number forms.
+-- | Full query plan JSON for the KV backend: the resolved condition + order
+-- terms + limit + offset. `orders` are `(column, "asc"|"desc")` pairs (column
+-- resolved field → snake). Consumed by `BlueDB.collQuery` / `collQueryCount`.
+planJson : List ( String, String ) -> Cond -> List ( String, String ) -> Int -> Int -> String
+planJson known cond orders limitN offsetN =
+    Encode.encode
+        0
+        (Encode.object
+            [ ( "cond", condToPlanV (resolveCond known cond) )
+            , ( "orders", Encode.list (orderToPlanV known) orders )
+            , ( "limit", Encode.int limitN )
+            , ( "offset", Encode.int offsetN )
+            ])
+
+
+orderToPlanV : List ( String, String ) -> ( String, String ) -> Value
+orderToPlanV known pair =
+    case pair of
+
+        ( col, dir ) ->
+            Encode.object
+                [ ( "col", Encode.string (resolveCol known col) )
+                , ( "dir", Encode.string dir )
+                ]
+
+
+-- | Just the condition node as JSON (no limit/offset wrapper) — for callers that
+-- assemble their own plan envelope.
+condPlanJson : List ( String, String ) -> Cond -> String
+condPlanJson known cond =
+    Encode.encode 0 (condToPlanV (resolveCond known cond))
+
+
+condToPlanV : Cond -> Value
+condToPlanV c =
+    case c of
+
+        CondOp col op v ->
+            Encode.object
+                [ ( "t", Encode.string "op" )
+                , ( "col", Encode.string col )
+                , ( "op", Encode.string (planOp op) )
+                , ( "v", sqlToPlanV v )
+                ]
+
+        CondNull col wantNull ->
+            Encode.object
+                [ ( "t", Encode.string "null" )
+                , ( "col", Encode.string col )
+                , ( "neg", Encode.bool wantNull )
+                ]
+
+        CondIn col vs ->
+            Encode.object
+                [ ( "t", Encode.string "in" )
+                , ( "col", Encode.string col )
+                , ( "vs", Encode.list sqlToPlanV vs )
+                ]
+
+        CondAnd cs ->
+            Encode.object
+                [ ( "t", Encode.string "and" )
+                , ( "cs", Encode.list condToPlanV cs )
+                ]
+
+        CondOr cs ->
+            Encode.object
+                [ ( "t", Encode.string "or" )
+                , ( "cs", Encode.list condToPlanV cs )
+                ]
+
+        CondNot inner ->
+            Encode.object
+                [ ( "t", Encode.string "not" ), ( "c", condToPlanV inner ) ]
+
+
+-- Map the SQL operator to the KV evaluator's operator spelling.
+planOp : String -> String
+planOp op =
+    case op of
+
+        "<>" ->
+            "!="
+
+        "LIKE" ->
+            "like"
+
+        other ->
+            other
+
+
+kvVal : String -> String -> Value
+kvVal k s =
+    Encode.object [ ( "k", Encode.string k ), ( "s", Encode.string s ) ]
+
+
+sqlToPlanV : SqlValue -> Value
+sqlToPlanV v =
+    case v of
+
+        Db.SqlString s ->
+            kvVal "str" s
+
+        Db.SqlInt i ->
+            kvVal "int" (String.fromInt i)
+
+        Db.SqlFloat f ->
+            kvVal "float" (String.fromFloat f)
+
+        Db.SqlBool b ->
+            kvVal
+                "bool"
+                (if b then
+                    "true"
+
+                else
+                    "false")
+
+        Db.SqlBytes s ->
+            kvVal "str" s
+
+        Db.SqlDecimal d ->
+            kvVal "float" (Decimal.toString d)
+
+        Db.SqlTime t ->
+            kvVal "int" (String.fromInt t)
+
+        Db.SqlMoney m ->
+            kvVal "str" (Decimal.toString (Money.amount m))
+
+        Db.SqlNull _ ->
+            kvVal "null" ""
 
 
 -- | Fail-fast guard: run `task` only if every used column exists in the store,

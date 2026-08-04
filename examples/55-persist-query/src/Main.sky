@@ -1,0 +1,120 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Codec as Codec
+import Std.Db.Store as Store
+import Std.Persist as Persist
+
+type alias User =
+    { id : Int
+    , name : String
+    , age : Int
+    , status : String
+    }
+
+
+blankUser : User
+blankUser =
+    { id = 0, name = "", age = 0, status = "" }
+
+
+users : Persist.Collection User
+users =
+    Persist.collection
+        (Store.fromCodec "users" (Codec.auto blankUser) |> Store.primaryKey "id")
+
+
+sample : List User
+sample =
+    [ { id = 1, name = "Ada", age = 36, status = "active" }
+    , { id = 2, name = "Lin", age = 17, status = "active" }
+    , { id = 3, name = "Bo", age = 52, status = "idle" }
+    , { id = 4, name = "Cy", age = 29, status = "active" }
+    ]
+
+
+-- active AND age >= 18, ordered by age desc
+demoQuery : Persist.Query User
+demoQuery =
+    Persist.query users
+        |> Persist.where_ (Persist.eq "status" (Persist.string "active"))
+        |> Persist.where_ (Persist.gte "age" (Persist.int 18))
+        |> Persist.orderDesc "age"
+
+
+-- (status = idle OR age > 50) — OR nesting
+orQuery : Persist.Query User
+orQuery =
+    Persist.query users
+        |> Persist.where_
+               (Persist.or_
+                   [ Persist.eq "status" (Persist.string "idle")
+                   , Persist.gt "age" (Persist.int 50)
+                   ])
+
+
+seedAll : Persist.Conn cap -> Task Error ()
+seedAll conn =
+    List.foldl
+        (\u acc -> acc |> Task.andThen (\_ -> Persist.put conn users u))
+        (Task.succeed ())
+        sample
+
+
+runBackend : String -> Persist.Conn cap -> Task Error ()
+runBackend label conn =
+    Persist.create conn users |> Task.andThen (\_ -> seedAll conn)
+        |> Task.andThen (\_ -> Persist.toList conn demoQuery)
+        |> Task.andThen
+               (\rows ->
+                   let
+                       _ =
+                           println
+                               (label ++ " active&age>=18 desc: "
+                                   ++ String.join "," (List.map .name rows))
+                   in
+                       Persist.toCount conn demoQuery
+                           |> Task.andThen
+                                  (\n ->
+                                      let
+                                          _ =
+                                              println
+                                                  (label ++ " count: "
+                                                      ++ String.fromInt n)
+                                      in
+                                          Persist.toList conn orQuery))
+        |> Task.andThen
+               (\rows ->
+                   let
+                       _ =
+                           println
+                               (label ++ " idle|age>50: "
+                                   ++ String.join "," (List.map .name rows))
+                       _ = println (label ++ " LIKE %o% names:")
+                   in
+                       Persist.toList
+                           conn
+                           (Persist.query users
+                               |> Persist.where_ (Persist.like "name" "%o%"))
+                           |> Task.map
+                                  (\ls ->
+                                      let
+                                          _ =
+                                              println
+                                                  ("  -> "
+                                                      ++ String.join
+                                                             ","
+                                                             (List.map .name ls))
+                                      in
+                                          ()))
+
+
+main : Task Error ()
+main =
+    Persist.connectKeyValue "data/q.blue" |> Task.andThen (runBackend "KV ")
+        |> Task.andThen (\_ -> Persist.connectRelational ())
+        |> Task.andThen (runBackend "SQL")

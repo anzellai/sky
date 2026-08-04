@@ -428,3 +428,49 @@ func TestCollUniqueNoDeadlock(t *testing.T) {
 }
 
 func atomicAddInt32(p *int32, d int32) { atomic.AddInt32(p, d) }
+
+// P5: Cond querying over a collection (full-scan + predicate eval).
+func TestCollQuery(t *testing.T) {
+	id := registerIdxStore(t)
+	collPut(t, id, "u", "1", `{"id":"1","age":30,"status":"active"}`)
+	collPut(t, id, "u", "2", `{"id":"2","age":18,"status":"active"}`)
+	collPut(t, id, "u", "3", `{"id":"3","age":100,"status":"idle"}`)
+
+	queryPks := func(plan string) []string {
+		r := BlueDB_collQuery(id, "u", plan).(func() any)().(SkyResult[any, any])
+		out := []string{}
+		for _, it := range r.OkValue.([]any) {
+			out = append(out, it.(SkyTuple2).V0.(string))
+		}
+		sort.Strings(out)
+		return out
+	}
+	queryCount := func(plan string) int {
+		return BlueDB_collQueryCount(id, "u", plan).(func() any)().(SkyResult[any, any]).OkValue.(int)
+	}
+
+	// status = active AND age > 18  → only pk 1
+	if got := queryPks(`{"cond":{"t":"and","cs":[{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}},{"t":"op","col":"age","op":">","v":{"k":"int","s":"18"}}]}}`); !eqStrs(got, []string{"1"}) {
+		t.Fatalf("AND query = %v want [1]", got)
+	}
+	// status = active OR age = 100  → 1,2,3
+	if got := queryPks(`{"cond":{"t":"or","cs":[{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}},{"t":"op","col":"age","op":"=","v":{"k":"int","s":"100"}}]}}`); !eqStrs(got, []string{"1", "2", "3"}) {
+		t.Fatalf("OR query = %v want [1 2 3]", got)
+	}
+	// NOT (status = active) → 3
+	if got := queryPks(`{"cond":{"t":"not","c":{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}}}}`); !eqStrs(got, []string{"3"}) {
+		t.Fatalf("NOT query = %v want [3]", got)
+	}
+	// like act% → 1,2
+	if got := queryPks(`{"cond":{"t":"op","col":"status","op":"like","v":{"k":"str","s":"act%"}}}`); !eqStrs(got, []string{"1", "2"}) {
+		t.Fatalf("LIKE query = %v want [1 2]", got)
+	}
+	// count active
+	if n := queryCount(`{"cond":{"t":"op","col":"status","op":"=","v":{"k":"str","s":"active"}}}`); n != 2 {
+		t.Fatalf("count active = %d want 2", n)
+	}
+	// limit 1
+	if got := queryPks(`{"cond":{"t":"true"},"limit":1}`); len(got) != 1 {
+		t.Fatalf("limit 1 = %v want len 1", got)
+	}
+}
