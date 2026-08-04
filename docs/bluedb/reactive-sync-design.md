@@ -372,3 +372,66 @@ The grill's SOUND redesign (supersedes the pk-erasing sketch above):
   dispatch); per-binding coalescing; re-derive query from live model at delivery
   (model-dependent Cond); post-mount paint-then-fill; NO-Cmd fold invariant keeps
   it loop-free. ~6 pieces + the resync-broadcast (already fixed at the pump).
+
+## GRILL: "should all Model data be reactive by default?" (2026-08-04)
+
+Four adversarial grills (DX · scalability/perf · reliability · security), each
+ranking the design OPTIONS — A opt-in (shipped `Persist.live`) · B provenance/
+unified store · C reactive-by-default · D local-first/CRDT.
+
+**Unanimous verdict: A > B > C > D on EVERY axis. Reactive-by-default is rejected.**
+
+- **The premise is a category error.** "Model persisted to the session DB"
+  (`autoBlueDB`) is DURABILITY — single-owner, Model→DB, per-session. "Reactive"
+  is cross-session SHARING — multi-owner, collection→Model. Opposite directions,
+  opposite ownership; they merely share a storage engine. Most Model fields
+  (draft, page, selection, error banners, optimistic UI) are single-owner and
+  must NEVER broadcast. So "persisted ⇒ reactive" mis-categorizes durability as
+  sharing.
+- **DX:** opt-in keeps the framework-owned surface a single enumerable list (grep
+  `reactiveQueries`); default-reactive dissolves that boundary and arms the
+  erase-your-typing footgun permanently. C wins only for read-heavy dashboards.
+- **Perf:** a write to an UNWATCHED collection is O(0) past commit (broker returns
+  0 with no subscribers). Opt-in = "cost scales with declared-live viewers";
+  default = "cost scales with total viewers × all backed fields" — taxes the OLTP
+  hot path the north star protects. Dominant cost = full re-render + full-tree
+  diff per affected session (V+D).
+- **Reliability:** reactivity is a silently-fallible surface (stale-but-plausible
+  under a green banner). Opt-in keeps it exactly as large as declared; default
+  gives a clean-compiling app staleness + clobber semantics its author never
+  reasoned about — the inverse of "if it compiles it works".
+- **Security:** per-collection-topic fan-out breaks tenant isolation regardless of
+  option; default-reactive multiplies the leak across the whole schema.
+
+The "less wiring" instinct is best served later by INFERRED provenance (a compiler
+concern — detect query-backed fields), NOT by flipping the default.
+
+### Confirmed bugs in the shipped design → FIXED this pass
+- **SECURITY (critical): cross-tenant record leak.** The change payload carried the
+  full record JSON on the shared `__bluedb:<coll>` topic → every tenant's session
+  received every other tenant's row (and plaintext across Redis replicas).
+  **Fixed:** the broadcast is now a NUDGE (op/coll/pk only, `record` always "");
+  subscribers re-query with their OWN filter. `watchCollection`'s `record` is now
+  documented as always "". (bluedb_reactive.go `reactivePublish`; Persist.sky.)
+- **RELIABILITY: silent-stale-on-query-error.** A transient DB error dropped a
+  refresh with no retry (the query layer had no resync while every other layer
+  does). **Fixed:** the loop re-arms with capped exponential backoff, a newer
+  change supersedes/resets (live_reactive.go `reactiveRefreshWithRetry`).
+- **RELIABILITY: panic-rollback cleared `sess.handlers`** before the panic-prone
+  render → clicks became silent no-ops. **Fixed:** rollback restores handlers.
+- **RELIABILITY: missed-first-change race.** `startReactive` was async, leaving a
+  gap between page-load and subscribe where the first write was missed (flaky).
+  **Fixed:** the SUBSCRIPTION is now synchronous (before the HTTP response); the
+  initial fill stays async on the loop goroutine. Demo 6/6.
+
+### Roadmap (levers, priority order — under-the-hood, API unchanged)
+1. **Tenant-scoped topics** `__bluedb:<coll>:<field>:<value>` from the record's
+   indexed field (the specced-but-unshipped DECISION A1) + subscriber scoping via
+   verified `SessionIdentity` — the real fix for the activity oracle (F3) + the
+   IDOR risk (F4). Needs an API to declare the scope field. THE security priority.
+2. **Wire the built overlap engine** (`bluedbChangeAffectsQuery`) into `Persist.live`
+   — cuts the re-run session COUNT (skip sessions the change can't affect).
+3. **Incremental / keyed rendering** — cut V+D from O(tree) to O(change); the
+   biggest perf lever, helps every refresh incl. the hot-shared-row case overlap
+   can't.
+4. Per-tenant fan-out rate-limit (DoS / thundering-herd).

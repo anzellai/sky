@@ -4214,11 +4214,15 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if mirror {
 		sess.fanOutFrame(mirrorFrame, navTab)
 	}
-	// Reactive query bindings (Live.withReactive): wire the session's
-	// subscriptions + paint-then-fill, once, asynchronously so the initial HTTP
-	// response isn't blocked on the first query. Idempotent per session.
+	// Reactive query bindings (Live.withReactive): establish the session's broker
+	// SUBSCRIPTIONS synchronously here — before the response — so no write can slip
+	// through the gap between page-load and subscribe (that gap was a flaky
+	// missed-first-change race). startReactive only subscribes + spawns the loop
+	// goroutines (fast, no query I/O); the initial paint-then-fill runs on those
+	// loops asynchronously, so the HTTP response is not blocked on the first query.
+	// Idempotent per session.
 	if app.hasReactive() {
-		go app.startReactive(sess)
+		app.startReactive(sess)
 	}
 
 	setSecurityHeaders(w.Header())

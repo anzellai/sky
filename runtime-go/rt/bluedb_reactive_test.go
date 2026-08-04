@@ -181,7 +181,9 @@ func TestReactivePumpPublishesToBroker(t *testing.T) {
 		if err := json.Unmarshal([]byte(s), &p); err != nil {
 			t.Fatalf("payload not JSON: %v (%q)", err, s)
 		}
-		if p.Op != "put" || p.Coll != "users" || p.Pk != "u1" || p.Record == "" {
+		// SECURITY: the record body is NOT broadcast (cross-tenant safety) — the
+		// payload is a nudge (op/coll/pk), record always "".
+		if p.Op != "put" || p.Coll != "users" || p.Pk != "u1" || p.Record != "" {
 			t.Fatalf("payload = %+v", p)
 		}
 	case <-time.After(2 * time.Second):

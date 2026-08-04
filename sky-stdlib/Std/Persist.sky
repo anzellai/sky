@@ -896,22 +896,26 @@ bool : Bool -> SqlValue
 bool =
     Db.SqlBool
 
--- ── Reactive change subscription (KV backend) ────────────────────────────────
+-- ── Reactive change subscription (any backend) ───────────────────────────────
 --
 -- A live subscription to a collection's changes. When ANY session writes a record
 -- (`put`/`insert`/`delete`) to `coll`, every session subscribed via
--- `watchCollection` receives a `Change` — the reactive foundation: session A
+-- `watchCollection` receives a `Change` NUDGE — the reactive foundation: session A
 -- writes, session B's UI updates with no polling. Rides the Sky.Live pub/sub
--- broker (the change is published per collection), so it works across replicas on
--- a shared broker. Put this in the app's `subscriptions`; handle the `Change` Msg
--- by re-querying (correctness) or merging the record. (KV backend only — SQL has
--- no change-feed; use a Postgres LISTEN/NOTIFY bridge there.)
-{-| One record change delivered to a `watchCollection` subscriber. `op` is
-`"put"` or `"delete"` (`record` is the record JSON for a put — decode with your
-`Codec` via `Codec.fromJson` — or `""` for a delete), OR `"resync"`: the change
-feed dropped deltas under load, so re-read (re-query) rather than trust the last
-state. Handling any `Change` by re-querying is always correct and covers all
-three ops. -}
+-- broker (works across replicas on a shared broker; KV + SQLite + Postgres via the
+-- write-layer publish). Put it in the app's `subscriptions` and handle the `Change`
+-- by RE-QUERYING (`Persist.toList` with your own filter).
+{-| A change NOTIFICATION delivered to a `watchCollection` subscriber. `op` is
+`"put"` / `"delete"` / `"resync"` (a feed overflow — re-read); `coll` + `pk`
+identify what changed.
+
+**`record` is always `""` — a nudge, not the row.** The record BODY is
+deliberately NOT broadcast: the collection topic is shared by every session (all
+tenants), so a record on it would leak one tenant's data to another. Respond by
+**re-querying** with your OWN filter (`Persist.toList (query … |> where_ …)`) — the
+result is correctly scoped to what THIS session may see. Re-querying on any
+`Change` is always correct and covers all three ops. (`Persist.live` does exactly
+this for you.) -}
 type alias Change =
     { op : String
     , coll : String
@@ -921,14 +925,15 @@ type alias Change =
 
 
 {-| Subscribe to a collection's changes. Every write to `coll` (from ANY session)
-delivers a `Change` to `toMsg`. Reach for it in `subscriptions`:
+delivers a `Change` nudge to `toMsg`. Reach for it in `subscriptions`:
 
     subscriptions model =
         Persist.watchCollection todos TodoChanged
 
-Handle `TodoChanged` by re-running your query (`Persist.toList`) or by merging the
-record. For a fully-declarative binding that re-queries and folds into the Model
-for you, see `Persist.live` (auto-refresh). -}
+Handle `TodoChanged` by **re-running your (filtered) query** — `record` is always
+`""` (see `Change`; the row body is not broadcast, for cross-tenant safety). For a
+fully-declarative binding that re-queries and folds into the Model for you, see
+`Persist.live` (auto-refresh). -}
 watchCollection : Collection a -> (Change -> msg) -> Sub msg
 watchCollection coll toMsg =
     Sub.subscribeTopic
@@ -1016,11 +1021,9 @@ publishSqlPut coll record =
     case persistKeyString (keyFieldOf coll) record of
 
         Ok pk ->
-            publishChangeKernel
-                (collNameOf coll)
-                "put"
-                pk
-                (Codec.toJson (codecOf coll) record)
+            -- Nudge only: the record body is NOT broadcast (cross-tenant safety),
+            -- so don't waste a JSON serialization on it — pass "".
+            publishChangeKernel (collNameOf coll) "put" pk ""
 
         Err _ ->
             Task.succeed ()

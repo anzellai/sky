@@ -14,6 +14,16 @@ package rt
 import (
 	"log"
 	"reflect"
+	"time"
+)
+
+// reactiveRetryBase/Max bound the self-healing retry when a reactive query errors
+// (a transient DB blip): the query-execution layer has no broker/feed resync, so
+// the loop re-arms itself with capped exponential backoff instead of leaving the
+// view silently stale until the next unrelated write.
+const (
+	reactiveRetryBase = 250 * time.Millisecond
+	reactiveRetryMax  = 5 * time.Second
 )
 
 // reactiveBindingRT is one binding decoded from a Persist.Live record.
@@ -109,7 +119,7 @@ func (sess *liveSession) teardownReactive() {
 // so a bulk write doesn't re-query per row. Sequential by construction — no
 // concurrent refresh, nothing to lock.
 func (app *liveApp) reactiveLoop(sess *liveSession, rs *reactiveState, coll string, ch <-chan SessionEvent) {
-	app.reactiveRefreshOnce(sess, coll) // initial fill
+	app.reactiveRefreshWithRetry(sess, rs, coll, ch) // initial fill (self-healing)
 	for {
 		select {
 		case <-rs.done:
@@ -118,16 +128,57 @@ func (app *liveApp) reactiveLoop(sess *liveSession, rs *reactiveState, coll stri
 			if !ok {
 				return
 			}
-			// Coalesce a burst: drain what's already buffered, then one refresh.
-			for draining := true; draining; {
-				select {
-				case _, ok := <-ch:
-					draining = ok
-				default:
-					draining = false
-				}
+			drainChangeBurst(ch)
+			app.reactiveRefreshWithRetry(sess, rs, coll, ch)
+		}
+	}
+}
+
+// drainChangeBurst collapses a burst of buffered change events (a bulk write) so
+// we re-query once, not per row.
+func drainChangeBurst(ch <-chan SessionEvent) {
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
 			}
-			app.reactiveRefreshOnce(sess, coll)
+		default:
+			return
+		}
+	}
+}
+
+// reactiveRefreshWithRetry runs one refresh and, if the query errored (a transient
+// failure), re-arms with capped exponential backoff until it succeeds, a NEWER
+// change supersedes it, or the session ends — so a reactive view can't sit
+// silently stale under a healthy connection when the DB briefly hiccups. Stays on
+// this collection's single loop goroutine (no concurrent refresh).
+func (app *liveApp) reactiveRefreshWithRetry(sess *liveSession, rs *reactiveState, coll string, ch <-chan SessionEvent) {
+	if !app.reactiveRefreshOnce(sess, coll) {
+		return // succeeded
+	}
+	backoff := reactiveRetryBase
+	for {
+		select {
+		case <-rs.done:
+			return
+		case <-time.After(backoff):
+			if !app.reactiveRefreshOnce(sess, coll) {
+				return
+			}
+			if backoff *= 2; backoff > reactiveRetryMax {
+				backoff = reactiveRetryMax
+			}
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			drainChangeBurst(ch)
+			if !app.reactiveRefreshOnce(sess, coll) {
+				return // a newer change healed it
+			}
+			backoff = reactiveRetryBase // reset budget on a fresh change
 		}
 	}
 }
@@ -136,42 +187,56 @@ func (app *liveApp) reactiveLoop(sess *liveSession, rs *reactiveState, coll stri
 // SkyResult (nil,false on Err or a shape mismatch). The concrete SkyResult[Error,
 // Tuple] can't be type-asserted to SkyResult[any,any] (generic identity), so read
 // Tag + OkValue reflectively.
-func reactiveFoldFromResult(r any) (any, bool) {
+// Returns (fold, ok, errored): ok=true → a usable fold; errored=true → the task
+// returned an Err (a transient failure worth retrying, as opposed to a shape
+// mismatch which is not).
+func reactiveFoldFromResult(r any) (any, bool, bool) {
 	// Read Tag/OkValue from the RAW SkyResult — do NOT unwrapAny (it unwraps an Ok
 	// straight to its OkValue, losing the Tag). Concrete SkyResult[Error, Tuple]
 	// can't be type-asserted to SkyResult[any,any] (generic identity), so reflect.
 	rv := reflect.ValueOf(r)
 	if rv.Kind() != reflect.Struct {
-		return nil, false
+		return nil, false, false
 	}
 	tag := rv.FieldByName("Tag")
 	okv := rv.FieldByName("OkValue")
-	if !tag.IsValid() || !okv.IsValid() || tag.Int() != 0 {
-		return nil, false // not a result, or Err
+	if !tag.IsValid() || !okv.IsValid() {
+		return nil, false, false // not a result
 	}
-	return tupleFirst(okv.Interface()), true // OkValue is the (fold, pks) tuple
+	if tag.Int() != 0 {
+		return nil, false, true // Err — retry-worthy
+	}
+	return tupleFirst(okv.Interface()), true, false // OkValue is the (fold, pks) tuple
 }
 
 // reactiveRefreshOnce re-derives the bindings from the CURRENT model (so a
 // model-dependent query filter stays fresh), runs each binding-on-coll's task
 // OUTSIDE sess.mu, then applies the folds + re-renders INSIDE sess.mu and pushes
 // one SSE frame — mirroring runPerformBody's lock discipline + frame tail.
-func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) {
+// reactiveRefreshOnce returns retry=true when a binding's query ERRORED (so the
+// loop should re-arm) — otherwise false (succeeded, or nothing to do).
+func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) (retry bool) {
 	sess.mu.Lock()
 	model := sess.model
 	sess.mu.Unlock()
 
 	var folds []any
+	errored := false
 	for _, b := range app.reactiveBindingsFor(model) {
 		if b.coll != coll {
 			continue
 		}
-		if fold, ok := reactiveFoldFromResult(sky_call(b.run, nil)); ok {
+		fold, ok, isErr := reactiveFoldFromResult(sky_call(b.run, nil))
+		if isErr {
+			errored = true
+			continue
+		}
+		if ok {
 			folds = append(folds, fold)
 		}
 	}
 	if len(folds) == 0 {
-		return
+		return errored // retry only if a query erred (not merely no folds)
 	}
 
 	sess.mu.Lock()
@@ -179,15 +244,19 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) {
 	prevTree := sess.prevTree
 	prevModel := sess.model
 	prevComputed := sess.lastComputedBody
+	prevHandlers := sess.handlers
 
 	// Apply folds + render with panic-rollback: the fold is user code + a coerce
-	// on decoded rows and can panic; on panic restore the pre-fold state and skip.
+	// on decoded rows and can panic; on panic restore the pre-fold state (INCLUDING
+	// handlers — cleared below before the panic-prone render; without restoring it,
+	// prevTree's handler IDs would dangle and every click would be a silent no-op).
 	var vn VNode
 	body, ok := func() (b string, ok bool) {
 		defer func() {
 			if r := recover(); r != nil {
 				sess.model = prevModel
 				sess.lastComputedBody = prevComputed
+				sess.handlers = prevHandlers
 				logReactivePanic(r)
 				ok = false
 			}
@@ -206,7 +275,7 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) {
 	}()
 	if !ok {
 		sess.mu.Unlock()
-		return
+		return errored
 	}
 	sess.commitRender(&vn, body)
 
@@ -223,7 +292,7 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) {
 	}
 	sess.mu.Unlock()
 	if !haveFrame {
-		return
+		return errored
 	}
 
 	frame := chooseSSEFrame(snap, prevTree, patches)
@@ -233,6 +302,7 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, coll string) {
 		recordSseDrop(sess.sid)
 		sess.markAllConnsOutOfSync()
 	}
+	return errored
 }
 
 func logReactivePanic(r any) {

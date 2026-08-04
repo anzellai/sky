@@ -125,12 +125,22 @@ func bluedbChangeAffectsQuery(rc bluedbRecordChange, s *bluedbQuerySub) bool {
 
 // ── Broker publish (P-R4a) ───────────────────────────────────────────────────
 
-// bluedbChangePayload is the JSON payload delivered to Persist.watch* subscribers.
+// bluedbChangePayload is the JSON change NOTIFICATION delivered to Persist.watch*
+// subscribers. It carries op/coll/pk only — a NUDGE, never the record body.
+//
+// SECURITY (cross-tenant isolation): the collection topic __bluedb:<coll> is
+// shared by EVERY session (all tenants) that watches the collection. Putting the
+// record body on it would broadcast one tenant's row content to every other
+// tenant's session (and, on a Redis broker, across replicas in plaintext).
+// So the record is never published here; a subscriber re-queries with its OWN
+// filter (the tenant-scoped, safe path). The `record` field stays for wire/decode
+// compatibility but is always "" — a future tenant-scoped topic
+// (__bluedb:<coll>:<field>:<value>) is where a record body could travel safely.
 type bluedbChangePayload struct {
-	Op     string `json:"op"`     // "put" | "delete"
+	Op     string `json:"op"`     // "put" | "delete" | "resync"
 	Coll   string `json:"coll"`   // collection name
 	Pk     string `json:"pk"`     // primary key
-	Record string `json:"record"` // record JSON for a put; "" for a delete
+	Record string `json:"record"` // ALWAYS "" — see the security note above
 }
 
 // bluedbPublishChange routes one decoded record change to the running Sky.Live
@@ -147,7 +157,7 @@ func bluedbPublishChange(rc bluedbRecordChange) {
 	case rc.IsDelete:
 		op = "delete"
 	}
-	reactivePublish(rc.Coll, op, rc.Pk, rc.Record)
+	reactivePublish(rc.Coll, op, rc.Pk)
 }
 
 // reactivePublish is the ONE reactive fan-out point: publish a {op,coll,pk,record}
@@ -157,12 +167,13 @@ func bluedbPublishChange(rc bluedbRecordChange) {
 // are backend-agnostic. A no-op when no Live app is registered. On a shared
 // (Redis) broker this crosses replicas, so app writes drive reactivity across
 // instances without a per-backend push mechanism.
-func reactivePublish(coll, op, pk, record string) {
+func reactivePublish(coll, op, pk string) {
 	app := processBroker.Load()
 	if app == nil {
 		return
 	}
-	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: coll, Pk: pk, Record: record})
+	// NUDGE only — never the record body (see bluedbChangePayload security note).
+	payload, err := json.Marshal(bluedbChangePayload{Op: op, Coll: coll, Pk: pk})
 	if err != nil {
 		return
 	}
@@ -173,9 +184,11 @@ func reactivePublish(coll, op, pk, record string) {
 // Persist_publishChange : String(coll) -> String(op) -> String(pk) -> String(record)
 //   -> Task Error () — the Persist SQL write arms call this after a successful
 // write so SQLite/Postgres get the same reactive fan-out the KV engine feed gives.
+// The record arg is accepted but NOT broadcast (cross-tenant safety — nudge only).
 func Persist_publishChange(collArg, opArg, pkArg, recordArg any) any {
 	return func() any {
-		reactivePublish(AsString(collArg), AsString(opArg), AsString(pkArg), AsString(recordArg))
+		_ = recordArg // intentionally not broadcast — see bluedbChangePayload
+		reactivePublish(AsString(collArg), AsString(opArg), AsString(pkArg))
 		return Ok[any, any](nil)
 	}
 }
