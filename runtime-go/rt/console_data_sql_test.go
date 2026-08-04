@@ -3,8 +3,26 @@ package rt
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestSqlRedactionTokenAware(t *testing.T) {
+	redact := []string{"password", "passwd", "pwd", "user_pw", "passphrase", "pin",
+		"signing_key", "api_key", "session_token", "secret", "credential", "ssn", "cvv"}
+	for _, c := range redact {
+		if !isSensitiveCol(c) {
+			t.Errorf("column %q must be redacted", c)
+		}
+	}
+	visible := []string{"email", "name", "monkey_id", "keyboard", "id", "created_at",
+		"description", "keynote_url"}
+	for _, c := range visible {
+		if isSensitiveCol(c) {
+			t.Errorf("column %q must NOT be redacted (over-redaction)", c)
+		}
+	}
+}
 
 func TestSqlBrowseRedactAndAllowlist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "b.db")
@@ -36,11 +54,14 @@ func TestSqlBrowseRedactAndAllowlist(t *testing.T) {
 	}
 	registerBrowsableTable(path, "users")
 
-	// listSqlSources shows it now.
+	// listSqlSources shows it now — under an OPAQUE HANDLE, never the raw DSN.
 	srcs := listSqlSources()
 	found := false
 	for _, s := range srcs {
-		if s.Name == path {
+		if strings.Contains(s.Name, path) || strings.Contains(s.Label, "s3cret") {
+			t.Fatalf("DSN/path must not appear in discovery: name=%q label=%q", s.Name, s.Label)
+		}
+		if s.Name == sqlSourceHandle(path) {
 			found = true
 			if len(s.Tables) != 1 || s.Tables[0] != "users" {
 				t.Fatalf("tables: %v", s.Tables)
@@ -49,6 +70,13 @@ func TestSqlBrowseRedactAndAllowlist(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("sql source not listed after a table was registered")
+	}
+	// findSqlSource resolves the handle back to the SkyDb.
+	if findSqlSource(sqlSourceHandle(path)) == nil {
+		t.Fatal("findSqlSource must resolve the opaque handle")
+	}
+	if findSqlSource("src-deadbeef0000") != nil {
+		t.Fatal("findSqlSource must reject an unknown handle")
 	}
 
 	res, err := browseSqlTable(d, "users", 10, 0)

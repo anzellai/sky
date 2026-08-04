@@ -17,7 +17,9 @@ package rt
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,33 +31,71 @@ import (
 	"time"
 )
 
-// handleSqlBrowse serves ?sql=<name> (list tables) and ?sql=<name>&table=<t> (rows).
-func handleSqlBrowse(w http.ResponseWriter, r *http.Request, sqlName string, q url.Values) {
-	d := findSqlSource(sqlName)
+// The public source identifier is an OPAQUE HANDLE (sha256 of the DSN), NEVER the
+// raw connection string — a Postgres DSN carries user:PASSWORD@host and must never
+// reach the discovery JSON, the audit log, or a client-echoed error.
+func sqlSourceHandle(dsn string) string {
+	sum := sha256.Sum256([]byte(dsn))
+	return "src-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// sqlSourceLabel is a human-readable, credential-free display name for a source.
+func sqlSourceLabel(dsn, driver string) string {
+	if driver == "pgx" {
+		if u, err := url.Parse(dsn); err == nil && u.Host != "" {
+			return "postgres://" + u.Host + u.Path // userinfo (user:pass) stripped
+		}
+		return "postgres"
+	}
+	// sqlite: a file path — show the base name only (dirs may reveal layout).
+	if i := strings.LastIndexAny(dsn, "/\\"); i >= 0 {
+		return dsn[i+1:]
+	}
+	return dsn
+}
+
+// sqlBrowseSem bounds concurrent SQL browses (each opens a small read-only pool);
+// caps backend connection pressure so a burst can't exhaust Postgres.
+var sqlBrowseSem = make(chan struct{}, 4)
+
+// handleSqlBrowse serves ?sql=<handle> (list tables) and ?sql=<handle>&table=<t> (rows).
+func handleSqlBrowse(w http.ResponseWriter, r *http.Request, handle string, q url.Values) {
+	d := findSqlSource(handle)
 	if d == nil {
+		logStructured("warn", "console.data.sql.denied", "reason", "unknown-source",
+			"handle", handle, "remote", r.RemoteAddr)
 		http.Error(w, "unknown sql source", http.StatusNotFound)
 		return
 	}
 	table := q.Get("table")
 	if table == "" {
+		logStructured("info", "console.data.sql.list", "handle", handle,
+			"remote", r.RemoteAddr, "forwarded", r.Header.Get("X-Forwarded-For"))
 		writeJSON(w, map[string]any{
-			"source": sqlName, "driver": d.driver, "kind": "sql",
-			"tables": browsableTablesFor(sqlName),
+			"source": handle, "label": sqlSourceLabel(d.name, d.driver),
+			"driver": d.driver, "kind": "sql", "tables": browsableTablesFor(d.name),
 		})
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
+
+	sqlBrowseSem <- struct{}{}
 	res, err := browseSqlTable(d, table, limit, offset)
+	<-sqlBrowseSem
+
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// Audit the rejected probe (allowlist miss / bad ident) — never echo internals.
+		logStructured("warn", "console.data.sql.denied", "handle", handle,
+			"table", table, "reason", err.Error(), "remote", r.RemoteAddr)
+		http.Error(w, "table not browsable", http.StatusBadRequest)
 		return
 	}
 	logStructured("info", "console.data.sql.read",
-		"source", sqlName, "table", table, "rows", strconv.Itoa(len(res.Rows)),
+		"handle", handle, "table", table, "rows", strconv.Itoa(len(res.Rows)),
 		"remote", r.RemoteAddr, "forwarded", r.Header.Get("X-Forwarded-For"))
 	writeJSON(w, map[string]any{
-		"source": sqlName, "table": table, "kind": "rows",
+		"source": handle, "table": table, "kind": "rows",
 		"columns": res.Columns, "redacted": res.Redacted,
 		"rows": res.Rows, "truncated": res.Truncated,
 	})
@@ -101,9 +141,11 @@ func isBrowsableTable(dbName, table string) bool {
 	return ok
 }
 
-// sqlSourceInfo describes a browsable SQL connection for discovery.
+// sqlSourceInfo describes a browsable SQL connection for discovery. `Name` is the
+// OPAQUE HANDLE (never the DSN); `Label` is a credential-free display string.
 type sqlSourceInfo struct {
-	Name   string   `json:"name"`
+	Name   string   `json:"name"` // opaque handle
+	Label  string   `json:"label"`
 	Driver string   `json:"driver"`
 	Kind   string   `json:"kind"` // always "sql"
 	Tables []string `json:"tables"`
@@ -123,30 +165,62 @@ func listSqlSources() []sqlSourceInfo {
 		if len(tables) == 0 {
 			continue // nothing Store-created here → not browsable
 		}
-		out = append(out, sqlSourceInfo{Name: d.name, Driver: d.driver, Kind: "sql", Tables: tables})
+		out = append(out, sqlSourceInfo{
+			Name:   sqlSourceHandle(d.name),
+			Label:  sqlSourceLabel(d.name, d.driver),
+			Driver: d.driver, Kind: "sql", Tables: tables,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func findSqlSource(name string) *SkyDb {
+// findSqlSource resolves an opaque handle back to its SkyDb (no DSN ever crosses
+// the wire). Iterating the registry is fine — a process has a handful of DBs.
+func findSqlSource(handle string) *SkyDb {
 	dbRegistryMu.Lock()
 	defer dbRegistryMu.Unlock()
-	return dbRegistry[name]
+	for _, d := range dbRegistry {
+		if sqlSourceHandle(d.name) == handle && len(browsableTablesFor(d.name)) > 0 {
+			return d
+		}
+	}
+	return nil
 }
 
-// sensitive column-name patterns → redact by default.
-var sensitiveColParts = []string{
-	"password", "passwd", "secret", "token", "hash", "salt",
-	"api_key", "apikey", "access_key", "private_key", "privatekey",
-	"jwt", "ssn", "card", "cvv", "pan", "otp", "mfa", "recovery",
-	"session", "cookie",
+// Redaction is token-aware, not a bare substring denylist: split the column on
+// non-alphanumerics and redact if ANY token is a known secret token, OR the whole
+// name contains a strong secret substring. Catches user_pw / signing_key / pwd /
+// passphrase / pin without over-redacting monkey_id / keyboard. Over-redaction is
+// the safe default here; unlisted secret columns are the only residual risk.
+var sensitiveTokens = map[string]bool{
+	"password": true, "passwd": true, "passphrase": true, "pass": true,
+	"pw": true, "pwd": true, "pin": true, "secret": true, "secrets": true,
+	"token": true, "tokens": true, "hash": true, "salt": true,
+	"key": true, "keys": true, "apikey": true, "jwt": true, "bearer": true,
+	"credential": true, "credentials": true, "cred": true, "creds": true,
+	"ssn": true, "cvv": true, "cvc": true, "pan": true, "otp": true,
+	"mfa": true, "totp": true, "recovery": true, "session": true,
+	"cookie": true, "private": true, "privatekey": true,
+}
+
+var sensitiveSubstrings = []string{
+	"password", "passwd", "passphrase", "secret", "apikey", "api_key",
+	"access_key", "private_key", "signing_key", "encryption_key", "auth_key",
+	"session_token", "refresh_token", "card_number", "creditcard",
 }
 
 func isSensitiveCol(name string) bool {
 	n := strings.ToLower(name)
-	for _, p := range sensitiveColParts {
-		if strings.Contains(n, p) {
+	for _, s := range sensitiveSubstrings {
+		if strings.Contains(n, s) {
+			return true
+		}
+	}
+	for _, tok := range strings.FieldsFunc(n, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		if sensitiveTokens[tok] {
 			return true
 		}
 	}
@@ -162,19 +236,30 @@ func openBrowseConn(d *SkyDb) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn.SetMaxOpenConns(2)
+	// MaxOpenConns(1): the session-scoped read-only PRAGMA/SET below must apply to
+	// the SAME connection the query later runs on. With a >1 pool the query could
+	// get a connection that never received it.
+	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
+	conn.SetConnMaxLifetime(30 * time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if driver == "pgx" {
-		_, _ = conn.ExecContext(ctx, "SET default_transaction_read_only = on")
+		if _, err := conn.ExecContext(ctx, "SET default_transaction_read_only = on"); err != nil {
+			conn.Close()
+			return nil, err
+		}
 	} else {
-		_, _ = conn.ExecContext(ctx, "PRAGMA query_only = ON")
+		if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+			conn.Close()
+			return nil, err
+		}
 	}
 	return conn, nil
 }
 
 const sqlBrowseMaxLimit = 200
+const sqlBrowseMaxOffset = 100000 // cap skip-scan cost (defense-in-depth w/ timeout)
 
 type sqlBrowseResult struct {
 	Columns   []string   `json:"columns"`
@@ -210,6 +295,9 @@ func browseSqlTable(d *SkyDb, table string, limit, offset int) (*sqlBrowseResult
 	if offset < 0 {
 		offset = 0
 	}
+	if offset > sqlBrowseMaxOffset {
+		offset = sqlBrowseMaxOffset
+	}
 
 	redacted := []string{}
 	selCols := make([]string, len(cols))
@@ -232,7 +320,14 @@ func browseSqlTable(d *SkyDb, table string, limit, offset int) (*sqlBrowseResult
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rows, err := conn.QueryContext(ctx, d.rebind(query), limit+1, offset)
+	// Read-only transaction: a second, driver-level guarantee that this browse
+	// cannot mutate, on top of the constructed column-only SELECT + query_only conn.
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, d.rebind(query), limit+1, offset)
 	if err != nil {
 		return nil, err
 	}

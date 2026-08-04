@@ -166,13 +166,20 @@ func codecValidIdent(s string) bool {
 // codecTableColumns returns the set of existing column names for a table, or an
 // empty set if the table doesn't exist.
 func codecTableColumns(d *SkyDb, table string) (map[string]bool, error) {
+	// Local safety: PRAGMA can't take a bind param, so `table` is interpolated —
+	// gate it here (not just at the caller) so this can never be an injection sink.
+	if !isSafeIdent(table) {
+		return nil, fmt.Errorf("invalid table identifier")
+	}
 	var sql string
 	var params []any
 	if d.driver == "pgx" {
-		sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
+		// Scope to the connection's current schema so a same-named table in another
+		// schema can't union its columns in.
+		sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
 		params = []any{table}
 	} else {
-		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params
+		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params (ident gated above)
 		params = []any{}
 	}
 	resp := AnyTaskRun(Db_query(d, sql, params))
