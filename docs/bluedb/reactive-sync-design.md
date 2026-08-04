@@ -329,3 +329,46 @@ paint-then-fill initial refresh. ~6 new pieces + 3 blocking fixes.
 The shipped `watchCollection` (browser-verified) already delivers the reactivity
 through the hardened update/dispatch path; P-R4b's marginal win is removing the
 `subscriptions` line + the re-query Msg arm.
+
+## UNIFIED reactive architecture (2026-08-04) — backend-agnostic change source
+
+The change SOURCE is unified per backend; the FAN-OUT is always the existing
+Sky.Live broker (in-process single-instance; Redis multi-instance):
+
+- **KV (BlueDB):** the engine change-feed (P-R1) — catches ALL writes at the
+  storage source (incl. raw BlueDB.put).
+- **SQL (SQLite + Postgres):** the Persist WRITE layer publishes each
+  put/insert/delete to the same broker topic (`reactivePublish` /
+  `Persist_publishChange`). SQLite has no LISTEN/NOTIFY and is single-process, so
+  the write-layer publish is the right (and only) source; Postgres uses it too for
+  app writes. Multi-instance Postgres crosses replicas via the existing Redis
+  broker — app writes drive reactivity across instances with NO per-backend push.
+- **Postgres LISTEN/NOTIFY:** OPTIONAL later add-on, only to catch EXTERNAL
+  (non-app) writers. Not needed for app-originated reactivity.
+
+`watchCollection` (and the future `Persist.live`) are backend-agnostic — they
+subscribe to the collection topic; whoever publishes drives them.
+
+**Browser-verified (scripts/verify-reactive-todos.{mjs,sh}, two independent
+sessions):** KV `examples/56-reactive-todos` 6/6 and SQLite
+`examples/57-reactive-todos-sql` 5/5, both ~70ms. The test uses a warmup
+handshake (pub/sub has no replay, so it proves both subscriptions are live before
+measuring). Demos coalesce re-queries (single in-flight + dirty flag) to avoid the
+stale-overwrite race the grill flagged.
+
+## Remaining: fully-declarative Persist.live (P-R4b) — sound design
+
+The grill's SOUND redesign (supersedes the pk-erasing sketch above):
+- `live : Conn cap -> Query a -> (List a -> model -> model) -> Live model`,
+  carrying `run : Task Error (model->model, List String)` — the RUNTIME gets BOTH
+  the fold AND the result pks (`List.filterMap (persistKeyString keyField) rows`),
+  so it CAN feed `setResultPks` and actually use the P3 overlap engine. (The
+  `(fold, pks)` tuple is still `a`-free → homogeneous `List (Live model)`.)
+- Backend-agnostic (NOT KV-gated) now that SQL has a change source.
+- Runtime = griller-2 HYBRID: ride setupSubscriptions/applyTopicSubsDiff/markDone
+  (free teardown); reactive leaf carries a per-topic SLICE of bindings; a
+  fold-apply variant of runSubscriberDispatch (run refresh OUTSIDE sess.mu, apply
+  fold INSIDE, render tail inside the panic-rollback contract — NOT the fat
+  dispatch); per-binding coalescing; re-derive query from live model at delivery
+  (model-dependent Cond); post-mount paint-then-fill; NO-Cmd fold invariant keeps
+  it loop-free. ~6 pieces + the resync-broadcast (already fixed at the pump).
