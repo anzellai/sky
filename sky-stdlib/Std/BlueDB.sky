@@ -382,19 +382,22 @@ countByIndexRange store field colType hasLo lo hasHi hi =
 -- One BlueDB store cleanly holds many ISOLATED collections (records + indexes +
 -- manifest namespaced by the collection name). Std.Persist drives these; the
 -- collection name = the Store's name (Store.nameOf).
-collPutRaw : Int -> String -> String -> String -> List ( String, String, String ) -> Task Error ()
+collPutRaw : Int -> String -> String -> String -> List ( String, String, String ) -> List ( String, String ) -> Task Error String
 collPutRaw =
     Ffi.kernel "BlueDB_collPut"
 
 
-{-| Namespaced upsert: the record + its secondary index entries for `coll`, in one
-atomic WriteBatch. `fieldValueTypes` = `(indexField, value, colType)` triples. -}
-collPut : Store -> String -> String -> String -> List ( String, String, String ) -> Task Error ()
-collPut store coll pk recordJson fieldValueTypes =
+{-| Namespaced upsert with schema enforcement: writes the record + its secondary
+index entries for `coll` in one atomic WriteBatch, applying defaultNow / default* /
+touchOnUpdate from `cols` (the `(name, kind-with-flags)` descriptor). Returns the
+STORED json (generated fields filled), so a returning-insert can decode it back.
+`fieldValueTypes` = `(indexField, value, colType)` triples. -}
+collPut : Store -> String -> String -> String -> List ( String, String, String ) -> List ( String, String ) -> Task Error String
+collPut store coll pk recordJson fieldValueTypes cols =
     case store of
 
         Store raw ->
-            collPutRaw raw coll pk recordJson fieldValueTypes
+            collPutRaw raw coll pk recordJson fieldValueTypes cols
 
 
 collGetRaw : Int -> String -> String -> Task Error (Maybe String)

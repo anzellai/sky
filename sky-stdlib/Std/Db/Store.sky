@@ -52,6 +52,7 @@ module Std.Db.Store exposing
     , deleteByKey
     , codecOf
     , nameOf
+    , colsOf
     , selectRaw
     , delete
     , deleteWhere
@@ -547,6 +548,14 @@ collection's keyspace, and by the SQL backend as the table name). -}
 nameOf : Store a -> String
 nameOf (Store s) =
     s.name
+
+
+{-| The store's columns as `(name, kind)` pairs, where `kind` carries the schema
+flags (`|u` unique, `!` serial, `|dnow`, `|touch`, `|dtext=`/`|dint=`/`|dbool=`).
+The KV backend parses these to enforce the same guarantees as SQL. -}
+colsOf : Store a -> List ( String, String )
+colsOf (Store s) =
+    s.cols
 
 
 -- Coerce a String key to the PK column's `SqlValue` by kind (int-ish → SqlInt so

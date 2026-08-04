@@ -21,10 +21,97 @@ package rt
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
+	"time"
 
 	"sky-app/bluedb"
 )
+
+// bluedbNow is the timestamp source for defaultNow/touchOnUpdate. It's a var so
+// tests can override it for determinism. The text shape matches SQLite's
+// datetime('now') so a record graduating KV→SQL reads back a comparable string.
+var bluedbNow = func() string {
+	return time.Now().UTC().Format("2006-01-02 15:04:05")
+}
+
+// bluedbIsZeroVal reports whether a JSON-decoded field value is absent or the zero
+// value for its base column kind (the D2 "apply default when zero" rule).
+func bluedbIsZeroVal(cur any, has bool, base string) bool {
+	if !has || cur == nil {
+		return true
+	}
+	switch base {
+	case "int", "bigint", "real":
+		f, ok := cur.(float64)
+		return ok && f == 0
+	case "bool":
+		b, ok := cur.(bool)
+		return ok && !b
+	default: // text / blob
+		s, ok := cur.(string)
+		return ok && s == ""
+	}
+}
+
+// bluedbNowValue renders "now" in the field's base type (text string, or epoch int
+// for an int/bigint column).
+func bluedbNowValue(base string) any {
+	switch base {
+	case "int", "bigint":
+		return float64(time.Now().UTC().Unix())
+	default:
+		return bluedbNow()
+	}
+}
+
+// bluedbDefaultValue renders a declared default (|dtext=/|dint=/|dbool=) as a typed
+// JSON value.
+func bluedbDefaultValue(defKind, defVal string) any {
+	switch defKind {
+	case "int":
+		n, _ := strconv.ParseInt(defVal, 10, 64)
+		return float64(n)
+	case "bool":
+		return defVal == "true"
+	default:
+		return defVal
+	}
+}
+
+// bluedbInjectDefaults applies defaultNow / default* on insert (when the field is
+// zero) and touchOnUpdate on update, mutating the decoded record map in place.
+// `cols` are (columnName, kind-with-flags) — the same flag grammar the SQL side
+// parses (codecColExtras / codecColIsTouch). Column names are snake_case (the
+// codec's JSON keys), so a direct map lookup matches.
+func bluedbInjectDefaults(m map[string]any, cols []bluedbFieldType, isInsert bool) {
+	for _, c := range cols {
+		name := c.field
+		kind := c.colType
+		base, _ := codecSplitKind(kind)
+		if codecColIsTouch(kind) {
+			if !isInsert {
+				m[name] = bluedbNowValue(base)
+				continue
+			}
+			// touch fields are also dnow → fall through to stamp on insert too.
+		}
+		if !isInsert {
+			continue
+		}
+		_, defKind, defVal := codecColExtras(kind)
+		cur, has := m[name]
+		if !bluedbIsZeroVal(cur, has, base) {
+			continue
+		}
+		switch defKind {
+		case "now":
+			m[name] = bluedbNowValue(base)
+		case "text", "int", "bool":
+			m[name] = bluedbDefaultValue(defKind, defVal)
+		}
+	}
+}
 
 // bluedbCollLayoutVersion — bump when the per-collection on-disk layout changes.
 const bluedbCollLayoutVersion = 1
@@ -93,11 +180,16 @@ func bluedbCollNULCheck(coll, pk string) any {
 }
 
 // BlueDB_collPut : Int -> String(coll) -> String(pk) -> String(json)
-//   -> List (String,String,String)(field,value,colType) -> Task Error ()
-// Namespaced upsert: writes the record + maintains its secondary index entries in
-// ONE atomic WriteBatch under the (coll,pk) stripe lock. (P1: no default/serial/
-// unique enforcement yet — layered in P2–P4.)
-func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg any) any {
+//   -> List (String,String,String)(field,value,colType)
+//   -> List (String,String)(col,kindWithFlags)
+//   -> Task Error String   (the STORED json — id/timestamps filled)
+// Namespaced upsert with defaultNow/touchOnUpdate/default* enforcement (P2):
+// detects insert-vs-update, injects defaults into the record, re-derives index
+// values from the injected record (so an indexed defaulted field stays
+// consistent), and writes record + indexes in ONE atomic WriteBatch under the
+// (coll,pk) stripe lock. Returns the stored JSON so Persist.insert can decode
+// back the generated fields.
+func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg, colsArg any) any {
 	return func() any {
 		db := bluedbLookup(idArg)
 		if db == nil {
@@ -109,37 +201,61 @@ func BlueDB_collPut(idArg, collArg, pkArg, jsonArg, fvtArg any) any {
 		if e := bluedbCollNULCheck(coll, pk); e != nil {
 			return Err[any, any](e)
 		}
-		recJSON := AsString(jsonArg)
 		fvts := bluedbParseFVT(fvtArg)
-		for _, fv := range fvts {
-			if bluedbFixedWidth(fv.colType) == 0 && strings.ContainsRune(fv.value, 0) {
-				return Err[any, any](ErrInvalidInput("BlueDB: indexed text value must not contain NUL"))
-			}
+		cols := bluedbParseFT(colsArg) // (colName, kind-with-flags)
+
+		var m map[string]any
+		if err := json.Unmarshal([]byte(AsString(jsonArg)), &m); err != nil {
+			return Err[any, any](ErrInvalidInput("BlueDB.collPut: record is not JSON"))
 		}
+
 		lk := bluedbPkLock(id, coll+"\x00"+pk)
 		lk.Lock()
 		defer lk.Unlock()
 
-		b := bluedb.NewBatch()
 		recKey := bluedbCollRecordKey(coll, pk)
-		if old, ok := db.Get(recKey); ok {
-			var m map[string]any
-			if err := json.Unmarshal(old, &m); err == nil {
-				for _, fv := range fvts {
-					if oldVal, has := bluedbOldIndexVal(m, fv.field); has && oldVal != fv.value {
-						b.Delete(bluedbCollIndexKey(coll, fv.field, oldVal, fv.colType, pk))
+		old, isUpdate := db.Get(recKey)
+		bluedbInjectDefaults(m, cols, !isUpdate)
+
+		// Re-derive each index value from the (possibly defaulted) record so an
+		// indexed default/touch field indexes its actual stored value.
+		type fvt struct{ field, value, colType string }
+		derived := make([]fvt, 0, len(fvts))
+		for _, f := range fvts {
+			v := f.value
+			if rv, has := bluedbOldIndexVal(m, f.field); has {
+				v = rv
+			}
+			if bluedbFixedWidth(f.colType) == 0 && strings.ContainsRune(v, 0) {
+				return Err[any, any](ErrInvalidInput("BlueDB: indexed text value must not contain NUL"))
+			}
+			derived = append(derived, fvt{f.field, v, f.colType})
+		}
+
+		stored, err := json.Marshal(m)
+		if err != nil {
+			return Err[any, any](ErrFfi("BlueDB.collPut: re-encode: " + err.Error()))
+		}
+
+		b := bluedb.NewBatch()
+		if isUpdate {
+			var oldM map[string]any
+			if json.Unmarshal(old, &oldM) == nil {
+				for _, f := range derived {
+					if oldVal, has := bluedbOldIndexVal(oldM, f.field); has && oldVal != f.value {
+						b.Delete(bluedbCollIndexKey(coll, f.field, oldVal, f.colType, pk))
 					}
 				}
 			}
 		}
-		for _, fv := range fvts {
-			b.Put(bluedbCollIndexKey(coll, fv.field, fv.value, fv.colType, pk), nil)
+		for _, f := range derived {
+			b.Put(bluedbCollIndexKey(coll, f.field, f.value, f.colType, pk), nil)
 		}
-		b.Put(recKey, []byte(recJSON))
+		b.Put(recKey, stored)
 		if err := db.WriteBatch(b); err != nil {
 			return Err[any, any](ErrFfi("BlueDB.collPut: " + err.Error()))
 		}
-		return Ok[any, any](nil)
+		return Ok[any, any](string(stored))
 	}
 }
 

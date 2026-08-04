@@ -202,6 +202,8 @@ put conn coll record =
                         pk
                         (Codec.toJson (codecOf coll) record)
                         (indexFieldValues coll record)
+                        (Store.colsOf (storeOf coll))
+                        |> Task.map (\_ -> ())
 
                 Err e ->
                     Task.fail e

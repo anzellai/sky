@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -11,11 +12,22 @@ import (
 
 func collPut(t *testing.T, id int, coll, pk, jsonStr string, fvt ...[3]string) {
 	t.Helper()
+	collPutCols(t, id, coll, pk, jsonStr, nil, fvt...)
+}
+
+// collPutCols is collPut with a schema descriptor (colName, kind-with-flags) for
+// default/touch enforcement. Returns the stored JSON.
+func collPutCols(t *testing.T, id int, coll, pk, jsonStr string, cols [][2]string, fvt ...[3]string) string {
+	t.Helper()
 	triples := []any{}
 	for _, p := range fvt {
 		triples = append(triples, SkyTuple3{V0: p[0], V1: p[1], V2: p[2]})
 	}
-	runOK(t, BlueDB_collPut(id, coll, pk, jsonStr, triples))
+	colList := []any{}
+	for _, c := range cols {
+		colList = append(colList, SkyTuple2{V0: c[0], V1: c[1]})
+	}
+	return runOK(t, BlueDB_collPut(id, coll, pk, jsonStr, triples, colList)).(string)
 }
 
 func collGet(t *testing.T, id int, coll, pk string) (string, bool) {
@@ -176,7 +188,7 @@ func TestCollConcurrentPuts(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			pk := fmt.Sprintf("u%02d", i)
-			BlueDB_collPut(id, "c", pk, fmt.Sprintf(`{"i":%d}`, i), []any{}).(func() any)()
+			BlueDB_collPut(id, "c", pk, fmt.Sprintf(`{"i":%d}`, i), []any{}, []any{}).(func() any)()
 		}(i)
 	}
 	wg.Wait()
@@ -194,4 +206,58 @@ func TestCollHiddenFromRawKeys(t *testing.T) {
 		t.Fatalf("namespaced records must be hidden from raw keys(), got %v", r.OkValue)
 	}
 	_ = bluedb.Options{}
+}
+
+// P2: defaultNow stamps created_at on insert; touchOnUpdate bumps updated_at on
+// every update; default* fills a zero field; a non-zero field is untouched (D2).
+func TestCollDefaultsAndTouch(t *testing.T) {
+	id := registerIdxStore(t)
+	// deterministic clock
+	old := bluedbNow
+	bluedbNow = func() string { return "2026-01-01 00:00:00" }
+	defer func() { bluedbNow = old }()
+
+	cols := [][2]string{
+		{"created_at", "text|dnow"},
+		{"updated_at", "text|dnow|touch"},
+		{"status", "text|dtext=active"},
+		{"name", "text"},
+	}
+	// insert with zero created_at/updated_at/status → all stamped/defaulted
+	stored := collPutCols(t, id, "u", "1", `{"name":"Ann","created_at":"","updated_at":"","status":""}`, cols)
+	var m map[string]any
+	json.Unmarshal([]byte(stored), &m)
+	if m["created_at"] != "2026-01-01 00:00:00" {
+		t.Fatalf("created_at not stamped on insert: %v", m["created_at"])
+	}
+	if m["updated_at"] != "2026-01-01 00:00:00" {
+		t.Fatalf("updated_at not stamped on insert: %v", m["updated_at"])
+	}
+	if m["status"] != "active" {
+		t.Fatalf("status default not applied: %v", m["status"])
+	}
+	if m["name"] != "Ann" {
+		t.Fatalf("name (no default) must be preserved: %v", m["name"])
+	}
+
+	// update: created_at STAYS (non-zero now); updated_at bumps to the new now
+	bluedbNow = func() string { return "2026-02-02 00:00:00" }
+	stored2 := collPutCols(t, id, "u", "1",
+		`{"name":"Ann2","created_at":"2026-01-01 00:00:00","updated_at":"2026-01-01 00:00:00","status":"active"}`, cols)
+	var m2 map[string]any
+	json.Unmarshal([]byte(stored2), &m2)
+	if m2["created_at"] != "2026-01-01 00:00:00" {
+		t.Fatalf("created_at must NOT change on update: %v", m2["created_at"])
+	}
+	if m2["updated_at"] != "2026-02-02 00:00:00" {
+		t.Fatalf("updated_at must bump on update: %v", m2["updated_at"])
+	}
+
+	// D2 boundary: a deliberately-set status is preserved (non-zero)
+	stored3 := collPutCols(t, id, "u", "2", `{"name":"Bo","status":"vip"}`, cols)
+	var m3 map[string]any
+	json.Unmarshal([]byte(stored3), &m3)
+	if m3["status"] != "vip" {
+		t.Fatalf("deliberate non-zero status must be preserved: %v", m3["status"])
+	}
 }
