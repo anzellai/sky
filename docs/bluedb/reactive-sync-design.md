@@ -1,0 +1,158 @@
+# BlueDB reactive scope-sync — design
+
+> **Status:** design (awaiting decisions A/B/C below), 2026-08-04. The flagship
+> "the Model is the DB" feature: a write in one session automatically updates the
+> UI of every other session viewing that data — no polling, no manual pub/sub.
+>
+> Grounded in two reconnaissance passes (BlueDB change-observation + Sky.Live
+> fan-out). The headline finding: **this rides existing machinery end-to-end** —
+> no parallel system (per the reuse-don't-parallel rule).
+
+## The one-paragraph architecture
+
+A committed BlueDB write flows through a single choke point. We emit a change
+event there, decode which `(collection, pk)` it touched, map that to one or more
+**scope topics**, and publish to the **existing Sky.Live pub/sub broker**. Any
+session subscribed to that scope receives the event through the **already-shipped**
+external-update path (`sess.mu → app.dispatch → sseCh → fanOutFrame`), updates its
+Model, and the SSE diff paints every one of its tabs. Because Sky.Live is
+server-driven (the Model lives on the server; the browser is a thin diff target),
+there is **no client-side database and therefore no optimistic-rebase problem** —
+a local write is ordinary TEA `update`, and cross-session propagation is the new
+part.
+
+## The pipeline (with the reuse seams)
+
+```
+Session A update:  Persist.put conn todos t
+        │
+        ▼
+BlueDB commit  ── choke point: bluedb/db.go:417-420 (post-fsync apply loop)
+        │        emit (op, key, value, seq) AFTER db.mu.Unlock → async buffered chan
+        ▼
+Change decoder ── skip non-record keys; record key \x00x\x00d\x00<coll>\x00<pk>
+        │        → (coll, pk, op, recordJSON)         [rt/bluedb_*_kernel.go helpers]
+        ▼
+Scope mapper  ── (coll, pk[, indexed fields]) → scope topic string(s)   [DECISION A]
+        │
+        ▼
+app.Publish(scopeTopic, changePayload)   ── existing broker: live.go:2973
+        │        in-process topicRegistry OR redisBroker (cross-replica) — unchanged
+        ▼
+Session B (subscribed to scopeTopic via Sub.subscribeTopic / Persist.watch*)
+        │        runSubscriberLoop → runSubscriberDispatch: live.go:5766   [DECISION B/C]
+        │        sess.mu.Lock → app.dispatch(sess, OnChange payload) → sseCh push
+        ▼
+fanOutFrame → every one of B's tabs repaints (SSE diff)   ── live.go:6688
+```
+
+Every box except the two new ones (**change-feed emit** + **scope mapper**) already
+exists and ships today.
+
+## New components (small, localized)
+
+1. **Engine change-feed** (`runtime-go/bluedb/`): a `Subscribe(fn func(ChangeEvent))`
+   / change channel on `*DB`. Emit site is `db.go:420` — right after
+   `db.mu.Unlock()` in `process`, handing `(op, key, value, seq, batchID)` per
+   mutation to a **buffered channel drained by a separate goroutine** (never call
+   subscriber code on the single committer goroutine or under `db.mu` — a slow
+   consumer must never stall commits; reuse the `ForEach`/`reap` snapshot-then-act
+   idiom). Bounded buffer with a documented drop/coalesce policy on overflow.
+
+2. **Change decoder + scope mapper** (`runtime-go/rt/bluedb_reactive.go`, new):
+   filter to reserved-prefix record keys (discriminator byte `d`), strip
+   `\x00x\x00d\x00`, split on first `\x00` → `(coll, pk)`; ignore the sibling
+   `i/u/s/m` keys in the same batch (one record change, not five). Map to scope
+   topic(s) per DECISION A. Publish via the app broker.
+
+3. **Sky subscription surface** (`Std/Persist.sky` + `Std/Live.sky`): per DECISION B.
+
+## Why there is no optimistic-rebase decision
+
+In client-DB reactive systems (Convex, Zero, Firebase) the client holds a local
+replica, applies writes optimistically, and must rebase when the server's
+authoritative version arrives. **Sky.Live has no client replica** — the browser
+receives DOM diffs, the Model is server-side, and a write already round-trips
+through the server `update`. So:
+
+- **Intra-session** freshness is automatic today (write → `update` → diff).
+- **Cross-session** is the new capability, and it is a *notify + re-render*, not a
+  *merge conflict*. The serializing per-session mutex (`live.go:2146`) already
+  gives last-writer-wins ordering within a session; the change-feed's monotonic
+  `db.seq` gives a global order across sessions.
+
+This removes the single hardest piece of the classic design. (A future *offline*
+or *client-authoritative* mode would reintroduce it — explicitly out of scope.)
+
+---
+
+## Decisions needed
+
+### DECISION A — scope-key granularity (v1)
+
+How a committed change maps to "which sessions care."
+
+| Option | Topic shape | Pro | Con |
+|---|---|---|---|
+| **A1 collection + record + indexed-field scope (recommended)** | `coll:<name>`, `coll:<name>:pk:<pk>`, `coll:<name>:<field>:<value>` (field must be a declared `index`) | Cheap (string topics, no query engine); covers "watch this list", "watch this row", "watch MY rows" (`todos:userId:<me>`); rides the R1 index metadata | Over-notifies within a scope (a session re-queries/filters); not arbitrary predicates |
+| **A2 full query-subscriptions (Convex/Zero-style)** | subscribe a `Persist.Query`; a change notifies iff it *could* change that query's result | Most precise; the true "reactive query" magic | Needs a change→query-overlap engine (does this pk match the query's `Cond`?), query-result caching + diffing — a large build, correctness-heavy |
+
+Recommendation: **A1 now** (ships the magic in days, is the foundation), **A2 as a
+later phase built on A1** (a query subscribes to its collection/field scope, then
+re-evaluates its `Cond` on the change — we already have the KV `Cond` evaluator
+from P5, so A2 is reachable incrementally).
+
+### DECISION B — Sky subscription API shape
+
+| Option | Looks like | Pro | Con |
+|---|---|---|---|
+| **B1 explicit `Persist.watch*` Subs (recommended)** | `subscriptions model = Persist.watchCollection todos OnTodosChanged` (or `watchKey` / `watchScope`), returns `Sub msg`; user handles the Msg (re-query or merge) | Thin layer over `Sub.subscribeTopic`; composes with existing TEA; ships fast; explicit + debuggable | User writes one `subscriptions` line + one Msg arm |
+| **B2 fully-declarative auto-refresh** | a query bound in the Model auto-subscribes and auto-re-runs on any relevant change; zero subscription code | Maximum magic | Needs query-result caching, auto-diff into Model, lifecycle tracking; much larger; couples to A2 |
+
+Recommendation: **B1 now**; B2 later on top of B1 + A2. (B1 *is* the "magic" from
+the user's POV — the UI updates itself; they just declare what to watch.)
+
+### DECISION C — delivery payload
+
+| Option | Subscriber receives | Pro | Con |
+|---|---|---|---|
+| **C1 change payload (recommended)** | `{ op, collection, pk, record }` — the actual changed row | No re-query; subscriber merges directly into Model; the change-feed already carries it | Subscriber does its own scope filtering/merge |
+| **C2 invalidation nudge** | "collection X changed" only | Dead simple; always correct via re-query | One extra query per change; coarser |
+| **C3 both** | payload + a `re-query` helper | Flexibility | Slightly bigger surface |
+
+Recommendation: **C1 with a re-query helper** — deliver the payload (cheap, already
+in hand) and ship a `Persist.watch*` variant that re-queries for the user who
+prefers correctness-by-reconstruction.
+
+---
+
+## Phasing (once A/B/C are set)
+
+- **P-R1 Engine change-feed** — `DB.Subscribe` + buffered async fan-out + overflow
+  policy; Go `-race` + a fault test (slow consumer never stalls commits).
+- **P-R2 Decoder + scope mapper + broker publish** — `rt/bluedb_reactive.go`;
+  unit-test key→(coll,pk) + scope-topic derivation + one-record-not-five batching.
+- **P-R3 Sky surface** — `Persist.watchCollection/watchKey/watchScope` → `Sub msg`;
+  wire through `setupSubscriptions`; the change payload type + codec.
+- **P-R4 autoBlueDB integration** — attach the change-feed at the `autoBlueDB`
+  seam so a Model-persist write is observable without app code (the "Model is the
+  DB" endpoint).
+- **P-R5 e2e** — two-session demo (session A writes a todo, session B's list
+  updates with no poll), on both in-process and Redis brokers (cross-replica).
+
+Each phase: three-leg verified (Go `-race` + emission/Sky spec + e2e), committed at
+the boundary, per the standing methodology.
+
+## Reuse map (nothing here is greenfield except items 1–2)
+
+| Concern | Existing seam |
+|---|---|
+| Commit choke point | `bluedb/db.go:417-420` (`process`, post-fsync apply) |
+| Snapshot-then-act idiom | `db.go` `ForEach`/`Scan`; `live_store_bluedb.go` `reap` |
+| Record-key decode | `bluedbReserved`/`bluedbCollRecordPrefix` (`rt/bluedb_*_kernel.go`) |
+| Pub/sub broker (in-proc + Redis) | `live_topics.go` `topicRegistry` / `live_redis_broker.go` |
+| External-update-into-session | `runSubscriberDispatch` (`live.go:5766`) |
+| Per-session serialization | `liveSession.mu` (`live.go:2146`) |
+| Fan-out to a session's tabs | `fanOutFrame` (`live.go:6688`) |
+| Scope identity | `SessionIdentity` claims (`session_identity.go:76`) |
+| Attach seam | `autoBlueDB` (`Std/Live.sky:197`) / `store.Set` (`live.go:4553`) |
