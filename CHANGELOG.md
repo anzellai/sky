@@ -11,6 +11,35 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.11 — Sky.Live: bounded session-store memory (tiered cache) (2026-08-05)
+
+### Fixed
+- **Durable session stores now bound RAM to the *active* working set instead of
+  every session held for the TTL.** Previously the sqlite / postgres / redis
+  session stores kept the live `liveSession` pointer (~tens of KB each — Model +
+  rendered tree + handlers) of EVERY session in an in-RAM `memCache` until its
+  full TTL expired. Under sustained cookie-less traffic — crawlers and bots each
+  minting a session — that accumulated `rate × TTL` sessions in RAM, enough to
+  OOM a small VM over hours-to-days even with little *human* traffic (it wedged a
+  1 GB instance on a 30-minute TTL, and was far worse on a 30-DAY TTL). The
+  stores now **evict an idle session's live pointer from `memCache` after a short
+  window** (default **5 min**) when it has no active SSE connection — persisting
+  a fresh blob first, then tearing down its goroutines — and keep the blob on
+  disk / in the external store until the full TTL, **resurrecting it from disk on
+  the next request** (single-flight; the reconnecting SSE re-establishes its
+  loops). RAM then tracks SSE-connected + recently-active sessions rather than
+  everything-within-TTL. On-by-default; no app changes required — an abandoned
+  tab / bot session evicts and a returning user resurrects transparently (one
+  full re-render on wake). Sessions with a non-gob-encodable Model (the
+  memCache-only fallback) are never evicted, so nothing is lost. The in-memory
+  store is unaffected (no disk backing). Rebuild or `sky upgrade` to pick it up.
+
+### Added
+- **`SKY_LIVE_IDLE_EVICT`** (and `Std.Live.withIdleEvict`) — the idle-evict
+  window for the tiered session cache above. Default `5m`; set `0` / `off` or a
+  value `>= ttl` to disable (falls back to the previous all-within-TTL
+  behaviour). Only the durable stores (sqlite / postgres / redis) honour it.
+
 ## v0.19.10 — Sky.Live: navigation scrolls the new page to the top (2026-08-04)
 
 ### Fixed
