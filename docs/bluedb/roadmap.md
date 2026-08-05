@@ -103,8 +103,15 @@ on both backends. Scope decided with the user:
   `examples/53-bluedb-migration`, `examples/55-persist-query`.
 
 ## Tier 4 — Operability / production-readiness
-- **G4 `sky bluedb <path> verify`** (full CRC scan, reports first bad offset, no
-  truncate) — the ONLY defense against G2; land it earlyish. Then `backup` +
+- **G4 `sky bluedb <path> verify`** — **SHIPPED** (`9fa553a3`). Read-only
+  integrity scanner: `bluedb.Verify(path)` CRC-scans the WAL + snapshot and
+  CLASSIFIES (clean / torn-tail / mid-file corruption / version-unsupported)
+  reusing the same `probeMidFileCorruption` forward-probe Open uses, reports the
+  first bad offset, and NEVER writes (every WAL/snapshot test asserts size +
+  mtime + bytes unchanged). CLI `sky bluedb <path> verify [--json]` runs BEFORE
+  Open (so it can't truncate), exits 0 when Open would succeed (clean/torn-tail)
+  and non-zero on corruption/unsupported-version so CI can gate. The operator
+  diagnostic paired with the G2 refuse-to-open guard. Next: `backup` +
   segmented-WAL / ship-before-truncate (checkpoint `Truncate(0)` destroys the log
   today, so "the WAL is the stream" is false — Litestream-style needs segments).
 - **G8** fuzz gaps: power-loss/un-fsync'd-page-drop model + torn-record-mid-index-
