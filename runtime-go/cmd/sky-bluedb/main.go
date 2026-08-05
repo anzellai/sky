@@ -280,6 +280,13 @@ func cmdPut(db *bluedb.DB, pos []string, f flags, stdin io.Reader, out, errOut i
 		fmt.Fprintln(errOut, "bluedb: put needs a <value> arg or --stdin")
 		return 2
 	}
+	// F7: reject a key reaching into the reserved index/manifest keyspace — the
+	// CLI writes via the engine db.Put, bypassing the kernel's NUL guard, so
+	// without this a `bluedb put` could corrupt the index/manifest/seq keyspace.
+	if strings.ContainsRune(key, 0) {
+		fmt.Fprintln(errOut, "bluedb: key must not contain NUL (reserved for the index keyspace)")
+		return 2
+	}
 	if err := db.Put([]byte(key), val); err != nil {
 		fmt.Fprintf(errOut, "bluedb: put %q: %v\n", key, err)
 		return 1

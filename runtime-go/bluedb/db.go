@@ -195,7 +195,9 @@ func Open(path string, opts ...Options) (*DB, error) {
 	}
 	db.walSize = validEnd
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// F7: 0o600 — bluedb files hold app/session data (gob blobs, records); they
+	// must not be world-readable.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}

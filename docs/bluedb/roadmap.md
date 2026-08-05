@@ -4,7 +4,15 @@ Synthesized from a four-way deep analysis (querying · multi-writer/scaling ·
 security · compat/reliability). Ranked: make what exists **safe** before building
 more on it → the two headline features → production hardening → the v2 rework.
 
-## Tier 0 — Data-safety floor (do first; small; protects existing data)
+## Tier 0 — Data-safety floor (do first; small; protects existing data) — **SHIPPED**
+Status: G1/G2/G3 shipped (`5a5ac745` — WAL `BWAL` version header + refuse-newer +
+legacy-headerless migration; mid-file-corruption fails closed vs torn-tail
+truncate + a 60-seed scribble fuzz; recovery-truncation log + `RecoveryStats()`).
+G7 already enforced (`BlueDB_collReindex` refuses `manifest.Layout >
+bluedbCollLayoutVersion` at the mandatory startup migration). F7 shipped —
+WAL/snapshot files now `0o600` (`TestF7FilePermsAre0600`), and the engine-bypass
+write paths (console `HandleConsoleDataMutate`, `sky bluedb put` CLI) reject a
+NUL-containing key so they can't corrupt the reserved index/manifest keyspace.
 - **G1 [CRITICAL] WAL magic + version header + refuse-newer gate.** The WAL has no
   version byte; an older binary replaying a newer WAL hits an unknown opcode,
   treats it as a torn tail, and `Open` **truncates the file** (silent data

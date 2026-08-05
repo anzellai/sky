@@ -48,7 +48,8 @@ func writeSnapshotAtomic(path string, coveredSeq uint64, mem map[string][]byte) 
 	buf = append(buf, num[:4]...)
 
 	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// F7: 0o600 — snapshot holds the full app/session working set; not world-readable.
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

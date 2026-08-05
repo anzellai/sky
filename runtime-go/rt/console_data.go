@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // dataMode reads SKY_CONSOLE_DATA: "" | "off" | "on"/"readonly" | "readwrite".
@@ -195,6 +196,14 @@ func HandleConsoleDataMutate(w http.ResponseWriter, r *http.Request) {
 	entry := findBluedbStore(req.Store)
 	if entry == nil {
 		http.Error(w, "unknown store", http.StatusNotFound)
+		return
+	}
+	// F7: reject a key reaching into the reserved index/manifest keyspace. This
+	// path calls the engine db.Put/Delete directly, bypassing the kernel's NUL
+	// guard (BlueDB.put), so without this a console mutate could write/delete a
+	// \x00-separated reserved key and corrupt the index/manifest/seq keyspace.
+	if strings.ContainsRune(req.Key, 0) {
+		http.Error(w, "key must not contain NUL (reserved for the index keyspace)", http.StatusBadRequest)
 		return
 	}
 	before, had := entry.db.Get([]byte(req.Key))
