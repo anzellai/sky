@@ -401,6 +401,35 @@ documented — exactly "low-level control if devs choose it."
   record-body-on-tenant-topic + overlap wiring; the freshness/commit token
   (multi-instance read-replica only).
 
+#### Phase 3 recon (liveInto marker + ephemeral) — feasibility LOCKED
+
+A bare `.todos` accessor is a distinct node `Expr::Accessor(Name("todos"))`
+(`hir.rs:59`), preserved through resolve/infer, desugared to an opaque
+`func(_r any) any { return rt.Field(_r,"Todos") }` only at `lower.rs:2506`.
+
+- **3a `liveInto db .field query` — BUILDABLE.** The field name IS statically
+  recoverable at the call site: args reach `lower_call` as `&[ExprId]` HIR nodes
+  (`lower.rs:3186`) and `lower_call` already pattern-matches an argument's HIR
+  before lowering it (precedent `lower.rs:3346` for `Expr::Lambda`). A `liveInto`
+  arm reads `Name("todos")` exactly as `lower_update` recovers a static field
+  write (`lower.rs:4785`). The framework-owned replace-fold synthesizes via the
+  existing `rt.RecordUpdate(m, {field: rows})` kernel (precedent `lower.rs:4747`).
+  No new metadata channel needed. Parts: a `liveInto` lower arm + a Sky binding
+  in Persist.sky + reuse RecordUpdate. Medium size, self-contained.
+  NOTE: no existing Sky feature mines a name from an accessor at compile time
+  (`Codec.field "id" .id` passes the name as a SEPARATE string; the accessor is a
+  runtime getter). `liveInto` deriving the name from `.field` is a NEW capability
+  — cheap, but genuinely new.
+- **3b `Persist.ephemeral` (`,noPersist` tag) — needs a NEW lower→codegen
+  channel.** Appending a 3rd `sky:` tag segment is trivial at emit
+  (`codegen/src/lib.rs:246`) + needs `skyTagType` fixed to cut at the 2nd comma
+  (`codec_auto.go:70`) + a flag reader. The HARD part: codegen's `emit_type_def`
+  sees only `(name, GoTy)` per field and has no knowledge of which
+  `(record, field)` pairs a `liveInto` marked — a side registry populated during
+  the 3a lower arm must be threaded into codegen. Plus the runtime side (shallow-
+  copy-zero persister at the encode boundary, projected dirty-check, restart
+  admission control). This is the substantial, compiler-invasive half.
+
 #### Build order (folds into the earlier revised sequence)
 
 The two FATAL prerequisites (identity-on-goroutine, startReactive-on-reconnect)
