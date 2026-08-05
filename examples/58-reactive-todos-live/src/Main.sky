@@ -108,10 +108,10 @@ subscriptions _ =
 -- THE ONLY reactive wiring: `todos` stays fresh from this query, forever.
 reactiveQueries : Model -> List (Persist.Live Model)
 reactiveQueries _ =
-    [ Persist.live
+    [ Persist.liveInto
           db
+          .todos
           (Persist.query todos |> Persist.orderAsc "id")
-          (\rows m -> { m | todos = rows })
     ]
 
 

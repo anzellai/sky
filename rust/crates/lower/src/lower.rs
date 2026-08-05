@@ -3183,6 +3183,99 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Lower `Persist.liveInto conn .field query` by delegating to the existing
+    /// `Persist.live conn query (\rows m -> { m | field = rows })` machinery. The
+    /// accessor's field name is read at compile time and a row-poly replace-fold
+    /// synthesised; `Persist.live` (and its transitive helpers) is pulled into the
+    /// DCE worklist via `discovered`, so a liveInto-only app still emits the
+    /// runtime path even when it never writes `Persist.live` itself.
+    fn lower_persist_live_into(&mut self, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // Shape: [conn, accessor, query]. The Sky sig guarantees arity 3, but an
+        // under-applied partial would arrive short — reject rather than miscompile.
+        if args.len() != 3 {
+            self.errors.push(
+                "Persist.liveInto takes exactly three arguments: a connection, a \
+                 bare field accessor (like `.todos`), and a query."
+                    .into(),
+            );
+            return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
+        }
+        // The 2nd argument MUST be a bare `.field` accessor. A named replace-fold
+        // belongs on `Persist.live`; anything else here is a hard error.
+        let field = match &self.body.exprs[args[1]] {
+            Expr::Accessor(name) => name.clone(),
+            _ => {
+                self.errors.push(
+                    "Persist.liveInto's 2nd argument must be a bare field accessor \
+                     like `.todos`. To fold rows in with a named function instead, \
+                     use `Persist.live conn query fold`."
+                        .into(),
+                );
+                return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
+            }
+        };
+        let cap = capitalize(field.as_str());
+        // Resolve `Std.Persist.live` and pull it (transitively) into the emit
+        // worklist. Without this, an app that only ever calls `liveInto` would
+        // never mark `live` reachable and the `Std_Persist_live` reference below
+        // would dangle at `go build`.
+        let live_def = self.defs.iter().find_map(|(id, e)| {
+            (e.name == "live" && e.module_name == "Std.Persist").then_some(*id)
+        });
+        let Some(live_def) = live_def else {
+            self.errors
+                .push("internal: Std.Persist.live not found for liveInto rewrite".into());
+            return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
+        };
+        self.discovered.push(live_def);
+        // Mirror the general-call path: use `live`'s DECLARED param/return Go
+        // types (in its own module) so conn/query coerce exactly as a hand-written
+        // `Persist.live` call would, and the call's Go type is `live`'s return
+        // (the outer slot then narrows it via `coerce_if_needed`).
+        let live_go = top_go_name("Std.Persist", "live");
+        let ps: Vec<GoTy> = self
+            .def_param_tys
+            .get(&live_def)
+            .cloned()
+            .map(|ptys| {
+                ptys.iter()
+                    .map(|t| self.goty_in(t, "Std.Persist"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let pty = |i: usize| ps.get(i).cloned().unwrap_or(GoTy::Any);
+        let ret_goty = self
+            .def_result_tys
+            .get(&live_def)
+            .cloned()
+            .map(|t| self.goty_in(&t, "Std.Persist"))
+            .unwrap_or_else(|| actual.clone());
+        // conn ← liveInto arg 0 (live param 0); query ← liveInto arg 2 (live
+        // param 1). The accessor (arg 1) becomes the synthesised fold (param 2).
+        let conn = self.lower_expr(args[0], &pty(0));
+        let query = self.lower_expr(args[2], &pty(1));
+        // Synthesised replace-fold — the row-poly (`model` is a type var) form of
+        // `\rows m -> { m | field = rows }`: a flat 2-arg Go closure over
+        // `rt.RecordUpdate` (which narrows the `[]any` rows into the Model's typed
+        // slice field via `narrowReflectValue`). Its Go type matches `live`'s
+        // param 2 (`func([]any, any) any`) exactly, so no coercion wrapper is
+        // added; `live` internally curries it (`\m -> fold rows m`, two
+        // `sky_call`s), which `rt.skyCallOne` supports on a flat N-ary func.
+        let fold = GoExpr::new(
+            GoExprKind::Ident(format!(
+                "func(rows []any, m any) any {{ return rt.RecordUpdate(m, map[string]any{{\"{cap}\": rows}}) }}"
+            )),
+            pty(2),
+        );
+        GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(live_go), ret_goty.clone())),
+                vec![conn, query, fold],
+            ),
+            ret_goty,
+        )
+    }
+
     fn lower_call(&mut self, callee: ExprId, args: &[ExprId], actual: &GoTy) -> GoExpr {
         // constructor application?
         if let Expr::Var(Res::Ctor(cr)) = &self.body.exprs[callee] {
@@ -3198,6 +3291,18 @@ impl<'a> Ctx<'a> {
             if self.record_ctor_name(d).is_some() {
                 let (_, e) = self.ctor_call(d, args, actual, None);
                 return e;
+            }
+        }
+        // `Persist.liveInto conn .field query` — ergonomic reactive marker.
+        // TIGHTLY special-cased: rewrite ONLY this exact kernel-alias call into
+        // the equivalent `Persist.live conn query (\rows m -> { m | field =
+        // rows })`, reusing the existing `live` machinery (toList / Task.map /
+        // pk-extraction) with a compiler-synthesised replace-fold. The 2nd arg
+        // MUST be a bare field accessor `.field` — anything else is a hard error
+        // (the whole point of the marker), never a silent miscompile.
+        if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
+            if self.kernel_alias.get(d).map(String::as_str) == Some("Persist_liveInto") {
+                return self.lower_persist_live_into(args, actual);
             }
         }
         // kernel-alias direct call → uniform widen-args / coerce-return.

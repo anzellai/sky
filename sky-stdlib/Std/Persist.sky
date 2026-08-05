@@ -57,6 +57,7 @@ module Std.Persist exposing
     , watchCollection
     , Live
     , live
+    , liveInto
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -993,6 +994,24 @@ live conn q fold =
                                          rows)
                                ))
             }
+
+
+{-| Like `live`, but you name the Model field with a bare accessor instead of
+writing the replace-fold by hand. These two are exactly equivalent:
+
+    Persist.liveInto db .todos (Persist.query todos |> Persist.orderAsc "id")
+
+    Persist.live db (Persist.query todos |> Persist.orderAsc "id")
+        (\rows m -> { m | todos = rows })
+
+The compiler reads the field name off the `.todos` accessor at the call site and
+synthesises the `\rows m -> { m | todos = rows }` fold for you — so there's no
+place to typo the field, and the fold can never drift from the query. The 2nd
+argument MUST be a bare field accessor (`.field`); a named function there is a
+compile error (reach for `Persist.live` when you need a custom fold). -}
+liveInto : Conn cap -> (model -> List a) -> Query a -> Live model
+liveInto =
+    Ffi.kernel "Persist_liveInto"
 
 
 reactivePkOf : String -> a -> Maybe String

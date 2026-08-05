@@ -1431,3 +1431,62 @@ fn issue163_polymorphic_list_into_lambda_pipe_builds() {
          \x20       _ = println (String.fromInt r)\n    in ()\n",
     );
 }
+
+/// `Persist.liveInto conn .field query` is an ergonomic reactive marker: the
+/// lowerer reads the field name off the bare `.field` accessor and synthesises
+/// the `\rows m -> { m | field = rows }` replace-fold, delegating to
+/// `Persist.live`. Passing a NAMED function where the accessor belongs is a HARD
+/// LOWERING error (not a type error — a `Model -> List Todo` function type-checks
+/// fine against liveInto's `(model -> List a)` param), so the driver must halt
+/// BEFORE emit with the actionable diagnostic. This is the negative half of the
+/// liveInto feature (the positive half is `examples/58-reactive-todos-live`).
+#[test]
+fn driver_rejects_live_into_named_fold() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "liveinto-named",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Sky.Core.System as System\n\
+         import Std.Log exposing (println)\n\
+         import Std.Codec as Codec\n\
+         import Std.Db.Store as Store\n\
+         import Std.Persist as Persist\n\n\
+         type alias Todo =\n    { id : Int, text : String }\n\n\
+         blankTodo : Todo\n\
+         blankTodo =\n    { id = 0, text = \"\" }\n\n\
+         todos : Persist.Collection Todo\n\
+         todos =\n    Persist.collection (Store.fromCodec \"todos\" (Codec.auto blankTodo) |> Store.serial \"id\")\n\n\
+         db : Persist.Conn Persist.KeyValue\n\
+         db =\n    case Task.run (Persist.connectKeyValue \"data/todos.blue\") of\n\
+         \x20       Ok conn -> conn\n\
+         \x20       Err _ -> System.exit 1\n\n\
+         type alias Model =\n    { todos : List Todo }\n\n\
+         namedFold : Model -> List Todo\n\
+         namedFold m =\n    m.todos\n\n\
+         bad : Persist.Live Model\n\
+         bad =\n    Persist.liveInto db namedFold (Persist.query todos)\n\n\
+         main =\n    let\n        _ = bad\n    in\n        println \"hi\"\n",
+    );
+    let out = project.join("sky-out-test");
+    let report = build_example(&opts_for(&repo, &project, &out));
+
+    assert!(
+        !report.emitted,
+        "driver EMITTED `liveInto db namedFold …` — the accessor-arg guard is not \
+         firing; note: {}",
+        report.note
+    );
+    assert!(
+        report.note.contains("bare field accessor"),
+        "expected the liveInto accessor-arg diagnostic in the note, got: {}",
+        report.note
+    );
+    assert!(
+        !out.join("main.go").exists(),
+        "no Go should be emitted for a rejected liveInto call"
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
