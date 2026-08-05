@@ -92,7 +92,23 @@ func (app *liveApp) startReactive(sess *liveSession) {
 		go app.reactiveLoop(sess, rs, coll, ch)
 	}
 
+	// Claim, or discard if we lost a concurrent start. startReactive is now
+	// reachable from handleSSE (a re-establish on reconnect), so two tabs
+	// reconnecting at once could both pass the `already` check above and both
+	// build a registry. The FIRST to set sess.reactive wins; the loser tears its
+	// own registry down — close(done) exits its loops (they select on it), and the
+	// cancels release its topic subscriptions — so exactly one live registry
+	// survives and nothing leaks. (A loser loop may do one idempotent refresh
+	// before seeing done; harmless replace-fold under sess.mu.)
 	sess.mu.Lock()
+	if sess.reactive != nil {
+		sess.mu.Unlock()
+		close(rs.done)
+		for _, cancel := range rs.cancels {
+			cancel()
+		}
+		return
+	}
 	sess.reactive = rs
 	sess.mu.Unlock()
 }
@@ -119,6 +135,16 @@ func (sess *liveSession) teardownReactive() {
 // so a bulk write doesn't re-query per row. Sequential by construction — no
 // concurrent refresh, nothing to lock.
 func (app *liveApp) reactiveLoop(sess *liveSession, rs *reactiveState, coll string, ch <-chan SessionEvent) {
+	// Stamp the session onto THIS goroutine for its whole life (runtime-grill 3a).
+	// Every reactiveRefreshOnce runs the binding's query via sky_call(b.run, nil);
+	// an identity-scoped re-derive resolves the tenant from SessionIdentity(
+	// currentLiveSession()). Without the stamp currentLiveSession() is nil →
+	// fail-closed to empty rows (or unscoped). dispatch/handleInitial stamp their
+	// own goroutines; the reactive loop is a distinct long-lived goroutine and must
+	// too. One loop == one session, so a lifetime stamp is correct.
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
 	app.reactiveRefreshWithRetry(sess, rs, coll, ch) // initial fill (self-healing)
 	for {
 		select {

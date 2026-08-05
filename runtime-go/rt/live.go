@@ -6169,6 +6169,15 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-establish reactive loops on (re)connect (runtime-grill 3b). startReactive
+	// is idempotent (no-op once sess.reactive != nil) and a no-op when the app has
+	// no reactive bindings — so this only bites the case it must: a session
+	// re-hydrated from the store after a server restart, whose in-process reactive
+	// loops were lost. handleInitial (full GET) already starts them; an SPA that
+	// reconnects via SSE only would otherwise restore with no loops → stale
+	// (default) or permanently-blank (ephemeral) derived data.
+	app.startReactive(sess)
+
 	// Phase 1 fan-out: this connection joins the session's live set.
 	// Start the relay (once) + register a private outbound channel
 	// BEFORE the reconnect-resync below, so no concurrent dispatch /
