@@ -407,7 +407,13 @@ A bare `.todos` accessor is a distinct node `Expr::Accessor(Name("todos"))`
 (`hir.rs:59`), preserved through resolve/infer, desugared to an opaque
 `func(_r any) any { return rt.Field(_r,"Todos") }` only at `lower.rs:2506`.
 
-- **3a `liveInto db .field query` — BUILDABLE.** The field name IS statically
+- **3a `liveInto db .field query` — SHIPPED** (`3bcd27e7`): lowerer special-cases
+  the `Persist_liveInto` kernel, extracts the field name from the bare
+  `Expr::Accessor`, and rewrites to `Std_Persist_live` with a synthesized
+  `rt.RecordUpdate` replace-fold (DCE-safe; non-accessor arg → hard error).
+  Example 58 rewritten to `liveInto .todos`; reactive e2e identical; corpus gates
+  + sweep 29/0 green.
+- (recon) The field name IS statically
   recoverable at the call site: args reach `lower_call` as `&[ExprId]` HIR nodes
   (`lower.rs:3186`) and `lower_call` already pattern-matches an argument's HIR
   before lowering it (precedent `lower.rs:3346` for `Expr::Lambda`). A `liveInto`
