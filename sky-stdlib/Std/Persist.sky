@@ -240,7 +240,7 @@ put conn coll record =
                         (Codec.toJson (codecOf coll) record)
                         (indexFieldValues coll record)
                         (Store.colsOf (storeOf coll))
-                        |> Task.map (\_ -> ())
+                        |> Task.andThen (\_ -> publishSqlPut coll record)
 
                 Err e ->
                     Task.fail e
@@ -292,7 +292,8 @@ insert conn coll record =
                                    case Codec.fromJson (codecOf coll) storedJson of
 
                                        Ok r ->
-                                           Task.succeed r
+                                           publishSqlPut coll r
+                                               |> Task.map (\_ -> r)
 
                                        Err e ->
                                            Task.fail e)
@@ -397,6 +398,13 @@ delete conn coll keyStr =
                 keyStr
                 (indexFieldTypes coll)
                 (Store.colsOf (storeOf coll))
+                |> Task.andThen
+                       (\_ ->
+                           publishChangeKernel
+                               (collNameOf coll)
+                               "delete"
+                               keyStr
+                               "")
 
 
 {-| Count all records. (SQL: `COUNT(*)`; KV: a key scan — O(n), an analytics act.) -}

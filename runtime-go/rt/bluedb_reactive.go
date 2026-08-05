@@ -30,6 +30,24 @@ const bluedbRecordKeyTag = bluedbReserved + "d\x00"
 // bluedbCollTopic is the broker topic a collection's changes publish to.
 func bluedbCollTopic(coll string) string { return "__bluedb:" + coll }
 
+// reactiveTenantTopic is the per-verified-TENANT reactive topic — and it IS the
+// security boundary. When a verified identity carries a non-empty Claims["tenant"],
+// its reactive nudges travel on "reactive:<tenant>:<coll>", so a session only ever
+// receives its OWN tenant's changes (removes the cross-tenant activity oracle the
+// shared collection topic exposed). Without a verified tenant (unauth / dev /
+// single-tenant) it falls back to bluedbCollTopic(coll) — that path stays
+// byte-identical to pre-tenant behaviour. The tenant is read from the VERIFIED
+// identity's claim (matching tenantPrefixForSession in hub_bridge.go), never from
+// record data — which is what makes it forgery-safe.
+func reactiveTenantTopic(id ConsoleIdentity, ok bool, coll string) string {
+	if ok {
+		if t := id.Claims["tenant"]; t != "" {
+			return "reactive:" + t + ":" + coll
+		}
+	}
+	return bluedbCollTopic(coll) // fallback: unauth/dev/single-tenant — unchanged
+}
+
 // bluedbDecodeRecordKey decodes a committed key back to (collection, pk) IFF it is
 // a record key (\x00x\x00d\x00<coll>\x00<pk>). Index/unique/manifest/seq keys
 // (\x00x\x00{i,u,m,s}\x00…) and bare/unnamespaced keys return ok=false — they are
@@ -168,6 +186,15 @@ func bluedbPublishChange(rc bluedbRecordChange) {
 // (Redis) broker this crosses replicas, so app writes drive reactivity across
 // instances without a per-backend push mechanism.
 func reactivePublish(coll, op, pk string) {
+	reactivePublishTo(bluedbCollTopic(coll), coll, op, pk)
+}
+
+// reactivePublishTo marshals the nudge payload once and publishes it to `topic` on
+// the running Sky.Live app's broker. Shared body of reactivePublish (collection
+// topic — the process-global pump / unauth-background path) and reactivePublishScoped
+// (tenant topic — the session-context write layer), so the payload marshal isn't
+// duplicated. A no-op when no Live app is registered.
+func reactivePublishTo(topic, coll, op, pk string) {
 	app := processBroker.Load()
 	if app == nil {
 		return
@@ -177,8 +204,20 @@ func reactivePublish(coll, op, pk string) {
 	if err != nil {
 		return
 	}
-	topic := bluedbCollTopic(coll)
 	app.Publish(topic, SessionEvent{Topic: topic, Payload: string(payload)})
+}
+
+// reactivePublishScoped is the WRITE-LAYER fan-out point: it derives the topic from
+// the CURRENT session's VERIFIED identity (never from record data), so a tenant's
+// write nudges only that tenant's sessions. Called from the Persist write arms
+// (which run in the session context, so currentLiveSession carries the identity).
+// With no verified tenant it falls back to the collection topic — byte-identical to
+// reactivePublish for the unauth/dev/single-tenant case. The process-global pump
+// stays on reactivePublish (collection topic) for unauth/background writes.
+func reactivePublishScoped(coll, op, pk string) {
+	id, ok := SessionIdentity(currentLiveSession())
+	topic := reactiveTenantTopic(id, ok, coll)
+	reactivePublishTo(topic, coll, op, pk)
 }
 
 // Persist_publishChange : String(coll) -> String(op) -> String(pk) -> String(record)
@@ -188,7 +227,8 @@ func reactivePublish(coll, op, pk string) {
 func Persist_publishChange(collArg, opArg, pkArg, recordArg any) any {
 	return func() any {
 		_ = recordArg // intentionally not broadcast — see bluedbChangePayload
-		reactivePublish(AsString(collArg), AsString(opArg), AsString(pkArg))
+		// Write-layer call: scope to the WRITER's own verified tenant (forgery-safe).
+		reactivePublishScoped(AsString(collArg), AsString(opArg), AsString(pkArg))
 		return Ok[any, any](nil)
 	}
 }

@@ -85,9 +85,15 @@ func (app *liveApp) startReactive(sess *liveSession) {
 		colls[b.coll] = true
 	}
 
+	// Subscribe on the session's PER-TENANT reactive topic (the security boundary):
+	// a verified tenant only receives its own tenant's write nudges. No verified
+	// tenant → the collection topic (unauth/dev/single-tenant), unchanged.
+	id, ok := SessionIdentity(sess)
+
 	rs := &reactiveState{done: make(chan struct{})}
 	for coll := range colls {
-		ch, cancel := app.topics.Subscribe(bluedbCollTopic(coll))
+		topic := reactiveTenantTopic(id, ok, coll)
+		ch, cancel := app.topics.Subscribe(topic)
 		rs.cancels = append(rs.cancels, cancel)
 		go app.reactiveLoop(sess, rs, coll, ch)
 	}
