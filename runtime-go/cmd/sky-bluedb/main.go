@@ -21,6 +21,7 @@
 //	bluedb <path> put    <key> <value>      [--stdin]
 //	bluedb <path> delete <key>              [--yes]
 //	bluedb <path> compact                   [--yes]
+//	bluedb <path> verify                    [--json]
 package main
 
 import (
@@ -77,6 +78,12 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	path, cmd := positional[0], positional[1]
 	rest := positional[2:]
+
+	// verify is a READ-ONLY integrity scan — it must NOT go through Open (Open
+	// would truncate a torn tail or refuse a corrupt file). Scan the raw path.
+	if cmd == "verify" {
+		return cmdVerify(path, f, stdout, stderr)
+	}
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		_ = os.MkdirAll(dir, 0o755) // engine Open won't create the parent dir
@@ -330,6 +337,62 @@ func cmdCompact(db *bluedb.DB, f flags, stdin io.Reader, out, errOut io.Writer) 
 	return 0
 }
 
+// cmdVerify runs the read-only integrity scanner (bluedb.Verify) and prints a
+// human (or --json) report. Exit code: 0 when Open would succeed (clean, or a
+// torn tail the engine recovers), non-zero on corruption / unsupported version
+// so scripts + CI can gate on it.
+func cmdVerify(path string, f flags, out, errOut io.Writer) int {
+	rep, err := bluedb.Verify(path)
+	if err != nil {
+		fmt.Fprintf(errOut, "bluedb: verify %q: %v\n", path, err)
+		return 1
+	}
+	if f.json {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(rep)
+		if rep.OK {
+			return 0
+		}
+		return 1
+	}
+
+	if !rep.WalExists {
+		fmt.Fprintln(out, "wal:              (absent — fresh / never-written store)")
+	} else {
+		if rep.WalVersion > 0 {
+			fmt.Fprintf(out, "wal version:      %d\n", rep.WalVersion)
+		} else {
+			fmt.Fprintln(out, "wal version:      0 (legacy headerless)")
+		}
+		fmt.Fprintf(out, "wal bytes:        %d\n", rep.WalBytes)
+		fmt.Fprintf(out, "records scanned:  %d\n", rep.WalRecords)
+	}
+	fmt.Fprintf(out, "wal status:       %s\n", rep.WalStatus)
+	if rep.FirstBadOffset >= 0 {
+		fmt.Fprintf(out, "first bad offset: %d\n", rep.FirstBadOffset)
+	}
+	if rep.Detail != "" {
+		fmt.Fprintf(out, "detail:           %s\n", rep.Detail)
+	}
+	if rep.SnapExists {
+		fmt.Fprintf(out, "snapshot:         %s (coveredSeq %d)\n", rep.SnapStatus, rep.SnapCoveredSeq)
+	} else {
+		fmt.Fprintln(out, "snapshot:         absent")
+	}
+
+	if rep.OK {
+		if rep.WalStatus == bluedb.VerifyTornTail {
+			fmt.Fprintln(out, "OK — a torn tail will be truncated + recovered on next Open (safe).")
+		} else {
+			fmt.Fprintln(out, "OK — Open would succeed.")
+		}
+		return 0
+	}
+	fmt.Fprintln(errOut, "NOT OK — Open would refuse. Restore from backup, or operate on a copy.")
+	return 1
+}
+
 // displayValue renders a value losslessly-ish for humans: valid UTF-8 as-is;
 // otherwise a "<binary N bytes>" marker (or hex when --raw), so a gob session
 // blob / compressed / encrypted value never corrupts the terminal or masquerades
@@ -389,6 +452,8 @@ const usage = `sky-bluedb — offline inspector + editor for a BlueDB store (app
   bluedb <path> put    <key> <value>      [--stdin]
   bluedb <path> delete <key>              [--yes]
   bluedb <path> compact                   [--yes]
+  bluedb <path> verify                    [--json]
 
 A live store (running app) holds an exclusive lock; edit it through the app, not here.
+verify is read-only (never opens/truncates); exits non-zero on corruption.
 `
