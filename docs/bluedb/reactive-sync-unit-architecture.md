@@ -251,6 +251,75 @@ the row's tenant column) is writer-controlled → cross-tenant misdelivery
 5. **API** — `withReactive` (auto-scope, loud override) + `Persist.live`
    at-site; verified-membership rooms; dev-mode assertion.
 
+## FOUNDATION REFINEMENT — "persist the inputs, re-derive the data" (TO GRILL)
+
+Motivating case (user): an internal admin app, many concurrent users, a huge
+Model (thousands of records). Today the whole Model is gob-encoded per change
+(`encodeSession`, `live_store.go`; no diff) — so a big Model is expensive on
+THREE axes at once: (1) persistence — multi-MB blob written per change; (2) live
+RAM — the Model sits in server memory per session (LiveView-style); (3)
+render/diff — CPU scales with Model size. Gob-diffing only chips at (1) and is
+hard (opaque struct). The right lever hits all three: **stop persisting the big
+query-derived data; re-derive it.**
+
+### Principle
+
+The Model conceptually splits into:
+- **Input / UI state** — page, filters, auth, scroll, draft, selection. Small.
+  Persisted in the session blob.
+- **Query-derived data** — the rows a `Persist.live` binding produces. Large.
+  **NOT persisted**; re-derived by re-running the query on load (recovery) and on
+  NOTIFY (reactivity) — the SAME operation.
+
+Blob size becomes dataset-independent. Live RAM + render stay bounded IF the
+query is paged (hold a page, not the table). Recovery = reactivity = refetch.
+
+### The mechanism candidates (the core design fork)
+
+- **A — `Reactive a` field wrapper.** `todos : Reactive (List Todo)`.
+  Custom `GobEncode` emits nothing (persists empty); the framework refetches on
+  load via the field's bound query. Explicit + typed, but every read/update site
+  unwraps (`Reactive.get` / re-wrap on `{m | todos = ...}`), and it must compose
+  with `view`, record-update, `Codec`, HM inference.
+- **B — infer the derived field from the `Persist.live` binding.** The binding's
+  fold `\rows m -> { m | todos = rows }` names the target field — but it's an
+  opaque closure; extracting "which field" at compile or runtime is hard.
+- **C — a designated sub-record.** `model.data : DataView` — a known field the
+  persister zeroes before encode and the framework rebuilds. Coarse (all-or-
+  nothing), simple, no per-field machinery, no wrapper at read sites.
+
+### On-load sequence (no stale snapshot for data)
+
+Restore input blob → paint (data fields at their zero/`loading`) → re-derive
+(re-run bindings) → fold → repaint. Unlike whole-Model restore, the data half
+has no stale-snapshot window because it was never stored — it's loading-then-
+fresh. Input half is instant.
+
+### Open questions for THIS grill
+
+1. Which mechanism (A/B/C) is actually implementable given the Sky→Go compiler +
+   gob + HM inference, and which has the least DX tax? Is there a D nobody's seen?
+2. First-paint gap: data fields empty until re-derive completes — is that a blank
+   flash / layout jump / an actionable-empty-state the user mis-reads as "no
+   data"? How to distinguish "loading" from "genuinely empty"?
+3. A field that is PART input, PART derived (a list the user reorders locally AND
+   that comes from a query) — optimistic local edits vs re-derive clobbering
+   them. Who wins, and is it expressible?
+4. Interaction with R1/R2/P1: the persist path now must zero/skip the derived
+   fields before encode — where, and does it break the DeepEqual dirty-check
+   (the derived field is always "changed" to empty)?
+5. Re-derive needs the session's query context (conn + verified identity) OUTSIDE
+   a request — does `currentLiveSession()` / the reactive loop provide it on the
+   reopen path AND the restart path?
+6. Failure: re-derive fails (DB down) on reopen — does the user get a broken
+   Model (inputs but no data), a retry, or a hard error? What's the contract?
+7. Does this force every Sky.Live app to adopt the split, or is it opt-in per
+   field with a zero-cost default for apps that DON'T have huge Models?
+8. Paging: to bound RAM/render the query must be paged, but the reactive re-derive
+   must then re-fetch the CURRENT page — does a change on page 1 while viewing
+   page 5 still notify correctly, and does "hold a page" break offset-based
+   reactivity?
+
 ## Original open questions (now answered by the grill above)
 
 1. Is "sync unit = verified claim" airtight, or is there a scope the app needs
