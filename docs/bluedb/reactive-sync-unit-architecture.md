@@ -295,6 +295,92 @@ Restore input blob → paint (data fields at their zero/`loading`) → re-derive
 has no stale-snapshot window because it was never stored — it's loading-then-
 fresh. Input half is instant.
 
+### GRILL RESOLUTION (4 adversaries: DX / feasibility / runtime / correctness)
+
+Verdicts: DX **HYBRID-B IS MAGIC**, feasibility **D IS BUILDABLE**, runtime **5
+HAZARDS**, correctness **6 CONTRACT HOLES**. None rejected the direction; taken
+together they force ONE reframe that dissolves the conflicts:
+
+**Reactivity and not-persisting-the-data are TWO features, not one.**
+
+- **Reactivity** (live NOTIFY → re-derive → fold) — clean, all four bless it.
+- **Ephemeral (don't persist the derived data, re-derive on load)** — the
+  blob-size optimization. It ALONE introduces the empty-flash, actionable-empty
+  state, lost-edit, Loading-state, and recovery≠reactivity problems.
+
+So: **default = persist the whole Model + revalidate derived fields on reopen
+(SWR); ephemeral = opt-in per field, for huge Models only.**
+
+#### The marker (reconciled across DX + feasibility + correctness)
+
+`Persist.liveInto db .todos (query …)` — a **bare field-accessor** `.todos`:
+- **DX:** the field stays a plain `List Todo` — `view`/`update`/`Codec` untouched,
+  zero read tax (kills the `Reactive a` wrapper = RemoteData-redux, DX grill).
+- **Feasibility:** `.todos` is a *syntactic* accessor literal at the call site
+  (statically known like record-update — NOT the opaque fold closure that blocked
+  candidate B). The compiler stamps the field for the persister via the existing
+  `sky:"name,type"` struct tag → `sky:"todos,…,noPersist"` (mechanism D — reuses
+  `codec_auto.go` tag reflection; no HM change, no GobEncode codegen).
+- **Correctness:** the framework OWNS the assignment (`{m | todos = rows}`,
+  replace-only) — an arbitrary `model→model` fold is inexpressible, so the
+  accumulating-fold break (Hole 3a) and recovery≠reactivity vanish.
+
+#### Default vs opt-in
+
+| | Default (99.9999%) | `|> Persist.ephemeral` (huge Model, opt-in) |
+|---|---|---|
+| Persist | whole Model (incl. derived data) | derived field zeroed out of the blob |
+| Reopen | instant paint (last-known) → revalidate (re-derive) | paint skeleton/empty → re-derive fills |
+| Blob size | grows with data | dataset-independent |
+| Loading state | none needed (data always present) | field is a tri-state; dev handles it |
+| Lost-edit / empty-flash | none | dev accepts the documented window |
+
+Default kills the empty-flash + actionable-empty (Holes 1/4) + lost-edit (Hole
+2) + the "loading-flash is worse UX than SWR" finding (Hole 7) for the common
+app. Ephemeral is the escape hatch for the admin grid, with its trade-offs
+documented — exactly "low-level control if devs choose it."
+
+#### FATAL prerequisites (needed for reactivity itself, not just ephemeral)
+
+1. **Stamp identity on the re-derive goroutine** (runtime 3a): `reactiveRefreshOnce`
+   calls `sky_call(b.run, nil)` at `live_reactive.go:229` WITHOUT
+   `setGoroutineLiveSession(sess)` → a tenant-scoped re-derive reads a nil session
+   → fail-closed to empty (or unscoped). Wrap the query body in
+   `setGoroutineLiveSession`/`defer clear`.
+2. **`startReactive` on SSE reconnect + re-hydrate** (runtime 3b, = the earlier
+   F5): today it fires only from the full-GET `handleInitial` (`live.go:4231`); an
+   SPA that reconnects via SSE after a restart gets no loops → stale (default) or
+   permanently-blank (ephemeral). Wire it to the reconnect/re-hydrate path.
+
+#### Other required fixes (from the grills)
+
+- **Zero on a shallow copy at the encode boundary, never in place** (runtime 1):
+  in-place zeroing empties the live session — and `reap` (`live_store_bluedb.go:231`)
+  makes it silent background loss. `encodeSession` shallow-copies the top-level
+  Model + zeroes each `,noPersist` field header (multiple top-level fields OK —
+  no forced sub-record).
+- **Dirty-check over the zeroed projection** (runtime 2 + correctness cross-cut):
+  `lastPersistedModel` holds the zeroed Model so a pure re-derive is a no-op
+  persist (else every ephemeral refresh persists).
+- **Restart admission control** (runtime 5): a global weighted semaphore + jitter
+  on re-derive, else 1000 reconnecting sessions stampede the DB at cold start.
+- **`liveInto` fields are server-owned — don't optimistically mutate them**
+  (correctness 2b/5): mutate via a write; the nudge reflects it. Local-only state
+  (drag-reorder overlay) lives in a separate INPUT field, not the live field.
+- **Ban derive-of-derive as a stored field** (correctness 3b): a value computed
+  from a live field is a `view`-time pure function, never a persisted field.
+- **Keyset (cursor) pagination for reactive paged bindings** (correctness 6):
+  `WHERE id > :last ORDER BY id LIMIT n`, not OFFSET, to avoid row-shift anomalies
+  under live inserts. Document until offered.
+
+#### Build order (folds into the earlier revised sequence)
+
+The two FATAL prerequisites (identity-on-goroutine, startReactive-on-reconnect)
++ the tenant-scoped topic-with-body (earlier grill) are the reactivity core.
+`liveInto .field` (replace-fold + tag) is the marker. `Persist.ephemeral` +
+shallow-copy-zero + projected dirty-check + admission control are the opt-in
+blob-size layer, built last.
+
 ### Open questions for THIS grill
 
 1. Which mechanism (A/B/C) is actually implementable given the Sky→Go compiler +
