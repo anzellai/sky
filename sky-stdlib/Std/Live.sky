@@ -27,6 +27,7 @@ module Std.Live exposing
     , lifecycle
     , withHead
     , withConsoleAuth
+    , withIdentify
     , withOnNavigate
     , withGuard
     , withMigrate
@@ -117,6 +118,20 @@ withHead =
 withConsoleAuth : (Request -> Task Error (Maybe a)) -> AppConfig model msg -> AppConfig model msg
 withConsoleAuth =
     Ffi.kernel "Live_withConsoleAuth"
+
+
+-- | Populate the framework-verified session identity from an app-supplied
+-- login check — `identify req` reads the request (cookie / bearer), verifies
+-- it (e.g. decode a JWT), and returns `Just identity` for a verified user or
+-- `Nothing` for an anonymous request. The runtime calls it once at session
+-- mint (only when an auth gate hasn't already provided an identity — the gate
+-- always wins) and stamps `sess.identity` / `sess.identityValid` from a `Just`,
+-- so tenant-scoped kernels can read it via the session-identity bridge. A
+-- `Nothing` / `Err` leaves the session anonymous (fail-closed). Same row-poly
+-- pattern as `withConsoleAuth` — apps that omit it build byte-identical.
+withIdentify : (Request -> Task Error (Maybe a)) -> AppConfig model msg -> AppConfig model msg
+withIdentify =
+    Ffi.kernel "Live_withIdentify"
 
 
 -- | Hook fired on in-app navigation (initial mount, `sky-nav` fetch,

@@ -79,6 +79,12 @@ func Live_withHead(fn, cfg any) any { return liveCfgSet(cfg, "Head", fn) }
 // Live_withConsoleAuth — `consoleAuth : Request -> Task Error (Maybe Identity)`.
 func Live_withConsoleAuth(fn, cfg any) any { return liveCfgSet(cfg, "ConsoleAuth", fn) }
 
+// Live_withIdentify — `identify : Request -> Task Error (Maybe Identity)`. Populates
+// the framework-verified session identity at mint (handleInitial) when an auth
+// gate didn't already provide one (the gate always wins). Stored verbatim under
+// "Identify" (invariant 2); read by liveAppRun/newLiveAppFromCfg via Field(cfg,"Identify").
+func Live_withIdentify(fn, cfg any) any { return liveCfgSet(cfg, "Identify", fn) }
+
 // Live_withOnNavigate — `onNavigate : String -> msg` navigation hook.
 func Live_withOnNavigate(fn, cfg any) any { return liveCfgSet(cfg, "OnNavigate", fn) }
 

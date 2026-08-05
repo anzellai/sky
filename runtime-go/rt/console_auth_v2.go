@@ -556,7 +556,30 @@ func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) 
 		return ConsoleIdentity{}, false
 	}
 	idAny := consoleUnwrapMaybeJust(maybeAny)
+	if idAny == nil {
+		// Fail-closed (SECURITY). We only grant an identity when the payload
+		// is POSITIVELY a recognized `Just identity`. An `Err` result is an
+		// int-tagged SkyResult{Tag:1} that the string-tagged consoleIsResultErr
+		// does not catch, and it unwraps to a non-nil non-Maybe struct; without
+		// this guard the function would fall through and return an empty-but-
+		// VALID ConsoleIdentity (identityValid=true, tenant=""), a cross-tenant
+		// hole. Any shape that isn't a Just — Err, malformed, undecodable —
+		// lands here and DENIES. Positive-allow, default-deny.
+		return ConsoleIdentity{}, false
+	}
 	return extractConsoleIdentity(idAny), true
+}
+
+// resolveIdentityFromCallback drives an app-supplied identity resolver
+// (`Request -> Task Error (Maybe Identity)`, from Live.withIdentify) at
+// session-mint time. It is a semantic alias of invokeConsoleAuthCallback —
+// same buildConsoleAuthRequest → sky_call → AnyTaskRun → Result/Maybe unwrap
+// → extractConsoleIdentity, same panic-safe deny-on-error contract — reused so
+// the framework-verified session identity is populated EXACTLY like the console
+// gate. Returns (identity, true) on `Just`, (_, false) on `Nothing` / `Err` /
+// panic (fail-closed).
+func resolveIdentityFromCallback(cb any, r *http.Request) (ConsoleIdentity, bool) {
+	return invokeConsoleAuthCallback(cb, r)
 }
 
 // buildConsoleAuthRequest mirrors the rt.go Sky.Http.Server "req"

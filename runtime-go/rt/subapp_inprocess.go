@@ -356,6 +356,7 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 		guard:         Field(cfg, "Guard"),
 		head:          Field(cfg, "Head"),
 		consoleAuth:   Field(cfg, "ConsoleAuth"),
+		identify:      Field(cfg, "Identify"),
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),

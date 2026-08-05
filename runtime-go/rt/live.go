@@ -2836,6 +2836,16 @@ type liveApp struct {
 	// gate in evaluateConsoleAuth). Same row-poly pattern as v0.15.58
 	// `head` field — apps that omit `consoleAuth` build byte-identical.
 	consoleAuth any
+	// identify : Request -> Task Error (Maybe Identity) — optional. Set from
+	// the `withIdentify` builder. At session mint (handleInitial) the runtime
+	// invokes it to populate the framework-verified session identity
+	// (sess.identity / sess.identityValid) from a `Just`, EXACTLY mirroring the
+	// consoleAuth mechanism — same Request → Task → Result → Maybe unwrap. It
+	// only runs when an auth gate didn't already write an Identity to
+	// r.Context() (the gate always wins); `Nothing` / `Err` / panic leaves the
+	// session anonymous (fail-closed). nil → not consulted, so apps that omit
+	// `withIdentify` build byte-identical (same row-poly pattern as `head`).
+	identify any
 	// v0.16.7 #418 — onNavigate : Page -> msg — optional callback.
 	// When set, the framework dispatches the resulting Msg through
 	// `update` AFTER every URL-driven `applyRoute` call (initial
@@ -3552,6 +3562,7 @@ func liveAppRun(cfg any) any {
 		head:               Field(cfg, "Head"),
 		reactive:           Field(cfg, "Reactive"),
 		consoleAuth:        Field(cfg, "ConsoleAuth"),
+		identify:           Field(cfg, "Identify"),
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
 		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
@@ -4112,6 +4123,17 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		if id, ok := IdentityFromContext(r.Context()); ok {
 			sess.identity = id
 			sess.identityValid = true
+		} else if app.identify != nil {
+			// No gate-provided identity — consult the app's `withIdentify`
+			// resolver. resolveIdentityFromCallback reuses the console-auth
+			// invoke path (Request → Task → Result → Maybe unwrap, panic-safe).
+			// The gate ALWAYS wins (this branch only runs when it didn't
+			// provide one); Nothing / Err / panic → ok=false → the session
+			// stays anonymous (identityValid remains false — fail-closed).
+			if id, ok := resolveIdentityFromCallback(app.identify, r); ok {
+				sess.identity = id
+				sess.identityValid = true
+			}
 		}
 	}
 	// Always set sid — both on fresh sessions AND on resumes from
