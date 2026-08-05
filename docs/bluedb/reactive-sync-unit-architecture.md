@@ -1,9 +1,17 @@
 # Persist reactive — the sync-unit architecture
 
-Status: **PROPOSED** (replaces the collection-topic reactive model). This is the
-design to grill adversarially before rebuilding. Supersedes the change-feed →
-overlap → re-query approach for the security/scoping layer; that machinery
+Status: **APPROVED** (2026-08-05, user-confirmed after two 4-adversary grill
+rounds). Replaces the collection-topic reactive model. Supersedes the change-feed
+→ overlap → re-query approach for the security/scoping layer; that machinery
 survives only for the non-session-write edge case (below).
+
+**Locked decisions:** default = persist whole Model + revalidate derived fields
+on reopen (SWR); `Persist.ephemeral` = opt-in per field for huge Models.
+Reactivity and ephemeral are separate features. Marker = `Persist.liveInto db
+.field query` (bare accessor → replace-fold + `sky:` `,noPersist` tag; no
+wrapper, no closure inference). Build order: (1) verified session identity on the
+Std.Auth path, (2) reactivity core (identity-on-goroutine + startReactive-on-
+reconnect + tenant-scoped topic-with-body + `liveInto`), (3) ephemeral opt-in.
 
 ## The one idea
 
