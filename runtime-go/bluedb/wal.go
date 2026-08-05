@@ -12,10 +12,41 @@ package bluedb
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
 )
+
+// WAL file header (G1). A versioned 5-byte prefix — 4-byte magic + 1-byte
+// version — written once when a WAL file is created fresh (see writeWalHeader).
+// It lets recovery reject a WAL written by a NEWER binary (a format it can't
+// safely parse) with an explicit error INSTEAD of mistaking an unknown record
+// for a torn tail and truncating valid data. Mirrors the snapshot format
+// (snapshot.go). A file that does NOT begin with the magic is a LEGACY headerless
+// WAL (implicitly version 0) and replays from offset 0 exactly as before —
+// backward compatible; the header is added the next time the WAL is written fresh
+// (fresh Open, or the post-checkpoint truncate-and-recreate).
+const (
+	walMagic     = "BWAL"
+	walVersion   = 1
+	walHeaderLen = 5 // len(walMagic) + 1 version byte
+)
+
+// walHeaderBytes is the 5-byte prefix written to a fresh WAL file.
+func walHeaderBytes() []byte {
+	h := make([]byte, walHeaderLen)
+	copy(h[0:4], walMagic)
+	h[4] = walVersion
+	return h
+}
+
+// probeBudgetBytes caps the CRC work the G2 forward-probe performs before giving
+// up and failing closed (refuse to open). A genuine torn tail concludes far below
+// this; the cap only guards a pathological/adversarial file from a catastrophic
+// scan. Exhausting the budget fails CLOSED (Open returns an error, truncates
+// nothing), so the cap can never cause data loss.
+const probeBudgetBytes = 1 << 30 // 1 GiB of CRC work
 
 // Operation codes stored in each record.
 const (
@@ -191,8 +222,18 @@ func batchMutBytes(muts []mutation) int {
 // replay reads every valid record from the WAL at path, calling apply in order
 // for records with seq > minSeq, and returns the highest seq seen plus the byte
 // offset of the end of the last valid record (validEnd). A missing file is not
-// an error (fresh DB). It stops at the first torn/invalid record; validEnd is
-// where the file should be truncated so future appends are clean.
+// an error (fresh DB).
+//
+// A torn/invalid record marks a stop point. Before treating that stop as a
+// truncate boundary the caller can rely on, replay disambiguates (G2): it probes
+// forward for a VALID record after the invalid one. If one exists the invalid
+// record is MID-FILE CORRUPTION (a rotted byte, not a partial final write) and
+// replay returns an error — the caller must fail closed rather than truncate away
+// the valid tail. If none exists it is a TORN TAIL (an interrupted final write);
+// validEnd is where the file should be truncated so future appends are clean.
+//
+// replay also refuses (G1) a WAL whose version header is NEWER than this binary
+// understands, so an old binary can't misparse a new format and truncate it.
 //
 // minSeq is the coveredSeq of a loaded snapshot: records with seq <= minSeq are
 // already reflected in the snapshot, so they are skipped. This makes recovery
@@ -211,26 +252,69 @@ func replay(path string, minSeq uint64, apply func(entry)) (maxSeq uint64, valid
 	defer f.Close()
 
 	r := bufio.NewReaderSize(f, 1<<16)
+
+	// G1: a WAL that begins with the magic carries a version header; peek it
+	// WITHOUT consuming (a legacy headerless WAL must still replay from offset 0).
+	if head, _ := r.Peek(walHeaderLen); len(head) >= walHeaderLen && string(head[0:4]) == walMagic {
+		version := head[4]
+		if version != walVersion {
+			if version > walVersion {
+				return 0, 0, fmt.Errorf("bluedb: WAL version %d unsupported (written by a newer binary); refusing to open to avoid truncating your data", version)
+			}
+			return 0, 0, fmt.Errorf("bluedb: WAL version %d unsupported", version)
+		}
+		_, _ = r.Discard(walHeaderLen)
+		validEnd = walHeaderLen // records begin AFTER the header
+	}
+	// else: legacy headerless WAL (version 0), or an empty/sub-header file — the
+	// loop below reads records from the current offset (0), which is unchanged
+	// from the pre-G1 behaviour.
+
 	var hdr [8]byte
 	for {
+		torn := false
 		if _, e := io.ReadFull(r, hdr[:]); e != nil {
-			break // clean EOF or torn header → stop
+			torn = true // clean EOF (nothing read) or torn header → stop-point
 		}
-		crc := binary.LittleEndian.Uint32(hdr[0:4])
-		plen := binary.LittleEndian.Uint32(hdr[4:8])
-		if plen == 0 || plen > maxRecordSize {
-			break // garbage length → torn
+		var payload []byte
+		var plen uint32
+		if !torn {
+			crc := binary.LittleEndian.Uint32(hdr[0:4])
+			plen = binary.LittleEndian.Uint32(hdr[4:8])
+			if plen == 0 || plen > maxRecordSize {
+				torn = true // garbage length
+			} else {
+				payload = make([]byte, plen)
+				if _, e := io.ReadFull(r, payload); e != nil {
+					torn = true // short payload
+				} else if crc32.ChecksumIEEE(payload) != crc {
+					torn = true // CRC mismatch
+				}
+			}
 		}
-		payload := make([]byte, plen)
-		if _, e := io.ReadFull(r, payload); e != nil {
-			break // short payload → torn
+		var ent entry
+		if !torn {
+			var ok bool
+			if ent, ok = decodePayload(payload); !ok {
+				torn = true // undecodable (e.g. unknown opcode from a newer binary)
+			}
 		}
-		if crc32.ChecksumIEEE(payload) != crc {
-			break // CRC mismatch → torn
-		}
-		ent, ok := decodePayload(payload)
-		if !ok {
-			break
+		if torn {
+			// G2: `validEnd` is the offset of this stop-point. Distinguish a torn
+			// tail (safe to truncate) from mid-file corruption (must refuse).
+			mid, inconclusive, perr := probeMidFileCorruption(f, validEnd)
+			if perr != nil {
+				return 0, 0, perr
+			}
+			if mid {
+				return 0, 0, fmt.Errorf("bluedb: WAL corruption at offset %d — a valid record follows an invalid one; refusing to open (would discard %d bytes). Run 'sky bluedb verify' / restore from backup",
+					validEnd, discardBytes(f, validEnd))
+			}
+			if inconclusive {
+				return 0, 0, fmt.Errorf("bluedb: WAL corruption at offset %d — could not confirm the invalid tail is a partial final write within the probe budget; refusing to open to avoid discarding %d bytes. Run 'sky bluedb verify' / restore from backup",
+					validEnd, discardBytes(f, validEnd))
+			}
+			break // genuine torn tail → stop; caller truncates at validEnd
 		}
 		if ent.seq > minSeq {
 			// Copy key/value out of the record buffer before handing to apply, so
@@ -257,4 +341,74 @@ func replay(path string, minSeq uint64, apply func(entry)) (maxSeq uint64, valid
 		validEnd += int64(8 + int(plen))
 	}
 	return maxSeq, validEnd, nil
+}
+
+// discardBytes is the number of bytes from the stop-point `pos` to EOF — the
+// amount a truncate would throw away (for the refuse-to-open diagnostics).
+func discardBytes(f *os.File, pos int64) int64 {
+	if fi, e := f.Stat(); e == nil && fi.Size() > pos {
+		return fi.Size() - pos
+	}
+	return 0
+}
+
+// probeMidFileCorruption inspects the bytes AFTER a torn/invalid record at `pos`
+// (G2). It reads the remaining region once and scans it for a record whose CRC
+// validates and payload decodes.
+//
+//	mid=true          → a valid record follows the invalid one: MID-FILE CORRUPTION.
+//	inconclusive=true → the probe hit its work budget without a verdict: fail closed.
+//	both false        → no valid record follows: a TORN TAIL (safe to truncate).
+func probeMidFileCorruption(f *os.File, pos int64) (mid bool, inconclusive bool, err error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return false, false, err
+	}
+	remaining := fi.Size() - pos
+	if remaining <= 8 {
+		// Fewer than a record header's worth of bytes follow → nothing valid can
+		// come after → definitively a torn tail.
+		return false, false, nil
+	}
+	buf := make([]byte, remaining)
+	n, rerr := f.ReadAt(buf, pos)
+	if n < len(buf) {
+		if rerr == nil {
+			rerr = io.ErrUnexpectedEOF
+		}
+		return false, false, rerr
+	}
+	// Scan from offset 1: offset 0 is the record we already know is invalid.
+	found, budgetExhausted := scanForValidRecord(buf, 1)
+	return found, budgetExhausted, nil
+}
+
+// scanForValidRecord byte-scans buf from minOff for the first record whose framing
+// (crc32 + length header) and payload decode successfully. Returns found on the
+// first hit, or exhausted when the CRC work budget is spent before a verdict — the
+// caller then fails closed (never truncates on an inconclusive scan).
+func scanForValidRecord(buf []byte, minOff int) (found bool, exhausted bool) {
+	budget := int64(probeBudgetBytes)
+	for o := minOff; o+8 <= len(buf); o++ {
+		plen := binary.LittleEndian.Uint32(buf[o+4 : o+8])
+		if plen == 0 || plen > maxRecordSize {
+			continue // not a plausible record header here
+		}
+		end := o + 8 + int(plen)
+		if end > len(buf) {
+			continue // declared payload runs past EOF here
+		}
+		budget -= int64(plen)
+		if budget < 0 {
+			return false, true // inconclusive → caller fails closed (safe)
+		}
+		crc := binary.LittleEndian.Uint32(buf[o : o+4])
+		if crc32.ChecksumIEEE(buf[o+8:end]) != crc {
+			continue
+		}
+		if _, ok := decodePayload(buf[o+8 : end]); ok {
+			return true, false // a genuinely valid record follows the invalid one
+		}
+	}
+	return false, false
 }

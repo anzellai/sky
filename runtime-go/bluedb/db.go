@@ -34,6 +34,22 @@ const (
 	maxBatch = 1024 // max records fsync'd in one group commit
 )
 
+// Recovery observability (G3). A torn-tail truncation on Open used to be silent;
+// these package-level counters + a structured log line make every recovery
+// truncation visible to an operator. Read via RecoveryStats.
+var (
+	recoveryTruncations    uint64 // atomic: number of Opens that truncated a torn tail
+	recoveryBytesDiscarded uint64 // atomic: total bytes discarded across those truncations
+)
+
+// RecoveryStats reports how many times Open has truncated a torn WAL tail during
+// recovery and how many bytes were discarded in total (process-wide, monotonic).
+// A non-zero, growing truncations count is worth alerting on — it means writes
+// were interrupted (crash / power loss) often enough to leave torn tails.
+func RecoveryStats() (truncations, bytesDiscarded uint64) {
+	return atomic.LoadUint64(&recoveryTruncations), atomic.LoadUint64(&recoveryBytesDiscarded)
+}
+
 // opCheckpoint is an internal marker request routed through the commit channel
 // so a checkpoint runs in the single committer goroutine, between batches — it is
 // never encoded to the WAL.
@@ -159,13 +175,23 @@ func Open(path string, opts ...Options) (*DB, error) {
 	}
 	db.seq = maxSeq
 
-	// Drop any torn trailing record so appends start on a clean boundary.
+	// Drop any torn trailing record so appends start on a clean boundary. `replay`
+	// has already refused (returned an error) for mid-file corruption or a
+	// newer-than-us WAL version, so a truncation here is only ever a genuine torn
+	// tail (an interrupted final write).
 	truncated := false
 	if fi, e := os.Stat(path); e == nil && fi.Size() > validEnd {
+		discarded := fi.Size() - validEnd
 		if e := os.Truncate(path, validEnd); e != nil {
 			return nil, e
 		}
 		truncated = true
+		// G3: a recovery truncation was silent before. Surface it (log + metric) so
+		// an operator can see that a crash left a torn tail.
+		atomic.AddUint64(&recoveryTruncations, 1)
+		atomic.AddUint64(&recoveryBytesDiscarded, uint64(discarded))
+		log.Printf("[bluedb] recovery: truncated torn WAL tail at offset %d (discarded %d bytes, %q)",
+			validEnd, discarded, path)
 	}
 	db.walSize = validEnd
 
@@ -178,6 +204,21 @@ func Open(path string, opts ...Options) (*DB, error) {
 	if err := lockFile(f); err != nil {
 		f.Close()
 		return nil, ErrLocked
+	}
+	// G1: a WAL that is empty here (a brand-new store, or one whose records were
+	// all a torn tail that we just truncated to nothing) gets the version header
+	// written before its first record. Write it via the RAW fd (not the
+	// fault-injection wrapper) — it is part of Open's setup, not a committed write.
+	if db.walSize == 0 {
+		hn, e := f.Write(walHeaderBytes())
+		if e != nil {
+			f.Close()
+			return nil, e
+		}
+		if db.sync {
+			_ = f.Sync()
+		}
+		db.walSize = int64(hn)
 	}
 	var wf walFile = f
 	if o.walWrap != nil {
@@ -509,11 +550,21 @@ func (db *DB) doCheckpoint() error {
 	if err := db.f.Truncate(0); err != nil {
 		return err
 	}
+	// G1: the WAL is now empty — re-write the version header so the freshly
+	// recreated log carries it (the same header a fresh Open writes). walSize is
+	// set from what actually landed: if the header write fails after the truncate,
+	// the WAL is left empty (walSize=0, a valid legacy-headerless state that still
+	// replays), never a torn record.
+	db.walSize = 0
+	db.writesSinceCkpt = 0
+	if hn, err := db.f.Write(walHeaderBytes()); err != nil {
+		return err
+	} else {
+		db.walSize = int64(hn)
+	}
 	if db.sync {
 		_ = db.f.Sync()
 	}
-	db.walSize = 0
-	db.writesSinceCkpt = 0
 	atomic.AddUint64(&db.checkpoints, 1)
 	return nil
 }

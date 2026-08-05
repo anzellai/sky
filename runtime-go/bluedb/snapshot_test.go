@@ -26,12 +26,14 @@ func TestCheckpointCompactsAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Snapshot exists; WAL was truncated to (near) empty.
+	// Snapshot exists; the WAL was compacted to just its version header (G1: the
+	// freshly recreated log re-writes the header so an old binary can't misparse a
+	// newer format — see writeSnapshotAtomic / doCheckpoint).
 	if _, err := os.Stat(wal + ".snap"); err != nil {
 		t.Fatalf("snapshot not written: %v", err)
 	}
-	if fi, _ := os.Stat(wal); fi.Size() != 0 {
-		t.Fatalf("WAL not truncated after checkpoint: %d bytes", fi.Size())
+	if fi, _ := os.Stat(wal); fi.Size() != walHeaderLen {
+		t.Fatalf("WAL not compacted to header after checkpoint: %d bytes (want %d)", fi.Size(), walHeaderLen)
 	}
 
 	// Writes after the checkpoint go to the fresh WAL.
