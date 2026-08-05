@@ -426,8 +426,19 @@ A bare `.todos` accessor is a distinct node `Expr::Accessor(Name("todos"))`
   (`Codec.field "id" .id` passes the name as a SEPARATE string; the accessor is a
   runtime getter). `liveInto` deriving the name from `.field` is a NEW capability
   — cheap, but genuinely new.
-- **3b `Persist.ephemeral` (`,noPersist` tag) — needs a NEW lower→codegen
-  channel.** Appending a 3rd `sky:` tag segment is trivial at emit
+- **3b `Persist.ephemeral` — SHIPPED** (`c9cc6230`): implemented WITHOUT the
+  lower→codegen tag channel below — the ephemeral field name rides the `Live`
+  record at runtime (`liveNamed` carries it; the 3a lower arm delegates to
+  `liveNamed` passing the accessor name), `startReactive` collects them onto
+  `sess.ephemeralFields`, and `encodeSession` zeroes them on a SHALLOW COPY at the
+  encode boundary (`projectEphemeralModel` — never in-place, Finding 1) with the
+  P1 dirty-check comparing the zeroed projection (Finding 2). Non-ephemeral apps
+  byte-identical. Proven: blob byte-identical at 10 vs 5000 rows; example 59 e2e
+  = 492-byte blob vs 2369-byte non-ephemeral control, 40 todos re-derived on
+  reopen. Corpus + sweep 29/0 green. (The tag-channel approach below was NOT
+  needed.)
+- (recon, not taken) `,noPersist` struct tag: appending a 3rd `sky:` tag segment
+  is trivial at emit
   (`codegen/src/lib.rs:246`) + needs `skyTagType` fixed to cut at the 2nd comma
   (`codec_auto.go:70`) + a flag reader. The HARD part: codegen's `emit_type_def`
   sees only `(name, GoTy)` per field and has no knowledge of which
