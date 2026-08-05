@@ -192,6 +192,70 @@ func TestVerifyTornTailIsOK(t *testing.T) {
 	}
 }
 
+// v2 verify — a trailing DATA group with NO commit record (a clean EOF with a
+// non-empty uncommitted pending group: the group's commit/fsync never landed) is
+// classified as a RECOVERABLE torn-tail (Open truncates + recovers), NOT clean and
+// NOT corruption. WalRecords counts only the COMMITTED data records.
+func TestVerifyV2UncommittedTrailingGroupIsTornTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.blue")
+	var buf []byte
+	buf = append(buf, walHeaderBytes()...) // v2
+	buf = append(buf, encodeRecord(entry{seq: 1, op: opPut, key: []byte("a"), value: []byte("1")})...)
+	buf = append(buf, encodeRecord(commitEntry(1, 1))...) // 'a' committed
+	buf = append(buf, encodeRecord(entry{seq: 2, op: opPut, key: []byte("b"), value: []byte("2")})...)
+	// 'b' has NO trailing commit → an un-acked in-flight group at a clean EOF.
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var rep VerifyReport
+	assertUnchanged(t, path, func() {
+		r, e := Verify(path)
+		if e != nil {
+			t.Fatalf("Verify: %v", e)
+		}
+		rep = r
+	})
+
+	if rep.WalVersion != int(walVersion) {
+		t.Fatalf("WalVersion = %d, want %d", rep.WalVersion, walVersion)
+	}
+	if rep.WalStatus != VerifyTornTail {
+		t.Fatalf("WalStatus = %q, want %q (recoverable un-acked trailing group)", rep.WalStatus, VerifyTornTail)
+	}
+	if !rep.OK {
+		t.Fatal("OK = false, want true — an un-acked trailing group is recoverable (Open truncates + recovers)")
+	}
+	if rep.WalRecords != 1 {
+		t.Fatalf("WalRecords = %d, want 1 (only the COMMITTED 'a' counts; the uncommitted 'b' does not)", rep.WalRecords)
+	}
+}
+
+// v2 verify — an inconsistent commit (CRC-valid but count/seq don't match its
+// group) is real corruption: Verify reports corruption (not a recoverable tail).
+func TestVerifyV2InconsistentCommitIsCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.blue")
+	var buf []byte
+	buf = append(buf, walHeaderBytes()...) // v2
+	buf = append(buf, encodeRecord(entry{seq: 1, op: opPut, key: []byte("a"), value: []byte("1")})...)
+	// A commit claiming count 5 (there is 1 data record) — a valid CRC over a lie.
+	buf = append(buf, encodeRecord(commitEntry(1, 5))...)
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Verify(path)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if rep.WalStatus != VerifyCorruption {
+		t.Fatalf("WalStatus = %q, want %q (commit count mismatch is corruption)", rep.WalStatus, VerifyCorruption)
+	}
+	if rep.OK {
+		t.Fatal("OK = true, want false for an inconsistent commit")
+	}
+}
+
 func TestVerifyNewerVersionUnsupported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.blue")
 	var buf []byte

@@ -255,6 +255,135 @@ func TestG2TornTailStillRecovers(t *testing.T) {
 	}
 }
 
+// RED→GREEN — the discovery artifact for the WAL v2 commit-record fix. The SAME
+// physical shape — an acked prefix, then an in-flight group with an interior HOLE
+// (a torn record followed by a later valid record) — is UNRECOVERABLE under v1 (no
+// durable commit boundary → recovery sees valid-after-torn → classifies mid-file
+// corruption → REFUSES → strands the acked prefix) but RECOVERABLE under v2 (the
+// per-group commit record frames the acked prefix, so recovery truncates the
+// un-acked in-flight tail and opens clean). This is the exact bug WAL v2 fixes.
+func TestV1StrandsWhatV2Recovers(t *testing.T) {
+	// A torn record: well-framed (header length is honest) but its payload CRC
+	// won't match — the reader reads the whole payload, then rejects it. This is
+	// the "interior page hole" a power-loss-during-fsync leaves.
+	tornPut := func(seq uint64, key, val string) []byte {
+		rec := encodeRecord(entry{seq: seq, op: opPut, key: []byte(key), value: []byte(val)})
+		rec[len(rec)-1] ^= 0xFF // corrupt the last payload byte → CRC mismatch
+		return rec
+	}
+
+	// --- v1 (the bug): [header v1][valid a][torn][valid b], NO commit records. ---
+	dir := t.TempDir()
+	v1path := filepath.Join(dir, "v1.blue")
+	var v1 []byte
+	v1 = append(v1, walMagic...)
+	v1 = append(v1, byte(1)) // legacy version-1 header
+	v1 = append(v1, encodeRecord(entry{seq: 1, op: opPut, key: []byte("a"), value: []byte("1")})...)
+	v1 = append(v1, tornPut(2, "mid", "xxxx")...)
+	v1 = append(v1, encodeRecord(entry{seq: 3, op: opPut, key: []byte("b"), value: []byte("2")})...)
+	if err := os.WriteFile(v1path, v1, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(v1path)
+	if _, err := Open(v1path); err == nil {
+		t.Fatal("v1: Open succeeded, but v1 has no commit boundary — it MUST refuse (the bug: it strands 'a')")
+	} else if !strings.Contains(err.Error(), "corruption") {
+		t.Fatalf("v1: error = %q; want a corruption refusal (documents the stranding bug)", err.Error())
+	}
+	after, _ := os.Stat(v1path)
+	if before.Size() != after.Size() {
+		t.Fatal("v1: refused Open must not truncate (the acked 'a' is stranded, not lost)")
+	}
+
+	// --- v2 (the fix): [header v2][a][commit a][torn][b], b un-committed. ---
+	v2path := filepath.Join(dir, "v2.blue")
+	var v2 []byte
+	v2 = append(v2, walHeaderBytes()...) // version-2 header
+	v2 = append(v2, encodeRecord(entry{seq: 1, op: opPut, key: []byte("a"), value: []byte("1")})...)
+	v2 = append(v2, encodeRecord(commitEntry(1, 1))...) // 'a' is the acked prefix
+	v2 = append(v2, tornPut(2, "mid", "xxxx")...)        // in-flight torn record …
+	v2 = append(v2, encodeRecord(entry{seq: 3, op: opPut, key: []byte("b"), value: []byte("2")})...)
+	// … followed by a later VALID data record but NO commit → an un-acked in-flight
+	// tail. (This is what would REFUSE under v1's valid-after-torn rule.)
+	if err := os.WriteFile(v2path, v2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(v2path)
+	if err != nil {
+		t.Fatalf("v2: Open REFUSED — the commit-record fix must recover the acked prefix, not strand it: %v", err)
+	}
+	defer db.Close()
+	if v, ok := db.Get([]byte("a")); !ok || string(v) != "1" {
+		t.Fatalf("v2: acked 'a' = %q,%v; want 1,true (the fix recovers what v1 stranded)", v, ok)
+	}
+	if _, ok := db.Get([]byte("mid")); ok {
+		t.Fatal("v2: torn in-flight record surfaced")
+	}
+	if _, ok := db.Get([]byte("b")); ok {
+		t.Fatal("v2: un-committed in-flight record 'b' surfaced — it was never acked")
+	}
+	if db.Len() != 1 {
+		t.Fatalf("v2: Len = %d, want 1 (only the committed prefix)", db.Len())
+	}
+}
+
+// G2 residual — corrupting the FINAL commit record TRUNCATES the last group and
+// recovers the prefix (it does NOT refuse). This is the documented, irreducible
+// residual of WAL v2: a rotted last commit is byte-indistinguishable from an
+// in-flight last group whose commit never landed, so recovery fails toward
+// availability (truncate + recover) rather than refusing. Contrast with a mid-file
+// scribble (TestG2MidFileScribble…) which leaves a WHOLE valid committed group
+// behind the corruption → refuse (G2 preserved).
+func TestG2FinalCommitCorruptTruncatesLastGroup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.blue")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const N = 12
+	for i := 0; i < N; i++ {
+		if err := db.Put([]byte(fmt.Sprintf("key%02d", i)), []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The WAL ends with the final group's commit record (frame = 8 header + 13
+	// payload = 21 bytes). Flip a byte in its payload → torn commit, everything
+	// before it intact.
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[len(b)-1] ^= 0xFF
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("a rotted FINAL commit must truncate + recover (not refuse — it is indistinguishable from an in-flight last group): %v", err)
+	}
+	defer db2.Close()
+	if db2.Len() != N-1 {
+		t.Fatalf("Len = %d, want %d (only the last group dropped)", db2.Len(), N-1)
+	}
+	for i := 0; i < N-1; i++ {
+		if _, ok := db2.Get([]byte(fmt.Sprintf("key%02d", i))); !ok {
+			t.Fatalf("key%02d lost after final-commit-corrupt recovery", i)
+		}
+	}
+	if _, ok := db2.Get([]byte(fmt.Sprintf("key%02d", N-1))); ok {
+		t.Fatalf("key%02d survived — its group's commit was corrupt, so the group is un-acked", N-1)
+	}
+	if err := db2.Put([]byte("fresh"), []byte("v")); err != nil {
+		t.Fatalf("append after recovery: %v", err)
+	}
+}
+
 // G3 — a torn-tail recovery emits a structured log line AND bumps the recovery
 // metric (it used to be silent).
 func TestG3RecoveryTruncationLogAndMetric(t *testing.T) {

@@ -49,6 +49,83 @@ serialize → append to WAL (CRC'd record) → GROUP-COMMIT fsync → apply to m
 
 Nothing is acked before it is on stable storage. That is the whole contract.
 
+## WAL v2 commit records — the durable group boundary
+
+A group commit writes N data records then ONE fsync, and acks its writers only
+after that fsync. Before **WAL v2** the log had NO durable marker for "this group
+is complete", which left one crash window unrecoverable:
+
+> A power loss **during** the group's fsync can leave the tail as
+> `[durable acked prefix][in-flight group with an interior page HOLE: a torn
+> record followed by a later valid record]`. Recovery saw a valid record after a
+> torn one, classified it as **mid-file corruption**, and REFUSED to open —
+> stranding the recoverable acked prefix (refuse-to-open on data that was fine).
+
+**WAL v2 (default for every store created on this version)** closes it with a
+per-group **commit record** (`opCommit`, a 13-byte `[seq][op][count]` payload on
+the same CRC+length frame as any record). After a group's N data records are
+written, ONE commit record is appended, and the SAME single fsync covers all N+1
+records — **no extra fsync, no extra latency**. A group is durable, and its
+writers acked, only once that commit record is present AND fsync'd.
+
+Recovery now has a durable boundary, so it can tell the two cases apart:
+
+- **Un-acked in-flight tail** (a torn/holed trailing group whose commit never
+  landed) → **truncate** it and recover the committed prefix. The acked prefix is
+  never stranded.
+- **Real bit-rot behind acked data** (a torn record with a WHOLE, fully-valid
+  committed group at/after it) → **REFUSE** (fail closed), exactly as before, so a
+  rotted byte behind acked writes never silently truncates them away.
+
+The discriminator is **group-granular**: a bare surviving commit record is NOT
+enough to refuse (an in-flight group's own commit sector can survive out of order
+after a torn data record — refusing on it would re-introduce the stranding bug).
+Recovery refuses only when a COMPLETE valid group — k contiguous CRC-valid data
+records with contiguous seqs, followed by a commit whose `count`/`seq` match —
+survives after the torn point.
+
+**Migration.** A store written before v2 keeps v1 semantics (record-at-a-time
+replay) until its header is next rewritten fresh — which happens on the first
+**checkpoint** (the WAL is truncated and recreated with a v2 header). Real stores
+use `CheckpointEvery` (BlueDB_open default 10000), so they auto-migrate on their
+first checkpoint. **Accepted gap:** a store opened with `CheckpointEvery = 0` that
+never checkpoints stays v1 forever — safe (old semantics), but the stranding fix
+does not apply to it until it checkpoints. Migration is deliberately NOT eager on
+open (that would add a crash surface + a per-open cost); a crash between a
+checkpoint's `Truncate(0)` and the header write leaves a 0-byte WAL, which
+recovery handles cleanly (the snapshot is preserved).
+
+## Irreducible residual — honest, and a widening over v1
+
+The v2 fix has ONE physically irreducible residual, and it is a **widening** of the
+v1 exposure, not a no-op:
+
+> **Rot of the LAST acked group is silently truncated.** A corrupt final commit
+> record is byte-indistinguishable from an in-flight last group whose commit never
+> landed. Recovery cannot tell "this group WAS acked and then rotted" from "this
+> group was never acked", so it **fails toward availability**: it truncates the
+> last group and recovers the prefix, rather than refusing.
+
+Under v1, the equivalent exposure was only the LAST record (recovery dropped a
+torn final record). Under v2 it is the LAST group. This is the deliberate price of
+never re-introducing the refuse-to-open stranding bug: within a single un-acked
+group nothing partial can masquerade as a complete group (the commit's `count`
+never matches a truncated data run), so the only ambiguity left is a whole
+last-group that *was* acked but then rotted — and that is indistinguishable from an
+in-flight one. It fails toward availability (recover the prefix, drop the
+ambiguous last group) and is mitigated by `sky bluedb <path> verify` (which flags
+where the WAL first goes bad) and periodic `backup`. Corruption of any group that
+is NOT the last acked one still leaves a whole valid committed group behind it →
+recovery REFUSES (fail closed), preserving that data for verify/restore.
+
+## Durability scope — Sync vs NoSync
+
+The v2 guarantee — **every `Sync=true` acked write survives a power loss** — is
+scoped to Sync mode. In `NoSync` mode a write is acked after the OS buffer write
+(no fsync); it survives a **process crash** (the kernel flushes the buffer) but
+**not** a power loss. NoSync is the relaxed tier for presence/cursors/UI scratch,
+not for data you must not lose.
+
 ## Restart / crash recovery (bounded, tail-only)
 
 Recovery replays only the WAL *tail* since the last flush — seconds of log, not
@@ -139,9 +216,9 @@ first commit of the engine:
 | Injection | Invariant asserted |
 |---|---|
 | `kill -9` at every fsync boundary (deterministic schedule) | after recovery, exactly the acked-prefix is present; no torn record applied |
-| Simulated torn write (truncate/scribble last WAL record) | recovery stops at the boundary; no partial apply |
-| Power-loss sim (drop un-fsync'd pages) | no acked write lost; no unacked write surfaces |
-| Disk-full mid-write | write fails cleanly (not-acked); no corruption; recovers |
+| Simulated torn write (truncate/scribble last WAL record) | recovery stops at the boundary; no partial apply — `TestG2TornTailStillRecovers`, `TestG2FinalCommitCorruptTruncatesLastGroup` |
+| Power-loss sim (drop un-fsync'd pages, 4 KiB sector granularity) | no acked write lost; no unacked write surfaces; Open never refuses on a holed un-acked tail — `TestFuzzPowerLossDropsUnsyncedPages`, `TestPowerLossSurvivingCommitAfterHole`, `TestFuzzTornMidWriteBatchAllOrNothing` (`crashsim_test.go`) |
+| Disk-full mid-write | write fails cleanly (not-acked); no corruption; recovers — `TestWriteErrorRollsBackNoResurrect`, `TestConcurrentWriteFaultNoAckedLoss` |
 | Idempotency replay (re-fire every op) | exactly-once effect; no double apply |
 | Clock skew / HLC uncertainty (cluster) | no stale read violates linearizability |
 | Jepsen partition + nemesis (cluster) | no lost/torn committed writes across partitions |

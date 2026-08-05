@@ -114,23 +114,41 @@ func verifyWal(path string, rep *VerifyReport) error {
 
 	// validEnd tracks the byte offset just past the last VALID record — i.e. the
 	// offset of the current (possibly torn) record. It starts after the header on
-	// a versioned WAL, or at 0 on a legacy headerless one.
+	// a versioned WAL, or at 0 on a legacy headerless one. The version gate mirrors
+	// replay's (magic-absent legacy → v1; version 1 → v1; version 2 → v2; a
+	// magic-present version this binary can't parse → unsupported).
 	var validEnd int64
+	useV2 := false
 	if head, _ := r.Peek(walHeaderLen); len(head) >= walHeaderLen && string(head[0:4]) == walMagic {
 		version := head[4]
 		rep.WalVersion = int(version)
-		if version != walVersion {
-			// A version this binary doesn't understand — Open refuses to avoid
-			// misparsing a newer format and truncating good data. Don't scan on.
+		switch {
+		case version == walVersion: // 2
+			useV2 = true
+			_, _ = r.Discard(walHeaderLen)
+			validEnd = walHeaderLen
+		case version == 1:
+			_, _ = r.Discard(walHeaderLen)
+			validEnd = walHeaderLen
+		default:
+			// A version this binary doesn't understand (newer, or a corrupt version
+			// byte) — Open refuses to avoid misparsing + truncating good data.
 			rep.WalStatus = VerifyVersionUnsupported
 			rep.Detail = fmt.Sprintf("WAL header version %d; this binary understands version %d", version, walVersion)
 			return nil
 		}
-		_, _ = r.Discard(walHeaderLen)
-		validEnd = walHeaderLen
 	}
-	// else: legacy headerless WAL (version 0) — records begin at offset 0.
+	// else: legacy headerless WAL (version 0) — records begin at offset 0 (v1).
 
+	if useV2 {
+		return verifyWalV2(f, r, rep, validEnd)
+	}
+	return verifyWalV1(f, r, rep, validEnd)
+}
+
+// verifyWalV1 classifies a legacy/version-1 WAL record-at-a-time (each valid
+// framed record counts; stop at the first torn record; record-granularity probe).
+func verifyWalV1(f *os.File, r *bufio.Reader, rep *VerifyReport, validEnd int64) error {
 	var hdr [8]byte
 	for {
 		torn := false
@@ -184,6 +202,115 @@ func verifyWal(path string, rep *VerifyReport) error {
 		}
 		rep.WalRecords++
 		validEnd += int64(8 + int(plen))
+	}
+}
+
+// verifyWalV2 classifies a version-2 WAL at GROUP granularity, mirroring replayV2:
+// DATA records buffer into a pending group; a valid opCommit closes it (WalRecords
+// counts only COMMITTED data records, so a torn/uncommitted trailing group is not
+// counted). A torn record is classified via the group-granularity discriminator —
+// a fully-valid committed group after it is VerifyCorruption (Open refuses); none
+// is VerifyTornTail (recoverable). A clean EOF with a non-empty uncommitted pending
+// group is ALSO VerifyTornTail (recoverable), NOT VerifyClean — the trailing group
+// never had its commit/fsync land, so Open truncates it and recovers the prefix.
+func verifyWalV2(f *os.File, r *bufio.Reader, rep *VerifyReport, startEnd int64) error {
+	lastCommitEnd := startEnd
+	offset := startEnd
+	var pendingCount uint32
+	var pendingHi uint64
+
+	// classifyTorn fills the report for a stop-point at `at` via the group probe.
+	classifyTorn := func(at int64) error {
+		mid, inconclusive, perr := probeForValidCommitGroup(f, at)
+		if perr != nil {
+			return perr
+		}
+		rep.FirstBadOffset = at
+		switch {
+		case mid:
+			rep.WalStatus = VerifyCorruption
+			rep.Detail = fmt.Sprintf("a fully-committed group follows the invalid record at offset %d (mid-file corruption); Open refuses to avoid discarding %d byte(s)", at, rep.WalBytes-lastCommitEnd)
+		case inconclusive:
+			rep.WalStatus = VerifyCorruption
+			rep.Detail = fmt.Sprintf("could not confirm the invalid tail at offset %d is an un-acked in-flight group within the probe budget; classified as corruption (fail closed)", at)
+		default:
+			rep.WalStatus = VerifyTornTail
+			rep.Detail = fmt.Sprintf("un-acked in-flight group at offset %d (torn tail — Open truncates it and recovers the committed prefix)", at)
+		}
+		return nil
+	}
+
+	var hdr [8]byte
+	for {
+		torn := false
+		cleanEOF := false
+		if n, e := io.ReadFull(r, hdr[:]); e != nil {
+			if e == io.EOF && n == 0 {
+				cleanEOF = true
+			} else {
+				torn = true
+			}
+		}
+		var payload []byte
+		var plen uint32
+		if !torn && !cleanEOF {
+			crc := binary.LittleEndian.Uint32(hdr[0:4])
+			plen = binary.LittleEndian.Uint32(hdr[4:8])
+			if plen == 0 || plen > maxRecordSize {
+				torn = true
+			} else {
+				payload = make([]byte, plen)
+				if _, e := io.ReadFull(r, payload); e != nil {
+					torn = true
+				} else if crc32.ChecksumIEEE(payload) != crc {
+					torn = true
+				}
+			}
+		}
+		var ent entry
+		if !torn && !cleanEOF {
+			var ok bool
+			if ent, ok = decodePayload(payload); !ok {
+				torn = true
+			}
+		}
+
+		if cleanEOF {
+			if pendingCount > 0 {
+				// A trailing group whose commit/fsync never landed → recoverable.
+				rep.FirstBadOffset = lastCommitEnd
+				rep.WalStatus = VerifyTornTail
+				rep.Detail = fmt.Sprintf("un-acked in-flight group of %d record(s) at offset %d with no trailing commit (torn tail — Open truncates it and recovers the committed prefix)", pendingCount, lastCommitEnd)
+			}
+			return nil
+		}
+		if torn {
+			return classifyTorn(offset)
+		}
+
+		if ent.op == opCommit {
+			if ent.count != pendingCount || ent.seq != pendingHi {
+				// CRC-valid but structurally inconsistent → real corruption.
+				rep.FirstBadOffset = offset
+				rep.WalStatus = VerifyCorruption
+				rep.Detail = fmt.Sprintf("commit record at offset %d does not match its group (count %d/seq %d vs %d records/high-water %d); Open refuses", offset, ent.count, ent.seq, pendingCount, pendingHi)
+				return nil
+			}
+			rep.WalRecords += int(pendingCount) // only COMMITTED data records count
+			offset += int64(8 + int(plen))
+			lastCommitEnd = offset
+			pendingCount = 0
+			pendingHi = 0
+			continue
+		}
+
+		// DATA record — buffer into the pending group.
+		pendingCount++
+		pendingHi = ent.seq
+		if pendingCount > maxGroupRecords {
+			return classifyTorn(offset) // no commit within the format bound → malformed
+		}
+		offset += int64(8 + int(plen))
 	}
 }
 

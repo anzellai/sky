@@ -153,8 +153,37 @@ on both backends. Scope decided with the user:
   see `docs/bluedb/backup-and-restore.md`. Remaining Tier-4 streaming item:
   segmented-WAL / ship-before-truncate (checkpoint `Truncate(0)` destroys the log
   today, so "the WAL is the stream" is false — Litestream-style needs segments).
-- **G8** fuzz gaps: power-loss/un-fsync'd-page-drop model + torn-record-mid-index-
-  WriteBatch (index crash test uses a graceful close today).
+- **G8** fuzz gaps + the WAL commit-record durability fix — **SHIPPED** (WAL
+  format v2). Two closures in one change:
+  1. **The stranding bug.** Under v1 a power loss DURING a group's fsync could
+     leave the tail as `[acked prefix][in-flight group with an interior page
+     HOLE: torn record then a later valid record]`; recovery saw valid-after-torn
+     → classified mid-file corruption → REFUSED → stranded the recoverable acked
+     prefix. Fixed with a per-group **commit record** (`opCommit`, 13-byte
+     `[seq][op][count]` payload, same CRC frame, covered by the SAME single fsync
+     — no extra fsync). Recovery now buffers a group and flushes it only on a
+     valid commit, and a **group-granularity discriminator** refuses ONLY when a
+     WHOLE valid committed group survives after the torn point (real bit-rot
+     behind acked data → preserve G2), truncating an un-acked in-flight tail
+     otherwise. v1/legacy WALs keep old semantics; stores migrate to v2 on their
+     first checkpoint. `runtime-go/bluedb/{wal.go,db.go,verify.go}`.
+  2. **The corrected crash-fuzz** (`runtime-go/bluedb/crashsim_test.go`): a
+     `crashSimFile` whose `durable` region is fsync-acked (never mangled) and
+     whose in-flight group beyond it is mangled at 4 KiB SECTOR granularity
+     (TAIL / HOLE / ZERO_SUBSET / GARBLE — no unphysical reorder-as-swap), with
+     `NoSync` modelling process-crash (pending preserved) vs `Sync` modelling
+     power loss (pending mangled). Includes the deterministic
+     `[valid,torn,valid-commit]` variant that REDs a naive discriminator, and a
+     red→green regression proving v1 refuses (strands) what v2 recovers. The
+     torn-record-mid-index-WriteBatch case is covered by
+     `TestFuzzTornMidWriteBatchAllOrNothing` (HOLE in the batch record + a
+     commit-only mangle → all-or-nothing).
+
+  **Documented widening (not "no regression").** The v2 fix has one irreducible
+  residual: rot of the LAST acked group is byte-indistinguishable from an
+  in-flight last group, so it is silently truncated (fails toward availability) —
+  a widening over v1's last-*record*-only exposure. Mitigated by `verify` +
+  `backup`. See `docs/bluedb/durability.md` § "Irreducible residual".
 - G9 reindex races serving; G10 no cross-process lock on Windows; G11 shared-handle
   close footgun (refcount).
 

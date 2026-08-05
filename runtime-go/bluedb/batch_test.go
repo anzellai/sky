@@ -241,7 +241,11 @@ func TestWriteBatchOracleReopen(t *testing.T) {
 func TestWriteBatchWriteFaultRollsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "b.blue")
 	db, err := Open(path, Options{Sync: true, CheckpointEvery: 0, walWrap: func(w walFile) walFile {
-		return &faultyFile{inner: w, failOn: 2} // write #1 = the Put; #2 = the batch
+		// WAL v2 writes a per-group commit record after each group's data records,
+		// so the Put group is writes #1 (data) + #2 (commit) and the batch group's
+		// data record is write #3. Fault #3 → the batch's data write fails → the
+		// whole batch rolls back while the Put stays durable.
+		return &faultyFile{inner: w, failOn: 3}
 	}})
 	if err != nil {
 		t.Fatal(err)

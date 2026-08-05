@@ -491,8 +491,24 @@ func (db *DB) process(batch []*commitReq) {
 				break
 			}
 		}
+		// WAL v2 durable commit boundary: after ALL N data records land (and only
+		// then), append ONE per-group commit record covered by the SAME single fsync
+		// below (N+1 records, one fsync — no extra fsync). db.seq is the group's
+		// high-water seq; len(writes) is its data-record count. Written directly here
+		// (NOT via a synthetic commitReq) so it stays out of buildChanges / ack. A
+		// commit-write error sets werr → the whole group rolls back at `start`, so
+		// the WAL never holds a data run without its closing commit (never a torn
+		// group behind good ones).
+		if werr == nil {
+			crec := encodeRecord(commitEntry(db.seq, len(writes)))
+			n, e := db.f.Write(crec)
+			written += int64(n)
+			if e != nil {
+				werr = e
+			}
+		}
 		if werr == nil && db.sync {
-			werr = db.f.Sync() // the one durability fsync for the batch
+			werr = db.f.Sync() // the one durability fsync for the batch (N data + commit)
 		}
 
 		if werr == nil {
@@ -757,6 +773,13 @@ func (db *DB) Stats() (batches, writes, checkpoints uint64) {
 }
 
 func applyEntry(mem map[string][]byte, e entry) {
+	if e.op == opCommit {
+		// Defensive: a WAL v2 commit record is a group BOUNDARY, never a mutation.
+		// replayV2 flushes DATA entries and never hands a commit to apply, so this is
+		// a compiler-bug contract — skip it rather than let it fall through to the
+		// put branch below (which would inject a garbage empty-key entry).
+		return
+	}
 	if e.op == opBatch {
 		// Apply in order — last-writer-wins for a key repeated within the batch,
 		// identically on the live path and on recovery.
