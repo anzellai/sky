@@ -6,6 +6,8 @@ module Std.BlueDB exposing
     , get
     , delete
     , has
+    , batch
+    , BatchOp(..)
     , keys
     , scan
     , scanFrom
@@ -154,6 +156,50 @@ has store key =
 
         Store raw ->
             hasRaw raw key
+
+-- Multi-key atomic batch ------------------------------------------------------
+-- | One op in a `batch`: `Put key value` writes, `Del key` removes.
+type BatchOp
+    = Put String String
+    | Del String
+
+
+batchRaw : Int -> List ( String, String, String ) -> Task Error ()
+batchRaw =
+    Ffi.kernel "BlueDB_batch"
+
+
+{-| Commit several key writes/deletes ATOMICALLY — all-or-nothing, with ONE
+fsync (the multi-key atomic write, via the engine's group-commit). Either every
+op lands or none does (a crash mid-commit recovers to the pre-batch state), so
+it's the right primitive for a set of keys that must move together.
+
+    BlueDB.batch store
+        [ Put "user:1" aliceJson
+        , Put "user:2" bobJson
+        , Del "user:old"
+        ]
+
+This is the RAW kv layer (like `put` / `delete`): it does NOT maintain secondary
+indexes. For an indexed collection use `collPut` / `putIndexed`. An empty list is
+a no-op (nothing committed). -}
+batch : Store -> List BatchOp -> Task Error ()
+batch store ops =
+    case store of
+
+        Store raw ->
+            batchRaw raw (List.map batchOpToTriple ops)
+
+
+batchOpToTriple : BatchOp -> ( String, String, String )
+batchOpToTriple op =
+    case op of
+
+        Put key value ->
+            ( "put", key, value )
+
+        Del key ->
+            ( "del", key, "" )
 
 
 keysRaw : Int -> Task Error (List String)

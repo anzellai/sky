@@ -72,6 +72,26 @@ document "open once, share the handle"; expose `BlueDB.batch`/`withBatch`
 (multi-key atomic + one fsync); per-store `Sync=false` relaxed tier (~319k/s);
 stripes 256→4096. Multi-*process* write is the irreducible floor — never build it.
 
+**SHIPPED — `Std.BlueDB.batch`** (`d714490d`). Multi-key atomic (all-or-nothing,
+one fsync) write surfacing the engine's `WriteBatch`: `type BatchOp = Put String
+String | Del String` + `batch : Store -> List BatchOp -> Task Error ()` over a new
+`BlueDB_batch` kernel. The declarative list form replaces an imperative
+`withBatch` builder (one kernel call, pure Sky). Raw-kv layer (no secondary-index
+maintenance — `collPut`/`putIndexed` stay the indexed path); F7 NUL guard on every
+key fires before `WriteBatch` so a bad op can't partially apply; empty list =
+no-op. 7 `-race` kernel tests (atomicity + one-commit-via-Stats + NUL-no-partial +
+mixed + empty + closed). Docs: `docs/bluedb/batch-and-concurrency.md` (batch API +
+open-once-share-the-handle + relaxed tier).
+
+**Remaining Tier-2 surfacing** (smaller, not yet done):
+- **`Sync=false` Sky-surfacing** — the engine `Options.Sync=false` relaxed tier
+  (~319k/s, survives process crash not power loss) exists but `BlueDB_open`
+  hardcodes `Sync: true` and there is NO relaxed-open verb on the Sky surface. Needs
+  an options-carrying open (e.g. `openWith`), with the Persist-layer open story
+  considered.
+- **Lock-stripe count 256→4096** — internal engine tuning (higher write
+  concurrency headroom); a bounded constant change once profiled.
+
 ## Tier 3 — Graduation-story integrity (compat) — **P1–P4 SHIPPED**
 **G5: enforce the SQL schema guarantees on KV** so a `Store` behaves identically
 on both backends. Scope decided with the user:

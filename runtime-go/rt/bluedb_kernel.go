@@ -148,6 +148,46 @@ func BlueDB_put(idArg, keyArg, valueArg any) any {
 	}
 }
 
+// BlueDB_batch : Int -> List (String, String, String) -> Task Error ()
+//
+// Each triple is (tag, key, value) with tag ∈ {"put","del"} (value ignored for
+// "del"). Commits every op ATOMICALLY as ONE group-commit (all-or-nothing, one
+// fsync) via the engine's WriteBatch — the multi-key atomic write. This is the
+// RAW kv layer (like BlueDB.put): it does NOT maintain secondary indexes. That
+// is intended — use collPut/putIndexed for indexed collections.
+func BlueDB_batch(idArg, opsArg any) any {
+	return func() any {
+		db := bluedbLookup(idArg)
+		if db == nil {
+			return Err[any, any](ErrInvalidInput("BlueDB.batch: store not found (closed?)"))
+		}
+		// Reuse the proven triple decode (SkyTuple3 / T3, read reflectively):
+		// here the triple is (tag, key, value) rather than (field, value, colType).
+		b := bluedb.NewBatch()
+		for _, t := range bluedbParseFVT(opsArg) {
+			tag, key, value := t.field, t.value, t.colType
+			if strings.ContainsRune(key, 0) {
+				return Err[any, any](ErrInvalidInput("BlueDB.batch: key must not contain NUL (reserved for the index keyspace)"))
+			}
+			switch tag {
+			case "put":
+				b.Put([]byte(key), []byte(value))
+			case "del":
+				b.Delete([]byte(key))
+			default:
+				return Err[any, any](ErrInvalidInput("BlueDB.batch: unknown op \"" + tag + "\" (expected put|del)"))
+			}
+		}
+		if b.Len() == 0 {
+			return Ok[any, any](nil) // empty batch = no-op; never commit an empty batch
+		}
+		if err := db.WriteBatch(b); err != nil {
+			return Err[any, any](ErrFfi("BlueDB.batch: " + err.Error()))
+		}
+		return Ok[any, any](nil)
+	}
+}
+
 // BlueDB_get : Int -> String -> Task Error (Maybe String)
 func BlueDB_get(idArg, keyArg any) any {
 	return func() any {
