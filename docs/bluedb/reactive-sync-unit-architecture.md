@@ -381,6 +381,26 @@ documented — exactly "low-level control if devs choose it."
   `WHERE id > :last ORDER BY id LIMIT n`, not OFFSET, to avoid row-shift anomalies
   under live inserts. Document until offered.
 
+#### Implementation progress (feat: exp/bluedb)
+
+- **Phase 1 — verified session identity** (`5767765a`): `Live.withIdentify`
+  callback populates `sess.identity` from a verified login; also fixed a
+  fail-OPEN in the shared console-auth invoke (Err → empty-but-valid identity).
+- **Phase 2a/2b** (`9e6c8c7b`): identity stamped on the reactive-loop goroutine
+  (3a); `startReactive` on SSE reconnect (3b) + a build-then-claim-or-discard
+  concurrency guard (no leak on concurrent reconnect).
+- **Phase 2c — tenant-scoped topic (LOCKED, in progress)**: sync unit =
+  verified `Claims["tenant"]` (aligns with `tenantPrefixForSession`,
+  `hub_bridge.go:539`). Topic = `reactive:<tenant>:<coll>` when a verified
+  tenant exists; else `bluedbCollTopic(coll)` (unauth/dev — byte-identical).
+  Subscribe derives it from `SessionIdentity(sess)` (fail-closed); publish moves
+  to the write layer (`Persist_publishChange` → `reactivePublishScoped`, deriving
+  the topic from the WRITER's own verified identity — forgery-safe, never from
+  record data); KV `Persist` arms gain that write-layer publish; the pump stays
+  on the collection topic for unauth/background. DEFERRED to follow-ups:
+  record-body-on-tenant-topic + overlap wiring; the freshness/commit token
+  (multi-instance read-replica only).
+
 #### Build order (folds into the earlier revised sequence)
 
 The two FATAL prerequisites (identity-on-goroutine, startReactive-on-reconnect)
