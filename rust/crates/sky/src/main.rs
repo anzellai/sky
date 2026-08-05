@@ -1585,7 +1585,7 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     }
 }
 
-/// `sky bluedb <path> <stats|keys|scan|get|put|delete|compact> [args]` — the
+/// `sky bluedb <path> <stats|keys|scan|get|put|delete|compact|backup|verify> [args]` — the
 /// OFFLINE inspector/editor for a BlueDB store file. Forwards to the engine-backed
 /// `sky-bluedb` helper (the same tool you can `go build ./runtime-go/cmd/sky-bluedb`
 /// and run standalone on any host — no `sky`, no toolchain, once built). A LIVE
@@ -1599,7 +1599,7 @@ fn cmd_bluedb(args: &[String]) -> ExitCode {
     }
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         eprintln!(
-            "usage: sky bluedb <path> <stats|keys|scan|get|put|delete|compact> [args] [--json] [--limit N] [--yes]\n\
+            "usage: sky bluedb <path> <stats|keys|scan|get|put|delete|compact|backup|verify> [args] [--json] [--limit N] [--yes]\n\
              Offline inspector/editor for a BlueDB store file. A live store (running app)\n\
              is locked — inspect/edit it through the app's console instead."
         );

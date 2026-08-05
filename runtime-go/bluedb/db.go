@@ -55,6 +55,16 @@ func RecoveryStats() (truncations, bytesDiscarded uint64) {
 // never encoded to the WAL.
 const opCheckpoint uint8 = 3
 
+// opBackup is an internal marker request routed through the commit channel so a
+// hot backup snapshots the memtable in the single committer goroutine (a clean
+// point-in-time at the current committed seq), between batches — like
+// opCheckpoint it is never encoded to the WAL, and unlike opCheckpoint it copies
+// OUT to a separate dest and never truncates the live WAL.
+//
+// Value 5: 1=opPut, 2=opDelete (wal.go), 3=opCheckpoint (above), 4=opBatch
+// (wal.go) are taken — this must not collide with any of them.
+const opBackup uint8 = 5
+
 // walFile is the WAL's file handle, an interface so tests can inject write
 // faults (*os.File satisfies it in production).
 type walFile interface {
@@ -258,6 +268,27 @@ func (db *DB) Delete(key []byte) error { return db.enqueue(opDelete, key, nil) }
 // Checkpoint forces a snapshot + WAL truncation now and returns when durable.
 func (db *DB) Checkpoint() error { return db.enqueue(opCheckpoint, nil, nil) }
 
+// Backup writes a consistent point-in-time HOT copy of the store to dest,
+// creating <dest> (a fresh empty WAL) + <dest>.snap (the memtable snapshot) — a
+// complete store openable with Open(dest) (or checkable with Verify(dest)). The
+// snapshot is taken in the committer goroutine, so it captures every write
+// committed before this call and none after; writes racing concurrently are
+// serialized after it. Backup NEVER truncates or writes the LIVE store's WAL — it
+// is a pure copy-OUT to dest, so it is safe to run on a running store. (A naive
+// `cp` of a live store can grab an inconsistent (snapshot, WAL) pair across a
+// checkpoint's Truncate(0); this reuses the checkpoint snapshot step without the
+// truncate to avoid that.) dest must differ from the live store's WAL/snapshot
+// paths — a dest that would clobber the live files is rejected.
+func (db *DB) Backup(dest string) error {
+	if dest == "" {
+		return errors.New("bluedb: backup dest must not be empty")
+	}
+	if dest == db.walPath || dest == db.snapPath || dest+".snap" == db.snapPath {
+		return errors.New("bluedb: backup dest must differ from the live store path")
+	}
+	return db.enqueue(opBackup, []byte(dest), nil)
+}
+
 // mutTotal counts individual mutations across a group (a batch counts as its
 // mutation count, not 1) so Stats().writes and CheckpointEvery stay meaningful.
 func mutTotal(reqs []*commitReq) int {
@@ -434,10 +465,14 @@ func (db *DB) committer() {
 func (db *DB) process(batch []*commitReq) {
 	writes := batch[:0:0]
 	var ckpts []*commitReq
+	var backups []*commitReq
 	for _, r := range batch {
-		if r.op == opCheckpoint {
+		switch r.op {
+		case opCheckpoint:
 			ckpts = append(ckpts, r)
-		} else {
+		case opBackup:
+			backups = append(backups, r)
+		default:
 			writes = append(writes, r)
 		}
 	}
@@ -511,7 +546,18 @@ func (db *DB) process(batch []*commitReq) {
 		for _, r := range ckpts {
 			r.done <- werr
 		}
+		for _, r := range backups {
+			r.done <- werr
+		}
 		return
+	}
+
+	// Hot backups: snapshot the memtable OUT to each dest (never touching the live
+	// WAL). Handled after the write commit, same as ckpts, so the snapshot is a
+	// clean point-in-time at the committed seq; runs even when the batch had no
+	// writes (a lone Backup req).
+	for _, r := range backups {
+		r.done <- db.doBackup(string(r.key))
 	}
 
 	forced := len(ckpts) > 0
@@ -569,6 +615,42 @@ func (db *DB) doCheckpoint() error {
 	}
 	atomic.AddUint64(&db.checkpoints, 1)
 	return nil
+}
+
+// doBackup materializes the memtable at the current committed seq into a snapshot
+// at <dest>.snap and writes a fresh empty WAL (version header only) at <dest>, so
+// <dest>+<dest>.snap is a complete, immediately-openable store. Runs only in the
+// committer (so seq and the memtable are stable — the copy is a clean
+// point-in-time). Mirrors doCheckpoint's snapshot half but NEVER truncates or
+// writes the live WAL (db.f / db.walSize are untouched): backup is copy-OUT only.
+func (db *DB) doBackup(dest string) error {
+	db.mu.RLock()
+	seq := db.seq
+	snap := make(map[string][]byte, len(db.mem))
+	for k, v := range db.mem {
+		snap[k] = v
+	}
+	db.mu.RUnlock()
+
+	if err := writeSnapshotAtomic(dest+".snap", seq, snap); err != nil {
+		return err
+	}
+	// Fresh empty WAL at dest: the same version header a fresh Open writes, so
+	// Open(dest) recovers <dest>.snap and replays an empty log. F7: 0o600 perms —
+	// the backup holds the same app/session data as the live store.
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(walHeaderBytes()); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // Close flushes in-flight writes, stops the committer, and closes the WAL.

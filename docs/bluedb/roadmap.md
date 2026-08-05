@@ -140,7 +140,17 @@ on both backends. Scope decided with the user:
   mtime + bytes unchanged). CLI `sky bluedb <path> verify [--json]` runs BEFORE
   Open (so it can't truncate), exits 0 when Open would succeed (clean/torn-tail)
   and non-zero on corruption/unsupported-version so CI can gate. The operator
-  diagnostic paired with the G2 refuse-to-open guard. Next: `backup` +
+  diagnostic paired with the G2 refuse-to-open guard.
+- **`backup` — consistent point-in-time hot backup** — **SHIPPED**.
+  `(*DB).Backup(dest)` + `opBackup` route a backup request through the single
+  committer, so it snapshots the memtable at the committed `seq` (includes every
+  write before the call, none after) and writes `<dest>` + `<dest>.snap` — a
+  complete, immediately-openable store — **without ever truncating the live
+  WAL** (reuses `doCheckpoint`'s snapshot half, drops the `Truncate(0)`). Kernel
+  `BlueDB_backup` + Sky `BlueDB.backup : Store -> String -> Task Error ()` +
+  offline CLI `sky bluedb <path> backup <dest>`. Restore = `Open <dest>` /
+  `sky bluedb <dest> verify`. Single-node local-file backup (pairs with verify);
+  see `docs/bluedb/backup-and-restore.md`. Remaining Tier-4 streaming item:
   segmented-WAL / ship-before-truncate (checkpoint `Truncate(0)` destroys the log
   today, so "the WAL is the stream" is false — Litestream-style needs segments).
 - **G8** fuzz gaps: power-loss/un-fsync'd-page-drop model + torn-record-mid-index-

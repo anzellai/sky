@@ -13,6 +13,7 @@ module Std.BlueDB exposing
     , get
     , delete
     , has
+    , backup
     , batch
     , BatchOp(..)
     , keys
@@ -247,6 +248,27 @@ has store key =
 
         Store raw ->
             hasRaw raw key
+
+
+backupRaw : Int -> String -> Task Error ()
+backupRaw =
+    Ffi.kernel "BlueDB_backup"
+
+
+{-| Consistent point-in-time HOT backup of a live store to `dest`. Writes
+`dest` + `dest.snap` — a complete, immediately-openable store — by snapshotting
+the memtable in the committer's single-threaded context, so it captures every
+write committed before the call and none after, and NEVER truncates the live
+store's WAL (safe on a running store; a naive file copy can grab an inconsistent
+snapshot/WAL pair across a checkpoint). Restore by opening `dest`
+(`BlueDB.open dest`) or checking it with `sky bluedb <dest> verify`. `dest` must
+differ from the live store's own path. -}
+backup : Store -> String -> Task Error ()
+backup store dest =
+    case store of
+
+        Store raw ->
+            backupRaw raw dest
 
 -- Multi-key atomic batch ------------------------------------------------------
 -- | One op in a `batch`: `Put key value` writes, `Del key` removes.

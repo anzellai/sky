@@ -21,6 +21,7 @@
 //	bluedb <path> put    <key> <value>      [--stdin]
 //	bluedb <path> delete <key>              [--yes]
 //	bluedb <path> compact                   [--yes]
+//	bluedb <path> backup <dest>
 //	bluedb <path> verify                    [--json]
 package main
 
@@ -116,6 +117,8 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdDelete(db, rest, f, stdin, stdout, stderr)
 	case "compact":
 		return cmdCompact(db, f, stdin, stdout, stderr)
+	case "backup":
+		return cmdBackup(db, path, rest, f, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "bluedb: unknown command %q\n\n%s", cmd, usage)
 		return 2
@@ -337,6 +340,28 @@ func cmdCompact(db *bluedb.DB, f flags, stdin io.Reader, out, errOut io.Writer) 
 	return 0
 }
 
+// cmdBackup writes a consistent point-in-time copy of the store to dest (dest +
+// dest.snap, a complete openable store). This tool OPENS the store itself (taking
+// the exclusive lock), so it is for OFFLINE / scripted backups of a STOPPED store;
+// for a LIVE store, back up THROUGH the running app's `BlueDB.backup`. The backup
+// snapshots in the committer, never truncating the WAL.
+func cmdBackup(db *bluedb.DB, path string, pos []string, f flags, out, errOut io.Writer) int {
+	if len(pos) < 1 {
+		fmt.Fprintln(errOut, "bluedb: backup needs a <dest> path")
+		return 2
+	}
+	dest := pos[0]
+	if dir := filepath.Dir(dest); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o755) // create the parent dir so "backups/app.blue" just works
+	}
+	if err := db.Backup(dest); err != nil {
+		fmt.Fprintf(errOut, "bluedb: backup %q -> %q: %v\n", path, dest, err)
+		return 1
+	}
+	fmt.Fprintf(out, "backed up %s -> %s\n", path, dest)
+	return 0
+}
+
 // cmdVerify runs the read-only integrity scanner (bluedb.Verify) and prints a
 // human (or --json) report. Exit code: 0 when Open would succeed (clean, or a
 // torn tail the engine recovers), non-zero on corruption / unsupported version
@@ -452,8 +477,10 @@ const usage = `sky-bluedb — offline inspector + editor for a BlueDB store (app
   bluedb <path> put    <key> <value>      [--stdin]
   bluedb <path> delete <key>              [--yes]
   bluedb <path> compact                   [--yes]
+  bluedb <path> backup <dest>
   bluedb <path> verify                    [--json]
 
 A live store (running app) holds an exclusive lock; edit it through the app, not here.
+backup opens the store itself (offline/scripted use); for a LIVE store use the app's BlueDB.backup.
 verify is read-only (never opens/truncates); exits non-zero on corruption.
 `

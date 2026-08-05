@@ -261,6 +261,32 @@ func BlueDB_delete(idArg, keyArg any) any {
 	}
 }
 
+// BlueDB_backup : Int -> String -> Task Error ()
+//
+// Consistent point-in-time HOT backup of a live store: writes <dest> + <dest>.snap
+// (a complete, immediately-openable store) by snapshotting the memtable in the
+// committer's single-threaded context — includes every write committed before the
+// call and none after, and NEVER truncates the live WAL. Restore = Open <dest> (or
+// `sky bluedb <dest> verify`). dest is a filesystem path (not a key), so there is
+// no NUL guard; a dest that would clobber the live store's files is rejected by the
+// engine.
+func BlueDB_backup(idArg, destArg any) any {
+	return func() any {
+		db := bluedbLookup(idArg)
+		if db == nil {
+			return Err[any, any](ErrInvalidInput("BlueDB.backup: store not found (closed?)"))
+		}
+		dest := AsString(destArg)
+		if dest == "" {
+			return Err[any, any](ErrInvalidInput("BlueDB.backup: empty dest"))
+		}
+		if err := db.Backup(dest); err != nil {
+			return Err[any, any](ErrFfi("BlueDB.backup: " + err.Error()))
+		}
+		return Ok[any, any](nil)
+	}
+}
+
 // BlueDB_has : Int -> String -> Task Error Bool
 func BlueDB_has(idArg, keyArg any) any {
 	return func() any {
