@@ -48,6 +48,42 @@ func bluedbLookup(idArg any) *bluedb.DB {
 	return e.db
 }
 
+// bluedbRegisterOpen opens `path` with `opts` and registers the handle, honouring
+// the open-once-per-path contract: a path already open returns the SAME handle
+// (never a second engine on one WAL, which would corrupt it) and `opts` is
+// IGNORED for that handle — the live handle keeps its original options. A racing
+// concurrent open is collapsed under the lock (the duplicate engine is closed).
+// Shared by BlueDB_open (default options) and BlueDB_openWith (explicit options).
+func bluedbRegisterOpen(path string, opts bluedb.Options) any {
+	bluedbRegMu.Lock()
+	if id, ok := bluedbByPath[path]; ok {
+		bluedbRegMu.Unlock()
+		return Ok[any, any](int(id)) // reuse the existing handle
+	}
+	bluedbRegMu.Unlock()
+
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o755) // create the parent dir so "data/app.blue" just works
+	}
+	db, err := bluedb.Open(path, opts)
+	if err != nil {
+		return Err[any, any](ErrFfi("BlueDB.open: " + err.Error()))
+	}
+	id := bluedbNextID.Add(1)
+	bluedbRegMu.Lock()
+	// Re-check under the lock in case of a concurrent open of the same path.
+	if existing, ok := bluedbByPath[path]; ok {
+		bluedbRegMu.Unlock()
+		_ = db.Close() // discard the racing duplicate
+		return Ok[any, any](int(existing))
+	}
+	bluedbRegistry[id] = &bluedbEntry{db: db, path: path}
+	bluedbByPath[path] = id
+	bluedbRegMu.Unlock()
+	bluedbMaybeStartPump(id, db)
+	return Ok[any, any](int(id))
+}
+
 // BlueDB_open : String -> Task Error Int
 //
 // Idempotent per path within a process: a second open of the same path returns
@@ -60,38 +96,45 @@ func BlueDB_open(pathArg any) any {
 		if path == "" {
 			return Err[any, any](ErrInvalidInput("BlueDB.open: empty path"))
 		}
-		bluedbRegMu.Lock()
-		if id, ok := bluedbByPath[path]; ok {
-			bluedbRegMu.Unlock()
-			return Ok[any, any](int(id)) // reuse the existing handle
-		}
-		bluedbRegMu.Unlock()
-
-		if dir := filepath.Dir(path); dir != "" && dir != "." {
-			_ = os.MkdirAll(dir, 0o755) // create the parent dir so "data/app.blue" just works
-		}
-		db, err := bluedb.Open(path, bluedb.Options{
+		return bluedbRegisterOpen(path, bluedb.Options{
 			Sync:            true,
 			CheckpointEvery: 10000,
 			MaxValueBytes:   bluedbMaxValueBytes,
 			MaxKeys:         bluedbMaxKeys,
 		})
-		if err != nil {
-			return Err[any, any](ErrFfi("BlueDB.open: " + err.Error()))
+	}
+}
+
+// BlueDB_openWith : String -> Bool -> Int -> Int -> Int -> Task Error Int
+//
+// The options-carrying open: exposes the engine's Options (sync / checkpointEvery
+// / maxValueBytes / maxKeys) to Sky. `sync=false` selects the relaxed durability
+// tier (higher throughput; survives a process crash, NOT power loss). Idempotent
+// per path exactly like BlueDB_open — and because a path already open keeps its
+// ORIGINAL options, these options are IGNORED when the handle is reused. That
+// reuse is logged (bluedb.open.options-ignored) so a second openWith with
+// different options isn't a silent no-op for the operator.
+func BlueDB_openWith(pathArg, syncArg, checkpointEveryArg, maxValueBytesArg, maxKeysArg any) any {
+	return func() any {
+		path := AsString(pathArg)
+		if path == "" {
+			return Err[any, any](ErrInvalidInput("BlueDB.openWith: empty path"))
 		}
-		id := bluedbNextID.Add(1)
+		opts := bluedb.Options{
+			Sync:            AsBool(syncArg),
+			CheckpointEvery: AsInt(checkpointEveryArg),
+			MaxValueBytes:   AsInt(maxValueBytesArg),
+			MaxKeys:         AsInt(maxKeysArg),
+		}
+		// Open-once contract: a path already open keeps its original options; the
+		// ones passed here won't take effect. Surface that to the operator.
 		bluedbRegMu.Lock()
-		// Re-check under the lock in case of a concurrent open of the same path.
-		if existing, ok := bluedbByPath[path]; ok {
-			bluedbRegMu.Unlock()
-			_ = db.Close() // discard the racing duplicate
-			return Ok[any, any](int(existing))
-		}
-		bluedbRegistry[id] = &bluedbEntry{db: db, path: path}
-		bluedbByPath[path] = id
+		_, reused := bluedbByPath[path]
 		bluedbRegMu.Unlock()
-		bluedbMaybeStartPump(id, db)
-		return Ok[any, any](int(id))
+		if reused {
+			logStructured("warn", "bluedb.open.options-ignored", "path", path, "reason", "already-open")
+		}
+		return bluedbRegisterOpen(path, opts)
 	}
 }
 

@@ -83,12 +83,21 @@ no-op. 7 `-race` kernel tests (atomicity + one-commit-via-Stats + NUL-no-partial
 mixed + empty + closed). Docs: `docs/bluedb/batch-and-concurrency.md` (batch API +
 open-once-share-the-handle + relaxed tier).
 
+**SHIPPED — `Sync=false` Sky-surfacing** (`BlueDB.openWith`). The relaxed
+durability tier (~319k/s; survives a process crash, NOT power loss) is now on the
+Sky surface via an options-carrying open: `openWith : OpenOptions -> String ->
+Task Error Store` over a new `BlueDB_openWith` kernel, alongside the unchanged
+`open`. `type alias OpenOptions = { sync, checkpointEvery, maxValueBytes, maxKeys
+}` composed from `defaultOptions` (the exact defaults `open` uses) via `withSync`
+/ `withCheckpointEvery` / `withMaxValueBytes` / `withMaxKeys` builders. The Go
+kernel refactored `BlueDB_open`'s registry/open/TOCTOU logic into a shared
+`bluedbRegisterOpen(path, opts)` — `BlueDB_open` stays byte-identical; a reused
+handle keeps its original options and logs `bluedb.open.options-ignored`. 5 `-race`
+kernel tests (maxKeys/maxValueBytes plumbing + sync=false round-trip + reuse-
+ignores-options + open-unchanged). Docs: `docs/bluedb/batch-and-concurrency.md`
+§`Sync=false`.
+
 **Remaining Tier-2 surfacing** (smaller, not yet done):
-- **`Sync=false` Sky-surfacing** — the engine `Options.Sync=false` relaxed tier
-  (~319k/s, survives process crash not power loss) exists but `BlueDB_open`
-  hardcodes `Sync: true` and there is NO relaxed-open verb on the Sky surface. Needs
-  an options-carrying open (e.g. `openWith`), with the Persist-layer open story
-  considered.
 - **Lock-stripe count 256→4096** — internal engine tuning (higher write
   concurrency headroom); a bounded constant change once profiled.
 

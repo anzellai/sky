@@ -1,6 +1,13 @@
 module Std.BlueDB exposing
     ( Store
     , open
+    , openWith
+    , OpenOptions
+    , defaultOptions
+    , withSync
+    , withCheckpointEvery
+    , withMaxValueBytes
+    , withMaxKeys
     , close
     , put
     , get
@@ -85,6 +92,90 @@ connection, like a DB pool. -}
 open : String -> Task Error Store
 open path =
     Task.map Store (openRaw path)
+
+-- Options-carrying open (relaxed / tuned tier) --------------------------------
+-- | Engine options for `openWith`. Mirror of the Go `bluedb.Options`
+-- (`runtime-go/bluedb/db.go`); keep `defaultOptions` in sync with the Go consts
+-- in `runtime-go/rt/bluedb_kernel.go`.
+type alias OpenOptions =
+    { sync : Bool
+    , checkpointEvery : Int
+    , maxValueBytes : Int
+    , maxKeys : Int
+    }
+
+
+{-| The exact defaults `open` uses: fully durable (`sync = True` — fsync each
+group commit), checkpoint every 10000 writes, 64 MiB max value, ~20M-key ceiling.
+
+Cross-reference: the Go consts `bluedbMaxValueBytes` (64 << 20 = 67108864) and
+`bluedbMaxKeys` (20000000) in `runtime-go/rt/bluedb_kernel.go` — keep these two
+literals in sync with those consts. -}
+defaultOptions : OpenOptions
+defaultOptions =
+    { sync = True
+    , checkpointEvery = 10000
+    , maxValueBytes = 67108864
+    , maxKeys = 20000000
+    }
+
+
+{-| Set the durability tier. `True` (the default) fsyncs each group commit —
+durable against power loss. `False` is the RELAXED tier: it skips the per-commit
+fsync for higher throughput and still survives a PROCESS crash (the WAL is
+written), but NOT power loss / OS crash (an un-fsync'd page can be lost). -}
+withSync : Bool -> OpenOptions -> OpenOptions
+withSync value opts =
+    { opts | sync = value }
+
+
+{-| Auto-checkpoint (snapshot + WAL truncation) every N writes (`0` = only on an
+explicit checkpoint). -}
+withCheckpointEvery : Int -> OpenOptions -> OpenOptions
+withCheckpointEvery value opts =
+    { opts | checkpointEvery = value }
+
+
+{-| Reject a `put` whose key+value exceeds N bytes with a too-large error (`0` =
+unlimited) — a guard against a single pathological write. -}
+withMaxValueBytes : Int -> OpenOptions -> OpenOptions
+withMaxValueBytes value opts =
+    { opts | maxValueBytes = value }
+
+
+{-| Reject a `put` that would insert a NEW key beyond N keys with a store-full
+error (`0` = unlimited; overwrites of existing keys are always allowed) — an
+operator-visible bound instead of an OOM kill. -}
+withMaxKeys : Int -> OpenOptions -> OpenOptions
+withMaxKeys value opts =
+    { opts | maxKeys = value }
+
+
+openWithRaw : String -> Bool -> Int -> Int -> Int -> Task Error Int
+openWithRaw =
+    Ffi.kernel "BlueDB_openWith"
+
+
+{-| Open a store with explicit `OpenOptions` — the tuned/relaxed counterpart of
+`open`. Compose the options from `defaultOptions` via the `with*` builders:
+
+    BlueDB.openWith (BlueDB.withSync False BlueDB.defaultOptions) "data/app.blue"
+
+selects the relaxed durability tier (higher throughput; survives a process
+crash, NOT power loss). Like `open`, it is idempotent per path within a process:
+if the path is ALREADY open, the existing handle is returned and THESE options
+are IGNORED (the live handle keeps its original options) — a warn log surfaces
+that so a second, differing `openWith` isn't silently a no-op. -}
+openWith : OpenOptions -> String -> Task Error Store
+openWith opts path =
+    Task.map
+        Store
+        (openWithRaw
+            path
+            opts.sync
+            opts.checkpointEvery
+            opts.maxValueBytes
+            opts.maxKeys)
 
 
 closeRaw : Int -> Task Error ()

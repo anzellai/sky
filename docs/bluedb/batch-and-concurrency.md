@@ -96,13 +96,33 @@ per-commit fsync: it still survives a **process crash** (the WAL is written), bu
 durability for throughput — roughly **~319k writes/sec** vs ~51k for the durable
 default (see [capacity.md](capacity.md)).
 
-**Honest status: this is engine-level today, not yet Sky-surfaced.** The Sky
-`BlueDB.open` verb opens every store with `Sync: true` (see
-`runtime-go/rt/bluedb_kernel.go` — `Options{ Sync: true, … }`), and there is no
-relaxed-open verb on the Sky surface. So from Sky code today every write is fully
-durable (one fsync per commit / per `batch`). A per-store relaxed-open verb is a
-future Tier-2 surfacing item; until it ships, `Sync=false` is reachable only by
-constructing `bluedb.Options` directly in Go, not from a Sky app.
+**Sky-surfaced via `BlueDB.openWith`.** `BlueDB.open` stays the fully-durable
+default (`Sync: true` — one fsync per commit / per `batch`). To pick the relaxed
+tier from Sky, open with explicit `OpenOptions`:
+
+```elm
+import Std.BlueDB as BlueDB
+
+main =
+    -- Relaxed durability: skips the per-commit fsync for throughput.
+    BlueDB.openWith (BlueDB.withSync False BlueDB.defaultOptions) "data/app.blue"
+        |> Task.andThen (\store -> BlueDB.put store "k" "v")
+        |> Task.run
+```
+
+`OpenOptions` is composed from `BlueDB.defaultOptions` (the exact defaults `open`
+uses) via the `with*` builders — `withSync`, `withCheckpointEvery`,
+`withMaxValueBytes`, `withMaxKeys` — so future fields never break call sites. The
+honest durability caveat still stands: `sync = False` survives a **process crash**
+(the WAL is written) but **NOT power loss / OS crash** (an un-fsync'd page can be
+lost). Use it only where the data can be regenerated or a lost tail is acceptable.
+
+**Reused handle ignores options.** `openWith` is idempotent per path just like
+`open`: a path already open returns the SAME handle and the options passed to the
+second `openWith` are IGNORED (the live handle keeps its original options). That
+reuse is logged (`bluedb.open.options-ignored`) so a second, differing `openWith`
+isn't silently a no-op. Open a store once with the options you want, then share
+the handle (the memoised-connection contract).
 
 ## See also
 
