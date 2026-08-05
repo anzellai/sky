@@ -58,6 +58,7 @@ module Std.Persist exposing
     , Live
     , live
     , liveInto
+    , ephemeral
     )
 
 {-| Std.Persist — the ONE front door for typed record persistence, over SQL
@@ -968,6 +969,8 @@ type alias Live model =
     { coll : String
     , condPlan : String
     , run : Task Error ( model -> model, List String )
+    , field : String
+    , ephemeral : Bool
     }
 
 
@@ -975,6 +978,17 @@ type alias Live model =
 — you only ever build one with `live` and hand the list to `Live.withReactive`. -}
 live : Conn cap -> Query a -> (List a -> model -> model) -> Live model
 live conn q fold =
+    liveNamed conn q fold ""
+
+
+{-| Internal: `live` with the Model field name it fills carried along (the
+`liveInto` lower arm passes the accessor's field name here). The field name is ""
+for the fold-based `live` form — the fold can replace ANY part of the Model, so
+there's no single known target field, and `ephemeral` on it is a no-op. Keeping
+the field name at RUNTIME on the record (not a compile-time struct tag) lets the
+session persister zero the ephemeral field with no lower→codegen tag channel. -}
+liveNamed : Conn cap -> Query a -> (List a -> model -> model) -> String -> Live model
+liveNamed conn q fold fieldName =
     case q of
 
         Query qr ->
@@ -993,7 +1007,27 @@ live conn q fold =
                                          (reactivePkOf (keyFieldOf qr.coll))
                                          rows)
                                ))
+            , field = fieldName
+            , ephemeral = False
             }
+
+
+{-| Mark a reactive binding's Model field as EPHEMERAL — NOT persisted in the
+Sky.Live session blob, re-derived by the reactive loop on reopen instead. The
+huge-Model optimization: a session holding thousands of query-derived rows keeps
+a small, dataset-independent session blob because the derived field is zeroed out
+of the gob before persisting and re-filled on load.
+
+Only meaningful on a binding built via `Persist.liveInto db .field query` (which
+records the field name). On a fold-based `Persist.live … fold` (no single known
+field) it is a no-op — the runtime keeps persisting the whole Model.
+
+    reactiveQueries model =
+        [ Persist.liveInto db .todos (Persist.query todos) |> Persist.ephemeral ]
+-}
+ephemeral : Live model -> Live model
+ephemeral lr =
+    { lr | ephemeral = True }
 
 
 {-| Like `live`, but you name the Model field with a bare accessor instead of

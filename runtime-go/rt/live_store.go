@@ -972,6 +972,72 @@ type storableSession struct {
 	AnalyticsUserID          string
 }
 
+// exportFieldName title-cases a Sky record field name to its exported Go struct
+// field name ("todos" → "Todos"), matching the codegen convention. "" stays "".
+func exportFieldName(name string) string {
+	if name == "" {
+		return name
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// projectEphemeralModel returns a SHALLOW COPY of model with the named ephemeral
+// fields zeroed, WITHOUT mutating the original. This is the huge-Model
+// optimization for `Persist.ephemeral`: a session holding thousands of
+// reactively-derived rows keeps a small, dataset-independent session blob because
+// the derived field is zeroed out of the gob before persisting (and re-filled by
+// the reactive loop on reopen).
+//
+// CRITICAL (runtime-grill Finding 1): NEVER zero the live model in place —
+// encodeSession reads the shared live pointer and the reap goroutine also calls
+// it, so an in-place zero would empty an ACTIVE user's data from a background
+// goroutine. We copy the TOP-LEVEL struct (field headers only — a slice header is
+// 3 words, the big backing array is shared, not cloned) then zero only the
+// ephemeral fields ON THE COPY.
+//
+// When there are no ephemeral fields the ORIGINAL model is returned unchanged, so
+// non-ephemeral apps are byte-identical to the pre-ephemeral behaviour (the
+// copy-zero path is skipped entirely).
+func projectEphemeralModel(model any, fields []string) any {
+	if len(fields) == 0 || model == nil {
+		return model
+	}
+	rv := reflect.ValueOf(model)
+	switch rv.Kind() {
+	case reflect.Struct:
+		cp := reflect.New(rv.Type()).Elem()
+		cp.Set(rv) // shallow: copies field headers, not slice contents
+		for _, f := range fields {
+			fv := cp.FieldByName(exportFieldName(f))
+			if fv.IsValid() && fv.CanSet() {
+				fv.SetZero()
+			}
+		}
+		return cp.Interface()
+	case reflect.Map:
+		// Model-as-map: shallow-clone the map, drop the ephemeral keys (the
+		// reactive fold re-adds them on reopen). Try both the raw + capitalized
+		// key spelling.
+		cp := reflect.MakeMap(rv.Type())
+		it := rv.MapRange()
+		for it.Next() {
+			cp.SetMapIndex(it.Key(), it.Value())
+		}
+		kt := rv.Type().Key()
+		if kt.Kind() == reflect.String {
+			for _, f := range fields {
+				cp.SetMapIndex(reflect.ValueOf(f).Convert(kt), reflect.Value{})
+				cp.SetMapIndex(reflect.ValueOf(exportFieldName(f)).Convert(kt), reflect.Value{})
+			}
+		}
+		return cp.Interface()
+	default:
+		// Pointer / other shapes: no safe in-place-free projection; persist the
+		// whole model (correctness preserved, just not size-optimized).
+		return model
+	}
+}
+
 func encodeSession(s *liveSession) ([]byte, error) {
 	// Audit P2-5: validate the value graph against the session-safe
 	// whitelist BEFORE handing it to gob. Gob silently skips func /
@@ -981,17 +1047,23 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	// keeps values by reference, but corrupting for SQLite /
 	// Postgres / Redis deployments. Rejecting up front gives a
 	// diagnosable error before bad data lands in the store.
-	if err := validateSessionValue(s.model, "model"); err != nil {
+	// Ephemeral-field projection (Persist.ephemeral): zero any reactively-derived
+	// fields marked ephemeral on a SHALLOW COPY so the persisted blob stays small
+	// and dataset-independent. s.model is untouched (the live session keeps its
+	// full data); the reactive loop re-fills the field on reopen. Empty
+	// ephemeralFields → model IS s.model (byte-identical to pre-ephemeral).
+	model := projectEphemeralModel(s.model, s.ephemeralFields)
+	if err := validateSessionValue(model, "model"); err != nil {
 		return nil, err
 	}
 	// Walk the value graph to discover + register every concrete struct
 	// type at an interface boundary. Safe to call repeatedly — we cache
 	// registered types.
-	gobRegisterAll(s.model)
+	gobRegisterAll(model)
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	blob := storableSession{
-		Model:         s.model,
+		Model:         model,
 		LastSeen:      s.lastSeenTime(),
 		OutSeq:        s.localSeq,
 		Identity:      s.identity,

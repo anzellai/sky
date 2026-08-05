@@ -30,6 +30,12 @@ const (
 type reactiveBindingRT struct {
 	coll string
 	run  any // Sky Task: () -> Result Error (model->model, []pk)
+	// field is the Model field this binding fills (the `liveInto db .field`
+	// accessor name, "" for the fold-based `live` form). ephemeral marks it as
+	// NOT persisted in the session blob — re-derived on reopen instead (the
+	// huge-Model optimization). Only meaningful when field != "".
+	field     string
+	ephemeral bool
 }
 
 // reactiveState is a session's reactive registry: the broker-subscription cancels
@@ -56,7 +62,16 @@ func (app *liveApp) reactiveBindingsFor(model any) []reactiveBindingRT {
 		coll := AsString(recordField(it, "Coll", "coll"))
 		run := recordField(it, "Run", "run")
 		if coll != "" && run != nil {
-			out = append(out, reactiveBindingRT{coll: coll, run: run})
+			field := ""
+			if fv := recordField(it, "Field", "field"); fv != nil {
+				field = AsString(fv)
+			}
+			out = append(out, reactiveBindingRT{
+				coll:      coll,
+				run:       run,
+				field:     field,
+				ephemeral: AsBoolOrFalse(recordField(it, "Ephemeral", "ephemeral")),
+			})
 		}
 	}
 	return out
@@ -81,8 +96,16 @@ func (app *liveApp) startReactive(sess *liveSession) {
 		return
 	}
 	colls := map[string]bool{}
+	// Collect the ephemeral Model fields (built via `liveInto db .field query |>
+	// Persist.ephemeral`) so the session persister zeroes them out of the blob —
+	// they are re-derived by this reactive loop on reopen. Only fields with a
+	// known name (field != "") from an ephemeral-marked binding qualify.
+	var ephemeralFields []string
 	for _, b := range bindings {
 		colls[b.coll] = true
+		if b.ephemeral && b.field != "" {
+			ephemeralFields = append(ephemeralFields, b.field)
+		}
 	}
 
 	// Subscribe on the session's PER-TENANT reactive topic (the security boundary):
@@ -116,6 +139,10 @@ func (app *liveApp) startReactive(sess *liveSession) {
 		return
 	}
 	sess.reactive = rs
+	// Record the ephemeral fields for the session persister (encodeSession /
+	// persistSession read this under sess.mu). Set only when we WIN the claim so
+	// exactly one registry owns the value; it's a stable per-app property.
+	sess.ephemeralFields = ephemeralFields
 	sess.mu.Unlock()
 }
 

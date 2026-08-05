@@ -3215,24 +3215,27 @@ impl<'a> Ctx<'a> {
             }
         };
         let cap = capitalize(field.as_str());
-        // Resolve `Std.Persist.live` and pull it (transitively) into the emit
-        // worklist. Without this, an app that only ever calls `liveInto` would
-        // never mark `live` reachable and the `Std_Persist_live` reference below
-        // would dangle at `go build`.
+        // Resolve `Std.Persist.liveNamed` and pull it (transitively) into the emit
+        // worklist. `liveNamed` is `live` plus the Model field name it fills — the
+        // runtime carries that name on the Live record so the session persister can
+        // zero an `ephemeral`-marked field (no lower→codegen tag channel). Without
+        // the discover push, an app that only ever calls `liveInto` would never mark
+        // `liveNamed` reachable and the `Std_Persist_liveNamed` reference below would
+        // dangle at `go build`.
         let live_def = self.defs.iter().find_map(|(id, e)| {
-            (e.name == "live" && e.module_name == "Std.Persist").then_some(*id)
+            (e.name == "liveNamed" && e.module_name == "Std.Persist").then_some(*id)
         });
         let Some(live_def) = live_def else {
             self.errors
-                .push("internal: Std.Persist.live not found for liveInto rewrite".into());
+                .push("internal: Std.Persist.liveNamed not found for liveInto rewrite".into());
             return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
         };
         self.discovered.push(live_def);
-        // Mirror the general-call path: use `live`'s DECLARED param/return Go
+        // Mirror the general-call path: use `liveNamed`'s DECLARED param/return Go
         // types (in its own module) so conn/query coerce exactly as a hand-written
-        // `Persist.live` call would, and the call's Go type is `live`'s return
+        // `Persist.liveNamed` call would, and the call's Go type is its return
         // (the outer slot then narrows it via `coerce_if_needed`).
-        let live_go = top_go_name("Std.Persist", "live");
+        let live_go = top_go_name("Std.Persist", "liveNamed");
         let ps: Vec<GoTy> = self
             .def_param_tys
             .get(&live_def)
@@ -3250,16 +3253,17 @@ impl<'a> Ctx<'a> {
             .cloned()
             .map(|t| self.goty_in(&t, "Std.Persist"))
             .unwrap_or_else(|| actual.clone());
-        // conn ← liveInto arg 0 (live param 0); query ← liveInto arg 2 (live
-        // param 1). The accessor (arg 1) becomes the synthesised fold (param 2).
+        // conn ← liveInto arg 0 (liveNamed param 0); query ← liveInto arg 2
+        // (liveNamed param 1). The accessor (arg 1) becomes the synthesised fold
+        // (param 2); its field name flows as the fieldName string (param 3).
         let conn = self.lower_expr(args[0], &pty(0));
         let query = self.lower_expr(args[2], &pty(1));
         // Synthesised replace-fold — the row-poly (`model` is a type var) form of
         // `\rows m -> { m | field = rows }`: a flat 2-arg Go closure over
         // `rt.RecordUpdate` (which narrows the `[]any` rows into the Model's typed
-        // slice field via `narrowReflectValue`). Its Go type matches `live`'s
+        // slice field via `narrowReflectValue`). Its Go type matches `liveNamed`'s
         // param 2 (`func([]any, any) any`) exactly, so no coercion wrapper is
-        // added; `live` internally curries it (`\m -> fold rows m`, two
+        // added; `liveNamed` internally curries it (`\m -> fold rows m`, two
         // `sky_call`s), which `rt.skyCallOne` supports on a flat N-ary func.
         let fold = GoExpr::new(
             GoExprKind::Ident(format!(
@@ -3267,10 +3271,13 @@ impl<'a> Ctx<'a> {
             )),
             pty(2),
         );
+        // The raw accessor field name (e.g. "todos"); the runtime capitalizes it to
+        // the Go struct field ("Todos") when zeroing an ephemeral field.
+        let field_name = GoExpr::new(GoExprKind::StrLit(field.as_str().to_string()), pty(3));
         GoExpr::new(
             GoExprKind::Call(
                 Box::new(GoExpr::new(GoExprKind::Ident(live_go), ret_goty.clone())),
-                vec![conn, query, fold],
+                vec![conn, query, fold, field_name],
             ),
             ret_goty,
         )

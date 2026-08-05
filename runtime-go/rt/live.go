@@ -2269,6 +2269,15 @@ type liveSession struct {
 	// nil until startReactive wires it. Torn down by stopReactive on session end.
 	reactive *reactiveState
 
+	// ephemeralFields — Model field names (accessor form, e.g. "todos") of
+	// reactive bindings marked `Persist.ephemeral`: NOT persisted in the session
+	// blob, re-derived by the reactive loop on reopen (the huge-Model
+	// optimization). Set once by startReactive when it wins the registry claim;
+	// read under sess.mu at the persist/encode boundary (persistSession /
+	// encodeSession). Empty (the default) → the whole Model persists unchanged,
+	// byte-identical to the pre-ephemeral behaviour.
+	ephemeralFields []string
+
 	// streams — Sky.Core.Http.Stream open handles owned by this
 	// session, keyed by stream id (Cycle 4 HS). HttpStream_open
 	// registers each new handle here; HttpStream_close deletes;
@@ -5377,11 +5386,20 @@ func (app *liveApp) persistSession(sess *liveSession) {
 	// Model is validated (no funcs/chans) before it can be persisted, so it is
 	// DeepEqual-safe. (Other fields — localSeq/identity/analytics — ride the next
 	// Model-changing persist; the Model is the durability-critical state.)
-	if sess.lastPersistedModel != nil && reflect.DeepEqual(sess.model, sess.lastPersistedModel) {
+	//
+	// Ephemeral-field projection (Persist.ephemeral, runtime-grill Finding 2):
+	// compare the ZEROED PROJECTION on both sides (the same shallow-copy-zero the
+	// encoder uses), so a pure ephemeral-field re-derive is correctly a NO-OP
+	// persist (not a write storm on every reactive refresh), while a real
+	// input-field change still persists. Store the zeroed copy as
+	// lastPersistedModel so the next tick compares like-for-like. Empty
+	// ephemeralFields → projection IS sess.model (byte-identical to pre-ephemeral).
+	projected := projectEphemeralModel(sess.model, sess.ephemeralFields)
+	if sess.lastPersistedModel != nil && reflect.DeepEqual(projected, sess.lastPersistedModel) {
 		return
 	}
 	app.store.Set(sess.sid, sess)
-	sess.lastPersistedModel = sess.model
+	sess.lastPersistedModel = projected
 }
 
 func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
