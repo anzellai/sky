@@ -389,7 +389,7 @@ documented — exactly "low-level control if devs choose it."
 - **Phase 2a/2b** (`9e6c8c7b`): identity stamped on the reactive-loop goroutine
   (3a); `startReactive` on SSE reconnect (3b) + a build-then-claim-or-discard
   concurrency guard (no leak on concurrent reconnect).
-- **Phase 2c — tenant-scoped topic (LOCKED, in progress)**: sync unit =
+- **Phase 2c — tenant-scoped topic** (`01055470`, SHIPPED): sync unit =
   verified `Claims["tenant"]` (aligns with `tenantPrefixForSession`,
   `hub_bridge.go:539`). Topic = `reactive:<tenant>:<coll>` when a verified
   tenant exists; else `bluedbCollTopic(coll)` (unauth/dev — byte-identical).
