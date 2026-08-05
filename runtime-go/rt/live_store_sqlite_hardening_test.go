@@ -19,7 +19,7 @@ import (
 func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")
 
-	s1, err := newSQLiteStore(path, time.Hour)
+	s1, err := newSQLiteStore(path, time.Hour, 0)
 	if err != nil {
 		t.Fatalf("first store open failed: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 	// A second store on the SAME file — this is the fast-restart / dual-instance
 	// case that used to fail with "unable to open database file (14)". With
 	// busy_timeout + WAL it must open cleanly.
-	s2, err := newSQLiteStore(path, time.Hour)
+	s2, err := newSQLiteStore(path, time.Hour, 0)
 	if err != nil {
 		t.Fatalf("second store open on the same path failed (the lock case the "+
 			"hardening fixes): %v", err)

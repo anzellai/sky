@@ -25,7 +25,7 @@ func TestChooseStore_UnknownKind_FailsLoudInProd(t *testing.T) {
 
 	for _, kind := range []string{"firestore", "postgress", "psql"} {
 		fatalMsg = ""
-		_ = chooseStore(kind, "", time.Minute)
+		_ = chooseStore(kind, "", time.Minute, 0)
 		if fatalMsg == "" {
 			t.Fatalf("chooseStore(%q) in production must FAIL LOUD, but storeFatalf did not fire "+
 				"(silent in-memory fallback would lose sessions on restart)", kind)
@@ -43,7 +43,7 @@ func TestChooseStore_UnknownKind_WarnsAndMemoryInDev(t *testing.T) {
 	storeFatalf = func(string, ...any) { fataled = true }
 	defer func() { storeFatalf = oldFatal }()
 
-	s := chooseStore("firestore", "", time.Minute)
+	s := chooseStore("firestore", "", time.Minute, 0)
 	if fataled {
 		t.Fatal("chooseStore(firestore) in DEV must NOT fatal — warn + memory fallback")
 	}
@@ -64,7 +64,7 @@ func TestChooseStore_MemoryAndEmpty_NeverFatal(t *testing.T) {
 	defer func() { storeFatalf = oldFatal }()
 
 	for _, kind := range []string{"", "memory"} {
-		s := chooseStore(kind, "", time.Minute)
+		s := chooseStore(kind, "", time.Minute, 0)
 		if fataled {
 			t.Fatalf("chooseStore(%q) must never fatal (intended memory path)", kind)
 		}

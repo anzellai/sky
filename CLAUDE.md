@@ -1505,6 +1505,7 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 |---|---|---|
 | `SKY_LIVE_PORT` | `port` | 8000 |
 | `SKY_LIVE_TTL` | `ttl` | `30m` |
+| `SKY_LIVE_IDLE_EVICT` | `idleEvict` | `5m` — tiered session cache: evict an idle session's live pointer from RAM after this window (no active SSE), keeping its blob on disk/external until `ttl` and resurrecting on next access. Bounds RAM to the active working set. `0`/`off` or `>= ttl` disables. Durable stores (sqlite/postgres/redis) only; `Std.Live.withIdleEvict` sets it per-app. (v0.19.11+) |
 | `SKY_LIVE_STORE` | `store` | `memory` (memory \| sqlite \| redis \| postgres) |
 | `SKY_LIVE_STORE_PATH` | `storePath` | `DATABASE_URL` / `REDIS_URL` fallback |
 | `SKY_LIVE_STATIC_DIR` | `static` | none |

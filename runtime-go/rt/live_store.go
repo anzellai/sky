@@ -286,6 +286,38 @@ func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
 	return def
 }
 
+// parseIdleEvict — resolve the tiered-session-cache idle-evict window from
+// env > sky.toml > default, mirroring parseTTL's precedence + duration/seconds
+// parsing. Differs in ONE way: an EXPLICIT "0" / "off" / "none" / "disable(d)"
+// returns 0 (idle-evict OFF — fall back to the classic all-within-TTL memCache),
+// whereas parseTTL would treat 0 as unparseable and fall through to the default.
+// This lets an operator turn the feature off via SKY_LIVE_IDLE_EVICT=0.
+func parseIdleEvict(envVal, tomlVal string, def time.Duration) time.Duration {
+	for _, raw := range []string{envVal, tomlVal} {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		switch strings.ToLower(s) {
+		case "0", "off", "none", "disable", "disabled":
+			return 0
+		}
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		// Unparseable at this layer — fall through to the next.
+	}
+	return def
+}
+
+// defaultIdleEvict — the tiered-session-cache idle-evict default (5m). A
+// session with no active SSE that hasn't been touched for this long is dropped
+// from a durable store's in-RAM memCache (blob kept on disk to the full TTL).
+const defaultIdleEvict = 5 * time.Minute
+
 // SessionStore: common interface for the three backends. The runtime
 // reads/writes via `Get`, `Set`, `Delete`, and generates IDs via
 // `NewID`. Callers are responsible for per-session locking (the runtime
@@ -433,6 +465,12 @@ type sqliteStore struct {
 	db   *sql.DB
 	ttl  time.Duration
 	stop chan struct{}
+	// idleEvict — tiered-session-cache idle-evict window (0 disables). When
+	// 0 < idleEvict < ttl, cleanupLoop drops a session's live memCache pointer
+	// after this idle window with no active SSE while KEEPING its blob on disk
+	// to the full ttl, and Get resurrects it from disk on the next access.
+	// See docs/skylive/tiered-session-cache.md.
+	idleEvict time.Duration
 	// memCache is a pointer cache so sessions that fail to gob-encode
 	// (anonymous struct types the Sky compiler emits for records) still
 	// behave correctly within a single process. Restart forgets them,
@@ -452,7 +490,7 @@ func (s *sqliteStore) Ping() error {
 	return s.db.PingContext(ctx)
 }
 
-func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
+func newSQLiteStore(path string, ttl, idleEvict time.Duration) (*sqliteStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -497,11 +535,12 @@ func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 		return nil, err
 	}
 	s := &sqliteStore{
-		db:       db,
-		ttl:      ttl,
-		stop:     make(chan struct{}),
-		memCache: map[string]*liveSession{},
-		broker:   newTopicRegistry(0),
+		db:        db,
+		ttl:       ttl,
+		idleEvict: idleEvict,
+		stop:      make(chan struct{}),
+		memCache:  map[string]*liveSession{},
+		broker:    newTopicRegistry(0),
 	}
 	go s.cleanupLoop()
 	return s, nil
@@ -509,13 +548,19 @@ func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 
 func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 	// Memory cache hit: current-process sessions we couldn't encode.
+	//
+	// fix #4: touch lastSeen INSIDE the RLock (was: RUnlock then touch). The
+	// touch must be mutually exclusive with the idle-evict re-check — fix #1's
+	// re-validate-under-memMu.Lock is what makes it airtight, but keeping the
+	// touch under the RLock closes the "read observes the pointer, evict pass
+	// then deletes, read returns a corpse" window at the store boundary.
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
-		s.memMu.RUnlock()
 		// L4: a read slides the TTL, matching memoryStore.Get. Without this,
 		// only writes (events) kept a DB-backed session alive, so a read-heavy
 		// idle session (dashboard, SSE-only) got evicted under a live view.
 		sess.touchLastSeen()
+		s.memMu.RUnlock()
 		return sess, true
 	}
 	s.memMu.RUnlock()
@@ -524,18 +569,45 @@ func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// Decode OFF-lock (before taking memMu) so a ~37KB gob decode doesn't
+	// serialize every other memMu reader/writer behind it.
 	sess, err := decodeSession(blob)
 	if err != nil {
 		log.Printf("[sky.live] sqlite: failed to decode session %s: %v", sid, err)
 		return nil, false
 	}
-	// Touch last_seen.
+	// fix #7: touch to NOW — decodeSession seeds lastSeen from the (stale)
+	// blob, so a resurrect that skipped this would be born-idle and get
+	// re-evicted on the very next tick (thrash).
+	sess.touchLastSeen()
+	// Single-flight re-insert (fix #1 / G1): the first caller inserts the
+	// decoded pointer; a concurrent caller that resurrected first wins and we
+	// use ITS pointer — two concurrent Gets for an evicted session share ONE
+	// live pointer, never two split-brain copies each spawning goroutines.
+	s.memMu.Lock()
+	if existing, ok := s.memCache[sid]; ok {
+		s.memMu.Unlock()
+		existing.touchLastSeen()
+		return existing, true
+	}
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
+	// Touch last_seen on disk so the TTL reap doesn't delete the blob under a
+	// freshly-resurrected session.
 	_, _ = s.db.Exec(`UPDATE sky_sessions SET last_seen = ? WHERE sid = ?`,
-		time.Now().Unix(), sid)
+		sess.lastSeenTime().Unix(), sid)
 	return sess, true
 }
 
 func (s *sqliteStore) Set(sid string, sess *liveSession) {
+	// fix #2: never re-insert an evicted (corpse) pointer. An abandoned
+	// session's late async result (runPerformBody / Time.every tick /
+	// subscriber dispatch) arriving after the idle-evict pass markDone'd this
+	// pointer must be DROPPED — resurrecting the corpse into memCache would
+	// split-brain against the fresh pointer a later Get decodes from disk.
+	if sess.evicted.Load() {
+		return
+	}
 	// Task #326: atomic.Int64 store — safe to write from any goroutine
 	// without holding s.memMu (sibling memCache readers under RLock no
 	// longer race on the field).
@@ -543,6 +615,15 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 	// Always keep the live pointer in memory so intra-process requests
 	// find the session even when the value isn't gob-encodable.
 	s.memMu.Lock()
+	if sess.evicted.Load() {
+		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+		// check can still race the evict and re-insert the markDone'd corpse.
+		// Re-checking here — mutually exclusive with the evict's set+delete —
+		// closes it: the corpse never re-enters memCache.
+		s.memMu.Unlock()
+		return
+	}
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
@@ -586,6 +667,83 @@ func (s *sqliteStore) Close() error {
 	return s.db.Close()
 }
 
+// idleEvictPass performs one tiered-session-cache idle-evict sweep over a
+// durable store's memCache (see docs/skylive/tiered-session-cache.md). It is
+// store-agnostic: `persist` writes a FRESH blob + last_seen for one candidate
+// to the backing store, and is invoked OUTSIDE both memMu and sess.mu.
+//
+// Lock-order invariant (grill fix #3): at most ONE of {memMu, sess.mu} is ever
+// held at a time. encodeSession runs under sess.mu with memMu released;
+// markDone runs with BOTH released. The only nested acquisition is
+// memMu → sseConnMu (via hasSSEConnOtherThan in the re-check), which is acyclic
+// (sseConnMu is a leaf lock, never taken before memMu anywhere).
+//
+// Race safety:
+//   - fix #1 (evict vs in-flight Get / SSE-connect): the candidate is
+//     re-validated (same pointer, still idle, still no SSE) under the SAME
+//     memMu.Lock that deletes it. A Get that touched lastSeen, or an SSE that
+//     registered, in the snapshot→delete window flips the re-check → no evict.
+//   - fix #5 (stale-blob overwrite): the pre-evict persist is only "the final
+//     word" when the re-check PASSES, and the re-check passing implies NO
+//     Set/dispatch touched lastSeen since `now` (every mutation touches it) —
+//     so no concurrent disk write exists to clobber. A persist that DID race a
+//     dispatch is followed by a failed re-check (session stays live) and the
+//     live session's next Set corrects the disk blob.
+//   - fix #6 (encode-fail): a session whose model can't gob-encode is the
+//     memCache-ONLY copy; it is NEVER evicted (kept to the full TTL).
+//   - fix #8 (fresh last_seen at evict): persist re-arms the disk row's
+//     last_seen so the TTL reap doesn't delete a resurrectable blob.
+func idleEvictPass(
+	now time.Time,
+	idleEvict time.Duration,
+	memMu *sync.RWMutex,
+	memCache map[string]*liveSession,
+	persist func(sid string, blob []byte, lastSeenUnix int64),
+) {
+	idleCut := now.Add(-idleEvict)
+	// Phase 1: snapshot candidates under RLock — idle AND no active SSE.
+	memMu.RLock()
+	type cand struct {
+		sid  string
+		sess *liveSession
+	}
+	var cands []cand
+	for sid, sess := range memCache {
+		if sess.lastSeenTime().Before(idleCut) && !sess.hasSSEConnOtherThan("") {
+			cands = append(cands, cand{sid, sess})
+		}
+	}
+	memMu.RUnlock()
+	for _, c := range cands {
+		// fix #6+#8: persist a FRESH blob under sess.mu BEFORE evicting;
+		// skip on encode-fail (keep in memCache to the full TTL).
+		c.sess.mu.Lock()
+		blob, err := encodeSession(c.sess)
+		ls := c.sess.lastSeenTime().Unix()
+		c.sess.mu.Unlock()
+		if err != nil {
+			continue // encode-fail → keep in memCache to TTL (no evict)
+		}
+		// persist (disk write OUTSIDE memMu and sess.mu)
+		persist(c.sid, blob, ls)
+		// fix #1: atomic re-check + delete under memMu.Lock (takes sseConnMu
+		// via hasSSEConnOtherThan here — memMu→sseConnMu, acyclic; NO sess.mu,
+		// NO markDone under memMu).
+		var evict *liveSession
+		memMu.Lock()
+		if cur, ok := memCache[c.sid]; ok && cur == c.sess &&
+			c.sess.lastSeenTime().Before(idleCut) && !c.sess.hasSSEConnOtherThan("") {
+			c.sess.evicted.Store(true)
+			delete(memCache, c.sid)
+			evict = c.sess
+		}
+		memMu.Unlock()
+		if evict != nil {
+			evict.markDone() // fix #3: markDone OUTSIDE memMu
+		}
+	}
+}
+
 func (s *sqliteStore) cleanupLoop() {
 	t := time.NewTicker(60 * time.Second)
 	defer t.Stop()
@@ -615,8 +773,30 @@ func (s *sqliteStore) cleanupLoop() {
 			for _, sess := range expired {
 				sess.markDone()
 			}
+			// Tiered-session-cache idle-evict pass (docs/skylive/
+			// tiered-session-cache.md). Runs AFTER the TTL reap so an
+			// already-expired session is reaped (blob deleted), not evicted
+			// (blob kept).
+			s.runIdleEvictOnce(now)
 		}
 	}
+}
+
+// runIdleEvictOnce performs one tiered-session-cache idle-evict pass. Called
+// each 60s tick by cleanupLoop AND directly by tests. No-op unless
+// 0 < idleEvict < ttl. The persist closure writes a FRESH blob + last_seen so
+// the TTL reap doesn't delete a resurrectable blob (fix #8).
+func (s *sqliteStore) runIdleEvictOnce(now time.Time) {
+	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
+		return
+	}
+	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
+		func(sid string, blob []byte, lastSeenUnix int64) {
+			_, _ = s.db.Exec(`
+				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES (?, ?, ?)
+				ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`,
+				sid, blob, lastSeenUnix)
+		})
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -624,11 +804,14 @@ func (s *sqliteStore) cleanupLoop() {
 // ═════════════════════════════════════════════════════════════════════
 
 type postgresStore struct {
-	db       *sql.DB
-	ttl      time.Duration
-	stop     chan struct{}
-	memMu    sync.RWMutex
-	memCache map[string]*liveSession
+	db   *sql.DB
+	ttl  time.Duration
+	stop chan struct{}
+	// idleEvict — tiered-session-cache idle-evict window (0 disables). See
+	// sqliteStore.idleEvict + docs/skylive/tiered-session-cache.md.
+	idleEvict time.Duration
+	memMu     sync.RWMutex
+	memCache  map[string]*liveSession
 	// broker — pub/sub registry. Cycle 3 P46.
 	broker Broker
 }
@@ -642,7 +825,7 @@ func (s *postgresStore) Ping() error {
 	return s.db.PingContext(ctx)
 }
 
-func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error) {
+func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresStore, error) {
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		return nil, err
@@ -657,21 +840,24 @@ func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error)
 		return nil, err
 	}
 	s := &postgresStore{
-		db:       db,
-		ttl:      ttl,
-		stop:     make(chan struct{}),
-		memCache: map[string]*liveSession{},
-		broker:   newTopicRegistry(0),
+		db:        db,
+		ttl:       ttl,
+		idleEvict: idleEvict,
+		stop:      make(chan struct{}),
+		memCache:  map[string]*liveSession{},
+		broker:    newTopicRegistry(0),
 	}
 	go s.cleanupLoop()
 	return s, nil
 }
 
 func (s *postgresStore) Get(sid string) (*liveSession, bool) {
+	// fix #4: touch lastSeen INSIDE the RLock (mutually exclusive with the
+	// idle-evict re-check). See sqliteStore.Get.
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
-		s.memMu.RUnlock()
 		sess.touchLastSeen() // L4: a read slides the TTL, matching memoryStore.Get
+		s.memMu.RUnlock()
 		return sess, true
 	}
 	s.memMu.RUnlock()
@@ -680,19 +866,45 @@ func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// Decode OFF-lock (before taking memMu).
 	sess, err := decodeSession(blob)
 	if err != nil {
 		log.Printf("[sky.live] postgres: failed to decode session %s: %v", sid, err)
 		return nil, false
 	}
+	// fix #7: touch to NOW so the resurrected session isn't born-idle.
+	sess.touchLastSeen()
+	// Single-flight re-insert (fix #1 / G1) — see sqliteStore.Get.
+	s.memMu.Lock()
+	if existing, ok := s.memCache[sid]; ok {
+		s.memMu.Unlock()
+		existing.touchLastSeen()
+		return existing, true
+	}
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
+	// fix #8: re-arm disk last_seen so the TTL reap doesn't delete the blob.
 	_, _ = s.db.Exec(`UPDATE sky_sessions SET last_seen = $1 WHERE sid = $2`,
-		time.Now().Unix(), sid)
+		sess.lastSeenTime().Unix(), sid)
 	return sess, true
 }
 
 func (s *postgresStore) Set(sid string, sess *liveSession) {
+	// fix #2: never re-insert an evicted (corpse) pointer. See sqliteStore.Set.
+	if sess.evicted.Load() {
+		return
+	}
 	sess.touchLastSeen()
 	s.memMu.Lock()
+	if sess.evicted.Load() {
+		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+		// check can still race the evict and re-insert the markDone'd corpse.
+		// Re-checking here — mutually exclusive with the evict's set+delete —
+		// closes it: the corpse never re-enters memCache.
+		s.memMu.Unlock()
+		return
+	}
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
@@ -757,8 +969,24 @@ func (s *postgresStore) cleanupLoop() {
 			for _, sess := range expired {
 				sess.markDone()
 			}
+			// Tiered-session-cache idle-evict pass. See sqliteStore.cleanupLoop.
+			s.runIdleEvictOnce(now)
 		}
 	}
+}
+
+// runIdleEvictOnce — see sqliteStore.runIdleEvictOnce.
+func (s *postgresStore) runIdleEvictOnce(now time.Time) {
+	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
+		return
+	}
+	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
+		func(sid string, blob []byte, lastSeenUnix int64) {
+			_, _ = s.db.Exec(`
+				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES ($1, $2, $3)
+				ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`,
+				sid, blob, lastSeenUnix)
+		})
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -769,12 +997,17 @@ func (s *postgresStore) cleanupLoop() {
 // ═════════════════════════════════════════════════════════════════════
 
 type redisStore struct {
-	client   *redis.Client
-	ttl      time.Duration
-	ctx      context.Context
-	cancel   context.CancelFunc
-	memMu    sync.RWMutex
-	memCache map[string]*liveSession
+	client *redis.Client
+	ttl    time.Duration
+	// idleEvict — tiered-session-cache idle-evict window (0 disables). When
+	// enabled a dedicated cleanupLoop drops idle no-SSE live pointers from
+	// memCache while the Redis blob stays (its native TTL is re-armed on
+	// evict). See docs/skylive/tiered-session-cache.md.
+	idleEvict time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	memMu     sync.RWMutex
+	memCache  map[string]*liveSession
 	// broker — pub/sub registry. Cycle 3 P46. v0.15.x: still
 	// in-process *topicRegistry; a v0.16+ RedisPubsubBroker would
 	// override this field to use `redis.PSubscribe` for cross-process
@@ -799,7 +1032,7 @@ func redisKey(sid string) string { return "sky:sess:" + sid }
 // ("redis://:password@host:6379/0") or a bare "host:port" address.
 // Pings before returning so a misconfigured URL surfaces as a startup
 // error rather than silently falling back to memory on first write.
-func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
+func newRedisStore(addr string, ttl, idleEvict time.Duration) (*redisStore, error) {
 	var opt *redis.Options
 	if strings.Contains(addr, "://") {
 		parsed, err := redis.ParseURL(addr)
@@ -819,12 +1052,13 @@ func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("redis: ping: %w", err)
 	}
-	return &redisStore{
-		client:   client,
-		ttl:      ttl,
-		ctx:      ctx,
-		cancel:   cancel,
-		memCache: map[string]*liveSession{},
+	s := &redisStore{
+		client:    client,
+		ttl:       ttl,
+		idleEvict: idleEvict,
+		ctx:       ctx,
+		cancel:    cancel,
+		memCache:  map[string]*liveSession{},
 		// Phase 2: multi-instance deploys use the cross-instance broker
 		// so Cmd.publish / Sub.subscribeTopic (and same-user cross-session
 		// sync) fan out across every instance, not just the publisher's.
@@ -832,14 +1066,23 @@ func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
 		// store's Close owns the client. SKY_LIVE_BROKER=inprocess forces
 		// the in-process registry back (escape hatch); see chooseBroker.
 		broker: brokerForRedisStore(client),
-	}, nil
+	}
+	// Redis has no TTL-reap cleanupLoop (native key TTL handles expiry), so
+	// the idle-evict pass gets its own goroutine — started ONLY when enabled.
+	// It drops idle no-SSE live pointers from memCache; the Redis blob stays
+	// (re-armed to the full ttl on evict). Exits on ctx cancel (store Close).
+	if idleEvict > 0 && idleEvict < ttl {
+		go s.idleEvictLoop()
+	}
+	return s, nil
 }
 
 func (s *redisStore) Get(sid string) (*liveSession, bool) {
+	// fix #4: touch lastSeen INSIDE the RLock. See sqliteStore.Get.
 	s.memMu.RLock()
 	if sess, ok := s.memCache[sid]; ok {
-		s.memMu.RUnlock()
 		sess.touchLastSeen() // L4: a read slides the TTL, matching memoryStore.Get
+		s.memMu.RUnlock()
 		return sess, true
 	}
 	s.memMu.RUnlock()
@@ -850,12 +1093,25 @@ func (s *redisStore) Get(sid string) (*liveSession, bool) {
 		}
 		return nil, false
 	}
+	// Decode OFF-lock (before taking memMu).
 	sess, err := decodeSession(blob)
 	if err != nil {
 		log.Printf("[sky.live] redis: failed to decode session %s: %v", sid, err)
 		return nil, false
 	}
-	// Touch TTL so an active session doesn't expire mid-conversation.
+	// fix #7: touch to NOW so the resurrected session isn't born-idle.
+	sess.touchLastSeen()
+	// Single-flight re-insert (fix #1 / G1) — see sqliteStore.Get.
+	s.memMu.Lock()
+	if existing, ok := s.memCache[sid]; ok {
+		s.memMu.Unlock()
+		existing.touchLastSeen()
+		return existing, true
+	}
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
+	// Touch native TTL so an active session doesn't expire mid-conversation
+	// (fix #8: re-arm so a resurrectable blob isn't expired by Redis).
 	if err := s.client.Expire(s.ctx, redisKey(sid), s.ttl).Err(); err != nil {
 		log.Printf("[sky.live] redis: refresh TTL for %s: %v", sid, err)
 	}
@@ -863,12 +1119,25 @@ func (s *redisStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *redisStore) Set(sid string, sess *liveSession) {
+	// fix #2: never re-insert an evicted (corpse) pointer. See sqliteStore.Set.
+	if sess.evicted.Load() {
+		return
+	}
 	sess.touchLastSeen()
 	// Keep an in-process pointer so values that fail gob encoding
 	// (closures, channels) still work within this instance. They won't
 	// survive a restart or cross-instance routing, which is the same
 	// trade-off SQLite/Postgres make.
 	s.memMu.Lock()
+	if sess.evicted.Load() {
+		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+		// check can still race the evict and re-insert the markDone'd corpse.
+		// Re-checking here — mutually exclusive with the evict's set+delete —
+		// closes it: the corpse never re-enters memCache.
+		s.memMu.Unlock()
+		return
+	}
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
@@ -913,6 +1182,40 @@ func (s *redisStore) Close() error {
 		_ = s.broker.Close()
 	}
 	return s.client.Close()
+}
+
+// idleEvictLoop runs the tiered-session-cache idle-evict pass every 60s until
+// the store's context is cancelled (Close). Redis expiry itself is native
+// (per-key TTL), so this loop ONLY drops idle no-SSE live pointers from
+// memCache — the persist closure re-Sets the blob with the full ttl so a
+// resurrectable session's key isn't expired out from under it. Started only
+// when 0 < idleEvict < ttl (see newRedisStore).
+func (s *redisStore) idleEvictLoop() {
+	t := time.NewTicker(60 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case now := <-t.C:
+			s.runIdleEvictOnce(now)
+		}
+	}
+}
+
+// runIdleEvictOnce — see sqliteStore.runIdleEvictOnce. Redis has no last_seen
+// column; the persist re-Sets the blob with the full ttl (native key TTL is
+// redis' "last_seen"), so a resurrectable session's key isn't expired.
+func (s *redisStore) runIdleEvictOnce(now time.Time) {
+	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
+		return
+	}
+	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
+		func(sid string, blob []byte, _ int64) {
+			if err := s.client.Set(s.ctx, redisKey(sid), blob, s.ttl).Err(); err != nil {
+				log.Printf("[sky.live] redis: idle-evict persist %s: %v", sid, err)
+			}
+		})
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1267,7 +1570,7 @@ func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
 	return newMemoryStore(ttl)
 }
 
-func chooseStore(kind, path string, ttl time.Duration) SessionStore {
+func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 	if kind == "" {
 		kind = skyGetenv("LIVE_STORE")
 	}
@@ -1277,13 +1580,19 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}
+	// idleEvict is disabled unless 0 < idleEvict < ttl (the durable stores'
+	// cleanupLoop gate). tieredLog renders the state for the store banner.
+	tieredLog := "off"
+	if idleEvict > 0 && idleEvict < ttl {
+		tieredLog = idleEvict.String()
+	}
 	switch kind {
 	case "sqlite":
 		if path == "" {
 			path = "sky_sessions.db"
 		}
 		store, err := connectStoreWithRetry("sqlite", func() (SessionStore, error) {
-			s, e := newSQLiteStore(path, ttl)
+			s, e := newSQLiteStore(path, ttl, idleEvict)
 			if e != nil {
 				return nil, e
 			}
@@ -1292,7 +1601,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if err != nil {
 			return failDurableStore("sqlite", err, ttl)
 		}
-		log.Printf("[sky.live] session store: sqlite @ %s (ttl=%s)", path, ttl)
+		log.Printf("[sky.live] session store: sqlite @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
 		return store
 	case "postgres", "postgresql":
 		if path == "" {
@@ -1305,7 +1614,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 				fmt.Errorf("no connection string (set DATABASE_URL or [live] storePath)"), ttl)
 		}
 		store, err := connectStoreWithRetry("postgres", func() (SessionStore, error) {
-			s, e := newPostgresStore(path, ttl)
+			s, e := newPostgresStore(path, ttl, idleEvict)
 			if e != nil {
 				return nil, e
 			}
@@ -1314,7 +1623,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if err != nil {
 			return failDurableStore("postgres", err, ttl)
 		}
-		log.Printf("[sky.live] session store: postgres (ttl=%s)", ttl)
+		log.Printf("[sky.live] session store: postgres (ttl=%s, idleEvict=%s)", ttl, tieredLog)
 		return store
 	case "redis", "valkey":
 		if path == "" {
@@ -1324,7 +1633,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 			path = "localhost:6379"
 		}
 		store, err := connectStoreWithRetry("redis", func() (SessionStore, error) {
-			s, e := newRedisStore(path, ttl)
+			s, e := newRedisStore(path, ttl, idleEvict)
 			if e != nil {
 				return nil, e
 			}
@@ -1333,14 +1642,14 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if err != nil {
 			return failDurableStore("redis", err, ttl)
 		}
-		log.Printf("[sky.live] session store: redis @ %s (ttl=%s)", path, ttl)
+		log.Printf("[sky.live] session store: redis @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
 		return store
 	case "bluedb":
 		if path == "" {
 			path = "sky_sessions.blue"
 		}
 		store, err := connectStoreWithRetry("bluedb", func() (SessionStore, error) {
-			s, e := newBlueDBStore(path, ttl)
+			s, e := newBlueDBStore(path, ttl, idleEvict)
 			if e != nil {
 				return nil, e
 			}
@@ -1349,7 +1658,7 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 		if err != nil {
 			return failDurableStore("bluedb", err, ttl)
 		}
-		log.Printf("[sky.live] session store: bluedb @ %s (ttl=%s)", path, ttl)
+		log.Printf("[sky.live] session store: bluedb @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
 		return store
 	case "", "memory":
 		log.Printf("[sky.live] session store: memory (ttl=%s)", ttl)

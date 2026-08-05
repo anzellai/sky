@@ -399,7 +399,8 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 		storeKind = "memory"
 	}
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
-	app.store = chooseStore(storeKind, storePath, ttl)
+	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()
 

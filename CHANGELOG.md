@@ -11,6 +11,67 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.11 — Sky.Live: bounded session-store memory (tiered cache) (2026-08-05)
+
+### Fixed
+- **Durable session stores now bound RAM to the *active* working set instead of
+  every session held for the TTL.** Previously the sqlite / postgres / redis
+  session stores kept the live `liveSession` pointer (~tens of KB each — Model +
+  rendered tree + handlers) of EVERY session in an in-RAM `memCache` until its
+  full TTL expired. Under sustained cookie-less traffic — crawlers and bots each
+  minting a session — that accumulated `rate × TTL` sessions in RAM, enough to
+  OOM a small VM over hours-to-days even with little *human* traffic (it wedged a
+  1 GB instance on a 30-minute TTL, and was far worse on a 30-DAY TTL). The
+  stores now **evict an idle session's live pointer from `memCache` after a short
+  window** (default **5 min**) when it has no active SSE connection — persisting
+  a fresh blob first, then tearing down its goroutines — and keep the blob on
+  disk / in the external store until the full TTL, **resurrecting it from disk on
+  the next request** (single-flight; the reconnecting SSE re-establishes its
+  loops). RAM then tracks SSE-connected + recently-active sessions rather than
+  everything-within-TTL. On-by-default; no app changes required — an abandoned
+  tab / bot session evicts and a returning user resurrects transparently (one
+  full re-render on wake). Sessions with a non-gob-encodable Model (the
+  memCache-only fallback) are never evicted, so nothing is lost. The in-memory
+  store is unaffected (no disk backing). Rebuild or `sky upgrade` to pick it up.
+
+### Added
+- **`SKY_LIVE_IDLE_EVICT`** (and `Std.Live.withIdleEvict`) — the idle-evict
+  window for the tiered session cache above. Default `5m`; set `0` / `off` or a
+  value `>= ttl` to disable (falls back to the previous all-within-TTL
+  behaviour). Only the durable stores (sqlite / postgres / redis) honour it.
+
+## v0.19.10 — Sky.Live: navigation scrolls the new page to the top (2026-08-04)
+
+### Fixed
+- **Sky.Live navigation now scrolls to the top of the new page**, like a normal
+  browser navigation. Previously the runtime restored the pre-patch scroll
+  position on every full-body/patch cycle — correct for in-place updates, but it
+  meant navigating to a new page (a `sky-nav` link click, a programmatic
+  `Navigate`, or any page change) landed you at the *old* page's scroll offset,
+  so the new page often appeared anchored mid-page or at the bottom. The runtime
+  now distinguishes a real page navigation (the URL pathname changed → scroll to
+  top) from an in-place update (SSE tick, same-page event, a filter change that
+  keeps the path → leave the scroll exactly where the user had it). Rebuild or
+  `sky upgrade` to pick it up; no app changes required.
+
+## v0.19.9 — Security: console API auth no longer trusts a loopback IP (2026-08-04)
+
+### Security
+- **The `/_sky/console` read APIs are no longer reachable unauthenticated behind
+  a reverse proxy.** The console auth gate (`consoleAccessAllowed`) previously
+  treated any request from a loopback `RemoteAddr` as trusted. Behind a reverse
+  proxy — the app on `127.0.0.1`, the proxy terminating TLS — **every** request's
+  `RemoteAddr` is loopback, so the console `overview` / `logs` / `traces` /
+  `metrics-summary` / `errors` / `analytics` endpoints (telemetry that can carry
+  PII and secrets) were served **without authentication** in production, and an
+  app-side SSRF could reach them too. The gate now authenticates the in-process
+  console sub-app by a per-boot internal token (and still accepts the operator's
+  `SKY_ADMIN_TOKEN`), falling through to the existing cookie / `SKY_CONSOLE_AUTH`
+  gate otherwise, and **never trusts a source IP**. No configuration change is
+  required — rebuild or `sky upgrade` to pick up the fix. Anyone running a
+  Sky.Live or Sky.Http.Server app behind a proxy with `SKY_CONSOLE_AUTH` set
+  should upgrade.
+
 ## v0.19.8 — Reliability-hardening pass: 11 fixes + comprehensive e2e coverage (2026-08-02)
 
 A ground-up test-coverage pass across the compiler, standard library, Sky.Live,

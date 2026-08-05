@@ -27,6 +27,16 @@ type bluedbStore struct {
 	stop chan struct{}
 	wg   sync.WaitGroup
 
+	// idleEvict — tiered-session-cache idle-evict window (0 disables). When
+	// 0 < idleEvict < ttl, cleanupLoop drops a session's live memCache pointer
+	// (the ~37KB liveSession object + its subscription goroutines) after it has
+	// been idle this long — persisting a FRESH blob first, then resurrecting it
+	// from disk on the next access. Mirrors sqliteStore.idleEvict. NOTE: BlueDB
+	// keeps the persisted blob in db.mem regardless (it's an in-RAM KV), so the
+	// win here is freeing the liveSession OBJECT + goroutines, not the blob.
+	// See docs/skylive/tiered-session-cache.md.
+	idleEvict time.Duration
+
 	// memCache holds the LIVE session pointer (the one owning Time.every /
 	// subscription goroutines) and is the fallback for sessions whose Model
 	// isn't gob-encodable — same trade-off as the sqlite store.
@@ -36,7 +46,7 @@ type bluedbStore struct {
 	broker Broker
 }
 
-func newBlueDBStore(path string, ttl time.Duration) (*bluedbStore, error) {
+func newBlueDBStore(path string, ttl, idleEvict time.Duration) (*bluedbStore, error) {
 	// Create the parent dir so a configured storePath like "data/app.blue" works
 	// out of the box — otherwise Open fails ("no such file or directory") and the
 	// store silently falls back to memory (sessions lost on restart). Mirrors the
@@ -59,11 +69,12 @@ func newBlueDBStore(path string, ttl time.Duration) (*bluedbStore, error) {
 		return nil, err
 	}
 	s := &bluedbStore{
-		db:       db,
-		ttl:      ttl,
-		stop:     make(chan struct{}),
-		memCache: map[string]*liveSession{},
-		broker:   newTopicRegistry(0),
+		db:        db,
+		ttl:       ttl,
+		idleEvict: idleEvict,
+		stop:      make(chan struct{}),
+		memCache:  map[string]*liveSession{},
+		broker:    newTopicRegistry(0),
 	}
 	s.wg.Add(1)
 	go s.cleanupLoop()
@@ -101,8 +112,24 @@ func decodeBlueValue(v []byte) (lastSeen int64, blob []byte, ok bool) {
 }
 
 func (s *bluedbStore) Set(sid string, sess *liveSession) {
+	// fix #2: never re-insert an evicted (corpse) pointer. An abandoned
+	// session's late async result (runPerformBody / Time.every tick / subscriber
+	// dispatch) arriving after the idle-evict pass markDone'd this pointer must
+	// be DROPPED — resurrecting the corpse into memCache would split-brain
+	// against the fresh pointer a later Get decodes from disk. Mirrors
+	// sqliteStore.Set.
+	if sess.evicted.Load() {
+		return
+	}
 	sess.touchLastSeen()
 	s.memMu.Lock()
+	if sess.evicted.Load() {
+		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+		// check can still race the evict and re-insert the markDone'd corpse.
+		s.memMu.Unlock()
+		return
+	}
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
 
@@ -187,8 +214,30 @@ func (s *bluedbStore) cleanupLoop() {
 			return
 		case now := <-t.C:
 			s.reap(now)
+			// Tiered-session-cache idle-evict pass (docs/skylive/
+			// tiered-session-cache.md). Runs AFTER the TTL reap so an
+			// already-expired session is reaped (blob deleted), not evicted
+			// (blob kept).
+			s.runIdleEvictOnce(now)
 		}
 	}
+}
+
+// runIdleEvictOnce performs one tiered-session-cache idle-evict pass. Called
+// each 60s tick by cleanupLoop AND directly by tests. No-op unless
+// 0 < idleEvict < ttl. The persist closure writes a FRESH blob + last_seen so
+// the TTL reap doesn't delete a resurrectable blob (fix #8). Reuses the same
+// store-agnostic idleEvictPass the sqlite/postgres/redis stores use — same
+// grill fixes (re-check under memMu.Lock, evicted flag, markDone outside memMu,
+// skip encode-fail, persist fresh blob first).
+func (s *bluedbStore) runIdleEvictOnce(now time.Time) {
+	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
+		return
+	}
+	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
+		func(sid string, blob []byte, lastSeenUnix int64) {
+			_ = s.db.Put([]byte(sid), encodeBlueValue(lastSeenUnix, blob))
+		})
 }
 
 // reap expires idle sessions. Reads slide only the in-memory clock, so a

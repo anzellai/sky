@@ -52,7 +52,7 @@ func TestPostgresStore_CrossInstanceRoundTrip(t *testing.T) {
 		"inner": gobRegInner{Label: "hi"},
 	}
 
-	writer, err := newPostgresStore(dsn, ttl)
+	writer, err := newPostgresStore(dsn, ttl, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore(writer): %v", err)
 	}
@@ -60,7 +60,7 @@ func TestPostgresStore_CrossInstanceRoundTrip(t *testing.T) {
 	writer.Delete(sid) // idempotent start
 	writer.Set(sid, buildSess(model))
 
-	reader, err := newPostgresStore(dsn, ttl)
+	reader, err := newPostgresStore(dsn, ttl, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore(reader): %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPostgresStore_CrossInstanceRoundTrip(t *testing.T) {
 	// Delete must reach Postgres, not just the writer's cache: a THIRD fresh
 	// instance must not find the session.
 	writer.Delete(sid)
-	reaper, err := newPostgresStore(dsn, ttl)
+	reaper, err := newPostgresStore(dsn, ttl, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore(reaper): %v", err)
 	}
@@ -91,7 +91,7 @@ func TestPostgresStore_CrossInstanceRoundTrip(t *testing.T) {
 // orchestrator keeps routing to a healthy replica.
 func TestPostgresStore_PingHealthy(t *testing.T) {
 	dsn := requirePostgresDSN(t)
-	s, err := newPostgresStore(dsn, 30*time.Minute)
+	s, err := newPostgresStore(dsn, 30*time.Minute, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestPostgresStore_GetTouchesLastSeen(t *testing.T) {
 	ttl := 30 * time.Minute
 	sid := "sky-test-lastseen"
 
-	writer, err := newPostgresStore(dsn, ttl)
+	writer, err := newPostgresStore(dsn, ttl, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore(writer): %v", err)
 	}
@@ -124,7 +124,7 @@ func TestPostgresStore_GetTouchesLastSeen(t *testing.T) {
 
 	time.Sleep(1100 * time.Millisecond)
 
-	reader, err := newPostgresStore(dsn, ttl)
+	reader, err := newPostgresStore(dsn, ttl, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore(reader): %v", err)
 	}

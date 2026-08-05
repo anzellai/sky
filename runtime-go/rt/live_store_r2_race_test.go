@@ -14,7 +14,7 @@ import (
 // reassignment; under -race it fails if the reap encode ever leaves the lock.
 func TestReapEncodeUnderLockR2(t *testing.T) {
 	dir := t.TempDir()
-	store, err := newBlueDBStore(dir+"/sess.blue", time.Millisecond)
+	store, err := newBlueDBStore(dir+"/sess.blue", time.Millisecond, 0)
 	if err != nil {
 		t.Fatalf("newBlueDBStore: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestReapEncodeUnderLockR2(t *testing.T) {
 func TestAsyncDispatchPersistsR1(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/sess.blue"
-	store, err := newBlueDBStore(path, time.Hour)
+	store, err := newBlueDBStore(path, time.Hour, 0)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestAsyncDispatchPersistsR1(t *testing.T) {
 	_ = store.Close()
 
 	// "Restart": reopen the file + Get (decodes from disk, no memCache).
-	store2, err := newBlueDBStore(path, time.Hour)
+	store2, err := newBlueDBStore(path, time.Hour, 0)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
