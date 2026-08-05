@@ -2218,6 +2218,24 @@ type liveSession struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
+	// evicted — set true (under the store's memMu.Lock, before release)
+	// when the tiered-session-cache idle-evict pass removes this session's
+	// live pointer from the store's memCache while KEEPING its blob on disk
+	// (see docs/skylive/tiered-session-cache.md). It is the generation flag
+	// that makes eviction race-safe:
+	//
+	//   * Set() checks it under memMu and SKIPS re-inserting an evicted
+	//     (corpse) pointer — an abandoned session's late async result
+	//     (runPerformBody / Time.every tick / subscriber dispatch) must not
+	//     resurrect the markDone'd pointer into memCache (split-brain /
+	//     lost updates).
+	//
+	// A resurrected session is a FRESH pointer decoded from the blob (new
+	// done channel, evicted=false), never the evicted corpse — so the flag
+	// is monotonic per pointer (false→true, exactly once, at evict) and the
+	// atomic read in Set() is a leaf operation taking no other lock.
+	evicted atomic.Bool
+
 	// Single session-wide monotonic counter for EVERY outgoing frame
 	// (event reply OR SSE patch). Bumped under sess.mu so the value
 	// reflects this session's true mutation order. The client keys its
@@ -3585,7 +3603,11 @@ func liveAppRun(cfg any) any {
 	// `SKY_LIVE_TTL=24h` and any `ttl = "24h"` in sky.toml were
 	// both silently ignored.
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
-	app.store = chooseStore(storeKind, storePath, ttl)
+	// Tiered-session-cache idle-evict window (env > cfg > default 5m; "0"/"off"
+	// disables). Bounds a durable store's RAM to the ACTIVE working set. See
+	// docs/skylive/tiered-session-cache.md.
+	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
 	// the backing DB is unreachable — instead of returning 200 while the store

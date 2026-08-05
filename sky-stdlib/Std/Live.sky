@@ -35,6 +35,7 @@ module Std.Live exposing
     , withStore
     , withStorePath
     , withTtl
+    , withIdleEvict
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
@@ -170,6 +171,17 @@ withStorePath =
 withTtl : String -> AppConfig model msg -> AppConfig model msg
 withTtl =
     Ffi.kernel "Live_withTtl"
+
+
+-- | Tiered-session-cache idle-evict window ("5m" / "0"/"off" to disable; env
+-- `SKY_LIVE_IDLE_EVICT` wins). On a durable store (sqlite / postgres / redis)
+-- a session with no active SSE that's been idle this long drops its live
+-- pointer from RAM while its blob stays on disk to the full TTL, resurrecting
+-- on next access — bounding RAM to the ACTIVE working set. Ignored by the
+-- memory store. See docs/skylive/tiered-session-cache.md.
+withIdleEvict : String -> AppConfig model msg -> AppConfig model msg
+withIdleEvict =
+    Ffi.kernel "Live_withIdleEvict"
 
 
 -- | Opt into Sky.Live auto page-view analytics —

@@ -22,7 +22,7 @@ func withRedis(t *testing.T) (*redisStore, *miniredis.Miniredis) {
 		t.Fatalf("miniredis.Run: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	store, err := newRedisStore(mr.Addr(), 30*time.Minute)
+	store, err := newRedisStore(mr.Addr(), 30*time.Minute, 0)
 	if err != nil {
 		t.Fatalf("newRedisStore: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestRedisStore_Expiry(t *testing.T) {
 		t.Fatalf("miniredis.Run: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	store, err := newRedisStore(mr.Addr(), 1*time.Minute)
+	store, err := newRedisStore(mr.Addr(), 1*time.Minute, 0)
 	if err != nil {
 		t.Fatalf("newRedisStore: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRedisStore_URLForm(t *testing.T) {
 	}
 	t.Cleanup(mr.Close)
 	// redis://host:port form should parse and connect.
-	store, err := newRedisStore("redis://"+mr.Addr(), 1*time.Minute)
+	store, err := newRedisStore("redis://"+mr.Addr(), 1*time.Minute, 0)
 	if err != nil {
 		t.Fatalf("newRedisStore with URL form: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestChooseStore_Redis(t *testing.T) {
 	}
 	t.Cleanup(mr.Close)
 
-	s := chooseStore("redis", mr.Addr(), 1*time.Minute)
+	s := chooseStore("redis", mr.Addr(), 1*time.Minute, 0)
 	if _, ok := s.(*redisStore); !ok {
 		t.Fatalf("chooseStore(redis, <ok>) = %T, want *redisStore", s)
 	}
@@ -200,7 +200,7 @@ func TestChooseStore_Redis(t *testing.T) {
 
 	// DEV (ENV unset): an unreachable explicit store falls back to memory with a
 	// loud warning rather than crashing — so a DB-less `sky run` still works.
-	fallback := chooseStore("redis", "127.0.0.1:1", 1*time.Minute)
+	fallback := chooseStore("redis", "127.0.0.1:1", 1*time.Minute, 0)
 	if _, ok := fallback.(*memoryStore); !ok {
 		t.Fatalf("dev: chooseStore(redis, <unreachable>) = %T, want *memoryStore fallback", fallback)
 	}
@@ -214,7 +214,7 @@ func TestChooseStore_Redis(t *testing.T) {
 	oldFatalf := storeFatalf
 	storeFatalf = func(format string, args ...any) { fatalMsg = fmt.Sprintf(format, args...) }
 	defer func() { storeFatalf = oldFatalf }()
-	_ = chooseStore("redis", "127.0.0.1:1", 1*time.Minute)
+	_ = chooseStore("redis", "127.0.0.1:1", 1*time.Minute, 0)
 	if fatalMsg == "" {
 		t.Fatal("prod: unreachable explicit redis store should fail loud, but no fatal fired")
 	}

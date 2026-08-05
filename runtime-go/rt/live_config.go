@@ -103,6 +103,15 @@ func Live_withStorePath(path, cfg any) any { return liveCfgSet(cfg, "StorePath",
 // Live_withTtl — `ttl : String` session TTL ("30m", "24h", or bare seconds).
 func Live_withTtl(ttl, cfg any) any { return liveCfgSet(cfg, "Ttl", ttl) }
 
+// Live_withIdleEvict — `idleEvict : String` tiered-session-cache idle-evict
+// window ("5m", "0"/"off" to disable; env `SKY_LIVE_IDLE_EVICT` wins). After
+// this idle window with NO active SSE connection, a durable store (sqlite /
+// postgres / redis) drops the session's live pointer from its in-RAM memCache
+// while keeping the blob on disk to the full TTL, resurrecting on next access
+// — so RAM tracks the ACTIVE working set, not all-within-TTL. Ignored by the
+// memory store (no disk backing). See docs/skylive/tiered-session-cache.md.
+func Live_withIdleEvict(idleEvict, cfg any) any { return liveCfgSet(cfg, "IdleEvict", idleEvict) }
+
 // Live_withAnalytics — `analytics : { pageViews : Bool }` (invariant 4:
 // the record is stored verbatim and read via Field(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }

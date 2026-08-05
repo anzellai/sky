@@ -116,7 +116,7 @@ func TestLastSeenRace_MemoryStore(t *testing.T) {
 }
 
 func TestLastSeenRace_SQLiteStore(t *testing.T) {
-	store, err := newSQLiteStore("file::memory:?cache=shared", 30*time.Minute)
+	store, err := newSQLiteStore("file::memory:?cache=shared", 30*time.Minute, 0)
 	if err != nil {
 		t.Fatalf("newSQLiteStore: %v", err)
 	}
