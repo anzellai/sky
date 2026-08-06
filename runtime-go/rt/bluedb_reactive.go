@@ -205,7 +205,12 @@ func (app *liveApp) reactiveLoop(sess *liveSession, b reactiveBindingRT, done ch
 	app.reactiveRefreshOnce(sess, b) // initial fill
 
 	if changes == nil {
-		<-done // no live trigger (SQL arm / setup failure) — hold until teardown
+		// No live trigger: the SQL / non-embedded arm (post-v1 NOTIFY bridge) or an embedded setup
+		// failure. This is NO LONGER a silent stale — assertReactiveCapabilityOrExit (called once in
+		// ensureReactiveStarted BEFORE this loop is spawned) has already fired the loud signal for the
+		// SQL-arm case: boot-fatal in prod, one-shot warn in dev. So we hold here only after the
+		// operator/developer has been told the list will not live-update.
+		<-done // hold until teardown
 		return
 	}
 	for {

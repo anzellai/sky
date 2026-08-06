@@ -72,6 +72,60 @@ func TestReactiveCapabilityGate_Matrix(t *testing.T) {
 	}
 }
 
+// TestReactiveSQLArmGated is the Phase-4 silent-stale close (root-caused by the Phase-4 Judge). A
+// reactive binding on a SQL / non-embedded Conn — connStoreId yields -1 for a SqlConn, which does
+// NOT resolve to an embedded backend — CANNOT be wired for live delivery today: reactiveLoop paints
+// the list once via the initial fill and then blocks on <-done forever with NO live updates.
+//
+// BEFORE the fix, reactiveDataBackendKind returned "" for such a binding, so
+// reactiveCapabilityError("") returned nil in BOTH prod and dev (empty is neither the local
+// single-writer class nor a fatal kind), AND the dev-warn branch (gated on isLocalSingleWriterBackend
+// == true) never fired: a fully SILENT stale, in dev and prod alike.
+//
+// AFTER the fix the classifier reports reactiveBackendSQLUnsupported and the gate fires LOUD: fatal
+// in prod (regardless of the single-instance scope assertion — no assertion makes SQL live-delivery
+// work), warn-and-allow in dev (paint-once still renders; the developer is told it will NOT
+// live-update). This test is the discovery artifact: it FAILS against the pre-fix gate (want FATAL,
+// got nil) and PASSES once the gate classifies + refuses.
+func TestReactiveSQLArmGated(t *testing.T) {
+	// prod → FATAL, for every scope assertion (none of them can make SQL live-delivery work).
+	for _, scope := range []string{"", reactiveScopeSingleInstance, "multi", "  Single-Instance  "} {
+		err := reactiveCapabilityError(true, scope, true, reactiveBackendSQLUnsupported)
+		if err == nil {
+			t.Fatalf("prod sql-unsupported (scope=%q): want FATAL, got nil (SILENT STALE)", scope)
+		}
+		// The message must be actionable: say it's a SQL/non-embedded Conn, that it's unsupported,
+		// and point at the embedded Conn remedy.
+		msg := err.Error()
+		for _, want := range []string{"SQL", "not supported", "embedded"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("fatal message not actionable, missing %q: %q", want, msg)
+			}
+		}
+	}
+	// dev → nil error (warn + allow at the call site). NOT a silent stale: the boot path emits a
+	// one-shot warn for this backend kind (asserted structurally by the fix; the pure decision here
+	// only proves dev does not FATAL).
+	if err := reactiveCapabilityError(false, "", true, reactiveBackendSQLUnsupported); err != nil {
+		t.Fatalf("dev sql-unsupported: want nil (warn+allow), got: %v", err)
+	}
+	// no reactivity → nothing to gate, even on the sql-unsupported backend.
+	if err := reactiveCapabilityError(true, "", false, reactiveBackendSQLUnsupported); err != nil {
+		t.Fatalf("no reactivity + sql-unsupported: want nil, got: %v", err)
+	}
+}
+
+// TestReactiveSQLArmStoreDoesNotResolve documents WHY a SQL-arm binding classifies as
+// sql-unsupported: connStoreId yields -1 for a SqlConn (Std/Persist.sky), and -1 does NOT resolve to
+// an embedded backend in the runtime registry, so reactiveDataBackendKind cannot classify it as
+// "embedded" and must route it to the sql-unsupported (loud) arm. (An inert failed-open KvConn(-1)
+// shares this fate — it likewise never resolves — and equally deserves a loud, not silent, signal.)
+func TestReactiveSQLArmStoreDoesNotResolve(t *testing.T) {
+	if _, ok := embeddedBackend(int64(-1)); ok {
+		t.Fatalf("store -1 resolved to an embedded backend; SQL-arm classification would be wrong")
+	}
+}
+
 // TestReactiveScopeAsserted covers the assertion parser in isolation.
 func TestReactiveScopeAsserted(t *testing.T) {
 	for _, ok := range []string{"single-instance", "Single-Instance", "  single-instance  "} {

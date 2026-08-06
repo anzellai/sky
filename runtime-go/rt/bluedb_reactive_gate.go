@@ -37,6 +37,16 @@ const reactiveScopeEnv = "SKY_DATA_REACTIVE_SCOPE"
 // reactiveScopeSingleInstance is the accepted assertion value.
 const reactiveScopeSingleInstance = "single-instance"
 
+// reactiveBackendSQLUnsupported is the classifier verdict for a reactive binding whose store does
+// NOT resolve to an embedded backend — a SqlConn (connStoreId → -1) or an inert failed-open
+// KvConn(-1). Such a binding CANNOT be wired for live delivery today (the reactive loop paints once
+// via the initial fill and then holds on <-done forever with no live updates — SQL live-delivery is
+// the post-v1 LISTEN/NOTIFY bridge). Unlike the embedded/sqlite single-writer hazard, NO operator
+// assertion makes this work, so it is fatal in prod regardless of scope. The distinct string keeps
+// it out of isLocalSingleWriterBackend (whose "" fall-through would silently allow it) so the pure
+// gate can fail loud instead of silently stale.
+const reactiveBackendSQLUnsupported = "sql-unsupported"
+
 // isLocalSingleWriterBackend reports whether a data backend is a single-writer LOCAL store — the
 // class the cross-replica-staleness hazard applies to (embedded pebble, sqlite file). A SHARED
 // backend (postgres) is NOT in this class: its reactive multi-replica story is the §5 Redis-nudge
@@ -61,12 +71,28 @@ func reactiveScopeAsserted(scopeAssertion string) bool {
 //   - the data backend is a local single-writer store (embedded/sqlite), AND
 //   - the runtime is in a non-dev env (prod), AND
 //   - the operator did NOT assert single-instance.
+//
 // Every other combination returns nil (boot proceeds): dev/unset env → allow (warn at the call
 // site); a shared backend → not this gate's concern; the assertion present → allow; no reactivity →
 // nothing to gate.
 func reactiveCapabilityError(prod bool, scopeAssertion string, usesReactive bool, backend string) error {
 	if !usesReactive {
 		return nil
+	}
+	// SQL / non-embedded reactive binding: live delivery is NOT wired today (the loop paints once
+	// then holds forever — SQL live-delivery is the post-v1 NOTIFY bridge). No operator assertion
+	// makes it work, so it is fatal in prod regardless of scope. Dev is warned (nil here) at the
+	// call site, never silently stalled. Checked BEFORE isLocalSingleWriterBackend so it can fail
+	// loud instead of falling through the "" allow-branch.
+	if backend == reactiveBackendSQLUnsupported {
+		if !prod {
+			return nil // dev — warn + allow (paint-once renders; the developer is told at the call site)
+		}
+		return fmt.Errorf(
+			"reactive Persist (liveInto/withReactive) on a SQL/non-embedded Conn is not supported yet — " +
+				"SQL live-delivery is the post-v1 NOTIFY bridge; the list would never live-update. Use an " +
+				"embedded Conn (connectKeyValue/connectKeyValueSync) for reactive Persist, or remove the " +
+				"reactive binding")
 	}
 	if !isLocalSingleWriterBackend(backend) {
 		return nil // shared backend (postgres) or unknown — not the single-writer-local hazard
@@ -88,16 +114,27 @@ func reactiveCapabilityError(prod bool, scopeAssertion string, usesReactive bool
 
 // reactiveDataBackendKind classifies the app's reactive DATA backend from its bindings. Today the
 // only backend wired for reactive LIVE delivery is embedded (a KvConn handle resolves to an
-// *EmbeddedBackend; a SqlConn passes -1 and does the initial fill only — see reactiveLoop). So a
-// binding that resolves to an embedded backend ⇒ "embedded". Anything else ⇒ "" (not gated here):
-// SQL reactive live-delivery is the documented post-v1 LISTEN/NOTIFY arm, and returning "" avoids
-// false-fataling a postgres deploy. When the SQL reactive arm lands, this classifier gains the
-// sqlite/postgres discrimination and the pure gate above already handles the "sqlite" string.
+// *EmbeddedBackend). A binding whose store does NOT resolve to an embedded backend cannot live-
+// deliver: a SqlConn passes connStoreId → -1 (SQL live-delivery is the post-v1 LISTEN/NOTIFY arm),
+// and an inert failed-open KvConn(-1) likewise never resolves — either way reactiveLoop paints once
+// and then holds on <-done forever with no live updates. That is a SILENT stale, so it is classified
+// as reactiveBackendSQLUnsupported and gated LOUD (fatal in prod / warn in dev) rather than allowed
+// through the old "" branch. Classification is BEHAVIORAL (registry resolution), not a parse of the
+// -1 sentinel, so it stays correct for both the SqlConn and inert-KvConn shapes.
+//
+// The sql-unsupported verdict WINS over embedded in a mixed app: any non-resolving binding is a
+// silent stale that must be surfaced. An empty binding set (nothing to gate) → "".
 func (app *liveApp) reactiveDataBackendKind(model any) string {
+	sawEmbedded := false
 	for _, b := range app.reactiveBindingsFor(model) {
 		if _, ok := embeddedBackend(b.store); ok {
-			return "embedded"
+			sawEmbedded = true
+			continue
 		}
+		return reactiveBackendSQLUnsupported // a binding that can't live-deliver — loudest wins
+	}
+	if sawEmbedded {
+		return "embedded"
 	}
 	return ""
 }
@@ -134,6 +171,17 @@ func (app *liveApp) assertReactiveCapabilityOrExit(model any) {
 				"backend", backend,
 				"hint", "set "+reactiveScopeEnv+"="+reactiveScopeSingleInstance+
 					" (or [data] reactiveScope) before a non-dev deploy; reactive on a local store is single-instance only")
+		}
+
+		// A reactive binding on a SQL / non-embedded Conn is fatal in prod (handled above); in DEV
+		// it's allowed so the paint-once initial fill still renders, but the developer MUST be told
+		// it will NEVER live-update (SQL live-delivery is the post-v1 NOTIFY bridge). Warn once — the
+		// alternative is the pre-fix silent stale, where the list paints and freezes with no signal.
+		if !prod && backend == reactiveBackendSQLUnsupported {
+			logStructured("warn", "reactive.sql-unsupported",
+				"hint", "reactive Persist (liveInto/withReactive) on a SQL/non-embedded Conn does NOT "+
+					"live-update yet (post-v1 NOTIFY bridge); it paints once and then holds. Use an embedded "+
+					"Conn (connectKeyValue/connectKeyValueSync) for reactive Persist, or remove the reactive binding")
 		}
 	})
 }
