@@ -1,6 +1,7 @@
 package bluedb
 
 import (
+	"bytes"
 	"errors"
 	"math/rand"
 	"sort"
@@ -59,8 +60,20 @@ type Txn struct {
 
 	// indexer maps a (userKey, record) to its index coordinates. Phase 3 populates it from
 	// L0 (Codec + Collection.indexes); Phase-2 tests supply a trivial indexer via SetIndexer.
+	// A multi-collection transaction installs ONE indexer closure that parses collName from
+	// the userKey and emits THAT collection's coords (§2.1) — the signature is unchanged
+	// because the userKey already namespaces the collection.
 	indexer func(userKey, record []byte) []IndexCoord
-	coll    CollID // owning collection id stamped on emitted KeyChanges
+	coll    CollID // single-collection fallback id stamped when no resolver is installed
+
+	// collResolver, when installed (SetCollResolver, §2.1), derives each write's owning
+	// CollID from its data userKey prefix (collName ‖ 0x1F ‖ pk). A Persist transaction is
+	// inherently MULTI-collection; buildReq attributes each KeyChange to its OWN collection so
+	// a concurrent WitnessCollection(X) reader can never miss a write mis-stamped as the last
+	// SetCollection'd id (the phantom hole §2.1 closes). nil ⇒ every change uses `coll` (the
+	// Phase-2 single-collection behaviour). This is a per-change attribution change ONLY — the
+	// on-disk key format, the changelog payload, and encodeIndexKey are all untouched.
+	collResolver func(userKey []byte) CollID
 
 	done bool
 }
@@ -95,8 +108,24 @@ func (e *pebbleEngine) Begin() (*Txn, error) {
 func (tx *Txn) SetIndexer(fn func(userKey, record []byte) []IndexCoord) { tx.indexer = fn }
 
 // SetCollection stamps the owning collection id on emitted KeyChanges (drives the
-// collection-level fallback witness).
+// collection-level fallback witness). The single-collection fallback used when no per-change
+// resolver is installed (§2.1).
 func (tx *Txn) SetCollection(coll CollID) { tx.coll = coll }
+
+// SetCollResolver installs the per-change collection resolver (§2.1). buildReq then derives
+// each emitted KeyChange's Coll from its data userKey (collName ‖ 0x1F ‖ pk) via fn, so a
+// multi-collection transaction attributes every write to its OWN collection. When unset, all
+// changes fall back to the single SetCollection id — the Phase-2 single-collection behaviour.
+func (tx *Txn) SetCollResolver(fn func(userKey []byte) CollID) { tx.collResolver = fn }
+
+// collOf returns the owning collection id for a data userKey: the installed resolver's
+// per-change attribution, else the single SetCollection fallback (§2.1).
+func (tx *Txn) collOf(userKey []byte) CollID {
+	if tx.collResolver != nil {
+		return tx.collResolver(userKey)
+	}
+	return tx.coll
+}
 
 // ReadTs exposes the pinned begin-snapshot readTs (durableHi at Begin).
 func (tx *Txn) ReadTs() HLC { return tx.readTs }
@@ -244,7 +273,7 @@ func (tx *Txn) buildReq() CommitReq {
 		uk := []byte(k)
 		writes = append(writes, VersionedWrite{UserKey: uk, Op: bw.op, Value: bw.value})
 		changes = append(changes, KeyChange{
-			Coll:     tx.coll,
+			Coll:     tx.collOf(uk),
 			Pk:       uk,
 			Op:       bw.op,
 			Record:   bw.value,
@@ -553,6 +582,63 @@ func (tx *Txn) scanMaterialize(index IndexID, lo, hi []byte, fallback bool, matc
 			delete(rows, key)
 			delete(tsOf, key)
 		}
+	}
+
+	keys := make([]string, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	sc := &sliceCursor{i: -1}
+	for _, k := range keys {
+		sc.keys = append(sc.keys, []byte(k))
+		sc.vals = append(sc.vals, rows[k])
+		sc.tss = append(sc.tss, tsOf[k])
+	}
+	return sc
+}
+
+// ScanCollection is the coarse-but-sound read-set path for a txn-scoped Query whose predicate
+// no declared range-optimized index can tighten (§2.6): an OR/nested predicate, a predicate on
+// a non-declared or not-order-preserving column, or an IS-NULL/IS-NOT-NULL leaf (§2.3). It
+// records a COLLECTION-level witness (any change to coll in the window conflicts — catching a
+// concurrent INSERT of a brand-new pk, which a set of point reads would miss) AND materializes
+// every row under the collection's data-key prefix with the write-set merged in. Pairing the
+// witness with the materialization in one method makes the read-set contract structural — a
+// txn-Query can never do a bare reader.Iterate that records nothing.
+func (tx *Txn) ScanCollection(coll CollID, prefix []byte) Cursor {
+	tx.WitnessCollection(coll)
+	return tx.scanPrefixMaterialize(prefix)
+}
+
+// scanPrefixMaterialize returns an ordered, write-set-merged cursor over every visible row whose
+// userKey begins with prefix (read-your-writes over the collection). It records NOTHING — the
+// caller (ScanCollection) owns the read-set entry.
+func (tx *Txn) scanPrefixMaterialize(prefix []byte) Cursor {
+	rows := map[string][]byte{}
+	tsOf := map[string]HLC{}
+
+	cur := tx.reader.Iterate(prefix)
+	for cur.Next() {
+		k := append([]byte(nil), cur.Key()...)
+		rows[string(k)] = append([]byte(nil), cur.Value()...)
+		tsOf[string(k)] = cur.CommitTs()
+	}
+	cur.Close()
+
+	// Overlay the write-set (only keys under this collection's prefix): a buffered put appears,
+	// a buffered delete masks.
+	for _, key := range tx.order {
+		if !bytes.HasPrefix([]byte(key), prefix) {
+			continue
+		}
+		bw := tx.writes[key]
+		if bw.op == OpDelete {
+			delete(rows, key)
+			delete(tsOf, key)
+			continue
+		}
+		rows[key] = bw.value
 	}
 
 	keys := make([]string, 0, len(rows))
