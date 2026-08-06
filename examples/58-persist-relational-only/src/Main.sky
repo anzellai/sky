@@ -1,0 +1,161 @@
+-- | Std.Persist RELATIONAL-ONLY app (BlueDB Phase-3 F2, honest materialisation).
+--
+-- Uses ONLY `connectRelational` — never `connectKeyValue`. It exercises the
+-- universal Persist verbs (insert / query / transaction) on the SQL arm, and
+-- the transaction runs under the serializable path (SQLite BEGIN IMMEDIATE;
+-- Postgres SERIALIZABLE) with typed-`Conflict` retry — the SAME guarantee the
+-- embedded arm gives.
+--
+-- Materialisation honesty: this binary STILL links the embedded BlueDB/Pebble
+-- subtree (every verb's `case conn of` names `rt.Embedded_*` in its `KvConn`
+-- arm; DCE is per-binding). That is documented, not silently deferred — see
+-- `rust/crates/project/src/build.rs` (persist_needed) + phase3-status.md §3c-4.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Persist as P
+import Std.Codec as Codec exposing (Codec)
+
+type alias Account =
+    { id : String
+    , owner : String
+    , balance : Int
+    }
+
+
+blankAccount : Account
+blankAccount =
+    { id = "", owner = "", balance = 0 }
+
+
+accountCodec : Codec Account
+accountCodec =
+    Codec.auto blankAccount
+
+
+accounts : P.Collection Account
+accounts =
+    P.collection "accounts" accountCodec |> P.key "id" |> P.index "balance"
+
+
+seed : List Account
+seed =
+    [ { id = "a1", owner = "Alice", balance = 100 }
+    , { id = "a2", owner = "Bob", balance = 50 }
+    ]
+
+
+insertAll : P.Conn cap -> List Account -> Task Error ()
+insertAll conn xs =
+    case xs of
+
+        [] ->
+            Task.succeed ()
+
+        x :: rest ->
+            P.insert conn accounts x |> Task.andThen (\_ -> insertAll conn rest)
+
+
+-- Atomically move 25 from Alice to Bob inside a serializable transaction.
+transfer : P.Conn cap -> Task Error ()
+transfer conn =
+    P.transaction
+        conn
+        (\tx ->
+            P.get tx accounts "a1"
+                |> Task.andThen
+                       (\ma ->
+                           case ma of
+
+                               Just a ->
+                                   P.get tx accounts "a2"
+                                       |> Task.andThen
+                                              (\mb ->
+                                                  case mb of
+
+                                                      Just b ->
+                                                          P.put
+                                                              tx
+                                                              accounts
+                                                              { a | balance =
+                                                                  a.balance - 25
+                                                              }
+                                                              |> Task.andThen
+                                                                     (\_ ->
+                                                                         P.put
+                                                                             tx
+                                                                             accounts
+                                                                             { b | balance =
+                                                                                 b.balance
+                                                                                     + 25
+                                                                             })
+
+                                                      Nothing ->
+                                                          Task.fail
+                                                              (Error.unexpected
+                                                                  "a2 missing"))
+
+                               Nothing ->
+                                   Task.fail (Error.unexpected "a1 missing")))
+
+
+-- F6 injection gate: a dynamic/typo column MUST fail fast BEFORE reaching SQL.
+-- A malicious ORDER BY column (";... DROP TABLE ...") is rejected by the
+-- identifier guard (Std.Persist isSafeIdent, [A-Za-z0-9_.]) → Task.fail, so it
+-- never hits the database.
+identGuardCheck : P.Conn cap -> Task Error String
+identGuardCheck conn =
+    P.toList
+        conn
+        (P.query accounts |> P.orderDesc "balance; DROP TABLE accounts")
+        |> Task.map
+               (\_ -> "IDENT GUARD FAIL — malicious column was NOT rejected")
+        |> Task.onError
+               (\_ -> Task.succeed "IDENT GUARD OK — malicious column rejected")
+
+
+printLines : List String -> ()
+printLines lines =
+    case lines of
+
+        [] ->
+            ()
+
+        x :: rest ->
+            let
+                _ = println x
+            in
+                printLines rest
+
+
+main : Task Error ()
+main =
+    P.connectRelational ()
+        |> Task.andThen
+               (\conn ->
+                   insertAll conn seed |> Task.andThen (\_ -> transfer conn)
+                       |> Task.andThen (\_ -> identGuardCheck conn)
+                       |> Task.andThen
+                              (\guardLine ->
+                                  P.toList
+                                      conn
+                                      (P.query accounts |> P.orderAsc "id")
+                                      |> Task.map (\rows -> ( guardLine, rows )))
+                       |> Task.map
+                              (\pair ->
+                                  let
+                                      _ = println (fst pair)
+                                  in
+                                      printLines
+                                          (List.map
+                                              (\a ->
+                                                  a.id ++ " " ++ a.owner
+                                                      ++ " => "
+                                                      ++ String.fromInt
+                                                             a.balance)
+                                              (snd pair))))

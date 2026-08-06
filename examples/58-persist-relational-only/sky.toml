@@ -1,0 +1,13 @@
+name = "persist-relational-only"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+# A RELATIONAL-ONLY Std.Persist app: it only ever calls `connectRelational`.
+# It STILL links the embedded BlueDB/Pebble subtree today, because every
+# universal verb's `case conn of` carries a `KvConn -> rt.Embedded_*` arm and
+# Sky's DCE is per-binding, not per-branch (BlueDB Phase-3 F2 — honest scope;
+# pruning Pebble here is a tracked Phase-4/5 optimisation). It builds + runs
+# correctly regardless.
+[database]
+driver = "sqlite"
+path = "data/relational.db"

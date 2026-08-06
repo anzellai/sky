@@ -2,8 +2,11 @@
 # Std.Persist SQL≡KV parity gate (BlueDB Phase 3c §8).
 #
 # Runs the SAME Collection + Cond/Query/CRUD source on the embedded BlueDB engine
-# AND a relational backend, asserting byte-identical results on the forced-semantics
-# subset (the program self-asserts + exits non-zero on divergence).
+# AND a relational backend, asserting byte-identical results on the forced-
+# semantics subset. FAIL-CLOSED (F1): the program prints `PARITY PASS` + exits 0
+# on agreement, or prints `PARITY FAIL` + exits NON-ZERO (System.exit 1) on any
+# divergence. This harness additionally asserts BOTH — `PARITY PASS` present AND
+# exit 0 — so a silently-swallowed divergence can never go green.
 #
 #   ./run.sh                 → embedded ≡ SQLite   (self-contained; always runnable)
 #   DATABASE_URL=postgres://…/… ./run.sh
@@ -27,4 +30,19 @@ else
     echo "parity: embedded ≡ SQLite ($SKY_DB_PATH)"
 fi
 
-./sky-out/app
+# Capture output + exit code WITHOUT tripping `set -e` (we assert on both).
+set +e
+out="$(./sky-out/app)"
+code=$?
+set -e
+echo "$out"
+
+if [ "$code" -ne 0 ]; then
+    echo "GATE FAIL: parity app exited non-zero ($code)" >&2
+    exit 1
+fi
+if ! echo "$out" | grep -q "PARITY PASS"; then
+    echo "GATE FAIL: 'PARITY PASS' not present in output (divergence or error)" >&2
+    exit 1
+fi
+echo "GATE OK: PARITY PASS present + exit 0"

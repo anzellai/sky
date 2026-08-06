@@ -461,11 +461,26 @@ fn build_inner(
         .out_dir_abs
         .clone()
         .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
-    // The embedded BlueDB engine (`bluedb/` + `rt/embedded_kernel.go`) is only
-    // linked when the program actually uses `Std.Persist`'s embedded arm — i.e.
-    // the emitted Go calls an `rt.Embedded_*` kernel. A non-Persist project (and a
-    // relational-only Persist project) must NOT compile the Pebble subtree
-    // (~10-18 MB + slow build). Detect it straight off the emitted source.
+    // The embedded BlueDB engine (`bluedb/` + `rt/embedded_kernel.go`) is linked
+    // only when the emitted Go statically references an `rt.Embedded_*` kernel.
+    //
+    // HONEST SCOPE (BlueDB Phase-3 F2): a NON-Persist project skips the Pebble
+    // subtree entirely — proven by `examples/01-hello-world` (no `bluedb/` in
+    // sky-out, ~small binary). But ANY project that imports `Std.Persist` and
+    // uses a universal verb links Pebble, EVEN IF it only ever calls
+    // `connectRelational` — because every universal verb's `case conn of` has a
+    // `KvConn -> rt.Embedded_*` arm, and Sky's DCE is per-binding, not
+    // per-branch, so both arms are always emitted. So the gate is really
+    // "non-Persist app" vs "any Persist app", NOT "relational-only" vs
+    // "embedded". `examples/58-persist-relational-only` is the relational-only
+    // Persist app that (correctly, honestly) still links Pebble today.
+    //
+    // TRACKED OPTIMISATION (Phase-4/5): pruning Pebble from a `connectRelational`-
+    // only program needs per-branch dead-code elimination (or splitting the
+    // embedded-arm kernels behind a module the relational path never imports) so
+    // the `KvConn` arm's `rt.Embedded_*` references vanish when unreached. That is
+    // a compiler-DCE change beyond Phase-3's scope; documented here rather than
+    // silently deferred.
     let persist_needed = source.contains("rt.Embedded_");
     if let Err(e) = write_out(
         &opts.repo_root,

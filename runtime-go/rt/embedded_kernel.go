@@ -569,5 +569,12 @@ func embeddedWriteErr(op string, err error) any {
 	if errors.Is(err, bluedb.ErrUniqueViolation) {
 		return ErrInvalidInput(op + ": unique constraint violation")
 	}
+	// A retry-exhausted SSI conflict surfaces as the typed Conflict Error (code
+	// 8) — the SAME class the SQL arm's Db_withSerializableTransaction maps a pg
+	// 40001 / SQLite BUSY to, so a caller's uniform retryWith / typed-Conflict
+	// handling spans both backends (BlueDB Phase-3 A3).
+	if errors.Is(err, bluedb.ErrConflict) {
+		return ErrConflict(op + ": transaction conflict (serialization failed after retries)")
+	}
 	return ErrFfi(op + ": " + err.Error())
 }

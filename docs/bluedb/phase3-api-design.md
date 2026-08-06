@@ -260,7 +260,11 @@ type Backend interface {
     // ---- Transaction (portable API; guarantee leaks — see §5) ----
     // Transaction runs a pure body under the backend's serializable transaction:
     //   embedded → Engine.Transact (SSI, Decision 4), bounded retry → ErrConflict
-    //   sql      → BEGIN … COMMIT (SERIALIZABLE / BEGIN IMMEDIATE), driver retry
+    //   sql      → Db_withSerializableTransaction (pg BeginTx SERIALIZABLE /
+    //              sqlite BEGIN IMMEDIATE over a pinned conn), bounded retry →
+    //              typed Conflict (code 8), UNIFORM with embedded. NOT the
+    //              generic Db.withTransaction (default isolation = READ
+    //              COMMITTED on pg), which stays for raw Std.Db users.
     // The body sees a Tx handle exposing txGet/txPut/txDelete/txQuery ONLY.
     // txQuery inside a txn MUST record a read-set (the SSI crux) — an indexable
     // leaf on a declared range-optimized index records a precise Txn.ScanRange;
@@ -348,7 +352,7 @@ column is the ported Sky `Store` path reached via `case conn of`):
 |---|---|---|
 | `get`/`put`/`insert`/`delete` | `Backend.Get/Put/Insert/Delete` over `Engine.Commit` + snapshot read | `Store.getByKey`/`upsert`/`insert`/`deleteByKey` (`ref:Persist.sky:217,231,261,387`) |
 | `toList`/`toCount` (`query`) | `Backend.Query/Count` — ordered scan + in-RAM `bluedbEvalCond` (§4.4) | `Store.toList/count (buildSqlQuery …)` (`ref:Persist.sky:718,737`) |
-| `transaction` | `Backend.Transaction` → `Engine.Transact` — **SSI** | `Store.transaction` → `Db.withTransaction` (`ref:Store.sky:918`): pg `SERIALIZABLE`, sqlite `BEGIN IMMEDIATE` |
+| `transaction` | `Backend.Transaction` → `Engine.Transact` — **SSI**, bounded retry → typed `Conflict` (code 8) | `sqlSerializableTransaction` → `Db_withSerializableTransaction` (`rt/db_auth.go`): pg `BeginTx SERIALIZABLE`, sqlite `BEGIN IMMEDIATE` (pinned conn) + bounded retry → typed `Conflict` (code 8). The generic `Db.withTransaction` (default isolation) is NOT used here — it stays for raw `Std.Db` users. |
 | `selectRaw` | `Backend.SelectRaw` — raw scan + in-RAM eval | `Store.selectRaw` (driver query) |
 | `watch`/`live` (single-instance) | in-process pub/sub — works today | ✅ in-process pub/sub — `publishChangeKernel` on the SQL write arms (`ref:Persist.sky:390`) — works today |
 | `watch`/`live` (CROSS-instance) | `Backend.(CrossInstanceReactive).Watch` — seam here; commit-path eval = Phase 4 | ❌ in v1 — boot-fatal ONLY for a multi-replica app declaring `Live.withReactive`/`liveInto` (§5); LISTEN/NOTIFY = post-v1 |

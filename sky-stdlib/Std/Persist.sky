@@ -78,6 +78,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Task as Task exposing (Task)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Char as Char
 import Sky.Core.Json.Encode as E exposing (Value)
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue(..))
@@ -278,10 +279,22 @@ selectRaw conn codec sql params =
             Store.selectRaw db codec sql params
 
 
--- | Run `fn` inside a serializable transaction (SSI, bounded conflict-retry). The
--- body is handed a `Conn` bound to the transaction; its `get`/`put`/`query` compose
--- atomically (a txn-scoped `query` records a read-set, §2.6). A body that returns
--- `Task.fail` rolls the transaction back and propagates the error.
+-- | Run `fn` inside a serializable transaction with bounded conflict-retry —
+-- the SAME guarantee on every backend:
+--
+--   * embedded (`connectKeyValue`) → SSI (the BlueDB engine's Decision-4
+--     commit-time validation);
+--   * Postgres (`connectRelational`) → `BEGIN … SERIALIZABLE` (= SSI, exact
+--     parity with embedded);
+--   * SQLite (`connectRelational`) → `BEGIN IMMEDIATE` (upfront write lock +
+--     the connect-time single-writer clamp).
+--
+-- A retry-exhausted conflict surfaces as the SAME typed `Conflict` error (code
+-- 8) on every backend, so a uniform `Task.retryWith` / typed-`Conflict` handler
+-- spans all three. The body is handed a `Conn` bound to the transaction; its
+-- `get`/`put`/`query` compose atomically (a txn-scoped `query` records a
+-- read-set, §2.6). A body that returns `Task.fail` rolls the transaction back
+-- and propagates the error.
 transaction : Conn cap -> (Conn cap -> Task Error a) -> Task Error a
 transaction conn fn =
     case conn of
@@ -290,7 +303,7 @@ transaction conn fn =
             embeddedTransaction store (\txStore -> fn (KvConn txStore))
 
         SqlConn db ->
-            Db.withTransaction db (\tx -> fn (SqlConn tx))
+            sqlSerializableTransaction db (\tx -> fn (SqlConn tx))
 
 -- ── Query builder ─────────────────────────────────────────────────────────────
 -- | A composable WHERE condition — build a leaf (`eq` / `gt` / `like` / …) and
@@ -352,6 +365,11 @@ offset n (Query q) =
 -- | Run the query, decoding each matching row via the collection's codec.
 toList : Conn cap -> Query a -> Task Error (List a)
 toList conn (Query q) =
+    guardIdents (Query q) |> Task.andThen (\_ -> toListRun conn (Query q))
+
+
+toListRun : Conn cap -> Query a -> Task Error (List a)
+toListRun conn (Query q) =
     case conn of
 
         KvConn store ->
@@ -381,6 +399,11 @@ toMaybe conn qr =
 -- | Run the query's predicate and return the matching row count.
 toCount : Conn cap -> Query a -> Task Error Int
 toCount conn (Query q) =
+    guardIdents (Query q) |> Task.andThen (\_ -> toCountRun conn (Query q))
+
+
+toCountRun : Conn cap -> Query a -> Task Error Int
+toCountRun conn (Query q) =
     case conn of
 
         KvConn store ->
@@ -567,6 +590,15 @@ sqlQueryObjects =
     Ffi.kernel "Db_queryObjects"
 
 
+-- The SERIALIZABLE transaction the SQL arm uses (pg SERIALIZABLE / SQLite BEGIN
+-- IMMEDIATE + bounded conflict-retry → typed `Conflict`), matching the embedded
+-- SSI arm. Distinct from `Db.withTransaction`, which keeps DEFAULT isolation for
+-- raw `Std.Db` users (§ Batch-1 / A1-A3).
+sqlSerializableTransaction : Db -> (Db -> Task Error a) -> Task Error a
+sqlSerializableTransaction =
+    Ffi.kernel "Db_withSerializableTransaction"
+
+
 -- ── Relational (SQL) arm — dialect-aware, forced-semantics rendering (§4.1) ──
 -- The SQL arm reuses `Std.Db`/`Std.Db.Store` for schema + CRUD; queries render a
 -- dialect-aware, forced-semantics SQL here (§0.6): NULLs sort FIRST ascending /
@@ -599,6 +631,65 @@ sqlCols coll =
 
         _ ->
             []
+
+
+-- ── Identifier validation (F6 — injection gate) ───────────────────────────────
+-- Column/table identifiers are interpolated into SQL text (values always bind as
+-- `?` params, so THEY are safe; identifiers are the surface). A dynamic or
+-- typo'd sort/filter column MUST fail fast with a clear error BEFORE it reaches
+-- the database — mirrors the Std.Db.Store fast-fail convention (Store.sky
+-- guardCols). Applies on BOTH arms: the embedded arm doesn't build SQL, but a
+-- bad identifier is still a bug worth catching uniformly.
+guardIdents : Query a -> Task Error ()
+guardIdents (Query q) =
+    let
+        idents =
+            collNameOf q.coll
+                :: (List.concatMap condIdents q.conds ++ List.map fst q.orders)
+    in
+        case List.find (\s -> not (isSafeIdent s)) idents of
+
+            Just bad ->
+                Task.fail
+                    (Error.invalidInput
+                        ("Std.Persist: invalid SQL identifier \"" ++ bad
+                            ++ "\" — column/table names must match [A-Za-z0-9_.]"))
+
+            Nothing ->
+                Task.succeed ()
+
+
+condIdents : Cond -> List String
+condIdents c =
+    case c of
+
+        CondLeaf col _ _ ->
+            [ col ]
+
+        CondNullC col _ ->
+            [ col ]
+
+        CondInC col _ ->
+            [ col ]
+
+        CondAndC kids ->
+            List.concatMap condIdents kids
+
+        CondOrC kids ->
+            List.concatMap condIdents kids
+
+        CondNotC k ->
+            condIdents k
+
+
+isSafeIdent : String -> Bool
+isSafeIdent s =
+    not (String.isEmpty s) && List.all isSafeIdentChar (String.toList s)
+
+
+isSafeIdentChar : Char -> Bool
+isSafeIdentChar c =
+    Char.isAlpha c || Char.isDigit c || c == '_' || c == '.'
 
 
 sqlWhere : String -> List Cond -> ( String, List SqlValue )

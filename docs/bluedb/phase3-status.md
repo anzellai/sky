@@ -157,8 +157,10 @@ embedded + SQLite + Postgres), and the conditional-materialisation build fix.
    single-collection-scan-only, §4.4). CRUD + codec-driven DDL reuse `Std.Db.Store`
    (`fromCodec`/`primaryKey`/`create`/`upsert`/`insert`/`findBy`/`delete`); queries render
    dialect-aware SQL in Sky and decode via the reused `Db_queryObjects` kernel (row columns →
-   codec JSON → `Codec.fromJson`). `transaction` → a real `Db.withTransaction` BEGIN…COMMIT. The
-   `case conn of` dispatch stays in Sky; the SQL text is never re-rendered in Go (Design B).
+   codec JSON → `Codec.fromJson`). `transaction` → `sqlSerializableTransaction`
+   (`Db_withSerializableTransaction`, see the boundary-grill closure §"A1/A2/A3" below), NOT the
+   generic `Db.withTransaction`. The `case conn of` dispatch stays in Sky; the SQL text is never
+   re-rendered in Go (Design B).
 
 2. **Dialect-aware, forced-semantics renderer (§0.6/§4.1)** — in `Std.Persist` (NOT `Std.Db.Store`,
    so legacy `Store` SQL users are byte-for-byte UNCHANGED — the "gate the new behaviour"
@@ -174,8 +176,10 @@ embedded + SQLite + Postgres), and the conditional-materialisation build fix.
 3. **KV≡SQL parity gate (§0.6/§8)** — `examples/57-persist-parity` (+ `run.sh`). The SAME
    `Collection` + `Cond`/`Query`/CRUD source runs on the embedded engine AND a relational backend;
    the program self-asserts byte-identical results on the forced-semantics subset (equality, non-null
-   `ORDER BY`, integer ranges, `inList`, case-insensitive ASCII `LIKE`, `or_`+`orderDesc`, count,
-   insert). Proven LIVE:
+   AND nullable `ORDER BY` with forced NULLS FIRST, DISCRIMINATING integer ranges/order (2/10/42/100),
+   `inList`, `isNull`/`notNull`, case-insensitive ASCII `LIKE`, `or_`+`orderDesc`, count, insert). The
+   gate is **fail-closed** (`System.exit 1` on divergence — see the boundary-grill closure §F1 below).
+   Proven LIVE:
    - **embedded ≡ SQLite** — self-contained, `sky run` prints `PARITY PASS` (the always-runnable gate).
    - **embedded ≡ Postgres** — `DATABASE_URL=postgres://… ./run.sh` (CI-gated; verified live against a
      Postgres 16 instance, `PARITY PASS`). The `%a%` LIKE probe is the discriminator: it returns
@@ -184,13 +188,19 @@ embedded + SQLite + Postgres), and the conditional-materialisation build fix.
    + `runtime-go/bluedb/like_test.go` (forced case-insensitive ASCII `LIKE`).
 
 4. **Conditional `bluedb` materialisation (the 3b build regression fix)** —
-   `rust/crates/project/src/build.rs`. `write_out` now materialises `bluedb/` (and `rt/embedded_kernel.go`,
-   the sole `sky-app/bluedb` importer in `rt`) ONLY when the emitted `main.go` calls an `rt.Embedded_*`
-   kernel (i.e. the program uses `Std.Persist`'s embedded arm). A non-Persist / relational-only project
-   never compiles the ~10-18 MB Pebble subtree. Verified: `examples/01-hello-world` clean-builds with NO
-   `sky-out/bluedb/` and NO `sky-out/rt/embedded_kernel.go`; `examples/56-persist-embedded` still gets
-   bluedb and runs. Nothing else in `rt` references the `Embedded_*` kernels, so dropping that one file
-   leaves `rt` self-contained.
+   `rust/crates/project/src/build.rs`. `write_out` materialises `bluedb/` (and `rt/embedded_kernel.go`,
+   the sole `sky-app/bluedb` importer in `rt`) ONLY when the emitted `main.go` statically references an
+   `rt.Embedded_*` kernel. **HONEST SCOPE (boundary-grill F2 — corrected):** the gate is really
+   "non-Persist app" vs "ANY Persist app", NOT "relational-only" vs "embedded". Every universal verb's
+   `case conn of` has a `KvConn -> rt.Embedded_*` arm, and Sky's DCE is **per-binding, not per-branch**,
+   so a `connectRelational`-only program STILL emits `rt.Embedded_*` and STILL links Pebble. Verified:
+   `examples/01-hello-world` (non-Persist) clean-builds with NO `sky-out/bluedb/` and NO
+   `sky-out/rt/embedded_kernel.go`; `examples/58-persist-relational-only` (relational-only Persist)
+   builds + runs correctly but DOES link Pebble (honest); `examples/56-persist-embedded` gets bluedb and
+   runs. **Tracked optimisation (Phase 4/5):** pruning Pebble from a relational-only Persist app needs
+   per-branch DCE (or splitting the embedded-arm kernels behind a module the relational path never
+   imports) so the unreached `KvConn` arm's `rt.Embedded_*` references vanish — a compiler-DCE change
+   beyond Phase 3. Documented here, not silently deferred.
 
 ### Verification
 
@@ -200,6 +210,64 @@ PASS`; `examples/56-persist-embedded` builds+runs (with bluedb); `examples/01-he
 WITHOUT bluedb. `sky fmt` idempotent on the edited `.sky`. **No compiler-semantics change** — the
 relational arm is pure stdlib Sky + reused `Std.Db` kernels; the only new kernel is the pure
 `Db_dialect`, resolved generically (no `hir`/`kernel_api` entry).
+
+## Phase-3 boundary-grill closure (A1–A3, F1–F6)
+
+A 2-adversary boundary grill (`docs/bluedb/phase3-grill-findings.md`) found the SQL-arm
+`transaction` did NOT match the embedded serializable guarantee and the parity gate did not fail
+closed. Closed as follows:
+
+- **A1/A2/A3 — serializable SQL transaction (the core fix).** The Persist SQL arm's `transaction`
+  now dispatches to **`Db_withSerializableTransaction`** (`runtime-go/rt/db_auth.go`), NOT the
+  generic `Db.withTransaction` (which was `d.conn.Begin()` = default isolation = READ COMMITTED on
+  Postgres → write-skew/phantoms). Per backend:
+  - **Postgres** → `BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})` = real
+    SERIALIZABLE (= SSI, exact parity with the embedded engine).
+  - **SQLite** → an explicit `BEGIN IMMEDIATE … COMMIT` over a **pinned `*sql.Conn`** (an upfront
+    write lock). `modernc.org/sqlite` IGNORES `sql.TxOptions.Isolation` and only honours a
+    per-connection `_txlock` DSN, so `BeginTx(LevelSerializable)` would silently run `BEGIN
+    DEFERRED` — the immediate lock is driven manually. (Note A2: with `SetMaxOpenConns(1)` the two
+    transactions are ALSO serialized onto one connection, so on SQLite the isolation mode cannot be
+    the DISCRIMINATOR — `BEGIN IMMEDIATE` is the STATED mechanism, MaxOpenConns(1) is the
+    additional serializer. The discriminating proof is on Postgres.)
+  - **Bounded conflict-retry** (maxAttempts = 8, mirroring `bluedb.Transact`): a pg `40001`
+    serialization_failure / `40P01` deadlock (and a SQLite BUSY/locked) maps to the **SAME typed
+    `Conflict` Error (code 8)** the embedded arm now surfaces (`embeddedWriteErr` maps
+    `bluedb.ErrConflict` → `ErrConflict`), and is retried under the same bound. So a caller's uniform
+    `Task.retryWith` / typed-`Conflict` handling spans BOTH backends. The generic `Db.withTransaction`
+    is UNCHANGED (default isolation, no retry) for raw `Std.Db` users.
+  - **Discriminating proof:** `runtime-go/rt/persist_writeskew_test.go` runs the classic on-call
+    doctors write-skew concurrently. On **live Postgres** it PROVES discrimination: READ COMMITTED
+    → 0 on-call (invariant VIOLATED), serializable path → 1 on-call (HELD). Embedded (real SSI) and
+    SQLite (BEGIN IMMEDIATE + MaxOpenConns(1)) always HOLD.
+
+- **F1 — the parity gate fails closed.** `examples/57-persist-parity` wraps `main` in
+  `Task.onError` that prints `PARITY FAIL` and calls **`System.exit 1`** (a bare `Task.fail` at
+  `main` is swallowed by `rt.AnyTaskRun` → exit 0). `run.sh` additionally asserts `PARITY PASS`
+  present AND exit 0. A perturbed expected value exits non-zero — the gate now proves something.
+
+- **F4 — nullable column + `isNull`/`notNull` + nullable ORDER BY** are now exercised
+  (`nickname : Maybe String`; probes for `isNull`/`notNull` + `orderAsc "nickname"` forcing NULLS
+  FIRST three-way).
+
+- **F5 — discriminating integer values.** Ages are `2/10/42/100` (lexical ≠ numeric), so an int
+  `ORDER BY`/range surfaces a text-vs-numeric collation bug.
+
+- **F3 — ASCII-LIKE scope (honest, explicit).** The forced `LIKE` collation is case-insensitive for
+  **ASCII ONLY**. Non-ASCII case-folding is OUT of the forced-semantics subset and is
+  backend-specific: Postgres `ILIKE` unicode-folds (`É`↔`é`); SQLite's `LIKE` and the embedded
+  `likeMatch` (`asciiFold`, `runtime-go/bluedb/cond.go`) do NOT. The gate seed is ASCII so the three
+  backends agree; a non-ASCII `LIKE` is deliberately not part of the parity contract. The `%A%`
+  (uppercase-pattern) probe proves ASCII case-insensitivity is identical three-way.
+
+- **F6 — identifier injection gate.** `Std.Persist` validates every column/table identifier against
+  `[A-Za-z0-9_.]` (`isSafeIdent`/`guardIdents`) BEFORE it reaches the interpolated SQL (values always
+  bind as `?` params — identifiers are the surface). A dynamic/typo sort or filter column fails fast
+  with a clear error. Proven by `examples/58-persist-relational-only` (`IDENT GUARD OK` — a malicious
+  `ORDER BY "balance; DROP TABLE accounts"` is rejected).
+
+- **F2 — materialisation honesty** — see §"What shipped" point 4 above (corrected: any Persist app
+  links Pebble; pruning it from relational-only apps is a tracked Phase-4/5 per-branch-DCE item).
 
 ### Deferred to Phase 4 (explicit, not a Phase-3 gap)
 

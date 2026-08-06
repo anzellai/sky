@@ -17,7 +17,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib" // Postgres driver registered as "pgx"
+	"github.com/jackc/pgx/v5/pgconn"  // typed pg error codes (SQLSTATE)
+	"github.com/jackc/pgx/v5/stdlib"  // Postgres driver registered as "pgx"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -37,6 +38,13 @@ type SkyDb struct {
 	// instead of the pool, so the body's writes are actually inside the
 	// BEGIN…COMMIT. nil for the ordinary pool handle.
 	tx *sql.Tx
+	// pinnedExec is non-nil only for the SQLite serializable-transaction
+	// handle (BlueDB Persist arm, Db_withSerializableTransaction). SQLite's
+	// modernc driver ignores sql.TxOptions.Isolation and only honours a
+	// per-connection `_txlock` DSN, so a `BEGIN IMMEDIATE` serializable txn is
+	// driven manually over a pinned *sql.Conn (executor below routes to it).
+	// nil for every other handle, including the generic Db.withTransaction one.
+	pinnedExec dbExecutor
 }
 
 // dbExecutor is the intersection of *sql.DB and *sql.Tx — both expose the
@@ -55,7 +63,31 @@ func (d *SkyDb) executor() dbExecutor {
 	if d.tx != nil {
 		return d.tx
 	}
+	if d.pinnedExec != nil {
+		return d.pinnedExec
+	}
 	return d.conn
+}
+
+// connExecutor adapts a pinned *sql.Conn to the dbExecutor interface (which
+// wants the context-free Exec/Query/QueryRow shape *sql.DB and *sql.Tx expose).
+// Used only by the SQLite serializable-transaction path, which drives an
+// explicit `BEGIN IMMEDIATE … COMMIT` over one pinned connection.
+type connExecutor struct {
+	conn *sql.Conn
+	ctx  context.Context
+}
+
+func (c connExecutor) Exec(query string, args ...any) (sql.Result, error) {
+	return c.conn.ExecContext(c.ctx, query, args...)
+}
+
+func (c connExecutor) Query(query string, args ...any) (*sql.Rows, error) {
+	return c.conn.QueryContext(c.ctx, query, args...)
+}
+
+func (c connExecutor) QueryRow(query string, args ...any) *sql.Row {
+	return c.conn.QueryRowContext(c.ctx, query, args...)
 }
 
 // Db_dialect exposes the connection's SQL dialect to Sky as "postgres" or
@@ -1417,6 +1449,212 @@ func dbWithTransactionBody(capDb, capBody any) any {
 		}
 		return result
 	}
+}
+
+// ── Serializable transaction (BlueDB Std.Persist SQL arm — A1/A2/A3) ──────────
+//
+// The generic Db_withTransaction above uses d.conn.Begin() = database/sql's
+// DEFAULT isolation (READ COMMITTED on Postgres), which admits write-skew and
+// phantoms — NOT the serializable guarantee the BlueDB embedded arm delivers.
+// Db_withSerializableTransaction is the SQL-arm entry the Std.Persist
+// `transaction` verb calls so its guarantee matches the embedded SSI arm:
+//
+//   • Postgres → BeginTx(LevelSerializable) = real SERIALIZABLE (= SSI, exact
+//     parity with the embedded engine's Decision-4 validation).
+//   • SQLite   → an explicit `BEGIN IMMEDIATE … COMMIT` over a pinned *sql.Conn
+//     (an upfront write lock). modernc.org/sqlite IGNORES sql.TxOptions.Isolation
+//     and only honours a per-connection `_txlock` DSN, so a serializable txn is
+//     driven manually here rather than via BeginTx(LevelSerializable) — the
+//     latter would silently run BEGIN DEFERRED. With SQLite's single-writer lock
+//     (and the connect-time SetMaxOpenConns(1)) this is serializable.
+//
+// Bounded conflict-retry mirrors the embedded arm (bluedb Transact, maxAttempts
+// = 8): a pg 40001 serialization_failure / 40P01 deadlock (and a SQLite
+// BUSY/locked) maps to the SAME typed `Conflict` Error (code 8) the embedded arm
+// surfaces, and is retried under the same bound. So a caller's uniform
+// retryWith / typed-`Conflict` handling now spans BOTH backends.
+
+// serializationConflictText reports whether an error/result rendering carries a
+// serialization-conflict marker (pg 40001/40P01; SQLite BUSY/locked).
+func serializationConflictText(s string) bool {
+	ls := strings.ToLower(s)
+	return strings.Contains(s, "40001") ||
+		strings.Contains(ls, "40p01") ||
+		strings.Contains(ls, "could not serialize") ||
+		strings.Contains(ls, "deadlock detected") ||
+		strings.Contains(ls, "database is locked") ||
+		strings.Contains(ls, "database table is locked") ||
+		strings.Contains(ls, "sqlite_busy")
+}
+
+// dbErrIsSerializationConflict classifies a RAW driver error (from BeginTx /
+// Commit) as a retryable serialization conflict — typed pgconn code first, then
+// the textual fallback (covers SQLite BUSY/locked, whose driver has no code).
+func dbErrIsSerializationConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "40001" || pgErr.Code == "40P01" {
+			return true
+		}
+	}
+	return serializationConflictText(err.Error())
+}
+
+// dbResultSerializationConflict classifies a body-returned Sky Err: a pg 40001
+// raised mid-body surfaces through Db_exec/Db_query as an Ffi Error whose message
+// carries the SQLSTATE, so the marker survives into the Err value's rendering.
+func dbResultSerializationConflict(sr SkyResult[any, any]) bool {
+	return serializationConflictText(fmt.Sprintf("%v", sr.ErrValue))
+}
+
+// dbRunTxBody runs the transaction body with a panic guard (a panic mid-body —
+// e.g. a bad Coerce — must roll back, not crash the process).
+func dbRunTxBody(runBody func(*SkyDb) any, txDb *SkyDb) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = Err[any, any](ErrUnexpected(fmt.Sprintf("serializable transaction: body panicked: %v", r)))
+		}
+	}()
+	return runBody(txDb)
+}
+
+// dbSerializableTxAttempt runs ONE transaction attempt. When serializable is
+// true it uses the strongest per-backend isolation (pg SERIALIZABLE / SQLite
+// BEGIN IMMEDIATE); when false it uses database/sql's default (READ COMMITTED on
+// pg) — the false path is the discriminating baseline the write-skew e2e uses to
+// prove the guarantee actually differs. Returns (result, conflict, fatal):
+// conflict=true ⇒ the caller retries; fatal!=nil ⇒ an unrecoverable driver error.
+func dbSerializableTxAttempt(d *SkyDb, serializable bool, runBody func(*SkyDb) any) (any, bool, error) {
+	ctx := context.Background()
+
+	// SQLite serializable: manual BEGIN IMMEDIATE over a pinned connection
+	// (modernc ignores TxOptions.Isolation — see the header note).
+	if serializable && d.driver != "pgx" {
+		conn, err := d.conn.Conn(ctx)
+		if err != nil {
+			return nil, dbErrIsSerializationConflict(err), errIfNotConflict(err)
+		}
+		defer conn.Close()
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			return nil, dbErrIsSerializationConflict(err), errIfNotConflict(err)
+		}
+		txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver,
+			pinnedExec: connExecutor{conn: conn, ctx: ctx}}
+		result := dbRunTxBody(runBody, txDb)
+		sr, isResult := result.(SkyResult[any, any])
+		if !isResult || sr.Tag != 0 {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+			if isResult && dbResultSerializationConflict(sr) {
+				return result, true, nil
+			}
+			return result, false, nil
+		}
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+			if dbErrIsSerializationConflict(err) {
+				return nil, true, nil
+			}
+			return Err[any, any](ErrFfi("tx commit: " + err.Error())), false, nil
+		}
+		return result, false, nil
+	}
+
+	// Postgres serializable, OR the read-committed discrimination baseline.
+	var opts *sql.TxOptions
+	if serializable {
+		opts = &sql.TxOptions{Isolation: sql.LevelSerializable}
+	}
+	tx, err := d.conn.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, serializable && dbErrIsSerializationConflict(err), errIfNotConflict2(err, serializable)
+	}
+	txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
+	result := dbRunTxBody(runBody, txDb)
+	sr, isResult := result.(SkyResult[any, any])
+	if !isResult || sr.Tag != 0 {
+		_ = tx.Rollback()
+		if isResult && serializable && dbResultSerializationConflict(sr) {
+			return result, true, nil
+		}
+		return result, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		if serializable && dbErrIsSerializationConflict(err) {
+			return nil, true, nil
+		}
+		return Err[any, any](ErrFfi("tx commit: " + err.Error())), false, nil
+	}
+	return result, false, nil
+}
+
+// errIfNotConflict returns err unless it is a serialization conflict (which the
+// caller signals separately so the loop retries instead of aborting).
+func errIfNotConflict(err error) error {
+	if dbErrIsSerializationConflict(err) {
+		return nil
+	}
+	return err
+}
+
+func errIfNotConflict2(err error, serializable bool) error {
+	if serializable && dbErrIsSerializationConflict(err) {
+		return nil
+	}
+	return err
+}
+
+// dbTxBackoff: bounded exponential backoff between retries (mirrors bluedb
+// Transact's backoff shape; capped so a livelock can't spin hot).
+func dbTxBackoff(attempt int) {
+	base := time.Duration(1<<uint(attempt)) * time.Millisecond
+	if base > 64*time.Millisecond {
+		base = 64 * time.Millisecond
+	}
+	time.Sleep(base)
+}
+
+// dbWithSerializableTransactionCore is the bounded optimistic loop.
+func dbWithSerializableTransactionCore(d *SkyDb, runBody func(*SkyDb) any) any {
+	const maxAttempts = 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		result, conflict, fatal := dbSerializableTxAttempt(d, true, runBody)
+		if fatal != nil {
+			return Err[any, any](ErrFfi("tx: " + fatal.Error()))
+		}
+		if !conflict {
+			return result
+		}
+		dbTxBackoff(attempt)
+	}
+	// Retry bound exhausted → typed Conflict (code 8), UNIFORM with the embedded
+	// arm so retryWith / typed-Conflict handling spans both backends (A3).
+	return Err[any, any](ErrConflict("transaction conflict: serialization failed after " +
+		strconv.Itoa(maxAttempts) + " attempts"))
+}
+
+// Db_withSerializableTransaction : Db -> (Db -> Task Error a) -> Task Error a
+// The serializable-isolation transaction the Std.Persist SQL arm dispatches to.
+// The generic Db_withTransaction keeps DEFAULT isolation for raw Std.Db users.
+func Db_withSerializableTransaction(db any, body any) any {
+	capDb, capBody := db, body
+	return func() any {
+		return WithDbSpan(dbSystemOf(capDb), "transaction", "BEGIN",
+			func() any { return dbWithSerializableTransactionBody(capDb, capBody) })
+	}
+}
+
+func dbWithSerializableTransactionBody(capDb, capBody any) any {
+	d, ok := capDb.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.withSerializableTransaction: not a Db"))
+	}
+	return dbWithSerializableTransactionCore(d, func(txDb *SkyDb) any {
+		return AnyTaskRun(sky_call(capBody, txDb))
+	})
 }
 
 // appliedMigration — a row of the _sky_migrations bookkeeping table.
