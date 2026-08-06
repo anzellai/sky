@@ -2,6 +2,7 @@ package bluedb
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/cockroachdb/pebble/v2"
 )
@@ -33,11 +34,17 @@ func (e *pebbleEngine) committer() {
 	}
 }
 
-// process assigns ONE commitTs to the whole group, encodes every write's data
-// version + each job's opaque changelog entry + the commit metadata into ONE
-// Pebble Batch, enforces the logical-commit invariant, Apply(Sync)s once, and acks
-// only AFTER Apply returns (C2 durable-on-ack). Pebble's Batch is atomic — a failed
-// Apply applies nothing — so the old hand-rolled torn-batch rollback is gone (C3).
+// process assigns a DISTINCT commitTs PER JOB (in FIFO drain order — strictly
+// increasing, no collision), encodes every write's data version + each job's opaque
+// changelog entry + the commit metadata into ONE Pebble Batch, enforces the
+// logical-commit invariant, Apply(Sync)s once, and acks only AFTER Apply returns (C2
+// durable-on-ack). ONE batch + ONE Apply(Sync) means the fsync is still amortized
+// over the whole drained group (throughput preserved); only timestamp assignment is
+// per-job. A per-batch commitTs would collide every job's data + changelog keys at
+// one ts → all but the last silently overwritten (Fix-2). Pebble's Batch is atomic —
+// a failed Apply applies nothing — so the old hand-rolled torn-batch rollback is gone
+// (C3). Per-job commitTs also aligns forward: Phase-2 SSI needs each transaction to
+// carry its own commitTs.
 func (e *pebbleEngine) process(batch []*commitJob) {
 	if e.sealed.Load() {
 		for _, j := range batch {
@@ -47,17 +54,22 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 	}
 
 	// SEAL on a synchronous durability panic. At the pinned Pebble version a fatal
-	// write-path FS fault surfaces as a panic (Pebble treats it as unrollbackable). If
-	// it unwinds through Apply on THIS goroutine, convert it to seal + errored ack
-	// (contained fail-loud) rather than letting it crash the process. A fault that
-	// panics on a Pebble BACKGROUND goroutine (e.g. an async memtable flush) is outside
-	// any recover here — that is Pebble's own unrecoverable-fault contract. Acks happen
-	// only AFTER Apply in the normal path, so on a panic no job has been acked yet and
-	// this recover acks each exactly once.
+	// write-path FS fault surfaces as a panic: quietLogger.Fatalf panics (pebble_engine.go)
+	// and it unwinds SYNCHRONOUSLY through Apply on THIS goroutine (the WAL sync is
+	// synchronous under pebble.Sync + !noSyncWait). Convert it to seal + errored ack
+	// (contained fail-loud) rather than letting it crash the process. A fault that panics
+	// on a Pebble BACKGROUND goroutine (e.g. an async memtable flush) is outside any
+	// recover here — that is Pebble's own unrecoverable-fault contract. Acks happen only
+	// AFTER Apply in the normal path, so on a panic no job has been acked yet and this
+	// recover acks each exactly once — every faulted write gets an ERRORED ack, never a
+	// false nil. A nil ack therefore always means durable.
 	acked := false
 	defer func() {
 		if r := recover(); r != nil && !acked {
 			e.sealed.Store(true)
+			// Log to stderr at the seal so the durability fault is observable (it is
+			// otherwise swallowed into per-job error acks).
+			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
 			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
 			for _, j := range batch {
 				j.done <- CommitResult{Err: err}
@@ -65,12 +77,18 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 		}
 	}()
 
-	commitTs := e.hlc.next() // §3.3 — strictly monotonic, floored across restart
 	b := e.db.NewBatch()
 	defer b.Close()
 
+	// One DISTINCT commitTs per job, assigned in FIFO drain order so commit-order ==
+	// enqueue-order == strictly-increasing commitTs (Fix-2). jobTs[i] is job i's ts.
+	jobTs := make([]HLC, len(batch))
 	var hasWrites bool
-	for _, j := range batch {
+	var lastCommitTs HLC
+	for i, j := range batch {
+		commitTs := e.hlc.next() // §3.3 — strictly monotonic, floored across restart
+		jobTs[i] = commitTs
+		lastCommitTs = commitTs // FIFO → the last job carries the highest commitTs
 		for _, w := range j.req.Writes {
 			hasWrites = true
 			k := encodeDataKey(w.UserKey, commitTs)
@@ -84,13 +102,15 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 			}
 		}
 		if len(j.req.ChangelogPayload) > 0 {
+			// Keyed by this job's OWN commitTs → distinct changelog entries, none lost.
 			_ = b.Set(encodeChangelogKey(commitTs), j.req.ChangelogPayload, nil)
 		}
 	}
 
-	// Commit metadata IN THE SAME batch (§3.4): hlc_hi + changelog_cursor. Because
-	// Apply is all-or-nothing, metadata can never diverge from the data it describes.
-	hlcBytes := encodeHLC(commitTs)
+	// Commit metadata IN THE SAME batch (§3.4): hlc_hi + changelog_cursor set to the
+	// LAST (highest) job's commitTs. Because Apply is all-or-nothing, metadata can never
+	// diverge from the data it describes.
+	hlcBytes := encodeHLC(lastCommitTs)
 	_ = b.Set(encodeMetaKey(metaHLCHi), hlcBytes, nil)
 	_ = b.Set(encodeMetaKey(metaChangelogCursor), hlcBytes, nil)
 
@@ -120,12 +140,19 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 	// seal-on-unrollbackable-error contract (fault_test.go:143).
 	if err != nil {
 		e.sealed.Store(true)
+	} else {
+		// Durable now: advance durableHi to the highest just-applied commitTs, BEFORE the
+		// ack (Fix-3). GC's advanceThreshold clamps its candidate to durableHi so the
+		// persisted GC threshold T can never outrun the durable WAL — closing the crash
+		// window where recovery replays hlc_hi < gc_threshold (reader wedge + trimmed
+		// changelog tail). Only advanced on SUCCESS; a failed Apply leaves durableHi put.
+		e.advanceDurableHi(lastCommitTs)
 	}
 
-	res := CommitResult{CommitTs: commitTs, Err: err}
 	acked = true
-	for _, j := range batch {
-		j.done <- res // ACK ONLY AFTER Apply returns
+	for i, j := range batch {
+		// Each job acks with ITS OWN commitTs (Fix-2) — the shared per-batch ts is gone.
+		j.done <- CommitResult{CommitTs: jobTs[i], Err: err} // ACK ONLY AFTER Apply returns
 	}
 
 	// TODO(phase1b): non-blocking changelog fan-out to subscribers AFTER ack, off the

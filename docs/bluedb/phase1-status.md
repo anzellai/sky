@@ -21,11 +21,12 @@
 | `base.CheckComparer` signature | `(cmp, prefixes, suffixes)` | CONFIRMED `CheckComparer(c *Comparer, prefixes, suffixes [][]byte) error`, re-exported as `pebble.CheckComparer`. **Also discovered: it STRIPS leading bytes off each prefix and requires the stripped prefix to still Split correctly.** | Forced `Split` to be **tag-independent** (pure trailing-length-byte) — see the deviation below. |
 | `DB.Apply` / `WriteOptions{Sync}` | `db.Apply(batch, pebble.Sync)` | CONFIRMED. `pebble.Sync`/`pebble.NoSync` are exported `*WriteOptions`. `Set/Delete` take `*WriteOptions` (nil OK). | Committer uses `db.Apply(b, pebble.Sync)`. |
 | `NewSnapshot` | `(*DB).NewSnapshot() *Snapshot`; `Get`/`NewIter`/`Close` | CONFIRMED. | Every `Reader` pins a `*pebble.Snapshot`. |
-| **R-U3** silence Logger | no-op `Logger`; `DiscardLogger` may not exist | CONFIRMED no reliable `DiscardLogger`. **The Logger interface has THREE methods (`Infof`/`Errorf`/`Fatalf`), not two as the doc said.** | `quietLogger` implements all three. |
+| **R-U3** silence Logger | no-op `Logger`; `DiscardLogger` may not exist | CONFIRMED no reliable `DiscardLogger`. **The Logger interface has THREE methods (`Infof`/`Errorf`/`Fatalf`), not two as the doc said.** | `quietLogger` silences `Infof`/`Errorf`; **`Fatalf` PANICS (Fix-1) — a no-op there breaks durability** (see the Fatalf row below). |
+| **`Logger.Fatalf` must not be a no-op** (Fix-1, net-new critical finding) | design assumed a silent Logger was safe | **At v2.1.6, `applyInternal` (db.go:882-897) calls `Logger.Fatalf(...)` on a fatal WAL commit error and then FALLS THROUGH to `return nil`.** The stock logger's `Fatalf` does `os.Exit(1)`; a NO-OP made `Apply(Sync)` return `nil` for a write that never fsync'd → the committer acked `Err:nil` for a lost write → **acked⇒durable violated deterministically.** | `quietLogger.Fatalf` now **panics**. Under `pebble.Sync` + `!noSyncWait` the WAL sync is synchronous, so the panic unwinds through `Apply` on the committer goroutine, where `process()`'s deferred recover seals the engine + delivers an ERRORED ack (never a false `nil`). Asserted by the rewritten `TestInjectedFaultsReopenConsistent`. |
 | **R-U2** cgo-zstd build tag | tag name `pebblegozstd` (unconfirmed) | **CONFIRMED VERBATIM.** `internal/compression/zstd_cgo.go` is `//go:build cgo && !pebblegozstd` (DataDog/zstd, cgo); `zstd_nocgo.go` is `//go:build !cgo \|\| pebblegozstd` (pure-Go klauspost). Under `CGO_ENABLED=0` only pure-Go zstd is in the graph; under `CGO_ENABLED=1` DataDog/zstd (cgo) is pulled **unless** `-tags pebblegozstd`. | **Build-integration guidance for `sky build`'s cgo-retry path (`run_go_build_once`): pass `-tags pebblegozstd` so the retry stays cgo-free for Pebble compression.** (Wiring into `build.rs` is a build-integration follow-up, not part of the engine package.) |
 | **R-U1** `errorfs` shape | injector/op differs released-vs-master | **RESOLVED at v2.1.6 (the "master" shape).** `errorfs.Injector` is `interface { MaybeError(op errorfs.Op) error }`; `errorfs.Op` is a STRUCT `{ Kind OpKind; Path string; Offset int64 }` (NOT an int enum); `errorfs.InjectorFunc(func(Op) error)` adapts a plain func; `errorfs.Wrap(baseFS vfs.FS, inj Injector) *FS`; `errorfs.ErrInjected` is the sentinel. OpKinds used: `OpFileWrite` / `OpFileSync` / `OpFileSyncData` / `OpCreate`. No in-package `And/Or/PathMatch` DSL needed (a plain `InjectorFunc` closure over `op.Kind` suffices). Crash simulation uses `vfs.NewCrashableMem()` + `(*MemFS).CrashClone(vfs.CrashCloneCfg{})` — the FS state containing exactly the last-SYNCED data (deterministic). Harness in `crashsim_test.go`. |
 | `Checkpoint` hot-backup | backup rows | Still DEFERRED (out of the 1b engine-substrate scope; L2/backup phase). Crash-consistency is proven instead via `vfs.CrashClone` recovery, which is the canonical Pebble crash-consistency method. |
-| **Durability-fault surfacing** (net-new finding) | design assumed injected faults surface as an `Apply` error | **At v2.1.6 on a mem FS, an injected FS fault is EITHER absorbed by Pebble (the commit still acks; a faulted WAL write can leave that write unsynced and truncates the recoverable WAL tail per WAL semantics) OR — for a truly fatal write-path fault — surfaces as a PANIC on a background flush goroutine (Pebble's unrecoverable-fault contract). It is NOT returned synchronously from `Apply`.** So the durability invariants are proven via `CrashClone` (recovery to the last-synced prefix), and the committer's seal is driven by (a) an `Apply`-returned error and (b) a synchronous durability panic recovered on the committer goroutine. |
+| **Durability-fault surfacing** (net-new finding, revised by Fix-1) | design assumed injected faults surface as an `Apply` error | **At v2.1.6 a fatal WAL-sync fault is NOT returned synchronously from `Apply` — Pebble calls `Logger.Fatalf` then `return nil` (db.go:882-897).** With `quietLogger.Fatalf` panicking (Fix-1), that fatal path unwinds SYNCHRONOUSLY through `Apply` on the committer goroutine (the WAL sync is synchronous under `pebble.Sync` + `!noSyncWait`), where `process()`'s recover seals + errored-acks. A NON-fatal faulted WAL write can still leave that write unsynced (truncated WAL tail per WAL semantics) with the commit acking — that class is proven via `CrashClone` recovery-to-last-synced-prefix. So the committer's seal is driven by (a) an `Apply`-returned error and (b) the synchronous Fatalf-panic recovered on the committer goroutine; a `nil` ack always means durable. |
 | **Single-process dir lock** | design proposed a `flock` port | **Pebble PROVIDES IT — do not reinvent.** `pebble.Open` acquires an exclusive OS lock (a `LOCK` file; `flock` on unix via `vfs/file_lock_unix.go`, `MemFS.Lock` → `EAGAIN` in-process). A second `Open` of the same directory FAILS, including from the same process. Asserted by `TestSecondOpenFailsSingleProcessLock`. No custom flock added. |
 
 ## LOCKED-format deviations from the design doc (necessary, documented)
@@ -145,6 +146,56 @@ Everything else in §2 is as locked: `Name = "skydb.mvcc.v1"` (permanent); data 
 
 **PHASE 1 (the engine substrate) is COMPLETE** and ready for the phase-boundary
 grill + Judge. The C1–C7 interface contracts (§8.2) are all satisfied and frozen.
+
+## DONE (Phase 1b hardening — grill-found blocking fixes)
+
+Two fresh-context adversaries traced three blocking holes to exact lines; all three
+are now closed with regression tests (all `-race` green; group-commit throughput
+re-measured at ~51–54k durable-writes/s, unchanged — the fsync stays per-batch).
+
+- **Fix-1 — `quietLogger.Fatalf` no-op defeated Pebble's fail-stop (CRITICAL,
+  durability).** Pebble's `applyInternal` (db.go:882-897, v2.1.6) calls `Logger.Fatalf`
+  on a WAL fsync failure then `return nil`; a no-op `Fatalf` made `Apply(Sync)` ack
+  `Err:nil` for a NON-durable write. Now `Fatalf` **panics** (`pebble_engine.go`); the
+  panic unwinds synchronously through `Apply` on the committer goroutine, where
+  `process()`'s recover (`committer.go`) seals the engine, logs the fault to
+  `os.Stderr`, and delivers an ERRORED ack for the in-flight batch. A `nil` ack now
+  always means durable. Regression: the rewritten `TestInjectedFaultsReopenConsistent`
+  injects a WAL-fsync fault and asserts every `nil`-acked commit survives reopen +
+  the engine fail-stops (no `nil`-acked-and-absent write) after the fault.
+- **Fix-2 — one `commitTs` shared across N group-commit jobs collided (HIGH, silent
+  corruption).** `process` assigned ONE `commitTs` to the whole drained batch, so every
+  job's data-version key AND changelog key collided at that ts → in a multi-job batch,
+  last-Set-wins silently dropped all but the last (both acked `nil`). Now a **DISTINCT
+  `commitTs` per JOB** is assigned in FIFO drain order (still ONE `Batch` + ONE
+  `Apply(Sync)` — fsync amortization preserved), with `hlc_hi`/`changelog_cursor`
+  metadata set to the last (highest) job's ts and each job acking its OWN ts.
+  Per-job commitTs also aligns forward (Phase-2 SSI needs per-transaction commitTs).
+  Regressions: `TestGroupCommitPerJobDistinctChangelog` (≥2 distinct changelog payloads
+  in one batch → all present at distinct ts), `TestGroupCommitPerJobSameKeyDistinctVersions`
+  (two same-key writes in one batch → two distinct MVCC versions).
+- **Fix-3 — `persisted_T` could exceed `durable_hlc_hi` (BLOCKER, durability-invariant
+  break).** GC's `advanceThreshold` derived its candidate from the IN-MEMORY high-water
+  (advanced at commitTs-ASSIGNMENT time, before `Apply(Sync)`); a crash between GC's
+  threshold-Sync and a later commit's Apply-Sync could recover `hlc_hi < gc_threshold`
+  → every reader wedged on `ErrSnapshotTooOld` + post-recovery commits fell in the
+  trimmed changelog tail. Now the committer maintains a **`durableHi`** advanced ONLY
+  after `Apply(Sync)` returns (`pebble_engine.go`); `advanceThreshold` clamps its
+  candidate to `durableHi` (`watermark.go`), guaranteeing `persisted_T ≤ durableHi ≤
+  durable hlc_hi` unconditionally (clamping DOWN is always correctness-safe). Regressions:
+  `TestAdvanceThresholdClampsToDurableHi` (unit), `TestGCThresholdNeverExceedsDurableHi`
+  (post-GC invariant), `TestGCThresholdClampSurvivesCrashNoReaderWedge` (crash regression
+  — in-flight-but-not-applied interleave → reopen has `hlc_hi ≥ gc_threshold`, no wedge).
+
+## Deferred to Phase 2 (tracked, not dropped)
+
+- **Tombstone reclamation** — once `T` advances past a LONE tombstone's ts and it is the
+  SOLE remaining version of a deleted-then-quiescent key, it is provably unobservable
+  (any reader `≥ T` reads absent) and safe to drop. Not implemented: the GC delete-pass
+  currently KEEPS the newest `< T` version per key even when it is a tombstone (correct,
+  never a corruption — a reader `≥ T` still reads absent). This is BOUNDED bloat ∝ the
+  deleted-key count, not unbounded growth. Reclaiming lone below-`T` tombstones is a
+  Phase-2 GC optimization.
 
 ## Still DEFERRED (later phases — outside the Phase-1 engine substrate)
 

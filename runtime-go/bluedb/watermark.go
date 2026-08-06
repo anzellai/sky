@@ -16,6 +16,11 @@ type watermarkRegistry struct {
 	// (future) GC-floor read will take, so a registration is never invisible to a
 	// concurrent floor computation.
 	highWater func() HLC
+	// durableHi reads the highest DURABLY-applied commitTs (advanced by the committer
+	// only after Apply(Sync) returns). advanceThreshold clamps its candidate to this so
+	// the persisted GC threshold T can never exceed what's durable on the WAL (Fix-3).
+	// nil ⇒ no clamp (a hand-built registry with no engine behind it, e.g. unit tests).
+	durableHi func() HLC
 	threshold HLC // T — persisted, monotone (advanced by phase-1b GC)
 }
 
@@ -103,14 +108,38 @@ func (w *watermarkRegistry) candidateLocked() HLC {
 // after the barrier picks readTs >= high-water >= the new T. Returns the current
 // threshold and whether it moved. T only ever moves UP (monotone).
 func (w *watermarkRegistry) advanceThreshold() (HLC, bool) {
+	// Read durableHi BEFORE taking w.mu (Fix-3): durableHi only moves UP, so a value
+	// read slightly early is at most stale-low → clamps MORE conservatively, always
+	// correctness-safe, and reading outside w.mu keeps the two locks (w.mu, engine
+	// durMu) strictly non-nested so there is no lock-ordering hazard vs the committer.
+	haveDur := w.durableHi != nil
+	var dur HLC
+	if haveDur {
+		dur = w.durableHi()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	candidate := w.candidateLocked()
+	if haveDur {
+		// Clamp T ≤ durableHi. Clamping DOWN is always safe: a live token at in-memory
+		// readTs > durableHi stays protected (T ≤ durableHi ≤ readTs), and this
+		// guarantees persisted_T ≤ durableHi ≤ durable hlc_hi unconditionally — closing
+		// both the reader-wedge and the changelog-trim-tail failure modes (§5.2, Fix-3).
+		candidate = minHLC(candidate, dur)
+	}
 	if w.threshold.Less(candidate) {
 		w.threshold = candidate
 		return candidate, true
 	}
 	return w.threshold, false
+}
+
+// minHLC returns the lesser of two HLCs in the total order.
+func minHLC(a, b HLC) HLC {
+	if b.Less(a) {
+		return b
+	}
+	return a
 }
 
 // setThresholdAtLeast raises the in-memory threshold to at least T (used when a

@@ -368,6 +368,117 @@ func TestGCConcurrentWithCommitter(t *testing.T) {
 	}
 }
 
+// TestAdvanceThresholdClampsToDurableHi is Fix-3 (b): a pure unit test on
+// advanceThreshold. With an in-memory high-water of tNew but durableHi = tOld (< tNew)
+// and an empty live set, the advanced threshold must clamp to tOld — never the
+// not-yet-durable tNew.
+func TestAdvanceThresholdClampsToDurableHi(t *testing.T) {
+	tOld := HLC{WallMs: 1000}
+	tNew := HLC{WallMs: 5000}
+	reg := newWatermarkRegistry(func() HLC { return tNew }, HLC{})
+	reg.durableHi = func() HLC { return tOld } // durable high-water lags the in-memory one
+
+	got, advanced := reg.advanceThreshold()
+	if !advanced || got != tOld {
+		t.Fatalf("advanceThreshold must clamp candidate (tNew=%+v) to durableHi (tOld=%+v): got %+v advanced=%v", tNew, tOld, got, advanced)
+	}
+	if th := reg.Threshold(); tOld.Less(th) {
+		t.Fatalf("Threshold %+v exceeds durableHi %+v (clamp failed)", th, tOld)
+	}
+}
+
+// TestGCThresholdNeverExceedsDurableHi is Fix-3 (a): after any GC pass the persisted
+// threshold T is <= durableHi (<= durable hlc_hi). Here every commit is durable, so T
+// reaches the high-water and the clamp is a no-op — but the invariant still holds.
+func TestGCThresholdNeverExceedsDurableHi(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(1000)
+	e := openDisk(t, clk.fn())
+
+	_ = put(t, e, "K", "v1")
+	_ = put(t, e, "K", "v2")
+	t3 := put(t, e, "K", "v3")
+
+	st, err := e.GC()
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	// The direct Fix-3 invariant: persisted T <= durableHi.
+	if e.durableHi().Less(st.Threshold) {
+		t.Fatalf("GC threshold %+v exceeded durableHi %+v (Fix-3 clamp violated)", st.Threshold, e.durableHi())
+	}
+	// All durable → T reaches the high-water.
+	if st.Threshold != t3 {
+		t.Fatalf("T should reach the durable high-water %+v, got %+v", t3, st.Threshold)
+	}
+}
+
+// TestGCThresholdClampSurvivesCrashNoReaderWedge is Fix-3 (c): the crash regression. It
+// reproduces the dangerous interleave — the committer has ASSIGNED a commitTs for an
+// in-flight commit (the in-memory high-water races ahead) but has NOT yet Apply(Sync)'d,
+// so durableHi still trails. A GC in that window must NOT persist a threshold above the
+// durable high-water; otherwise a crash before the in-flight commit's Apply-Sync recovers
+// hlc_hi < gc_threshold → every reader wedges on ErrSnapshotTooOld. Advancing the
+// in-memory HLC directly reproduces the interleave deterministically (no timing hook).
+func TestGCThresholdClampSurvivesCrashNoReaderWedge(t *testing.T) {
+	dir := t.TempDir()
+	clk := &fakeClock{}
+	clk.set(1000)
+	e, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// A durable commit: durableHi == persisted hlc_hi == tLast.
+	tLast := put(t, e, "K", "v1")
+
+	// In-flight-but-not-applied: the in-memory HLC races ahead of durableHi.
+	e.hlc.next()
+	tAhead := e.hlc.next()
+	if !tLast.Less(tAhead) {
+		t.Fatalf("setup: tAhead %+v not ahead of tLast %+v", tAhead, tLast)
+	}
+	if e.durableHi() != tLast {
+		t.Fatalf("durableHi should still be tLast %+v (no Apply since), got %+v", tLast, e.durableHi())
+	}
+
+	// GC in the window. Pre-Fix-3 it advances T to the in-memory high-water (tAhead) and
+	// persists it durably though only tLast is durable. Fix-3 clamps T to durableHi=tLast.
+	st, err := e.GC()
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if st.Threshold != tLast {
+		t.Fatalf("GC threshold must clamp to durableHi %+v (not the in-memory high-water %+v), got %+v", tLast, tAhead, st.Threshold)
+	}
+	if err := e.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen: recovered hlc_hi == tLast; persisted gc_threshold == tLast. Invariant
+	// gc_threshold <= hlc_hi holds → a fresh reader is NOT wedged.
+	e2, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer e2.Close()
+
+	hw := e2.NowTs()
+	if hw.Less(e2.reg.Threshold()) {
+		t.Fatalf("recovered hlc_hi %+v < gc_threshold %+v — Fix-3 clamp failed, readers would wedge", hw, e2.reg.Threshold())
+	}
+	r, err := e2.Snapshot()
+	if err != nil {
+		t.Fatalf("reader WEDGED after reopen: %v — gc_threshold outran the durable hlc_hi", err)
+	}
+	r.Close()
+	// Post-recovery commits land at/above T, not in the trimmed changelog tail.
+	got := put(t, e2, "K", "v2")
+	if got.Less(e2.reg.Threshold()) {
+		t.Fatalf("post-recovery commit %+v landed below gc_threshold %+v (changelog-trim tail)", got, e2.reg.Threshold())
+	}
+}
+
 // --- test helpers ---
 
 func commitWithLog(t *testing.T, e *pebbleEngine, key, val, log string) HLC {

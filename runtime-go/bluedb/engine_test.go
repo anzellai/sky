@@ -50,6 +50,96 @@ func getAt(t *testing.T, e *pebbleEngine, key string, ts HLC) (string, bool) {
 	return string(v), ok
 }
 
+// mkJob builds one commitJob (one Put + optional changelog payload) for white-box
+// process() tests that need a DETERMINISTIC multi-job drained batch (the shape the
+// group-committer forms). A "" changelog ⇒ no changelog entry.
+func mkJob(key, val, changelog string) *commitJob {
+	req := CommitReq{Writes: []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(val)}}}
+	if changelog != "" {
+		req.ChangelogPayload = []byte(changelog)
+	}
+	return &commitJob{req: req, done: make(chan CommitResult, 1)}
+}
+
+// TestGroupCommitPerJobDistinctChangelog is Fix-2 (a): a drained batch with >=2 jobs
+// carrying DISTINCT changelog payloads keeps ALL of them at DISTINCT commitTs. Pre-Fix-2
+// (one commitTs for the whole batch) every changelog key is encodeChangelogKey(commitTs)
+// — identical for every job — so each b.Set overwrites the previous and all but the last
+// are silently lost (both acked nil). Processing the jobs as ONE batch via process()
+// reproduces the exact group-commit shape deterministically.
+func TestGroupCommitPerJobDistinctChangelog(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(1000)
+	e := openDisk(t, clk.fn())
+
+	jobs := []*commitJob{
+		mkJob("k0", "v0", "chg-0"),
+		mkJob("k1", "v1", "chg-1"),
+		mkJob("k2", "v2", "chg-2"),
+	}
+	e.process(jobs) // one Apply(Sync) over all three jobs (committer stays idle on e.ch)
+
+	var tss []HLC
+	for i, j := range jobs {
+		res := <-j.done
+		if res.Err != nil {
+			t.Fatalf("job %d: %v", i, res.Err)
+		}
+		tss = append(tss, res.CommitTs)
+	}
+	// Each job gets its OWN strictly-increasing commitTs.
+	for i := 1; i < len(tss); i++ {
+		if !tss[i-1].Less(tss[i]) {
+			t.Fatalf("per-job commitTs not strictly increasing: %+v then %+v", tss[i-1], tss[i])
+		}
+	}
+	// ALL THREE changelog payloads present at their own commitTs — none overwritten.
+	entries, err := e.Changelog().Tail(HLC{})
+	if err != nil {
+		t.Fatalf("tail: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("multi-job batch LOST changelog entries: got %d want 3 (per-job commitTs must not collide)", len(entries))
+	}
+	want := []string{"chg-0", "chg-1", "chg-2"}
+	for i, ent := range entries {
+		if string(ent.Payload) != want[i] || ent.CommitTs != tss[i] {
+			t.Fatalf("changelog entry %d = %q@%+v want %q@%+v", i, ent.Payload, ent.CommitTs, want[i], tss[i])
+		}
+	}
+}
+
+// TestGroupCommitPerJobSameKeyDistinctVersions is Fix-2 (b): two jobs writing the SAME
+// user-key in one drained batch produce two DISTINCT MVCC versions at distinct commitTs.
+// Pre-Fix-2 both data-version keys are encodeDataKey(key, commitTs) with one shared
+// commitTs → last-Set-wins → the first write ("v1") is silently lost.
+func TestGroupCommitPerJobSameKeyDistinctVersions(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(1000)
+	e := openDisk(t, clk.fn())
+
+	jobs := []*commitJob{
+		mkJob("K", "v1", ""),
+		mkJob("K", "v2", ""),
+	}
+	e.process(jobs)
+	r1 := <-jobs[0].done
+	r2 := <-jobs[1].done
+	if r1.Err != nil || r2.Err != nil {
+		t.Fatalf("commit err: %v %v", r1.Err, r2.Err)
+	}
+	if !r1.CommitTs.Less(r2.CommitTs) {
+		t.Fatalf("same-key jobs must get distinct increasing commitTs, got %+v then %+v", r1.CommitTs, r2.CommitTs)
+	}
+	// Both versions resolve at their own ts (neither clobbered).
+	if v, ok := getAt(t, e, "K", r1.CommitTs); !ok || v != "v1" {
+		t.Fatalf("first same-key version lost: Get(K,t1)=%q,%v want v1", v, ok)
+	}
+	if v, ok := getAt(t, e, "K", r2.CommitTs); !ok || v != "v2" {
+		t.Fatalf("second same-key version wrong: Get(K,t2)=%q,%v want v2", v, ok)
+	}
+}
+
 // TestVersionedRoundTrip: Put K@t1=v1, K@t2=v2 (t2>t1); reads resolve per-version.
 func TestVersionedRoundTrip(t *testing.T) {
 	clk := &fakeClock{}

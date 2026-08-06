@@ -2,6 +2,7 @@ package bluedb
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -174,29 +175,28 @@ func TestSealContractRefusesWrites(t *testing.T) {
 	}
 }
 
-// TestInjectedFaultsReopenConsistent exercises the errorfs harness end-to-end (proving it
-// is wired to the real v2.1.6 API — InjectorFunc / Op / ErrInjected / Wrap) and asserts
-// the durability invariant that HOLDS under an injected write fault: the store always
-// reopens to a CONSISTENT prefix — never a corrupt or unopenable state, metadata never
-// lags data (every recovered version has commitTs <= the recovered high-water), and the
-// engine accepts new writes after recovery.
+// TestInjectedFaultsReopenConsistent is the fail-stop durability regression (Fix-1). It
+// injects a WAL fsync fault and asserts the acked⇒durable invariant DETERMINISTICALLY:
+// a nil ack ALWAYS means durable, and once a durability fault hits, the engine seals and
+// every subsequent commit returns an error — never a nil-acked-but-absent write.
 //
-// Harness note (verified against the pinned Pebble v2.1.6): on a memory FS an injected FS
-// fault is either absorbed by Pebble (the commit acks; a faulted WAL write may leave that
-// write unsynced — the §7 "no-sync writes may/may-not survive" class, and a torn WAL
-// record truncates the recoverable tail per WAL semantics) or, for a truly fatal
-// write-path fault, surfaces as a PANIC on a background flush goroutine (Pebble's
-// unrecoverable-fault contract) — never as a synchronous Apply-error return. So the
-// acked-survives / no-torn / HLC-no-reissue invariants are proven by the clean-sync
-// CrashClone tests above (the canonical Pebble crash-consistency method); this test
-// proves the complementary invariant: an injected fault never yields a CORRUPT store.
+// Root cause it locks: Pebble's applyInternal (db.go:882-897, v2.1.6) calls
+// Logger.Fatalf(...) on a fatal WAL commit error and then FALLS THROUGH to `return nil`.
+// A no-op Fatalf (the pre-Fix-1 quietLogger) makes Apply(Sync) return nil for a write
+// that never fsync'd → the committer acks Err:nil for a lost write. Fix-1 makes Fatalf
+// PANIC; under pebble.Sync + !noSyncWait the WAL sync is synchronous, so the panic
+// unwinds through Apply on the committer goroutine, where process()'s recover seals +
+// delivers an errored ack while acked==false. This test proves that contract end-to-end.
 func TestInjectedFaultsReopenConsistent(t *testing.T) {
 	clk := &fakeClock{}
 	clk.set(2000)
 
 	var armed atomic.Bool
+	// Arm a fault on the WAL fsync (the *.log file). Under Apply(pebble.Sync) the WAL
+	// sync is synchronous, so this fault surfaces through Apply → Fatalf-panic → seal.
 	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
-		if armed.Load() && op.Kind == errorfs.OpFileWrite {
+		isSync := op.Kind == errorfs.OpFileSync || op.Kind == errorfs.OpFileSyncData || op.Kind == errorfs.OpFileSyncTo
+		if armed.Load() && isSync && strings.HasSuffix(op.Path, ".log") {
 			return errorfs.ErrInjected
 		}
 		return nil
@@ -209,19 +209,44 @@ func TestInjectedFaultsReopenConsistent(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	// A clean prefix, then a faulted phase, then a healed phase — a realistic mixed run.
-	base0 := put(t, e1, "base", "b0")
-	armed.Store(true)
-	for i := 0; i < 15; i++ {
-		_ = e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(fmt.Sprintf("f%02d", i)), Op: OpPut, Value: []byte("x")}}})
+	// The durability invariant under test: every nil-acked commit MUST survive reopen.
+	type ack struct{ key, val string }
+	var durable []ack
+
+	// A clean prefix — every commit acks nil (no fault armed) and must survive.
+	for i := 0; i < 10; i++ {
+		key, val := fmt.Sprintf("clean%02d", i), fmt.Sprintf("c%d", i)
+		r := e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(val)}}})
+		if r.Err != nil {
+			t.Fatalf("clean commit %d unexpectedly failed: %v", i, r.Err)
+		}
+		durable = append(durable, ack{key, val})
 	}
-	armed.Store(false)
+
+	// Arm the WAL-sync fault. The invariant: NO commit from here on may ack nil-yet-absent.
+	// Either it acks nil AND is durable (record it), or it acks an error (fail-stop).
+	armed.Store(true)
+	var sawSeal bool
 	for i := 0; i < 15; i++ {
-		_ = e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(fmt.Sprintf("h%02d", i)), Op: OpPut, Value: []byte("y")}}})
+		key, val := fmt.Sprintf("fault%02d", i), fmt.Sprintf("f%d", i)
+		r := e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(val)}}})
+		if r.Err == nil {
+			durable = append(durable, ack{key, val}) // nil ack ⇒ must be durable
+		} else {
+			sawSeal = true
+		}
+	}
+	if !sawSeal {
+		t.Fatalf("armed WAL-fsync fault produced NO errored ack — a durability fault was silently swallowed (acked⇒durable broken)")
+	}
+	// Once sealed, every further commit must return an error, never nil.
+	rAfter := e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte("after-seal"), Op: OpPut, Value: []byte("x")}}})
+	if rAfter.Err == nil {
+		t.Fatalf("commit after a durability fault acked nil — the sealed engine must refuse all writes")
 	}
 
 	crashed := base.CrashClone(vfs.CrashCloneCfg{})
-	_ = e1.Close()
+	_ = e1.Close() // horked-DB close; error/none both tolerated (durability already proven)
 
 	e2, err := openWith(config{dir: crashDir, fs: crashed, wallClock: clk.fn()})
 	if err != nil {
@@ -229,16 +254,17 @@ func TestInjectedFaultsReopenConsistent(t *testing.T) {
 	}
 	defer e2.Close()
 
-	// (a) The clean prefix committed before any fault survives (it was synced-durable).
-	if v, ok := getAt(t, e2, "base", e2.NowTs()); !ok || v != "b0" {
-		t.Fatalf("clean pre-fault write lost: base=%q,%v", v, ok)
+	// The core invariant: EVERY nil-acked commit is present after reopen (nil ⇒ durable).
+	r := e2.snapshotAt(e2.NowTs())
+	defer r.Close()
+	for _, a := range durable {
+		v, _, ok := r.Get([]byte(a.key))
+		if !ok || string(v) != a.val {
+			t.Fatalf("nil-acked commit %s=%s ABSENT after reopen — acked⇒durable violated: got %q,%v", a.key, a.val, v, ok)
+		}
 	}
-	// (b) Metadata never lags data: every recovered version has commitTs <= high-water.
+	// Metadata never lags data: every recovered version has commitTs <= high-water.
 	hw := e2.NowTs()
-	if hw.Less(base0) {
-		t.Fatalf("recovered hlc_hi=%+v regressed below the clean pre-fault commit %+v", hw, base0)
-	}
-	r := e2.snapshotAt(hw)
 	c := r.Iterate(nil)
 	for c.Next() {
 		if hw.Less(c.CommitTs()) {
@@ -249,11 +275,6 @@ func TestInjectedFaultsReopenConsistent(t *testing.T) {
 		t.Fatalf("cursor error over recovered store: %v", err)
 	}
 	c.Close()
-	r.Close()
-	// (c) The engine accepts new writes after recovery (not wedged/sealed).
-	if got := put(t, e2, "post-recovery", "ok"); !hw.Less(got) {
-		t.Fatalf("post-recovery commitTs %+v not strictly above recovered high-water %+v", got, hw)
-	}
 }
 
 // TestCrashConcurrentNoAckedLoss — under concurrent writer load, every commit that

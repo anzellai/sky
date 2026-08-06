@@ -1,6 +1,7 @@
 package bluedb
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -12,13 +13,28 @@ import (
 // hand-built committer's cap.
 const maxBatch = 1024
 
-// quietLogger silences Pebble's stderr chatter. Pebble's Logger has THREE methods
+// quietLogger routes Pebble's Logger. Pebble's Logger has THREE methods
 // (Infof/Errorf/Fatalf) — the design doc's two-method assumption was wrong.
+//
+// Infof/Errorf are silenced (chatter). Fatalf MUST NOT be a no-op: on a WAL
+// fsync failure Pebble's applyInternal (db.go:882-897, pinned v2.1.6) calls
+// Logger.Fatalf(...) and then FALLS THROUGH to `return nil`. The stock logger's
+// Fatalf does os.Exit(1); a no-op would make Apply(Sync) return nil for a write
+// that never reached durable storage — the committer would ack Err:nil for a lost
+// write, breaking the acked⇒durable contract deterministically. So Fatalf PANICS.
+// The panic unwinds synchronously through Apply on the committer goroutine (the
+// WAL sync is synchronous under pebble.Sync + !noSyncWait), where process()'s
+// deferred recover catches it while acked==false, seals the engine, and delivers
+// an ERRORED ack for the in-flight batch. A nil ack therefore always means durable.
+// We panic (not os.Exit) so the fault is contained + converted to a fail-loud seal
+// rather than crashing the host process.
 type quietLogger struct{}
 
 func (quietLogger) Infof(string, ...any)  {}
 func (quietLogger) Errorf(string, ...any) {}
-func (quietLogger) Fatalf(string, ...any) {}
+func (quietLogger) Fatalf(format string, args ...any) {
+	panic(fmt.Sprintf("bluedb: pebble fatal: "+format, args...))
+}
 
 // config carries Open parameters, including the test seams (injectable clock + FS).
 type config struct {
@@ -45,9 +61,38 @@ type pebbleEngine struct {
 
 	sealed atomic.Bool
 
+	// durableHi is the highest commitTs whose Apply(Sync) has RETURNED (i.e. is
+	// durable on the WAL), advanced by the committer AFTER each successful Apply —
+	// never at HLC-assignment time. It is the durable analogue of the in-memory
+	// high-water (hlc.highWater() == c.last), which the committer bumps at next()
+	// BEFORE the Apply. GC's advanceThreshold clamps its candidate to durableHi so
+	// the persisted GC threshold T can never outrun what's durable (§5.2, Fix-3):
+	// otherwise a crash between GC's threshold-Sync and a later commit's Apply-Sync
+	// could recover hlc_hi < gc_threshold → every reader wedges on ErrSnapshotTooOld
+	// and post-recovery commits fall into the trimmed changelog tail. Monotone up.
+	durMu        sync.Mutex
+	durableHiVal HLC
+
 	closeMu   sync.Mutex
 	closed    bool
 	closeOnce sync.Once
+}
+
+// durableHi returns the highest durably-applied commitTs (guards the GC clamp).
+func (e *pebbleEngine) durableHi() HLC {
+	e.durMu.Lock()
+	defer e.durMu.Unlock()
+	return e.durableHiVal
+}
+
+// advanceDurableHi raises durableHi to ts iff ts is higher (monotone). Called by
+// the committer AFTER a successful Apply(Sync), before acking.
+func (e *pebbleEngine) advanceDurableHi(ts HLC) {
+	e.durMu.Lock()
+	defer e.durMu.Unlock()
+	if e.durableHiVal.Less(ts) {
+		e.durableHiVal = ts
+	}
 }
 
 var _ Engine = (*pebbleEngine)(nil)
@@ -87,6 +132,11 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	e := &pebbleEngine{
 		db:  db,
 		hlc: newHLCClock(persistedHi, cfg.wallClock),
+		// Everything on disk up to persistedHi (metaHLCHi) was written in a synced,
+		// committed batch, so the durable high-water starts AT persistedHi (Fix-3). A
+		// fresh store has persistedHi = {0,0}. Seeding it here (not {0,0}) lets the first
+		// post-reopen GC advance T normally even before a new commit lands.
+		durableHiVal: persistedHi,
 		// Buffered so concurrent writers ENQUEUE without blocking, letting the committer's
 		// drain coalesce many in-flight commits into ONE Apply(Sync)/one fsync (§3.2 group
 		// commit — the throughput lever, since the single committer forgoes Pebble's commit
@@ -95,6 +145,8 @@ func openWith(cfg config) (*pebbleEngine, error) {
 		ch: make(chan *commitJob, maxBatch),
 	}
 	e.reg = newWatermarkRegistry(e.hlc.highWater, persistedThreshold)
+	// Wire the durable-high accessor so GC's advanceThreshold can clamp T ≤ durableHi.
+	e.reg.durableHi = e.durableHi
 
 	e.wg.Add(1)
 	go e.committer()
