@@ -68,9 +68,61 @@ The design moved fan-out from the ref's identity-stamped rt/session layer DOWN t
   (last-writer-wins); the resync storm is not.
 
 ## Plan
-1. **Phase-2 correctness patch (now):** blindPut emits OldIndex + failing→passing regression +
-   re-run the Phase-2 conformance suite. Ship as its own commit (fixes shipped code).
-2. **Revise the Phase-4 design** folding A#1/A#2/B#1/B#2/B#3 + NB-1/2/3 — especially the rt-layer
-   fan-out re-architecture (changefeed + identity-stamped publish). Re-grill or Judge the revised
-   design.
-3. Only then implement Phase 4a (with the two-tenant isolation test in its `-race` gate).
+1. **Phase-2 correctness patch (DONE + pushed @aba0611a):** blindPut emits OldIndex + regression.
+2. **Design v2 (DONE @d965b682):** changefeed + rt pump + write-time tenant tag. Re-grilled below.
+3. Implement Phase 4a with the v3 fixes baked in (two-tenant isolation + cross-instance fail-closed
+   + tenant-not-durable tests in its `-race` gate).
+
+---
+
+## Re-grill of v2 (`d965b682`) — 2 blocking + 4 NB → v3 fixes (locked)
+
+Orchestrator independently verified the v2 load-bearing assumption: `Cmd.perform` writes run on an
+identity-stamped goroutine (`live.go:5298` `runWithLiveSession`), and enumerated every write path —
+all intra-Live paths stamp; unstamped paths (raw `Http.Server` handler, background/CLI, subscriber
+`toMsg` decoder) fail-closed to tenant `""`. No LOCAL leak. But:
+
+- **RG#1 (BLOCKING) — cross-instance `""`-tag leak.** v2's strict-partition proof holds only on the
+  LOCAL `byCollTenant` lookup. The cross-instance publish uses `reactiveTenantTopic`
+  (`(ref) bluedb_reactive.go:42-49`) which FALLS BACK to the shared `__bluedb:<coll>` topic when
+  tenant is `""`. A no-session write (Stripe webhook via `Sky.Http.Server`, background job) tags `""`
+  → pk-nudge on the shared cross-tenant topic → every unauth reactive session across replicas learns
+  tenant-A's row pk (`Record=""` holds, so body doesn't cross — pk-oracle, not body-leak).
+  **v3 FIX:** empty `batch.Tenant` SKIPS the cross-instance broker publish entirely (fail-closed) —
+  NO `reactiveTenantTopic` fallback. A cross-instance reactive write MUST carry a real tenant tag
+  from an identity-stamped writer; out-of-session writes (webhooks) that need reactive propagation
+  use an explicit tenant-attach escape hatch (`Persist.withTenant` / stamp the handler goroutine) —
+  documented liveness boundary (closes NB-B too).
+- **RG#2 (BLOCKING) — embedded multi-replica boot-fatal is not runtime-detectable.** A process has no
+  intrinsic "replica count" signal; N replicas each with their own local pebble dir is
+  indistinguishable from single-instance (pebble's dir-lock only catches SAME-dir). So a
+  non-SkyDeploy multi-replica embedded deploy boots green → silent stale — the exact B#3 hole,
+  relocated to boot-detection-impossibility.
+  **v3 FIX:** replace "runtime detects topology" with an EXPLICIT fail-closed operator assertion.
+  `watch`/reactive on embedded (or sqlite) requires `[data] reactiveScope = "single-instance"`
+  (`SKY_DATA_REACTIVE_SCOPE=single-instance`). In a non-dev env, `watch` on embedded/sqlite WITHOUT
+  the assertion is a boot HARD-FATAL with a clear message (assert single-instance, or use
+  postgres data + redis broker for multi-replica reactive). Dev: warn+allow. Detectable (signal =
+  the explicit assertion), fail-closed by default, parallels the `SKY_CONSOLE_AUTH`-must-be-set prod
+  gate. The assertion is about the DATA backend's replica scope — independent of the session store,
+  so a single-instance app using postgres SESSIONS for durability is not false-positive-fatal'd.
+
+- **NB-A (over-notify) — setup-race is AT-LEAST-ONCE, not exactly-once.** `EmbeddedBackend.Query`'s
+  `eng.Snapshot()` picks a FRESH readTs (`pebble_engine.go:334-350`); the pinned-readTs read
+  (`snapshotAt`) is off the `Engine` iface, so baseline can't pin step-2's readTs → a commit in the
+  overlap is double-delivered. **v3:** relax §7's "exactly once" to "AT-LEAST-once; `liveInto`/`watch`
+  apply is IDEMPOTENT (pk-keyed), so a double-delivery is a no-op." Still no miss (union covers all).
+- **NB-C — the changefeed is NEW work, not a ref port.** `(ref) changefeed.go` carries no coords/no
+  tenant; v2's coord+tenant `ChangeBatch` is materially new. **v3:** drop the "proven/ported" framing;
+  it gets its own tests.
+- **NB-D — `CommitReq.Tenant` must never enter `EncodeChangelogPayload`** (transient routing only).
+  **v3:** add an explicit test asserting Tenant never appears in the durable changelog payload.
+
+**Verified-clean by the re-grill:** durable-before-notify (both emit sites strictly post-`Apply(Sync)`
++ `advanceDurableHi`); drop→resync can't permanently under-notify; the blindPut OldIndex fix is real.
+
+### Phase-4a gate (updated with v3)
+`-race` tests: (a) two-tenant LOCAL commit-path isolation (no cross-tenant delivery); (b) cross-instance
+empty-tenant fail-closed (empty tag → NO broker publish); (c) `CommitReq.Tenant` never in the durable
+changelog payload; (d) precise-tier Enter/Leave/Stay incl. autocommit-blind update-out (the A#1 path);
+(e) register-live-first setup with no missed commit (at-least-once). No realistic-N deferral (NB-1).
