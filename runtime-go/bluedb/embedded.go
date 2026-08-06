@@ -549,6 +549,7 @@ func (b *EmbeddedBackend) WatchTenant(coll CollSchema, plan QueryPlan, tenant st
 		plan:      plan,
 		footprint: buildFootprint(cs, &plan),
 		orderIdx:  orderIndexIDs(cs, plan.Orders),
+		predKey:   condKey(&plan.Where),
 		out:       make(chan Change, reactiveDeliverBuf),
 		resultPks: map[string]bool{},
 		buffering: true,

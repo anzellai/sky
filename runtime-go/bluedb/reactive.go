@@ -3,6 +3,9 @@ package bluedb
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -111,10 +114,73 @@ func (r *reactiveRegistry) dispatchLocal(batch ChangeBatch) {
 
 	for i := range batch.Changes {
 		ch := &batch.Changes[i]
-		for _, sub := range buckets[ch.Coll] {
-			sub.consider(batch.CommitTs, ch)
+		subs := buckets[ch.Coll]
+		if len(subs) == 0 {
+			continue
+		}
+		// Shared-predicate coalescing (§4.5): one matchCache per change decodes the row body ONCE
+		// and evaluates each DISTINCT predicate ONCE (memoized by predKey), then fans the result to
+		// every sub sharing it. So match DETECTION (decode + residual eval — the expensive part) is
+		// O(changes × distinct-predicates), N-INDEPENDENT; only the belt update + delivery is the
+		// honest O(N) LiveView floor. A single query watched by N sessions ⇒ one decode + one eval
+		// per change, not N.
+		mc := &matchCache{}
+		for _, sub := range subs {
+			sub.considerCached(batch.CommitTs, ch, mc)
 		}
 	}
+}
+
+// matchCache memoizes a single change's expensive detection work across the subs in a (coll,tenant)
+// bucket (§4.5). It decodes the record body at most once (all subs on a collection share the
+// registry's *CollSchema) and evaluates each distinct predicate at most once (keyed by predKey).
+type matchCache struct {
+	cols        map[string]ColValue
+	colsErr     error
+	decoded     bool
+	predResults map[string]bool // predKey → residual predicate result for THIS change's record
+}
+
+// reactiveMatchDecodes / reactiveMatchEvals — atomic counters of the EXPENSIVE detection work (row
+// decode + predicate eval) actually performed on the coalesced live path. They are the observable
+// proof of §4.5 N-independence: for one change watched by N subs sharing a predicate, both increment
+// exactly ONCE, not N times. The atomic add is ~1ns against a µs-scale decode/eval — negligible in
+// prod; the NB-1 bench reads them to assert detection cost is O(changes × distinct-predicates).
+var (
+	reactiveMatchDecodes uint64
+	reactiveMatchEvals   uint64
+)
+
+// columns lazily decodes the change's record ONCE (shared across every sub for this change).
+func (mc *matchCache) columns(cs *CollSchema, record []byte) (map[string]ColValue, error) {
+	if !mc.decoded {
+		mc.decoded = true
+		if len(record) == 0 || cs == nil {
+			mc.colsErr = errMatchNoRecord
+		} else {
+			atomic.AddUint64(&reactiveMatchDecodes, 1)
+			mc.cols, mc.colsErr = decodeColumns(cs, record)
+		}
+	}
+	return mc.cols, mc.colsErr
+}
+
+// matches reports whether sub's residual predicate holds for this change's record — decoding the
+// body once and memoizing the eval per distinct predicate (predKey). The memo is correctness-safe:
+// predKey is a length-prefixed faithful serialization of plan.Where (condKey), so two entries
+// collide ONLY when the predicates are byte-identical.
+func (mc *matchCache) matches(sub *subscription, record []byte) bool {
+	if mc.predResults == nil {
+		mc.predResults = map[string]bool{}
+	}
+	if r, ok := mc.predResults[sub.predKey]; ok {
+		return r
+	}
+	cols, err := mc.columns(sub.schema, record)
+	atomic.AddUint64(&reactiveMatchEvals, 1)
+	r := err == nil && bluedbEvalCond(cols, &sub.plan.Where)
+	mc.predResults[sub.predKey] = r
+	return r
 }
 
 // markResyncAll latches EVERY live subscription's resync flag. Called when the pump's engine
@@ -142,6 +208,7 @@ type subscription struct {
 	plan      QueryPlan
 	footprint *ReadSet  // the SAME struct SSI uses (ranges precise, else collWitness)
 	orderIdx  []IndexID // declared order-column indexes for the A#1 order-churn signal (§2.5)
+	predKey   string    // faithful serialization of plan.Where — the shared-predicate coalescing key (§4.5)
 	out       chan Change
 
 	reg *reactiveRegistry
@@ -207,10 +274,44 @@ func (s *subscription) consider(commitTs HLC, ch *KeyChange) {
 	s.applyChangeLocked(commitTs, ch)
 }
 
-// applyChangeLocked is the membership-transition matcher (§2.2). s.mu MUST be held. It advances
-// lastTs monotonically, then decides Enter / Leave / Stay from the tracked resultPks belt (§2.3)
-// + coordHit(New) + the residual predicate, delivering a typed Change and updating resultPks.
+// considerCached is the pump's per-change entry on the COALESCED live path (§4.5): it is `consider`
+// but takes the per-change matchCache so the residual predicate eval is shared across every sub in
+// the bucket. Same setup-buffering + dedup discipline as `consider`.
+func (s *subscription) considerCached(commitTs HLC, ch *KeyChange, mc *matchCache) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	if s.buffering {
+		s.buf = append(s.buf, ChangeBatch{CommitTs: commitTs, Changes: []KeyChange{*ch}})
+		return
+	}
+	if !s.lastTs.IsZero() && !s.lastTs.Less(commitTs) {
+		return // dedup (§4.3)
+	}
+	// entered is the per-sub coord test (cheap, O(footprint)); the residual predicate eval is the
+	// expensive part and comes from the shared cache (decoded + evaluated once per distinct predicate).
+	nowIn := ch.Op != OpDelete && s.hitFootprint(ch.NewIndex) && mc.matches(s, ch.Record)
+	s.applyTransitionLocked(commitTs, ch, nowIn)
+}
+
+// applyChangeLocked is the membership-transition matcher (§2.2) on the NON-coalesced path (the
+// register-live-first setup-buffer drain). s.mu MUST be held. It computes the residual match
+// directly (no cache) then applies the transition.
 func (s *subscription) applyChangeLocked(commitTs HLC, ch *KeyChange) {
+	// entered = does the NEW position hit the footprint? residual = does the new record satisfy the
+	// full predicate? nowIn requires BOTH (the range is over-approximate; residual excludes a
+	// boundary/non-matching row).
+	nowIn := ch.Op != OpDelete && s.hitFootprint(ch.NewIndex) && s.recordMatches(ch.Record)
+	s.applyTransitionLocked(commitTs, ch, nowIn)
+}
+
+// applyTransitionLocked advances lastTs monotonically, then decides Enter / Leave / Stay from the
+// tracked resultPks belt (§2.3) + the precomputed `nowIn` membership, delivering a typed Change and
+// updating resultPks. s.mu MUST be held. Shared by the coalesced live path (considerCached) and the
+// setup-drain path (applyChangeLocked) so the transition truth table lives in ONE place.
+func (s *subscription) applyTransitionLocked(commitTs HLC, ch *KeyChange, nowIn bool) {
 	if s.lastTs.Less(commitTs) {
 		s.lastTs = commitTs
 	}
@@ -227,12 +328,6 @@ func (s *subscription) applyChangeLocked(commitTs HLC, ch *KeyChange) {
 		}
 		return
 	}
-
-	// OpPut. entered = does the NEW position hit the footprint? residual = does the new record
-	// satisfy the full predicate? nowIn requires BOTH (the range is over-approximate; residual
-	// excludes a boundary/non-matching row — truth-table row "no match → none").
-	entered := s.hitFootprint(ch.NewIndex)
-	nowIn := entered && s.recordMatches(ch.Record)
 
 	switch {
 	case nowIn && wasDisplayed:
@@ -328,6 +423,47 @@ func cloneBytes(b []byte) []byte {
 		return nil
 	}
 	return append([]byte(nil), b...)
+}
+
+// errMatchNoRecord marks a change with no decodable body (a delete or a coord-only nudge) so the
+// shared matchCache reports a non-match without decoding.
+var errMatchNoRecord = errors.New("bluedb: change carries no record body")
+
+// condKey is a length-prefixed FAITHFUL serialization of a resolved predicate tree — the
+// shared-predicate coalescing key (§4.5). It is collision-free by construction (every field is
+// length-delimited), so two subs share a matchCache memo entry ONLY when their predicates are
+// byte-identical; a genuinely different predicate can never read a stale cached result.
+func condKey(c *CondNode) string {
+	var b strings.Builder
+	writeCondKey(&b, c)
+	return b.String()
+}
+
+func writeCondKey(b *strings.Builder, c *CondNode) {
+	b.WriteByte('(')
+	b.WriteByte(byte(c.Op))
+	fmt.Fprintf(b, "|C%d:%s|T%d|", len(c.Col), c.Col, c.Type)
+	writeColValKey(b, &c.Val)
+	fmt.Fprintf(b, "|n%d", len(c.Vals))
+	for i := range c.Vals {
+		b.WriteByte('|')
+		writeColValKey(b, &c.Vals[i])
+	}
+	fmt.Fprintf(b, "|k%d[", len(c.Kids))
+	for i := range c.Kids {
+		writeCondKey(b, &c.Kids[i])
+	}
+	b.WriteByte(']')
+	b.WriteByte(')')
+}
+
+func writeColValKey(b *strings.Builder, v *ColValue) {
+	null := byte('0')
+	if v.Null {
+		null = '1'
+	}
+	fmt.Fprintf(b, "t%dz%cb%d:", v.Type, null, len(v.Bytes))
+	b.Write(v.Bytes)
 }
 
 // ── footprint construction (§3.1) ──────────────────────────────────────────────────────────────

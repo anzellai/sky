@@ -150,6 +150,12 @@ func (app *liveApp) ensureReactiveStarted(sess *liveSession) {
 	model := sess.model
 	sess.mu.Unlock()
 
+	// RG#2 capability boot-gate (§6.1): refuse to boot a reactive app on a single-writer local
+	// data backend in a non-dev env without the operator's single-instance assertion — the write
+	// isn't in the other replicas' stores, so cross-replica reactivity would silently stale. Runs
+	// once per process (sync.Once inside), needs a live model to resolve the data backend.
+	app.assertReactiveCapabilityOrExit(model)
+
 	for _, b := range app.reactiveBindingsFor(model) {
 		done := make(chan struct{})
 		var once sync.Once
@@ -238,8 +244,14 @@ func drainReactiveBurst(ch <-chan bluedb.Change) {
 // per-session mutex + SSE emission are the SAME machinery a Cmd.perform completion uses (no new
 // fan-out path). A fold that panics rolls the session back (Model + handlers) and ships nothing.
 func (app *liveApp) reactiveRefreshOnce(sess *liveSession, b reactiveBindingRT) {
+	// NB-3 global re-query bound: hold one of K (=min(GOMAXPROCS,8)) slots for the query re-run so a
+	// synchronized N-way refresh (a resync storm, or many sessions reacting to one write) runs at
+	// most K concurrent engine scans, not N. Released before the render/lock tail so the semaphore
+	// bounds engine pressure, not the per-session mutex hop.
+	release := bluedb.AcquireReQuery()
 	task := sky_call(b.run, nil) // () -> Task Error (model -> model)
 	res := anyTaskInvoke(task)
+	release()
 	fold, ok := reactiveFoldFromResult(res)
 	if !ok {
 		return // Err (transient query failure) or a shape mismatch — next change self-heals

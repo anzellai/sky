@@ -1238,7 +1238,9 @@ fn materialise_rt(
             materialise_rt(&path, &dst.join(&name_s), console_needed, persist_needed)?;
         } else if name_s.ends_with("_test.go") {
             continue;
-        } else if (name_s == "embedded_kernel.go" || name_s == "bluedb_reactive.go")
+        } else if (name_s == "embedded_kernel.go"
+            || name_s == "bluedb_reactive.go"
+            || name_s == "bluedb_reactive_gate.go")
             && !persist_needed
         {
             // The `rt` files importing `sky-app/bluedb` (the embedded-kernel bridge +

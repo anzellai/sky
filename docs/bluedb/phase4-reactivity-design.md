@@ -877,6 +877,68 @@ the buffer OR the durable backfill — never in none.** ∎ (v1 could drop a com
 
 ---
 
-*End of v2. Re-grill this before any Phase-4 code. The two most likely re-grill targets are
-§11 #1 (the `Cmd.perform` identity stamp — a liveness, not a leak, but it undermines the
-magic) and §11 #7 (the re-register race).*
+## 13. Phase-4c — what shipped vs what is post-v1 (honest scope + the safety gate)
+
+Phase-4c closes the reactivity safety gate + the fan-out honesty bench. This section is the
+explicit delivered-vs-deferred line so the deferral is HONEST (documented, gated) rather
+than silent.
+
+### Delivered in Phase-4c
+
+- **RG#2 capability boot-gate (§6.1) — the safety gate.** A reactive app on a single-writer
+  LOCAL data backend (embedded/sqlite) in a non-dev env boots HARD-FATAL unless the operator
+  asserts `SKY_DATA_REACTIVE_SCOPE=single-instance` (also settable as `[data] reactiveScope`).
+  Dev/unset env → warn+allow. The decision is factored into a pure, unit-tested
+  `reactiveCapabilityError(prod, scopeAssertion, usesReactive, backend)` and wired at reactive
+  startup (`ensureReactiveStarted` → `assertReactiveCapabilityOrExit`, one-shot). The gate is
+  about the DATA backend's replica scope — INDEPENDENT of the session store, so a single-instance
+  app on postgres SESSIONS + embedded DATA is not false-fataled. Sites:
+  `runtime-go/rt/bluedb_reactive_gate.go`, `runtime-go/rt/bluedb_reactive.go:ensureReactiveStarted`.
+  Tests: `runtime-go/rt/bluedb_reactive_gate_test.go` (the full prod/dev × backend × assertion
+  matrix).
+- **NB-1 realistic-N fan-out — detection is N-INDEPENDENT.** Shared-predicate coalescing
+  (§4.5) is now IMPLEMENTED: `dispatchLocal` decodes each change's body ONCE and evaluates each
+  DISTINCT predicate ONCE (memoized by a collision-free `condKey`), fanning the transition to
+  every sub sharing it. Measured (`runtime-go/bluedb/reactive_bench_test.go`): for 200 changes,
+  N=40 and N=400 both perform exactly 200 decodes + 200 evals (would be 8k / 80k if per-sub);
+  with 2 distinct predicates over 200 subs, 100 changes → 100 decodes + 200 evals (distinct ×
+  changes, not subs × changes). Delivery is the honest O(N) LiveView floor — the benchmark
+  reports it: on an Apple M1, per-change dispatch is ~2.0 µs at N=1 rising ~linearly to ~86 µs
+  at N=500 (~169 ns marginal per subscriber = one channel push + belt update + Change alloc).
+- **NB-3 resync thundering-herd — BOUNDED.** A global re-query semaphore
+  (`K = min(GOMAXPROCS, 8)`, `runtime-go/bluedb/resync_sem.go`) caps concurrent reactive
+  re-queries process-wide; every reactive re-query (`reactiveRefreshOnce`) acquires a slot, and
+  the bounded `reactiveRegistry.ResyncPending` fan-out runs at most K at once. Per-sub coalescing
+  collapses a drop-burst to ONE re-query per sub. Measured: 500 subs × 3 overflow latches →
+  peak 8 concurrent re-queries (= K), 500 total (one per sub).
+- **Headless live-delivery integration test.** `runtime-go/rt/live_reactive_delivery_test.go`
+  drives the full path — identity-stamped `Embedded_put` → engine feed → precise fan-out →
+  the session's `reactiveLoop` → `reactiveRefreshOnce` (re-query, fold, render, diff, SSE frame)
+  — and asserts the session's rendered body + emitted SSE frame carry the new row, AND that a
+  tenant-B write never repaints a tenant-A session (fail-closed gate, end-to-end). No browser
+  (per the repo's flaky-browser guidance).
+
+### DEFERRED, design-sanctioned (post-v1) — SAFE because of the gate
+
+- **Cross-instance reactive on a shared backend (§5).** A writing instance's deltas reaching
+  subscribers on OTHER replicas (Postgres data + Redis nudge → local re-query) is the §5 design
+  but is NOT wired in Phase-4. The architecture pre-decided "reactivity embedded-first; SQL =
+  storage + post-v1 NOTIFY bridge". **The RG#2 boot-fatal is what makes this deferral SAFE:** a
+  multi-replica app that needs cross-instance reactivity on a local store boot-FATALS (must set
+  the single-instance assertion, or move DATA to postgres + a redis broker) rather than silently
+  staling. There is no green cell that isn't proven end-to-end AND no silent-stale cell — every
+  unshared-multi-replica reactive config refuses to boot.
+- **SQL-backend reactive live delivery.** A `SqlConn` reactive binding does the initial fill only
+  (no live updates) in Phase-4 — the LISTEN/NOTIFY trigger is the post-v1 SQL arm. The pure
+  capability gate already handles the `"sqlite"` backend string; the runtime backend classifier
+  (`reactiveDataBackendKind`) wires sqlite/postgres discrimination when that arm lands.
+
+The distinction is deliberate: **cross-instance is DEFERRED with a boot-fatal safety gate, not
+silently dropped.** An operator can never accidentally run reactive-multi-replica-local and get
+stale reads — the process refuses to start.
+
+---
+
+*End of v2 + Phase-4c scope note. Re-grill before any further Phase-4 code. The two most likely
+re-grill targets remain §11 #1 (the `Cmd.perform` identity stamp) and §11 #7 (the re-register
+race).*
