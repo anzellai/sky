@@ -58,6 +58,19 @@ func (d *SkyDb) executor() dbExecutor {
 	return d.conn
 }
 
+// Db_dialect exposes the connection's SQL dialect to Sky as "postgres" or
+// "sqlite" (Sky type: Db.dialect : Db -> String). Std.Persist's SQL arm reads
+// it to render the dialect-aware, forced-semantics SQL (LIKE vs ILIKE — the
+// forced case-insensitive-ASCII collation of BlueDB Phase-3 §0.6) so a single
+// logical Persist query is byte-identical across SQLite and Postgres. Pure — it
+// reads a handle field, no I/O.
+func Db_dialect(db any) string {
+	if d, ok := db.(*SkyDb); ok && d.driver == "pgx" {
+		return "postgres"
+	}
+	return "sqlite"
+}
+
 // placeholder returns "?" for SQLite, "$N" for Postgres.
 func (d *SkyDb) placeholder(i int) string {
 	if d.driver == "pgx" {

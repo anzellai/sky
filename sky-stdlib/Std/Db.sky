@@ -30,6 +30,7 @@ module Std.Db exposing
     , getString
     , getInt
     , getBool
+    , dialect
     , Migration
     , defaultMigration
     , withSql
@@ -321,6 +322,14 @@ getInt =
 getBool : String -> row -> Bool
 getBool =
     Ffi.kernel "Db_getBool"
+
+
+-- | The connection's SQL dialect — `"postgres"` or `"sqlite"`. Pure (reads a
+-- handle field). Lets dialect-aware SQL renderers (e.g. `Std.Persist`'s SQL arm)
+-- force one semantics across backends without a per-backend fork.
+dialect : Db -> String
+dialect =
+    Ffi.kernel "Db_dialect"
 
 -- ─── Typed SQL parameter binding (v0.16.26 — #582) ─────────────────
 -- | A typed SQL parameter value for prepared-statement binding.

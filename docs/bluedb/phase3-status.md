@@ -125,9 +125,9 @@ unchanged. But `rt/embedded_kernel.go` is the FIRST `rt → sky-app/bluedb` impo
 `bluedb` package was not previously shipped into user projects, so two **build-system** files
 changed to materialise it (packaging, not compiler semantics):
 `rust/crates/ffi/build.rs` (`stage_runtime` now stages `runtime-go/bluedb`) and
-`rust/crates/project/src/build.rs` (`write_out` now materialises `bluedb/` beside `rt/`). Because
-`rt` imports `bluedb` unconditionally, every project now compiles the `bluedb`/Pebble subtree —
-conditional materialisation (only when `Std.Persist` is used) is a Phase-3c optimization.
+`rust/crates/project/src/build.rs` (`write_out` now materialises `bluedb/` beside `rt/`). In 3b
+this was UNconditional (every project compiled the Pebble subtree); Phase 3c makes it conditional
+(below).
 
 ### Deferred to 3b→later (documented)
 
@@ -142,12 +142,76 @@ conditional materialisation (only when `Std.Persist` is used) is a Phase-3c opti
 - **`watch`/`live`** — single-instance in-process pub/sub reactivity is NOT wired in this Sky
   surface yet (the engine seam is Phase 4). Deferred with the reactive path.
 
-## Phase 3c — SQL adapters + dialect-aware renderer + parity + capability check — pending
+## Phase 3c — SQL adapters + dialect-aware renderer + KV≡SQL parity + conditional materialisation — **DONE** → Phase 3 COMPLETE
 
-## Phase 3c — SQL adapters + dialect-aware renderer + parity + capability check — pending
+The relational (`SqlConn`) arm of the ported `case conn of` (Design B — NO new Go SQL `Backend`),
+the dialect-aware forced-semantics renderer, the runnable KV≡SQL parity gate (proven LIVE against
+embedded + SQLite + Postgres), and the conditional-materialisation build fix.
 
-- The SQL arm of the ported `case conn of` over `Std.Db`/`Store` (Design B — no new Go SQL
-  `Backend`); the dialect-aware `renderCond`/`orderTail` ADAPT (forced `NULLS FIRST` + forced
-  `LIKE` collation) with the matching `bluedbEvalCond`; the SQL≡KV parity gate for the documented
-  forced-semantics subset (`examples/55-persist-query`); the cross-instance capability check (§5 —
-  single-instance watch is NEVER gated).
+### What shipped
+
+1. **Std.Persist relational arm (§1/§3/§4.1)** — `sky-stdlib/Std/Persist.sky`. New `Relational`
+   phantom tag + `SqlConn Db` constructor + `connectRelational : () -> Task Error (Conn Relational)`.
+   Every universal verb (`get`/`put`/`insert`/`delete`/`toList`/`toCount`/`transaction`) gains a
+   `SqlConn db ->` arm; `selectRaw` is added (SQL-native on the relational arm; embedded is
+   single-collection-scan-only, §4.4). CRUD + codec-driven DDL reuse `Std.Db.Store`
+   (`fromCodec`/`primaryKey`/`create`/`upsert`/`insert`/`findBy`/`delete`); queries render
+   dialect-aware SQL in Sky and decode via the reused `Db_queryObjects` kernel (row columns →
+   codec JSON → `Codec.fromJson`). `transaction` → a real `Db.withTransaction` BEGIN…COMMIT. The
+   `case conn of` dispatch stays in Sky; the SQL text is never re-rendered in Go (Design B).
+
+2. **Dialect-aware, forced-semantics renderer (§0.6/§4.1)** — in `Std.Persist` (NOT `Std.Db.Store`,
+   so legacy `Store` SQL users are byte-for-byte UNCHANGED — the "gate the new behaviour"
+   requirement). Forced semantics a single logical query renders identically on BOTH dialects:
+   - **`ORDER BY` null placement** — explicit `NULLS FIRST` (ascending) / `NULLS LAST` (descending)
+     on both SQLite and Postgres, matching the embedded `orderAndPage` (`runtime-go/bluedb/indexer.go`).
+   - **`LIKE` collation** — forced **case-insensitive ASCII**: `LIKE` on SQLite (already
+     ASCII-case-insensitive) / `ILIKE` on Postgres. The embedded `likeMatch`
+     (`runtime-go/bluedb/cond.go`) now folds ASCII case to mirror it. The dialect is read via the
+     new pure `Db.dialect : Db -> String` kernel (`Db_dialect` → "postgres"/"sqlite").
+   Injection-safe (values bind as `?` params; `Db.query`'s `rebind` rewrites to `$n` on Postgres).
+
+3. **KV≡SQL parity gate (§0.6/§8)** — `examples/57-persist-parity` (+ `run.sh`). The SAME
+   `Collection` + `Cond`/`Query`/CRUD source runs on the embedded engine AND a relational backend;
+   the program self-asserts byte-identical results on the forced-semantics subset (equality, non-null
+   `ORDER BY`, integer ranges, `inList`, case-insensitive ASCII `LIKE`, `or_`+`orderDesc`, count,
+   insert). Proven LIVE:
+   - **embedded ≡ SQLite** — self-contained, `sky run` prints `PARITY PASS` (the always-runnable gate).
+   - **embedded ≡ Postgres** — `DATABASE_URL=postgres://… ./run.sh` (CI-gated; verified live against a
+     Postgres 16 instance, `PARITY PASS`). The `%a%` LIKE probe is the discriminator: it returns
+     `Alice` (capital A) on Postgres, proving `ILIKE` (not a case-sensitive bare `LIKE`) was emitted.
+   Unit coverage without a live Postgres: `runtime-go/rt/db_dialect_test.go` (dialect classification)
+   + `runtime-go/bluedb/like_test.go` (forced case-insensitive ASCII `LIKE`).
+
+4. **Conditional `bluedb` materialisation (the 3b build regression fix)** —
+   `rust/crates/project/src/build.rs`. `write_out` now materialises `bluedb/` (and `rt/embedded_kernel.go`,
+   the sole `sky-app/bluedb` importer in `rt`) ONLY when the emitted `main.go` calls an `rt.Embedded_*`
+   kernel (i.e. the program uses `Std.Persist`'s embedded arm). A non-Persist / relational-only project
+   never compiles the ~10-18 MB Pebble subtree. Verified: `examples/01-hello-world` clean-builds with NO
+   `sky-out/bluedb/` and NO `sky-out/rt/embedded_kernel.go`; `examples/56-persist-embedded` still gets
+   bluedb and runs. Nothing else in `rt` references the `Embedded_*` kernels, so dropping that one file
+   leaves `rt` self-contained.
+
+### Verification
+
+`go build ./...` + `go vet ./rt/ ./bluedb/` clean; `go test ./rt/ ./bluedb/ -race -count=1` green.
+`cargo build --release -p sky` clean. `examples/57-persist-parity` embedded≡SQLite≡Postgres `PARITY
+PASS`; `examples/56-persist-embedded` builds+runs (with bluedb); `examples/01-hello-world` builds
+WITHOUT bluedb. `sky fmt` idempotent on the edited `.sky`. **No compiler-semantics change** — the
+relational arm is pure stdlib Sky + reused `Std.Db` kernels; the only new kernel is the pure
+`Db_dialect`, resolved generically (no `hir`/`kernel_api` entry).
+
+### Deferred to Phase 4 (explicit, not a Phase-3 gap)
+
+- **Cross-instance capability check (§5)** — `Capabilities()` is reported per backend today
+  (`bluedb.EmbeddedBackend.Capabilities`), and single-instance watch is NEVER gated. The boot /
+  first-subscription hard-fatal for a multi-replica app on a non-`CrossInstanceReactive` backend is
+  wired with the reactive path (Phase 4), since the reactive bindings (`Live.withReactive`/`liveInto`/
+  `watchCollection`) it guards are themselves Phase 4. There is no silent-stale risk in Phase 3 —
+  the Persist surface does not yet expose `watch`/`live`.
+- **`selectRaw` on the embedded arm** — SQL-native on the relational arm (`Store.selectRaw`); the
+  embedded arm returns the documented SQL-only error (cross-collection JOIN/GROUP BY is SQL-only,
+  §4.4). Single-collection embedded `selectRaw` is a Phase-4 refinement.
+- **Collection `unique`/`serial`/generated builders on the SQL arm** — the SQL DDL is codec-driven
+  today (columns + PK); surfacing `unique`/`serial`/`defaultNow` on the `Persist.Collection` builder
+  (so both arms enforce them from one declaration) is additive (also deferred in 3b).

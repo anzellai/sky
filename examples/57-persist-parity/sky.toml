@@ -1,0 +1,9 @@
+name = "persist-parity"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+# The relational arm opens SQLite from this path (overridable via SKY_DB_PATH /
+# DATABASE_URL). run.sh points it at a fresh temp file per run.
+[database]
+driver = "sqlite"
+path = "data/parity.db"

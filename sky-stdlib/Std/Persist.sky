@@ -27,17 +27,20 @@
 module Std.Persist exposing
     ( Conn
     , KeyValue
+    , Relational
     , Collection
     , collection
     , key
     , index
     , connectKeyValue
+    , connectRelational
     , get
     , put
     , insert
     , delete
     , all
     , count
+    , selectRaw
     , transaction
     , Query
     , Cond
@@ -78,6 +81,7 @@ import Sky.Core.String as String
 import Sky.Core.Json.Encode as E exposing (Value)
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store
 import Std.Decimal as Decimal
 import Std.Money as Money
 
@@ -86,12 +90,18 @@ import Std.Money as Money
 type KeyValue
     = KeyValue
 
+-- | The phantom capability marking a relational (SQLite / Postgres) connection.
+type Relational
+    = Relational
+
 -- | A backend-invisible connection, tagged with its capability `cap`. The embedded
 -- arm wraps a runtime handle id (a registry-backed `*bluedb.EmbeddedBackend`, or the
--- tx surface inside a `transaction` body — never destructured by user code, since
--- the `KvConn` constructor is not exposed). SQLite/Postgres arms land in Phase 3c.
+-- tx surface inside a `transaction` body); the relational arm wraps a `Std.Db` handle
+-- (SQLite / Postgres, or the tx handle inside a `transaction` body). Neither payload is
+-- destructured by user code — the constructors are not exposed.
 type Conn cap
     = KvConn Int
+    | SqlConn Db
 
 -- ── Collection ────────────────────────────────────────────────────────────────
 -- | A persisted collection of `a`: a name, its codec (drives JSON + the engine's
@@ -155,6 +165,14 @@ connectKeyValue path =
     Task.map KvConn (openEmbedded path)
 
 
+-- | Open a relational connection (SQLite / Postgres) from the project's `[database]`
+-- config and mint a relational connection. The same universal verbs then persist
+-- records through `Std.Db`/`Std.Db.Store` — dialect-safe and codec-driven.
+connectRelational : () -> Task Error (Conn Relational)
+connectRelational _ =
+    Task.map SqlConn (Db.connect ())
+
+
 -- ── Universal verbs ───────────────────────────────────────────────────────────
 -- | Fetch a record by primary key. `Nothing` when absent.
 get : Conn cap -> Collection a -> String -> Task Error (Maybe a)
@@ -164,6 +182,16 @@ get conn coll keyStr =
         KvConn store ->
             embeddedGet store (schemaJson coll) keyStr
                 |> Task.andThen (decodeMaybe (codecOf coll))
+
+        SqlConn db ->
+            ensureSqlTable db coll
+                |> Task.andThen
+                       (\_ ->
+                           Store.findBy
+                               db
+                               (sqlStoreOf coll)
+                               (keyFieldOf coll)
+                               keyStr)
 
 
 -- | Upsert a record by its self-assigned primary key.
@@ -176,6 +204,11 @@ put conn coll record =
                 store
                 (schemaJson coll)
                 (Codec.toJson (codecOf coll) record)
+
+        SqlConn db ->
+            ensureSqlTable db coll
+                |> Task.andThen (\_ -> Store.upsert db (sqlStoreOf coll) record)
+                |> Task.map (\_ -> ())
 
 
 -- | Insert a record, returning the persisted row (with any engine-filled generated
@@ -191,6 +224,11 @@ insert conn coll record =
                 (Codec.toJson (codecOf coll) record)
                 |> Task.andThen (decodeOne (codecOf coll))
 
+        SqlConn db ->
+            ensureSqlTable db coll
+                |> Task.andThen (\_ -> Store.insert db (sqlStoreOf coll) record)
+                |> Task.map (\_ -> record)
+
 
 -- | Delete a record by primary key. Idempotent (a missing key is a no-op).
 delete : Conn cap -> Collection a -> String -> Task Error ()
@@ -199,6 +237,17 @@ delete conn coll keyStr =
 
         KvConn store ->
             embeddedDelete store (schemaJson coll) keyStr
+
+        SqlConn db ->
+            ensureSqlTable db coll
+                |> Task.andThen
+                       (\_ ->
+                           Store.delete
+                               db
+                               (sqlStoreOf coll)
+                               (keyFieldOf coll)
+                               keyStr)
+                |> Task.map (\_ -> ())
 
 
 -- | Every record in the collection.
@@ -213,6 +262,22 @@ count conn coll =
     toCount conn (query coll)
 
 
+-- | Escape hatch: run arbitrary SQL (JOIN / GROUP BY / aggregate) and decode each
+-- row into a projection via `codec`. SQL-native on the relational arm; the embedded
+-- arm supports only single-collection scans and returns an error on SQL text
+-- (cross-collection joins are SQL-only — §4.4).
+selectRaw : Conn cap -> Codec row -> String -> List SqlValue -> Task Error (List row)
+selectRaw conn codec sql params =
+    case conn of
+
+        KvConn store ->
+            embeddedSelectRaw store sql params
+                |> Task.andThen (decodeRows codec)
+
+        SqlConn db ->
+            Store.selectRaw db codec sql params
+
+
 -- | Run `fn` inside a serializable transaction (SSI, bounded conflict-retry). The
 -- body is handed a `Conn` bound to the transaction; its `get`/`put`/`query` compose
 -- atomically (a txn-scoped `query` records a read-set, §2.6). A body that returns
@@ -223,6 +288,9 @@ transaction conn fn =
 
         KvConn store ->
             embeddedTransaction store (\txStore -> fn (KvConn txStore))
+
+        SqlConn db ->
+            Db.withTransaction db (\tx -> fn (SqlConn tx))
 
 -- ── Query builder ─────────────────────────────────────────────────────────────
 -- | A composable WHERE condition — build a leaf (`eq` / `gt` / `like` / …) and
@@ -290,6 +358,19 @@ toList conn (Query q) =
             embeddedQuery store (schemaJson q.coll) (planJson (Query q))
                 |> Task.andThen (decodeRows (codecOf q.coll))
 
+        SqlConn db ->
+            let
+                ( whereSql, params ) = sqlWhere (Db.dialect db) q.conds
+                sql =
+                    "SELECT * FROM " ++ collNameOf q.coll ++ whereSql
+                        ++ orderTailSql q.orders
+                        ++ pageTailSql q.limitN q.offsetN
+            in
+                ensureSqlTable db q.coll
+                    |> Task.andThen
+                           (\_ -> sqlQueryObjects db sql params (sqlCols q.coll))
+                    |> Task.andThen (decodeRows (codecOf q.coll))
+
 
 -- | Run the query and return the first matching row (if any).
 toMaybe : Conn cap -> Query a -> Task Error (Maybe a)
@@ -304,6 +385,29 @@ toCount conn (Query q) =
 
         KvConn store ->
             embeddedCount store (schemaJson q.coll) (planJson (Query q))
+
+        SqlConn db ->
+            let
+                ( whereSql, params ) = sqlWhere (Db.dialect db) q.conds
+            in
+                ensureSqlTable db q.coll
+                    |> Task.andThen
+                           (\_ ->
+                               Db.query
+                                   db
+                                   ("SELECT COUNT(*) AS n FROM "
+                                       ++ collNameOf q.coll
+                                       ++ whereSql)
+                                   params)
+                    |> Task.map
+                           (\rows ->
+                               case rows of
+
+                                   row :: _ ->
+                                       Db.getInt "n" row
+
+                                   [] ->
+                                       0)
 
 
 -- ── Condition leaves + combinators ────────────────────────────────────────────
@@ -449,6 +553,197 @@ embeddedCount =
 embeddedTransaction : Int -> (Int -> Task Error a) -> Task Error a
 embeddedTransaction =
     Ffi.kernel "Embedded_transaction"
+
+
+embeddedSelectRaw : Int -> String -> List SqlValue -> Task Error (List String)
+embeddedSelectRaw =
+    Ffi.kernel "Embedded_selectRaw"
+
+
+-- Reused from the proven `Std.Db` surface: build column rows into codec-decodable
+-- JSON blobs (§4.1 — the relational arm reuses `Std.Db`, never re-rendered in Go).
+sqlQueryObjects : Db -> String -> List SqlValue -> List ( String, String ) -> Task Error (List String)
+sqlQueryObjects =
+    Ffi.kernel "Db_queryObjects"
+
+
+-- ── Relational (SQL) arm — dialect-aware, forced-semantics rendering (§4.1) ──
+-- The SQL arm reuses `Std.Db`/`Std.Db.Store` for schema + CRUD; queries render a
+-- dialect-aware, forced-semantics SQL here (§0.6): NULLs sort FIRST ascending /
+-- LAST descending on BOTH dialects (matching the embedded `orderAndPage`), and
+-- `LIKE` is case-insensitive ASCII on every backend (`LIKE` on SQLite — already
+-- ASCII-case-insensitive; `ILIKE` on Postgres; the embedded `likeMatch` folds
+-- ASCII case). Values bind as `?` params — injection-safe.
+-- Build a `Store a` view of a collection for the codec-driven schema + CRUD verbs.
+sqlStoreOf : Collection a -> Store.Store a
+sqlStoreOf coll =
+    Store.fromCodec (collNameOf coll) (codecOf coll)
+        |> Store.primaryKey (keyFieldOf coll)
+
+
+-- Create the collection's table if absent (idempotent DDL derived from the codec).
+ensureSqlTable : Db -> Collection a -> Task Error ()
+ensureSqlTable db coll =
+    Store.create db (sqlStoreOf coll)
+
+
+-- The collection's (column, DDL-kind) descriptors — the schema `Db_queryObjects`
+-- uses to shape each row's JSON. Uses the codec's PHYSICAL kind (like `Std.Db.Store`),
+-- not the engine kind the embedded indexer needs.
+sqlCols : Collection a -> List ( String, String )
+sqlCols coll =
+    case Codec.shape (codecOf coll) of
+
+        SRecord cols ->
+            List.map (\pair -> ( fst pair, Codec.colTypeKind (snd pair) )) cols
+
+        _ ->
+            []
+
+
+sqlWhere : String -> List Cond -> ( String, List SqlValue )
+sqlWhere dia conds =
+    case conds of
+
+        [] ->
+            ( "", [] )
+
+        _ ->
+            let
+                ( s, p ) = renderCondSql dia (combined conds)
+            in
+                ( " WHERE " ++ s, p )
+
+
+renderCondSql : String -> Cond -> ( String, List SqlValue )
+renderCondSql dia cond =
+    case cond of
+
+        CondLeaf col op v ->
+            ( col ++ " " ++ sqlOp dia op ++ " ?", [ v ] )
+
+        CondNullC col wantNull ->
+            ( col
+                  ++ (if wantNull then
+                         " IS NULL"
+
+                     else
+                         " IS NOT NULL")
+            , []
+            )
+
+        CondInC col vs ->
+            case vs of
+
+                [] ->
+                    ( "1 = 0", [] )
+
+                _ ->
+                    ( col ++ " IN ("
+                          ++ String.join ", " (List.map (\_ -> "?") vs)
+                          ++ ")"
+                    , vs
+                    )
+
+        CondAndC kids ->
+            renderGroupSql dia "1 = 1" " AND " kids
+
+        CondOrC kids ->
+            renderGroupSql dia "1 = 0" " OR " kids
+
+        CondNotC k ->
+            let
+                ( s, p ) = renderCondSql dia k
+            in
+                ( "NOT (" ++ s ++ ")", p )
+
+
+-- The comparison operator token. `like` forces case-insensitive ASCII: `LIKE` on
+-- SQLite (already case-insensitive ASCII) / `ILIKE` on Postgres (§0.6).
+sqlOp : String -> String -> String
+sqlOp dia op =
+    case op of
+
+        "eq" ->
+            "="
+
+        "ne" ->
+            "<>"
+
+        "gt" ->
+            ">"
+
+        "gte" ->
+            ">="
+
+        "lt" ->
+            "<"
+
+        "lte" ->
+            "<="
+
+        "like" ->
+            if dia == "postgres" then
+                "ILIKE"
+
+            else
+                "LIKE"
+
+        _ ->
+            "="
+
+
+renderGroupSql : String -> String -> String -> List Cond -> ( String, List SqlValue )
+renderGroupSql dia emptySql sep cs =
+    case cs of
+
+        [] ->
+            ( emptySql, [] )
+
+        _ ->
+            let
+                parts = List.map (renderCondSql dia) cs
+            in
+                ( "(" ++ String.join sep (List.map fst parts) ++ ")"
+                , List.concat (List.map snd parts)
+                )
+
+
+-- ORDER BY with FORCED null placement: NULLs FIRST ascending, LAST descending, on
+-- BOTH dialects — matching the embedded `orderAndPage` (§0.6). `orders` is already
+-- in priority order (orderAsc/orderDesc APPEND).
+orderTailSql : List ( String, String ) -> String
+orderTailSql orders =
+    case orders of
+
+        [] ->
+            ""
+
+        _ ->
+            " ORDER BY " ++ String.join ", " (List.map orderTermSql orders)
+
+
+orderTermSql : ( String, String ) -> String
+orderTermSql pair =
+    if snd pair == "desc" then
+        fst pair ++ " DESC NULLS LAST"
+
+    else
+        fst pair ++ " ASC NULLS FIRST"
+
+
+pageTailSql : Int -> Int -> String
+pageTailSql limitN offsetN =
+    (if limitN >= 0 then
+        " LIMIT " ++ String.fromInt limitN
+
+    else
+        "")
+        ++ (if offsetN > 0 then
+               " OFFSET " ++ String.fromInt offsetN
+
+           else
+               "")
 
 
 -- ── Decode helpers ────────────────────────────────────────────────────────────

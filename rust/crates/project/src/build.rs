@@ -461,7 +461,19 @@ fn build_inner(
         .out_dir_abs
         .clone()
         .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
-    if let Err(e) = write_out(&opts.repo_root, &out_dir, &source, console_needed) {
+    // The embedded BlueDB engine (`bluedb/` + `rt/embedded_kernel.go`) is only
+    // linked when the program actually uses `Std.Persist`'s embedded arm — i.e.
+    // the emitted Go calls an `rt.Embedded_*` kernel. A non-Persist project (and a
+    // relational-only Persist project) must NOT compile the Pebble subtree
+    // (~10-18 MB + slow build). Detect it straight off the emitted source.
+    let persist_needed = source.contains("rt.Embedded_");
+    if let Err(e) = write_out(
+        &opts.repo_root,
+        &out_dir,
+        &source,
+        console_needed,
+        persist_needed,
+    ) {
         report.note = format!("write failed: {e}");
         return report;
     }
@@ -1083,6 +1095,7 @@ fn write_out(
     out_dir: &Path,
     source: &str,
     console_needed: bool,
+    persist_needed: bool,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     std::fs::write(out_dir.join("main.go"), source)?;
@@ -1093,16 +1106,21 @@ fn write_out(
     if sum.exists() {
         std::fs::copy(sum, out_dir.join("go.sum"))?;
     }
-    // materialise a pruned copy of runtime-go/rt (tests stripped).
+    // materialise a pruned copy of runtime-go/rt (tests stripped). When the program
+    // does NOT use `Std.Persist`'s embedded arm, `rt/embedded_kernel.go` (the sole
+    // `sky-app/bluedb` importer in `rt`) is skipped so the Pebble subtree never
+    // enters the build — see `materialise_rt`'s `persist_needed` gate + `bluedb/`
+    // below. Nothing else in `rt` references the `Embedded_*` kernels, so dropping
+    // that one file leaves `rt` self-contained.
     let rt_dst = out_dir.join("rt");
-    materialise_rt(&rt_src.join("rt"), &rt_dst, console_needed)?;
+    materialise_rt(&rt_src.join("rt"), &rt_dst, console_needed, persist_needed)?;
     // materialise runtime-go/bluedb (the embedded DB engine `rt/embedded_kernel.go`
-    // imports as `sky-app/bluedb`). rt imports it unconditionally, so every project
-    // needs it linked (v0.19 BlueDB Phase 3b). `materialise_rt` strips `_test.go` +
-    // `testdata`; bluedb has no `console_app`, so `console_needed=false` is inert.
+    // imports as `sky-app/bluedb`) — ONLY when the program uses it (v0.19 BlueDB
+    // Phase 3c conditional materialisation). A non-Persist / relational-only project
+    // never compiles the ~10-18 MB Pebble subtree.
     let bluedb_src = rt_src.join("bluedb");
-    if bluedb_src.is_dir() {
-        materialise_rt(&bluedb_src, &out_dir.join("bluedb"), false)?;
+    if persist_needed && bluedb_src.is_dir() {
+        materialise_rt(&bluedb_src, &out_dir.join("bluedb"), false, persist_needed)?;
     }
     Ok(())
 }
@@ -1181,7 +1199,12 @@ fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), S
 /// skipped so the console stack stays out of the build (leanness — mirrors the
 /// oracle, whose linker tree-shakes it away when unimported). `testdata` is
 /// always skipped.
-fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Result<()> {
+fn materialise_rt(
+    src: &Path,
+    dst: &Path,
+    console_needed: bool,
+    persist_needed: bool,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -1197,8 +1220,13 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
             if name_s == "console_app" && !console_needed {
                 continue;
             }
-            materialise_rt(&path, &dst.join(&name_s), console_needed)?;
+            materialise_rt(&path, &dst.join(&name_s), console_needed, persist_needed)?;
         } else if name_s.ends_with("_test.go") {
+            continue;
+        } else if name_s == "embedded_kernel.go" && !persist_needed {
+            // The ONLY `rt` file importing `sky-app/bluedb`. Skip it (and the
+            // `bluedb/` subtree) when the program never calls an `rt.Embedded_*`
+            // kernel, so a non-Persist project doesn't compile the Pebble engine.
             continue;
         } else if name_s.ends_with(".go") {
             std::fs::copy(&path, dst.join(&name_s))?;

@@ -1,0 +1,176 @@
+-- | Std.Persist SQL≡KV parity gate (BlueDB Phase 3c, docs/bluedb/phase3-api-design.md §8).
+--
+-- The SAME `Collection` + `Cond`/`Query`/CRUD source runs on BOTH backends —
+-- `connectKeyValue` (the embedded BlueDB engine) and `connectRelational` (SQLite) —
+-- and asserts the results are byte-identical on the FORCED-SEMANTICS SUBSET (§0.6):
+-- equality, non-null `ORDER BY`, integer ranges, `inList`, ASCII `LIKE` under the
+-- forced case-insensitive collation, count, and insert/delete. A single logical
+-- query renders to ONE semantics on both backends (dialect-aware renderer + the
+-- mirroring embedded `bluedbEvalCond`).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Persist as P
+import Std.Codec as Codec exposing (Codec)
+
+type alias Person =
+    { id : String
+    , name : String
+    , age : Int
+    , active : Bool
+    , city : String
+    }
+
+
+blankPerson : Person
+blankPerson =
+    { id = "", name = "", age = 0, active = False, city = "" }
+
+
+personCodec : Codec Person
+personCodec =
+    Codec.auto blankPerson
+
+
+people : P.Collection Person
+people =
+    P.collection "people" personCodec |> P.key "id" |> P.index "age"
+
+
+seed : List Person
+seed =
+    [ { id = "1", name = "Alice", age = 30, active = True, city = "London" }
+    , { id = "2", name = "Bob", age = 55, active = False, city = "Boston" }
+    , { id = "3", name = "Cara", age = 25, active = True, city = "Berlin" }
+    , { id = "4", name = "Dan", age = 42, active = False, city = "Boston" }
+    ]
+
+
+-- ── The probe matrix (the documented forced-semantics subset, §0.6/§8) ────────
+probes : P.Conn cap -> List (Task Error String)
+probes conn =
+    [ namesWhere
+          conn
+          "eq+orderAsc(name)"
+          (P.query people |> P.where_ (P.eq "active" (P.bool True))
+              |> P.orderAsc "name")
+    , namesWhere
+          conn
+          "int-range(26<age<50)+orderAsc(age)"
+          (P.query people |> P.where_ (P.gt "age" (P.int 26))
+              |> P.where_ (P.lt "age" (P.int 50))
+              |> P.orderAsc "age")
+    , namesWhere
+          conn
+          "inList(city)+orderAsc(name)"
+          (P.query people
+              |> P.where_
+                     (P.inList "city" [ P.string "Boston", P.string "Berlin" ])
+              |> P.orderAsc "name")
+    , namesWhere
+          conn
+          "like(name %a%, case-insensitive)+orderAsc(name)"
+          (P.query people |> P.where_ (P.like "name" "%a%") |> P.orderAsc "name")
+    , namesWhere
+          conn
+          "or_(age>50 | city=Berlin)+orderDesc(age)"
+          (P.query people
+              |> P.where_
+                     (P.or_
+                         [ P.gt "age" (P.int 50)
+                         , P.eq "city" (P.string "Berlin")
+                         ])
+              |> P.orderDesc "age")
+    , countProbe
+          conn
+          "count(active)"
+          (P.query people |> P.where_ (P.eq "active" (P.bool True)))
+    ]
+
+
+namesWhere : P.Conn cap -> String -> P.Query Person -> Task Error String
+namesWhere conn label q =
+    P.toList conn q
+        |> Task.map
+               (\rows -> label ++ " => " ++ String.join "," (List.map .name rows))
+
+
+countProbe : P.Conn cap -> String -> P.Query Person -> Task Error String
+countProbe conn label q =
+    P.toCount conn q |> Task.map (\n -> label ++ " => " ++ String.fromInt n)
+
+
+insertAll : P.Conn cap -> List Person -> Task Error ()
+insertAll conn ps =
+    case ps of
+
+        [] ->
+            Task.succeed ()
+
+        x :: rest ->
+            P.insert conn people x |> Task.andThen (\_ -> insertAll conn rest)
+
+
+runBackend : P.Conn cap -> Task Error (List String)
+runBackend conn =
+    insertAll conn seed |> Task.andThen (\_ -> Task.sequence (probes conn))
+
+
+printLines : List String -> ()
+printLines lines =
+    case lines of
+
+        [] ->
+            ()
+
+        x :: rest ->
+            let
+                _ = println x
+            in
+                printLines rest
+
+
+main : Task Error ()
+main =
+    P.connectKeyValue "data/kv"
+        |> Task.andThen
+               (\kv ->
+                   P.connectRelational ()
+                       |> Task.andThen
+                              (\sql ->
+                                  runBackend kv
+                                      |> Task.andThen
+                                             (\kvOut ->
+                                                 runBackend sql
+                                                     |> Task.andThen
+                                                            (\sqlOut ->
+                                                                report
+                                                                    kvOut
+                                                                    sqlOut))))
+
+
+report : List String -> List String -> Task Error ()
+report kvOut sqlOut =
+    let
+        _ = println "── KV  (embedded BlueDB) ──"
+        _ = printLines kvOut
+        _ = println "── SQL (SQLite) ──"
+        _ = printLines sqlOut
+    in
+        if kvOut == sqlOut then
+            let
+                _ =
+                    println
+                        "PARITY PASS — embedded ≡ SQLite byte-identical on the forced-semantics subset"
+            in
+                Task.succeed ()
+
+        else
+            Task.fail
+                (Error.unexpected
+                    "PARITY FAIL — embedded and SQLite diverged on the subset")

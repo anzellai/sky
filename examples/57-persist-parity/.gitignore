@@ -1,0 +1,8 @@
+# Runtime data + build artifacts — regenerated on run
+skydata*/
+data/
+*.db
+*.db-*
+sky-out/
+.skycache/
+.skydeps/

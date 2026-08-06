@@ -1,0 +1,6 @@
+# BlueDB embedded engine runtime data (Pebble store) — regenerated on run
+skydata-todos/
+data/
+sky-out/
+.skycache/
+.skydeps/

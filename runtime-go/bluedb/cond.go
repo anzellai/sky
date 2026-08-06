@@ -191,14 +191,16 @@ func numericOf(cv ColValue) (float64, bool) {
 	return f, true
 }
 
-// likeMatch implements SQL LIKE with % (any run) and _ (any single char), ASCII, case-sensitive
-// (the forced §0.6 collation the embedded arm mirrors). Backtracking matcher — inputs are small.
+// likeMatch implements SQL LIKE with % (any run) and _ (any single char), over ASCII, and
+// CASE-INSENSITIVE — the forced §0.6 collation the embedded arm mirrors so a Persist LIKE is
+// byte-identical across embedded / SQLite (natural ASCII-case-insensitive LIKE) / Postgres
+// (rendered as ILIKE). Backtracking matcher — inputs are small.
 func likeMatch(s, pat string) bool {
 	// Iterative greedy backtracking (Thompson-style for % / _).
 	sIdx, pIdx := 0, 0
 	star, mark := -1, 0
 	for sIdx < len(s) {
-		if pIdx < len(pat) && (pat[pIdx] == '_' || pat[pIdx] == s[sIdx]) {
+		if pIdx < len(pat) && (pat[pIdx] == '_' || asciiFold(pat[pIdx]) == asciiFold(s[sIdx])) {
 			sIdx++
 			pIdx++
 		} else if pIdx < len(pat) && pat[pIdx] == '%' {
@@ -217,6 +219,15 @@ func likeMatch(s, pat string) bool {
 		pIdx++
 	}
 	return pIdx == len(pat)
+}
+
+// asciiFold lowercases an ASCII byte (A–Z → a–z); non-ASCII bytes pass through. The forced
+// case-insensitive-ASCII LIKE collation (§0.6) — matches SQLite's default LIKE and Postgres ILIKE.
+func asciiFold(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }
 
 // ── the txn-Query read-set classifier (§2.6) ─────────────────────────────────────────────────
