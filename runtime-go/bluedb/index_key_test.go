@@ -204,11 +204,11 @@ func TestFix2_CompositeLayoutGuard(t *testing.T) {
 	const idx = IndexID(7)
 
 	accept := [][]IndexCol{
-		{{ColInt, IntKey(1)}, {ColText, []byte("a")}},                     // (int, text) — fixed prefix, variable suffix
+		{{ColInt, IntKey(1)}, {ColText, []byte("a")}},                       // (int, text) — fixed prefix, variable suffix
 		{{ColBool, []byte{1}}, {ColInt, IntKey(2)}, {ColText, []byte("z")}}, // (bool, int, text)
-		{{ColInt, IntKey(1)}, {ColInt, IntKey(2)}},                        // (int, int) — all fixed
-		{{ColText, []byte("solo")}},                                       // single variable column IS the suffix
-		{{ColInt, IntKey(1)}, {ColMoney, []byte("USD 1.00")}},             // fallback money as suffix is allowed
+		{{ColInt, IntKey(1)}, {ColInt, IntKey(2)}},                          // (int, int) — all fixed
+		{{ColText, []byte("solo")}},                                         // single variable column IS the suffix
+		{{ColInt, IntKey(1)}, {ColMoney, []byte("USD 1.00")}},               // fallback money as suffix is allowed
 	}
 	for _, cols := range accept {
 		if err := checkCompositeLayout(cols); err != nil {
@@ -218,9 +218,9 @@ func TestFix2_CompositeLayoutGuard(t *testing.T) {
 	}
 
 	reject := [][]IndexCol{
-		{{ColText, []byte("a")}, {ColInt, IntKey(1)}},   // (text, int) — variable-width non-suffix
-		{{ColText, []byte("a")}, {ColText, []byte("b")}}, // (text, text) — first text is non-suffix
-		{{ColBlob, []byte("x")}, {ColBool, []byte{1}}},   // (blob, bool) — variable-width non-suffix
+		{{ColText, []byte("a")}, {ColInt, IntKey(1)}},                      // (text, int) — variable-width non-suffix
+		{{ColText, []byte("a")}, {ColText, []byte("b")}},                   // (text, text) — first text is non-suffix
+		{{ColBlob, []byte("x")}, {ColBool, []byte{1}}},                     // (blob, bool) — variable-width non-suffix
 		{{ColInt, IntKey(1)}, {ColText, []byte("a")}, {ColInt, IntKey(2)}}, // text in the middle
 	}
 	for _, cols := range reject {
