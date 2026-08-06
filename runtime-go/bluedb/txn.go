@@ -13,12 +13,23 @@ import (
 const maxTxnAttempts = 8
 
 // maxLeaseAttempts bounds the strict-2PL Phase-C run (§6.3). While the txn holds every hot-key
-// lease it touches, it can only lose to a range/non-hot conflict OR the rare transitional race
-// where a key promotes to hot between an optimistic attempt's anyHot check and its commit; a
-// held-lease holder re-runs and wins as the transient drains. Generously bounded so a
-// point-contended txn never returns ErrConflict, yet a genuine range conflict under the held
-// leases still degrades to a typed ErrConflict rather than hanging.
+// lease it touches, it is the sole active writer of those point keys among BOTH other lease-path
+// txns AND blind writes (Fix-3 routes a blind write to a hot key through the same FIFO lease), so
+// a purely point-contended RMW makes progress and commits on its held keys. It CAN still return a
+// typed ErrConflict — HONESTLY, in exactly two cases: (1) a genuine range/predicate conflict
+// (non-leaseable, §6.4) under the held leases; (2) transiently, a body whose touched hot-key set
+// diverges from the held set (Fix-4 handles this by re-discovering + re-acquiring the expanded set
+// up to maxLeaseRediscover, then surfacing ErrConflict only if it never stabilizes). Generously
+// bounded so the rare promote-between-check-and-commit transient drains rather than hanging.
 const maxLeaseAttempts = 32
+
+// maxLeaseRediscover bounds Fix-4's re-discovery loop: a data-dependent body can, under
+// contention, touch a NEW hot key each time it re-runs (branch divergence on a value another txn
+// flips). Each such divergence expands the held lease set and re-acquires the WHOLE set in
+// canonical order (still deadlock-free). The touched-key set is finite, so it stabilizes; this cap
+// is the honest bound after which a never-stabilizing body surfaces a typed ErrConflict instead of
+// livelocking.
+const maxLeaseRediscover = 8
 
 // leasePathCalls counts transactUnderLeases entries — a test seam: the range-contention
 // conformance test asserts it stays 0 (predicate contention is never leased, §6.4).
@@ -356,12 +367,13 @@ func (e *pebbleEngine) Transact(body func(tx *Txn) error) error {
 //	          every hot key it holds, it cannot lose the validation race on those point keys;
 //	          a range/non-hot conflict still returns ErrConflict (honest — no predicate lease).
 //
-// Release is DRIVER-side (defer releaseAll); the committer-side reaper (leaseManager.reap) is
-// the timeout backstop for a driver that crashes between Commit-return and its release defer.
+// Release is DRIVER-side (defer releaseAll); a dedicated lease-reaper goroutine (leaseManager.reap,
+// run by pebble_engine.go `go e.leaseReaper()` — NOT the committer) is the timeout backstop for a
+// driver that crashes between Commit-return and its release defer.
 func (e *pebbleEngine) transactUnderLeases(body func(tx *Txn) error) error {
 	leasePathCalls.Add(1)
 
-	// ── Phase A: discover the full hot-key set, holding NO lease. ──
+	// ── Phase A: discover the initial hot-key set, holding NO lease. ──
 	tx0, err := e.Begin()
 	if err != nil {
 		return err
@@ -377,44 +389,120 @@ func (e *pebbleEngine) transactUnderLeases(body func(tx *Txn) error) error {
 		return e.Transact(body) // cooled between detection and here → back to optimistic
 	}
 
-	// ── Phase B: acquire ALL leases in canonical order (strict-2PL: acquire-all-then-run). ──
-	tickets := make([]*leaseTicket, 0, len(hot))
+	// held is the current lease set (a membership set). Fix-4 grows it when Phase C discovers a
+	// hot key outside it, and RE-acquires the whole expanded set in canonical order each round.
+	held := make(map[string]bool, len(hot))
 	for _, k := range hot {
-		t := e.leases.acquire(string(k))
-		<-t.granted
-		tickets = append(tickets, t)
+		held[string(k)] = true
 	}
-	defer func() { // driver releases; the committer reaper is the crash backstop
-		for _, t := range tickets {
-			e.leases.release(t)
-		}
-	}()
 
-	// ── Phase C: run the pure body under the held leases (bounded). ──
 	var lastErr error
-	for attempt := 0; attempt < maxLeaseAttempts; attempt++ {
-		tx, err := e.Begin() // snapshot AFTER the prior holders' durable commits
-		if err != nil {
-			return err
+	for rediscover := 0; rediscover < maxLeaseRediscover; rediscover++ {
+		// ── Phase B: acquire ALL held leases in canonical bytes.Compare order (strict-2PL:
+		// acquire-all-then-run; one global lock order over a total order → no hold-and-wait
+		// cycle → deadlock-free). Nothing is held across this acquire — the prior round released
+		// everything before re-acquiring the expanded set, so the canonical order is never
+		// violated by a partial hold. ──
+		ordered := sortedKeys(held)
+		tickets := make([]*leaseTicket, 0, len(ordered))
+		for _, k := range ordered {
+			t := e.leases.acquire(k)
+			<-t.granted
+			tickets = append(tickets, t)
 		}
-		if berr := body(tx); berr != nil {
-			tx.Abort()
-			return berr
+
+		// ── Phase C: run the pure body under the held leases (bounded). ──
+		committed := false
+		var newHot [][]byte
+		for attempt := 0; attempt < maxLeaseAttempts; attempt++ {
+			tx, err := e.Begin() // snapshot AFTER the prior holders' durable commits
+			if err != nil {
+				e.releaseLeases(tickets)
+				return err
+			}
+			if berr := body(tx); berr != nil {
+				tx.Abort()
+				e.releaseLeases(tickets)
+				return berr
+			}
+			// Fix-4: did this run touch a hot key OUTSIDE the held set? A data-dependent body can
+			// branch onto a different key than Phase A saw (or a key that has since gone hot).
+			// Such a key is unleased → the commit would race it unprotected → livelock. Instead,
+			// ABORT, expand the held set, and re-acquire the WHOLE set in canonical order.
+			if extra := e.unheldHot(tx.touchedKeys(), held); len(extra) > 0 {
+				tx.Abort()
+				newHot = extra
+				break
+			}
+			err = tx.Commit()
+			if err == nil {
+				committed = true
+				break
+			}
+			if !errors.Is(err, ErrConflict) {
+				e.releaseLeases(tickets)
+				return err
+			}
+			lastErr = err
+			backoff(attempt)
 		}
-		err = tx.Commit()
-		if err == nil {
+
+		// Release the whole held set BEFORE re-acquiring (deadlock-free: never hold across an
+		// acquire of a lower-ordered key) or returning.
+		e.releaseLeases(tickets)
+
+		if committed {
 			return nil
 		}
-		if !errors.Is(err, ErrConflict) {
-			return err
+		if len(newHot) > 0 {
+			for _, k := range newHot {
+				held[string(k)] = true
+			}
+			continue // re-acquire the expanded set next round
 		}
-		lastErr = err
-		backoff(attempt)
+		// Phase C exhausted maxLeaseAttempts with ErrConflict on the held keys → a genuine
+		// range/predicate conflict under the leases (§6.4) → honest typed ErrConflict.
+		if lastErr == nil {
+			lastErr = ErrConflict
+		}
+		return lastErr
 	}
+
+	// Fix-4: the touched hot-key set never stabilized within the re-discovery cap → honest bound.
 	if lastErr == nil {
 		lastErr = ErrConflict
 	}
 	return lastErr
+}
+
+// sortedKeys returns the set's keys in ascending order. Go string ordering is bytewise, identical
+// to bytes.Compare, so this IS the canonical lease-acquisition order (§6.4) — deadlock-free.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unheldHot returns the touched keys that are currently hot but NOT in the held lease set — the
+// Fix-4 signal to expand + re-acquire. Deduped; returned in touched-order (the caller only unions
+// them into the held set, which re-sorts on the next acquire).
+func (e *pebbleEngine) unheldHot(touched [][]byte, held map[string]bool) [][]byte {
+	seen := make(map[string]bool, len(touched))
+	var extra [][]byte
+	for _, k := range touched {
+		s := string(k)
+		if held[s] || seen[s] {
+			continue
+		}
+		if e.hotKeys.isHot(k) {
+			seen[s] = true
+			extra = append(extra, append([]byte(nil), k...))
+		}
+	}
+	return extra
 }
 
 // backoff sleeps an exponentially-growing, jittered interval to dampen the two-txns-

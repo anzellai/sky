@@ -362,6 +362,22 @@ func (e *pebbleEngine) Commit(req CommitReq) CommitResult {
 	if e.isClosed() {
 		return CommitResult{Err: ErrClosed}
 	}
+
+	// Fix-3 (liveness): a BLIND write (ReadSet == nil) whose target key is currently HOT must not
+	// firehose past a lease-holding RMW txn — a blind-write flood on a hot key would otherwise
+	// exhaust that RMW's retries and starve it to ErrConflict while it holds every lease. Route
+	// such a blind write through the SAME FIFO lease the transactional path uses, so it queues
+	// BEHIND the lease holder and the RMW makes progress. This is DRIVER-side (before enqueue) —
+	// the committer is the single writer and MUST NOT block on a lease. The overwhelming common
+	// case (no hot key anywhere) is a single pair of atomic loads and takes NO lock, so the OLTP
+	// firehose pays zero (blindHotLeases returns nil immediately). Not a correctness change —
+	// validation already prevents lost updates; blind last-write-wins stays the caller's choice.
+	if req.ReadSet == nil {
+		if tickets := e.blindHotLeases(req); len(tickets) > 0 {
+			defer e.releaseLeases(tickets)
+		}
+	}
+
 	job := &commitJob{req: req, done: make(chan CommitResult, 1)}
 	defer func() {
 		// A send on a closed channel panics if Close raced us; recover to ErrClosed.
@@ -371,6 +387,47 @@ func (e *pebbleEngine) Commit(req CommitReq) CommitResult {
 	}()
 	e.ch <- job
 	return <-job.done
+}
+
+// blindHotLeases returns the FIFO lease tickets a blind write must hold before committing to a
+// currently-hot target key (Fix-3), acquired in canonical bytes.Compare order — the SAME
+// whole-set canonical-order acquisition the transactional lease path uses, so a blind write that
+// touches several hot keys cannot deadlock against a transactional holder. The lock-free atomic
+// gate (hotKeys.hotN == 0 AND leases.waiterN == 0 ⇒ nothing hot anywhere) makes the no-hot-key
+// firehose pay a single pair of atomic loads and take NO lock. Returns nil when no target is hot.
+func (e *pebbleEngine) blindHotLeases(req CommitReq) []*leaseTicket {
+	if e.hotKeys == nil || e.leases == nil {
+		return nil // not wired (manualDrain never reaches here — it bypasses e.Commit)
+	}
+	// Lock-free fast gate: no key is hot and no lease is contended → zero-cost firehose path.
+	if e.hotKeys.hotN.Load() == 0 && e.leases.waiterN.Load() == 0 {
+		return nil
+	}
+	// Something is hot somewhere — precisely check THIS req's write keys (blind writes have no
+	// reads, so the touched set is exactly the write-set keys).
+	keys := make([][]byte, 0, len(req.Writes))
+	for i := range req.Writes {
+		keys = append(keys, req.Writes[i].UserKey)
+	}
+	hot := e.hotKeys.hotSubset(keys) // dedup + ascending bytes.Compare order (deadlock-free acquire)
+	if len(hot) == 0 {
+		return nil
+	}
+	tickets := make([]*leaseTicket, 0, len(hot))
+	for _, k := range hot {
+		t := e.leases.acquire(string(k))
+		<-t.granted
+		tickets = append(tickets, t)
+	}
+	return tickets
+}
+
+// releaseLeases releases every held lease ticket (driver-side; the lease-reaper goroutine is the
+// crash backstop). Shared by the blind-write path (Fix-3) and the transactional lease path (Fix-4).
+func (e *pebbleEngine) releaseLeases(tickets []*leaseTicket) {
+	for _, t := range tickets {
+		e.leases.release(t)
+	}
 }
 
 func (e *pebbleEngine) isClosed() bool {

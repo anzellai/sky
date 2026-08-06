@@ -1,6 +1,7 @@
 package bluedb
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -11,6 +12,16 @@ import (
 // changelogTailCalls counts the ring-spill fallback (a Pebble scan). A test seam: T16 asserts
 // a fresh-readTs txn is served entirely by the in-RAM ring (zero Tail scans).
 var changelogTailCalls atomic.Int64
+
+// changelogTailFaultInject is a TEST SEAM (Fix-1 regression, T31): when set, changelogTailChanges
+// returns errInjectedChangelogFault instead of reading Pebble, so a test can exercise the
+// fail-CLOSED spill-error path (a phantom whose change spilled out of the ring must ABORT the txn,
+// never commit against a nil window). atomic so the committer-goroutine read races cleanly with
+// the test-goroutine set under `go test -race`.
+var changelogTailFaultInject atomic.Bool
+
+// errInjectedChangelogFault is the sentinel the Fix-1 test seam raises on the spill path.
+var errInjectedChangelogFault = errors.New("bluedb: injected changelog-tail fault (test)")
 
 // committer is the single writer goroutine (§3.2). It group-commits: grabs the
 // first queued job, drains up to maxBatch more non-blocking, and processes the
@@ -221,9 +232,23 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 			// Fix-8 spill fallback: readTs fell below the ring floor → validate via the durable
 			// changelog (correct, off the in-RAM fast path). (In 2a the ring is uncapped, so
 			// this is only reached if GC trimmed past a lagging readTs — still correct.)
-			if tail, terr := changelogTailChanges(e.db, j.req.ReadTs); terr == nil {
-				base = tail
+			//
+			// Fix-1 (fail CLOSED): if that changelog read ERRORS — a Pebble iterator error OR a
+			// malformed/truncated changelog entry surfaced by DecodeChangelogPayload — we CANNOT
+			// compute the validation window. We MUST NOT fall through with base == nil: that would
+			// validate the txn against `pending` ONLY, dropping the spilled committed changes in
+			// (readTs, floor] and UNDER-REJECTING a phantom whose conflicting change spilled out of
+			// the ring (a serializability break — violates validate.go's NEVER-under-reject
+			// contract). Instead ABORT this job (assign NO commitTs). The driver re-Begins at a
+			// fresher readTs (>= durableHi >= ring floor → no spill on retry; a transient I/O error
+			// also clears), so this fails closed WITHOUT starving the txn.
+			tail, terr := changelogTailChanges(e.db, j.req.ReadTs)
+			if terr != nil {
+				j.done <- CommitResult{Err: ErrConflict} // fail closed — never commit a non-serializable history
+				acked[j] = true                          // Fix-7: record the inline ack
+				continue
 			}
+			base = tail
 		}
 		window := make([]KeyChange, 0, len(base)+len(pending))
 		window = append(window, base...)
@@ -327,6 +352,9 @@ func decodePayload(payload []byte) []KeyChange {
 // the ring-spill fallback (Fix-8, §4.2) and available for cold-start rebuild.
 func changelogTailChanges(db *pebble.DB, after HLC) ([]KeyChange, error) {
 	changelogTailCalls.Add(1)
+	if changelogTailFaultInject.Load() {
+		return nil, errInjectedChangelogFault // Fix-1 test seam: force the fail-CLOSED spill-error path
+	}
 	cl := &changelog{db: db}
 	entries, err := cl.Tail(after)
 	if err != nil {

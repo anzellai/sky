@@ -3,6 +3,7 @@ package bluedb
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 )
 
 // ColType tags a column's value domain so the ONE canonical encoder (encodeIndexKey)
@@ -120,12 +121,47 @@ type IndexCol struct {
 	Value []byte
 }
 
+// fixedWidthCol reports whether colType encodes to a FIXED number of bytes independent of the
+// value (int → BE8, bool → 1B). Everything else (text / real / money / blob) is variable-width:
+// encodeColValue emits its raw bytes, whose length depends on the value. Only fixed-width columns
+// are safe as a non-suffix position of a separator-less composite key (Fix-2).
+func fixedWidthCol(c ColType) bool {
+	switch c &^ colDescendingFlag {
+	case ColInt, ColBool:
+		return true
+	}
+	return false
+}
+
+// checkCompositeLayout is the Fix-2 construction-time guard. encodeCompositeKey concatenates the
+// per-column encodings with NO separator or length prefix, so lexicographic byte order == tuple
+// order ONLY when every column BEFORE the last is fixed-width (int BE8 / bool 1B). A variable-width
+// column (text / real / money / blob) in a non-suffix position lets a longer value bleed into the
+// next column's bytes and silently UNDER-REJECT at validation (§2.2) — the one failure the module
+// forbids. Phase 3 wires schema-driven composites; this guard makes a bad layout fail LOUD at
+// construction rather than mis-validate at runtime. Returns nil for a safe layout (fixed-width
+// prefix + at most one variable-width column, as the suffix).
+func checkCompositeLayout(cols []IndexCol) error {
+	for i := 0; i+1 < len(cols); i++ { // every column EXCEPT the last (the only allowed variable-width slot)
+		if !fixedWidthCol(cols[i].Type) {
+			return fmt.Errorf("bluedb: non-order-preserving composite index layout: variable-width column at "+
+				"position %d precedes another column — only fixed-width columns (int/bool) may be non-suffix; a "+
+				"text/blob/real/money column must be the LAST column (§2.2)", i)
+		}
+	}
+	return nil
+}
+
 // encodeCompositeKey concatenates the per-column encodings in declared column order, so
 // lexicographic byte order == tuple order (§2.2). Order-preserving as long as every
 // variable-width column (text/blob) is a suffix of the tuple — fixed-width columns
 // (int BE8, bool 1B) must precede them. Both the scan bound and the coord go through this
-// same builder, so they byte-match.
+// same builder, so they byte-match. A layout that violates that invariant PANICS here (Fix-2's
+// fail-loud construction guard) rather than silently under-rejecting a phantom at validation.
 func encodeCompositeKey(indexID IndexID, cols []IndexCol) []byte {
+	if err := checkCompositeLayout(cols); err != nil {
+		panic(err) // construction-time schema error — fail loud, never mis-validate at runtime
+	}
 	var out []byte
 	for _, c := range cols {
 		out = append(out, encodeIndexKey(indexID, c.Type, c.Value)...)

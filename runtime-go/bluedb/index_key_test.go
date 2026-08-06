@@ -193,3 +193,60 @@ func TestRecentRingAfterTrimSpill(t *testing.T) {
 		t.Fatalf("after(25): got %d spilled=%v, want 1 (only commit 30)", len(got), spilled)
 	}
 }
+
+// Fix-2 — composite index layout guard (§2.2). encodeCompositeKey concatenates columns with NO
+// separator, so it is order-preserving ONLY when every non-suffix column is fixed-width (int BE8 /
+// bool 1B); a variable-width (text/blob/real/money) column in a non-suffix position would silently
+// UNDER-REJECT at validation. checkCompositeLayout must ACCEPT the safe layouts and REJECT the
+// unsafe ones, and encodeCompositeKey must PANIC (fail loud at construction) on an unsafe layout —
+// a guard before Phase 3 wires schema-driven composites.
+func TestFix2_CompositeLayoutGuard(t *testing.T) {
+	const idx = IndexID(7)
+
+	accept := [][]IndexCol{
+		{{ColInt, IntKey(1)}, {ColText, []byte("a")}},                     // (int, text) — fixed prefix, variable suffix
+		{{ColBool, []byte{1}}, {ColInt, IntKey(2)}, {ColText, []byte("z")}}, // (bool, int, text)
+		{{ColInt, IntKey(1)}, {ColInt, IntKey(2)}},                        // (int, int) — all fixed
+		{{ColText, []byte("solo")}},                                       // single variable column IS the suffix
+		{{ColInt, IntKey(1)}, {ColMoney, []byte("USD 1.00")}},             // fallback money as suffix is allowed
+	}
+	for _, cols := range accept {
+		if err := checkCompositeLayout(cols); err != nil {
+			t.Fatalf("checkCompositeLayout rejected an order-preserving layout %v: %v", cols, err)
+		}
+		mustNotPanic(t, func() { _ = encodeCompositeKey(idx, cols) }, cols)
+	}
+
+	reject := [][]IndexCol{
+		{{ColText, []byte("a")}, {ColInt, IntKey(1)}},   // (text, int) — variable-width non-suffix
+		{{ColText, []byte("a")}, {ColText, []byte("b")}}, // (text, text) — first text is non-suffix
+		{{ColBlob, []byte("x")}, {ColBool, []byte{1}}},   // (blob, bool) — variable-width non-suffix
+		{{ColInt, IntKey(1)}, {ColText, []byte("a")}, {ColInt, IntKey(2)}}, // text in the middle
+	}
+	for _, cols := range reject {
+		if err := checkCompositeLayout(cols); err == nil {
+			t.Fatalf("checkCompositeLayout ACCEPTED a non-order-preserving layout %v — it must reject (variable-width non-suffix)", cols)
+		}
+		mustPanic(t, func() { _ = encodeCompositeKey(idx, cols) }, cols)
+	}
+}
+
+func mustPanic(t *testing.T, fn func(), cols []IndexCol) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("encodeCompositeKey must PANIC (fail loud) on unsafe layout %v, but it returned", cols)
+		}
+	}()
+	fn()
+}
+
+func mustNotPanic(t *testing.T, fn func(), cols []IndexCol) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("encodeCompositeKey must NOT panic on a safe layout %v, but it panicked: %v", cols, r)
+		}
+	}()
+	fn()
+}

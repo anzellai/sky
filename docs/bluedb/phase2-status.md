@@ -83,8 +83,8 @@ hardening) is now complete.
   bound. Starvation-freedom is claimed for POINT-key contention only.
 - **FIFO queue + release** (`hotkey.go` — `leaseManager`). One FIFO queue per hot key → waiters
   served in arrival order (no starvation among holders). Release is **driver-side** (`defer
-  releaseAll` in `transactUnderLeases`); the **committer-side reaper** (`leaseReaper` →
-  `leaseManager.reap`, timeout `defaultLeaseTimeout`) is the backstop that reclaims a lease held
+  releaseAll` in `transactUnderLeases`); a **dedicated lease-reaper goroutine** (`go e.leaseReaper()`
+  → `leaseManager.reap`, timeout `defaultLeaseTimeout`; NOT the committer) is the backstop that reclaims a lease held
   past the timeout so a driver that crashes between `Commit`-return and its defer cannot wedge
   the queue forever.
 - **Purity under re-run.** Phases A and C both re-run the pure `func(*Txn) error` body; the
@@ -114,7 +114,7 @@ hardening) is now complete.
 | `TestT25_HotKeyNoStarvation` | 16×25 RMW on ONE counter → all commit (0 conflicts), final == 400 (no lost update), lease path engaged. |
 | `TestT26_MultiHotKeyNoDeadlock` | txns touching {X,Y} and {Y,X}, both hot → all commit, no deadlock, exact counts (the grill's X<Y case). |
 | `TestT27_RangeContentionBoundedRetryNoLease` | a range conflict never promotes a key hot; a victim under a live flood degrades to typed `ErrConflict` with `leasePathCalls == 0` (no predicate lease, no hang). |
-| `TestT28_LeaseTimeoutBackstop` | a crashed driver holding a lease → the committer reaper reclaims it → the waiter proceeds. |
+| `TestT28_LeaseTimeoutBackstop` | a crashed driver holding a lease → the lease-reaper goroutine reclaims it → the waiter proceeds. |
 | `TestT29_RingCapSpillIdenticalValidation` | a capped ring spills a phantom below a lagging reader's readTs → still rejected via `Changelog.Tail`, identical to the uncapped ring path. |
 | `TestT30_RingCapSpillRaisesFloor` | ring unit: append past the cap spills the oldest + raises the floor. |
 
@@ -128,4 +128,78 @@ go build ./...
 go test ./bluedb/ -race -count=1        # 54 Phase-1/2a + 6 Phase-2b, -race clean
 go test ./bluedb/ -race -count=5 -run 'TestT25|TestT26|TestT27|TestT28|TestT29|TestT30'  # no flakes/deadlocks
 go test ./bluedb/ -bench GroupCommit -run '^$'   # ~49k durable blind writes/s (unchanged — the blind path is untouched)
+```
+
+## Phase 2 boundary grill — 5 fixes (SSI + lease layer, architecture SOUND)
+
+Two fresh-context adversaries read the actual SSI + lease code. The architecture is sound (no
+lost update, no deadlock, no race, no rework). They found ONE correctness blocker (an
+under-reject), one latent guard, two liveness-honesty gaps, and comment drift. All five closed.
+
+### Fix-1 (CORRECTNESS BLOCKER) — the spill fallback now fails CLOSED
+
+`processTxn` (`committer.go`) previously fell through with `base == nil` when the ring-spill
+`changelogTailChanges` read ERRORED (a Pebble iterator error OR a malformed/truncated changelog
+entry via `DecodeChangelogPayload`). A `nil` window drops the spilled committed changes in
+`(readTs, floor]` → a phantom whose conflicting change spilled out of the ring is MISSED → the txn
+commits a **non-serializable** history (an under-reject — the one failure `validate.go` forbids).
+Now the spill-read error path ABORTS the job (`ErrConflict` + inline ack) — fail CLOSED. The
+driver re-`Begin`s at a fresher `readTs` (≥ `durableHi` ≥ ring floor → no spill on retry; a
+transient I/O error also clears). No under-reject remains on ANY path, including the spill-error
+branch. Regression: `TestT31_SpillChangelogErrorFailsClosed` fault-injects the tail error on the
+spill path (seam: `changelogTailFaultInject`) with a spilled phantom and asserts the txn ABORTS
+(negative-checked: with the old fall-through, T31 commits `<nil>` — the under-reject). T29 still
+covers the fallback SUCCESS path.
+
+### Fix-2 (LATENT — guard before Phase 3) — composite index column-order guard
+
+`encodeCompositeKey` (`index_key.go`) concatenates encoded columns with NO separator/length prefix
+— order-preserving ONLY when every non-suffix column is fixed-width (int BE8 / bool 1B); a
+variable-width (text/blob/real/money) column in a non-suffix position silently under-rejects.
+`checkCompositeLayout` now REJECTS such a layout at construction and `encodeCompositeKey` PANICS
+(fail loud) — so a bad Phase-3 schema-driven composite can never silently mis-validate at runtime.
+Regression: `TestFix2_CompositeLayoutGuard` (accepts `(int,text)`/`(bool,int,text)`/single-var;
+rejects `(text,int)`/`(text,text)`/`(blob,bool)`/text-in-the-middle).
+
+### Fix-3 (LIVENESS) — a blind write to a HOT key routes through the lease
+
+A blind `Commit` (`ReadSet == nil`) skipped validation AND the lease, so a blind-write firehose on
+a hot key could starve a lease-holding RMW to `ErrConflict`. `e.Commit` (`pebble_engine.go`) now
+routes a blind write whose target is currently hot through the SAME FIFO lease (`blindHotLeases`,
+canonical `bytes.Compare` order for multi-key), so it queues BEHIND the RMW → the RMW makes
+progress. The overwhelming common case (no hot key) is a **lock-free** atomic gate
+(`hotKeyTable.hotN == 0 && leaseManager.waiterN == 0`) → the OLTP firehose pays a single pair of
+atomic loads and takes NO lock. Throughput unchanged: `BenchmarkGroupCommit` ≈ 53k durable
+blind writes/s. The false `txn.go` `maxLeaseAttempts` comment ("a point-contended txn never
+returns ErrConflict") is corrected to the actual guarantee. Regression:
+`TestT32_BlindFirehoseDoesNotStarveRMW` (4 blind flooders on a hot key + a 20-iteration RMW → RMW
+commits, lease path engaged).
+
+### Fix-4 (LIVENESS) — data-dependent touched-key set re-discovery
+
+`transactUnderLeases` (`txn.go`) discovered the hot-key set at Phase A but a data-dependent Phase-C
+body could touch a DIFFERENT hot key `M` (never leased) → race → livelock. Phase C now checks (via
+`unheldHot`) whether the run touched any hot key OUTSIDE the held lease set; if so it ABORTS,
+expands the set, and re-acquires the WHOLE set in canonical order (release-all-then-reacquire keeps
+deadlock-freedom) — bounded by `maxLeaseRediscover` (honest typed `ErrConflict` if the touched set
+never stabilizes). Regression: `TestT33_DataDependentTouchedSetConverges` (bodies RMW A or B by a
+flag another txn flips → converge, no livelock, no non-conflict error, `-race` clean at `-count=5`).
+
+### Fix-5 (honesty) — comment corrections
+
+The "committer-side reaper" comments (`hotkey.go`, `txn.go`, `contention_test.go`) are corrected:
+`leaseManager.reap` runs on its OWN dedicated lease-reaper goroutine (`pebble_engine.go`
+`go e.leaseReaper()`), NOT the committer. The stale-empty-queue that `reap()` leaves on a
+crashed-driver reclaim is noted as harmless (bounded, inert; `waiterN` stays accurate).
+
+### Verification (all green)
+
+```
+go build ./bluedb/...
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./bluedb/...
+go vet ./bluedb/
+go build ./...
+go test ./bluedb/ -race -count=1                              # 60 prior + 4 new (T31/T32/T33/Fix2), -race clean
+go test ./bluedb/ -run 'TestT2[5-9]|TestT3[0-3]|TestFix2' -race -count=5   # no flake/deadlock/livelock
+go test ./bluedb/ -bench GroupCommit -run '^$'               # ~53k durable blind writes/s (blind non-hot pays zero)
 ```

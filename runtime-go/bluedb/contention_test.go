@@ -274,7 +274,7 @@ func TestT27_RangeContentionBoundedRetryNoLease(t *testing.T) {
 // ── T28 — lease timeout backstop: committer reclaims a crashed holder's lease ───────────────
 //
 // Release is driver-side, so a driver that crashes holding a lease would wedge the FIFO queue
-// forever. The committer-side reaper reclaims a lease held past the timeout so the next waiter
+// forever. The lease-reaper goroutine reclaims a lease held past the timeout so the next waiter
 // proceeds (§6.3). Here a "crashed driver" acquires a lease and never releases it; a waiter must
 // still be granted after the reaper reclaims the stale holder.
 func TestT28_LeaseTimeoutBackstop(t *testing.T) {
@@ -378,4 +378,200 @@ func TestT30_RingCapSpillRaisesFloor(t *testing.T) {
 	if len(r.entries) != 3 {
 		t.Fatalf("ring holds %d entries, want the cap of 3", len(r.entries))
 	}
+}
+
+// ── T31 — Fix-1: a spill-path changelog ERROR fails CLOSED (aborts, never under-rejects) ─────
+//
+// The mirror of T29's ERROR path. A small ring cap forces the phantom's ring entry to spill below
+// a lagging reader's readTs, so validation falls back to Changelog.Tail. T29 covers the fallback
+// SUCCESS path (the tail read returns the phantom → conflict). T31 covers the ERROR path: when the
+// tail read FAILS (a Pebble iterator error OR a malformed/truncated changelog entry), the committer
+// MUST NOT fall through with a nil (pending-only) window — that would DROP the spilled phantom and
+// COMMIT a non-serializable history (an under-reject, forbidden by validate.go's contract). It must
+// fail CLOSED: abort the txn with ErrConflict so the driver re-Begins at a fresher readTs.
+func TestT31_SpillChangelogErrorFailsClosed(t *testing.T) {
+	e, err := openWith(config{dir: t.TempDir(), maxRingEntries: 4})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer e.Close()
+
+	// A lagging reader opened at readTs=durableHi (== {0,0} on a fresh store), BEFORE the phantom.
+	tx1, _ := e.Begin()
+	tx1.SetIndexer(statusIndexer)
+	lo, hi := encodeScanRange(statusIdx, ColText, []byte("open"), []byte("open"))
+	cur := tx1.Scan(statusIdx, lo, hi)
+	for cur.Next() {
+	}
+	cur.Close()
+
+	// The phantom: an 'open' row in tx1's scanned range.
+	if r := e.Commit(blindPutReq("r1", "open", statusIndexer(nil, []byte("open")))); r.Err != nil {
+		t.Fatalf("phantom commit: %v", r.Err)
+	}
+	// Flood past the cap so the phantom's ring entry spills below tx1.readTs → the spill path.
+	for i := 0; i < 6; i++ {
+		pk := fmt.Sprintf("closed-%d", i)
+		if r := e.Commit(blindPutReq(pk, "closed", statusIndexer(nil, []byte("closed")))); r.Err != nil {
+			t.Fatalf("filler commit: %v", r.Err)
+		}
+	}
+
+	// Fix-1: force the spill-path changelog read to ERROR. Without fail-closed, `base` stays nil,
+	// the phantom is dropped from the validation window, and tx1 would COMMIT (under-reject).
+	changelogTailCalls.Store(0)
+	changelogTailFaultInject.Store(true)
+	defer changelogTailFaultInject.Store(false)
+
+	if err := tx1.Put([]byte("r2"), []byte("open")); err != nil {
+		t.Fatal(err)
+	}
+	err = tx1.Commit()
+
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("a spill-path changelog ERROR must fail CLOSED (abort with ErrConflict), got %v — "+
+			"falling through with a nil window under-rejects a phantom = a non-serializable commit", err)
+	}
+	if changelogTailCalls.Load() == 0 {
+		t.Fatal("the spill path (changelogTailChanges) was never reached — T31 did not exercise the error branch")
+	}
+}
+
+// ── T32 — Fix-3: a blind-write firehose on a HOT key does NOT starve a transactional RMW ─────
+//
+// A blind write (no ReadSet) skips validation AND the lease. Pre-Fix-3 a blind-write firehose on a
+// hot key could exhaust a lease-holding RMW's retries → ErrConflict while it held every lease. Fix-3
+// routes a blind write to a currently-HOT key through the SAME FIFO lease, so it queues BEHIND the
+// RMW and the RMW makes progress. Assertion: the RMW COMMITS (never ErrConflict) under the flood.
+func TestT32_BlindFirehoseDoesNotStarveRMW(t *testing.T) {
+	e := newSSIEngine(t)
+	leasePathCalls.Store(0)
+
+	const key = "counter"
+
+	stop := make(chan struct{})
+	var flooders sync.WaitGroup
+	for f := 0; f < 4; f++ { // several blind flooders hammering the same key
+		flooders.Add(1)
+		go func() {
+			defer flooders.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				// Blind write to `key` with a KeyChange (Pk=key) so it conflicts an open RMW's
+				// point read → drives `key` hot. Value "0" so incrBody's Atoi never fails.
+				if r := e.Commit(blindPutReq(key, "0", nil)); r.Err != nil {
+					return // engine closing → stop
+				}
+			}
+		}()
+	}
+
+	var rmwErr error
+	runBounded(t, 60*time.Second, "blind firehose vs RMW", func() {
+		for i := 0; i < 20; i++ { // the RMW must keep committing under the flood
+			if err := e.Transact(incrBody(key)); err != nil {
+				rmwErr = err
+				break
+			}
+		}
+	})
+	close(stop)
+	flooders.Wait()
+
+	if rmwErr != nil {
+		t.Fatalf("a transactional RMW on a hot key STARVED under a blind-write firehose: %v — "+
+			"Fix-3 must route a blind write to a hot key through the lease so the RMW makes progress", rmwErr)
+	}
+	if leasePathCalls.Load() == 0 {
+		t.Fatal("expected the RMW to engage the strict-2PL lease path under the blind-write flood, but it never did")
+	}
+}
+
+// ── T33 — Fix-4: a data-dependent touched-key set converges (re-discover + re-acquire) ───────
+//
+// A body whose touched key depends on a value it READS (RMW A when a flag is even, else RMW B) can,
+// under the lease path, discover a DIFFERENT hot key at Phase C than Phase A saw (a flipper flips the
+// flag). Pre-Fix-4 that new key was never leased → the txn raced it → livelock. Fix-4 aborts, expands
+// the held lease set, and re-acquires the WHOLE set in canonical order (bounded), keeping
+// deadlock-freedom. Assertions: no livelock/deadlock (the runBounded guard) + no NON-conflict error
+// (a bounded ErrConflict is the honest bound and is tolerated) + `-race` clean at `-count=5`.
+func TestT33_DataDependentTouchedSetConverges(t *testing.T) {
+	e := newSSIEngine(t)
+	leasePathCalls.Store(0)
+
+	const flag, a, b = "flag", "ctrA", "ctrB"
+
+	readInt := func(tx *Txn, k string) (int, error) {
+		if v, ok := tx.Get([]byte(k)); ok {
+			return strconv.Atoi(string(v))
+		}
+		return 0, nil
+	}
+
+	// body reads the flag (a point read → the flipper's writes make `flag` hot) and RMWs A or B
+	// depending on the flag's parity — the DATA-DEPENDENT touched key.
+	body := func(tx *Txn) error {
+		f, err := readInt(tx, flag)
+		if err != nil {
+			return err
+		}
+		target := a
+		if f%2 == 1 {
+			target = b
+		}
+		n, err := readInt(tx, target)
+		if err != nil {
+			return err
+		}
+		return tx.Put([]byte(target), []byte(strconv.Itoa(n+1)))
+	}
+
+	stop := make(chan struct{})
+	var flipper sync.WaitGroup
+	flipper.Add(1)
+	go func() {
+		defer flipper.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = e.Transact(func(tx *Txn) error {
+				v, err := readInt(tx, flag)
+				if err != nil {
+					return err
+				}
+				return tx.Put([]byte(flag), []byte(strconv.Itoa(v+1)))
+			})
+		}
+	}()
+
+	var nonConflict int64
+	runBounded(t, 60*time.Second, "data-dependent touched set", func() {
+		var wg sync.WaitGroup
+		for w := 0; w < 6; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 15; i++ {
+					if err := e.Transact(body); err != nil && !errors.Is(err, ErrConflict) {
+						atomic.AddInt64(&nonConflict, 1) // a logic/durability error is a real failure
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	})
+	close(stop)
+	flipper.Wait()
+
+	if c := atomic.LoadInt64(&nonConflict); c != 0 {
+		t.Fatalf("%d txns returned a NON-conflict error — a data-dependent body must converge (commit or bounded ErrConflict), not error out", c)
+	}
+	t.Logf("lease path engaged %d times (data-dependent divergence exercises Fix-4 re-discovery)", leasePathCalls.Load())
 }

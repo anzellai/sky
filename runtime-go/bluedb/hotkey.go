@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,8 +18,9 @@ import (
 //     key (§6.3). Deadlock-free because Transact acquires a txn's WHOLE hot-key set up front
 //     in ascending bytes.Compare order (strict-2PL — the whole-set canonical-order acquire is
 //     what the grill rework requires; NEVER acquire-on-discovery, §6.3/§6.4). Release is
-//     DRIVER-side (defer releaseAll); the committer-side reaper is the timeout backstop for a
-//     driver that crashes between Commit-return and its release defer (§6.3).
+//     DRIVER-side (defer releaseAll); a dedicated lease-reaper goroutine (pebble_engine.go
+//     `go e.leaseReaper()` — NOT the committer) is the timeout backstop for a driver that
+//     crashes between Commit-return and its release defer (§6.3).
 //
 // Both structs are guarded by their own mutex. The design's "single-writer, no lock" holds
 // for the ring (recent_changes.go) but NOT here: recordAbort runs on the committer goroutine
@@ -31,7 +33,7 @@ import (
 // ends (see decay()).
 const hotThreshold = 2
 
-// defaultLeaseTimeout is the committer-side reaper's reclaim age for a held lease (§6.3). Set
+// defaultLeaseTimeout is the lease-reaper goroutine's reclaim age for a held lease (§6.3). Set
 // well above a normal commit latency so it never expires a merely-slow legitimate holder and
 // reintroduces the race; it fires only for a driver that crashed holding the lease. Tests
 // inject a short timeout via config.leaseTimeout.
@@ -43,6 +45,15 @@ type hotKeyTable struct {
 	aborts map[string]int
 	hot    map[string]bool
 	leases *leaseManager // consulted for stickiness: a key stays hot while its lease is contended
+
+	// hotN mirrors len(hot) as a lock-free atomic (Fix-3). The blind-write path reads it WITHOUT
+	// taking mu: when hotN == 0 AND leases.waiterN == 0 nothing is hot anywhere, so the OLTP
+	// firehose skips the whole hot-key check with a single pair of atomic loads (zero added lock
+	// cost — the ~49k/s blind path is preserved). Maintained in lockstep with `hot` under mu
+	// (increment on a false→true promotion in recordAbort, decrement on retirement in decay). A
+	// momentarily-stale read is benign: it is a LIVENESS gate, not a correctness one — validation
+	// still prevents every lost update regardless of which path a blind write takes.
+	hotN atomic.Int64
 }
 
 func newHotKeyTable(leases *leaseManager) *hotKeyTable {
@@ -64,8 +75,9 @@ func (h *hotKeyTable) recordAbort(culprit []byte) {
 	k := string(culprit)
 	h.mu.Lock()
 	h.aborts[k]++
-	if h.aborts[k] >= hotThreshold {
+	if h.aborts[k] >= hotThreshold && !h.hot[k] { // false→true promotion only → keep hotN == len(hot)
 		h.hot[k] = true
+		h.hotN.Add(1)
 	}
 	h.mu.Unlock()
 }
@@ -130,6 +142,7 @@ func (h *hotKeyTable) decay() {
 		if h.aborts[k] < hotThreshold {
 			delete(h.hot, k)
 			delete(h.aborts, k)
+			h.hotN.Add(-1) // retire → keep hotN == len(hot)
 		}
 	}
 }
@@ -151,12 +164,20 @@ type leaseQueue struct {
 }
 
 // leaseManager arbitrates per-hot-key FIFO leases (§6.3). Driver goroutines acquire/release;
-// the committer-side reaper reclaims a stale head. All under one mutex — off the blind path.
+// a dedicated lease-reaper goroutine (NOT the committer) reclaims a stale head. All under one
+// mutex — off the blind path.
 type leaseManager struct {
 	mu      sync.Mutex
 	queues  map[string]*leaseQueue
 	timeout time.Duration
 	now     func() time.Time // injectable clock (tests)
+
+	// waiterN is the total live ticket count across all queues, mirrored as a lock-free atomic
+	// (Fix-3). The blind-write fast gate reads it WITHOUT mu: waiterN == 0 (with hotKeys.hotN == 0)
+	// means no lease is contended anywhere → the firehose skips the hot-key check entirely. Kept
+	// in lockstep with the queues under mu: +1 on acquire, -1 when a ticket leaves (driver release
+	// via removeLocked, or reaper reclaim). A stale read is benign (liveness gate only).
+	waiterN atomic.Int64
 }
 
 func newLeaseManager(timeout time.Duration) *leaseManager {
@@ -184,6 +205,7 @@ func (lm *leaseManager) acquire(key string) *leaseTicket {
 	}
 	t := &leaseTicket{key: key, granted: make(chan struct{})}
 	q.waiters = append(q.waiters, t)
+	lm.waiterN.Add(1) // mirror len(all queues) for the lock-free blind-write gate (Fix-3)
 	if len(q.waiters) == 1 {
 		lm.grantHeadLocked(q)
 	}
@@ -230,11 +252,12 @@ func (lm *leaseManager) removeLocked(t *leaseTicket) {
 	}
 	if idx < 0 {
 		t.done = true
-		return
+		return // already removed (e.g. reaper-reclaimed) — waiterN was decremented then
 	}
 	wasHead := idx == 0
 	t.done = true
 	q.waiters = append(q.waiters[:idx], q.waiters[idx+1:]...)
+	lm.waiterN.Add(-1) // this ticket left the queue → keep waiterN == total live tickets (Fix-3)
 	if len(q.waiters) == 0 {
 		delete(lm.queues, t.key)
 		return
@@ -244,11 +267,12 @@ func (lm *leaseManager) removeLocked(t *leaseTicket) {
 	}
 }
 
-// reap is the committer-side timeout backstop (§6.3): it reclaims any lease whose active holder
-// has held it longer than lm.timeout — the driver-crashed-before-releasing case. Reclaiming a
-// merely-slow legitimate holder is avoided by setting timeout well above commit latency;
+// reap is the lease-reaper goroutine's timeout backstop (§6.3): it reclaims any lease whose active
+// holder has held it longer than lm.timeout — the driver-crashed-before-releasing case. Reclaiming
+// a merely-slow legitimate holder is avoided by setting timeout well above commit latency;
 // even if it did fire, correctness is preserved (the reclaimed holder loses point-key
-// exclusivity → its Commit conflicts → it retries, §6.4). Called by the reaper goroutine.
+// exclusivity → its Commit conflicts → it retries, §6.4). Called by the lease-reaper goroutine
+// (pebble_engine.go `go e.leaseReaper()`), NOT the committer.
 func (lm *leaseManager) reap() {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
@@ -262,9 +286,13 @@ func (lm *leaseManager) reap() {
 			// Reclaim the stale head: mark done, drop it, grant the next waiter.
 			head.done = true
 			q.waiters = q.waiters[1:]
+			lm.waiterN.Add(-1) // reclaimed ticket left the queue → keep waiterN == total live tickets (Fix-3)
 			lm.grantHeadLocked(q)
-			// (empty queues are pruned lazily by removeLocked; leaving a drained queue here
-			// is harmless — hasWaiters reports len==0, decay retires the key.)
+			// Fix-5 note (harmless, deliberately NOT fixed): when this reclaim drains the queue to
+			// empty, the now-empty *leaseQueue is left in lm.queues (pruned only lazily by a future
+			// removeLocked, which won't come for a reaped ticket). hasWaiters reports len==0 and
+			// decay retires the key, and waiterN stays accurate (0), so the stale empty entry is
+			// inert — a bounded, rare (crashed-driver-only) memory wart, not a correctness issue.
 		}
 	}
 }
