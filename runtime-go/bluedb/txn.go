@@ -4,12 +4,25 @@ import (
 	"errors"
 	"math/rand"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
 // maxTxnAttempts bounds the optimistic retry loop (§5.1). On exhaustion Transact returns a
 // typed ErrConflict.
 const maxTxnAttempts = 8
+
+// maxLeaseAttempts bounds the strict-2PL Phase-C run (§6.3). While the txn holds every hot-key
+// lease it touches, it can only lose to a range/non-hot conflict OR the rare transitional race
+// where a key promotes to hot between an optimistic attempt's anyHot check and its commit; a
+// held-lease holder re-runs and wins as the transient drains. Generously bounded so a
+// point-contended txn never returns ErrConflict, yet a genuine range conflict under the held
+// leases still degrades to a typed ErrConflict rather than hanging.
+const maxLeaseAttempts = 32
+
+// leasePathCalls counts transactUnderLeases entries — a test seam: the range-contention
+// conformance test asserts it stays 0 (predicate contention is never leased, §6.4).
+var leasePathCalls atomic.Int64
 
 // errTxnDone is returned by a Txn op after Commit/Abort.
 var errTxnDone = errors.New("bluedb: transaction already finished")
@@ -257,6 +270,27 @@ func (tx *Txn) Abort() {
 	tx.reader.Close()
 }
 
+// touchedKeys is the union of the txn's write-set keys and its point-read keys (§6.2) — the
+// point keys whose hotness the driver checks (anyHot/hotSubset) to decide the lease path. Index
+// ranges / witnesses are NOT included: they have no single key to lease (§6.4).
+func (tx *Txn) touchedKeys() [][]byte {
+	seen := make(map[string]bool, len(tx.order)+len(tx.points))
+	out := make([][]byte, 0, len(tx.order)+len(tx.points))
+	for _, k := range tx.order { // write-set
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, []byte(k))
+		}
+	}
+	for k := range tx.points { // point reads (incl. pre-image reads)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, []byte(k))
+		}
+	}
+	return out
+}
+
 // Transact runs the optimistic loop (§5.1): Begin → body → Commit; on ErrConflict it re-runs
 // body against a FRESH snapshot (bounded retry + backoff), and returns nil on durable commit
 // or a typed ErrConflict after the retry bound. The body MUST be pure (re-runnable, no
@@ -264,10 +298,12 @@ func (tx *Txn) Abort() {
 // body built solely from them is automatically re-runnable (§5.3). A blind single-key write
 // (no reads → empty read-set) validates trivially → one append.
 //
-// TODO(phase2b): a genuinely-contended POINT key detected via hot-key aborts switches to the
-// strict-2PL committer-arbitrated FIFO lease (§6) for starvation-freedom. In 2a, contention
-// is handled by bounded optimistic retry + backoff only (range/predicate contention is never
-// leased even in 2b — it stays on this path).
+// Phase 2b (§6): a genuinely-contended POINT key — detected by the committer via repeated
+// validation aborts (recordAbort) — switches this txn to the strict-2PL committer-arbitrated
+// FIFO lease path (transactUnderLeases) for starvation-freedom. The check runs BOTH before the
+// optimistic commit (so a txn touching an already-hot key does not even try to lose the race)
+// AND after an ErrConflict (the abort that just promoted the key). Range/predicate contention
+// has NO lease (§6.4) → it stays on this bounded optimistic path → typed ErrConflict.
 func (e *pebbleEngine) Transact(body func(tx *Txn) error) error {
 	var lastErr error
 	for attempt := 0; attempt < maxTxnAttempts; attempt++ {
@@ -279,6 +315,13 @@ func (e *pebbleEngine) Transact(body func(tx *Txn) error) error {
 			tx.Abort()
 			return berr
 		}
+		touched := tx.touchedKeys()
+		// §6: a touched POINT key is already hot → don't gamble an optimistic commit that
+		// would lose the race; go straight to the strict-2PL lease path.
+		if e.hotKeys.anyHot(touched) {
+			tx.Abort()
+			return e.transactUnderLeases(body)
+		}
 		err = tx.Commit() // Commit already Close()s the reader (success OR error)
 		if err == nil {
 			return nil
@@ -287,12 +330,91 @@ func (e *pebbleEngine) Transact(body func(tx *Txn) error) error {
 			return err // durability error → propagate
 		}
 		lastErr = err
+		// §6: the conflict just fed recordAbort on the committer — re-check hotness. If the
+		// culprit POINT key crossed the threshold, switch to the lease path now.
+		if e.hotKeys.anyHot(touched) {
+			return e.transactUnderLeases(body)
+		}
 		backoff(attempt)
 	}
 	if lastErr == nil {
 		lastErr = ErrConflict
 	}
 	return lastErr // retry bound exhausted → typed, surfaced by Phase 3
+}
+
+// transactUnderLeases is the strict-2PL lease path (§6.3, the GRILL-REWORKED, deadlock-free
+// version). It never acquires a lease on mid-body discovery — the concrete X<Y deadlock the
+// grill found is prevented ONLY by discovering the WHOLE hot-key set first, then acquiring
+// every lease in canonical bytes.Compare order before running the committing attempt.
+//
+//	Phase A — DISCOVER: run body once (holding NO lease) purely to observe the touched keys,
+//	          then Abort (commits nothing, no external effect — §5.3 purity).
+//	Phase B — ACQUIRE : take ALL hot-key leases in ascending bytes.Compare order (one global
+//	          lock order over a total order → no hold-and-wait cycle → deadlock-free).
+//	Phase C — RUN     : re-run the pure body under the held set. As the sole active writer of
+//	          every hot key it holds, it cannot lose the validation race on those point keys;
+//	          a range/non-hot conflict still returns ErrConflict (honest — no predicate lease).
+//
+// Release is DRIVER-side (defer releaseAll); the committer-side reaper (leaseManager.reap) is
+// the timeout backstop for a driver that crashes between Commit-return and its release defer.
+func (e *pebbleEngine) transactUnderLeases(body func(tx *Txn) error) error {
+	leasePathCalls.Add(1)
+
+	// ── Phase A: discover the full hot-key set, holding NO lease. ──
+	tx0, err := e.Begin()
+	if err != nil {
+		return err
+	}
+	berr := body(tx0)
+	touched := tx0.touchedKeys()
+	tx0.Abort() // discard — this run committed nothing
+	if berr != nil {
+		return berr
+	}
+	hot := e.hotKeys.hotSubset(touched) // ascending bytes.Compare order (§6.4)
+	if len(hot) == 0 {
+		return e.Transact(body) // cooled between detection and here → back to optimistic
+	}
+
+	// ── Phase B: acquire ALL leases in canonical order (strict-2PL: acquire-all-then-run). ──
+	tickets := make([]*leaseTicket, 0, len(hot))
+	for _, k := range hot {
+		t := e.leases.acquire(string(k))
+		<-t.granted
+		tickets = append(tickets, t)
+	}
+	defer func() { // driver releases; the committer reaper is the crash backstop
+		for _, t := range tickets {
+			e.leases.release(t)
+		}
+	}()
+
+	// ── Phase C: run the pure body under the held leases (bounded). ──
+	var lastErr error
+	for attempt := 0; attempt < maxLeaseAttempts; attempt++ {
+		tx, err := e.Begin() // snapshot AFTER the prior holders' durable commits
+		if err != nil {
+			return err
+		}
+		if berr := body(tx); berr != nil {
+			tx.Abort()
+			return berr
+		}
+		err = tx.Commit()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return err
+		}
+		lastErr = err
+		backoff(attempt)
+	}
+	if lastErr == nil {
+		lastErr = ErrConflict
+	}
+	return lastErr
 }
 
 // backoff sleeps an exponentially-growing, jittered interval to dampen the two-txns-

@@ -229,9 +229,14 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 		window = append(window, base...)
 		window = append(window, pending...)
 
-		if conflict, _ := validate(j.req.ReadSet, window); conflict {
+		if conflict, culprit, pointConflict := validate(j.req.ReadSet, window); conflict {
 			j.done <- CommitResult{Err: ErrConflict} // abort THIS job; assign NO commitTs
 			acked[j] = true                          // Fix-7: record the inline ack
+			// §6.2 hot-key detection: only a POINT-read conflict is leaseable — a
+			// range/predicate/witness conflict has no single key to enqueue on (§6.4).
+			if pointConflict {
+				e.hotKeys.recordAbort(culprit)
+			}
 			continue
 		}
 

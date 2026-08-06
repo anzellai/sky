@@ -20,32 +20,36 @@ var validateCalls atomic.Int64
 //
 // The witnesses over-reject (coarser) but NEVER under-reject — the conservative fail-safe
 // that keeps SERIALIZABLE holding for real/money/blob/IS-NULL (§2.2). Returns the culprit Pk
-// (feeds Phase-2b hot-key detection; advisory in 2a).
-func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte) {
+// AND whether the conflict was a POINT-read hit (pointConflict): Phase-2b hot-key detection
+// (§6.2) records an abort ONLY for a point conflict — a range/predicate/witness conflict has
+// no single key to lease (§6.4), so the culprit's Pk there is just the changed row, not a key
+// the victim read as a point, and leasing it would not help. pointConflict gates recordAbort.
+func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte, pointConflict bool) {
 	validateCalls.Add(1)
 	if rs == nil {
-		return false, nil
+		return false, nil, false
 	}
 	for i := range window {
 		ch := &window[i]
-		// Point read.
+		// Point read — the leaseable conflict class (§6.2).
 		if len(rs.points) > 0 {
 			if _, ok := rs.points[string(ch.Pk)]; ok {
-				return true, ch.Pk
+				return true, ch.Pk, true
 			}
 		}
-		// Collection-level fallback witness.
+		// Collection-level fallback witness — predicate contention, NOT leaseable.
 		if len(rs.collWitness) > 0 && rs.collWitness[ch.Coll] {
-			return true, ch.Pk
+			return true, ch.Pk, false
 		}
-		// Index ranges + index-level fallback witness, over both New and Old coords.
+		// Index ranges + index-level fallback witness, over both New and Old coords — predicate
+		// contention, NOT leaseable (§6.4).
 		if len(rs.ranges) > 0 || len(rs.indexWitness) > 0 {
 			if coordHit(rs, ch.NewIndex) || coordHit(rs, ch.OldIndex) {
-				return true, ch.Pk
+				return true, ch.Pk, false
 			}
 		}
 	}
-	return false, nil
+	return false, nil, false
 }
 
 // coordHit reports whether any coord matches a scanned index range (byte-range test) or a

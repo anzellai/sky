@@ -13,6 +13,17 @@ type recentRing struct {
 	floor   HLC         // the lowest commitTs the ring still guarantees to hold; a readTs
 	//                     below it → after() reports spilled=true → caller falls back to
 	//                     Changelog.Tail for that one txn.
+
+	// maxEntries is the HARD RAM cap (Fix-8, §4.2/R-2.4): a config bound on the entry count
+	// the in-RAM ring will hold. When an append would exceed it, the ring PROACTIVELY spills
+	// its oldest entries and raises `floor` above them, so a leaked / never-Release'd reader
+	// token (which pins the GC threshold T low and would otherwise grow the ring UNBOUNDED,
+	// strictly worse than the Phase-1 disk-retention bloat) instead pays a per-validation
+	// Changelog.Tail (Pebble) read for its stale readTs. RAM is bounded UNCONDITIONALLY,
+	// independent of reader liveness; correctness is preserved because the durable changelog
+	// holds every spilled change (the spill validation sees EXACTLY the same window). 0 ⇒ no
+	// cap (unbounded-but-correct, the pre-2b behaviour — floored only at the GC threshold T).
+	maxEntries int
 }
 
 type ringEntry struct {
@@ -42,15 +53,39 @@ func (r *recentRing) after(readTs HLC) (changes []KeyChange, spilled bool) {
 // append adds a just-durable commit's changes (post Apply(Sync) success). Committer
 // goroutine only. Callers pass a non-empty change list.
 //
-// TODO(phase2b): cap at maxRingEntries and spill oldest entries to Changelog.Tail, raising
-// r.floor (Fix-8, R-2.4). In 2a the ring is unbounded-but-correct: the retention invariant
-// floors it at the GC threshold T (== every live reader's readTs), so a healthy system's
-// ring is bounded by reader lag; only a leaked/never-Release'd reader token could grow it
-// without bound — the hard RAM cap that closes that is deferred to 2b.
+// Fix-8 (§4.2/R-2.4): when maxEntries is set and appending would exceed it, the oldest
+// entries are SPILLED (dropped from RAM) and `floor` is raised to the commitTs of the new
+// oldest retained entry. A later txn whose readTs < floor then takes after()'s spilled=true
+// branch → validation falls back to Changelog.Tail(readTs) for that one txn (a Pebble scan —
+// correct, off the in-RAM fast path). This bounds the ring's RAM UNCONDITIONALLY (a
+// leaked/lagging reader can no longer grow it), at the cost of a Pebble read for a validation
+// that reaches below the retained window.
 func (r *recentRing) append(commitTs HLC, changes []KeyChange) {
 	cp := make([]KeyChange, len(changes))
 	copy(cp, changes)
 	r.entries = append(r.entries, ringEntry{commitTs: commitTs, changes: cp})
+	if r.maxEntries > 0 && len(r.entries) > r.maxEntries {
+		r.spillOldest(len(r.entries) - r.maxEntries)
+	}
+}
+
+// spillOldest drops the oldest `n` entries and raises `floor` to the commitTs of the new oldest
+// retained entry, so a readTs below it correctly reports spilled (Fix-8). Committer goroutine
+// only. The dropped entries' change slices are niled before the reslice so they are GC'd
+// immediately (the reslice keeps the backing array, which Go compacts on the next grow — RAM
+// stays O(maxEntries)). floor is monotone (never lowered).
+func (r *recentRing) spillOldest(n int) {
+	if n <= 0 || n >= len(r.entries) {
+		return
+	}
+	newFloor := r.entries[n].commitTs // the commitTs of the new oldest retained entry
+	for i := 0; i < n; i++ {
+		r.entries[i].changes = nil // release the dropped change lists for GC
+	}
+	r.entries = r.entries[n:]
+	if r.floor.Less(newFloor) {
+		r.floor = newFloor
+	}
 }
 
 // trim drops entries with commitTs < T and raises the floor to T. Committer goroutine only

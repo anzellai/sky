@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
@@ -12,6 +13,14 @@ import (
 // maxBatch caps a single group-commit drain window (§3.2). Mirrors the old
 // hand-built committer's cap.
 const maxBatch = 1024
+
+// defaultMaxRingEntries is the in-RAM recent-changes ring's hard entry cap (Fix-8, §4.2). Each
+// entry is one committed transaction's KeyChange list. Above the cap the oldest entries spill
+// to Changelog.Tail (a Pebble read), bounding RAM regardless of reader liveness. Chosen large
+// so a healthy system (ring bounded by reader lag well under this) never spills; the cap is the
+// backstop against a leaked/never-Release'd reader token pinning the GC floor low. Tests inject
+// a small cap via config.maxRingEntries to force the spill path.
+const defaultMaxRingEntries = 100_000
 
 // quietLogger routes Pebble's Logger. Pebble's Logger has THREE methods
 // (Infof/Errorf/Fatalf) — the design doc's two-method assumption was wrong.
@@ -46,6 +55,12 @@ type config struct {
 	// test can enqueue several jobs and drain them into ONE deterministic batch (exercises the
 	// intra-batch `pending` validation path). Uses submitForTest/drainOnceForTest (test file).
 	manualDrain bool
+	// maxRingEntries overrides the recent-changes ring's hard entry cap (Fix-8, §4.2). 0 ⇒
+	// defaultMaxRingEntries. Tests set it small to force the spill-to-Changelog.Tail path.
+	maxRingEntries int
+	// leaseTimeout overrides the hot-key lease reaper's reclaim age (§6.3). 0 ⇒
+	// defaultLeaseTimeout. Tests set it short to exercise the crashed-driver backstop.
+	leaseTimeout time.Duration
 }
 
 // commitJob is one enqueued Commit awaiting the committer.
@@ -72,6 +87,15 @@ type pebbleEngine struct {
 	// GC pass; trim is monotone so over-retaining briefly is safe.
 	recent   *recentRing
 	trimReqs chan HLC
+
+	// Phase-2b hot-key strict-2PL lease machinery (§6). hotKeys is fed by the committer
+	// (recordAbort on a point-read conflict) and read by the driver (anyHot/hotSubset);
+	// leases is the per-hot-key FIFO queue the driver acquires/releases. reaperStop signals
+	// the committer-side lease-reaper goroutine to exit at Close. NONE of these are touched by
+	// the blind-write path (e.Commit / processBlindPhase1) — the OLTP firehose is unaffected.
+	hotKeys    *hotKeyTable
+	leases     *leaseManager
+	reaperStop chan struct{}
 
 	// durableHi is the highest commitTs whose Apply(Sync) has RETURNED (i.e. is
 	// durable on the WAL), advanced by the committer AFTER each successful Apply —
@@ -165,6 +189,10 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	// validation window served in-RAM (the retention invariant: the ring covers everything
 	// above T). Floored at persistedThreshold — the same watermark version-GC uses.
 	e.recent = newRecentRing()
+	e.recent.maxEntries = cfg.maxRingEntries
+	if e.recent.maxEntries == 0 {
+		e.recent.maxEntries = defaultMaxRingEntries
+	}
 	e.trimReqs = make(chan HLC, 8)
 	if tail, terr := (&changelog{db: db}).Tail(persistedThreshold); terr == nil {
 		for _, entry := range tail {
@@ -173,13 +201,50 @@ func openWith(cfg config) (*pebbleEngine, error) {
 			}
 		}
 	}
-	e.recent.floor = persistedThreshold
+	// Floor at least at the persisted GC threshold (the same watermark version-GC uses). Use
+	// max, not assign: a small-cap cold-start seed may have already spilled and raised the
+	// floor above persistedThreshold — never lower it back (monotone, Fix-8 correctness).
+	if e.recent.floor.Less(persistedThreshold) {
+		e.recent.floor = persistedThreshold
+	}
+
+	// Phase-2b hot-key lease machinery (§6). Wired before the committer starts so recordAbort
+	// (committer goroutine) always sees a non-nil hotKeys.
+	e.leases = newLeaseManager(cfg.leaseTimeout)
+	e.hotKeys = newHotKeyTable(e.leases)
+	e.reaperStop = make(chan struct{})
 
 	if !cfg.manualDrain {
-		e.wg.Add(1)
+		e.wg.Add(2)
 		go e.committer()
+		go e.leaseReaper()
 	}
 	return e, nil
+}
+
+// leaseReaper is the committer-side timeout backstop for the hot-key leases (§6.3). It wakes
+// periodically and reclaims any lease whose active holder has held it past leases.timeout — the
+// driver-crashed-before-release case (release is driver-side, so without this a crashed holder
+// would wedge the FIFO queue forever). It also decays the hot set so a key whose contention has
+// ended retires to the optimistic fast path (§6.3 auto-retirement). Runs only in the auto-
+// committer configuration (manualDrain tests drive process() directly and take no leases).
+func (e *pebbleEngine) leaseReaper() {
+	defer e.wg.Done()
+	interval := e.leases.timeout / 4
+	if interval < time.Millisecond {
+		interval = time.Millisecond
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-e.reaperStop:
+			return
+		case <-t.C:
+			e.leases.reap()
+			e.hotKeys.decay()
+		}
+	}
 }
 
 // beginSnapshot backs Begin() (§3.4, R-2.8). In ONE critical section under durMu it reads
@@ -321,6 +386,9 @@ func (e *pebbleEngine) Close() error {
 		e.closeMu.Lock()
 		e.closed = true
 		close(e.ch) // committer drains remaining jobs then returns
+		if e.reaperStop != nil {
+			close(e.reaperStop) // lease reaper exits (§6.3)
+		}
 		e.closeMu.Unlock()
 		e.wg.Wait()
 		err = e.db.Close()
