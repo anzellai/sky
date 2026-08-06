@@ -1,154 +1,75 @@
-# Autonomous mandate — comprehensive e2e test coverage (compiler + stdlib + console + LSP + tooling)
+# AUTONOMOUS GOAL — BlueDB clean-slate rebuild (feat/bluedb)
 
-Set: 2026-08-02. Branch: main.
-(Supersedes the completed v0.19.3 conformance-suite mandate.)
+## Verbatim user mandate (2026-08-06)
+> back to feat/bluedb, and continue in fully autonomous mode -- don't need to ask
+> me questions, permissions, continuity. set look/schedule automatically without
+> unnecessary long pauses.
+> the task is simple, e2e implemented, tested + verified; each phase is grilled
+> under our original goals.
+> you may proceed now.
 
-## User's goal (verbatim — the authority on "done")
+Earlier (the rebuild mandate, 2026-08-06):
+> this is just a exp branch, start over again on a feat/bluedb branch -- reuse
+> anything useful, and start off from main branch AGAIN. implement this time
+> properly and grill all the way.
 
-> "we need more thorough test e2e for compiler + standard libs + console etc.
-> LSP + tooling to ensure no regression and bugs"
->
-> Sequencing (answer to my scope question): "Full autonomous program" — grind
-> all 5 tiers to completion over multiple sessions with fresh-context Judge
-> verification at each tier boundary.
->
-> "remember not to do individual release, we need holistic complete confidence
-> fix + refinement for the next release. we must be confident on reliability"
+## What "done" means (the ONLY authority — do NOT scope down)
+Build the BlueDB clean-slate data layer per the GRILLED design docs on this branch
+— `docs/bluedb/clean-slate-architecture.md` (Phase 0) + `docs/bluedb/phase1-engine-design.md`
+(Phase 1) — **e2e implemented, tested + verified, each phase grilled**, until the
+ORIGINAL GOALS are achieved. Only an independent adversarial Judge (fresh context,
+given this goal) may declare a phase or the whole done — I cannot self-declare.
 
-## Release discipline (user-set, INVIOLABLE for this mandate)
+### The original goals (the rebuild must deliver these; from the strategy discussion)
+1. Session-bounded Model state sync.
+2. Unified store: high-throughput lock-safe parallel + scalable + reliable + ACID
+   (**real SERIALIZABLE via SSI/index-range validation** — user chose SSI) + secure,
+   with UNIFIED APIs shareable across dbs (sqlite/postgres/bluedb).
+3. Easy + simple; low-level APIs only for the 0.001%.
+4. Notify clients of changesets (query/row-scoped, in the commit path).
+5. Built-in Sky Console admin access to records.
+Kills the 5 dev pains: juggling multiple stores · per-db quirks/non-portable code ·
+data migration · session RAM overflow · too many configs / no unified query.
 
-**NO individual/incremental releases.** Batch the ENTIRE program (all 5 tiers +
-every bug found + every fix) locally. Push at tier boundaries (CI parity), but do
-**ONE holistic release only when the whole program is complete AND
-reliability-verified end to end.** The int64 fix (commit e3c2dd70) folds into that
-release — it is NOT tagged separately. No v0.19.8-per-fix.
+### The locked architecture (grilled; do NOT re-litigate the decisions)
+Embed **Pebble** (empirically CGO=0 cross-compile-verified) + **MVCC-timestamp-in-key**
+(comparer MIRRORs cockroachkvs, `Name="skydb.mvcc.v1"` IRREVERSIBLE, gated by
+`base.CheckComparer`) + **single-writer committer** (HLC floor `max(persisted+1,wall)`,
+metadata-in-batch) + **SSI transaction** (index-range read-set validation) +
+**commit-path query-scoped reactivity** (changelog carries NewIndex/OldIndex) +
+**opaque L1 changelog** + **watermark GC** (persisted monotone threshold T, physical
+side-deletes) + **DX collapse** (one `[data]` config, one Persist API, one migration,
+auto-admin) + **runtime-loud reactive-capability check** (compile-time backend gating
+impossible by theorem). Reactivity embedded-first; SQL = storage + post-v1 NOTIFY bridge.
 
-## What "done" means
+### Phased roadmap (architecture §7) — bottom-up, each design→grill→implement→verify→Judge
+- **Phase 1 — engine substrate** (Pebble+MVCC+committer+changelog+GC+errorfs harness).
+  Gate: `base.CheckComparer` green; versioned KV + snapshot reads; single-writer
+  group-commit w/ HLC floor + metadata-in-batch; changelog (commitTs-indexed, opaque);
+  watermark GC (threshold T, physical deletes); flock; the crash corpus green via
+  Pebble `errorfs`; point r/w p99 ≤ old, group-commit ≥ ~51k/s, ordered range O(log n+k),
+  no RAM ceiling.
+- **Phase 2 — SSI transaction + validated commit** (index-range read-set, retry-bound +
+  typed Conflict + hot-key pessimistic fallback). Gate: serializability conformance
+  suite (write-skew/phantom rejected, lost-update prevented, read-your-writes) green.
+- **Phase 3 — logical API + backend adapters** (Persist front + Cond/Query + embedded/
+  sqlite/postgres adapters). Gate: SQL≡KV parity green.
+- **Phase 4 — query-scoped reactivity in the commit path** (promote the delta engine).
+  Gate: 2-browser live demo + query-scoped delete-re-run + realistic-N fan-out honesty.
+- **Phase 5 — DX collapse** (one `[data]` config, `sky data migrate` incl. session blob
+  version, auto-admin, session-store adapter, R1 async-persist funnel + durability tier).
 
-All 5 tiers of `docs/testing/coverage-hardening-plan.md` implemented + green, and
-every real bug the new adversarial tests surface FIXED at root cause (no-deferral
-§4). Each tier is closed only by a fresh-context adversarial **Judge**.
+## Loop protocol (INVIOLABLE — CLAUDE.md §0)
+Each iteration: (1) re-read THIS file, quote the goal (drift gate); (2) cross-check the
+planned step is IN the goal (not a narrowed scope); (3) design→grill(≥2 adversaries)→
+implement (worktree, isolated)→three-leg verify (unit -race + integration + real use)→
+fresh-context Judge. A phase closes ONLY on a Judge PASS with NO "but/except/however/
+caveat/mostly/essentially/for the scope of/modulo". Commit at each verified sub-milestone;
+push at phase boundaries. Stop ONLY on a genuine implementation blocker (surface it, keep
+the loop alive). No long pauses — drive via agent-completion re-invocation + a long
+fallback wakeup. Never declare done myself.
 
-- **T1** Behavioral conformance suites driving the **Sky-source API** (through the
-  compiled binary, not the Go kernel) with adversarial/boundary inputs: Decimal,
-  Money, Jwt/Auth, Encoding, Csv, Compression, Time, Json-int64-boundary,
-  Random-golden, Math/Dict-Set/Regex/Uuid.
-- **T2** CI-enforcement wiring: Std.Db example-sweep in CI, macOS cargo tests +
-  golden, multi-tab in web verify, fmt/lsp local↔CI parity, non-CLI runtime
-  goldens incl. Tui gob round-trip.
-- **T3** Production-incident e2e: real-Postgres store (testcontainers),
-  cross-process gob, browser desync-recovery, SSE drop-resync/idle-survival,
-  CORS/BasicAuth tests, firestore implement-or-delete decision.
-- **T4** Tooling: `sky db` dialect flow, `sky fmt` interpolation paren-drop,
-  `sky watch`, LSP diagnostics parity + rename/references/semtokens,
-  add/doctor/doc/profile.
-- **T5** Compiler-internal depth: codegen/lower unit snapshots, infer
-  type-equality vs oracle, fuzz oracle-diff, divergence fixtures per ledger entry.
-
-## Hard rules (per CLAUDE.md §0)
-
-1. A new adversarial test that FAILS = a real bug → FIX the root cause. A test
-   failing because the TEST is wrong (bad API usage) is corrected, not counted.
-2. I cannot declare a tier "done" — a fresh-context adversarial Judge does, given
-   this verbatim goal + the tier's plan section. Any "but/except/mostly/for the
-   scope of" in a PASS → NOT done.
-3. Drift gate: each tier, re-read this file + quote the goal before work.
-4. Only stop condition: a genuine blocker needing user input (real-engine
-   integration needs Docker/Postgres the env can't provide; firestore
-   implement-vs-delete product decision).
-5. Every suite drives the Sky-source API through the compiled binary — the whole
-   point (int64 bug was Go-correct, Sky-path-wrong / platform-dependent).
-6. Narrow gate per change; full sweep + gates at milestone (tier) boundaries.
-
-## Progress ledger
-
-- [x] T1 — behavioral conformance — **JUDGE-VERIFIED 2026-08-02** (18/18 suites, 12
-      new adversarial Sky-source suites, 7 real "compiles-clean, behaves-wrong"
-      bugs found+fixed: Money.allocate neg-residue, Bytes.length/slice rune-vs-byte,
-      Auth.passwordStrength panic, Time.addMonths year-carry, Time.timeString UTC,
-      Uuid.parse Result-vs-Maybe, + Json int64). Commits e3c2dd70, 3b63b673,
-      f05756b9, 35184780. Codegen finding T5.0 (bare Math.pi/inf -> any) logged.
-- [x] T2 — CI enforcement — DONE (macOS parity: project tests + golden + conformance
-      on BOTH platforms; test-ci.sh CI parity; nightly full example-sweep workflow).
-      Commit 88885b1e.
-- [~] T3 — production-incident e2e — WAVE 1 DONE (commit ee667b21 + 55a24d30):
-      CORS/BasicAuth 18 tests (sound), real-Postgres store 3 integration tests +
-      CI service container (sound), cross-process gob restart test + codegen test
-      (sound), AND bug #8 fixed: unknown session store kind (firestore/typo) now
-      fails loud in prod not silent-memory. REMAINING: browser e2e (desync-recovery
-      T3.3, SSE-drop/idle T3.4, multitab wiring), firestore implement-vs-remove
-      (USER DECISION surfaced).
-- [x] T4 — tooling — DONE: sky fmt guarded, bug #9 sky db constraint-drop FIXED, LSP diagnostics parity (FFI-alias + cross-module false-positive guards), watch/doctor/doc/profile/add smoke tests. No new bugs beyond #9.
-      (commit 11987a89). REMAINING: LSP diagnostics parity + Go-FFI-alias
-      false-positive; sky watch/doctor/doc/add/profile smoke.
-- [~] T5 — compiler-internal depth — T5.0 FIXED (commit 5d296f75): bare Math
-      constants (pi/e/phi/sqrt2/inf/nan) lowered to `any` → direct use failed
-      go build; repointed kernel map to typed `_T` variants; MathConformance
-      92→96 with direct-use guards; coerce-floor/repro/build-run all PASS.
-      REMAINING: codegen/lower unit snapshots, infer type-equality vs oracle,
-      fuzz oracle-diff, divergence fixtures per ledger entry.
-
-## Fix count: 11 (9 stdlib/runtime + T5.0 codegen + bug #11 CSRF-idle)
-11. **FIXED (915faf21) — THE darraghstudio incident root cause.** __sky_csrf
-    cookie Max-Age keyed to SKY_LIVE_TTL → expired during idle while the server
-    session slid on the SSE heartbeat → next POST 403 → strand. The v0.19.4-7
-    resilience work MISSED this; the browser e2e (T3.3/T3.4) caught it. Fixed
-    with a 30-day Max-Age floor. Both idle-survival + desync-recovery e2e now
-    HARD GATES in verify-all-web.sh (2 pass/0 fail).
-
-## T3 browser e2e — DONE (idle-survival + desync-recovery gated; found bug #11)
-
-## Bugs found + fixed by this mandate (running count: 8 fixed, 1 in-flight)
-1. Json.Decode.int int64 platform-dependent (e3c2dd70) · 2. Money.allocate neg residue ·
-3. Bytes.length/slice rune-vs-byte · 4. Auth.passwordStrength success panic ·
-5. Time.addMonths backward year-carry · 6. Time.timeString host-TZ · 7. Uuid.parse
-never Just · 8. chooseStore unknown-kind silent-memory-degrade.
-9. **FIXED (11987a89):** `sky db migrate` (committed-migration path) DROPPED
-   UNIQUE + serial AUTOINCREMENT/BIGSERIAL + DEFAULT that `sky db push` preserves
-   → duplicate rows accepted on SQLite; app BROKEN on Postgres. Fixed by routing
-   BOTH paths through one shared schemaColMap renderer (can't diverge). Verified:
-   byte-match invariant, real-SQLite dup rejection, db_flow.rs, Store conformance,
-   2 Std.Db examples clean-build. Follow-ups: existing-column constraint toggles
-   not diffed; secondary indexes not in Store.Project path.
-
-## USER DECISIONS — RESOLVED
-- **Firestore**: user chose REMOVE from docs (not implement) — poor session-store
-  fit (per-request latency + cost + doesn't provide the broker). Removed from all
-  session-store option lists (commit a9a2f22d); firestore-as-app-DB via FFI (skyshop)
-  kept. Fix #8 already made `store="firestore"` fail loud.
-
-## Fix count: 11 total — all FIXED + guarded
-#1 Json.Decode.int int64 · #2 Money.allocate neg-residue · #3 Bytes.length/slice
-rune-vs-byte · #4 Auth.passwordStrength panic · #5 Time.addMonths year-carry ·
-#6 Time.timeString host-TZ · #7 Uuid.parse never-Just · #8 chooseStore
-unknown-kind silent-degrade · #9 sky db migrate constraint-drop (Postgres-breaking) ·
-#10 (T5.0) Math constants → any lowering · #11 CSRF-idle (THE darraghstudio incident).
-Tiers T1(Judge✓) T2✓ T3✓ T4✓ done. T5: 5.0/5.1/5.2/5.3/5.5 Judge-VERIFIED green; T5.4 Judge ruled reclassification a PARTIAL DODGE (rejecting oracle-diff-on-mutation-fuzzer was sound, but "covered elsewhere" was a false equivalence — no gate diffs oracle on GENERATED valid programs). Building the WellTypedFuzzerSpec analog (bounded type-directed generator + local oracle accept/reject diff) per Judge option (a). Then re-Judge → final holistic sweep → release (needs user go-ahead).
-snapshots + infer type-equality + fuzz oracle-diff + divergence fixtures remain).
-
-Final (all tiers Judge-passed): ONE holistic release — CHANGELOG + gh release,
-per CLAUDE.md checklist incl. conformance gate. (SkyDeploy redeploy skipped per
-[[feedback_ignore_skydeploy_redeploy]].)
-
-## Anchor
-
-- Plan: `docs/testing/coverage-hardening-plan.md`
-- Triggering bug fix: commit `e3c2dd70` (lossless int64 JSON round-trip)
-- Audit: 2026-08-02, 4-agent parallel coverage audit
-
-## ═══ ALL 5 TIERS JUDGE-VERIFIED (2026-08-02) — program complete ═══
-T1 (Judge✓ 18/18 conformance, 7 bugs) · T2 (CI-validated) · T3 (CI-validated:
-CORS/BasicAuth + Postgres + gob + browser e2e; bug #8, bug #11 the darraghstudio
-incident) · T4 (fmt + bug #9 sky-db + LSP diagnostics + verb smoke) · T5 (Judge✓:
-Math constants + codegen/lower snapshots + infer-sig snapshot + divergences
-bidirectional + welltyped differential fuzzer, which found D002 ctor-arg divergence).
-11 bugs fixed. Firestore removed. Remaining: final holistic milestone sweep +
-CHANGELOG → USER authorizes the ONE holistic release.
-
-## ═══ MANDATE COMPLETE — v0.19.8 TAGGED (2026-08-02) ═══
-All 5 tiers Judge-verified · 11 bugs fixed · full pre-tag gate GREEN (CI all 9 jobs
-incl. macos-determinism + integration-postgres; local e2e web 10/10, resilience 2/0,
-CLI 13/0, welltyped 60/60). Tag v0.19.8 pushed → release.yml builds binaries +
-publishes from CHANGELOG. NO SkyDeploy (per feedback_ignore_skydeploy_redeploy).
-CI-speed optimisation dropped (user: ~35m is fine; the 60m+ was the now-fixed macOS
-`timeout`-not-found failure, not slowness).
+## Non-negotiables carried in
+mem-guard running · timeout-bound every long run · CGO=0 cross-compile stays green ·
+`-tags pebblegozstd` · CheckComparer is the irreversible gate · no runtime panic from
+well-typed code · the crash corpus is day-one, not bolted on.
